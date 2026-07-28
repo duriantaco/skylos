@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-CLASSIFICATION_POLICY = "dead-code-evidence-v2"
+CLASSIFICATION_POLICY = "dead-code-evidence-v3"
 
 
 class EvidenceKind(str, Enum):
@@ -20,6 +20,7 @@ class EvidenceKind(str, Enum):
     COVERAGE_HIT = "coverage_hit"
     TRACE_HIT = "trace_hit"
     GREP_RESCUE = "grep_rescue"
+    ATTRIBUTE_NAME_MATCH = "attribute_name_match"
     VALIDATION_PASS = "validation_pass"
     VALIDATION_FAIL = "validation_fail"
     UNCERTAINTY = "uncertainty"
@@ -251,7 +252,10 @@ class EvidenceLedger:
                 or event.kind == EvidenceKind.VALIDATION_FAIL
             ),
             dead_evidence_count=sum(
-                1 for event in events if event.kind in DEAD_EVIDENCE_KINDS
+                1
+                for event in events
+                if event.kind in DEAD_EVIDENCE_KINDS
+                or event.kind == EvidenceKind.VALIDATION_PASS
             ),
             uncertainty_count=sum(
                 1 for event in events if event.kind == EvidenceKind.UNCERTAINTY
@@ -620,10 +624,11 @@ def _event_from_heuristic_ref(key: str, confidence: Any) -> EvidenceEvent | None
 
     if key in {"same_file_attr", "same_pkg_attr", "global_attr"}:
         return EvidenceEvent(
-            kind=EvidenceKind.DYNAMIC_PATTERN,
-            reason=key,
+            kind=EvidenceKind.ATTRIBUTE_NAME_MATCH,
+            reason=f"unverified {key} match",
             source="attribute_reference",
             confidence=value,
+            details={"bucket": key},
         )
 
     if key.startswith("dead_code_liveness:"):

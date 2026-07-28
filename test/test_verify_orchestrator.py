@@ -2001,6 +2001,12 @@ def test_build_verification_output_applies_defaults_without_overwriting_fields()
     assert survivor["_source"] == "registry_survivor_challenge"
     assert survivor["message"] == "keep survivor message"
     assert survivor["_category"] == "dead_code"
+    assert survivor["dead_code_classification"] == "validated_dead"
+    assert survivor["dead_code_disposition"] == "reported"
+    assert survivor["dead_code_evidence"][-1]["kind"] == "validation_pass"
+    assert survivor["dead_code_evidence"][-1]["source"] == (
+        "registry_survivor_challenge"
+    )
 
     assert result["entry_points"] == [
         {

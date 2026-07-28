@@ -125,7 +125,7 @@ class TestPrepareCategoryData:
         data = prepare_category_data(sample_result)
         cols, rows, raw = data["dead_code"]
         assert len(rows) == 3
-        assert cols == ["Type", "Name", "File:Line", "Confidence"]
+        assert cols == ["Type", "Name", "File:Line", "Confidence", "Decision"]
 
     def test_dead_code_type_labels(self, sample_result):
         data = prepare_category_data(sample_result)
@@ -147,6 +147,22 @@ class TestPrepareCategoryData:
         data = prepare_category_data(result)
         _, rows, _ = data["dead_code"]
         assert rows[0][3] == "?"
+
+    def test_dead_code_decision_is_visible(self):
+        result = {
+            "unused_functions": [
+                {
+                    "name": "f",
+                    "file": "a.py",
+                    "line": 1,
+                    "confidence": 90,
+                    "dead_code_classification": "validated_dead",
+                }
+            ],
+        }
+        data = prepare_category_data(result)
+        _, rows, _ = data["dead_code"]
+        assert rows[0][4] == "validated dead"
 
     def test_security_rows(self, sample_result):
         data = prepare_category_data(sample_result)

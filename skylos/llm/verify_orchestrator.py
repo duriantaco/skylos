@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -2414,6 +2413,35 @@ def _apply_dead_code_defaults(
             )
 
 
+def _attach_dead_code_validation_evidence(items: list[dict[str, Any]]) -> None:
+    from skylos.deadcode.finding_evidence import attach_dead_code_validation
+
+    outcome_by_verdict = {
+        "TRUE_POSITIVE": "validated_dead",
+        "FALSE_POSITIVE": "alive",
+        "UNCERTAIN": "uncertain",
+    }
+    for item in items:
+        verdict = str(item.get("_llm_verdict") or "").upper()
+        outcome = outcome_by_verdict.get(verdict)
+        if outcome is None:
+            continue
+        source = (
+            "llm_dead_code_verifier"
+            if item.get("_verified_by_llm")
+            else str(item.get("_source") or "dead_code_verifier")
+        )
+        attach_dead_code_validation(
+            item,
+            outcome,
+            reason=str(item.get("_llm_rationale") or "Dead-code verifier verdict"),
+            source=source,
+            confidence=item.get("_adjusted_confidence")
+            or item.get("confidence")
+            or 100,
+        )
+
+
 def _build_verification_output(
     findings: list[dict[str, Any]],
     new_dead: list[dict[str, Any]],
@@ -2431,6 +2459,8 @@ def _build_verification_output(
         rule_id="SKY-DEAD-CHALLENGE",
         default_source="llm_survivor_challenge",
     )
+    _attach_dead_code_validation_evidence(findings)
+    _attach_dead_code_validation_evidence(new_dead)
 
     return {
         "verified_findings": findings,

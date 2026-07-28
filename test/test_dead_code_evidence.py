@@ -1,15 +1,20 @@
 import json
 import sqlite3
+from types import SimpleNamespace
 
 from skylos.analyzer import analyze
 from skylos.deadcode.collect import collect_dead_code_findings
+from skylos.deadcode.finding_evidence import attach_dead_code_validation
 from skylos.deadcode.evidence import (
     CandidateClassification,
     EvidenceEvent,
     EvidenceKind,
     EvidenceLedger,
     SymbolKey,
+    build_dead_code_evidence,
 )
+from skylos.reporting.dead_code_result import dead_code_candidate_decisions
+from skylos.visitors.base import Definition
 
 
 def _entries_by_name(result):
@@ -86,7 +91,45 @@ def test_evidence_ledger_uses_paper_classification_precedence():
     assert ledger.classify(symbol) == CandidateClassification.VALIDATED_DEAD
 
 
-def test_analyzer_outputs_dead_code_evidence_without_changing_findings(tmp_path):
+def test_validation_outcomes_update_finding_classification_and_evidence():
+    base = {
+        "name": "old_helper",
+        "dead_code_classification": "likely_dead",
+        "dead_code_evidence": [],
+    }
+
+    validated = attach_dead_code_validation(
+        dict(base),
+        "validated_dead",
+        reason="verification found no live use",
+        source="test_validator",
+    )
+    assert validated["dead_code_classification"] == "validated_dead"
+    assert validated["dead_code_disposition"] == "reported"
+    assert validated["dead_code_evidence"][-1]["kind"] == "validation_pass"
+
+    alive = attach_dead_code_validation(
+        dict(base),
+        "alive",
+        reason="verification found a caller",
+        source="test_validator",
+    )
+    assert alive["dead_code_classification"] == "alive"
+    assert alive["dead_code_disposition"] == "rescued"
+    assert alive["dead_code_evidence"][-1]["kind"] == "validation_fail"
+
+    uncertain = attach_dead_code_validation(
+        dict(base),
+        "uncertain",
+        reason="verification was inconclusive",
+        source="test_validator",
+    )
+    assert uncertain["dead_code_classification"] == "uncertain"
+    assert uncertain["dead_code_disposition"] == "abstained"
+    assert uncertain["dead_code_evidence"][-1]["kind"] == "uncertainty"
+
+
+def test_analyzer_uses_dead_code_evidence_for_final_findings(tmp_path):
     module = tmp_path / "app.py"
     module.write_text(
         "\n".join(
@@ -111,6 +154,11 @@ def test_analyzer_outputs_dead_code_evidence_without_changing_findings(tmp_path)
     unused_names = {item["name"] for item in result["unused_functions"]}
     assert "unused" in unused_names
     assert "used" not in unused_names
+    assert result["analysis_summary"]["dead_code_evidence"]["candidate_decisions"] == {
+        "reported": 2,
+        "rescued": 0,
+        "abstained": 0,
+    }
 
     by_name = _entries_by_name(result)
 
@@ -156,7 +204,7 @@ def test_analyzer_outputs_dead_code_evidence_without_changing_findings(tmp_path)
     ]
 
 
-def test_uncertain_dead_code_decision_leads_with_uncertainty(tmp_path):
+def test_uncertain_dead_code_candidate_is_abstained_not_reported(tmp_path):
     module = tmp_path / "app.py"
     module.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "\n".join(
@@ -173,14 +221,21 @@ def test_uncertain_dead_code_decision_leads_with_uncertainty(tmp_path):
         analyze(str(tmp_path), conf=0, grep_verify=False, trace_file=False)
     )
 
+    assert "format_admin_status" not in {
+        item["name"] for item in result["unused_functions"]
+    }
     finding = next(
         item
-        for item in result["unused_functions"]
+        for item in result["dead_code_abstentions"]
         if item["name"] == "format_admin_status"
     )
     assert finding["dead_code_classification"] == "uncertain"
+    assert finding["dead_code_disposition"] == "abstained"
     assert finding["dead_code_reason_tags"][0] == "uncertainty"
     assert finding["dead_code_reason"].startswith("Uncertainty evidence present")
+    assert result["analysis_summary"]["dead_code_evidence"]["candidate_decisions"][
+        "abstained"
+    ] == 1
 
 
 def test_pyproject_entrypoint_is_reported_as_package_evidence(tmp_path):
@@ -248,6 +303,88 @@ def test_dynamic_pattern_evidence_is_reported_from_analyzer(tmp_path):
     assert by_name["app.handle_login"]["classification"] == "alive"
     assert _event_kinds(by_name["app.handle_login"]) >= {"dynamic_pattern"}
     assert "reachable_from_root" not in _event_kinds(by_name["app.handle_login"])
+    assert "app.handle_login" not in _unused_full_names(result, "unused_functions")
+
+
+def test_unverified_attribute_name_match_is_context_not_liveness(tmp_path):
+    definition = Definition(
+        "app.Factory.build",
+        "method",
+        tmp_path / "app.py",
+        3,
+    )
+    definition.confidence = 90
+    definition.references = 0
+    definition.heuristic_refs["same_pkg_attr"] = 0.2946
+    analyzer = SimpleNamespace(defs={"app.Factory.build": definition})
+    ledger = build_dead_code_evidence(
+        analyzer.defs,
+        project_root=tmp_path,
+        threshold=0,
+    )
+    payload = ledger.to_dict(
+        tmp_path,
+        definitions=analyzer.defs,
+        threshold=0,
+    )
+    reported, rescued, abstained = dead_code_candidate_decisions(
+        analyzer,
+        0,
+        payload,
+    )
+
+    assert len(reported) == 1
+    finding = reported[0]
+    assert finding["dead_code_classification"] == "likely_dead"
+    attribute_event = next(
+        event
+        for event in finding["dead_code_evidence"]
+        if event["kind"] == "attribute_name_match"
+    )
+    assert attribute_event["role"] == "context"
+    assert attribute_event["details"]["bucket"] == "same_pkg_attr"
+    assert rescued == []
+    assert abstained == []
+
+
+def test_evidence_identity_does_not_cross_files_or_symbol_kinds(tmp_path):
+    source = Definition(
+        "constants.PLAIN_UNUSED",
+        "variable",
+        tmp_path / "constants.py",
+        1,
+    )
+    source.references = 1
+    imported = Definition(
+        "constants.PLAIN_UNUSED",
+        "import",
+        tmp_path / "facade.py",
+        1,
+    )
+    imported.references = 0
+    analyzer = SimpleNamespace(defs={"source": source, "imported": imported})
+    ledger = build_dead_code_evidence(
+        analyzer.defs,
+        project_root=tmp_path,
+        threshold=0,
+    )
+    payload = ledger.to_dict(
+        tmp_path,
+        definitions=analyzer.defs,
+        threshold=0,
+    )
+
+    reported, rescued, abstained = dead_code_candidate_decisions(
+        analyzer,
+        0,
+        payload,
+    )
+
+    assert [(item["type"], item["file"]) for item in reported] == [
+        ("import", str(tmp_path / "facade.py"))
+    ]
+    assert rescued == []
+    assert abstained == []
 
 
 def test_gunicorn_config_settings_and_hooks_are_not_reported_dead(tmp_path):

@@ -8,6 +8,10 @@ from rich.console import Console
 from rich.text import Text
 
 from skylos.api._snippets import _resolve_snippet_path
+from skylos.ui.dead_code_evidence import (
+    compact_dead_code_evidence,
+    dead_code_candidate_counts,
+)
 
 
 CATEGORY_SPECS = (
@@ -235,7 +239,7 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
     if finding.why:
         console.print(
             Text.assemble(
-                ("      why: ", "dim"),
+                ("      evidence: ", "dim"),
                 (_truncate(finding.why, 140), "dim"),
             )
         )
@@ -289,6 +293,15 @@ def _summary_line(result: dict) -> Text:
         if parts:
             parts.append(Text("  "))
         parts.append(Text(f"{label}: {count}", style="dim"))
+
+    evidence_counts = dead_code_candidate_counts(result)
+    for key, label in (("rescued", "rescued"), ("abstained", "abstained")):
+        count = evidence_counts.get(key, 0)
+        if not count:
+            continue
+        if parts:
+            parts.append(Text("  "))
+        parts.append(Text(f"dead-code {label}: {count}", style="dim"))
 
     if not parts:
         return Text()
@@ -503,53 +516,8 @@ def _fix(item: dict, category: str) -> str:
     return ""
 
 
-_DEAD_CODE_REASON_LABELS = {
-    "no_refs": "no refs",
-    "not_exported": "not exported",
-    "no_entrypoint": "no entrypoint",
-    "static_reference": "has refs",
-    "reachable_from_root": "root reachable",
-    "top_level_execution": "import-time call",
-    "framework_root": "framework entry",
-    "package_entrypoint": "package entry",
-    "test_entrypoint": "test entry",
-    "dynamic_pattern": "dynamic ref",
-    "coverage_hit": "coverage hit",
-    "trace_hit": "trace hit",
-    "grep_rescue": "grep usage",
-    "uncertainty": "uncertain",
-    "validated_dead": "validated dead",
-    "validation_failed": "live use found",
-    "no_liveness_evidence": "no live evidence",
-}
-
-
 def _dead_code_why(item: dict) -> str:
-    decision = item.get("dead_code_decision") or {}
-    tags = item.get("dead_code_reason_tags")
-    if tags is None and isinstance(decision, dict):
-        tags = decision.get("reason_tags")
-
-    if isinstance(tags, (list, tuple)):
-        visible = []
-        for raw_tag in tags:
-            tag = str(raw_tag)
-            if tag == "confidence_ge_threshold":
-                continue
-            label = _DEAD_CODE_REASON_LABELS.get(tag)
-            if label:
-                visible.append(label)
-        if visible:
-            shown = visible[:3]
-            suffix = ""
-            if len(visible) > len(shown):
-                suffix = f" · +{len(visible) - len(shown)}"
-            return " · ".join(shown) + suffix
-
-    reason = item.get("dead_code_reason")
-    if reason is None and isinstance(decision, dict):
-        reason = decision.get("primary_reason")
-    return str(reason or "")
+    return compact_dead_code_evidence(item)
 
 
 def _read_source_line(
