@@ -1556,6 +1556,51 @@ def fail_render(*_args, **_kwargs):
     assert "_kwargs" not in param_names
 
 
+def test_all_parameter_kinds_honor_intentional_discard_prefix(tmp_path):
+    code = """
+def handler(
+    _positional_only,
+    regular_positional_only,
+    /,
+    _ordinary,
+    regular_ordinary,
+    *,
+    _keyword_only,
+    regular_keyword_only,
+):
+    return regular_positional_only
+
+def variadic(*_args, **_kwargs):
+    pass
+
+def double_underscore(__ordinary, *__args, **__kwargs):
+    pass
+
+def read_dummy(_read_param):
+    return _read_param
+"""
+    v = _visit(code, tmp_path)
+    param_names = {d.simple_name for d in v.defs if d.type == "parameter"}
+
+    assert {
+        "_positional_only",
+        "_ordinary",
+        "_keyword_only",
+        "_args",
+        "_kwargs",
+        "_read_param",
+    }.isdisjoint(param_names)
+    assert {
+        "regular_positional_only",
+        "regular_ordinary",
+        "regular_keyword_only",
+        "__ordinary",
+        "__args",
+        "__kwargs",
+    } <= param_names
+    assert "test_module.read_dummy._read_param" in _ref_names(v)
+
+
 def test_regular_vararg_not_suppressed(tmp_path):
     """Non-underscore *args and **kwargs should still produce defs."""
     code = """
@@ -1566,3 +1611,72 @@ def handler(*args, **kwargs):
     param_names = {d.simple_name for d in v.defs if d.type == "parameter"}
     assert "args" in param_names
     assert "kwargs" in param_names
+
+
+def test_loop_targets_honor_intentional_discard_prefix(tmp_path):
+    code = """
+async def consume(rows, stream):
+    for _single in rows:
+        pass
+    for used, _tuple, *_starred in rows:
+        print(used)
+    async for _async_item in stream:
+        pass
+    for __private_loop in rows:
+        pass
+    for regular_loop in rows:
+        pass
+    for _read_later in rows:
+        print(_read_later)
+"""
+    v = _visit(code, tmp_path)
+    variable_names = {d.simple_name for d in v.defs if d.type == "variable"}
+
+    assert {
+        "_single",
+        "_tuple",
+        "_starred",
+        "_async_item",
+        "_read_later",
+    }.isdisjoint(variable_names)
+    assert {"used", "__private_loop", "regular_loop"} <= variable_names
+    assert "test_module.consume._read_later" in _ref_names(v)
+
+
+def test_other_underscore_binding_contexts_remain_defined(tmp_path):
+    code = """
+_module_assignment = object()
+
+class Example:
+    _class_assignment = object()
+
+def _private_function(context, value):
+    _local_assignment = value
+    with context as _with_binding:
+        pass
+    try:
+        raise ValueError
+    except ValueError as _error_binding:
+        pass
+    match value:
+        case {"key": _match_binding}:
+            pass
+
+class _PrivateClass:
+    pass
+"""
+    v = _visit(code, tmp_path)
+    variable_names = {d.simple_name for d in v.defs if d.type == "variable"}
+    function_names = {d.simple_name for d in v.defs if d.type == "function"}
+    class_names = {d.simple_name for d in v.defs if d.type == "class"}
+
+    assert {
+        "_module_assignment",
+        "_class_assignment",
+        "_local_assignment",
+        "_with_binding",
+        "_error_binding",
+        "_match_binding",
+    } <= variable_names
+    assert "_private_function" in function_names
+    assert "_PrivateClass" in class_names

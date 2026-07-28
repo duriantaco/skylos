@@ -23,8 +23,8 @@ def func(x: int) -> int:
         )
         assert "ast" in import_names, "Regular unused import should also be flagged"
 
-    def test_underscore_items_flagged_with_small_penalty(self):
-        """_ items get a small penalty (10) but are still flagged when truly unused"""
+    def test_private_symbols_reported_but_dummy_parameters_suppressed(self):
+        """Private symbols remain reportable while _parameters express non-use."""
         code = """
 _private_var = "private"
 
@@ -32,6 +32,7 @@ def _private_func():
     return "private"
 
 def regular_func(_private_param):
+    _local_var = "private"
     return "test"
 
 class Example:
@@ -49,10 +50,13 @@ class Example:
         assert "_private_var" in variable_names, (
             "Unused private variable should be flagged"
         )
+        assert "_local_var" in variable_names, (
+            "A direct local assignment should remain reportable"
+        )
 
         param_names = [p["name"] for p in result["unused_parameters"]]
-        assert "_private_param" in param_names, (
-            "Unused underscore parameter should be flagged"
+        assert "_private_param" not in param_names, (
+            "An underscore-prefixed parameter should be treated as intentional"
         )
 
     def test_unittest_magic_methods_not_flagged(self):
