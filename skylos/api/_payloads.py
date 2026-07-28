@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Any
 import json
 
+from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
+
 
 __all__ = [
     "_build_legacy_payload",
@@ -213,6 +215,14 @@ def _compact_upload_finding(
         if snippet:
             compact["snippet"] = snippet
     metadata = _compact_finding_metadata(finding.get("metadata"))
+    dead_code_evidence = dead_code_finding_evidence_payload(
+        finding,
+        max_events=8,
+    )
+    if dead_code_evidence is not None:
+        if metadata is None:
+            metadata = {}
+        metadata["dead_code_evidence"] = dead_code_evidence
     if metadata:
         compact["metadata"] = metadata
     return compact

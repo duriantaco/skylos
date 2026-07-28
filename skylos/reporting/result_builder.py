@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import os
+import traceback
 from pathlib import Path
 
 from skylos.config import load_config
 from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.reporting.architecture_result import attach_circular_and_architecture
 from skylos.reporting.dead_code_result import (
+    dead_code_candidate_decisions,
     dead_code_evidence,
     definition_context,
-    unused_definitions,
     whitelisted_definitions,
 )
 from skylos.reporting.rollups import attach_directory_rollups
@@ -21,6 +23,11 @@ AI_DEFECT_RULE_IDS = {
     "SKY-D224",
     "SKY-D225",
 }
+
+
+def _debug_traceback():
+    if os.getenv("SKYLOS_DEBUG"):
+        traceback.print_exc()
 
 
 def _primary_path(path):
@@ -77,7 +84,11 @@ def build_analysis_result(
         pyproject_entrypoint_qnames,
         threshold=thr,
     )
-    unused = unused_definitions(analyzer, thr, evidence)
+    unused, rescued, abstained = dead_code_candidate_decisions(
+        analyzer,
+        thr,
+        evidence,
+    )
     context_map = definition_context(analyzer, thr, evidence)
     whitelisted = whitelisted_definitions(analyzer, all_suppressed)
 
@@ -90,6 +101,9 @@ def build_analysis_result(
         all_suppressed,
         evidence,
         ledger,
+        rescued,
+        abstained,
+        unused,
     )
     _attach_analysis_reports(analyzer, result)
     _attach_workspace(analyzer, result, workspace_inventory, path)
@@ -147,7 +161,16 @@ def _base_result(
     all_suppressed,
     dead_code_evidence,
     dead_code_ledger,
+    dead_code_rescues,
+    dead_code_abstentions,
+    reported_dead_code,
 ):
+    evidence_summary = dead_code_ledger.summary()
+    evidence_summary["candidate_decisions"] = {
+        "reported": len(reported_dead_code),
+        "rescued": len(dead_code_rescues),
+        "abstained": len(dead_code_abstentions),
+    }
     return {
         "definitions": context_map,
         "unused_functions": [],
@@ -159,11 +182,13 @@ def _base_result(
         "whitelisted": whitelisted,
         "suppressed": all_suppressed,
         "dead_code_evidence": dead_code_evidence,
+        "dead_code_rescues": dead_code_rescues,
+        "dead_code_abstentions": dead_code_abstentions,
         "analysis_summary": {
             "total_files": len(files),
             "excluded_folders": exclude_folders or [],
             "languages": analyzer._count_languages(files),
-            "dead_code_evidence": dead_code_ledger.summary(),
+            "dead_code_evidence": evidence_summary,
         },
     }
 

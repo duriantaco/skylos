@@ -15,7 +15,15 @@ from textual.widgets import (
     ListView,
     Static,
 )
+from rich.markup import escape
 from rich.text import Text
+
+from skylos.ui.dead_code_evidence import (
+    CLASSIFICATION_LABELS,
+    dead_code_candidate_counts,
+    dead_code_classification,
+    dead_code_evidence_detail_lines,
+)
 
 SEVERITY_COLORS = {
     "CRITICAL": "#ffffff on #8232b4 bold",
@@ -68,14 +76,21 @@ def _loc(item, root_path=None):
 def prepare_category_data(result: dict, root_path=None) -> dict:
     data = {}
 
-    dc_cols = ["Type", "Name", "File:Line", "Confidence"]
+    dc_cols = ["Type", "Name", "File:Line", "Confidence", "Decision"]
     dc_rows, dc_raw = [], []
     for key, type_label in DEAD_CODE_KEYS:
         for item in result.get(key) or []:
             name = item.get("name") or item.get("simple_name") or "?"
             conf = item.get("confidence", "?")
             conf_str = f"{conf}%" if isinstance(conf, (int, float)) else str(conf)
-            dc_rows.append((type_label, name, _loc(item, root_path), conf_str))
+            classification = dead_code_classification(item)
+            decision = CLASSIFICATION_LABELS.get(
+                classification,
+                classification.replace("_", " "),
+            )
+            dc_rows.append(
+                (type_label, name, _loc(item, root_path), conf_str, decision or "?")
+            )
             dc_raw.append({**item, "_type_label": type_label})
     data["dead_code"] = (dc_cols, dc_rows, dc_raw)
 
@@ -297,6 +312,15 @@ class OverviewPanel(VerticalScroll):
             lines.append(f"  [{style}]{label:15s} {n}[/{style}]")
         yield Static("\n".join(lines) + "\n")
 
+        evidence_counts = dead_code_candidate_counts(self.result)
+        if evidence_counts:
+            yield Static(
+                "  [bold]Dead-code evidence decisions[/bold]\n"
+                f"    Reported: {evidence_counts.get('reported', 0)}\n"
+                f"    [green]Rescued: {evidence_counts.get('rescued', 0)}[/green]\n"
+                f"    [yellow]Abstained: {evidence_counts.get('abstained', 0)}[/yellow]\n"
+            )
+
         sev_counts: dict[str, int] = {}
         for cat in ("security", "dependencies"):
             _, _, raw = self.category_data.get(cat, ([], [], []))
@@ -367,6 +391,8 @@ class DetailPanel(Static):
                 lines.append(
                     f"  [{color}]{'█' * bar_len}{'░' * (20 - bar_len)}[/{color}]"
                 )
+            for evidence_line in dead_code_evidence_detail_lines(item):
+                lines.append(f"  {escape(evidence_line)}")
 
         elif category == "security":
             lines.append(f"  [bold]Rule:[/bold]  {item.get('rule_id', '?')}")

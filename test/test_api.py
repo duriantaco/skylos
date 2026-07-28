@@ -23,6 +23,36 @@ from skylos.api import (
 
 
 class TestSkylosApi(unittest.TestCase):
+    def test_compact_upload_finding_preserves_dead_code_evidence(self):
+        compact = api._compact_upload_finding(
+            {
+                "rule_id": "SKY-U001",
+                "file_path": "app.py",
+                "line_number": 4,
+                "message": "Dead code: old_helper",
+                "severity": "LOW",
+                "category": "DEAD_CODE",
+                "dead_code_classification": "likely_dead",
+                "dead_code_disposition": "reported",
+                "dead_code_evidence": [
+                    {
+                        "kind": "no_static_references",
+                        "role": "supports_dead",
+                        "reason": "no static references were found",
+                        "source": "analyzer",
+                        "confidence": 1.0,
+                        "details": {"references": 0},
+                    }
+                ],
+            },
+            include_snippet=False,
+        )
+
+        evidence = compact["metadata"]["dead_code_evidence"]
+        self.assertEqual(evidence["classification"], "likely_dead")
+        self.assertEqual(evidence["disposition"], "reported")
+        self.assertEqual(evidence["events"][0]["source"], "analyzer")
+
     def test_cli_version_returns_package_version(self):
         self.assertEqual(api._cli_version(), str(skylos.__version__))
 

@@ -2,6 +2,7 @@ import os
 import json
 
 from skylos.core.evidence_contract import finding_evidence_contract
+from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
 
 
 def severity_to_sarif_level(severity):
@@ -175,6 +176,10 @@ class SarifExporter:
             evidence_contract = finding_evidence_contract(finding)
             if evidence_contract is not None:
                 properties["skylos_evidence_contract"] = evidence_contract
+
+            dead_code_evidence = dead_code_finding_evidence_payload(finding)
+            if dead_code_evidence is not None:
+                properties["skylos_dead_code_evidence"] = dead_code_evidence
 
             result_obj = {
                 "ruleId": rule_id,

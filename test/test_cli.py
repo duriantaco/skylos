@@ -860,10 +860,12 @@ def test_render_results_unused_table_includes_compact_dead_code_reason():
 
     table = tables[0]
     headers = [column.header for column in table.columns]
-    assert "Why" in headers
+    assert "Evidence" in headers
 
-    why_col = next(column for column in table.columns if column.header == "Why")
-    assert list(why_col._cells) == ["uncertain · no refs · not exported · +1"]
+    evidence_col = next(
+        column for column in table.columns if column.header == "Evidence"
+    )
+    assert list(evidence_col._cells) == ["uncertain · no refs · not exported"]
 
 
 def test_render_results_shows_grep_verify_summary():

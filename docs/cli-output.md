@@ -48,9 +48,26 @@ Skylos static analysis  3 issues  1 file analyzed
 
     █  LOW  dead-code/function  Unused function: old_handler
       Dead Code  src/app.py:42
+      evidence: likely dead — no static references were found [analyzer] · symbol is not exported as public API [analyzer]
       def old_handler() -> None:
       Fix: Remove the unused function if it is not public API.
 ```
+
+Dead-code reporting is evidence-gated. The configured confidence threshold
+selects candidates, then the evidence decision determines the outcome:
+
+- `alive`: rescued and omitted from unused-code findings.
+- `uncertain`: recorded as an abstention and omitted from unused-code findings.
+- `likely_dead` or `validated_dead`: reported as unused code.
+
+The human formats show the classification plus the evidence reason and source.
+The TUI includes the full event list in its detail pane. JSON includes the full
+`dead_code_evidence` ledger, `dead_code_rescues`,
+`dead_code_abstentions`, and per-finding `dead_code_decision` data. Candidate
+outcome counts are available under
+`analysis_summary.dead_code_evidence.candidate_decisions`.
+Unverified same-name attribute matches are retained as contextual evidence;
+they do not rescue a symbol unless a stronger liveness signal confirms the use.
 
 Write the same pretty report to a file with `--output`:
 

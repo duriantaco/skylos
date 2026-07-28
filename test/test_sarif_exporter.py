@@ -220,3 +220,47 @@ def test_results_include_skylos_evidence_contract_for_high_impact_findings():
     assert contract["sources"] == ["request.args['cmd']"]
     assert contract["sinks"] == ["subprocess.run"]
     assert contract["traces"] == ["app/routes.py:27", "handler", "subprocess.run"]
+
+
+def test_results_include_dead_code_classification_and_evidence():
+    findings = [
+        {
+            "rule_id": "SKY-U001",
+            "severity": "LOW",
+            "message": "Dead code: old_helper",
+            "file_path": "app.py",
+            "line_number": 5,
+            "category": "DEAD_CODE",
+            "dead_code_classification": "likely_dead",
+            "dead_code_disposition": "reported",
+            "dead_code_reason": "No static references",
+            "dead_code_reason_tags": ["no_refs"],
+            "dead_code_decision": {
+                "classification": "likely_dead",
+                "primary_reason": "No static references",
+                "reason_tags": ["no_refs"],
+                "live_evidence_count": 0,
+                "dead_evidence_count": 1,
+                "uncertainty_count": 0,
+            },
+            "dead_code_evidence": [
+                {
+                    "kind": "no_static_references",
+                    "role": "supports_dead",
+                    "reason": "no static references were found",
+                    "source": "analyzer",
+                    "confidence": 1.0,
+                    "details": {"references": 0},
+                }
+            ],
+        }
+    ]
+
+    sarif = SarifExporter(findings).generate()
+    evidence = sarif["runs"][0]["results"][0]["properties"][
+        "skylos_dead_code_evidence"
+    ]
+
+    assert evidence["classification"] == "likely_dead"
+    assert evidence["disposition"] == "reported"
+    assert evidence["events"][0]["source"] == "analyzer"

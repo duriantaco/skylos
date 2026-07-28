@@ -8,6 +8,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from skylos.ui.dead_code_evidence import (
+    compact_dead_code_evidence,
+    dead_code_candidate_counts,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,18 @@ def _grep_verify_pill(summary):
         return "[muted]Grep verify: off[/muted]"
     rescued_count = int(grep_verify.get("rescued_count") or 0)
     return f"[brand]Grep verify: on[/brand] [muted](rescued {rescued_count})[/muted]"
+
+
+def _dead_code_evidence_pill(result):
+    counts = dead_code_candidate_counts(result)
+    rescued = counts.get("rescued", 0)
+    abstained = counts.get("abstained", 0)
+    if not rescued and not abstained:
+        return None
+    return (
+        f"[good]Evidence rescued: {rescued}[/good] "
+        f"[warn]abstained: {abstained}[/warn]"
+    )
 
 
 def _display_cap(items, limit):
@@ -159,55 +176,8 @@ def _format_confidence(conf):
     return str(conf)
 
 
-_DEAD_CODE_REASON_LABELS = {
-    "no_refs": "no refs",
-    "not_exported": "not exported",
-    "no_entrypoint": "no entrypoint",
-    "static_reference": "has refs",
-    "reachable_from_root": "root reachable",
-    "top_level_execution": "import-time call",
-    "framework_root": "framework entry",
-    "package_entrypoint": "package entry",
-    "test_entrypoint": "test entry",
-    "dynamic_pattern": "dynamic ref",
-    "coverage_hit": "coverage hit",
-    "trace_hit": "trace hit",
-    "grep_rescue": "grep usage",
-    "uncertainty": "uncertain",
-    "validated_dead": "validated dead",
-    "validation_failed": "live use found",
-    "no_liveness_evidence": "no live evidence",
-}
-
-
 def _dead_code_why(item: dict) -> str:
-    decision = item.get("dead_code_decision") or {}
-    tags = item.get("dead_code_reason_tags")
-    if tags is None and isinstance(decision, dict):
-        tags = decision.get("reason_tags")
-
-    if isinstance(tags, (list, tuple)):
-        visible = []
-        for raw_tag in tags:
-            tag = str(raw_tag)
-            if tag == "confidence_ge_threshold":
-                continue
-            label = _DEAD_CODE_REASON_LABELS.get(tag)
-            if label:
-                visible.append(label)
-        if visible:
-            shown = visible[:3]
-            suffix = ""
-            if len(visible) > len(shown):
-                suffix = f" · +{len(visible) - len(shown)}"
-            return " · ".join(shown) + suffix
-
-    reason = item.get("dead_code_reason")
-    if reason is None and isinstance(decision, dict):
-        reason = decision.get("primary_reason")
-    if not reason:
-        return ""
-    return escape(str(reason))
+    return escape(compact_dead_code_evidence(item))
 
 
 def _render_unused(console: Console, root_path, limit, title, items, name_key="name"):
@@ -223,7 +193,7 @@ def _render_unused(console: Console, root_path, limit, title, items, name_key="n
     table.add_column("Location", style="muted", overflow="fold")
     table.add_column("Conf", style="yellow", width=6, justify="right")
     if has_why:
-        table.add_column("Why", style="muted", width=30, overflow="fold")
+        table.add_column("Evidence", style="muted", width=42, overflow="fold")
 
     show, overflow = _display_cap(items, limit)
     for i, item in enumerate(show, 1):
@@ -245,7 +215,7 @@ def _render_unused(console: Console, root_path, limit, title, items, name_key="n
         "[muted]Name — the unused function, import, class, or variable.[/muted]\n"
         "[muted]Conf — how confident Skylos is that this code is truly unused (higher = safer to remove).[/muted]\n"
         + (
-            "[muted]Why — compact evidence behind the dead-code decision.[/muted]\n"
+            "[muted]Evidence — classification and analyzer evidence behind the dead-code decision.[/muted]\n"
             if has_why
             else ""
         )
@@ -735,6 +705,7 @@ def render_results(
                     bad_style="muted",
                 ),
                 _grep_verify_pill(summ),
+                _dead_code_evidence_pill(result),
             ]
             if part
         )
