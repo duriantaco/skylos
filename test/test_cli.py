@@ -894,6 +894,46 @@ def test_render_results_shows_grep_verify_summary():
     assert "rescued 3" in printed
 
 
+def test_render_results_shows_analysis_errors_without_grade():
+    console = Mock()
+    result = {
+        "analysis_summary": {"total_files": 1, "analysis_error_count": 1},
+        "analysis_errors": [
+            {
+                "kind": "syntax_error",
+                "message": "invalid syntax",
+                "file": "/root/future.py",
+                "line": 1,
+                "python_version": "3.12.13",
+            }
+        ],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    tables = [
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], Table)
+    ]
+    assert any(table.title == "Analysis Errors" for table in tables)
+    panels = [
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], cli.Panel)
+    ]
+    assert any("Analysis incomplete" in str(panel.renderable) for panel in panels)
+    assert all("Codebase Grade" not in str(panel.renderable) for panel in panels)
+
+
 def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
     console = Mock()
 
@@ -1535,6 +1575,94 @@ def test_main_json_strict_failure_exits_nonzero(monkeypatch):
 
     assert e.value.code == 1
     mock_print.assert_called_once_with(json.dumps(result))
+
+
+def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
+    result = {
+        "analysis_summary": {
+            "total_files": 1,
+            "analysis_error_count": 1,
+            "grade_unavailable_reason": "analysis_incomplete",
+        },
+        "analysis_errors": [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "severity": "HIGH",
+                "kind": "syntax_error",
+                "message": "invalid syntax",
+                "file": "app.py",
+                "line": 1,
+                "python_version": "3.12.13",
+            }
+        ],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "--json", "--upload", "--no-provenance"],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.upload_report") as upload_report,
+        patch("builtins.print") as mock_print,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 2
+    mock_print.assert_called_once_with(json.dumps(result))
+    upload_report.assert_not_called()
+
+
+def test_main_incomplete_analysis_renders_without_badge_then_exits_two(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1, "analysis_error_count": 1},
+        "analysis_errors": [
+            {
+                "message": "invalid syntax",
+                "file": "app.py",
+                "line": 1,
+            }
+        ],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "--no-provenance", "--no-upload"],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results") as render_results,
+        patch("skylos.cli.print_badge") as badge,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 2
+    render_results.assert_called_once()
+    badge.assert_not_called()
 
 
 def test_main_strict_failure_renders_results_then_exits_nonzero(monkeypatch):

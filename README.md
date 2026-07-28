@@ -342,6 +342,17 @@ docker pull ghcr.io/duriantaco/skylos:latest
 docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --json --no-provenance
 ```
 
+The unqualified image uses Python 3.14. Runtime-specific tags are also
+published for Python 3.11 through 3.14, so container scans can match a local or
+CI parser exactly:
+
+```bash
+docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest-python3.13 . --json --no-provenance
+```
+
+If a Python file cannot be parsed, Skylos reports `analysis_errors`, omits the
+grade, and exits with code 2 instead of treating the skipped file as clean.
+
 See [Installation](https://docs.skylos.dev/installation) for source installs,
 container usage, and optional dependencies.
 

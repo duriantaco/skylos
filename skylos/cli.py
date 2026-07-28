@@ -1857,6 +1857,10 @@ def _formatted_output_gate_exit_code(
     provenance=None,
 ) -> int:
     """Evaluate --gate for output modes that must not print gate UI."""
+    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    if incomplete_exit_code:
+        return incomplete_exit_code
+
     from skylos.core.gatekeeper import (
         build_summary_markdown,
         check_gate,
@@ -1879,6 +1883,10 @@ def _formatted_output_gate_exit_code(
 def _concise_scan_exit_code(
     result: dict, config: dict, args, *, provenance=None
 ) -> int:
+    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    if incomplete_exit_code:
+        return incomplete_exit_code
+
     if bool(getattr(args, "gate", False)):
         return _formatted_output_gate_exit_code(
             result,
@@ -1894,6 +1902,7 @@ def _concise_scan_exit_code(
 
 
 CONCISE_FINDING_CATEGORIES = (
+    ("analysis_errors", "analysis error"),
     ("unused_functions", "unused function"),
     ("unused_imports", "unused import"),
     ("unused_classes", "unused class"),
@@ -1952,6 +1961,10 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
 
 def _strict_scan_exit_code(result: dict, args) -> int:
     """Evaluate --strict when it is used without --gate."""
+    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    if incomplete_exit_code:
+        return incomplete_exit_code
+
     if not bool(getattr(args, "strict", False)):
         return 0
     if bool(getattr(args, "gate", False)) or bool(getattr(args, "force", False)):
@@ -1961,6 +1974,11 @@ def _strict_scan_exit_code(result: dict, args) -> int:
 
     passed, _reasons = check_gate(result, {}, strict=True)
     return 0 if passed else 1
+
+
+def _analysis_incomplete_exit_code(result: dict) -> int:
+    """Return the operational-error exit code when any file was not analyzed."""
+    return 2 if result.get("analysis_errors") else 0
 
 
 def _apply_config_driven_analysis_flags(args, project_cfg, console):

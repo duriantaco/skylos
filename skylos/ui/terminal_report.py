@@ -15,6 +15,7 @@ from skylos.ui.dead_code_evidence import (
 
 
 CATEGORY_SPECS = (
+    ("analysis_errors", "Analysis", "File analysis failed"),
     ("ai_defects", "AI Defect", "AI defect"),
     ("danger", "Security", "security issue"),
     ("secrets", "Secret", "secret detected"),
@@ -57,6 +58,7 @@ SEVERITY_RANK = {
 }
 
 SUMMARY_CATEGORIES = (
+    "analysis_errors",
     "unused_functions",
     "unused_imports",
     "unused_parameters",

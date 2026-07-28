@@ -38,6 +38,15 @@ def _default_dead_code_llm_fields(finding, rule_id, severity, human_label):
 
 def _collect_llm_report_findings(result: dict):
     all_findings = []
+    for error in result.get("analysis_errors", []) or []:
+        if not isinstance(error, dict):
+            continue
+        finding = dict(error)
+        finding.setdefault("rule_id", "SKY-ANALYSIS-INCOMPLETE")
+        finding.setdefault("severity", "CRITICAL")
+        finding.setdefault("message", "File analysis failed")
+        all_findings.append((finding, "Analysis Incomplete"))
+
     for category, label in _LLM_REPORT_CATEGORIES:
         for finding in result.get(category, []):
             all_findings.append((finding, label))

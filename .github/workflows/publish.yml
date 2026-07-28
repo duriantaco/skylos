@@ -246,15 +246,22 @@ jobs:
           python -m twine upload --skip-existing dist/*
 
   container:
+    name: container (Python ${{ matrix.python-version }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     permissions:
       contents: read
       packages: write
     env:
       IMAGE_NAME: ghcr.io/duriantaco/skylos
       RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      PYTHON_VERSION: ${{ matrix.python-version }}
+      DEFAULT_PYTHON_VERSION: "3.14"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -278,10 +285,16 @@ jobs:
           fi
 
       - name: Build smoke image
-        run: docker build -t skylos:smoke . # skylos: ignore[SKY-D296] local smoke-test image
+        run: docker build --build-arg "PYTHON_VERSION=${PYTHON_VERSION}" -t skylos:smoke . # skylos: ignore[SKY-D296] local smoke-test image
 
       - name: Smoke test CLI entrypoint
         run: docker run --rm skylos:smoke --version # skylos: ignore[SKY-D296] local smoke-test image
+
+      - name: Verify image Python runtime
+        shell: bash
+        run: |
+          actual="$(docker run --rm --entrypoint python skylos:smoke -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" # skylos: ignore[SKY-D296] local smoke-test image
+          test "$actual" = "$PYTHON_VERSION"
 
       - name: Smoke test real scan
         run: |
@@ -307,20 +320,32 @@ jobs:
           MINOR: ${{ steps.meta.outputs.minor }}
         run: |
           revision="$(git rev-parse HEAD)"
+          runtime_tag="python${PYTHON_VERSION}"
           tags=(
-            "--tag" "${IMAGE_NAME}:${VERSION}"
+            "--tag" "${IMAGE_NAME}:${VERSION}-${runtime_tag}"
           )
           if [[ "$STABLE" == "true" ]]; then
             tags+=(
-              "--tag" "${IMAGE_NAME}:${MAJOR}.${MINOR}"
-              "--tag" "${IMAGE_NAME}:${MAJOR}"
-              "--tag" "${IMAGE_NAME}:latest"
+              "--tag" "${IMAGE_NAME}:${MAJOR}.${MINOR}-${runtime_tag}"
+              "--tag" "${IMAGE_NAME}:${MAJOR}-${runtime_tag}"
+              "--tag" "${IMAGE_NAME}:latest-${runtime_tag}"
             )
+          fi
+          if [[ "$PYTHON_VERSION" == "$DEFAULT_PYTHON_VERSION" ]]; then
+            tags+=("--tag" "${IMAGE_NAME}:${VERSION}")
+            if [[ "$STABLE" == "true" ]]; then
+              tags+=(
+                "--tag" "${IMAGE_NAME}:${MAJOR}.${MINOR}"
+                "--tag" "${IMAGE_NAME}:${MAJOR}"
+                "--tag" "${IMAGE_NAME}:latest"
+              )
+            fi
           fi
 
           build_and_push() {
             docker buildx build \
               --platform linux/amd64,linux/arm64 \
+              --build-arg "PYTHON_VERSION=${PYTHON_VERSION}" \
               "${tags[@]}" \
               --label "org.opencontainers.image.title=skylos" \
               --label "org.opencontainers.image.description=Open-source AI code security and static analysis for Python, TypeScript, and Go." \
@@ -328,6 +353,7 @@ jobs:
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.version=${VERSION}" \
               --label "org.opencontainers.image.revision=${revision}" \
+              --label "org.opencontainers.image.python.version=${PYTHON_VERSION}" \
               --push \
               .
           }
