@@ -189,6 +189,16 @@ IMPLICIT_DUNDERS = {
 METACLASS_BASES = {"ABCMeta", "EnumMeta", "type"}
 
 
+def _is_intentional_discard_name(name: str) -> bool:
+    if name == "_":
+        return True
+    if name.startswith("__"):
+        return False
+    if name.startswith("_"):
+        return True
+    return False
+
+
 def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
     if exc_type is None:
         return set()
@@ -624,7 +634,7 @@ class Visitor(ast.NodeVisitor):
         self._complexity_stack[-1] += 1
 
         self.visit(node.iter)
-        self._bind_target(node.target, node.lineno)
+        self._bind_target(node.target, node.lineno, suppress_discards=True)
 
         for stmt in node.body:
             self.visit(stmt)
@@ -635,7 +645,7 @@ class Visitor(ast.NodeVisitor):
         self._complexity_stack[-1] += 1
 
         self.visit(node.iter)
-        self._bind_target(node.target, node.lineno)
+        self._bind_target(node.target, node.lineno, suppress_discards=True)
 
         for stmt in node.body:
             self.visit(stmt)
@@ -984,7 +994,7 @@ class Visitor(ast.NodeVisitor):
 
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
-            if not skip_params and arg.arg != "_":
+            if not skip_params and not _is_intentional_discard_name(arg.arg):
                 self.add_def(
                     param_name, "parameter", getattr(arg, "lineno", node.lineno)
                 )
@@ -998,7 +1008,7 @@ class Visitor(ast.NodeVisitor):
         if node.args.vararg:
             va = node.args.vararg
             param_name = f"{qualified_name}.{va.arg}"
-            if not skip_params and not va.arg.startswith("_"):
+            if not skip_params and not _is_intentional_discard_name(va.arg):
                 self.add_def(
                     param_name, "parameter", getattr(va, "lineno", node.lineno)
                 )
@@ -1007,7 +1017,7 @@ class Visitor(ast.NodeVisitor):
         if node.args.kwarg:
             ka = node.args.kwarg
             param_name = f"{qualified_name}.{ka.arg}"
-            if not skip_params and not ka.arg.startswith("_"):
+            if not skip_params and not _is_intentional_discard_name(ka.arg):
                 self.add_def(
                     param_name, "parameter", getattr(ka, "lineno", node.lineno)
                 )
@@ -1418,12 +1428,21 @@ class Visitor(ast.NodeVisitor):
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][name] = outer_qname
 
-    def _bind_target(self, target: ast.expr, lineno: int) -> None:
+    def _bind_target(
+        self,
+        target: ast.expr,
+        lineno: int,
+        *,
+        suppress_discards: bool = False,
+    ) -> None:
         if isinstance(target, ast.Name):
             name_simple = target.id
             var_name = self._compute_variable_name(name_simple)
+            skip_definition = self._should_skip_variable_def(name_simple) or (
+                suppress_discards and _is_intentional_discard_name(name_simple)
+            )
 
-            if not self._should_skip_variable_def(name_simple):
+            if not skip_definition:
                 self.add_def(var_name, "variable", lineno)
 
             if self.current_function_scope and self.local_var_maps:
@@ -1431,9 +1450,17 @@ class Visitor(ast.NodeVisitor):
 
         elif isinstance(target, (ast.Tuple, ast.List)):
             for elt in target.elts:
-                self._bind_target(elt, lineno)
+                self._bind_target(
+                    elt,
+                    lineno,
+                    suppress_discards=suppress_discards,
+                )
         elif isinstance(target, ast.Starred):
-            self._bind_target(target.value, lineno)
+            self._bind_target(
+                target.value,
+                lineno,
+                suppress_discards=suppress_discards,
+            )
 
     def _compute_variable_name(self, name_simple: str) -> str:
         scope_parts = [self.mod]
@@ -1604,11 +1631,7 @@ class Visitor(ast.NodeVisitor):
             if self._should_skip_variable_def(name_simple):
                 return
 
-            if (
-                _in_tuple_unpack
-                and name_simple.startswith("_")
-                and not name_simple.startswith("__")
-            ):
+            if _in_tuple_unpack and _is_intentional_discard_name(name_simple):
                 return
 
             var_name = self._compute_variable_name(name_simple)
