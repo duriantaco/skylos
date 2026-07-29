@@ -6,8 +6,11 @@ import logging
 import os
 import threading
 import time
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
+
+from skylos.core.grep_verify_common import _ALL_SOURCE_GLOBS, _GREP_EXCLUDE_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,84 @@ def file_content_hash(file_path: str | Path) -> str:
         return ""
 
 
+def _resolve_repository_root(project_root: str | Path) -> Path | None:
+    try:
+        root = Path(project_root).resolve(strict=True)
+    except OSError:
+        return None
+    if root.is_file():
+        root = root.parent
+    if not root.is_dir():
+        return None
+    return root
+
+
+def _collect_repository_evidence_files(
+    root: Path,
+) -> list[tuple[str, Path]] | None:
+    evidence_files: list[tuple[str, Path]] = []
+
+    try:
+        for directory, dirnames, filenames in os.walk(root, followlinks=False):
+            directory_path = Path(directory)
+            dirnames[:] = sorted(
+                name
+                for name in dirnames
+                if not any(fnmatch(name, pattern) for pattern in _GREP_EXCLUDE_DIRS)
+                and not (directory_path / name).is_symlink()
+            )
+            for filename in filenames:
+                if not any(fnmatch(filename, pattern) for pattern in _ALL_SOURCE_GLOBS):
+                    continue
+                path = directory_path / filename
+                if path.is_symlink():
+                    continue
+                relative_path = path.relative_to(root).as_posix()
+                evidence_files.append((relative_path, path))
+    except (OSError, ValueError):
+        return None
+    return evidence_files
+
+
+def _update_digest_from_evidence_file(
+    digest: Any,
+    path: Path,
+) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(  # skylos: ignore[SKY-D215] in-root grep evidence
+            path, flags
+        )
+        with os.fdopen(fd, "rb") as evidence_file:
+            while chunk := evidence_file.read(64 * 1024):
+                digest.update(chunk)
+    except OSError:
+        digest.update(b"\0<unreadable>")
+
+
+def repository_evidence_fingerprint(project_root: str | Path) -> str | None:
+    """Hash every file that can contribute repository-wide grep evidence."""
+    root = _resolve_repository_root(project_root)
+    if root is None:
+        return None
+    evidence_files = _collect_repository_evidence_files(root)
+    if evidence_files is None:
+        return None
+
+    digest = hashlib.sha256(b"skylos-grep-evidence-v1\0")
+    for relative_path, path in sorted(evidence_files):
+        encoded_path = relative_path.encode("utf-8", errors="surrogateescape")
+        digest.update(len(encoded_path).to_bytes(8, "big"))
+        digest.update(encoded_path)
+        _update_digest_from_evidence_file(digest, path)
+        digest.update(b"\0")
+
+    digest.update(len(evidence_files).to_bytes(8, "big"))
+    return digest.hexdigest()[:20]
+
+
 def _make_key(
     strategy: str,
     simple_name: str,
@@ -49,6 +130,31 @@ class GrepCache:
         self._lock = threading.Lock()
         self._entries: dict[str, dict[str, Any]] = {}
         self._dirty = False
+        self._repository_fingerprint: str | None = None
+        self._fingerprint_root: Path | None = None
+
+    @property
+    def repository_fingerprint(self) -> str | None:
+        with self._lock:
+            return self._repository_fingerprint
+
+    def bind_repository(self, project_root: str | Path) -> str | None:
+        try:
+            root = Path(project_root).resolve(strict=True)
+        except OSError:
+            return None
+        if root.is_file():
+            root = root.parent
+
+        with self._lock:
+            if self._fingerprint_root == root:
+                return self._repository_fingerprint
+
+        fingerprint = repository_evidence_fingerprint(root)
+        with self._lock:
+            self._fingerprint_root = root
+            self._repository_fingerprint = fingerprint
+        return fingerprint
 
     def get(self, key: str) -> list[str] | None:
         with self._lock:
@@ -99,7 +205,9 @@ class GrepCache:
         with self._lock:
             return len(self._entries)
 
-    def _cache_path(self, project_root: str | Path, *, create: bool = False) -> Path | None:
+    def _cache_path(
+        self, project_root: str | Path, *, create: bool = False
+    ) -> Path | None:
         try:
             root = Path(project_root).resolve(strict=True)
         except OSError:
@@ -141,7 +249,9 @@ class GrepCache:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
-            fd = os.open(path, flags)  # skylos: ignore[SKY-D215] guarded project-local grep cache path
+            fd = os.open(  # skylos: ignore[SKY-D215] guarded local cache path
+                path, flags
+            )
         except OSError:
             return None
         try:
@@ -173,6 +283,7 @@ class GrepCache:
         return normalized
 
     def load(self, project_root: str | Path) -> None:
+        self.bind_repository(project_root)
         path = self._cache_path(project_root)
         if path is None:
             return
@@ -212,7 +323,9 @@ class GrepCache:
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
-            fd = os.open(temp_path, flags, 0o600)  # skylos: ignore[SKY-D215] guarded project-local grep cache temp path
+            fd = os.open(  # skylos: ignore[SKY-D215] guarded local cache temp
+                temp_path, flags, 0o600
+            )
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(payload)

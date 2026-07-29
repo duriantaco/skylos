@@ -87,7 +87,7 @@ class GrepStrategy:
         return self.result_key or self.name
 
 
-_GREP_VERIFY_CACHE_VERSION = "v4"
+_GREP_VERIFY_CACHE_VERSION = "v5"
 
 _DETERMINISTIC_RULES: list[tuple[str, str, str]] = [
     ("method_calls", "real_method_call", "Direct method-call usage found via grep"),
@@ -111,13 +111,18 @@ def _cached_group_results(
 
     from skylos.core.grep_cache import file_content_hash as _fch
 
+    repository_fingerprint = getattr(cache, "repository_fingerprint", None)
+    if not isinstance(repository_fingerprint, str) or not repository_fingerprint:
+        return search_fn()
+
     simple_name = finding.get("simple_name", finding.get("name", ""))
     finding_file = finding.get("file", "")
     content_hash = _fch(finding_file) if finding_file else ""
     cache_key = (
         f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
         f"{simple_name}:{finding.get('full_name', '')}:"
-        f"{finding.get('type', '')}:{content_hash}"
+        f"{finding.get('type', '')}:{content_hash}:"
+        f"repo:{repository_fingerprint}"
     )
     cached = cache.get(cache_key)
     if cached is not None:
@@ -235,6 +240,9 @@ def grep_verify_findings(
     cache: Any = None,
 ) -> dict[str, GrepVerdict]:
     verdicts: dict[str, GrepVerdict] = {}
+    cache_binder = getattr(type(cache), "bind_repository", None)
+    if callable(cache_binder):
+        cache_binder(cache, project_root)
     start_time = time.monotonic()
     search_fn = _build_grep_search_fn(
         project_root,
