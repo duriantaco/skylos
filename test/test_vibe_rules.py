@@ -1,4 +1,5 @@
 import ast
+import json
 import os
 import shutil
 import textwrap
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.analyzer import analyze
 from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality.logic import (
     EmptyErrorHandlerRule,
@@ -2023,6 +2025,104 @@ class TestUnfinishedGeneration:
         findings = check_code(UnfinishedGenerationRule(), code)
         l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
         assert len(l026) == 0
+
+    def test_runtime_checkable_protocol_methods_not_flagged(self):
+        code = """
+        from typing import Protocol, runtime_checkable
+
+        @runtime_checkable
+        class ParentCall(Protocol):
+            def operation1(self) -> int: ...
+            def operation2(self) -> int: ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    @pytest.mark.parametrize(
+        ("import_statement", "protocol_base"),
+        [
+            ("import typing", "typing.Protocol"),
+            (
+                "from typing_extensions import Protocol as Interface",
+                "Interface",
+            ),
+            ("import typing_extensions as typing_ext", "typing_ext.Protocol"),
+        ],
+    )
+    def test_protocol_import_forms_not_flagged(self, import_statement, protocol_base):
+        code = f"""
+        {import_statement}
+
+        class ParentCall({protocol_base}):
+            def operation(self) -> int: ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_protocol_subclass_placeholder_still_flagged(self):
+        code = """
+        from typing import Protocol
+
+        class ParentCall(Protocol):
+            def operation(self) -> int: ...
+
+        class BrokenImplementation(ParentCall):
+            def operation(self) -> int: ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert [finding["name"] for finding in l026] == ["operation"]
+
+    def test_generic_protocol_method_not_flagged(self):
+        code = """
+        from typing import Protocol, TypeVar
+
+        T = TypeVar("T")
+
+        class ParentCall(Protocol[T]):
+            def operation(self) -> T: ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_unrelated_protocol_named_base_still_flagged(self):
+        code = """
+        class Protocol:
+            pass
+
+        class ParentCall(Protocol):
+            def operation(self) -> int: ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert [finding["name"] for finding in l026] == ["operation"]
+
+    def test_analyzer_ignores_protocol_method_stubs(self, tmp_path):
+        (tmp_path / "protocols.py").write_text(
+            "from typing import Protocol, runtime_checkable\n"
+            "\n"
+            "@runtime_checkable\n"
+            "class ParentCall(Protocol):\n"
+            "    def operation(self) -> int: ...\n"
+            "\n"
+            "class Worker:\n"
+            "    def unfinished(self) -> int: ...\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+        unfinished = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") == "SKY-L026"
+        ]
+
+        assert [finding["name"] for finding in unfinished] == ["unfinished"]
 
     def test_test_file_not_flagged(self):
         code = """

@@ -114,7 +114,7 @@ LINTER_RULE_NODE_TYPES = {
     BroadFilePermissionsRule: (ast.Call,),
     UndefinedConfigRule: (ast.Module, ast.Call),
     StaleMockRule: (ast.Module, ast.Call),
-    UnfinishedGenerationRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    UnfinishedGenerationRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     DuplicateStringLiteralRule: (ast.Module,),
     TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
