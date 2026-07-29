@@ -1,5 +1,24 @@
 ## Changelog
 
+## [4.31.1](https://github.com/duriantaco/skylos/compare/v4.31.0...v4.31.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **analyzer:** fail closed on compile-time syntax errors ([#657](https://github.com/duriantaco/skylos/issues/657)) ([ab8c249](https://github.com/duriantaco/skylos/commit/ab8c24969f1307c970afe1419f37bd22b86f935c))
+* **container:** prevent false-clean Python scans ([#654](https://github.com/duriantaco/skylos/issues/654)) ([4d2a502](https://github.com/duriantaco/skylos/commit/4d2a502cc96698783cfc89ed0abf11d48e048f9f))
+* **dead-code:** honor underscore discard bindings ([#655](https://github.com/duriantaco/skylos/issues/655)) ([fe908b6](https://github.com/duriantaco/skylos/commit/fe908b67d768f025e158230caa5a5db7dc3445a2))
+* **dead-code:** invalidate grep cache on evidence changes ([#661](https://github.com/duriantaco/skylos/issues/661)) ([2277788](https://github.com/duriantaco/skylos/commit/2277788ee2e6a69a7dd897695e6f9f5f0f497782))
+* **dead-code:** prevent unrelated parameter rescues ([#658](https://github.com/duriantaco/skylos/issues/658)) ([93e7ddb](https://github.com/duriantaco/skylos/commit/93e7ddb30d94d8baeb42042a3cab8f1599bb31ac))
+* **dead-code:** wire evidence into reporting decisions ([#652](https://github.com/duriantaco/skylos/issues/652)) ([ae6936c](https://github.com/duriantaco/skylos/commit/ae6936c396732c9ceee5ebf6020cd96bbb85643c))
+* **quality:** exempt Protocol method stubs ([#663](https://github.com/duriantaco/skylos/issues/663)) ([84e1ce4](https://github.com/duriantaco/skylos/commit/84e1ce49331ef77b2d7e5632592146623f8c2d6e))
+* **quality:** exempt underscore exception discard ([#662](https://github.com/duriantaco/skylos/issues/662)) ([a0c2ede](https://github.com/duriantaco/skylos/commit/a0c2ede8766110c35dc70419ea2dd713c1616487))
+
+
+### Documentation
+
+* **readme:** add MCP Toplist ranking badge ([#656](https://github.com/duriantaco/skylos/issues/656)) ([5593163](https://github.com/duriantaco/skylos/commit/559316304c03c1d17dc96ac310aa4f3bdb82fb19))
+
 ## [4.31.0](https://github.com/duriantaco/skylos/compare/v4.30.0...v4.31.0) (2026-07-27)
 
 
