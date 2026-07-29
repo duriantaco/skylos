@@ -87,7 +87,7 @@ class GrepStrategy:
         return self.result_key or self.name
 
 
-_GREP_VERIFY_CACHE_VERSION = "v3"
+_GREP_VERIFY_CACHE_VERSION = "v4"
 
 _DETERMINISTIC_RULES: list[tuple[str, str, str]] = [
     ("method_calls", "real_method_call", "Direct method-call usage found via grep"),
