@@ -13,6 +13,7 @@ from skylos.core.grep_cache import (
     GrepCache,
     _make_key,
     file_content_hash,
+    repository_evidence_fingerprint,
 )
 
 
@@ -60,6 +61,40 @@ class TestFileContentHash:
         f = tmp_path / "s.py"
         f.write_text("x = 1")
         assert file_content_hash(str(f)) == file_content_hash(f)
+
+
+class TestRepositoryEvidenceFingerprint:
+    def test_changes_when_evidence_content_changes(self, tmp_path: Path) -> None:
+        evidence = tmp_path / "evidence.py"
+        evidence.write_bytes(b"A" * 9000)
+        first = repository_evidence_fingerprint(tmp_path)
+
+        evidence.write_bytes(b"A" * 8999 + b"B")
+        second = repository_evidence_fingerprint(tmp_path)
+
+        assert first is not None
+        assert second is not None
+        assert first != second
+
+    def test_changes_when_evidence_file_is_added(self, tmp_path: Path) -> None:
+        (tmp_path / "target.py").write_text("def target():\n    pass\n")
+        first = repository_evidence_fingerprint(tmp_path)
+
+        (tmp_path / "evidence.py").write_text("target()\n")
+        second = repository_evidence_fingerprint(tmp_path)
+
+        assert first != second
+
+    def test_ignores_skylos_cache_files(self, tmp_path: Path) -> None:
+        (tmp_path / "target.py").write_text("def target():\n    pass\n")
+        first = repository_evidence_fingerprint(tmp_path)
+
+        cache_file = tmp_path / CACHE_DIR / CACHE_FILE
+        cache_file.parent.mkdir(parents=True)
+        cache_file.write_text('{"entries": {}}')
+        second = repository_evidence_fingerprint(tmp_path)
+
+        assert first == second
 
 
 class TestMakeKey:

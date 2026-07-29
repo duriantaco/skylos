@@ -502,6 +502,27 @@ class TestQualifiedReferenceSubstring:
 
 
 class TestAnalyzerIntegration:
+    def test_grep_cache_invalidates_when_repository_evidence_changes(self, tmp_path):
+        target = tmp_path / "target.py"
+        evidence = tmp_path / "evidence.py"
+        target.write_text("def _cached_helper() -> None:\n    pass\n")
+        evidence.write_text("from target import _cached_helper\n\n_cached_helper()\n")
+
+        from skylos.analyzer import analyze
+        import json
+
+        def unused_functions():
+            result = json.loads(analyze(str(target), conf=0, grep_verify=True))
+            return {finding["full_name"] for finding in result["unused_functions"]}
+
+        assert "target._cached_helper" not in unused_functions()
+
+        evidence.write_text("value = 1\n")
+        assert "target._cached_helper" in unused_functions()
+
+        evidence.write_text("from target import _cached_helper\n\n_cached_helper()\n")
+        assert "target._cached_helper" not in unused_functions()
+
     def test_grep_verify_matches_static_analysis_for_unrelated_parameters(
         self, tmp_path
     ):
