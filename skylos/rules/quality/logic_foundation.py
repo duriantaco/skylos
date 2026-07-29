@@ -506,6 +506,8 @@ class UnusedExceptVarRule(SkylosRule):
             return None
         if not node.name:
             return None
+        if node.name == "_":
+            return None
 
         use_count = 0
         for child in ast.walk(node):
