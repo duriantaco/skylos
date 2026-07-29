@@ -186,6 +186,60 @@ class TestGrepVerifyFindings:
         verdicts = grep_verify_findings(findings, str(tmp_path))
         assert "lib.orphan" not in verdicts
 
+    def test_unrelated_parameter_declarations_do_not_rescue(self, tmp_path):
+        first = tmp_path / "first.py"
+        second = tmp_path / "second.py"
+        first.write_text("def target(unused_value: str) -> None:\n    pass\n")
+        second.write_text("def unrelated(unused_value: str) -> None:\n    pass\n")
+
+        findings = [
+            {
+                "name": "unused_value",
+                "full_name": "first.target.unused_value",
+                "simple_name": "unused_value",
+                "type": "parameter",
+                "file": str(first),
+                "line": 1,
+                "confidence": 80,
+            },
+            {
+                "name": "unused_value",
+                "full_name": "second.unrelated.unused_value",
+                "simple_name": "unused_value",
+                "type": "parameter",
+                "file": str(second),
+                "line": 1,
+                "confidence": 80,
+            },
+        ]
+
+        assert multi_strategy_search(findings[0], str(tmp_path)) == {}
+        assert multi_strategy_search(findings[1], str(tmp_path)) == {}
+        assert grep_verify_findings(findings, str(tmp_path)) == {}
+
+    def test_parameter_search_retains_owner_contract_evidence(self, tmp_path):
+        source = tmp_path / "callbacks.py"
+        source.write_text(
+            "def target(unused_value: str) -> None:\n"
+            "    pass\n"
+            "\n"
+            "register(callback=target)\n"
+        )
+        finding = {
+            "name": "unused_value",
+            "full_name": "callbacks.target.unused_value",
+            "simple_name": "unused_value",
+            "type": "parameter",
+            "file": str(source),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        results = multi_strategy_search(finding, str(tmp_path))
+
+        assert set(results) == {"callback_registrations"}
+        assert "register(callback=target)" in results["callback_registrations"][0]
+
     def test_getattr_dispatch_rescues(self, tmp_path):
         (tmp_path / "plugin.py").write_text(
             "class Handler:\n    def process(self):\n        pass\n"
@@ -448,6 +502,34 @@ class TestQualifiedReferenceSubstring:
 
 
 class TestAnalyzerIntegration:
+    def test_grep_verify_matches_static_analysis_for_unrelated_parameters(
+        self, tmp_path
+    ):
+        (tmp_path / "first.py").write_text(
+            'def target(unused_value: str) -> None:\n    pass\n\ntarget("x")\n'
+        )
+        (tmp_path / "second.py").write_text(
+            'def unrelated(unused_value: str) -> None:\n    pass\n\nunrelated("x")\n'
+        )
+
+        from skylos.analyzer import analyze
+        import json
+
+        result_on = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        result_off = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+
+        def unused_parameter_locations(result):
+            return {
+                (finding["file"], finding["full_name"])
+                for finding in result["unused_parameters"]
+            }
+
+        assert unused_parameter_locations(result_on) == unused_parameter_locations(
+            result_off
+        )
+        assert len(result_on["unused_parameters"]) == 2
+        assert result_on["analysis_summary"]["grep_verify"]["rescued_count"] == 0
+
     def test_grep_verify_rescues_dynamic_dispatch(self, tmp_path):
         (tmp_path / "plugin.py").write_text(
             'def handle_event():\n    return "handled"\n'

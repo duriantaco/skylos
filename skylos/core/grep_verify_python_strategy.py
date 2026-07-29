@@ -19,6 +19,60 @@ from skylos.core.grep_verify_strategies import (
 )
 
 
+def _parameter_contract_search(
+    finding: dict,
+    project_root: str,
+    *,
+    simple_name: str,
+    owner_simple_name: str,
+    file_path: str,
+    max_per_strategy: int,
+) -> dict[str, list[str]]:
+    """Collect owner-aware evidence for a lexical parameter binding."""
+    results: dict[str, list[str]] = {}
+    if not owner_simple_name:
+        return results
+
+    callback_pattern = rf"callback\s*=\s*(?:[\w\.]+\.)*{re.escape(owner_simple_name)}\b"
+    callback_refs = _run_grep(
+        callback_pattern,
+        project_root,
+        use_regex=True,
+        include_globs=["*.py"],
+        max_results=max_per_strategy,
+    )
+    if callback_refs:
+        results["callback_registrations"] = callback_refs[:max_per_strategy]
+
+    signature_pattern = (
+        rf"def\s+{re.escape(owner_simple_name)}\s*\([^)]*\b{re.escape(simple_name)}\b"
+    )
+    signature_refs = _run_grep(
+        signature_pattern,
+        project_root,
+        use_regex=True,
+        include_globs=["*.py"],
+        max_results=max_per_strategy * 2,
+    )
+    if signature_refs:
+        override_refs = []
+        line_value = finding.get("line", 0)
+        line_num = int(line_value) if isinstance(line_value, (int, float)) else 0
+        for ref in signature_refs:
+            parts = ref.split(":", 2)
+            if len(parts) < 2 or not parts[1].isdigit():
+                continue
+            match_file = parts[0]
+            match_line = int(parts[1])
+            if match_file == file_path and abs(match_line - line_num) <= 3:
+                continue
+            override_refs.append(ref)
+        if override_refs:
+            results["signature_overrides"] = override_refs[:max_per_strategy]
+
+    return _deduplicate_grep_results(results)
+
+
 def multi_strategy_search(
     finding: dict,
     project_root: str,
@@ -55,6 +109,16 @@ def multi_strategy_search(
 
     if not simple_name or len(simple_name) <= 1:
         return results
+
+    if kind == "parameter":
+        return _parameter_contract_search(
+            finding,
+            project_root,
+            simple_name=simple_name,
+            owner_simple_name=owner_simple_name,
+            file_path=file_path,
+            max_per_strategy=max_per_strategy,
+        )
 
     def _should_early_exit() -> bool:
         for strategy in _STRONG_ALIVE_STRATEGIES:
@@ -265,46 +329,6 @@ def multi_strategy_search(
             if usages:
                 results["module_references"] = usages[:max_per_strategy]
                 break
-
-    if kind == "parameter" and owner_simple_name:
-        callback_pattern = (
-            rf"callback\s*=\s*(?:[\w\.]+\.)*{re.escape(owner_simple_name)}\b"
-        )
-        callback_refs = _run_grep(
-            callback_pattern,
-            project_root,
-            use_regex=True,
-            include_globs=["*.py"],
-            max_results=max_per_strategy,
-        )
-        if callback_refs:
-            results["callback_registrations"] = callback_refs[:max_per_strategy]
-
-        def _parse_int(value):
-            return int(value) if isinstance(value, (int, float)) else 0
-
-        signature_pattern = rf"def\s+{re.escape(owner_simple_name)}\s*\([^)]*\b{re.escape(simple_name)}\b"
-        signature_refs = _run_grep(
-            signature_pattern,
-            project_root,
-            use_regex=True,
-            include_globs=["*.py"],
-            max_results=max_per_strategy * 2,
-        )
-        if signature_refs:
-            override_refs = []
-            line_num = _parse_int(finding.get("line", 0))
-            for ref in signature_refs:
-                parts = ref.split(":", 2)
-                if len(parts) < 2 or not parts[1].isdigit():
-                    continue
-                match_file = parts[0]
-                match_line = int(parts[1])
-                if match_file == file_path and abs(match_line - line_num) <= 3:
-                    continue
-                override_refs.append(ref)
-            if override_refs:
-                results["signature_overrides"] = override_refs[:max_per_strategy]
 
     doc_refs = _run_grep(
         rf"\b{simple_name}\b",
