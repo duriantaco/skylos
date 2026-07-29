@@ -1,3 +1,5 @@
+import ast
+
 from skylos.rules.ai_defect.python_api_hallucination import (
     scan_python_local_api_hallucinations,
 )
@@ -97,6 +99,27 @@ def test_python_local_api_check_passes_existing_direct_import(tmp_path):
             "app.py": "from security import VERIFY_TOKEN as token\nprint(token)\n",
         },
         targets=["app.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 1
+
+
+def test_python_local_api_check_passes_pep695_type_alias_import(tmp_path):
+    if not hasattr(ast, "TypeAlias"):
+        return
+
+    findings, check = _scan(
+        tmp_path,
+        {
+            "alias_package/consumer.py": (
+                "from .provider import NativePostStepCall\n"
+                "assert NativePostStepCall.__value__ is int\n"
+            ),
+            "alias_package/provider.py": "type NativePostStepCall = int\n",
+        },
+        targets=["alias_package/consumer.py"],
     )
 
     assert findings == []

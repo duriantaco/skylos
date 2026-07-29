@@ -394,6 +394,7 @@ def _collect_module_facts(tree, current_module, local_modules):
     if not isinstance(tree, ast.Module):
         return members, has_dynamic_getattr, exported_modules
 
+    type_alias_node = getattr(ast, "TypeAlias", None)
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             members.add(stmt.name)
@@ -406,6 +407,8 @@ def _collect_module_facts(tree, current_module, local_modules):
                 members.update(_extract_target_names(target))
         elif isinstance(stmt, ast.AnnAssign):
             members.update(_extract_target_names(stmt.target))
+        elif type_alias_node is not None and isinstance(stmt, type_alias_node):
+            members.update(_extract_target_names(stmt.name))
         elif isinstance(stmt, ast.Import):
             for alias in stmt.names:
                 bound_name = alias.asname or alias.name.split(".", 1)[0]
