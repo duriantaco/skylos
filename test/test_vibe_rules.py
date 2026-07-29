@@ -1080,6 +1080,42 @@ class TestPhantomCall:
         assert l012[0]["name"] == "totals.compute_total"
         assert l012[0]["simple_name"] == "compute_total"
 
+    def test_repo_pep695_type_alias_import_not_flagged(self):
+        if not hasattr(ast, "TypeAlias"):
+            return
+
+        findings = scan_repo_code(
+            {
+                "alias_package/consumer.py": """
+                    from .provider import NativePostStepCall
+                """,
+                "alias_package/provider.py": """
+                    type NativePostStepCall = int
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 0
+
+    def test_repo_pep695_type_alias_does_not_hide_missing_import(self):
+        if not hasattr(ast, "TypeAlias"):
+            return
+
+        findings = scan_repo_code(
+            {
+                "alias_package/consumer.py": """
+                    from .provider import MissingPostStepCall
+                """,
+                "alias_package/provider.py": """
+                    type NativePostStepCall = int
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert [finding["name"] for finding in l012] == ["MissingPostStepCall"]
+
     def test_repo_dynamic_module_not_flagged(self):
         findings = scan_repo_code(
             {
