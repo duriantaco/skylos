@@ -5,6 +5,7 @@
 
 ### Bug Fixes
 
+* **ai-defect:** recognize PEP 695 type aliases ([#664](https://github.com/duriantaco/skylos/issues/664)) ([2a645df](https://github.com/duriantaco/skylos/commit/2a645df96ecfa72a65d3e3f784d1fcf498a2ee3f))
 * **analyzer:** fail closed on compile-time syntax errors ([#657](https://github.com/duriantaco/skylos/issues/657)) ([ab8c249](https://github.com/duriantaco/skylos/commit/ab8c24969f1307c970afe1419f37bd22b86f935c))
 * **container:** prevent false-clean Python scans ([#654](https://github.com/duriantaco/skylos/issues/654)) ([4d2a502](https://github.com/duriantaco/skylos/commit/4d2a502cc96698783cfc89ed0abf11d48e048f9f))
 * **dead-code:** honor underscore discard bindings ([#655](https://github.com/duriantaco/skylos/issues/655)) ([fe908b6](https://github.com/duriantaco/skylos/commit/fe908b67d768f025e158230caa5a5db7dc3445a2))
