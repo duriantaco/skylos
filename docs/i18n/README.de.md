@@ -94,6 +94,7 @@ Mehr Befehle stehen in der [CLI Reference](https://docs.skylos.dev/cli-reference
 |:---|:---|:---|:---|
 | Erster Dead-Code-Scan | `skylos .` | Findet ungenutzte Funktionen, Klassen, Imports, Dateien und Fehler bei Framework-Entrypoints | [Dead-code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security- und Quality-Audit | `skylos . -a` | Aktiviert gefährliche Datenflüsse, Secrets, Dependencies und Quality-Prüfungen | [Security docs](https://docs.skylos.dev/security-analysis) |
+| Optionales Python-Linting | `pip install "skylos[lint]" && skylos lint .` | Führt Ruff mit nativer Konfiguration, Ausgabe, Fixes und Exit-Codes über die Skylos-CLI aus | [Python linting](../python-linting.md) |
 | PR-Gate | `skylos cicd init` | Erzeugt einen GitHub-Actions-Workflow mit Annotationen und Failure-Thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Lesbarer Terminalreport | `skylos . --format pretty` | Gruppiert Findings nach Datei, mit Severity, Snippets und kopierbaren `file:line`-Positionen | [CLI output modes](../cli-output.md) |
 | Interaktive Terminaltriage | `skylos . --tui` | Öffnet eine tastaturgesteuerte Ansicht für Kategorien, Findings und Details | [CLI output modes](../cli-output.md) |
@@ -146,6 +147,9 @@ pip install skylos
 
 # LLM-gestützte Agent-Workflows
 pip install "skylos[llm]"
+
+# Ruff-Python-Linting über `skylos lint`
+pip install "skylos[lint]"
 
 # Alle veröffentlichten optionalen Extras
 pip install "skylos[all]"
@@ -273,6 +277,7 @@ Branch-Metadaten und unterstützt Monorepo-Subprojekte über `--scan-path`.
 | Erster Scan und Kernworkflows | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI-Befehle, Flags und Beispiele | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | CLI-Ausgabemodi, Pretty Reports und TUI-Steuerung | [CLI Output Modes](../cli-output.md) |
+| Optionales Ruff-Linting über die Skylos-CLI | [Python Linting](../python-linting.md) |
 | CI-Setup, PR-Gates, Annotationen und Branch Protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | Dead-Code-Verhalten und Framework-Awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security-Scanning und Taint-Analyse | [Security Analysis](https://docs.skylos.dev/security-analysis) |
@@ -304,6 +309,12 @@ kombinierten Workflow für Dead Code, Security, Secrets und Quality.
 
 Nein. Die Kernanalyse läuft lokal ohne API Keys. LLM-Funktionen sind optional
 über `skylos[llm]` und Agent-Befehle.
+
+**Ersetzt Skylos Ruff?**
+
+Nein. `skylos lint` ist ein optionaler Einstiegspunkt, der an Ruff delegiert.
+Die Installation erfolgt mit `pip install "skylos[lint]"`; normale
+Skylos-Scans führen Ruff nicht aus.
 
 **Kann ich nur geänderten Code prüfen?**
 

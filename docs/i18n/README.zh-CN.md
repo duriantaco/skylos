@@ -58,6 +58,7 @@ git push
 |:---|:---|:---|:---|
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
+| 可选 Python lint | `pip install "skylos[lint]" && skylos lint .` | 通过 Skylos CLI 运行 Ruff，并保留其原生配置、输出、修复和退出码 | [Python linting](../python-linting.md) |
 | PR 门控 | `skylos cicd init` | 生成带注释和失败阈值的 GitHub Actions 工作流 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
 | 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
 | 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
@@ -96,6 +97,9 @@ pip install skylos
 
 # LLM Agent 工作流
 pip install "skylos[llm]"
+
+# 通过 `skylos lint` 使用 Ruff Python lint
+pip install "skylos[lint]"
 
 # 所有已发布的可选 extras
 pip install "skylos[all]"
@@ -183,6 +187,7 @@ Skylos 辅助的死代码清理 PR 已被
 | 第一次扫描和核心工作流 | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI 命令、flags 和示例 | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | CLI 输出模式、pretty 报告和 TUI 快捷键 | [CLI Output Modes](../cli-output.md) |
+| 通过 Skylos CLI 使用可选 Ruff lint | [Python Linting](../python-linting.md) |
 | CI 设置、PR 门控、注释和分支保护 | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | 死代码行为和框架感知 | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | 安全扫描和污点分析 | [Security Analysis](https://docs.skylos.dev/security-analysis) |
@@ -209,6 +214,11 @@ Skylos 辅助的死代码清理 PR 已被
 **Skylos 需要 LLM 吗？**
 
 不需要。核心静态分析在本地运行，不需要 API key。LLM 功能是可选的，通过 `skylos[llm]` 和 agent 命令使用。
+
+**Skylos 会替代 Ruff 吗？**
+
+不会。`skylos lint` 是一个委托给 Ruff 的可选命令入口。使用
+`pip install "skylos[lint]"` 安装；普通 Skylos 扫描不会运行 Ruff。
 
 **可以只扫描变更代码吗？**
 

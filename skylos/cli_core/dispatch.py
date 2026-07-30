@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from rich.console import Console
+from rich.markup import escape
 
 
 EARLY_COMMAND_HANDLERS = {
@@ -15,6 +16,7 @@ EARLY_COMMAND_HANDLERS = {
     "badge": "_run_badge_command",
     "whitelist": "_run_whitelist_command",
     "clean": "_run_clean_command",
+    "lint": "_run_lint_command",
     "cache": "_run_cache_command",
     "contract": "_handle_contract_command",
     "doctor": "_run_doctor_command",
@@ -60,11 +62,11 @@ def run_early_command_help(
 
     console.print("[bold]Usage:[/bold]")
     for item in matches:
-        console.print(f"  {item['name']}")
+        console.print(f"  {escape(item['name'])}")
 
     console.print("\n[bold]Description:[/bold]")
     for item in matches:
-        console.print(f"  {item['desc']}")
+        console.print(f"  {escape(item['desc'])}")
 
     detail_lines = []
     for item in matches:
@@ -73,7 +75,7 @@ def run_early_command_help(
     if detail_lines:
         console.print("\n[bold]Options:[/bold]")
         for detail in detail_lines:
-            console.print(f"  {detail}")
+            console.print(f"  {escape(detail)}")
 
     console.print("\nRun [bold]skylos commands[/bold] for all commands.")
     return 0

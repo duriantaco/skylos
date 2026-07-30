@@ -33,6 +33,7 @@ Rule IDs use a stable public prefix:
 | Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
+| Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
 | Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |

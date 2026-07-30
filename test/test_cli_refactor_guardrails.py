@@ -298,6 +298,40 @@ def test_cli_guardrail_clean_dispatch_preserves_argv(monkeypatch):
     mock_clean.assert_called_once_with(["pkg"])
 
 
+def test_cli_guardrail_lint_dispatch_preserves_ruff_argv(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "lint", "src", "--select", "E,F", "--no-cache"],
+    )
+
+    with (
+        patch("skylos.commands.lint_cmd.run_lint_command", return_value=1) as mock_lint,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    mock_lint.assert_called_once_with(["src", "--select", "E,F", "--no-cache"])
+
+
+def test_cli_guardrail_lint_help_documents_optional_extra(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["skylos", "lint", "--help"])
+
+    with (
+        patch("skylos.commands.lint_cmd.run_lint_command") as mock_lint,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_lint.assert_not_called()
+    output = capsys.readouterr().out
+    assert "skylos lint [path ...] [Ruff options]" in output
+    assert 'pip install "skylos[lint]"' in output
+    assert "ruff check" in output
+
+
 def test_cli_guardrail_clean_help_lists_noninteractive_flags(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["skylos", "clean", "--help"])
 
