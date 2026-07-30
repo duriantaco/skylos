@@ -46,10 +46,10 @@ Individual check flags:
 | Need | Flag | Notes |
 | :-- | :-- | :-- |
 | Human terminal report | `--format rich` or no flag | Full rich report |
-| Compact review | `--format pretty` | File grouped with snippets |
+| Compact review | `--format pretty` | File grouped; finding fields cap at 140 characters |
 | Agent parsing | `--format json` or `--json` | Preferred for automation |
 | LLM fix context | `--format llm` | Markdown with code context |
-| File-line output | `--format concise` | Exits non-zero if findings exist |
+| File-line output | `--format concise` | Untruncated `file:line  RULE_ID  message`; exits non-zero if findings exist |
 | GitHub annotations | `--format github` | Emits workflow annotations |
 | SARIF | `--sarif path` | Writes SARIF 2.1.0 |
 | Interactive triage | `--tui` | Screen UI; no `--output` |
@@ -84,6 +84,8 @@ skylos . --diff origin/main --format json
 skylos . --diff-base origin/main --format json
 skylos . --severity high --format json
 skylos . --category security,secret --format json
+skylos . --select SKY-L012 --format concise
+skylos . --select SKY-D211,SKY-D215 --format json
 skylos . --file-filter auth/ --format json
 skylos . --confidence 80 --format json
 skylos . --limit 50 --format json
@@ -92,6 +94,10 @@ skylos . --limit 50 --format json
 Use `--diff REF` for findings on changed lines. Use `--diff-base REF` for
 findings in changed files. Use `--baseline` after `skylos baseline .` to show
 only new findings.
+
+Use `--select` for exact, case-insensitive rule IDs. Repeat it or separate IDs
+with commas. Skylos enables the matching analyzer family automatically and
+filters every scan output format; analysis errors remain visible.
 
 ## Gating
 

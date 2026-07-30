@@ -284,6 +284,17 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "Comma-separated for multiple. Example: --category security,ai_defects",
     )
     parser.add_argument(
+        "--select",
+        action="append",
+        default=None,
+        metavar="RULE",
+        help=(
+            "Only report exact rule ID(s), case-insensitively. Repeat the option "
+            "or use commas for multiple rules. Matching analyzer families are "
+            "enabled automatically. Example: --select SKY-L012,SKY-D225"
+        ),
+    )
+    parser.add_argument(
         "--file-filter",
         type=str,
         default=None,

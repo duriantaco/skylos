@@ -20,6 +20,9 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
         [
             "--json",
             "--ai-defects",
+            "--select",
+            "SKY-L012",
+            "--select=SKY-D225",
             "--confidence",
             "80",
             "--severity=high",
@@ -42,6 +45,9 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
     ) == [
         "--json",
         "--ai-defects",
+        "--select",
+        "SKY-L012",
+        "--select=SKY-D225",
         "--confidence",
         "80",
         "--severity=high",
@@ -103,6 +109,23 @@ def test_parse_main_cli_args_accepts_pretty_format():
     assert args.llm is False
     assert args.github is False
     assert args.concise is False
+
+
+def test_parse_main_cli_args_accepts_repeated_and_comma_separated_selectors():
+    parser = build_main_parser(version="test")
+
+    args = parse_main_cli_args(
+        parser,
+        [
+            ".",
+            "--select",
+            "sky-l012,SKY-D225",
+            "--select=SKY-U001",
+        ],
+        addopts_loader=list,
+    )
+
+    assert args.select == ["sky-l012,SKY-D225", "SKY-U001"]
 
 
 def test_parse_main_cli_args_accepts_config_file():

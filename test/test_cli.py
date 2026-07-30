@@ -595,6 +595,82 @@ def test_apply_display_filters_combines_category_file_and_severity():
     assert filtered["danger"] == []
 
 
+def test_apply_rule_selection_filters_exact_ids_and_preserves_analysis_errors():
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "analysis_errors": [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "file": "broken.py",
+                "line": 1,
+            }
+        ],
+        "ai_defects": [
+            {"rule_id": "SKY-L012", "file": "keep.py", "line": 3},
+            {"rule_id": "SKY-D225", "file": "drop.py", "line": 4},
+        ],
+        "danger": [{"rule_id": "SKY-D211", "file": "drop.py", "line": 5}],
+        "unused_functions": [
+            {"name": "drop_dead_code", "file": "drop.py", "line": 6}
+        ],
+    }
+
+    filtered = cli._apply_rule_selection(result, ["sky-l012"])
+
+    assert filtered["analysis_errors"] == result["analysis_errors"]
+    assert filtered["ai_defects"] == [result["ai_defects"][0]]
+    assert filtered["danger"] == []
+    assert filtered["unused_functions"] == []
+    assert filtered["analysis_summary"]["selected_rules"] == ["SKY-L012"]
+
+
+def test_apply_rule_selection_uses_public_ids_for_dead_code_without_rule_ids():
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [{"name": "keep", "file": "app.py", "line": 1}],
+        "unused_imports": [{"name": "drop", "file": "app.py", "line": 2}],
+        "unused_classes": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+    }
+
+    filtered = cli._apply_rule_selection(result, ["SKY-U001"])
+
+    assert filtered["unused_functions"] == result["unused_functions"]
+    assert filtered["unused_imports"] == []
+
+
+def test_selected_rule_analysis_flags_use_catalog_categories_not_prefixes():
+    args = types.SimpleNamespace(
+        select=[
+            "SKY-D225,sky-l026",
+            "SKY-S101",
+            "SKY-SCA-CVE-TEST",
+            "SKY-UC001",
+        ],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == [
+        "SKY-D225",
+        "SKY-L026",
+        "SKY-S101",
+        "SKY-SCA-CVE-TEST",
+        "SKY-UC001",
+    ]
+    assert args.ai_defects is True
+    assert args.quality is True
+    assert args.secrets is True
+    assert args.sca is True
+    assert args.danger is False
+
+
 def test_comment_out_unused_import_handles_exception_and_returns_false():
     with (
         patch("pathlib.Path.read_text", return_value="import os\n"),
@@ -1480,7 +1556,8 @@ def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch)
 
     assert e.value.code == 1
     mock_print.assert_called_once_with(
-        "src/test.py:1  unused function\nsrc/test.py:5  unused class\n",
+        "src/test.py:1  SKY-U001  unused function: unused_function\n"
+        "src/test.py:5  SKY-U004  unused class: UnusedClass\n",
         end="",
     )
     progress.assert_not_called()
@@ -1499,7 +1576,7 @@ def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch)
                 "line": 1,
                 "message": "CVE-TEST vulnerable dependency",
             },
-            "requirements.txt:1  CVE-TEST vulnerable dependency\n",
+            "requirements.txt:1  SKY-SCA-000  CVE-TEST vulnerable dependency\n",
         ),
         (
             "custom_rules",
@@ -1509,7 +1586,7 @@ def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch)
                 "line": 3,
                 "message": "custom rule hit",
             },
-            "src/test.py:3  custom rule hit\n",
+            "src/test.py:3  CUSTOM-001  custom rule hit\n",
         ),
     ],
 )
@@ -1594,6 +1671,167 @@ def test_main_concise_clean_output_prints_nothing(monkeypatch):
 
     mock_print.assert_not_called()
     progress.assert_not_called()
+
+
+def test_main_select_ai_rule_enables_family_and_filters_concise_output(monkeypatch):
+    full_message = (
+        "Call to 'security.require_auth()' resolves to no definition on local "
+        "modules and should remain completely visible."
+    )
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [
+            {"name": "unselected_dead_code", "file": "app.py", "line": 1}
+        ],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "file": "app.py",
+                "line": 4,
+                "message": full_message,
+            },
+            {
+                "rule_id": "SKY-D225",
+                "file": "app.py",
+                "line": 8,
+                "message": "unselected AI defect",
+            },
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--select",
+            "sky-l012",
+            "--format",
+            "concise",
+            "--no-provenance",
+        ],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as analyze,
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 1
+    assert analyze.call_args.kwargs["enable_ai_defects"] is True
+    assert analyze.call_args.kwargs["enable_quality"] is False
+    mock_print.assert_called_once_with(
+        f"app.py:4  SKY-L012  {full_message}\n",
+        end="",
+    )
+
+
+def test_main_select_filters_json_without_gate_failure(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [{"name": "drop", "file": "app.py", "line": 1}],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [
+            {
+                "rule_id": "SKY-D211",
+                "file": "app.py",
+                "line": 2,
+                "message": "keep",
+            },
+            {
+                "rule_id": "SKY-D215",
+                "file": "app.py",
+                "line": 3,
+                "message": "drop",
+            },
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--select=SKY-D211",
+            "--format",
+            "json",
+            "--no-provenance",
+        ],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as analyze,
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    assert analyze.call_args.kwargs["enable_danger"] is True
+    selected_result = json.loads(mock_print.call_args.args[0])
+    assert [finding["rule_id"] for finding in selected_result["danger"]] == [
+        "SKY-D211"
+    ]
+    assert selected_result["unused_functions"] == []
+
+
+def test_main_select_with_no_matching_concise_findings_exits_zero(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [{"name": "drop", "file": "app.py", "line": 1}],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "ai_defects": [],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--select=SKY-L012",
+            "--format",
+            "concise",
+            "--no-provenance",
+        ],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    mock_print.assert_not_called()
 
 
 def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):

@@ -1297,6 +1297,76 @@ _DISPLAY_FILTER_CATEGORY_MAP = {
     "dependency_vulnerabilities": "dependency",
 }
 
+_RULE_SELECTION_DEFAULT_IDS = {
+    "analysis_errors": "SKY-ANALYSIS-INCOMPLETE",
+    "unused_functions": "SKY-U001",
+    "unused_imports": "SKY-U002",
+    "unused_variables": "SKY-U003",
+    "unused_classes": "SKY-U004",
+    "unused_parameters": "SKY-U006",
+    "unused_files": "SKY-E002",
+    "unused_fixtures": "SKY-U000",
+    "forgotten": "SKY-U001",
+    "danger": "SKY-D000",
+    "ai_defects": "SKY-AI000",
+    "quality": "SKY-Q000",
+    "secrets": "SKY-S000",
+    "custom_rules": "CUSTOM",
+    "circular_dependencies": "SKY-CIRC",
+    "dependency_vulnerabilities": "SKY-SCA-000",
+}
+
+_RULE_SELECTION_FINDING_CATEGORIES = (
+    "unused_functions",
+    "unused_imports",
+    "unused_variables",
+    "unused_classes",
+    "unused_parameters",
+    "unused_files",
+    "unused_fixtures",
+    "unused_exports",
+    "forgotten",
+    "danger",
+    "ai_defects",
+    "quality",
+    "secrets",
+    "custom_rules",
+    "circular_dependencies",
+    "dependency_vulnerabilities",
+)
+
+_RULE_SELECTION_SUMMARY_COUNTS = {
+    "unused_functions": "unused_functions_count",
+    "unused_imports": "unused_imports_count",
+    "unused_variables": "unused_variables_count",
+    "unused_classes": "unused_classes_count",
+    "unused_parameters": "unused_parameters_count",
+    "unused_files": "unused_files_count",
+    "unused_fixtures": "unused_fixtures_count",
+    "unused_exports": "unused_exports_count",
+    "danger": "danger_count",
+    "ai_defects": "ai_defects_count",
+    "quality": "quality_count",
+    "secrets": "secrets_count",
+    "custom_rules": "custom_rules_count",
+    "circular_dependencies": "circular_dependencies_count",
+    "dependency_vulnerabilities": "sca_count",
+}
+
+_RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES = {
+    # These rules are semantically dead-code findings, but their detectors run
+    # in the quality analysis phase.
+    "SKY-U005": "quality",
+    "SKY-UC001": "quality",
+    "SKY-UC002": "quality",
+    # Generic normalized IDs are not first-class catalog entries.
+    "SKY-AI000": "ai_defect",
+    "SKY-D000": "security",
+    "SKY-Q000": "quality",
+    "SKY-S000": "secrets",
+    "SKY-SCA-000": "dependency",
+}
+
 
 def _display_filter_min_rank(severity):
     if severity:
@@ -1363,6 +1433,97 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
         filtered[key] = _display_filter_items(items, file_filter, min_rank)
 
     return filtered
+
+
+def _normalize_selected_rules(selectors) -> list[str]:
+    if not selectors:
+        return []
+    if isinstance(selectors, str):
+        selectors = [selectors]
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        for raw_rule_id in str(selector).split(","):
+            rule_id = raw_rule_id.strip().upper()
+            if rule_id and rule_id not in seen:
+                selected.append(rule_id)
+                seen.add(rule_id)
+    return selected
+
+
+def _finding_rule_id(item, category: str) -> str:
+    if isinstance(item, dict):
+        for key in ("rule_id", "rule", "code", "id"):
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return _RULE_SELECTION_DEFAULT_IDS.get(category, "")
+
+
+def _apply_rule_selection(result: dict, selectors) -> dict:
+    import copy
+
+    selected_rules = _normalize_selected_rules(selectors)
+    if not selected_rules:
+        return result
+
+    allowed = set(selected_rules)
+    filtered = copy.copy(result)
+    for category in _RULE_SELECTION_FINDING_CATEGORIES:
+        if category not in result:
+            continue
+        filtered[category] = [
+            item
+            for item in (result.get(category) or [])
+            if _finding_rule_id(item, category).upper() in allowed
+        ]
+
+    summary = copy.copy(result.get("analysis_summary") or {})
+    summary["selected_rules"] = selected_rules
+    summary.pop("by_directory", None)
+    summary.pop("dead_code_evidence", None)
+    summary.pop("grep_verify", None)
+    for category, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
+        if category in result or count_key in summary:
+            summary[count_key] = len(filtered.get(category) or [])
+    filtered["analysis_summary"] = summary
+
+    # Aggregate grades describe the unfiltered scan and would be misleading in
+    # a rule-selected report.
+    filtered.pop("grade", None)
+    return filtered
+
+
+def _apply_selected_rule_analysis_flags(args) -> None:
+    selected_rules = _normalize_selected_rules(getattr(args, "select", None))
+    args.select = selected_rules
+    if not selected_rules:
+        return
+
+    from skylos.rules.catalog import get_rule_catalog
+
+    categories_by_rule = {
+        str(entry["id"]).upper(): str(entry["category"])
+        for entry in get_rule_catalog()
+    }
+    for rule_id in selected_rules:
+        category = _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES.get(
+            rule_id,
+            categories_by_rule.get(rule_id),
+        )
+        if category == "security":
+            args.danger = True
+        elif category == "ai_defect":
+            args.ai_defects = True
+        elif category == "quality":
+            args.quality = True
+        elif category == "secrets":
+            args.secrets = True
+        elif category == "dependency" or rule_id.startswith("SKY-SCA-"):
+            args.sca = True
+        elif rule_id.startswith("CUSTOM-"):
+            args.quality = True
 
 
 def render_pretty_results(
@@ -1824,6 +1985,8 @@ def _build_main_scan_context(args):
         args.ai_defects = True
         args.sca = True
 
+    _apply_selected_rule_analysis_flags(args)
+
     project_root = _resolve_main_project_root(args.path)
     logger = setup_logger()
     console = logger.console
@@ -1932,14 +2095,24 @@ def _has_concise_findings(result: dict) -> bool:
     return False
 
 
-def _concise_line(item: dict, label: str, root_path=None) -> str:
+def _concise_line(
+    item: dict,
+    label: str,
+    *,
+    category: str,
+    root_path=None,
+) -> str:
     file_path = item.get("file") or item.get("file_path") or "?"
     line = item.get("line") or item.get("line_number") or 1
     try:
         line = max(1, int(line))
     except (TypeError, ValueError):
         line = 1
-    return f"{_shorten_path(file_path, root_path)}:{line}  {label}"
+    rule_id = _finding_rule_id(item, category)
+    prefix = f"{_shorten_path(file_path, root_path)}:{line}"
+    if rule_id:
+        return f"{prefix}  {rule_id}  {label}"
+    return f"{prefix}  {label}"
 
 
 def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
@@ -1956,9 +2129,18 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
                 item.get("message")
                 or item.get("msg")
                 or item.get("detail")
-                or fallback_label
             )
-            lines.append(_concise_line(item, str(label), root_path=root_path))
+            if not label:
+                name = item.get("name") or item.get("simple_name") or item.get("symbol")
+                label = f"{fallback_label}: {name}" if name else fallback_label
+            lines.append(
+                _concise_line(
+                    item,
+                    str(label),
+                    category=category,
+                    root_path=root_path,
+                )
+            )
 
     if not lines:
         return ""

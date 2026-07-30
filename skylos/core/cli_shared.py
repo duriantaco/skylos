@@ -42,6 +42,7 @@ _SAFE_ADDOPTS_VALUE_OPTIONS = frozenset(
         "--diff",
         "--severity",
         "--category",
+        "--select",
         "--file-filter",
         "--limit",
         "--provenance-base",

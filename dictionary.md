@@ -58,7 +58,8 @@ Rule IDs use a stable public prefix:
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
 | TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
 | Pretty output | `--format pretty`; compact file-grouped terminal output with severity rails, snippets, and copyable `file:line` locations. |
-| Concise output | `--format concise`; plain `file:line` output for editors, scripts, and agents. |
+| Concise output | `--format concise`; untruncated `file:line  RULE_ID  message` output for editors, scripts, and agents. |
+| Rule selection | `--select SKY-...`; exact, case-insensitive rule filtering across scan output formats with automatic analyzer-family enablement. |
 | Structured output | `--format json`, `--format llm`, or `--format github` for machines, LLM consumers, and GitHub annotations. |
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
 | MCP server | Integration surface for AI agents and coding assistants. |
@@ -71,7 +72,7 @@ Rule IDs use a stable public prefix:
 |:---|:---|:---|
 | Rich/default | `skylos .` | Existing full terminal report. |
 | Pretty | `skylos . --format pretty` | Human terminal triage with grouped findings and copyable locations. |
-| Concise | `skylos . --format concise` | Editors, test scripts, and agents that need plain `file:line` findings. |
+| Concise | `skylos . --format concise` | Editors, test scripts, and agents that need untruncated `file:line  RULE_ID  message` findings. |
 | JSON | `skylos . --format json` or `skylos . --json` | Structured machine output. |
 | LLM | `skylos . --format llm` or `skylos . --llm` | LLM-oriented structured report with code context. |
 | GitHub | `skylos . --format github` or `skylos . --github` | GitHub annotation output. |
