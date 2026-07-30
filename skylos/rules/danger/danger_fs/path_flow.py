@@ -9,6 +9,20 @@ SYMLINK_READ_RULE = "SKY-D325"
 ARCHIVE_EXTRACTION_RULE = "SKY-D326"
 OS_OPEN_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
 PYTEST_TMP_FIXTURE_NAMES = {"tmp_path", "tmpdir"}
+FIRST_PATH_PARAMETERS = {
+    "open": "file",
+    "os.open": "path",
+    "os.unlink": "path",
+    "os.remove": "path",
+    "os.mkdir": "path",
+    "os.rmdir": "path",
+    "os.makedirs": "name",
+    "shutil.copy": "src",
+    "shutil.copy2": "src",
+    "shutil.copytree": "src",
+    "shutil.move": "src",
+    "shutil.rmtree": "path",
+}
 
 
 def _qualified_name(node):
@@ -80,6 +94,15 @@ def _call_mode(node, default="r"):
     return mode or default
 
 
+def _bound_argument(node, position, keyword_name):
+    if len(node.args) > position:
+        return node.args[position]
+    for keyword in node.keywords or []:
+        if keyword.arg == keyword_name:
+            return keyword.value
+    return None
+
+
 def _mode_writes(mode):
     return any(char in mode for char in ("w", "a", "x", "+"))
 
@@ -136,9 +159,6 @@ def _is_pytest_fixture_function(fn: ast.AST):
 
 
 class _PathFlowChecker(TaintVisitor):
-    FILE_OPEN_FUNCS = {"open"}
-    OS_FILE_FUNCS = {"open", "unlink", "remove", "mkdir", "rmdir", "makedirs"}
-    SHUTIL_FUNCS = {"copy", "copy2", "copytree", "move", "rmtree"}
     PATHLIB_SINK_METHODS = {
         "open",
         "read_bytes",
@@ -470,9 +490,9 @@ class _PathFlowChecker(TaintVisitor):
         )
 
     def _os_open_uses_write_flags(self, node):
-        if len(node.args) < 2:
+        flags = _bound_argument(node, 1, "flags")
+        if flags is None:
             return False
-        flags = node.args[1]
         if _node_mentions(flags, OS_OPEN_WRITE_FLAGS):
             return True
         if isinstance(flags, ast.Name):
@@ -552,6 +572,9 @@ class _PathFlowChecker(TaintVisitor):
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
         archive_method = _archive_call_name(node)
+        first_path = None
+        if qn in FIRST_PATH_PARAMETERS:
+            first_path = _bound_argument(node, 0, FIRST_PATH_PARAMETERS[qn])
 
         if archive_method:
             self._flag_archive_extract_if_unsafe(node)
@@ -563,16 +586,8 @@ class _PathFlowChecker(TaintVisitor):
         ):
             self._flag_if_tainted_path(node, node.func.value)
 
-        if qn and qn in self.FILE_OPEN_FUNCS and node.args:
-            self._flag_if_tainted_path(node, node.args[0])
-
-        if qn and "." in qn:
-            mod, func = qn.split(".", 1)
-            if mod == "os" and func in self.OS_FILE_FUNCS and node.args:
-                self._flag_if_tainted_path(node, node.args[0])
-
-            if mod == "shutil" and func in self.SHUTIL_FUNCS and node.args:
-                self._flag_if_tainted_path(node, node.args[0])
+        if first_path is not None:
+            self._flag_if_tainted_path(node, first_path)
 
         if isinstance(node.func, ast.Attribute):
             if node.func.attr in self.PATHLIB_WRITE_METHODS:
@@ -586,21 +601,21 @@ class _PathFlowChecker(TaintVisitor):
                 else:
                     self._flag_symlink_read_if_unsafe(node, node.func.value)
 
-        if qn and qn in self.FILE_OPEN_FUNCS and node.args:
+        if qn == "open" and first_path is not None:
             mode = _call_mode(node)
             if _mode_writes(mode):
-                self._flag_symlink_write_if_unsafe(node, node.args[0])
+                self._flag_symlink_write_if_unsafe(node, first_path)
             else:
-                self._flag_symlink_read_if_unsafe(node, node.args[0])
+                self._flag_symlink_read_if_unsafe(node, first_path)
 
-        if qn == "os.open" and node.args:
+        if qn == "os.open" and first_path is not None:
             if not _node_mentions(node, {"O_NOFOLLOW"}) and not self._current_safety()[
                 "nofollow"
             ]:
                 if self._os_open_uses_write_flags(node):
-                    self._flag_symlink_write_if_unsafe(node, node.args[0])
+                    self._flag_symlink_write_if_unsafe(node, first_path)
                 else:
-                    self._flag_symlink_read_if_unsafe(node, node.args[0])
+                    self._flag_symlink_read_if_unsafe(node, first_path)
 
         self._record_safety_tokens(node)
         self.generic_visit(node)
