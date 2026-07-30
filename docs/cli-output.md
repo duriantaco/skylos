@@ -38,6 +38,10 @@ skylos . -a --format pretty --limit 20
 
 `--format pretty` groups findings by file, shows severity badges and rails, keeps `file:line` locations copyable, includes source snippets when available, and suppresses the large banner and follow-up prompts. It is intended for interactive terminal review, PR comments, and quick local triage.
 
+To keep this view compact, each finding title, evidence summary, and source
+snippet is capped at 140 characters. Use `--format concise` for the complete,
+untruncated finding message, or `--format json` for every structured field.
+
 Example shape:
 
 ```text
@@ -77,10 +81,18 @@ skylos . --format pretty --output skylos-report.txt
 
 ## Copyable And Machine Output
 
-Use `concise` when an editor, test script, or agent needs plain `file:line` findings and a non-zero exit code when findings exist:
+Use `concise` when an editor, test script, or agent needs plain
+`file:line  RULE_ID  message` findings and a non-zero exit code when findings
+exist. Concise messages are not truncated:
 
 ```bash
 skylos . --format concise
+```
+
+Example:
+
+```text
+src/app.py:42  SKY-L012  Call to 'security.require_auth()' resolves to no definition on local modules.
 ```
 
 Use `json`, `llm`, or `github` for structured consumers:
@@ -98,6 +110,25 @@ skylos . --json
 skylos . --llm
 skylos . --github
 ```
+
+## Select Exact Rules
+
+Use `--select` to report only exact rule IDs. Matching is case-insensitive, and
+the required analyzer family is enabled automatically, so selecting an AI
+defect or security rule does not also require `--ai-defects` or `--danger`:
+
+```bash
+skylos . --select SKY-L012 --format concise
+skylos . --select SKY-D211,SKY-D215 --format pretty
+skylos . --select SKY-L012 --select SKY-D225 --format json
+```
+
+`--select` applies to rich, pretty, concise, JSON, LLM, GitHub, and SARIF
+reports. It filters reported findings rather than promising that shared
+analysis phases will not execute. A selected report omits the aggregate grade,
+because that grade describes the unfiltered scan. Analysis errors remain
+visible regardless of selection and still exit with code 2, preventing an
+incomplete scan from appearing clean.
 
 ## Selectable Terminal UI
 

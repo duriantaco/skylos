@@ -20,6 +20,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     SpinnerColumn = cli_module.SpinnerColumn
     TextColumn = cli_module.TextColumn
     _apply_display_filters = cli_module._apply_display_filters
+    _apply_rule_selection = cli_module._apply_rule_selection
     _attach_upload_project_context = cli_module._attach_upload_project_context
     _build_main_parser = cli_module._build_main_parser
     _build_main_scan_context = cli_module._build_main_scan_context
@@ -287,6 +288,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             else:
                 result["unused_fixtures"] = []
                 result["unused_fixtures_counts"] = {}
+
+        if getattr(args, "select", None):
+            result = _apply_rule_selection(result, args.select)
+            result_json = json.dumps(result)
 
         if args.verify and not machine_output:
             try:
