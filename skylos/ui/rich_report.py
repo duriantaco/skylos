@@ -523,6 +523,7 @@ def _render_result_tree(console: Console, result, root_path=None):
     _add_unused(result.get("unused_parameters"), "parameter")
 
     _add_findings(result.get("danger"), "security", default_sev="high")
+    _add_findings(result.get("ai_defects"), "AI defect", default_sev="medium")
     _add_findings(result.get("secrets"), "secret", default_sev="high")
     _add_findings(result.get("quality"), "quality", default_sev="medium")
     _add_findings(
@@ -599,6 +600,58 @@ def _verification_label(verdict):
     if verdict == "UNKNOWN":
         return "[warn]UNKNOWN[/warn]"
     return "-"
+
+
+def _render_ai_defects(console: Console, root_path, limit, items):
+    if not items:
+        return
+
+    console.rule("[bold magenta]AI Defects")
+
+    table = Table(expand=True)
+    table.add_column("#", style="muted", width=3)
+    table.add_column("Defect", style="yellow", width=18)
+    table.add_column("Severity", width=8)
+    table.add_column("Message", overflow="fold")
+    table.add_column("Location", style="muted", width=18, overflow="fold")
+
+    show, overflow = _display_cap(items, limit)
+    for i, defect in enumerate(show, 1):
+        rule_id = str(defect.get("rule_id") or "UNKNOWN")
+        defect_name = str(_display_rule_name(rule_id))
+        defect_cell = f"{escape(defect_name)}\n[dim]{escape(rule_id)}[/dim]"
+        severity = str(defect.get("severity") or "UNKNOWN").title()
+        message = str(defect.get("message") or "AI defect detected")
+        short = _shorten_path(defect.get("file"), root_path)
+        location = f"{short}:{defect.get('line', '?')}"
+        symbol = (
+            defect.get("symbol")
+            or defect.get("name")
+            or defect.get("simple_name")
+            or "<module>"
+        )
+        message_cell = escape(message)
+        if symbol != "<module>":
+            message_cell += f"\n[muted]Symbol: {escape(str(symbol))}[/muted]"
+        table.add_row(
+            str(i),
+            defect_cell,
+            escape(severity),
+            message_cell,
+            escape(location),
+        )
+
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+        )
+    console.print(
+        "[muted]Defect — the evidence-backed AI-code failure mode and rule ID.[/muted]\n"
+        "[muted]Severity — impact level: Critical > High > Medium > Low.[/muted]\n"
+        "[muted]Message — the defect evidence and affected symbol, when available.[/muted]\n"
+        + _RESULTS_DOCS_LINK
+    )
 
 
 def _render_danger(console: Console, root_path, limit, items):
@@ -742,6 +795,7 @@ def render_results(
                 ),
                 _results_pill("Unused vars", len(result.get("unused_variables", []))),
                 _results_pill("Unused classes", len(result.get("unused_classes", []))),
+                _results_pill("AI defects", len(result.get("ai_defects", []) or [])),
                 _results_pill(
                     "Quality", len(result.get("quality", []) or []), bad_style="warn"
                 ),
@@ -828,6 +882,9 @@ def render_results(
         )
         _render_secrets(console, root_path, limit, result.get("secrets", []) or [])
         _render_danger(console, root_path, limit, result.get("danger", []) or [])
+        _render_ai_defects(
+            console, root_path, limit, result.get("ai_defects", []) or []
+        )
         _render_quality(console, limit, result.get("quality", []) or [])
         _render_circular_deps(
             console, limit, result.get("circular_dependencies", []) or []

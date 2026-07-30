@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+from io import StringIO
+
 import pytest
 import json
 import logging
 from unittest.mock import Mock, patch
 import sys
 import types
+from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree as RichTree
 import skylos.cli as cli
@@ -759,6 +762,137 @@ def test_llm_report_code_block_handles_unreadable_file(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.pathlib.Path, "read_text", fail_read_text)
 
     assert cli._llm_report_code_block(str(src), 1, tmp_path, {}) == ""
+
+
+def test_render_results_includes_ai_defect_summary_and_table():
+    console = Mock()
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "severity": "CRITICAL",
+                "message": "Call to a missing local helper",
+                "file": "/root/app/views.py",
+                "line": 5,
+                "name": "security.require_auth",
+            }
+        ],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    printed = "\n".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "AI defects: 1" in printed
+    console.rule.assert_any_call("[bold magenta]AI Defects")
+
+    tables = [
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], Table)
+    ]
+    ai_table = next(
+        table
+        for table in tables
+        if any(col.header == "Defect" for col in table.columns)
+    )
+    columns = {column.header: list(column._cells) for column in ai_table.columns}
+
+    assert "SKY-L012" in columns["Defect"][0]
+    assert columns["Severity"] == ["Critical"]
+    assert "Call to a missing local helper" in columns["Message"][0]
+    assert "security.require_auth" in columns["Message"][0]
+    assert columns["Location"] == ["/root/app/views.py:5"]
+
+
+def test_render_results_ai_defect_message_is_visible_at_narrow_terminal_width():
+    output = StringIO()
+    console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=80,
+        theme=cli._skylos_console_theme(),
+    )
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "severity": "CRITICAL",
+                "message": "Call to a missing local helper",
+                "file": "/root/app/views.py",
+                "line": 5,
+                "name": "security.require_auth",
+            }
+        ],
+    }
+
+    cli.render_results(
+        console,
+        result,
+        tree=False,
+        root_path="/root",
+        copy_badge=False,
+    )
+
+    rendered = output.getvalue()
+    assert "AI Defects" in rendered
+    assert "Call to a missing" in rendered
+    assert "local helper" in rendered
+    assert "security.require_" in rendered
+
+
+def test_render_results_tree_mode_includes_ai_defects():
+    console = Mock()
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+        "ai_defects": [
+            {
+                "rule_id": "SKY-A103",
+                "severity": "HIGH",
+                "message": "Workflow permissions expanded",
+                "file": "/root/.github/workflows/ci.yml",
+                "line": 9,
+            }
+        ],
+    }
+
+    cli.render_results(console, result, tree=True, root_path="/root")
+
+    tree = next(
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], RichTree)
+    )
+    finding_labels = [
+        str(finding.label)
+        for file_node in tree.children
+        for finding in file_node.children
+    ]
+
+    assert any(
+        "SKY-A103" in label and "Workflow permissions expanded" in label
+        for label in finding_labels
+    )
 
 
 def test_render_results_unused_table_includes_confidence_column_and_formats():
