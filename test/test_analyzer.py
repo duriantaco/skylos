@@ -725,6 +725,68 @@ class TestAnalyze:
         assert "PLAIN_UNUSED" in unused_imports
         assert "USED_FOR_COMPAT" in suppressed
 
+    def test_rule_specific_inline_ignore_keeps_other_findings_on_same_line(
+        self, tmp_path
+    ):
+        source = """
+from pathlib import Path
+
+def unsuppressed(destination: str, filename: str) -> None:
+    destination_path = Path(destination)
+    (destination_path / filename).write_text("payload", encoding="utf-8")
+
+def ignore_path_traversal(destination: str, filename: str) -> None:
+    destination_path = Path(destination)
+    (destination_path / filename).write_text(  # skylos: ignore[SKY-D215]
+        "payload",
+        encoding="utf-8",
+    )
+
+def ignore_symlink_write(destination: str, filename: str) -> None:
+    destination_path = Path(destination)
+    (destination_path / filename).write_text(  # skylos: ignore[SKY-D324]
+        "payload",
+        encoding="utf-8",
+    )
+""".strip()
+        (tmp_path / "reproduce.py").write_text(source, encoding="utf-8")
+        write_lines = [
+            line_number
+            for line_number, line in enumerate(source.splitlines(), start=1)
+            if ".write_text(" in line
+        ]
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_danger=True,
+                grep_verify=False,
+                trace_file=False,
+            )
+        )
+        relevant_findings = {
+            (finding["line"], finding["rule_id"])
+            for finding in result["danger"]
+            if finding.get("rule_id") in {"SKY-D215", "SKY-D324"}
+        }
+        relevant_suppressed = {
+            (finding["line"], finding["rule_id"])
+            for finding in result["suppressed"]
+            if finding.get("rule_id") in {"SKY-D215", "SKY-D324"}
+        }
+
+        assert relevant_findings == {
+            (write_lines[0], "SKY-D215"),
+            (write_lines[0], "SKY-D324"),
+            (write_lines[1], "SKY-D324"),
+            (write_lines[2], "SKY-D215"),
+        }
+        assert relevant_suppressed == {
+            (write_lines[1], "SKY-D215"),
+            (write_lines[2], "SKY-D324"),
+        }
+
     def test_noqa_f401_on_multiline_import_statement_suppresses_aliases(
         self, tmp_path
     ):
