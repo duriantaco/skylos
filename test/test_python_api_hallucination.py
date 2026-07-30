@@ -106,6 +106,45 @@ def test_python_local_api_check_passes_existing_direct_import(tmp_path):
     assert check["verified_references"] == 1
 
 
+def test_python_local_api_check_passes_explicit_dotted_submodule_import(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "sample_package/child.py": "VALUE = 42\n",
+            "reproduce.py": (
+                "import sample_package.child\n\n"
+                "child_module = sample_package.child\n"
+                "assert child_module.VALUE == 42\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 1
+
+
+def test_python_local_api_check_flags_unimported_submodule_attribute(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "sample_package/child.py": "VALUE = 42\n",
+            "reproduce.py": (
+                "import sample_package\n\n"
+                "child_module = sample_package.child\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["child"]
+    assert findings[0]["metadata"]["reference_kind"] == "module_member"
+    assert check["outcome"] == "fail"
+
+
 def test_python_local_api_check_passes_pep695_type_alias_import(tmp_path):
     if not hasattr(ast, "TypeAlias"):
         return

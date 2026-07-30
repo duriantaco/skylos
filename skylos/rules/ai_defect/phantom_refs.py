@@ -18,6 +18,7 @@ class _ScopeInfo:
     shadowed_names: set[str]
     bound_names: set[str]
     local_imports: dict[str, list[tuple[int, str]]]
+    imported_module_paths: dict[str, list[tuple[int, str]]]
 
 
 def scan_repo_phantom_security_references(
@@ -460,6 +461,7 @@ def _collect_scope_info(scope_node, current_module, local_modules):
     shadowed = set()
     bound = set()
     local_imports = defaultdict(list)
+    imported_module_paths = defaultdict(list)
 
     if isinstance(scope_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         arg_names = _extract_args_names(scope_node.args)
@@ -481,6 +483,14 @@ def _collect_scope_info(scope_node, current_module, local_modules):
                     full_name = alias.name.split(".", 1)[0]
                 if full_name in local_modules:
                     local_imports[bound_name].append((node.lineno, full_name))
+                if (
+                    not alias.asname
+                    and "." in alias.name
+                    and alias.name in local_modules
+                ):
+                    imported_module_paths[bound_name].append(
+                        (node.lineno, alias.name)
+                    )
 
         def visit_ImportFrom(self, node):
             base = _resolve_import_from_base(current_module, node)
@@ -583,6 +593,9 @@ def _collect_scope_info(scope_node, current_module, local_modules):
         shadowed_names=shadowed,
         bound_names=bound,
         local_imports={k: sorted(v) for k, v in local_imports.items()},
+        imported_module_paths={
+            k: sorted(v) for k, v in imported_module_paths.items()
+        },
     )
 
 
@@ -608,6 +621,15 @@ def _resolve_local_module_member(
         scope_infos=scope_infos,
     )
     if not base_module:
+        return None
+
+    if _is_explicitly_imported_module_reference(
+        chain=chain,
+        node=node,
+        tree=tree,
+        parent_map=parent_map,
+        scope_infos=scope_infos,
+    ):
         return None
 
     current_module = base_module
@@ -649,6 +671,30 @@ def _resolve_visible_alias(base_name, node, tree, parent_map, scope_infos):
         visible_module = matching[-1]
 
     return visible_module
+
+
+def _is_explicitly_imported_module_reference(
+    chain,
+    node,
+    tree,
+    parent_map,
+    scope_infos,
+):
+    expression = ".".join(chain)
+    base_name = chain[0]
+
+    for scope in _enclosing_scopes(node, tree, parent_map):
+        info = scope_infos.get(scope)
+        if not info:
+            continue
+        imports = info.imported_module_paths.get(base_name, [])
+        for line, module_name in imports:
+            if line > node.lineno:
+                continue
+            if module_name == expression or module_name.startswith(f"{expression}."):
+                return True
+
+    return False
 
 
 def _enclosing_scopes(node, tree, parent_map):
