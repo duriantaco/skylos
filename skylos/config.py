@@ -763,6 +763,11 @@ def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
 
 
 _NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*([^#]+))?", re.IGNORECASE)
+_SKYLOS_IGNORE_RE = re.compile(
+    r"#\s*skylos\s*:\s*ignore\b(?:\s*\[([^\]]*)\]|(?!\s*\[))",
+    re.IGNORECASE,
+)
+_SKYLOS_RULE_ID_RE = re.compile(r"\bSKY-[A-Z][A-Z0-9-]*\b", re.IGNORECASE)
 
 
 def get_noqa_codes_by_line(source) -> dict[int, set[str]]:
@@ -782,6 +787,23 @@ def get_noqa_codes_by_line(source) -> dict[int, set[str]]:
         if codes:
             codes_by_line[i] = codes
     return codes_by_line
+
+
+def get_skylos_ignore_rules_by_line(source) -> dict[int, set[str]]:
+    rules_by_line: dict[int, set[str]] = {}
+    for i, line in enumerate(source.splitlines(), start=1):
+        match = _SKYLOS_IGNORE_RE.search(line)
+        if not match or match.group(1) is None:
+            continue
+        rules = {
+            rule_id.upper() for rule_id in _SKYLOS_RULE_ID_RE.findall(match.group(1))
+        }
+        if not rules:
+            continue
+        rules_by_line.setdefault(i, set()).update(rules)
+        if line.strip().startswith("@"):
+            rules_by_line.setdefault(i + 1, set()).update(rules)
+    return rules_by_line
 
 
 def _collect_ignore_lines(source, *, include_code_specific_noqa: bool) -> set[int]:
@@ -808,17 +830,17 @@ def _collect_ignore_lines(source, *, include_code_specific_noqa: bool) -> set[in
             ignore_lines.add(i)
             continue
 
-        if any(
-            marker in line_lower
-            for marker in [
-                "# skylos: ignore",
-                "# skylos:ignore",
-                "#skylos: ignore",
-                "#skylos:ignore",
-                "# noqa: skylos",
-                "pragma: no skylos",
-            ]
-        ):
+        skylos_match = _SKYLOS_IGNORE_RE.search(line)
+        if skylos_match:
+            if skylos_match.group(1) is not None:
+                continue
+            ignore_lines.add(i)
+            stripped = line.strip()
+            if stripped.startswith("@"):
+                ignore_lines.add(i + 1)
+            continue
+
+        if "# noqa: skylos" in line_lower or "pragma: no skylos" in line_lower:
             ignore_lines.add(i)
             stripped = line.strip()
             if stripped.startswith("@"):

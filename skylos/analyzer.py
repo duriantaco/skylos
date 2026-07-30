@@ -42,7 +42,12 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 from skylos.rules.danger.calls import DangerousCallsRule
 
 
-from skylos.config import get_noqa_codes_by_line, get_skylos_ignore_lines, load_config
+from skylos.config import (
+    get_noqa_codes_by_line,
+    get_skylos_ignore_lines,
+    get_skylos_ignore_rules_by_line,
+    load_config,
+)
 from skylos.core.file_discovery import (
     discover_source_files,
     find_git_root,
@@ -148,11 +153,29 @@ def _python_verification_surface_root(surface_root):
     return root
 
 
+def _finding_is_inline_ignored(
+    finding,
+    ignore_lines,
+    ignore_rules_by_line,
+):
+    line = finding.get("line")
+    if ignore_lines and line in ignore_lines:
+        return True
+
+    rule_id = str(finding.get("rule_id") or "").upper()
+    return bool(
+        rule_id
+        and ignore_rules_by_line
+        and rule_id in ignore_rules_by_line.get(line, set())
+    )
+
+
 def _extend_unsuppressed_danger_findings(
     findings,
     *,
     project_ignore,
     per_file_ignore_lines,
+    per_file_ignore_rules,
     all_dangers,
     all_suppressed,
 ):
@@ -162,7 +185,8 @@ def _extend_unsuppressed_danger_findings(
 
         file_key = str(finding.get("file", ""))
         f_ignore = per_file_ignore_lines.get(file_key, set())
-        if finding.get("line") in f_ignore:
+        f_ignore_rules = per_file_ignore_rules.get(file_key, {})
+        if _finding_is_inline_ignored(finding, f_ignore, f_ignore_rules):
             suppressed = dict(finding)
             suppressed["category"] = "danger"
             suppressed["reason"] = "inline ignore comment"
@@ -177,6 +201,7 @@ def _extend_unsuppressed_ai_defect_findings(
     *,
     project_ignore,
     per_file_ignore_lines,
+    per_file_ignore_rules,
     all_ai_defects,
     all_suppressed,
 ):
@@ -186,7 +211,8 @@ def _extend_unsuppressed_ai_defect_findings(
 
         file_key = str(finding.get("file", ""))
         f_ignore = per_file_ignore_lines.get(file_key, set())
-        if finding.get("line") in f_ignore:
+        f_ignore_rules = per_file_ignore_rules.get(file_key, {})
+        if _finding_is_inline_ignored(finding, f_ignore, f_ignore_rules):
             suppressed = dict(finding)
             suppressed["category"] = "ai_defect"
             suppressed["reason"] = "inline ignore comment"
@@ -202,6 +228,7 @@ def _append_ai_verification_result(
     *,
     project_ignore,
     per_file_ignore_lines,
+    per_file_ignore_rules,
     all_ai_defects,
     all_suppressed,
     verification_checks,
@@ -214,6 +241,7 @@ def _append_ai_verification_result(
         findings,
         project_ignore=project_ignore,
         per_file_ignore_lines=per_file_ignore_lines,
+        per_file_ignore_rules=per_file_ignore_rules,
         all_ai_defects=all_ai_defects,
         all_suppressed=all_suppressed,
     )
@@ -287,6 +315,7 @@ def _scan_ai_defect_diff_signals(
     *,
     project_ignore,
     per_file_ignore_lines,
+    per_file_ignore_rules,
     all_ai_defects,
     all_suppressed,
 ):
@@ -308,6 +337,7 @@ def _scan_ai_defect_diff_signals(
                 detect_ci_permission_expansion(diff_text, rel_file),
                 project_ignore=project_ignore,
                 per_file_ignore_lines=per_file_ignore_lines,
+                per_file_ignore_rules=per_file_ignore_rules,
                 all_ai_defects=all_ai_defects,
                 all_suppressed=all_suppressed,
             )
@@ -317,6 +347,7 @@ def _scan_ai_defect_diff_signals(
                 detect_cli_surface_drift(diff_text, rel_file),
                 project_ignore=project_ignore,
                 per_file_ignore_lines=per_file_ignore_lines,
+                per_file_ignore_rules=per_file_ignore_rules,
                 all_ai_defects=all_ai_defects,
                 all_suppressed=all_suppressed,
             )
@@ -2366,6 +2397,7 @@ class Skylos:
         architecture_main_guard_modules = set()
 
         per_file_ignore_lines = {}
+        per_file_ignore_rules = {}
         pattern_trackers = {}
         all_raw_imports = {}
         ts_raw_imports = {}
@@ -2451,6 +2483,7 @@ class Skylos:
                 else:
                     file_suppressed = []
 
+                file_ignore_rules = out[26] if len(out) > 26 else {}
                 file_inferred_types = out[15] if len(out) > 15 else {}
                 file_instance_attr_types = out[16] if len(out) > 16 else {}
                 file_used_attr_names = out[17] if len(out) > 17 else set()
@@ -2480,6 +2513,8 @@ class Skylos:
 
                 if file_ignore_lines:
                     per_file_ignore_lines[str(file)] = file_ignore_lines
+                if file_ignore_rules:
+                    per_file_ignore_rules[str(file)] = file_ignore_rules
                 if file_suppressed:
                     all_suppressed.extend(file_suppressed)
 
@@ -2571,9 +2606,16 @@ class Skylos:
                             findings = list(_secrets_scan_ctx(ctx))
                             if findings:
                                 f_ignore = per_file_ignore_lines.get(str(file), set())
-                                if f_ignore:
+                                f_ignore_rules = per_file_ignore_rules.get(
+                                    str(file), {}
+                                )
+                                if f_ignore or f_ignore_rules:
                                     for sf in findings:
-                                        if sf.get("line") in f_ignore:
+                                        if _finding_is_inline_ignored(
+                                            sf,
+                                            f_ignore,
+                                            f_ignore_rules,
+                                        ):
                                             all_suppressed.append(
                                                 {
                                                     **sf,
@@ -2584,7 +2626,11 @@ class Skylos:
                                     findings = [
                                         sf
                                         for sf in findings
-                                        if sf.get("line") not in f_ignore
+                                        if not _finding_is_inline_ignored(
+                                            sf,
+                                            f_ignore,
+                                            f_ignore_rules,
+                                        )
                                     ]
                                 all_secrets.extend(findings)
                         except Exception:
@@ -3082,6 +3128,7 @@ class Skylos:
                             dep_findings,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
@@ -3106,6 +3153,7 @@ class Skylos:
                             api_findings,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
@@ -3125,6 +3173,7 @@ class Skylos:
                         manifest_findings,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
+                        per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
@@ -3191,6 +3240,7 @@ class Skylos:
                             python_check,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
@@ -3233,6 +3283,7 @@ class Skylos:
                             linter.findings,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
@@ -3267,6 +3318,7 @@ class Skylos:
                             go_check,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
@@ -3308,6 +3360,7 @@ class Skylos:
                             java_check,
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
+                            per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                             verification_checks=self._ai_verification_checks,
@@ -3370,6 +3423,7 @@ class Skylos:
                                 assertion_findings,
                                 project_ignore=project_ignore,
                                 per_file_ignore_lines=per_file_ignore_lines,
+                                per_file_ignore_rules=per_file_ignore_rules,
                                 all_ai_defects=all_ai_defects,
                                 all_suppressed=all_suppressed,
                             )
@@ -3401,6 +3455,7 @@ class Skylos:
                         test_impact_findings,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
+                        per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
@@ -3418,6 +3473,7 @@ class Skylos:
                         changed_files,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
+                        per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
@@ -3535,6 +3591,7 @@ class Skylos:
                         js_check,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
+                        per_file_ignore_rules=per_file_ignore_rules,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                         verification_checks=self._ai_verification_checks,
@@ -3777,6 +3834,7 @@ def proc_file(
     try:
         source = Path(file).read_text(encoding="utf-8")
         ignore_lines = get_skylos_ignore_lines(source)
+        ignore_rules_by_line = get_skylos_ignore_rules_by_line(source)
         noqa_codes_by_line = get_noqa_codes_by_line(source)
 
         tree = ast.parse(source, filename=str(file))
@@ -3855,14 +3913,42 @@ def proc_file(
                 checker.visit(tree)
 
         suppressed_findings = []
-        if ignore_lines:
-            sup_q = [f for f in quality_findings if f.get("line") in ignore_lines]
-            sup_d = [f for f in danger_findings if f.get("line") in ignore_lines]
+        if ignore_lines or ignore_rules_by_line:
+            sup_q = [
+                f
+                for f in quality_findings
+                if _finding_is_inline_ignored(
+                    f,
+                    ignore_lines,
+                    ignore_rules_by_line,
+                )
+            ]
+            sup_d = [
+                f
+                for f in danger_findings
+                if _finding_is_inline_ignored(
+                    f,
+                    ignore_lines,
+                    ignore_rules_by_line,
+                )
+            ]
             quality_findings = [
-                f for f in quality_findings if f.get("line") not in ignore_lines
+                f
+                for f in quality_findings
+                if not _finding_is_inline_ignored(
+                    f,
+                    ignore_lines,
+                    ignore_rules_by_line,
+                )
             ]
             danger_findings = [
-                f for f in danger_findings if f.get("line") not in ignore_lines
+                f
+                for f in danger_findings
+                if not _finding_is_inline_ignored(
+                    f,
+                    ignore_lines,
+                    ignore_rules_by_line,
+                )
             ]
             for f in sup_q:
                 suppressed_findings.append(
@@ -3973,6 +4059,7 @@ def proc_file(
             architecture_metrics,
             getattr(v, "top_level_refs", set()),
             None,
+            ignore_rules_by_line,
         )
 
     except Exception as e:
@@ -4009,6 +4096,7 @@ def proc_file(
             None,
             set(),
             _analysis_error_payload(file, e),
+            {},
         )
 
 

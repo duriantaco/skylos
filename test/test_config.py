@@ -13,6 +13,7 @@ from skylos.config import (
     get_all_ignore_lines,
     get_noqa_codes_by_line,
     get_skylos_ignore_lines,
+    get_skylos_ignore_rules_by_line,
     suggest_pattern,
 )
 from skylos.core.contribution_settings import load_contribution_settings
@@ -871,6 +872,45 @@ lower_confidence = "boom"
         self.assertNotIn(1, ignore_lines)
         self.assertIn(2, ignore_lines)
         self.assertIn(3, ignore_lines)
+
+    def test_rule_specific_skylos_ignores_are_not_blanket_lines(self):
+        source = "\n".join(
+            [
+                "first()  # skylos: ignore[SKY-D215]",
+                "second()  # SKYLOS : IGNORE [sky-d324, SKY-Q502]",
+                "third()  # skylos: ignore[]",
+                "fourth()  # skylos: ignore[SKY-D215",
+                "fifth()  # skylos: ignore",
+            ]
+        )
+
+        ignore_lines = get_skylos_ignore_lines(source)
+        all_ignore_lines = get_all_ignore_lines(source)
+        rules_by_line = get_skylos_ignore_rules_by_line(source)
+
+        self.assertEqual(ignore_lines, {5})
+        self.assertEqual(all_ignore_lines, {5})
+        self.assertEqual(
+            rules_by_line,
+            {
+                1: {"SKY-D215"},
+                2: {"SKY-D324", "SKY-Q502"},
+            },
+        )
+
+    def test_rule_specific_skylos_ignore_on_decorator_marks_definition_line(self):
+        source = "\n".join(
+            [
+                "@app.get('/x')  # skylos: ignore[SKY-D215]",
+                "def x():",
+                "    return 1",
+            ]
+        )
+
+        rules_by_line = get_skylos_ignore_rules_by_line(source)
+
+        self.assertEqual(rules_by_line[1], {"SKY-D215"})
+        self.assertEqual(rules_by_line[2], {"SKY-D215"})
 
     def test_get_noqa_codes_by_line_parses_specific_and_blanket(self):
         source = "\n".join(
