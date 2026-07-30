@@ -1,4 +1,9 @@
 import ast
+import json
+
+import pytest
+
+from skylos.analyzer import analyze
 from skylos.rules.quality.cohesion import LCOMRule, analyze_cohesion, _UnionFind
 
 
@@ -8,6 +13,19 @@ def _parse(code: str) -> ast.ClassDef:
         if isinstance(node, ast.ClassDef):
             return node
     raise ValueError("No class found")
+
+
+def _run_lcom_rule(code: str, **rule_kwargs) -> list[dict]:
+    tree = ast.parse(code)
+    rule = LCOMRule(**rule_kwargs)
+    context = {"filename": "test.py"}
+    rule.visit_node(tree, context)
+
+    findings = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            findings.extend(rule.visit_node(node, context) or [])
+    return findings
 
 
 class TestUnionFind:
@@ -279,3 +297,115 @@ class Config:
         node = _parse(code)
         result = rule.visit_node(node, {"filename": "test.py"})
         assert result is None
+
+    @pytest.mark.parametrize(
+        ("import_statement", "protocol_base"),
+        [
+            ("from typing import Protocol", "Protocol"),
+            ("import typing", "typing.Protocol"),
+            (
+                "from typing_extensions import Protocol as Interface",
+                "Interface",
+            ),
+            (
+                "import typing_extensions as typing_ext",
+                "typing_ext.Protocol",
+            ),
+            (
+                "from typing import Protocol",
+                "Protocol[int]",
+            ),
+        ],
+    )
+    def test_protocol_classes_exempted(self, import_statement, protocol_base):
+        code = f"""
+{import_statement}
+
+class ParentCall({protocol_base}):
+    def operation1(self) -> int: ...
+    def operation2(self) -> int: ...
+    def operation3(self) -> int: ...
+"""
+        assert _run_lcom_rule(code) == []
+
+    def test_runtime_checkable_protocol_exempted(self):
+        code = """
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class ParentCall(Protocol):
+    def operation1(self) -> int: ...
+    def operation2(self) -> int: ...
+    def operation3(self) -> int: ...
+    def operation4(self) -> int: ...
+    def operation5(self) -> int: ...
+    def operation6(self) -> int: ...
+"""
+        assert _run_lcom_rule(code) == []
+
+    def test_analyzer_exempts_runtime_checkable_protocol(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        (tmp_path / "skylos_cohesion.py").write_text(
+            "from typing import Protocol, runtime_checkable\n"
+            "\n"
+            "@runtime_checkable\n"
+            "class ParentCall(Protocol):\n"
+            "    def operation1(self) -> int: ...\n"
+            "    def operation2(self) -> int: ...\n"
+            "    def operation3(self) -> int: ...\n"
+            "    def operation4(self) -> int: ...\n"
+            "    def operation5(self) -> int: ...\n"
+            "    def operation6(self) -> int: ...\n",
+            encoding="utf-8",
+        )
+
+        payload = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+        findings = [
+            finding
+            for finding in payload.get("quality", [])
+            if finding.get("rule_id") == "SKY-Q702"
+        ]
+
+        assert findings == []
+
+    def test_unrelated_protocol_named_base_not_exempted(self):
+        code = """
+class Protocol:
+    pass
+
+class ParentCall(Protocol):
+    def operation1(self):
+        self.a = 1
+
+    def operation2(self):
+        self.b = 2
+
+    def operation3(self):
+        self.c = 3
+"""
+        findings = _run_lcom_rule(code)
+        assert [finding["name"] for finding in findings] == ["ParentCall"]
+
+    def test_protocol_subclass_not_exempted(self):
+        code = """
+from typing import Protocol
+
+class ParentCall(Protocol):
+    def operation1(self) -> int: ...
+    def operation2(self) -> int: ...
+    def operation3(self) -> int: ...
+
+class ConcreteParentCall(ParentCall):
+    def operation1(self):
+        self.a = 1
+
+    def operation2(self):
+        self.b = 2
+
+    def operation3(self):
+        self.c = 3
+"""
+        findings = _run_lcom_rule(code)
+        assert [finding["name"] for finding in findings] == ["ConcreteParentCall"]

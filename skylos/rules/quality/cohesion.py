@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._protocols import protocol_class_ids
 
 DATACLASS_DECORATORS = frozenset(
     {
@@ -354,11 +355,17 @@ class LCOMRule(SkylosRule):
     def __init__(self, low_threshold=2, high_threshold=4):
         self.low_threshold = low_threshold
         self.high_threshold = high_threshold
+        self._protocol_class_ids: set[int] = set()
 
     def visit_node(
         self, node: ast.AST, context: dict[str, Any]
     ) -> Optional[list[dict[str, Any]]]:
+        if isinstance(node, ast.Module):
+            self._protocol_class_ids = protocol_class_ids(node)
+            return None
         if not isinstance(node, ast.ClassDef):
+            return None
+        if id(node) in self._protocol_class_ids:
             return None
 
         result = analyze_cohesion(node)

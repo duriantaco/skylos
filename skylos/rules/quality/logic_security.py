@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._protocols import protocol_method_ids
 from skylos.rules.quality.logic_foundation import _string_literal_value
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
@@ -338,67 +339,6 @@ class DisabledSecurityRule(SkylosRule):
         return findings if findings else None
 
 
-_PROTOCOL_MODULES = {"typing", "typing_extensions"}
-
-
-def _protocol_import_bindings(module: ast.Module) -> tuple[set[str], set[str]]:
-    protocol_names: set[str] = set()
-    protocol_modules: set[str] = set()
-
-    for stmt in module.body:
-        if isinstance(stmt, ast.ImportFrom) and stmt.module in _PROTOCOL_MODULES:
-            for imported in stmt.names:
-                if imported.name == "Protocol":
-                    protocol_names.add(imported.asname or imported.name)
-        elif isinstance(stmt, ast.Import):
-            for imported in stmt.names:
-                if imported.name in _PROTOCOL_MODULES:
-                    protocol_modules.add(imported.asname or imported.name)
-
-    return protocol_names, protocol_modules
-
-
-def _is_protocol_base(
-    base: ast.expr,
-    protocol_names: set[str],
-    protocol_modules: set[str],
-) -> bool:
-    if isinstance(base, ast.Subscript):
-        base = base.value
-    if isinstance(base, ast.Name):
-        return base.id in protocol_names
-    return (
-        isinstance(base, ast.Attribute)
-        and base.attr == "Protocol"
-        and isinstance(base.value, ast.Name)
-        and base.value.id in protocol_modules
-    )
-
-
-def _protocol_method_ids(module: ast.Module) -> set[int]:
-    protocol_names, protocol_modules = _protocol_import_bindings(module)
-    if not protocol_names and not protocol_modules:
-        return set()
-
-    method_ids: set[int] = set()
-
-    for candidate in ast.walk(module):
-        if not isinstance(candidate, ast.ClassDef):
-            continue
-        if not any(
-            _is_protocol_base(base, protocol_names, protocol_modules)
-            for base in candidate.bases
-        ):
-            continue
-        method_ids.update(
-            id(stmt)
-            for stmt in candidate.body
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-        )
-
-    return method_ids
-
-
 class UnfinishedGenerationRule(SkylosRule):
     rule_id = "SKY-L026"
     name = "Unfinished Generation"
@@ -408,7 +348,7 @@ class UnfinishedGenerationRule(SkylosRule):
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
-            self._protocol_method_ids = _protocol_method_ids(node)
+            self._protocol_method_ids = protocol_method_ids(node)
             return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None

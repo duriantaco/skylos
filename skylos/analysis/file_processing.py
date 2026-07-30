@@ -124,7 +124,7 @@ LINTER_RULE_NODE_TYPES = {
     GodFileRule: (ast.Module,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
-    LCOMRule: (ast.ClassDef,),
+    LCOMRule: (ast.Module, ast.ClassDef),
     UnreachableCodeRule: (
         ast.Module,
         ast.FunctionDef,
