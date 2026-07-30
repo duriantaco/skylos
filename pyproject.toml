@@ -103,8 +103,14 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 
 [project.optional-dependencies]
 llm = ["litellm>=1.84.0,<1.85.0", "aiohttp>=3.14.0"]
+lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2"]
-all = ["pytest>=9.0.2", "litellm>=1.84.0,<1.85.0", "aiohttp>=3.14.0"]
+all = [
+    "pytest>=9.0.2",
+    "litellm>=1.84.0,<1.85.0",
+    "aiohttp>=3.14.0",
+    "ruff>=0.15.0",
+]
 
 [project.scripts]
 skylos = "skylos.cli:main"

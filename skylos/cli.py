@@ -1467,6 +1467,12 @@ def _run_clean_command(argv):
     return run_clean_command(argv)
 
 
+def _run_lint_command(argv):
+    from skylos.commands.lint_cmd import run_lint_command
+
+    return run_lint_command(argv)
+
+
 def _run_cache_command(argv):
     from skylos.commands.cache_cmd import run_cache_command
 

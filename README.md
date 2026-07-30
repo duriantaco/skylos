@@ -136,6 +136,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Deterministic cleanup preview | `skylos clean . --dry-run --types import,function --confidence 80` | Shows safe import/function removals before writing; add `--apply` to edit files | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
+| Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -333,6 +334,9 @@ pip install skylos
 # LLM-powered agent workflows
 pip install "skylos[llm]"
 
+# Ruff Python linting through `skylos lint`
+pip install "skylos[lint]"
+
 # All published optional extras
 pip install "skylos[all]"
 ```
@@ -496,6 +500,7 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 | GitHub Action | [GitHub Action](./action.yml) | PR gates, annotations, and CI enforcement |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants |
+| Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
 | Skylos Cloud | [Cloud workflow](https://docs.skylos.dev/cloud-workflow) | optional upload and dashboard workflows |
 
@@ -517,6 +522,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | First scan and core workflows | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI commands, flags, and examples | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./docs/cli-output.md) |
+| Optional Ruff linting through the Skylos CLI | [Python Linting](./docs/python-linting.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
@@ -548,6 +554,12 @@ dead code, security, secrets, quality, and AI-defect checks.
 
 No. Core static analysis runs locally without API keys. LLM features are
 optional through `skylos[llm]` and agent commands.
+
+**Does Skylos replace Ruff?**
+
+No. `skylos lint` is an optional convenience entry point that delegates to
+Ruff. Install it with `pip install "skylos[lint]"`; normal Skylos scans do not
+run Ruff or merge Ruff violations into `SKY-*` findings.
 
 **Can I use it only on changed code?**
 

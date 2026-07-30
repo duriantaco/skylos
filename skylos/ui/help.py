@@ -12,6 +12,17 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos lint [path ...] [Ruff options]",
+        "desc": "Run Ruff Python linting through Skylos",
+        "details": [
+            "Arguments are forwarded to `ruff check`; the default path is `.`",
+            'Install support with: pip install "skylos[lint]"',
+            "Ruff configuration is read from pyproject.toml, ruff.toml, or .ruff.toml",
+            "Exit codes are preserved: 0 clean, 1 findings, 2 error",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos verify <path>",
         "desc": "Verify changed code for AI-code defects",
         "group": "AI Agent",
