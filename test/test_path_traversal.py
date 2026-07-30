@@ -1,4 +1,7 @@
 from pathlib import Path
+
+import pytest
+
 from skylos.rules.danger.danger import scan_ctx
 
 
@@ -31,6 +34,90 @@ def test_os_remove_tainted_flags(tmp_path):
     code = "import os\ndef f(p):\n    os.remove(p)\n"
     out = _scan_one(tmp_path, "pt_os.py", code)
     assert "SKY-D215" in _rule_ids(out)
+
+
+def test_shutil_rmtree_keyword_path_matches_positional_sink(tmp_path):
+    code = """
+import shutil
+from pathlib import Path
+
+def positional_argument(destination: str) -> None:
+    destination_path = Path(destination)
+    shutil.rmtree(destination_path)
+
+def keyword_argument(destination: str) -> None:
+    destination_path = Path(destination)
+    shutil.rmtree(path=destination_path)
+"""
+
+    out = _scan_one(tmp_path, "pt_rmtree_keyword.py", code)
+    symbols = {
+        finding["symbol"]
+        for finding in out
+        if finding.get("rule_id") == "SKY-D215"
+    }
+
+    assert {"positional_argument", "keyword_argument"} <= symbols
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "open(file=path, mode='r')",
+        "os.open(path=path, flags=os.O_RDONLY)",
+        "os.unlink(path=path)",
+        "os.remove(path=path)",
+        "os.mkdir(path=path)",
+        "os.rmdir(path=path)",
+        "os.makedirs(name=path)",
+        "shutil.copy(src=path, dst='fixed')",
+        "shutil.copy2(src=path, dst='fixed')",
+        "shutil.copytree(src=path, dst='fixed')",
+        "shutil.move(src=path, dst='fixed')",
+        "shutil.rmtree(path=path)",
+    ],
+)
+def test_keyword_bound_first_path_argument_flags(tmp_path, call):
+    code = f"""
+import os
+import shutil
+
+def vulnerable(path):
+    {call}
+"""
+
+    out = _scan_one(tmp_path, "pt_keyword_path.py", code)
+
+    assert "SKY-D215" in _rule_ids(out)
+
+
+def test_os_open_keyword_flags_preserve_symlink_write_classification(tmp_path):
+    code = """
+import os
+
+def vulnerable(path):
+    os.open(path=path, flags=os.O_WRONLY)
+"""
+
+    out = _scan_one(tmp_path, "pt_os_open_keyword_flags.py", code)
+    rule_ids = _rule_ids(out)
+
+    assert "SKY-D215" in rule_ids
+    assert "SKY-D324" in rule_ids
+    assert "SKY-D325" not in rule_ids
+
+
+def test_tainted_non_path_keyword_does_not_flag_literal_rmtree_path(tmp_path):
+    code = """
+import shutil
+
+def cleanup(onerror):
+    shutil.rmtree(path="/srv/cache", onerror=onerror)
+"""
+
+    out = _scan_one(tmp_path, "pt_rmtree_non_path_keyword.py", code)
+
+    assert "SKY-D215" not in _rule_ids(out)
 
 
 def test_open_constant_ok(tmp_path):
