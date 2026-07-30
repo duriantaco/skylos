@@ -1,5 +1,21 @@
 ## Changelog
 
+## [4.32.0](https://github.com/duriantaco/skylos/compare/v4.31.1...v4.32.0) (2026-07-30)
+
+
+### Features
+
+* **cli:** add exact rule selection ([#678](https://github.com/duriantaco/skylos/issues/678)) ([78c1afa](https://github.com/duriantaco/skylos/commit/78c1afae29ae7f437e3a8056faf3259bb277704d))
+* **cli:** add optional Ruff lint command ([#677](https://github.com/duriantaco/skylos/issues/677)) ([c451060](https://github.com/duriantaco/skylos/commit/c451060302f1294b2f5720087f8f2bc07309162c))
+
+
+### Bug Fixes
+
+* **ai-defect:** handle imported submodule references ([#671](https://github.com/duriantaco/skylos/issues/671)) ([d9ca4b8](https://github.com/duriantaco/skylos/commit/d9ca4b81a3741330bd60c7e01236058b7ecbf06e))
+* **analyzer:** honor rule-specific inline ignores ([#674](https://github.com/duriantaco/skylos/issues/674)) ([f0ad568](https://github.com/duriantaco/skylos/commit/f0ad568658689c064a732a58384590fcb9e740a8))
+* **cli:** render AI defects in rich output ([#676](https://github.com/duriantaco/skylos/issues/676)) ([34f696c](https://github.com/duriantaco/skylos/commit/34f696cefb793f646f1b74c7720e391bf733c73a))
+* **security:** bind keyword filesystem path arguments ([#675](https://github.com/duriantaco/skylos/issues/675)) ([b475414](https://github.com/duriantaco/skylos/commit/b4754145bc60e6720d211c0b2ebe5510318f3e29))
+
 ## [4.31.1](https://github.com/duriantaco/skylos/compare/v4.31.0...v4.31.1) (2026-07-29)
 
 
