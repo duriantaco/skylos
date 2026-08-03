@@ -498,6 +498,21 @@ class DartCore:
             self.defs.append(d)
 
     def _scan_refs_in_node(self, node, *, current_callable: str | None) -> None:
+        if node.type == "method_invocation":
+            function = node.child_by_field_name("function")
+            identifiers = (
+                list(self._descendants_of_type(function, "identifier"))
+                if function is not None
+                else []
+            )
+            if identifiers:
+                called = identifiers[-1]
+                self._add_ref(
+                    self._node_name_text(called),
+                    called.start_byte,
+                    current_callable=current_callable,
+                )
+
         children = list(node.children)
         for idx, child in enumerate(children):
             next_child = children[idx + 1] if idx + 1 < len(children) else None
