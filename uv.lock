@@ -2393,7 +2393,7 @@ wheels = [
 
 [[package]]
 name = "skylos"
-version = "4.31.1"
+version = "4.32.0"
 source = { editable = "." }
 dependencies = [
     { name = "ca9" },
@@ -2422,6 +2422,7 @@ dependencies = [
 all = [
     { name = "aiohttp" },
     { name = "litellm" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -2433,6 +2434,7 @@ llm = [
     { name = "litellm" },
 ]
 test = [
+    { name = "packaging" },
     { name = "pytest" },
 ]
 
@@ -2446,8 +2448,10 @@ requires-dist = [
     { name = "libcst", specifier = ">=1.8.2" },
     { name = "litellm", marker = "extra == 'all'", specifier = ">=1.84.0,<1.85.0" },
     { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.84.0,<1.85.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "networkx" },
+    { name = "packaging", marker = "extra == 'all'", specifier = ">=24.2" },
+    { name = "packaging", marker = "extra == 'test'", specifier = ">=24.2" },
     { name = "pyperclip" },
     { name = "pytest", marker = "extra == 'all'", specifier = ">=9.0.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
@@ -2458,13 +2462,13 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.15.0" },
     { name = "textual", specifier = ">=1.0.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
-    { name = "tree-sitter", specifier = ">=0.25.2" },
-    { name = "tree-sitter-dart-orchard", specifier = ">=0.3.2" },
-    { name = "tree-sitter-go", specifier = ">=0.23.0" },
-    { name = "tree-sitter-java", specifier = ">=0.23.0" },
-    { name = "tree-sitter-php", specifier = ">=0.24.1" },
-    { name = "tree-sitter-rust", specifier = ">=0.24.2" },
-    { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
+    { name = "tree-sitter", specifier = ">=0.25.2,<0.27" },
+    { name = "tree-sitter-dart-orchard", specifier = ">=0.3.2,<0.6" },
+    { name = "tree-sitter-go", specifier = ">=0.23.0,<0.26" },
+    { name = "tree-sitter-java", specifier = ">=0.23.0,<0.24" },
+    { name = "tree-sitter-php", specifier = ">=0.24.1,<0.25" },
+    { name = "tree-sitter-rust", specifier = ">=0.24.2,<0.25" },
+    { name = "tree-sitter-typescript", specifier = ">=0.23.2,<0.24" },
 ]
 provides-extras = ["llm", "lint", "test", "all"]
 
