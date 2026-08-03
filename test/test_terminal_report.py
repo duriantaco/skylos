@@ -64,6 +64,32 @@ def test_pretty_renderer_uses_secret_preview_instead_of_source_line(tmp_path):
     assert "sk_live_real_secret_value" not in output
 
 
+def test_pretty_renderer_labels_reliability_separately_from_security(tmp_path):
+    manifest = tmp_path / "deploy.yml"
+    manifest.write_text("command: [uvicorn, app:app, --reload]\n", encoding="utf-8")
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "danger": [],
+        "reliability": [
+            {
+                "rule_id": "SKY-DEP003",
+                "severity": "MEDIUM",
+                "message": "Reload mode is externally reachable",
+                "file": str(manifest),
+                "line": 1,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result, root_path=tmp_path)
+    output = console.export_text()
+
+    assert "Reliability" in output
+    assert "SKY-DEP003" in output
+    assert "Security" not in output
+
+
 def test_pretty_renderer_prints_classification_and_evidence_source(tmp_path):
     source = tmp_path / "src" / "app.py"
     result = {
@@ -93,7 +119,9 @@ def test_pretty_renderer_prints_classification_and_evidence_source(tmp_path):
     output = console.export_text()
 
     assert "Unused function: old_helper" in output
-    assert "evidence: likely dead — no static references were found [analyzer]" in output
+    assert (
+        "evidence: likely dead — no static references were found [analyzer]" in output
+    )
 
 
 def test_pretty_renderer_shows_rescued_and_abstained_counts():

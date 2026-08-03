@@ -227,6 +227,120 @@ def write_existing_text_no_symlink(
                 pass
 
 
+def _output_open_flags() -> int:
+    flags = os.O_WRONLY | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
+def _open_output_parent(output_path: Path) -> int | None:
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(
+            output_path.anchor or os.sep,
+            _directory_open_flags(follow_symlinks=True),
+        )
+        for component in output_path.parent.parts[1:]:
+            next_fd = os.open(
+                component,
+                _directory_open_flags(),
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return directory_fd
+    except OSError:
+        _close_file_descriptor(directory_fd)
+        return None
+
+
+def _fallback_output_parent_is_safe(output_path: Path) -> bool:
+    current = Path(output_path.anchor)
+    try:
+        for component in output_path.parent.parts[1:]:
+            current /= component
+            if current.is_symlink() or not current.is_dir():
+                return False
+        return not output_path.is_symlink()
+    except OSError:
+        return False
+
+
+def _open_output_file(output_path: Path) -> int | None:
+    flags = _output_open_flags()
+    if (
+        os.open in os.supports_dir_fd
+        and os.name != "nt"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    ):
+        directory_fd = _open_output_parent(output_path)
+        if directory_fd is None:
+            return None
+        try:
+            return os.open(  # skylos: ignore[SKY-D215] verified no-follow parent dir_fd and explicit output basename
+                output_path.name,
+                flags,
+                0o600,
+                dir_fd=directory_fd,
+            )
+        except OSError:
+            return None
+        finally:
+            _close_file_descriptor(directory_fd)
+
+    if not _fallback_output_parent_is_safe(output_path):
+        return None
+    try:
+        return os.open(  # skylos: ignore[SKY-D215] fallback rejects symlink parents and validates the opened file
+            output_path,
+            flags,
+            0o600,
+        )
+    except OSError:
+        return None
+
+
+def write_text_no_symlink(
+    path: str | Path,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+) -> bool:
+    """Create or replace a regular file without following path symlinks."""
+
+    try:
+        output_path = Path(os.path.abspath(Path(path).expanduser()))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if not output_path.name:
+        return False
+
+    fd = _open_output_file(output_path)
+    if fd is None:
+        return False
+    try:
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode) or stat_result.st_nlink != 1:
+            return False
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "w", encoding=encoding) as handle:
+            fd = None
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
+    except (OSError, UnicodeError):
+        return False
+    finally:
+        _close_file_descriptor(fd)
+
+
 def _project_cache_path(
     project_root: str | Path,
     cache_path: str | Path,

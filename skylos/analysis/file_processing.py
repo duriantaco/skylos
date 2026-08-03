@@ -415,6 +415,36 @@ def _scan_shell_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
+class _ConfigOnlyVisitor:
+    def __init__(self) -> None:
+        self.is_test_file = False
+        self.test_decorated_lines: set[int] = set()
+        self.dataclass_fields: set[str] = set()
+        self.pydantic_models: set[str] = set()
+        self.class_defs: dict = {}
+        self.first_read_lineno: dict = {}
+        self.framework_decorated_lines: set[int] = set()
+        self.detected_frameworks: set[str] = set()
+
+
+def _scan_config_only_file(_file, cfg, **_options):
+    return (
+        [],
+        [],
+        set(),
+        set(),
+        _ConfigOnlyVisitor(),
+        _ConfigOnlyVisitor(),
+        [],
+        [],
+        [],
+        None,
+        None,
+        cfg,
+        [],
+    )
+
+
 NON_PYTHON_SCANNERS = (
     (TS_JS_SOURCE_EXTS, _scan_typescript_like_file),
     ((".go",), _scan_go_file),
@@ -425,6 +455,7 @@ NON_PYTHON_SCANNERS = (
     ((".cs",), _scan_csharp_file),
     (KOTLIN_SOURCE_EXTS, _scan_kotlin_file),
     (SHELL_SOURCE_EXTS, _scan_shell_file),
+    ((".yaml", ".yml"), _scan_config_only_file),
 )
 
 

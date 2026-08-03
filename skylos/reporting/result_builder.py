@@ -13,6 +13,9 @@ from skylos.reporting.dead_code_result import (
     definition_context,
     whitelisted_definitions,
 )
+from skylos.reporting.finding_categories import (
+    split_security_reliability_findings,
+)
 from skylos.reporting.rollups import attach_directory_rollups
 
 AI_DEFECT_RULE_IDS = {
@@ -202,6 +205,10 @@ def _base_result(
 
 
 def _attach_analysis_reports(analyzer, result):
+    analysis_scope = getattr(analyzer, "_analysis_scope", None)
+    if isinstance(analysis_scope, dict):
+        result["analysis_summary"]["comparison_scope"] = dict(analysis_scope)
+
     liveness_report = getattr(analyzer, "_dead_code_liveness_report", None)
     if liveness_report is not None:
         result["analysis_summary"]["dead_code_liveness"] = liveness_report.to_dict()
@@ -209,6 +216,10 @@ def _attach_analysis_reports(analyzer, result):
     grep_verify_report = getattr(analyzer, "_grep_verify_report", None)
     if grep_verify_report is not None:
         result["analysis_summary"]["grep_verify"] = dict(grep_verify_report)
+
+    sca_coverage = getattr(analyzer, "_sca_coverage", None)
+    if isinstance(sca_coverage, dict):
+        result["analysis_summary"]["sca_coverage"] = dict(sca_coverage)
 
     verification_checks = getattr(analyzer, "_ai_verification_checks", None)
     if isinstance(verification_checks, list):
@@ -269,12 +280,20 @@ def _attach_findings(
         result["secrets"] = all_secrets
         summary["secrets_count"] = len(all_secrets)
     if enable_danger and all_dangers:
-        core_danger, ai_defects = _split_ai_defect_findings(all_dangers)
+        security_findings, reliability = split_security_reliability_findings(
+            all_dangers
+        )
+        core_danger, ai_defects = _split_ai_defect_findings(security_findings)
         if core_danger:
             result["danger"] = [
                 attach_evidence_contract(finding) for finding in core_danger
             ]
             summary["danger_count"] = len(core_danger)
+        if reliability:
+            result["reliability"] = [
+                attach_evidence_contract(finding) for finding in reliability
+            ]
+            summary["reliability_count"] = len(reliability)
         if enable_ai_defects:
             _append_ai_defects(result, ai_defects)
     if enable_ai_defects:

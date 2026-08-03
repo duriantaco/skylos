@@ -102,7 +102,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         action="store_true",
         help="Launch interactive TUI dashboard",
     )
-    parser.add_argument("--tree", action="store_true", help="Show findings in tree format")
+    parser.add_argument(
+        "--tree", action="store_true", help="Show findings in tree format"
+    )
     parser.add_argument(
         "--model",
         type=str,
@@ -154,7 +156,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--interactive", "-i", action="store_true", help="Select items to remove"
     )
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be removed")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed"
+    )
 
     parser.add_argument(
         "--exclude",
@@ -190,7 +194,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         action="store_true",
         help="List the default excluded folders and exit.",
     )
-    parser.add_argument("--secrets", action="store_true", help="Scan for API keys. Off by default.")
+    parser.add_argument(
+        "--secrets", action="store_true", help="Scan for API keys. Off by default."
+    )
     parser.add_argument(
         "--danger",
         action="store_true",
@@ -280,8 +286,9 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         type=str,
         default=None,
         metavar="CAT",
-        help="Show only specific category: security, secret, quality, ai_defects, dead_code, dependency. "
-        "Comma-separated for multiple. Example: --category security,ai_defects",
+        help="Show only specific category: security, reliability, secret, quality, "
+        "ai_defects, dead_code, dependency. Comma-separated for multiple. "
+        "Example: --category reliability,security",
     )
     parser.add_argument(
         "--select",
@@ -291,7 +298,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help=(
             "Only report exact rule ID(s), case-insensitively. Repeat the option "
             "or use commas for multiple rules. Matching analyzer families are "
-            "enabled automatically. Example: --select SKY-L012,SKY-D225"
+            "enabled automatically; required contract rules remain visible. "
+            "Example: --select SKY-L012,SKY-D225"
         ),
     )
     parser.add_argument(

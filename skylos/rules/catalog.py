@@ -17,6 +17,7 @@ class RuleCatalogEntry:
         data["aliases"] = list(self.aliases)
         return data
 
+
 # Keep this catalog aligned with skylos-docs/docs/rules-reference.mdx.
 _RULES = (
     RuleCatalogEntry("SKY-U001", "Unused function", "dead_code"),
@@ -42,7 +43,9 @@ _RULES = (
     RuleCatalogEntry("SKY-Q306", "Cognitive complexity", "quality"),
     RuleCatalogEntry("SKY-Q401", "Async blocking call", "quality"),
     RuleCatalogEntry("SKY-Q402", "Await in loop", "quality", "MEDIUM"),
-    RuleCatalogEntry("SKY-Q403", "Inconsistent lock acquisition order", "quality", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-Q403", "Inconsistent lock acquisition order", "quality", "HIGH"
+    ),
     RuleCatalogEntry("SKY-Q404", "Thread shared state mutation", "quality", "MEDIUM"),
     RuleCatalogEntry("SKY-Q501", "God class", "quality"),
     RuleCatalogEntry("SKY-Q502", "Class too large", "quality"),
@@ -100,37 +103,91 @@ _RULES = (
     RuleCatalogEntry("SKY-D201", "Dynamic code execution via eval", "security", "HIGH"),
     RuleCatalogEntry("SKY-D202", "Dynamic code execution via exec", "security", "HIGH"),
     RuleCatalogEntry("SKY-D203", "OS command execution", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D204", "Unsafe pickle deserialization", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D205", "Unsafe pickle.loads deserialization", "security", "CRITICAL"),
+    RuleCatalogEntry(
+        "SKY-D204", "Unsafe pickle deserialization", "security", "CRITICAL"
+    ),
+    RuleCatalogEntry(
+        "SKY-D205", "Unsafe pickle.loads deserialization", "security", "CRITICAL"
+    ),
     RuleCatalogEntry("SKY-D206", "Unsafe YAML load", "security", "HIGH"),
     RuleCatalogEntry("SKY-D207", "Weak MD5 hash", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D208", "Weak SHA1 hash", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D209", "Subprocess shell execution", "security", "HIGH"),
     RuleCatalogEntry("SKY-D210", "TLS verification disabled", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D211", "SQL injection", "security", "CRITICAL", aliases=("sqli",)),
+    RuleCatalogEntry(
+        "SKY-D211", "SQL injection", "security", "CRITICAL", aliases=("sqli",)
+    ),
     RuleCatalogEntry("SKY-D212", "Command injection", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D214", "Broken access control", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D215", "Path traversal", "security", "HIGH", aliases=("lfi", "file traversal")),
-    RuleCatalogEntry("SKY-D216", "Server-side request forgery", "security", "CRITICAL", aliases=("ssrf",),),
+    RuleCatalogEntry(
+        "SKY-D215",
+        "Path traversal",
+        "security",
+        "HIGH",
+        aliases=("lfi", "file traversal"),
+    ),
+    RuleCatalogEntry(
+        "SKY-D216",
+        "Server-side request forgery",
+        "security",
+        "CRITICAL",
+        aliases=("ssrf",),
+    ),
     RuleCatalogEntry("SKY-D217", "Raw SQL execution", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D222", "Dependency hallucination", "ai_defect", "CRITICAL"),
-    RuleCatalogEntry("SKY-D223", "Undeclared third-party dependency", "security", "MEDIUM"),
+    RuleCatalogEntry(
+        "SKY-D223", "Undeclared third-party dependency", "security", "MEDIUM"
+    ),
     RuleCatalogEntry("SKY-D224", "API signature hallucination", "ai_defect", "HIGH"),
-    RuleCatalogEntry("SKY-D225", "Dependency version hallucination", "ai_defect", "HIGH"),
-    RuleCatalogEntry("SKY-D226", "Cross-site scripting: untrusted content marked safe", "security", "CRITICAL",aliases=("xss", "cross site scripting", "cross-site scripting"),),
-    RuleCatalogEntry("SKY-D227", "Cross-site scripting: unsafe inline template", "security", "HIGH", aliases=("xss", "cross site scripting", "cross-site scripting"),),
-    RuleCatalogEntry("SKY-D228", "Cross-site scripting: HTML built from user input", "security", "HIGH", aliases=("xss", "cross site scripting", "cross-site scripting"),),
-    RuleCatalogEntry("SKY-D230", "Open redirect", "security", "HIGH", aliases=("redirect",)),
+    RuleCatalogEntry(
+        "SKY-D225", "Dependency version hallucination", "ai_defect", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D226",
+        "Cross-site scripting: untrusted content marked safe",
+        "security",
+        "CRITICAL",
+        aliases=("xss", "cross site scripting", "cross-site scripting"),
+    ),
+    RuleCatalogEntry(
+        "SKY-D227",
+        "Cross-site scripting: unsafe inline template",
+        "security",
+        "HIGH",
+        aliases=("xss", "cross site scripting", "cross-site scripting"),
+    ),
+    RuleCatalogEntry(
+        "SKY-D228",
+        "Cross-site scripting: HTML built from user input",
+        "security",
+        "HIGH",
+        aliases=("xss", "cross site scripting", "cross-site scripting"),
+    ),
+    RuleCatalogEntry(
+        "SKY-D230", "Open redirect", "security", "HIGH", aliases=("redirect",)
+    ),
     RuleCatalogEntry("SKY-D231", "Unsafe CORS configuration", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D232", "Unsafe JWT handling", "security", "CRITICAL", aliases=("jwt",)),
+    RuleCatalogEntry(
+        "SKY-D232", "Unsafe JWT handling", "security", "CRITICAL", aliases=("jwt",)
+    ),
     RuleCatalogEntry("SKY-D233", "Unsafe deserialization", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D234", "Mass assignment", "security", "HIGH"),
     RuleCatalogEntry("SKY-D235", "Remote command execution sink", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D240", "MCP tool description poisoning", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D241", "MCP unauthenticated network transport", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D242", "MCP overly permissive resource URI", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D243", "MCP network-exposed server without auth", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D244", "MCP hardcoded tool parameter secret", "security", "CRITICAL"),
+    RuleCatalogEntry(
+        "SKY-D240", "MCP tool description poisoning", "security", "CRITICAL"
+    ),
+    RuleCatalogEntry(
+        "SKY-D241", "MCP unauthenticated network transport", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D242", "MCP overly permissive resource URI", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D243", "MCP network-exposed server without auth", "security", "CRITICAL"
+    ),
+    RuleCatalogEntry(
+        "SKY-D244", "MCP hardcoded tool parameter secret", "security", "CRITICAL"
+    ),
     RuleCatalogEntry("SKY-D245", "Dynamic require", "security", "HIGH"),
     RuleCatalogEntry("SKY-D246", "JWT decode without verification", "security", "HIGH"),
     RuleCatalogEntry("SKY-D247", "CORS wildcard origin", "security", "MEDIUM"),
@@ -139,7 +196,13 @@ _RULES = (
     RuleCatalogEntry("SKY-D251", "Sensitive data in logs", "security", "HIGH"),
     RuleCatalogEntry("SKY-D252", "Insecure cookie", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D253", "Timing-unsafe comparison", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D260", "Prompt injection exposure", "security", "HIGH", aliases=("prompt injection", "hidden unicode"),),
+    RuleCatalogEntry(
+        "SKY-D260",
+        "Prompt injection exposure",
+        "security",
+        "HIGH",
+        aliases=("prompt injection", "hidden unicode"),
+    ),
     RuleCatalogEntry(
         "SKY-D261",
         "Untrusted input to LLM prompt",
@@ -190,46 +253,136 @@ _RULES = (
         aliases=("llm cost blowup", "unbounded consumption"),
     ),
     RuleCatalogEntry("SKY-D270", "Sensitive data in storage", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D271", "Error information disclosure over HTTP", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D282", "Webhook signature verification issue", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D290", "GitHub Actions dangerous trigger", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D291", "GitHub Actions excessive permissions", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-D271", "Error information disclosure over HTTP", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D282", "Webhook signature verification issue", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D290", "GitHub Actions dangerous trigger", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D291", "GitHub Actions excessive permissions", "security", "HIGH"
+    ),
     RuleCatalogEntry("SKY-D292", "GitHub Actions unpinned action", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D293", "GitHub Actions persisted checkout credentials", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D294", "GitHub Actions template injection", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D295", "GitHub Actions self-hosted runner", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D296", "GitHub Actions unpinned container image", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D297", "GitHub Actions secrets inheritance", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D298", "GitHub Actions overprovisioned secrets", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D299", "GitHub Actions secret outside environment", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D300", "GitHub Actions unsafe environment file write", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D301", "GitHub Actions hardcoded container credential", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D302", "GitHub Actions broad GitHub App token", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D303", "GitHub Actions unsound contains condition", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D304", "GitHub Actions spoofable bot condition", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D305", "GitHub Actions unsound multiline condition", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D306", "GitHub Actions insecure commands enabled", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D307", "GitHub Actions anonymous definition", "security", "LOW"),
-    RuleCatalogEntry("SKY-D308", "GitHub Actions cache poisoning risk", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D309", "GitHub Actions broad secret environment", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D310", "GitHub Actions OIDC build-script exposure", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D311", "GitHub Actions lax artifact upload", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D312", "GitHub Actions JavaScript install scripts", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D313", "GitHub Actions privileged job missing timeout", "security", "MEDIUM"),
+    RuleCatalogEntry(
+        "SKY-D293",
+        "GitHub Actions persisted checkout credentials",
+        "security",
+        "MEDIUM",
+    ),
+    RuleCatalogEntry(
+        "SKY-D294", "GitHub Actions template injection", "security", "CRITICAL"
+    ),
+    RuleCatalogEntry(
+        "SKY-D295", "GitHub Actions self-hosted runner", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D296", "GitHub Actions unpinned container image", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D297", "GitHub Actions secrets inheritance", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D298", "GitHub Actions overprovisioned secrets", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D299", "GitHub Actions secret outside environment", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D300", "GitHub Actions unsafe environment file write", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D301", "GitHub Actions hardcoded container credential", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D302", "GitHub Actions broad GitHub App token", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D303", "GitHub Actions unsound contains condition", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D304", "GitHub Actions spoofable bot condition", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D305", "GitHub Actions unsound multiline condition", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D306", "GitHub Actions insecure commands enabled", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D307", "GitHub Actions anonymous definition", "security", "LOW"
+    ),
+    RuleCatalogEntry(
+        "SKY-D308", "GitHub Actions cache poisoning risk", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D309", "GitHub Actions broad secret environment", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D310", "GitHub Actions OIDC build-script exposure", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D311", "GitHub Actions lax artifact upload", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D312", "GitHub Actions JavaScript install scripts", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D313",
+        "GitHub Actions privileged job missing timeout",
+        "security",
+        "MEDIUM",
+    ),
     RuleCatalogEntry("SKY-D510", "Prototype pollution", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D314", "GitLab CI mutable container image", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D315", "GitLab CI unpinned external include", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D316", "GitLab CI literal secret variable", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-D314", "GitLab CI mutable container image", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D315", "GitLab CI unpinned external include", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D316", "GitLab CI literal secret variable", "security", "HIGH"
+    ),
     RuleCatalogEntry("SKY-D317", "GitLab CI untrusted eval", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D318", "GitLab CI Docker-in-Docker TLS disabled", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D319", "GitLab CI OIDC local-script exposure", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D320", "GitLab CI release cache poisoning risk", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D321", "GitLab CI privileged job missing timeout", "security", "MEDIUM"),
+    RuleCatalogEntry(
+        "SKY-D318", "GitLab CI Docker-in-Docker TLS disabled", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D319", "GitLab CI OIDC local-script exposure", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D320", "GitLab CI release cache poisoning risk", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D321", "GitLab CI privileged job missing timeout", "security", "MEDIUM"
+    ),
     RuleCatalogEntry("SKY-D322", "GitLab CI dynamic runner tag", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D323", "GitLab CI ambiguous secret token", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D324", "Symlink-following file write", "security", "HIGH", aliases=("symlink",)),
-    RuleCatalogEntry("SKY-D325", "Symlink-following file read", "security", "MEDIUM", aliases=("symlink",)),
-    RuleCatalogEntry("SKY-D326", "Unsafe archive extraction", "security", "HIGH", aliases=("zip slip", "symlink")),
+    RuleCatalogEntry(
+        "SKY-D323", "GitLab CI ambiguous secret token", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D324",
+        "Symlink-following file write",
+        "security",
+        "HIGH",
+        aliases=("symlink",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D325",
+        "Symlink-following file read",
+        "security",
+        "MEDIUM",
+        aliases=("symlink",),
+    ),
+    RuleCatalogEntry(
+        "SKY-D326",
+        "Unsafe archive extraction",
+        "security",
+        "HIGH",
+        aliases=("zip slip", "symlink"),
+    ),
     RuleCatalogEntry(
         "SKY-D327",
         "Shell or agent data exfiltration",
@@ -251,25 +404,107 @@ _RULES = (
         "HIGH",
         aliases=("destructive command",),
     ),
-    RuleCatalogEntry("SKY-D330", "Docker Compose privileged edge container", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D331", "Docker Compose host device exposure", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D332", "Docker Compose host networking on edge service", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D333", "Systemd edge service runs as root", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D334", "Systemd root service executes mutable path", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D335", "Systemd edge service missing sandboxing", "security", "MEDIUM"),
-    RuleCatalogEntry("SKY-D336", "Systemd broad edge service privilege", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D337", "Package registry or index override", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-D330", "Docker Compose privileged edge container", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D331", "Docker Compose host device exposure", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D332",
+        "Docker Compose host networking on edge service",
+        "security",
+        "MEDIUM",
+    ),
+    RuleCatalogEntry(
+        "SKY-D333", "Systemd edge service runs as root", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D334", "Systemd root service executes mutable path", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D335", "Systemd edge service missing sandboxing", "security", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-D336", "Systemd broad edge service privilege", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D337", "Package registry or index override", "security", "HIGH"
+    ),
     RuleCatalogEntry("SKY-D338", "Sensitive host scope access", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D339", "Persistent environment mutation", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D340", "Unapproved package or artifact publish", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D341", "Untrusted package-managed tool execution", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D342", "Dockerfile remote ADD without checksum", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D343", "Dockerfile literal secret build value", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D344", "Trojan Source bidirectional Unicode", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D345", "Mutable Hugging Face artifact revision", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-D340", "Unapproved package or artifact publish", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D341", "Untrusted package-managed tool execution", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D342", "Dockerfile remote ADD without checksum", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D343", "Dockerfile literal secret build value", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D344", "Trojan Source bidirectional Unicode", "security", "HIGH"
+    ),
+    RuleCatalogEntry(
+        "SKY-D345", "Mutable Hugging Face artifact revision", "security", "HIGH"
+    ),
     RuleCatalogEntry("SKY-D346", "Flask debug mode enabled", "security", "HIGH"),
-    RuleCatalogEntry("SKY-D347", "Unsafe logging config listener", "security", "MEDIUM"),
+    RuleCatalogEntry(
+        "SKY-D347", "Unsafe logging config listener", "security", "MEDIUM"
+    ),
     RuleCatalogEntry("SKY-D348", "Insecure temporary filename", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-DEP001",
+        "Externally deployed route is missing a required auth guard",
+        "security",
+        "HIGH",
+        aliases=("deployment", "kubernetes", "ingress", "route guard"),
+    ),
+    RuleCatalogEntry(
+        "SKY-DEP002",
+        "External Ingress exposes the Flask development debugger",
+        "security",
+        "HIGH",
+        aliases=("deployment", "kubernetes", "ingress", "flask debug"),
+    ),
+    RuleCatalogEntry(
+        "SKY-DEP003",
+        "External Ingress routes to a reload-mode application server",
+        "reliability",
+        "MEDIUM",
+        aliases=("deployment", "kubernetes", "ingress", "reload"),
+    ),
+    RuleCatalogEntry(
+        "SKY-GPU000",
+        "GPU release contract is invalid or incomplete",
+        "reliability",
+        "HIGH",
+        aliases=("gpu", "cuda", "release contract", "compatibility proof"),
+    ),
+    RuleCatalogEntry(
+        "SKY-GPU001",
+        "CUDA image requires newer NVIDIA driver",
+        "reliability",
+        "HIGH",
+        aliases=("gpu", "cuda", "driver", "container"),
+    ),
+    RuleCatalogEntry(
+        "SKY-GPU002",
+        "CUDA target architecture missing from build",
+        "reliability",
+        "HIGH",
+        aliases=("gpu", "cuda", "architecture", "ptx"),
+    ),
+    RuleCatalogEntry(
+        "SKY-GPU003",
+        "TensorRT engine is not portable across target GPUs",
+        "reliability",
+        "HIGH",
+        aliases=("gpu", "tensorrt", "engine", "portability"),
+    ),
     RuleCatalogEntry("SKY-G203", "Go defer in loop", "security", "HIGH"),
     RuleCatalogEntry("SKY-G206", "Go unsafe package import", "security", "HIGH"),
     RuleCatalogEntry("SKY-G207", "Go weak MD5 hash", "security", "MEDIUM"),

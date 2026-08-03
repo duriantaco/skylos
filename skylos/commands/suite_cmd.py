@@ -5,11 +5,13 @@ import json
 import uuid
 from pathlib import Path
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.core.suite import format_suite_json, format_suite_table, run_suite
 
 _VALID_UPLOAD_FAMILIES = ("static", "defense", "debt")
 _VALID_STATIC_UPLOAD_CATEGORIES = (
     "danger",
+    "reliability",
     "ai_defects",
     "quality",
     "secrets",
@@ -57,6 +59,8 @@ def _build_static_upload_result(
 
     if "danger" in category_set:
         payload["danger"] = list(static_result.get("danger") or [])
+    if "reliability" in category_set:
+        payload["reliability"] = list(static_result.get("reliability") or [])
     if "ai_defects" in category_set:
         payload["ai_defects"] = list(static_result.get("ai_defects") or [])
     if "quality" in category_set:
@@ -142,10 +146,10 @@ def _build_suite_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--static-categories",
-        default="danger,ai_defects,quality,secrets,dead_code,dependency",
+        default="danger,reliability,ai_defects,quality,secrets,dead_code,dependency",
         help=(
             "Comma-separated code-scan categories to upload inside the static family. "
-            "Choices: danger,ai_defects,quality,secrets,dead_code,dependency"
+            "Choices: danger,reliability,ai_defects,quality,secrets,dead_code,dependency"
         ),
     )
     return parser
@@ -240,10 +244,8 @@ def _format_suite_output(args: argparse.Namespace, report: dict) -> str:
 def _write_suite_output(args: argparse.Namespace, console, output: str) -> int:
     if args.output_file:
         try:
-            Path(args.output_file).write_text(  # skylos: ignore[SKY-D215] user-selected suite output path
-                output,
-                encoding="utf-8",
-            )
+            if not write_text_no_symlink(args.output_file, output, encoding="utf-8"):
+                raise OSError("output must be a regular, non-symlinked file")
         except OSError as exc:
             console.print(f"[red]Error writing output file: {exc}[/red]")
             return 1

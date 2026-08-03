@@ -10,6 +10,7 @@ from skylos.cicd.review import (
     _format_review_comment,
     _format_evidence_card_comment,
     _post_summary_comment,
+    _review_comment_location,
     _detect_pr_number,
 )
 from skylos.cicd.evidence import build_evidence_card
@@ -83,6 +84,17 @@ def test_parse_unified_diff():
     assert ranges[1]["end"] == 5
 
 
+def test_parse_unified_diff_keeps_deletion_only_hunk_anchor():
+    diff = """diff --git a/app/main.py b/app/main.py
+--- a/app/main.py
++++ b/app/main.py
+@@ -7 +6,0 @@
+-def require_admin(): ...
+"""
+
+    assert _parse_unified_diff(diff) == [{"file": "app/main.py", "start": 6, "end": 6}]
+
+
 def test_filter_findings_to_diff(sample_results):
     ranges = _parse_unified_diff(SAMPLE_DIFF)
     findings = _flatten_findings(sample_results)
@@ -100,11 +112,107 @@ def test_filter_findings_empty_ranges():
     assert filter_findings_to_diff(findings, []) == []
 
 
+def test_filter_findings_to_diff_matches_related_location_span():
+    finding = {
+        "file": "src/app.py",
+        "line": 40,
+        "message": "Cross-layer exposure",
+        "related_locations": [
+            {
+                "file": "deploy/kubernetes.yaml",
+                "start_line": 10,
+                "end_line": 24,
+            }
+        ],
+    }
+    changed_ranges = [{"file": "deploy/kubernetes.yaml", "start": 18, "end": 18}]
+
+    assert filter_findings_to_diff([finding], changed_ranges) == [finding]
+
+
+def test_filter_findings_to_diff_matches_related_location_path_suffix():
+    finding = {
+        "file": "/workspace/src/app.py",
+        "line": 40,
+        "message": "Cross-layer exposure",
+        "related_locations": [
+            {
+                "file": "/workspace/deploy/kubernetes.yaml",
+                "start_line": 10,
+                "end_line": 24,
+            }
+        ],
+    }
+    changed_ranges = [{"file": "deploy/kubernetes.yaml", "start": 24, "end": 30}]
+
+    assert filter_findings_to_diff([finding], changed_ranges) == [finding]
+
+
+def test_pr_comment_reanchors_to_changed_related_location():
+    finding = {
+        "file": "/workspace/deploy/rendered.yaml",
+        "line": 8,
+        "related_locations": [
+            {
+                "file": "/workspace/deploy/rendered.yaml",
+                "start_line": 40,
+                "end_line": 65,
+            }
+        ],
+    }
+    changed_ranges = [{"file": "deploy/rendered.yaml", "start": 57, "end": 58}]
+
+    assert _review_comment_location(finding, changed_ranges) == (
+        "/workspace/deploy/rendered.yaml",
+        57,
+    )
+
+
+def test_filter_findings_to_diff_ignores_nonoverlapping_related_locations():
+    finding = {
+        "file": "src/app.py",
+        "line": 40,
+        "message": "Cross-layer exposure",
+        "related_locations": [
+            {
+                "file": "deploy/kubernetes.yaml",
+                "start_line": 10,
+                "end_line": 24,
+            },
+            "not-a-location",
+            {"file": "deploy/other.yaml", "start_line": 1, "end_line": 4},
+        ],
+    }
+    changed_ranges = [{"file": "deploy/kubernetes.yaml", "start": 25, "end": 30}]
+
+    assert filter_findings_to_diff([finding], changed_ranges) == []
+
+
 def test_flatten_findings(sample_results):
     findings = _flatten_findings(sample_results)
     assert len(findings) == 3
     assert findings[0]["category"] == "danger"
     assert findings[2]["category"] == "quality"
+
+
+def test_flatten_findings_preserves_related_locations():
+    related_locations = [
+        {"file": "deploy/kubernetes.yaml", "start_line": 10, "end_line": 24}
+    ]
+    findings = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "file": "src/app.py",
+                    "line": 40,
+                    "message": "Cross-layer exposure",
+                    "related_locations": related_locations,
+                }
+            ]
+        }
+    )
+
+    assert findings[0]["related_locations"] == related_locations
 
 
 def test_flatten_findings_preserves_safe_evidence_metadata():
@@ -251,6 +359,22 @@ def test_format_evidence_card_comment_includes_fallback_suggested_fix():
     assert "Refactor the affected code" in comment
 
 
+def test_format_evidence_card_comment_supports_reliability():
+    finding = {
+        "category": "reliability",
+        "severity": "MEDIUM",
+        "rule_id": "SKY-DEP003",
+        "message": "External Ingress reaches reload mode.",
+        "file": "deploy.yaml",
+        "line": 4,
+    }
+
+    comment = _format_evidence_card_comment(finding)
+
+    assert "Risk: Likely reliability issue" in comment
+    assert "SKY-DEP003" in comment
+
+
 def test_summary_comment_omits_evidence_counts_by_default():
     captured = {}
 
@@ -278,6 +402,35 @@ def test_summary_comment_omits_evidence_counts_by_default():
         _post_summary_comment([finding], [finding], 42, "owner/repo")
 
     assert "### Evidence" not in captured["body"]
+
+
+def test_summary_comment_lists_reliability_category():
+    captured = {}
+
+    def mock_run(cmd, **kwargs):
+        if "pr" in cmd and "comment" in cmd:
+            captured["body"] = cmd[cmd.index("--body") + 1]
+
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return FakeResult()
+
+    finding = {
+        "category": "reliability",
+        "severity": "MEDIUM",
+        "rule_id": "SKY-DEP003",
+        "message": "External Ingress reaches reload mode.",
+        "file": "deploy.yaml",
+        "line": 4,
+    }
+
+    with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
+        _post_summary_comment([finding], [finding], 42, "owner/repo")
+
+    assert "| reliability | 1 |" in captured["body"]
 
 
 def test_summary_comment_includes_evidence_counts_when_enabled():

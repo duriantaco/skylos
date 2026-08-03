@@ -117,9 +117,16 @@ def pick_nudge(result, args, project_root=None):
         )
     )
     danger_count = len(result.get("danger", []) or [])
+    reliability_count = len(result.get("reliability", []) or [])
     quality_count = len(result.get("quality", []) or [])
     secrets_count = len(result.get("secrets", []) or [])
-    total = dead_code_count + danger_count + quality_count + secrets_count
+    total = (
+        dead_code_count
+        + danger_count
+        + reliability_count
+        + quality_count
+        + secrets_count
+    )
 
     ran_all = getattr(args, "all_checks", False)
     ran_danger = getattr(args, "danger", False)
@@ -131,6 +138,9 @@ def pick_nudge(result, args, project_root=None):
 
     if danger_count > 0 or secrets_count > 0:
         return "[dim]Check LLM defenses:[/dim] [bold]skylos defend .[/bold]"
+
+    if reliability_count > 0:
+        return "[dim]Review deployment and runtime compatibility findings before release.[/dim]"
 
     if not ran_all and not (ran_danger and ran_secrets and ran_quality):
         extras = []

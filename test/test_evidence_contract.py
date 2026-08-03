@@ -78,7 +78,9 @@ def test_synthesize_evidence_contract_preserves_private_registry_limitation():
     assert "requirements.txt" in contract["sources"]
     assert "internal-auth-client@1.0.0" in contract["symbols"]
     assert "requirements.txt:4" in contract["traces"]
-    assert any("private or unverified registry" in item for item in contract["limitations"])
+    assert any(
+        "private or unverified registry" in item for item in contract["limitations"]
+    )
 
 
 def test_low_impact_findings_do_not_gain_evidence_contracts():
@@ -155,3 +157,41 @@ def test_high_impact_danger_json_attaches_evidence_contract():
     assert finding["evidence_contract"]["proof_state"] == "candidate"
     assert finding["evidence_contract"]["sources"] == ["request.args['cmd']"]
     assert finding["evidence_contract"]["sinks"] == ["subprocess.run"]
+
+
+def test_reliability_finding_is_split_from_security_bucket():
+    result = {"analysis_summary": {}}
+
+    _attach_findings(
+        result,
+        False,
+        True,
+        False,
+        False,
+        [],
+        [
+            {
+                "rule_id": "SKY-D212",
+                "severity": "HIGH",
+                "category": "SECURITY",
+                "file": "app.py",
+                "line": 1,
+                "message": "Command injection",
+            },
+            {
+                "rule_id": "SKY-GPU001",
+                "severity": "HIGH",
+                "category": "RELIABILITY",
+                "file": "Dockerfile",
+                "line": 1,
+                "message": "CUDA/driver mismatch",
+            },
+        ],
+        [],
+        [],
+    )
+
+    assert [finding["rule_id"] for finding in result["danger"]] == ["SKY-D212"]
+    assert [finding["rule_id"] for finding in result["reliability"]] == ["SKY-GPU001"]
+    assert result["analysis_summary"]["danger_count"] == 1
+    assert result["analysis_summary"]["reliability_count"] == 1

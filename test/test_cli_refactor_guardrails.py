@@ -462,7 +462,9 @@ def test_cli_guardrail_verify_dispatch_preserves_argv(monkeypatch):
     )
 
     with (
-        patch("skylos.commands.verify_cmd.run_verify_command", return_value=0) as mock_verify,
+        patch(
+            "skylos.commands.verify_cmd.run_verify_command", return_value=0
+        ) as mock_verify,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -612,7 +614,13 @@ def test_cli_guardrail_baseline_subcommand_writes_baseline(tmp_path, monkeypatch
         cli.main()
 
     assert exc.value.code == 0
-    mock_analyze.assert_called_once_with(str(target))
+    mock_analyze.assert_called_once_with(
+        str(target),
+        enable_danger=True,
+        enable_quality=True,
+        enable_secrets=True,
+        enable_ai_defects=True,
+    )
     mock_save.assert_called_once()
 
 
@@ -643,7 +651,13 @@ def test_baseline_command_defaults_to_current_directory():
         exit_code = run_baseline_command([])
 
     assert exit_code == 0
-    mock_analyze.assert_called_once_with(".")
+    mock_analyze.assert_called_once_with(
+        ".",
+        enable_danger=True,
+        enable_quality=True,
+        enable_secrets=True,
+        enable_ai_defects=True,
+    )
 
 
 def test_doctor_command_reports_core_statuses(tmp_path):
@@ -848,7 +862,9 @@ def test_defend_command_rejects_invalid_owasp_version(tmp_path):
     assert "Unsupported OWASP version" in console.print.call_args.args[0]
 
 
-def test_defend_command_ignores_repo_policy_without_explicit_flag(tmp_path, monkeypatch):
+def test_defend_command_ignores_repo_policy_without_explicit_flag(
+    tmp_path, monkeypatch
+):
     target = tmp_path / "repo"
     target.mkdir()
     (target / "app.py").write_text(

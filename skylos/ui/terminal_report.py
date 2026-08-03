@@ -18,6 +18,7 @@ CATEGORY_SPECS = (
     ("analysis_errors", "Analysis", "File analysis failed"),
     ("ai_defects", "AI Defect", "AI defect"),
     ("danger", "Security", "security issue"),
+    ("reliability", "Reliability", "reliability issue"),
     ("secrets", "Secret", "secret detected"),
     ("quality", "Quality", "quality issue"),
     ("custom_rules", "Custom", "custom rule"),
@@ -68,6 +69,7 @@ SUMMARY_CATEGORIES = (
     "quality",
     "custom_rules",
     "danger",
+    "reliability",
     "secrets",
     "dependency_vulnerabilities",
 )
@@ -350,6 +352,7 @@ def _directory_rollup_detail(item: dict, total: int) -> str:
     categories = (
         ("dead_code", "dead"),
         ("quality", "quality"),
+        ("reliability", "reliability"),
         ("security", "security"),
         ("secrets", "secrets"),
         ("dependencies", "deps"),
@@ -443,7 +446,7 @@ def _severity(item: dict, category: str) -> str:
             return label
     if category in {"danger", "secrets", "dependency_vulnerabilities"}:
         return "HIGH"
-    if category in {"quality", "custom_rules"}:
+    if category in {"quality", "custom_rules", "reliability"}:
         return "MEDIUM"
     return "LOW"
 

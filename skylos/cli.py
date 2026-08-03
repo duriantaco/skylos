@@ -38,6 +38,7 @@ from skylos.core.result_cache import (
     save_trace_cache,
     write_trace_payload,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.remediation.safety import resolve_remediation_path
 
 from pathlib import Path
@@ -491,6 +492,7 @@ def _remap_precommit_result_files(
         "unused_parameters",
         "unused_files",
         "danger",
+        "reliability",
         "quality",
         "secrets",
         "custom_rules",
@@ -508,21 +510,110 @@ def _remap_precommit_result_files(
             mapped = dict(item)
             file_value = mapped.get("file")
             if file_value:
-                file_path = Path(str(file_value))
-                if file_path.is_absolute():
-                    try:
-                        relpath = file_path.resolve().relative_to(source_root.resolve())
-                    except ValueError:
-                        relpath = None
-                else:
-                    relpath = file_path
-                if relpath is not None:
-                    mapped["file"] = str((target_root / relpath).resolve())
+                mapped["file"] = _remap_precommit_file_value(
+                    file_value, source_root, target_root
+                )
+            related_locations = mapped.get("related_locations")
+            if isinstance(related_locations, list):
+                mapped["related_locations"] = [
+                    {
+                        **location,
+                        "file": _remap_precommit_file_value(
+                            location.get("file", ""), source_root, target_root
+                        ),
+                    }
+                    if isinstance(location, dict) and location.get("file")
+                    else location
+                    for location in related_locations
+                ]
             mapped_items.append(mapped)
 
         remapped[category] = mapped_items
 
     return remapped
+
+
+def _remap_precommit_file_value(
+    file_value: object, source_root: Path, target_root: Path
+) -> str:
+    file_path = Path(str(file_value))
+    if file_path.is_absolute():
+        try:
+            relpath = file_path.resolve().relative_to(source_root.resolve())
+        except ValueError:
+            return str(file_value)
+    else:
+        relpath = file_path
+    return str((target_root / relpath).resolve())
+
+
+_PRECOMMIT_CONTRACT_EVIDENCE_SUFFIXES = {
+    ".bash",
+    ".bazel",
+    ".bzl",
+    ".c",
+    ".cc",
+    ".cmake",
+    ".cpp",
+    ".cu",
+    ".cuh",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".make",
+    ".mk",
+    ".sh",
+    ".yaml",
+    ".yml",
+    ".zsh",
+}
+_PRECOMMIT_CONTRACT_EVIDENCE_NAMES = {
+    "cmakelists.txt",
+    "gnumakefile",
+    "makefile",
+}
+
+
+def _is_precommit_contract_evidence(path: Path) -> bool:
+    name = path.name.lower()
+    is_dockerfile = (
+        name == "dockerfile"
+        or name.startswith("dockerfile.")
+        or name.endswith(".dockerfile")
+    )
+    return (
+        is_dockerfile
+        or name in _PRECOMMIT_CONTRACT_EVIDENCE_NAMES
+        or path.suffix.lower() in _PRECOMMIT_CONTRACT_EVIDENCE_SUFFIXES
+    )
+
+
+def _precommit_finding_targets_report_file(
+    finding: dict, project_root: Path, report_targets: set[str]
+) -> bool:
+    file_values = [finding.get("file", "")]
+    related_locations = finding.get("related_locations")
+    if isinstance(related_locations, list):
+        file_values.extend(
+            location.get("file", "")
+            for location in related_locations
+            if isinstance(location, dict)
+        )
+
+    for file_value in file_values:
+        if not file_value:
+            continue
+        candidate = Path(str(file_value))
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        try:
+            if str(candidate.resolve()) in report_targets:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 _PRECOMMIT_HUNK_RE = re.compile(r"^@@ .+ \+(\d+)(?:,(\d+))? @@")
@@ -541,14 +632,14 @@ def _parse_unified_diff_ranges(diff_output: str) -> list[dict]:
         if match and current_file:
             start = int(match.group(1))
             count = int(match.group(2) or 1)
-            if count > 0:
-                entries.append(
-                    {
-                        "file": current_file,
-                        "start": start,
-                        "end": start + count - 1,
-                    }
-                )
+            anchor = max(1, start)
+            entries.append(
+                {
+                    "file": current_file,
+                    "start": anchor,
+                    "end": anchor if count == 0 else start + count - 1,
+                }
+            )
 
     return entries
 
@@ -594,11 +685,32 @@ def _finding_is_in_changed_lines(
     file_ranges = _ranges_for_precommit_file(
         str(finding.get("file", "")), changed_range_index
     )
-    if not file_ranges:
-        return False
-
     line = int(finding.get("line") or 0)
-    return any(start <= line <= end for start, end in file_ranges)
+    if any(start <= line <= end for start, end in file_ranges):
+        return True
+
+    related_locations = finding.get("related_locations")
+    if not isinstance(related_locations, list):
+        return False
+    for location in related_locations:
+        if not isinstance(location, dict):
+            continue
+        ranges = _ranges_for_precommit_file(
+            str(location.get("file", "")), changed_range_index
+        )
+        try:
+            start_line = int(location.get("start_line") or 0)
+            end_line = int(location.get("end_line") or start_line)
+        except (TypeError, ValueError):
+            continue
+        if start_line < 1 or end_line < start_line:
+            continue
+        if any(
+            changed_start <= end_line and start_line <= changed_end
+            for changed_start, changed_end in ranges
+        ):
+            return True
+    return False
 
 
 def _get_cached_changed_line_ranges(
@@ -922,6 +1034,7 @@ def _normalize_agent_findings(payload, project_root: Path):
 def _agent_findings_to_result_json(findings):
     result = {
         "danger": [],
+        "reliability": [],
         "ai_defects": [],
         "quality": [],
         "secrets": [],
@@ -934,6 +1047,7 @@ def _agent_findings_to_result_json(findings):
     category_map = {
         "security": "danger",
         "danger": "danger",
+        "reliability": "reliability",
         "ai_defects": "ai_defects",
         "quality": "quality",
         "secret": "secrets",
@@ -1067,6 +1181,7 @@ def _selected_main_upload_static_categories(args) -> list[str]:
     categories = ["dead_code"]
     if getattr(args, "danger", False):
         categories.append("danger")
+        categories.append("reliability")
     if getattr(args, "ai_defects", False):
         categories.append("ai_defects")
     if getattr(args, "quality", False):
@@ -1241,6 +1356,8 @@ def print_badge(
     *,
     danger_enabled=False,
     danger_count=0,
+    reliability_enabled=False,
+    reliability_count=0,
     quality_enabled=False,
     quality_count=0,
 ):
@@ -1249,9 +1366,10 @@ def print_badge(
 
     has_dead_code = dead_code_count > 0
     has_danger = danger_enabled and danger_count > 0
+    has_reliability = reliability_enabled and reliability_count > 0
     has_quality = quality_enabled and quality_count > 0
 
-    if not has_dead_code and not has_danger and not has_quality:
+    if not has_dead_code and not has_danger and not has_reliability and not has_quality:
         console.print(
             Panel.fit(
                 "[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:",
@@ -1268,6 +1386,8 @@ def print_badge(
     headline = f"Found {dead_code_count} dead-code items"
     if danger_enabled:
         headline += f" and {danger_count} security issues"
+    if reliability_enabled:
+        headline += f" and {reliability_count} reliability issues"
     if quality_enabled:
         headline += f" and {quality_count} quality issues"
     headline += ". Add this badge to your README:"
@@ -1287,8 +1407,12 @@ _DISPLAY_FILTER_CATEGORY_MAP = {
     "unused_parameters": "dead_code",
     "unused_variables": "dead_code",
     "unused_classes": "dead_code",
+    "unused_files": "dead_code",
     "unused_fixtures": "dead_code",
+    "unused_exports": "dead_code",
+    "forgotten": "dead_code",
     "danger": "security",
+    "reliability": "reliability",
     "ai_defects": "ai_defects",
     "secrets": "secret",
     "quality": "quality",
@@ -1308,6 +1432,7 @@ _RULE_SELECTION_DEFAULT_IDS = {
     "unused_fixtures": "SKY-U000",
     "forgotten": "SKY-U001",
     "danger": "SKY-D000",
+    "reliability": "SKY-R000",
     "ai_defects": "SKY-AI000",
     "quality": "SKY-Q000",
     "secrets": "SKY-S000",
@@ -1327,6 +1452,7 @@ _RULE_SELECTION_FINDING_CATEGORIES = (
     "unused_exports",
     "forgotten",
     "danger",
+    "reliability",
     "ai_defects",
     "quality",
     "secrets",
@@ -1345,6 +1471,7 @@ _RULE_SELECTION_SUMMARY_COUNTS = {
     "unused_fixtures": "unused_fixtures_count",
     "unused_exports": "unused_exports_count",
     "danger": "danger_count",
+    "reliability": "reliability_count",
     "ai_defects": "ai_defects_count",
     "quality": "quality_count",
     "secrets": "secrets_count",
@@ -1365,6 +1492,16 @@ _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES = {
     "SKY-Q000": "quality",
     "SKY-S000": "secrets",
     "SKY-SCA-000": "dependency",
+}
+
+# Some rules only make a claim after a prerequisite contract has been proven
+# valid.  Keep that prerequisite visible when users request a leaf rule so a
+# malformed or missing contract cannot disappear behind --select and make a
+# release gate pass open.
+_RULE_SELECTION_PREREQUISITES = {
+    "SKY-GPU001": ("SKY-GPU000",),
+    "SKY-GPU002": ("SKY-GPU000",),
+    "SKY-GPU003": ("SKY-GPU000",),
 }
 
 
@@ -1423,7 +1560,7 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
 
     for key, cat in _DISPLAY_FILTER_CATEGORY_MAP.items():
         items = result.get(key, []) or []
-        if not items:
+        if key not in result and not items:
             continue
 
         if allowed_cats and cat not in allowed_cats:
@@ -1431,6 +1568,21 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
             continue
 
         filtered[key] = _display_filter_items(items, file_filter, min_rank)
+
+    summary = copy.copy(result.get("analysis_summary") or {})
+    summary.pop("by_directory", None)
+    summary.pop("dead_code_evidence", None)
+    summary.pop("grep_verify", None)
+    for key, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
+        if key in result or count_key in summary:
+            summary[count_key] = len(filtered.get(key) or [])
+    filtered["analysis_summary"] = summary
+
+    # These aggregates describe the unfiltered result and must not be emitted
+    # alongside a filtered machine-readable finding set.
+    filtered.pop("grade", None)
+    filtered.pop("ai_security_stats", None)
+    filtered.pop("provenance_summary", None)
 
     return filtered
 
@@ -1449,7 +1601,22 @@ def _normalize_selected_rules(selectors) -> list[str]:
             if rule_id and rule_id not in seen:
                 selected.append(rule_id)
                 seen.add(rule_id)
+    for rule_id in tuple(selected):
+        for prerequisite in _RULE_SELECTION_PREREQUISITES.get(rule_id, ()):
+            if prerequisite not in seen:
+                selected.append(prerequisite)
+                seen.add(prerequisite)
     return selected
+
+
+def _selected_rule_prerequisite_ids(selectors) -> set[str]:
+    selected = set(_normalize_selected_rules(selectors))
+    prerequisites = {
+        prerequisite
+        for values in _RULE_SELECTION_PREREQUISITES.values()
+        for prerequisite in values
+    }
+    return selected & prerequisites
 
 
 def _finding_rule_id(item, category: str) -> str:
@@ -1504,15 +1671,32 @@ def _apply_selected_rule_analysis_flags(args) -> None:
     from skylos.rules.catalog import get_rule_catalog
 
     categories_by_rule = {
-        str(entry["id"]).upper(): str(entry["category"])
-        for entry in get_rule_catalog()
+        str(entry["id"]).upper(): str(entry["category"]) for entry in get_rule_catalog()
     }
+    known_rule_ids = (
+        set(categories_by_rule)
+        | set(_RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES)
+        | set(_RULE_SELECTION_DEFAULT_IDS.values())
+    )
+    unknown_rule_ids = [
+        rule_id
+        for rule_id in selected_rules
+        if rule_id not in known_rule_ids
+        and not rule_id.startswith("CUSTOM-")
+        and not rule_id.startswith("SKY-SCA-")
+    ]
+    if unknown_rule_ids:
+        unknown_text = ", ".join(unknown_rule_ids)
+        raise ConfigError(
+            f"Unknown --select rule ID(s): {unknown_text}. "
+            "Run 'skylos rules list' to discover valid IDs."
+        )
     for rule_id in selected_rules:
         category = _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES.get(
             rule_id,
             categories_by_rule.get(rule_id),
         )
-        if category == "security":
+        if category in {"security", "reliability"}:
             args.danger = True
         elif category == "ai_defect":
             args.ai_defects = True
@@ -1560,7 +1744,8 @@ def _write_rich_report_output(
         limit=limit,
         copy_badge=False,
     )
-    pathlib.Path(output_file).write_text(buffer.getvalue(), encoding="utf-8")
+    if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
+        raise OSError(f"could not safely write output file: {output_file}")
 
 
 def _write_pretty_report_output(
@@ -1582,7 +1767,8 @@ def _write_pretty_report_output(
         root_path=root_path,
         limit=limit,
     )
-    pathlib.Path(output_file).write_text(buffer.getvalue(), encoding="utf-8")
+    if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
+        raise OSError(f"could not safely write output file: {output_file}")
 
 
 def run_init():
@@ -1852,6 +2038,12 @@ def _run_sonar_command(argv):
     return run_sonar_command(argv, console_factory=Console)
 
 
+def _run_compare_command(argv):
+    from skylos.commands.compare_cmd import run_compare_command
+
+    return run_compare_command(argv, console_factory=Console)
+
+
 def _run_verify_command(argv):
     from skylos.commands.verify_cmd import run_verify_command
 
@@ -2080,6 +2272,7 @@ CONCISE_FINDING_CATEGORIES = (
     ("unused_files", "unused file"),
     ("unused_fixtures", "unused fixture"),
     ("danger", "security issue"),
+    ("reliability", "reliability issue"),
     ("ai_defects", "AI defect"),
     ("quality", "quality issue"),
     ("secrets", "secret"),
@@ -2125,11 +2318,7 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            label = (
-                item.get("message")
-                or item.get("msg")
-                or item.get("detail")
-            )
+            label = item.get("message") or item.get("msg") or item.get("detail")
             if not label:
                 name = item.get("name") or item.get("simple_name") or item.get("symbol")
                 label = f"{fallback_label}: {name}" if name else fallback_label
@@ -3458,6 +3647,7 @@ def main() -> None:
 
                 staged_source_files = []
                 staged_config_files = []
+                staged_contract_files = []
                 staged_secret_only_files = {
                     "test": [],
                     "benchmark": [],
@@ -3479,6 +3669,14 @@ def main() -> None:
                         continue
                     if _is_config_candidate(relpath_obj):
                         staged_config_files.append(relpath)
+                        if _is_precommit_contract_evidence(relpath_obj):
+                            staged_contract_files.append(relpath)
+                        abs_path = str((project_root / relpath).resolve())
+                        report_targets.add(abs_path)
+                        continue
+                    if _is_precommit_contract_evidence(relpath_obj):
+                        staged_config_files.append(relpath)
+                        staged_contract_files.append(relpath)
                         abs_path = str((project_root / relpath).resolve())
                         report_targets.add(abs_path)
                         continue
@@ -3524,14 +3722,20 @@ def main() -> None:
                     str((project_root / relpath).resolve())
                     for relpath in staged_source_files
                 ]
+                analysis_scan_target: str | list[str] = analysis_source_paths
                 snapshot_note = ""
 
                 def _is_relevant_analysis_path(path: Path) -> bool:
-                    return path.suffix.lower() in source_exts or _is_config_candidate(
-                        path
+                    return (
+                        path.suffix.lower() in source_exts
+                        or _is_config_candidate(path)
+                        or _is_precommit_contract_evidence(path)
                     )
 
-                if staged_source_files:
+                has_static_analysis_targets = bool(
+                    staged_source_files or staged_contract_files
+                )
+                if has_static_analysis_targets:
                     unstaged_relevant = _list_dirty_relevant_paths(
                         project_root, _is_relevant_analysis_path
                     )
@@ -3554,6 +3758,11 @@ def main() -> None:
                             )
                         else:
                             snapshot_note = " Exact staged snapshot unavailable; using working tree context."
+
+                if staged_contract_files:
+                    analysis_scan_target = str(analysis_root)
+                else:
+                    analysis_scan_target = analysis_source_paths
 
                 exclude_folders = parse_exclude_folders(
                     use_defaults=True,
@@ -3596,12 +3805,12 @@ def main() -> None:
                         )
                         mode_note = (
                             " Running secrets check only."
-                            if not staged_source_files
+                            if not has_static_analysis_targets
                             else ""
                         )
                         scope_note = (
                             "Checks security, secrets, and high-signal quality regressions on production source/config."
-                            if staged_source_files
+                            if has_static_analysis_targets
                             else "Checks secrets only."
                         )
                         console.print(
@@ -3625,7 +3834,7 @@ def main() -> None:
                         ignore_tests=False,
                     )
 
-                    if not staged_source_files:
+                    if not has_static_analysis_targets:
                         secrets = _scan_staged_secret_files(
                             project_root,
                             staged_config_files,
@@ -3668,7 +3877,7 @@ def main() -> None:
 
                         analyzer_logger.setLevel(logging.WARNING)
                         raw_result = run_analyze(
-                            analysis_source_paths,
+                            analysis_scan_target,
                             conf=agent_args.conf,
                             enable_secrets=True,
                             enable_danger=True,
@@ -3706,6 +3915,7 @@ def main() -> None:
                     "unused_parameters",
                     "unused_files",
                     "danger",
+                    "reliability",
                     "quality",
                     "ai_defects",
                     "secrets",
@@ -3716,8 +3926,9 @@ def main() -> None:
                         result[category] = [
                             item
                             for item in items
-                            if str((project_root / item.get("file", "")).resolve())
-                            in report_targets
+                            if _precommit_finding_targets_report_file(
+                                item, project_root, report_targets
+                            )
                         ]
 
                 staged_findings = normalize_findings(
@@ -3743,6 +3954,7 @@ def main() -> None:
                     else:
                         category_counts = {
                             "security": 0,
+                            "reliability": 0,
                             "secrets": 0,
                             "quality": 0,
                             "ai_defects": 0,
@@ -3786,7 +3998,7 @@ def main() -> None:
                         "full quality enforcement still runs in CI.[/dim]"
                     )
                 console.print(
-                    "[good]No staged security, secrets, quality, or AI-defect issues[/good]"
+                    "[good]No staged security, reliability, secrets, quality, or AI-defect issues[/good]"
                 )
                 sys.exit(0)
 

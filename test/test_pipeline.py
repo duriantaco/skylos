@@ -65,6 +65,7 @@ FAKE_STATIC_RESULT = {
             "confidence": 95,
         },
     ],
+    "reliability": [],
     "quality": [
         {
             "name": "long_func",
@@ -307,8 +308,36 @@ class TestRunStaticOnFiles:
             project_root=pathlib.Path("/proj"),
         )
 
-        assert [finding["rule_id"] for finding in result["ai_defects"]] == [
-            "SKY-A101"
+        assert [finding["rule_id"] for finding in result["ai_defects"]] == ["SKY-A101"]
+
+    @patch(P_CUSTOM, return_value=None)
+    @patch(P_EXCLUDE, return_value={"venv"})
+    @patch(P_ANALYZE)
+    def test_filters_reliability_to_target_files(self, mock_analyze, _exc, _cust):
+        data = _fresh_static()
+        data["reliability"] = [
+            {
+                "file": "/proj/a.py",
+                "line": 8,
+                "message": "External Ingress reaches reload mode.",
+                "rule_id": "SKY-DEP003",
+            },
+            {
+                "file": "/proj/b.py",
+                "line": 12,
+                "message": "CUDA target architecture missing from build.",
+                "rule_id": "SKY-GPU002",
+            },
+        ]
+        mock_analyze.return_value = json.dumps(data)
+
+        result = run_static_on_files(
+            ["/proj/a.py"],
+            project_root=pathlib.Path("/proj"),
+        )
+
+        assert [finding["rule_id"] for finding in result["reliability"]] == [
+            "SKY-DEP003"
         ]
 
     @patch(P_CUSTOM, return_value=None)
@@ -430,9 +459,7 @@ class TestPipelinePhase1:
             )
 
         ai_defects = [
-            finding
-            for finding in findings
-            if finding.get("_category") == "ai_defects"
+            finding for finding in findings if finding.get("_category") == "ai_defects"
         ]
         assert len(ai_defects) == 1
         assert ai_defects[0]["rule_id"] == "SKY-A101"

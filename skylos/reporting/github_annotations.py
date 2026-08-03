@@ -13,6 +13,7 @@ _GITHUB_ANNOTATION_THRESHOLDS = {
 }
 _GITHUB_FINDING_CATEGORIES = (
     "danger",
+    "reliability",
     "ai_defects",
     "quality",
     "secrets",

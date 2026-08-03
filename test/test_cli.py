@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from io import StringIO
+from pathlib import Path
 
 import pytest
 import json
@@ -21,6 +22,22 @@ from skylos.cli import (
     print_badge,
     main,
 )
+from skylos.commands.scan_cmd import _write_scan_output
+
+
+def test_scan_output_rejects_symlink_without_clobbering_target(tmp_path):
+    victim = tmp_path / "victim.json"
+    victim.write_text("KEEP", encoding="utf-8")
+    output_file = tmp_path / "scan.json"
+    try:
+        output_file.symlink_to(victim)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+    with pytest.raises(OSError, match="could not safely write"):
+        _write_scan_output(str(output_file), '{"scan":true}')
+
+    assert victim.read_text(encoding="utf-8") == "KEEP"
 
 
 def test_agent_findings_result_json_preserves_ai_defect_category():
@@ -567,7 +584,8 @@ def test_apply_display_filters_severity_filters_without_crashing():
         {"severity": "HIGH", "file": "src/c.py", "message": "high"},
     ]
     assert filtered["unused_functions"] == result["unused_functions"]
-    assert filtered["analysis_summary"] == result["analysis_summary"]
+    assert filtered["analysis_summary"]["total_files"] == 1
+    assert filtered["analysis_summary"]["quality_count"] == 2
 
 
 def test_apply_display_filters_combines_category_file_and_severity():
@@ -595,6 +613,117 @@ def test_apply_display_filters_combines_category_file_and_severity():
     assert filtered["danger"] == []
 
 
+def test_apply_display_filters_separates_reliability_from_security():
+    security = {
+        "category": "SECURITY",
+        "severity": "HIGH",
+        "file": "Dockerfile",
+    }
+    reliability = {
+        "category": "RELIABILITY",
+        "severity": "HIGH",
+        "file": "Dockerfile",
+    }
+    security_subcategory = {
+        "category": "cookie_security",
+        "severity": "MEDIUM",
+        "file": "src/auth.java",
+    }
+    result = {
+        "danger": [security, security_subcategory],
+        "reliability": [reliability],
+    }
+
+    reliability_only = cli._apply_display_filters(result, category="reliability")
+    assert reliability_only["danger"] == []
+    assert reliability_only["reliability"] == [reliability]
+    security_only = cli._apply_display_filters(result, category="security")
+    assert security_only["danger"] == [
+        security,
+        security_subcategory,
+    ]
+    assert security_only["reliability"] == []
+
+
+def test_precommit_changed_line_filter_uses_related_location_span():
+    finding = {
+        "rule_id": "SKY-DEP001",
+        "file": "/snapshot/app/main.py",
+        "line": 20,
+        "related_locations": [
+            {
+                "file": "/snapshot/deploy/rendered.yaml",
+                "start_line": 40,
+                "end_line": 70,
+            }
+        ],
+    }
+    index = cli._build_changed_range_index(
+        [{"file": "deploy/rendered.yaml", "start": 55, "end": 55}]
+    )
+
+    assert cli._finding_is_in_changed_lines(finding, index) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Dockerfile",
+        "containers/release.dockerfile",
+        "CMakeLists.txt",
+        "build/kernel.cu",
+        "scripts/package.sh",
+        ".skylos/gpu-targets.yml",
+        "deploy/rendered.yaml",
+    ],
+)
+def test_precommit_recognizes_release_contract_evidence(path):
+    assert cli._is_precommit_contract_evidence(Path(path)) is True
+
+
+def test_precommit_diff_parser_keeps_deletion_only_hunk_anchor():
+    diff = """diff --git a/app/main.py b/app/main.py
+--- a/app/main.py
++++ b/app/main.py
+@@ -7 +6,0 @@
+-def require_admin(): ...
+"""
+
+    assert cli._parse_unified_diff_ranges(diff) == [
+        {"file": "app/main.py", "start": 6, "end": 6}
+    ]
+
+
+def test_precommit_snapshot_remaps_related_location_files(tmp_path):
+    source_root = tmp_path / "snapshot"
+    target_root = tmp_path / "project"
+    source_root.mkdir()
+    target_root.mkdir()
+    result = {
+        "danger": [
+            {
+                "file": str(source_root / "app" / "main.py"),
+                "line": 20,
+                "related_locations": [
+                    {
+                        "file": str(source_root / "deploy" / "rendered.yaml"),
+                        "start_line": 40,
+                        "end_line": 70,
+                    }
+                ],
+            }
+        ]
+    }
+
+    remapped = cli._remap_precommit_result_files(result, source_root, target_root)
+
+    finding = remapped["danger"][0]
+    assert finding["file"] == str((target_root / "app" / "main.py").resolve())
+    assert finding["related_locations"][0]["file"] == str(
+        (target_root / "deploy" / "rendered.yaml").resolve()
+    )
+
+
 def test_apply_rule_selection_filters_exact_ids_and_preserves_analysis_errors():
     result = {
         "analysis_summary": {"total_files": 2},
@@ -610,9 +739,7 @@ def test_apply_rule_selection_filters_exact_ids_and_preserves_analysis_errors():
             {"rule_id": "SKY-D225", "file": "drop.py", "line": 4},
         ],
         "danger": [{"rule_id": "SKY-D211", "file": "drop.py", "line": 5}],
-        "unused_functions": [
-            {"name": "drop_dead_code", "file": "drop.py", "line": 6}
-        ],
+        "unused_functions": [{"name": "drop_dead_code", "file": "drop.py", "line": 6}],
     }
 
     filtered = cli._apply_rule_selection(result, ["sky-l012"])
@@ -669,6 +796,88 @@ def test_selected_rule_analysis_flags_use_catalog_categories_not_prefixes():
     assert args.secrets is True
     assert args.sca is True
     assert args.danger is False
+
+
+def test_selected_reliability_rule_enables_danger_analysis():
+    args = types.SimpleNamespace(
+        select=["SKY-GPU001"],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == ["SKY-GPU001", "SKY-GPU000"]
+    assert args.danger is True
+
+
+def test_gpu_rule_selection_keeps_contract_prerequisite_visible():
+    result = {
+        "analysis_summary": {"total_files": 2, "reliability_count": 3},
+        "reliability": [
+            {"rule_id": "SKY-GPU000", "file": ".skylos/gpu-targets.yml"},
+            {"rule_id": "SKY-GPU001", "file": "Dockerfile"},
+            {"rule_id": "SKY-GPU002", "file": "CMakeLists.txt"},
+        ],
+    }
+
+    filtered = cli._apply_rule_selection(result, ["SKY-GPU001"])
+
+    assert [item["rule_id"] for item in filtered["reliability"]] == [
+        "SKY-GPU000",
+        "SKY-GPU001",
+    ]
+    assert filtered["analysis_summary"]["selected_rules"] == [
+        "SKY-GPU001",
+        "SKY-GPU000",
+    ]
+
+
+def test_selected_deployment_rules_enable_danger_analysis():
+    args = types.SimpleNamespace(
+        select=["SKY-DEP001,SKY-DEP003"],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == ["SKY-DEP001", "SKY-DEP003"]
+    assert args.danger is True
+
+
+def test_unknown_selected_rule_is_rejected_instead_of_passing_open():
+    args = types.SimpleNamespace(
+        select=["SKY-GUP001"],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    with pytest.raises(cli.ConfigError, match="Unknown --select rule ID"):
+        cli._apply_selected_rule_analysis_flags(args)
+
+
+def test_main_unknown_selected_rule_exits_two(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "--select", "SKY-GUP001", "--gate", "--format", "json"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 2
+    assert "Unknown --select rule ID" in capsys.readouterr().err
 
 
 def test_comment_out_unused_import_handles_exception_and_returns_false():
@@ -1144,6 +1353,36 @@ def test_render_results_shows_analysis_errors_without_grade():
     assert all("Codebase Grade" not in str(panel.renderable) for panel in panels)
 
 
+def test_render_results_uses_dedicated_reliability_section():
+    console = Mock()
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "reliability": [
+            {
+                "rule_id": "SKY-GPU001",
+                "severity": "HIGH",
+                "message": "CUDA/driver mismatch",
+                "file": "/root/Dockerfile",
+                "line": 1,
+            }
+        ],
+        "secrets": [],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    rule_text = [str(call.args[0]) for call in console.rule.call_args_list if call.args]
+    assert any("Reliability Issues" in text for text in rule_text)
+    assert all("Security Issues" not in text for text in rule_text)
+
+
 def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
     console = Mock()
 
@@ -1277,7 +1516,26 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
                 "line": "7",
                 "message": "SQLi",
                 "severity": "HIGH",
-            }
+            },
+        ],
+        "reliability": [
+            {
+                "rule_id": "SKY-GPU001",
+                "file": "Dockerfile",
+                "line": 1,
+                "message": "CUDA/driver mismatch",
+                "severity": "HIGH",
+                "category": "RELIABILITY",
+            },
+            {
+                "rule_id": "SKY-DEP003",
+                "file": "deploy/rendered.yaml",
+                "line": 12,
+                "message": "Reload mode is externally reachable",
+                "severity": "MEDIUM",
+                "category": "RELIABILITY",
+                "evidence_contract": {"proof_state": "candidate"},
+            },
         ],
         "quality": [
             {
@@ -1328,9 +1586,16 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
         cats.add(f["category"])
 
     assert "SECURITY" in cats
+    assert "RELIABILITY" in cats
     assert "QUALITY" in cats
     assert "SECRET" in cats
     assert "DEAD_CODE" in cats
+
+    deployment = next(
+        finding for finding in findings if finding["rule_id"] == "SKY-DEP003"
+    )
+    assert deployment["category"] == "RELIABILITY"
+    assert deployment["evidence_contract"]["proof_state"] == "candidate"
 
     dead_rules = set()
     for f in findings:
@@ -1343,6 +1608,148 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
     for f in findings:
         assert isinstance(f["line_number"], int)
         assert f["line_number"] >= 1
+
+
+def test_main_sarif_category_reliability_excludes_security_deployment_findings(
+    monkeypatch, tmp_path
+):
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "danger": [
+            {
+                "rule_id": "SKY-DEP001",
+                "file": "app/main.py",
+                "line": 8,
+                "message": "External route is missing its required auth guard",
+                "severity": "HIGH",
+                "category": "SECURITY",
+            },
+        ],
+        "reliability": [
+            {
+                "rule_id": "SKY-DEP003",
+                "file": "deploy/rendered.yaml",
+                "line": 22,
+                "message": "Reload mode is externally reachable",
+                "severity": "MEDIUM",
+                "category": "RELIABILITY",
+            },
+        ],
+        "quality": [],
+        "secrets": [],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+    sarif_path = tmp_path / "reliability.sarif.json"
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--sarif",
+            str(sarif_path),
+            "--json",
+            "--category",
+            "reliability",
+            "--no-provenance",
+        ],
+    )
+
+    captured = {}
+
+    def fake_exporter_ctor(findings, tool_name=None):
+        captured["findings"] = findings
+        exporter = Mock()
+        exporter.generate.return_value = {"runs": [{}]}
+        return exporter
+
+    with (
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.SarifExporter", side_effect=fake_exporter_ctor),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print"),
+    ):
+        cli.main()
+
+    assert [finding["rule_id"] for finding in captured["findings"]] == ["SKY-DEP003"]
+    assert captured["findings"][0]["category"] == "RELIABILITY"
+
+
+def test_main_json_category_reliability_excludes_security_deployment_findings(
+    monkeypatch,
+):
+    result = {
+        "analysis_summary": {
+            "total_files": 2,
+            "danger_count": 1,
+            "reliability_count": 1,
+            "by_directory": [{"path": ".", "total": 2}],
+        },
+        "grade": {"overall": {"score": 90, "letter": "A-"}},
+        "ai_security_stats": {"total_findings": 2},
+        "provenance_summary": {"total_files": 2},
+        "danger": [
+            {
+                "rule_id": "SKY-DEP001",
+                "file": "app/main.py",
+                "line": 8,
+                "message": "External route is missing its required auth guard",
+                "severity": "HIGH",
+                "category": "SECURITY",
+            },
+        ],
+        "reliability": [
+            {
+                "rule_id": "SKY-DEP003",
+                "file": "deploy/rendered.yaml",
+                "line": 22,
+                "message": "Reload mode is externally reachable",
+                "severity": "MEDIUM",
+                "category": "RELIABILITY",
+            },
+        ],
+        "quality": [],
+        "secrets": [],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--json",
+            "--category",
+            "reliability",
+            "--no-provenance",
+        ],
+    )
+
+    with (
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    output = json.loads(mock_print.call_args.args[0])
+    assert output["danger"] == []
+    assert [finding["rule_id"] for finding in output["reliability"]] == ["SKY-DEP003"]
+    assert output["reliability"][0]["category"] == "RELIABILITY"
+    assert output["analysis_summary"]["danger_count"] == 0
+    assert output["analysis_summary"]["reliability_count"] == 1
+    assert "by_directory" not in output["analysis_summary"]
+    assert "grade" not in output
+    assert "ai_security_stats" not in output
+    assert "provenance_summary" not in output
 
 
 def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
@@ -1788,10 +2195,9 @@ def test_main_select_filters_json_without_gate_failure(monkeypatch):
         cli.main()
 
     assert analyze.call_args.kwargs["enable_danger"] is True
+    assert analyze.call_args.kwargs["required_config_rules"] == ["SKY-D211"]
     selected_result = json.loads(mock_print.call_args.args[0])
-    assert [finding["rule_id"] for finding in selected_result["danger"]] == [
-        "SKY-D211"
-    ]
+    assert [finding["rule_id"] for finding in selected_result["danger"]] == ["SKY-D211"]
     assert selected_result["unused_functions"] == []
 
 
@@ -2603,6 +3009,127 @@ class TestDiffFlag:
         output = json.loads(captured_output[0])
         assert len(output["ai_defects"]) == 1
         assert output["ai_defects"][0]["file"] == "src/app.py"
+
+    def test_diff_keeps_selected_gpu_contract_prerequisite(self, monkeypatch):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--select",
+                "SKY-GPU001",
+                "--diff",
+                "origin/main",
+                "--json",
+                "--gate",
+                "--no-provenance",
+            ],
+        )
+        result = {
+            "analysis_summary": {"total_files": 1, "reliability_count": 1},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "reliability": [
+                {
+                    "rule_id": "SKY-GPU000",
+                    "severity": "HIGH",
+                    "file": ".skylos/gpu-targets.yml",
+                    "line": 1,
+                    "message": "GPU target contract is required",
+                }
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+        diff_output = (
+            "diff --git a/Dockerfile b/Dockerfile\n"
+            "--- a/Dockerfile\n"
+            "+++ b/Dockerfile\n"
+            "@@ -1 +1 @@\n"
+            "+FROM nvidia/cuda:12.4-runtime-ubuntu22.04\n"
+        )
+        captured_output = []
+
+        with (
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch(
+                "skylos.cicd.review.subprocess.run",
+                return_value=Mock(returncode=0, stdout=diff_output),
+            ),
+            patch(
+                "builtins.print",
+                side_effect=lambda value: captured_output.append(value),
+            ),
+            pytest.raises(SystemExit) as exc,
+        ):
+            cli.main()
+
+        assert exc.value.code == 1
+        output = json.loads(captured_output[0])
+        assert [item["rule_id"] for item in output["reliability"]] == ["SKY-GPU000"]
+
+    def test_diff_base_keeps_selected_gpu_contract_prerequisite(self, monkeypatch):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--select",
+                "SKY-GPU001",
+                "--diff-base",
+                "origin/main",
+                "--json",
+                "--gate",
+                "--no-provenance",
+            ],
+        )
+        result = {
+            "analysis_summary": {"total_files": 1, "reliability_count": 1},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "reliability": [
+                {
+                    "rule_id": "SKY-GPU000",
+                    "severity": "HIGH",
+                    "file": ".skylos/gpu-targets.yml",
+                    "line": 1,
+                    "message": "GPU target contract is required",
+                }
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+        captured_output = []
+
+        with (
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch(
+                "skylos.cli.subprocess.run",
+                return_value=Mock(returncode=0, stdout="Dockerfile\n"),
+            ),
+            patch(
+                "builtins.print",
+                side_effect=lambda value: captured_output.append(value),
+            ),
+            pytest.raises(SystemExit) as exc,
+        ):
+            cli.main()
+
+        assert exc.value.code == 1
+        output = json.loads(captured_output[0])
+        assert [item["rule_id"] for item in output["reliability"]] == ["SKY-GPU000"]
 
 
 if __name__ == "__main__":

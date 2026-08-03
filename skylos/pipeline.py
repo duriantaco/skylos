@@ -182,6 +182,7 @@ def _empty_result() -> dict:
         "unused_parameters": [],
         "unused_classes": [],
         "danger": [],
+        "reliability": [],
         "ai_defects": [],
         "quality": [],
         "secrets": [],
@@ -384,6 +385,7 @@ def run_static_on_files(
         "unused_parameters",
         "unused_classes",
         "danger",
+        "reliability",
         "ai_defects",
         "quality",
         "secrets",
@@ -418,7 +420,7 @@ def run_pipeline(
     Calls: skylos/analyzer.py analyze; skylos/pipeline.py run_static_on_files;
         skylos/llm/analyzer.py SkylosLLM.analyze_files;
         skylos/llm/repo_activation.py build_repo_activation_index.
-        
+
     Called from: skylos/cli.py main; skylos/cli.py run_pipeline.
     """
     import sys
@@ -448,6 +450,7 @@ def run_pipeline(
     static_findings = {
         "dead_code": [],
         "security": [],
+        "reliability": [],
         "ai_defects": [],
         "quality": [],
         "secrets": [],
@@ -513,6 +516,11 @@ def run_pipeline(
                 item["_source"] = "static"
                 item["_category"] = "security"
                 static_findings["security"].append(item)
+
+            for item in static_result.get("reliability", []) or []:
+                item["_source"] = "static"
+                item["_category"] = "reliability"
+                static_findings["reliability"].append(item)
 
             for item in static_result.get("ai_defects", []) or []:
                 item["_source"] = "static"
@@ -822,7 +830,13 @@ def run_pipeline(
         phase_stats["phase_2b_seconds"] = round(time.time() - phase_2b_start, 1)
         return results
 
-    for category in ["security", "ai_defects", "quality", "secrets"]:
+    for category in [
+        "security",
+        "reliability",
+        "ai_defects",
+        "quality",
+        "secrets",
+    ]:
         for f in static_findings.get(category, []):
             f["_confidence"] = "medium"
             all_findings.append(f)

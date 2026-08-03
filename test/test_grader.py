@@ -20,6 +20,7 @@ from skylos.reporting.grader import (
 def _empty_result(**overrides):
     base = {
         "danger": [],
+        "reliability": [],
         "quality": [],
         "ai_defects": [],
         "secrets": [],
@@ -260,6 +261,16 @@ class TestComputeGrade:
         grade = compute_grade(result, 10000)
         assert grade["overall"]["score"] <= 79
         assert grade["overall"]["letter"][0] in ("C", "D", "F")
+
+    def test_reliability_does_not_reduce_security_grade(self):
+        result = _empty_result(
+            reliability=[{"severity": "CRITICAL", "message": "Runtime incompatibility"}]
+        )
+
+        grade = compute_grade(result, 10000, included_categories=["security"])
+
+        assert grade["overall"]["score"] == 100
+        assert grade["categories"]["security"]["score"] == 100
 
     def test_weights_sum_to_one(self):
         assert abs(sum(CATEGORY_WEIGHTS.values()) - 1.0) < 0.001
