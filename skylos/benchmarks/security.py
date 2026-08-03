@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -299,21 +300,30 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     if scan:
         scan_cfg.update(scan)
 
-    analyzer_logger = logging.getLogger("Skylos")
-    prev_level = analyzer_logger.level
-    analyzer_logger.setLevel(logging.WARNING)
-    try:
-        raw = analyze(
-            str(case_path),
-            conf=0,
-            enable_quality=bool(scan_cfg.get("enable_quality", False)),
-            enable_danger=bool(scan_cfg.get("enable_danger", True)),
-            enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
-            changed_files=_case_changed_files(case_path),
-            grep_verify=bool(scan_cfg.get("grep_verify", False)),
-        )
-    finally:
-        analyzer_logger.setLevel(prev_level)
+    # In-repo fixture paths otherwise resolve to the Skylos project root and
+    # inherit its config, coverage, and trace evidence.
+    with tempfile.TemporaryDirectory(prefix="skylos-security-benchmark-") as tmp:
+        isolated_path = Path(tmp) / case_path.name
+        if case_path.is_dir():
+            shutil.copytree(case_path, isolated_path, symlinks=True)
+        else:
+            shutil.copy2(case_path, isolated_path, follow_symlinks=False)
+
+        analyzer_logger = logging.getLogger("Skylos")
+        prev_level = analyzer_logger.level
+        analyzer_logger.setLevel(logging.WARNING)
+        try:
+            raw = analyze(
+                str(isolated_path),
+                conf=0,
+                enable_quality=bool(scan_cfg.get("enable_quality", False)),
+                enable_danger=bool(scan_cfg.get("enable_danger", True)),
+                enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
+                changed_files=_case_changed_files(isolated_path),
+                grep_verify=bool(scan_cfg.get("grep_verify", False)),
+            )
+        finally:
+            analyzer_logger.setLevel(prev_level)
     return json.loads(raw)
 
 
@@ -324,9 +334,7 @@ def _case_changed_files(case_path: Path) -> set[str]:
     changed_files: set[str] = set()
     for current_root, dirnames, filenames in os.walk(case_path, followlinks=False):
         dirnames[:] = [
-            name
-            for name in dirnames
-            if not (Path(current_root) / name).is_symlink()
+            name for name in dirnames if not (Path(current_root) / name).is_symlink()
         ]
         base = Path(current_root)
         for filename in filenames:
