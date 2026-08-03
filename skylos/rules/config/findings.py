@@ -16,6 +16,7 @@ def config_finding(
     severity: str,
     value: str,
     finding_type: str,
+    category: str = "SECURITY",
 ) -> dict[str, Any]:
     return {
         "rule_id": rule_id,
@@ -33,5 +34,5 @@ def config_finding(
         "basename": file.name,
         "line": max(1, line),
         "col": 0,
-        "category": "SECURITY",
+        "category": category,
     }
