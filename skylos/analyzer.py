@@ -3974,10 +3974,10 @@ class Skylos:
 
         grep_verify_report = {
             "enabled": bool(grep_verify),
-            "project_cache_enabled": bool(grep_verify and grep_cache),
             "rescued_count": 0,
         }
         if grep_verify:
+            grep_verify_report["project_cache_enabled"] = bool(grep_cache)
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
             grep_verify_report["rescued_count"] = self._grep_verify(

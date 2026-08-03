@@ -4132,7 +4132,7 @@ def create_invoice(order):
 
         monkeypatch.setattr(Skylos, "_grep_verify", fake_grep_verify)
 
-        json.loads(
+        result = json.loads(
             analyze(
                 str(tmp_path),
                 conf=0,
@@ -4142,6 +4142,9 @@ def create_invoice(order):
         )
 
         assert seen == [False]
+        assert (
+            result["analysis_summary"]["grep_verify"]["project_cache_enabled"] is False
+        )
 
     def test_ai_defect_scan_checks_manifest_dependencies_without_python_files(
         self, tmp_path, monkeypatch
