@@ -146,7 +146,9 @@ COMMANDS = [
     {
         "name": "skylos doctor [--format text|json]",
         "desc": "Check installation health and language-engine availability",
-        "details": ["--format text|json  Print human-readable or machine-readable health"],
+        "details": [
+            "--format text|json  Print human-readable or machine-readable health"
+        ],
         "group": "Utility",
     },
     {
@@ -180,6 +182,22 @@ COMMANDS = [
     {
         "name": "skylos ingest",
         "desc": "Ingest findings from external tools",
+        "group": "Utility",
+    },
+    {
+        "name": "skylos compare [path] --against <report>",
+        "desc": "Measure Skylos beside an incumbent scanner without replacing it",
+        "details": [
+            "--against: SARIF, Sonar issues JSON, or normalized findings JSON",
+            "--skylos-results: reuse an existing Skylos JSON report instead of scanning",
+            "--confidence/--exclude: tune the local Skylos scan profile",
+            "--sca: add bounded exact-pin OSV signals (category-limited)",
+            "default profile: no secret-file traversal, registry lookup, or SCA network calls",
+            "--external-revision/--skylos-revision: bind reports that lack provenance",
+            "--format text|json: print a concise scorecard or machine-readable report",
+            "-o/--output: write the full comparison report as JSON",
+            "--upload: opt in to a project-bound Cloud receipt and scorecard",
+        ],
         "group": "Utility",
     },
     {
