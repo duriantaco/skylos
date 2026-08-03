@@ -61,6 +61,130 @@ def test_snapshot_file_signatures_skips_gitignored_files(tmp_path):
     assert "customenv/ghost.py" not in signatures
 
 
+def test_snapshot_file_signatures_includes_release_evidence_without_state_or_symlinks(
+    tmp_path,
+):
+    project = tmp_path / "repo"
+    project.mkdir()
+    state_dir = project / ".skylos"
+    state_dir.mkdir()
+    (state_dir / "gpu-targets.yml").write_text(
+        "targets:\n  - name: edge\n    driver: '450'\n",
+        encoding="utf-8",
+    )
+    (state_dir / "agent_state.json").write_text("{}\n", encoding="utf-8")
+    (project / "Dockerfile").write_text(
+        "FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04\n",
+        encoding="utf-8",
+    )
+    (project / "CMakeLists.txt").write_text(
+        "set(CMAKE_CUDA_ARCHITECTURES 75)\n",
+        encoding="utf-8",
+    )
+    deploy = project / "deploy"
+    deploy.mkdir()
+    manifest = deploy / "rendered.yaml"
+    manifest.write_text("kind: Deployment\n", encoding="utf-8")
+    (deploy / "linked.yaml").symlink_to(manifest)
+
+    signatures = snapshot_file_signatures(project)
+
+    assert ".skylos/gpu-targets.yml" in signatures
+    assert "Dockerfile" in signatures
+    assert "CMakeLists.txt" in signatures
+    assert "deploy/rendered.yaml" in signatures
+    assert ".skylos/agent_state.json" not in signatures
+    assert "deploy/linked.yaml" not in signatures
+
+
+def test_snapshot_file_signatures_excludes_custom_state_and_detects_profile_change(
+    tmp_path,
+):
+    project = tmp_path / "repo"
+    project.mkdir()
+    state_dir = project / ".skylos"
+    state_dir.mkdir()
+    profile = state_dir / "gpu-targets.yml"
+    profile.write_text("targets: []\n", encoding="utf-8")
+    custom_state = project / "watch-state.yml"
+    custom_state.write_text("{}\n", encoding="utf-8")
+
+    before = snapshot_file_signatures(project, state_file=custom_state)
+    profile.write_text(
+        "targets:\n  - name: edge\n    driver: '450'\n",
+        encoding="utf-8",
+    )
+    after = snapshot_file_signatures(project, state_file=custom_state)
+
+    assert "watch-state.yml" not in before
+    assert "watch-state.yml" not in after
+    assert detect_changed_files(before, after) == [".skylos/gpu-targets.yml"]
+
+
+def test_refresh_agent_state_rescans_after_gpu_profile_only_change(tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / ".git").mkdir()
+    state_dir = project / ".skylos"
+    state_dir.mkdir()
+    profile = state_dir / "gpu-targets.yml"
+    profile.write_text("targets: []\n", encoding="utf-8")
+    empty_result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [],
+        "reliability": [],
+        "quality": [],
+        "secrets": [],
+        "ai_defects": [],
+    }
+    reliability_result = {
+        **empty_result,
+        "reliability": [
+            {
+                "rule_id": "SKY-GPU001",
+                "file": str(profile),
+                "line": 2,
+                "severity": "HIGH",
+                "message": "CUDA image needs a newer driver",
+            }
+        ],
+    }
+
+    with (
+        patch(
+            "skylos.agents.center.run_analyze",
+            side_effect=[json.dumps(empty_result), json.dumps(reliability_result)],
+        ) as run_analyze,
+        patch("skylos.agents.center.collect_debt_signals", return_value=[]),
+    ):
+        _, first_updated = refresh_agent_state(
+            project,
+            force=True,
+            include_dead_code=False,
+            use_baseline=False,
+        )
+        profile.write_text(
+            "targets:\n  - name: edge\n    driver: '450'\n",
+            encoding="utf-8",
+        )
+        state, second_updated = refresh_agent_state(
+            project,
+            force=False,
+            include_dead_code=False,
+            use_baseline=False,
+        )
+
+    assert first_updated is True
+    assert second_updated is True
+    assert run_analyze.call_count == 2
+    assert state["changed_files"] == [".skylos/gpu-targets.yml"]
+    assert state["findings"][0]["rule_id"] == "SKY-GPU001"
+    assert state["findings"][0]["category"] == "reliability"
+
+
 def test_build_ranked_actions_prioritizes_new_critical_changed_security():
     findings = [
         {
@@ -297,6 +421,41 @@ def test_normalize_findings_includes_ai_defects(tmp_path):
     assert len(findings) == 1
     assert findings[0]["category"] == "ai_defects"
     assert findings[0]["rule_id"] == "SKY-L012"
+
+
+def test_normalize_findings_preserves_reliability_and_related_locations(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    source = project_root / "app.py"
+    manifest = project_root / "deploy.yaml"
+    source.write_text("app.run(debug=True)\n", encoding="utf-8")
+    manifest.write_text("kind: Ingress\n", encoding="utf-8")
+    related_locations = [
+        {
+            "file": str(manifest),
+            "start_line": 1,
+            "end_line": 1,
+        }
+    ]
+    result = {
+        "reliability": [
+            {
+                "rule_id": "SKY-DEP003",
+                "severity": "MEDIUM",
+                "message": "External Ingress reaches reload mode.",
+                "file": str(source),
+                "line": 1,
+                "related_locations": related_locations,
+            }
+        ]
+    }
+
+    findings = normalize_findings(result, project_root, include_dead_code=False)
+
+    assert len(findings) == 1
+    assert findings[0]["category"] == "reliability"
+    assert findings[0]["rule_id"] == "SKY-DEP003"
+    assert findings[0]["related_locations"] == related_locations
 
 
 def test_normalize_findings_applies_debt_baseline(tmp_path):

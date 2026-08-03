@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,75 @@ SUPPORTED_EXTENSIONS = {
     ".kts",
 }
 
+CONFIG_EVIDENCE_SUFFIXES = {
+    ".bash",
+    ".bazel",
+    ".bzl",
+    ".c",
+    ".cc",
+    ".cfg",
+    ".cmake",
+    ".conf",
+    ".cpp",
+    ".cu",
+    ".cuh",
+    ".cxx",
+    ".gradle",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".ini",
+    ".json",
+    ".make",
+    ".mk",
+    ".service",
+    ".sh",
+    ".toml",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".zsh",
+}
+CONFIG_EVIDENCE_NAMES = {
+    "bun.lock",
+    "bun.lockb",
+    "cmakelists.txt",
+    "gemfile",
+    "gemfile.lock",
+    "gnumakefile",
+    "go.mod",
+    "go.sum",
+    "makefile",
+    "pipfile",
+    "pipfile.lock",
+    "poetry.lock",
+    "requirements.txt",
+    "uv.lock",
+    "yarn.lock",
+}
+CONFIG_EVIDENCE_SKIP_DIR_NAMES = {
+    ".cache",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+}
+GPU_PROFILE_PATHS = (
+    Path(STATE_DIR) / "gpu-targets.yml",
+    Path(STATE_DIR) / "gpu-targets.yaml",
+)
+MAX_AGENT_CONFIG_EVIDENCE_FILES = 5_000
+MAX_AGENT_CONFIG_CANDIDATES = 20_000
+MAX_AGENT_CONFIG_DIRECTORIES = 10_000
+
 
 def run_analyze(*args, **kwargs):
     from skylos.analyzer import analyze as run_analyze_impl
@@ -69,6 +139,111 @@ def discover_source_files(*args, **kwargs):
     )
 
     return discover_source_files_impl(*args, **kwargs)
+
+
+def _is_dockerfile(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        name == "dockerfile"
+        or name.startswith("dockerfile.")
+        or name.endswith(".dockerfile")
+    )
+
+
+def _is_config_evidence_file(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        _is_dockerfile(path)
+        or name in CONFIG_EVIDENCE_NAMES
+        or (name.startswith("requirements-") and path.suffix.lower() == ".txt")
+        or name == ".env"
+        or name.startswith(".env.")
+        or path.suffix.lower() in CONFIG_EVIDENCE_SUFFIXES
+    )
+
+
+def _contained_file_signature(
+    path: Path,
+    root: Path,
+) -> tuple[str, dict[str, int]] | None:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return None
+
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            return None
+
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+        if not resolved.is_file():
+            return None
+        stat = resolved.stat()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    rel = str(relative).replace("\\", "/")
+    return rel, {
+        "mtime_ns": int(stat.st_mtime_ns),
+        "size": int(stat.st_size),
+    }
+
+
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return path.absolute()
+
+
+def _walk_config_evidence(root: Path):
+    try:
+        yield from os.walk(root, followlinks=False)
+    except (OSError, PermissionError):
+        return
+
+
+def _iter_config_evidence_files(
+    root: Path,
+    excluded: set[str],
+):
+    from skylos.core.file_discovery import should_exclude_path
+
+    for relative in GPU_PROFILE_PATHS:
+        yield root / relative
+
+    walked_directories = 0
+    candidate_files = 0
+    for dirpath, dirnames, filenames in _walk_config_evidence(root):
+        walked_directories += 1
+        if walked_directories > MAX_AGENT_CONFIG_DIRECTORIES:
+            return
+
+        base = Path(dirpath)
+        kept_directories = []
+        for dirname in sorted(dirnames):
+            directory = base / dirname
+            if directory.is_symlink():
+                continue
+            if dirname in CONFIG_EVIDENCE_SKIP_DIR_NAMES or dirname == STATE_DIR:
+                continue
+            if should_exclude_path(directory, root, excluded):
+                continue
+            kept_directories.append(dirname)
+        dirnames[:] = kept_directories
+
+        for filename in sorted(filenames):
+            candidate = base / filename
+            if not _is_config_evidence_file(candidate):
+                continue
+            candidate_files += 1
+            if candidate_files > MAX_AGENT_CONFIG_CANDIDATES:
+                return
+            yield candidate
 
 
 def resolve_project_root(path: str | Path) -> Path:
@@ -126,8 +301,10 @@ def snapshot_file_signatures(
     project_root: str | Path,
     *,
     exclude_folders: list[str] | set[str] | None = None,
+    state_file: str | Path | None = None,
 ) -> dict[str, dict[str, int]]:
     root = Path(project_root).resolve()
+    resolved_state_path = _safe_resolve(resolve_state_path(root, state_file))
     excluded = set(
         exclude_folders
         or parse_exclude_folders(
@@ -139,16 +316,29 @@ def snapshot_file_signatures(
 
     signatures: dict[str, dict[str, int]] = {}
     for path in discover_source_files(root, SUPPORTED_EXTENSIONS, excluded):
-        try:
-            stat = path.stat()
-        except OSError as exc:
-            logger.debug("Skipping unreadable source file %s: %s", path, exc)
+        if _safe_resolve(path) == resolved_state_path:
             continue
-        rel = str(path.relative_to(root)).replace("\\", "/")
-        signatures[rel] = {
-            "mtime_ns": int(stat.st_mtime_ns),
-            "size": int(stat.st_size),
-        }
+        signature = _contained_file_signature(path, root)
+        if signature is None:
+            logger.debug("Skipping unsafe or unreadable source file %s", path)
+            continue
+        rel, metadata = signature
+        signatures[rel] = metadata
+
+    evidence_files = 0
+    for path in _iter_config_evidence_files(root, excluded):
+        if evidence_files >= MAX_AGENT_CONFIG_EVIDENCE_FILES:
+            break
+        if _safe_resolve(path) == resolved_state_path:
+            continue
+        signature = _contained_file_signature(path, root)
+        if signature is None:
+            continue
+        rel, metadata = signature
+        if rel in signatures:
+            continue
+        signatures[rel] = metadata
+        evidence_files += 1
     return signatures
 
 
@@ -375,7 +565,11 @@ def _load_refresh_context(
     previous_state = load_agent_state(project_root, state_file=state_file) or {}
     triage = normalize_triage_map(previous_state.get("triage") or {})
     triage_changed = triage != (previous_state.get("triage") or {})
-    signatures = snapshot_file_signatures(project_root, exclude_folders=exclude_folders)
+    signatures = snapshot_file_signatures(
+        project_root,
+        exclude_folders=exclude_folders,
+        state_file=state_file,
+    )
     changed_files = detect_changed_files(
         previous_state.get("file_signatures"), signatures
     )
@@ -740,6 +934,13 @@ def normalize_findings(
         )
 
     _append_findings(findings, result.get("danger") or [], root, "security", "HIGH")
+    _append_findings(
+        findings,
+        result.get("reliability") or [],
+        root,
+        "reliability",
+        "MEDIUM",
+    )
     _append_findings(findings, result.get("secrets") or [], root, "secrets", "HIGH")
     _append_findings(findings, result.get("quality") or [], root, "quality", "MEDIUM")
     _append_findings(
@@ -952,6 +1153,9 @@ def _append_findings(
         }
         if "advisory" in item:
             finding["advisory"] = bool(item.get("advisory"))
+        related_locations = item.get("related_locations")
+        if isinstance(related_locations, list):
+            finding["related_locations"] = related_locations
         out.append(finding)
 
 
