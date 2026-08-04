@@ -27,7 +27,10 @@ from skylos.rules.quality.logic import (
     MissingNetworkTimeoutRule,
 )
 from skylos.rules.ai_defect.phantom_refs import scan_repo_phantom_security_references
-from skylos.rules.quality.unused_deps import scan_unused_dependencies
+from skylos.rules.quality.unused_deps import (
+    _collect_declared_deps,
+    scan_unused_dependencies,
+)
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 
 
@@ -751,6 +754,30 @@ class TestUnusedDependencies:
             names = {f["name"] for f in u005}
             assert "rich" in names
             assert "click" not in names
+
+    def test_pyproject_comment_apostrophe_is_not_a_dependency(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            """
+[project]
+name = "issue-682-repro"
+version = "0.0.0"
+dependencies = [
+    # The project's dependency is declared on the next line.
+    "rich>=13",
+]
+requires-python = ">=3.10"
+""".strip(),
+            encoding="utf-8",
+        )
+        source = tmp_path / "app.py"
+        source.write_text("import rich\n", encoding="utf-8")
+
+        declared, project_name = _collect_declared_deps(tmp_path)
+        findings = scan_unused_dependencies(tmp_path, [source])
+
+        assert declared == {"rich"}
+        assert project_name == "issue-682-repro"
+        assert [item for item in findings if item["rule_id"] == "SKY-U005"] == []
 
 
 def check_code_with_source(rule, code, filename="test.py"):

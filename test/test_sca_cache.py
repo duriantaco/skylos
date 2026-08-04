@@ -75,6 +75,21 @@ def test_scan_dependencies_reports_invalid_manifest(monkeypatch, tmp_path):
     assert result.receipt["parse_error_count"] == 1
 
 
+def test_scan_dependencies_reports_invalid_utf8_pyproject(monkeypatch, tmp_path):
+    monkeypatch.setattr(sca, "_requests", object())
+    (tmp_path / "pyproject.toml").write_bytes(
+        b'[project]\ndependencies = ["rich==13.0.0"]\n# \xff\n'
+    )
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert result == []
+    assert result.receipt["status"] == "incomplete"
+    assert result.receipt["complete"] is False
+    assert result.receipt["parse_error_count"] == 1
+    assert result.receipt["queried_dependency_count"] == 0
+
+
 def test_scan_dependencies_reports_osv_failure(monkeypatch, tmp_path):
     class FailingRequests:
         @staticmethod
@@ -152,6 +167,65 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     assert [
         (item["name"], item["version"]) for item in sca.parse_pyproject_toml(pyproject)
     ] == [("exact", "1.2.3")]
+
+
+def test_poetry_multiple_constraint_versions_are_preserved(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[tool.poetry.dependencies]
+python = ">=3.7"
+foo = [
+    { version = "1.9.0", python = "<3.8" },
+    { version = "2.0.0", python = ">=3.8" },
+]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    expected = [("foo", "1.9.0"), ("foo", "2.0.0")]
+    assert [
+        (item["name"], item["version"])
+        for item in sca.parse_pyproject_toml(pyproject)
+    ] == expected
+    assert [
+        (item["name"], item["version"])
+        for item in sca.parse_pyproject_toml_candidates(pyproject)
+    ] == expected
+
+
+def test_pyproject_comment_apostrophe_preserves_dependency_candidates(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "issue-682-repro"
+version = "0.0.0"
+dependencies = [
+    # The project's dependency is declared on the next line.
+    "rich>=13",
+]
+requires-python = ">=3.10"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    candidates = sca.parse_pyproject_toml_candidates(pyproject)
+
+    assert [(item["name"], item["version"]) for item in candidates] == [
+        ("rich", "13")
+    ]
+
+
+def test_malformed_pyproject_does_not_produce_poetry_dependencies(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.poetry.dependencies]\nghost = "9.9.9"\nnot valid toml\n',
+        encoding="utf-8",
+    )
+
+    assert sca.parse_pyproject_toml(pyproject) == []
+    assert sca.parse_pyproject_toml_candidates(pyproject) == []
 
 
 def test_scan_receipt_counts_unresolved_ranges(monkeypatch, tmp_path):
