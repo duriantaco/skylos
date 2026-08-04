@@ -11,6 +11,7 @@ from skylos.rules.ai_defect.phantom_refs import (
     _build_parent_map,
     _build_scope_infos,
     _collect_module_facts,
+    _module_has_member,
     _module_name,
     _resolve_local_module_member,
     _resolve_import_from_base,
@@ -187,7 +188,12 @@ def _inspect_target_references(
             state.skip("dynamic_module_surface")
         elif target_module not in trees:
             state.skip("target_surface_unavailable")
-        elif member_name in members.get(target_module, set()):
+        elif _module_has_member(
+            target_module,
+            member_name,
+            members,
+            package_modules,
+        ):
             state.verified += 1
 
 
@@ -265,7 +271,12 @@ def _inspect_from_import(
             state.skip("target_surface_unavailable")
             continue
         full_module = f"{base}.{alias.name}"
-        if full_module in local_modules or alias.name in members.get(base, set()):
+        if full_module in local_modules or _module_has_member(
+            base,
+            alias.name,
+            members,
+            package_modules,
+        ):
             state.verified += 1
         elif base in package_modules:
             state.skip("package_import_ownership_uncertain")

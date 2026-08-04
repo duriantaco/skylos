@@ -12,21 +12,19 @@ from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 PYTHON_SOURCE_SUFFIXES = (".py", ".pyi", ".pyw")
 
-# Module attributes that the import system creates on every module (or that
-# every module object carries by definition). References to these are not
-# phantom members even when the source does not define them explicitly.
-MODULE_DUNDER_ATTRIBUTES = frozenset(
+# Stable attributes supplied by the import system or inherited by module
+# objects. Version-specific attributes belong in target-aware analysis.
+_STANDARD_MODULE_ATTRIBUTES = frozenset(
     {
-        "__annotate__",
         "__annotations__",
         "__cached__",
+        "__class__",
         "__dict__",
         "__doc__",
         "__file__",
         "__loader__",
         "__name__",
         "__package__",
-        "__path__",
         "__spec__",
     }
 )
@@ -172,7 +170,12 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                ):
                     continue
                 findings.append(
                     _build_reference_finding(
@@ -219,7 +222,12 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                ):
                     continue
 
                 findings.append(
@@ -258,7 +266,12 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                ):
                     continue
 
                 findings.append(
@@ -299,7 +312,12 @@ def _direct_local_import_findings(
             full_module = f"{base}.{alias.name}"
             if full_module in local_modules:
                 continue
-            if alias.name in module_members.get(base, set()):
+            if _module_has_member(
+                base,
+                alias.name,
+                module_members,
+                package_modules,
+            ):
                 continue
             if base in package_modules:
                 continue
@@ -316,6 +334,19 @@ def _direct_local_import_findings(
 
 def _is_package_module_file(file_path):
     return file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
+
+
+def _module_has_member(
+    module_name,
+    member_name,
+    module_members,
+    package_modules,
+):
+    if member_name in module_members.get(module_name, set()):
+        return True
+    if member_name in _STANDARD_MODULE_ATTRIBUTES:
+        return True
+    return member_name == "__path__" and module_name in package_modules
 
 
 def _repo_member_names(module_members):
@@ -649,10 +680,6 @@ def _resolve_local_module_member(
         parent_map=parent_map,
         scope_infos=scope_infos,
     ):
-        return None
-
-    final_member = chain[-1]
-    if final_member in MODULE_DUNDER_ATTRIBUTES:
         return None
 
     current_module = base_module

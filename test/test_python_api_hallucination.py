@@ -1,5 +1,7 @@
 import ast
 
+import pytest
+
 from skylos.rules.ai_defect.python_api_hallucination import (
     scan_python_local_api_hallucinations,
 )
@@ -163,6 +165,7 @@ def test_python_local_api_check_passes_module_dunder_attributes(tmp_path):
                 "    sample_package.__doc__,\n"
                 "    sample_package.__dict__,\n"
                 "    sample_package.__annotations__,\n"
+                "    sample_package.__class__,\n"
                 "):\n"
                 "    pass\n"
             ),
@@ -172,6 +175,8 @@ def test_python_local_api_check_passes_module_dunder_attributes(tmp_path):
 
     assert findings == []
     assert check["outcome"] == "pass"
+    assert check["references"] == 12
+    assert check["verified_references"] == 12
 
 
 def test_python_local_api_check_passes_module_dunder_attributes_via_alias(tmp_path):
@@ -189,6 +194,152 @@ def test_python_local_api_check_passes_module_dunder_attributes_via_alias(tmp_pa
 
     assert findings == []
     assert check["outcome"] == "pass"
+    assert check["references"] == 2
+    assert check["verified_references"] == 2
+
+
+@pytest.mark.parametrize(
+    ("usage", "rule_id", "finding_type"),
+    [
+        ("module_path = sample_module.__path__\n", "SKY-L012", "module_member"),
+        ("sample_module.__path__()\n", "SKY-L012", "call"),
+        (
+            "@sample_module.__path__\ndef protected():\n    pass\n",
+            "SKY-L023",
+            "decorator",
+        ),
+    ],
+)
+def test_python_local_api_check_flags_package_only_path_on_module(
+    tmp_path,
+    usage,
+    rule_id,
+    finding_type,
+):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": "import sample_module\n\n" + usage,
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [
+        (finding["rule_id"], finding["type"], finding["simple_name"])
+        for finding in findings
+    ] == [(rule_id, finding_type, "__path__")]
+    assert check["outcome"] == "fail"
+    assert check["references"] == 2
+    assert check["verified_references"] == 1
+
+
+def test_python_local_api_check_flags_unknown_dunder_attribute(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": (
+                "import sample_module\n\n"
+                "missing = sample_module.__not_a_module_attribute__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == [
+        "__not_a_module_attribute__"
+    ]
+    assert check["outcome"] == "fail"
+
+
+def test_python_local_api_check_does_not_assume_versioned_module_attribute(
+    tmp_path,
+):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "pyproject.toml": '[project]\nrequires-python = ">=3.10,<3.14"\n',
+            "sample_module.py": "",
+            "reproduce.py": (
+                "import sample_module\n\n"
+                "annotate = sample_module.__annotate__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["__annotate__"]
+    assert check["outcome"] == "fail"
+
+
+def test_python_local_api_check_passes_module_dunder_direct_import(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": "from sample_module import __file__\n",
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["references"] == 1
+    assert check["verified_references"] == 1
+
+
+def test_python_local_api_check_passes_package_path_direct_import(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "reproduce.py": "from sample_package import __path__\n",
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["references"] == 1
+    assert check["verified_references"] == 1
+
+
+def test_python_local_api_check_flags_module_path_direct_import(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": "from sample_module import __path__\n",
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [
+        (finding["rule_id"], finding["type"], finding["simple_name"])
+        for finding in findings
+    ] == [("SKY-L012", "from_import", "__path__")]
+    assert check["outcome"] == "fail"
+
+
+def test_python_local_api_check_passes_imported_submodule_dunder(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "sample_package/child.py": "",
+            "reproduce.py": (
+                "import sample_package.child\n\n"
+                "module_file = sample_package.child.__file__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["references"] == 2
+    assert check["verified_references"] == 2
 
 
 def test_python_local_api_check_passes_pep695_type_alias_import(tmp_path):
