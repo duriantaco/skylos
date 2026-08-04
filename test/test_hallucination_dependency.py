@@ -89,6 +89,40 @@ dependencies = [
     assert "google-genai" in deps
 
 
+def test_pyproject_comment_apostrophe_does_not_hide_declared_dependency(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        """
+[project]
+name = "issue-682-repro"
+version = "0.0.0"
+dependencies = [
+    # The project's dependency is declared on the next line.
+    "rich>=13",
+]
+requires-python = ">=3.10"
+""".strip(),
+        encoding="utf-8",
+    )
+    source = _write_py(repo / "reproduce.py", "from rich.console import Console\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(
+        dep,
+        "_build_installed_module_mapping",
+        lambda: {"rich": {"rich"}},
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert _extract_single(findings, dep.RULE_ID_UNDECLARED) == []
+
+
 def test_uv_source_dependency_counts_as_declared_for_d223(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -9,6 +9,11 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib
+
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
     read_text_no_symlink,
@@ -376,136 +381,86 @@ def _parse_requirements_txt(path):
     return deps
 
 
-def _extract_toml_array(txt, key):
-    pattern = re.compile(r"(?m)^\s*" + re.escape(key) + r"\s*=\s*\[")
-    match = pattern.search(txt)
-    if not match:
-        return None
+def _dependency_names(specs):
+    deps = set()
+    if not isinstance(specs, list):
+        return deps
 
-    start = match.end()
-    depth = 1
-    pos = start
-    while pos < len(txt) and depth > 0:
-        ch = txt[pos]
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-        elif ch == '"':
-            pos += 1
-            while pos < len(txt) and txt[pos] != '"':
-                if txt[pos] == "\\":
-                    pos += 1
-                pos += 1
-        elif ch == "'":
-            pos += 1
-            while pos < len(txt) and txt[pos] != "'":
-                if txt[pos] == "\\":
-                    pos += 1
-                pos += 1
-        pos += 1
+    for spec in specs:
+        if not isinstance(spec, str):
+            continue
+        match = REQ_LINE_RE.match(spec.strip())
+        if match:
+            deps.add(_normalize_name(match.group(1)))
+    return deps
 
-    if depth != 0:
-        return None
 
-    return txt[start : pos - 1]
+def _project_dependency_metadata(data):
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return set(), None
+
+    deps = _dependency_names(project.get("dependencies"))
+    optional = project.get("optional-dependencies")
+    if isinstance(optional, dict):
+        for specs in optional.values():
+            deps.update(_dependency_names(specs))
+
+    raw_name = project.get("name")
+    project_name = raw_name if isinstance(raw_name, str) else None
+    return deps, project_name
+
+
+def _poetry_dependency_names(poetry):
+    deps = set()
+    poetry_dependencies = poetry.get("dependencies")
+    if isinstance(poetry_dependencies, dict):
+        for raw_name in poetry_dependencies:
+            name = _normalize_name(raw_name)
+            if name and name != "python":
+                deps.add(name)
+
+    poetry_extras = poetry.get("extras")
+    if isinstance(poetry_extras, dict):
+        for specs in poetry_extras.values():
+            deps.update(_dependency_names(specs))
+    return deps
+
+
+def _poetry_dependency_metadata(data):
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return set(), None
+
+    poetry = tool.get("poetry")
+    if not isinstance(poetry, dict):
+        return set(), None
+
+    raw_name = poetry.get("name")
+    project_name = raw_name if isinstance(raw_name, str) else None
+    return _poetry_dependency_names(poetry), project_name
 
 
 def _parse_pyproject_toml(path):
-    deps = set()
-    project_name = None
-
     txt = read_text_no_symlink(
         path,
         max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
         encoding="utf-8",
-        errors="ignore",
     )
     if txt is None:
-        return deps, project_name
+        return set(), None
 
-    name_match = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
-    if name_match:
-        project_name = name_match.group(1)
+    try:
+        data = tomllib.loads(txt)
+    except tomllib.TOMLDecodeError as exc:
+        logger.debug("Failed to parse dependency metadata from %s: %s", path, exc)
+        return set(), None
 
-    for key in ("dependencies",):
-        block = _extract_toml_array(txt, key)
-        if block is None:
-            continue
-        raw_items = re.findall(r'"([^"]+)"', block)
-        raw_items += re.findall(r"'([^']+)'", block)
-
-        for item in raw_items:
-            item = item.strip()
-            m = REQ_LINE_RE.match(item)
-            if not m:
-                continue
-
-            deps.add(_normalize_name(m.group(1)))
-
-    for section_re in (
-        r"\[project\.optional-dependencies\]",
-        r"\[tool\.poetry\.extras\]",
-    ):
-        section_match = re.search(section_re, txt)
-        if not section_match:
-            continue
-        rest = txt[section_match.end() :]
-        next_section = re.search(r"(?m)^\s*\[", rest)
-
-        if next_section:
-            section_body = rest[: next_section.start()]
-        else:
-            section_body = rest
-
-        for arr_match in re.finditer(r"(\w+)\s*=\s*\[", section_body):
-            arr_key = arr_match.group(1)
-            block = _extract_toml_array(section_body, arr_key)
-            if block is None:
-                continue
-
-            raw_items = re.findall(r'"([^"]+)"', block)
-            raw_items += re.findall(r"'([^']+)'", block)
-            for item in raw_items:
-                item = item.strip()
-                m = REQ_LINE_RE.match(item)
-                if m:
-                    deps.add(_normalize_name(m.group(1)))
-
-    in_poetry = False
-
-    for raw_line in txt.splitlines():
-        line = raw_line.strip()
-
-        if line.startswith("[") and line.endswith("]"):
-            if line == "[tool.poetry.dependencies]":
-                in_poetry = True
-            else:
-                in_poetry = False
-            continue
-
-        if not in_poetry:
-            continue
-
-        if not line:
-            continue
-
-        if line.startswith("#"):
-            continue
-
-        key = line.split("=", 1)[0].strip()
-        if not key:
-            continue
-
-        if key == "python":
-            continue
-
-        deps.add(_normalize_name(key))
-
-    if not project_name:
-        poetry_name = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
-        if poetry_name:
-            project_name = poetry_name.group(1)
+    deps, project_name = _project_dependency_metadata(data)
+    poetry_deps, poetry_name = _poetry_dependency_metadata(data)
+    deps.update(poetry_deps)
+    if project_name is None:
+        project_name = poetry_name
 
     return deps, project_name
 

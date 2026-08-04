@@ -1,7 +1,15 @@
 from __future__ import annotations
 import re
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib
+
+from skylos.core.safe_cache_io import read_text_no_symlink
+
 RULE_ID = "SKY-U005"
+MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
 
 CLI_ONLY_PACKAGES = {
     "black",
@@ -59,6 +67,7 @@ FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w.]*)\s+import\b", re.MULTILINE)
 DYNAMIC_RE = re.compile(
     r"importlib\.import_module\s*\(\s*['\"]([A-Za-z_][\w.]*)['\"]", re.MULTILINE
 )
+REQ_LINE_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
 
 def _normalize_name(name):
@@ -115,11 +124,44 @@ def _build_import_to_dist():
     return mapping
 
 
+def _parse_pyproject_toml(path):
+    text = read_text_no_symlink(
+        path,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if text is None:
+        return set(), None
+
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return set(), None
+
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return set(), None
+
+    project_name = project.get("name")
+    if not isinstance(project_name, str):
+        project_name = None
+
+    deps = set()
+    dependencies = project.get("dependencies")
+    if isinstance(dependencies, list):
+        for item in dependencies:
+            if not isinstance(item, str):
+                continue
+            match = REQ_LINE_RE.match(item.strip())
+            if match:
+                deps.add(_normalize_name(match.group(1)))
+
+    return deps, project_name
+
+
 def _collect_declared_deps(repo_root):
     deps = set()
     project_name = None
-
-    req_line_re = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
     current = repo_root
     for _ in range(5):
@@ -132,7 +174,7 @@ def _collect_declared_deps(repo_root):
                     line = line.strip()
                     if not line or line.startswith("#") or line.startswith("-"):
                         continue
-                    m = req_line_re.match(line)
+                    m = REQ_LINE_RE.match(line)
                     if m:
                         deps.add(_normalize_name(m.group(1)))
             except Exception:
@@ -140,30 +182,10 @@ def _collect_declared_deps(repo_root):
 
         pyproj_path = current / "pyproject.toml"
         if pyproj_path.exists():
-            try:
-                txt = pyproj_path.read_text(encoding="utf-8", errors="ignore")
-                name_match = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
-                if name_match and not project_name:
-                    project_name = name_match.group(1)
-
-                dep_block = re.search(r"(?m)^\s*dependencies\s*=\s*\[", txt)
-                if dep_block:
-                    start = dep_block.end()
-                    depth = 1
-                    pos = start
-                    while pos < len(txt) and depth > 0:
-                        if txt[pos] == "[":
-                            depth += 1
-                        elif txt[pos] == "]":
-                            depth -= 1
-                        pos += 1
-                    block = txt[start : pos - 1]
-                    for item in re.findall(r'["\']([^"\']+)["\']', block):
-                        m = req_line_re.match(item.strip())
-                        if m:
-                            deps.add(_normalize_name(m.group(1)))
-            except Exception:
-                pass
+            pyproject_deps, pyproject_name = _parse_pyproject_toml(pyproj_path)
+            deps.update(pyproject_deps)
+            if pyproject_name and not project_name:
+                project_name = pyproject_name
 
         setup_path = current / "setup.py"
         if setup_path.exists():
@@ -189,7 +211,7 @@ def _collect_declared_deps(repo_root):
                         pos += 1
                     block = txt[start : pos - 1]
                     for item in re.findall(r'["\']([^"\']+)["\']', block):
-                        rm = req_line_re.match(item.strip())
+                        rm = REQ_LINE_RE.match(item.strip())
                         if rm:
                             deps.add(_normalize_name(rm.group(1)))
             except Exception:
@@ -205,7 +227,7 @@ def _collect_declared_deps(repo_root):
                         line = line.strip()
                         if not line or line.startswith("#") or line.startswith("-"):
                             continue
-                        m = req_line_re.match(line)
+                        m = REQ_LINE_RE.match(line)
                         if m:
                             deps.add(_normalize_name(m.group(1)))
                 except Exception:
