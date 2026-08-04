@@ -53,6 +53,7 @@ from skylos.core.file_discovery import (
     find_git_root,
     should_exclude_path,
 )
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 from skylos.core.linter import LinterVisitor
 
@@ -91,16 +92,11 @@ def _merge_project_config_overrides(project_cfg, overrides):
 
     merged = dict(project_cfg)
     for key, value in overrides.items():
-        if (
-            isinstance(value, dict)
-            and isinstance(merged.get(key), dict)
-        ):
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
             nested = dict(merged[key])
             for nested_key, nested_value in value.items():
                 existing_value = nested.get(nested_key)
-                if isinstance(existing_value, list) and isinstance(
-                    nested_value, list
-                ):
+                if isinstance(existing_value, list) and isinstance(nested_value, list):
                     nested[nested_key] = _merge_ordered_lists(
                         existing_value, nested_value
                     )
@@ -362,6 +358,7 @@ _SECRET_CONFIG_SUFFIXES = {
     ".cfg",
     ".conf",
 }
+MAX_SECRET_CONFIG_BYTES = 8_000_000
 
 _TS_JS_SOURCE_EXTS = (
     ".ts",
@@ -534,6 +531,85 @@ def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
     return resolved
 
 
+def _iter_secret_config_candidates(
+    root: Path,
+    scan_target: Path,
+    changed_files: set[str] | None,
+):
+    if changed_files is not None:
+        for raw_path in changed_files:
+            candidate = Path(raw_path)
+            yield candidate if candidate.is_absolute() else root / candidate
+        return
+    if scan_target.is_file() or scan_target.is_symlink():
+        yield scan_target
+        return
+    yield from root.rglob("*")
+
+
+def _scan_secret_config_candidate(
+    candidate: Path,
+    *,
+    root: Path,
+    excluded: set[str],
+    scanned: set[str],
+) -> list[dict]:
+    resolved = _resolve_secret_config_candidate(candidate, root)
+    if resolved is None or str(resolved) in scanned:
+        return []
+    try:
+        rel = str(resolved.relative_to(root))
+        if excluded.intersection(Path(rel).parts):
+            return []
+        source = read_project_text_no_symlink(
+            root,
+            resolved,
+            max_bytes=MAX_SECRET_CONFIG_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+        if source is None:
+            return []
+        ctx = {
+            "relpath": rel,
+            "lines": source.splitlines(True),
+            "tree": None,
+        }
+        return list(_secrets_scan_ctx(ctx))
+    except Exception:
+        logger.debug("Secret scan failed for config file: %s", candidate, exc_info=True)
+        return []
+
+
+def _scan_secret_config_candidates(
+    *,
+    root: Path,
+    scan_target: Path,
+    changed_files: set[str] | None,
+    exclude_folders: list[str] | None,
+    already_scanned: set[str] | None = None,
+) -> list[dict]:
+    if _secrets_scan_ctx is None:
+        return []
+    try:
+        root = Path(root).resolve(strict=True)
+    except OSError:
+        return []
+    scanned = already_scanned or set()
+    excluded = set(exclude_folders or [])
+    findings: list[dict] = []
+    for candidate in _iter_secret_config_candidates(root, scan_target, changed_files):
+        findings.extend(
+            _scan_secret_config_candidate(
+                candidate,
+                root=root,
+                excluded=excluded,
+                scanned=scanned,
+            )
+        )
+    return findings
+
+
 _GREP_VERIFY_TYPE_PRIORITY = {
     "method": 0,
     "function": 1,
@@ -691,6 +767,34 @@ def _grep_verify_rescue_priority(candidate: dict) -> tuple:
         int(candidate.get("line", 0)),
         str(candidate.get("full_name", candidate.get("name", ""))),
     )
+
+
+def _collect_grep_verify_candidates(definitions: dict) -> tuple[list[dict], dict]:
+    candidates: list[dict] = []
+    candidate_defs: dict = {}
+    for defn in definitions.values():
+        if defn.references != 0 or defn.is_exported or defn.confidence <= 0:
+            continue
+        payload = defn.to_dict()
+        candidates.append(payload)
+        full_name = payload.get("full_name", payload.get("name", ""))
+        candidate_defs[full_name] = defn
+    candidates.sort(key=_grep_verify_rescue_priority)
+    return candidates, candidate_defs
+
+
+def _apply_grep_verify_verdicts(candidate_defs: dict, verdicts: dict) -> int:
+    rescued = 0
+    for full_name, verdict in verdicts.items():
+        defn = candidate_defs.get(full_name)
+        if defn is None or not verdict.alive:
+            continue
+        defn.references += 1
+        defn.heuristic_refs["grep_verify"] = 1.0
+        if verdict.suppression_code:
+            defn.suppression_code = verdict.suppression_code
+        rescued += 1
+    return rescued
 
 
 def _confidence_as_unit_interval(value) -> float:
@@ -860,7 +964,10 @@ class Skylos:
         return counts
 
     def _get_python_files(self, path, exclude_folders=None):
-        p = Path(path).resolve()
+        raw_path = Path(path)
+        if raw_path.is_symlink() is True:
+            return [], Path(os.path.abspath(raw_path)).parent.resolve()
+        p = raw_path.resolve()
 
         if p.is_file():
             return [p], p.parent
@@ -1297,23 +1404,14 @@ class Skylos:
                     defn.confidence = 0
                     defn.skip_reason = "standalone ORM model module"
 
-    def _grep_verify(self):
+    def _grep_verify(self, *, use_project_cache: bool = True):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.core.grep_cache import GrepCache
         from skylos.core.grep_verify import grep_verify_findings
 
-        candidates = []
-        candidate_defs = {}
-        for name, defn in self.defs.items():
-            if defn.references == 0 and not defn.is_exported and defn.confidence > 0:
-                d = defn.to_dict()
-                candidates.append(d)
-                candidate_defs[d.get("full_name", d.get("name", ""))] = defn
-
+        candidates, candidate_defs = _collect_grep_verify_candidates(self.defs)
         if not candidates:
             return 0
-
-        candidates.sort(key=_grep_verify_rescue_priority)
 
         project_root = str(getattr(self, "_project_root", ""))
         if not project_root:
@@ -1321,7 +1419,8 @@ class Skylos:
 
         grep_root = find_git_root(project_root) or Path(project_root)
         grep_cache = GrepCache()
-        grep_cache.load(grep_root)
+        if use_project_cache:
+            grep_cache.load(grep_root)
         try:
             grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
             verdicts = grep_verify_findings(
@@ -1331,19 +1430,10 @@ class Skylos:
                 time_budget=grep_budget,
             )
         finally:
-            grep_cache.save(grep_root)
+            if use_project_cache:
+                grep_cache.save(grep_root)
 
-        rescued = 0
-        for full_name, verdict in verdicts.items():
-            defn = candidate_defs.get(full_name)
-            if not defn:
-                continue
-            if verdict.alive:
-                defn.references += 1
-                defn.heuristic_refs["grep_verify"] = 1.0
-                if verdict.suppression_code:
-                    defn.suppression_code = verdict.suppression_code
-                rescued += 1
+        rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
 
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
@@ -2041,7 +2131,9 @@ class Skylos:
                     stack.append(callee)
         return reachable
 
-    def _mark_evidence_reachable_defs(self, evidence_roots: set[str], call_graph) -> None:
+    def _mark_evidence_reachable_defs(
+        self, evidence_roots: set[str], call_graph
+    ) -> None:
         for name in self._walk_call_graph(evidence_roots, call_graph):
             if name in evidence_roots:
                 continue
@@ -2180,6 +2272,8 @@ class Skylos:
         trace_file=None,
         config_file=None,
         project_config_overrides=None,
+        required_config_rules=None,
+        grep_cache=True,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -2189,18 +2283,61 @@ class Skylos:
             raise ValueError(f"thr must be 0-100, got {thr}")
 
         clear_go_cache()
+        self._sca_coverage = None
 
+        raw_first = Path(
+            path[0] if isinstance(path, (list, tuple)) else path
+        ).expanduser()
+        first_is_symlink = raw_first.is_symlink() is True
         if isinstance(path, (list, tuple)):
-            _first = Path(path[0]).resolve()
+            _first = (
+                Path(os.path.abspath(raw_first))
+                if first_is_symlink
+                else raw_first.resolve()
+            )
             all_resolved = [Path(p).resolve() for p in path]
             project_root = Path(os.path.commonpath(all_resolved))
         else:
-            _first = Path(path).resolve()
+            _first = (
+                Path(os.path.abspath(raw_first))
+                if first_is_symlink
+                else raw_first.resolve()
+            )
             project_root = _first
         if not project_root.is_dir():
             project_root = project_root.parent
         if project_root.exists():
             project_root = _resolve_analysis_root(project_root)
+        scope_is_full_root = (
+            not isinstance(path, (list, tuple))
+            and not first_is_symlink
+            and _first.is_dir()
+            and _first.resolve(strict=False) == project_root.resolve(strict=False)
+            and not exclude_folders
+            and changed_files is None
+        )
+        self._analysis_scope = {
+            "kind": (
+                "repository_root"
+                if scope_is_full_root
+                else "symlink"
+                if first_is_symlink
+                else "file"
+                if _first.is_file()
+                else "multiple_paths"
+                if isinstance(path, (list, tuple))
+                else "changed_files"
+                if changed_files is not None
+                else "repository_root_with_exclusions"
+                if exclude_folders
+                else "subdirectory"
+            ),
+            "scan_path": str(_first),
+            "repository_root": str(project_root),
+            "complete_repository": scope_is_full_root,
+            "excluded_folders": list(exclude_folders or []),
+            "changed_files_only": changed_files is not None,
+        }
 
         files, root = self._discover_files(path, exclude_folders)
         verification_surface_root = _verification_surface_root(
@@ -2250,8 +2387,17 @@ class Skylos:
                 "analysis_errors": [],
                 "analysis_summary": {
                     "total_files": 0,
+                    "languages": {},
+                    "grade_categories": [
+                        *(["security"] if enable_danger else []),
+                        *(["ai_defects"] if enable_ai_defects else []),
+                        "dead_code",
+                        *(["dependencies"] if enable_sca else []),
+                        *(["secrets"] if enable_secrets else []),
+                    ],
                     "excluded_folders": exclude_folders if exclude_folders else [],
                     "analysis_error_count": 0,
+                    "comparison_scope": dict(self._analysis_scope),
                     "monorepo_detected": workspace_inventory.is_monorepo,
                     "workspace_count": len(workspace_inventory.packages),
                     "workspace_total_packages": workspace_inventory.total_packages,
@@ -2259,25 +2405,51 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
+            if first_is_symlink and required_config_rules:
+                result["analysis_errors"].append(
+                    _analysis_error_payload(
+                        raw_first,
+                        RuntimeError(
+                            "Refusing to analyze a symlink scan root; pass the "
+                            "resolved project directory explicitly"
+                        ),
+                        kind="symlink_scan_root",
+                    )
+                )
+                result["analysis_summary"]["analysis_error_count"] = 1
             if enable_danger or enable_ai_defects:
                 danger_findings = []
                 ai_defect_findings = []
                 try:
                     from skylos.rules.config import scan_config_files
 
-                    if enable_danger:
+                    if enable_danger and not first_is_symlink:
                         config_findings = scan_config_files(
                             no_source_scan_target,
                             changed_files=changed_files,
                             ignore=project_ignore,
+                            required_rules=required_config_rules,
                         )
                         if config_findings:
                             danger_findings.extend(config_findings)
-                except Exception:
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error("Config scan failed", exc_info=True)
+                except Exception as exc:
+                    result["analysis_errors"].append(
+                        _analysis_error_payload(
+                            no_source_scan_target,
+                            exc,
+                            kind="config_scan_error",
+                        )
+                    )
+                    result["analysis_summary"]["analysis_error_count"] = len(
+                        result["analysis_errors"]
+                    )
+                    logger.debug("Config scan failed", exc_info=True)
 
-                if enable_ai_defects and enable_dependency_hallucinations:
+                if (
+                    enable_ai_defects
+                    and enable_dependency_hallucinations
+                    and not first_is_symlink
+                ):
                     try:
                         from skylos.rules.ai_defect.manifest_dependency_hallucination import (
                             scan_manifest_dependency_hallucinations,
@@ -2300,14 +2472,86 @@ class Skylos:
                     from skylos.rules.compliance import (
                         enrich_findings_with_compliance,
                     )
+                    from skylos.reporting.finding_categories import (
+                        split_security_reliability_findings,
+                    )
 
-                    result["danger"] = enrich_findings_with_compliance(danger_findings)
-                    result["analysis_summary"]["danger_count"] = len(danger_findings)
+                    security_findings, reliability_findings = (
+                        split_security_reliability_findings(danger_findings)
+                    )
+                    if security_findings:
+                        result["danger"] = enrich_findings_with_compliance(
+                            security_findings
+                        )
+                        result["analysis_summary"]["danger_count"] = len(
+                            security_findings
+                        )
+                    if reliability_findings:
+                        from skylos.core.evidence_contract import (
+                            attach_evidence_contract,
+                        )
+
+                        result["reliability"] = [
+                            attach_evidence_contract(finding)
+                            for finding in reliability_findings
+                        ]
+                        result["analysis_summary"]["reliability_count"] = len(
+                            reliability_findings
+                        )
                 if ai_defect_findings:
                     result["ai_defects"] = ai_defect_findings
                     result["analysis_summary"]["ai_defects_count"] = len(
                         ai_defect_findings
                     )
+            if enable_secrets and not first_is_symlink:
+                secret_findings = _scan_secret_config_candidates(
+                    root=Path(root),
+                    scan_target=no_source_scan_target,
+                    changed_files=changed_files,
+                    exclude_folders=exclude_folders,
+                )
+                if secret_findings:
+                    result["secrets"] = secret_findings
+                    result["analysis_summary"]["secrets_count"] = len(secret_findings)
+            if enable_sca:
+                if first_is_symlink:
+                    self._sca_coverage = {
+                        "status": "incomplete",
+                        "complete": False,
+                        "category_complete": False,
+                        "reason": "symlink_scan_root",
+                    }
+                else:
+                    try:
+                        from skylos.rules.sca.vulnerability_scanner import (
+                            scan_dependencies,
+                        )
+
+                        sca_findings = scan_dependencies(project_root)
+                        sca_receipt = getattr(sca_findings, "receipt", None)
+                        self._sca_coverage = (
+                            dict(sca_receipt)
+                            if isinstance(sca_receipt, dict)
+                            else {
+                                "status": "unknown",
+                                "complete": False,
+                                "category_complete": False,
+                                "reason": "scanner_returned_no_coverage_receipt",
+                            }
+                        )
+                        result["dependency_vulnerabilities"] = list(sca_findings)
+                        result["analysis_summary"]["sca_count"] = len(sca_findings)
+                    except Exception as exc:
+                        self._sca_coverage = {
+                            "status": "incomplete",
+                            "complete": False,
+                            "category_complete": False,
+                            "reason": "scanner_exception",
+                            "error_type": type(exc).__name__,
+                        }
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(traceback.format_exc())
+                result["analysis_summary"]["sca_coverage"] = dict(self._sca_coverage)
             if enable_ai_defects:
                 from skylos.core.verification_coverage import (
                     build_ai_verification_coverage,
@@ -2917,7 +3161,13 @@ class Skylos:
             try:
                 from skylos.rules.config import scan_config_files
 
-                if _first.is_file():
+                if isinstance(path, (list, tuple)):
+                    # A file list limits language analysis to the requested files, but
+                    # config rules can describe a repository-wide contract.  Scan that
+                    # contract from the resolved project root so a changed source route
+                    # can still correlate with an existing deployment manifest.
+                    scan_target = project_root
+                elif _first.is_file():
                     scan_target = _first
                 else:
                     scan_target = project_root
@@ -2926,12 +3176,19 @@ class Skylos:
                     scan_target,
                     changed_files=changed_files,
                     ignore=project_ignore,
+                    required_rules=required_config_rules,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error("Config scan failed", exc_info=True)
+            except Exception as exc:
+                analysis_errors.append(
+                    _analysis_error_payload(
+                        project_root,
+                        exc,
+                        kind="config_scan_error",
+                    )
+                )
+                logger.debug("Config scan failed", exc_info=True)
 
             # --- SKY-D260/D266: Prompt injection scanner (multi-file) ---
             if {"SKY-D260", "SKY-D266"} - set(project_ignore):
@@ -3076,7 +3333,9 @@ class Skylos:
                                                     not entry.name.startswith(".")
                                                     and entry.name not in excluded_dirs
                                                 ):
-                                                    pending_dirs.append(Path(entry.path))
+                                                    pending_dirs.append(
+                                                        Path(entry.path)
+                                                    )
                                                 continue
                                         except OSError:
                                             continue
@@ -3095,7 +3354,9 @@ class Skylos:
                             scan_path = None
                         inj_hits = _injection_scan_file(f, scan_path=scan_path)
                         if inj_hits:
-                            remaining = _INJECTION_MAX_SCAN_FINDINGS - injection_findings
+                            remaining = (
+                                _INJECTION_MAX_SCAN_FINDINGS - injection_findings
+                            )
                             bounded_hits = [
                                 hit
                                 for hit in inj_hits
@@ -3464,8 +3725,7 @@ class Skylos:
                         logger.error("Test impact scan failed", exc_info=True)
 
             if changed_files and (
-                "SKY-A103" not in project_ignore
-                or "SKY-A104" not in project_ignore
+                "SKY-A103" not in project_ignore or "SKY-A104" not in project_ignore
             ):
                 try:
                     _scan_ai_defect_diff_signals(
@@ -3536,6 +3796,16 @@ class Skylos:
 
                 scan_root = project_root
                 sca_findings = scan_dependencies(scan_root)
+                sca_receipt = getattr(sca_findings, "receipt", None)
+                self._sca_coverage = (
+                    dict(sca_receipt)
+                    if isinstance(sca_receipt, dict)
+                    else {
+                        "status": "unknown",
+                        "complete": False,
+                        "reason": "scanner_returned_no_coverage_receipt",
+                    }
+                )
                 if sca_findings:
                     all_sca.extend(sca_findings)
                     try:
@@ -3547,7 +3817,13 @@ class Skylos:
                     except Exception:
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.error(traceback.format_exc())
-            except Exception:
+            except Exception as exc:
+                self._sca_coverage = {
+                    "status": "incomplete",
+                    "complete": False,
+                    "reason": "scanner_exception",
+                    "error_type": type(exc).__name__,
+                }
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
@@ -3639,7 +3915,9 @@ class Skylos:
             self.refs.extend(browser_handler_refs)
         except Exception:
             if os.getenv("SKYLOS_DEBUG"):
-                logger.error("Browser event handler liveness scan failed", exc_info=True)
+                logger.error(
+                    "Browser event handler liveness scan failed", exc_info=True
+                )
 
         for top_level_ref in all_top_level_refs:
             defn = self.defs.get(top_level_ref)
@@ -3694,11 +3972,17 @@ class Skylos:
         self._propagate_transitive_dead()
         self._suppress_standalone_orm_models()
 
-        grep_verify_report = {"enabled": bool(grep_verify), "rescued_count": 0}
+        grep_verify_report = {
+            "enabled": bool(grep_verify),
+            "rescued_count": 0,
+        }
         if grep_verify:
+            grep_verify_report["project_cache_enabled"] = bool(grep_cache)
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
-            grep_verify_report["rescued_count"] = self._grep_verify()
+            grep_verify_report["rescued_count"] = self._grep_verify(
+                use_project_cache=grep_cache
+            )
         self._grep_verify_report = grep_verify_report
 
         dead_ts_files = self._find_dead_ts_files(
@@ -4118,6 +4402,8 @@ def analyze(
     trace_file=None,
     config_file=None,
     project_config_overrides=None,
+    required_config_rules=None,
+    grep_cache=True,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -4133,10 +4419,12 @@ def analyze(
         custom_rules_data=custom_rules_data,
         changed_files=changed_files,
         grep_verify=grep_verify,
+        grep_cache=grep_cache,
         enable_sca=enable_sca,
         trace_file=trace_file,
         config_file=config_file,
         project_config_overrides=project_config_overrides,
+        required_config_rules=required_config_rules,
     )
 
 

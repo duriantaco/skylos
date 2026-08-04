@@ -7,6 +7,7 @@ from typing import Any
 FINDING_SECTIONS = (
     ("ai_defects", "ai_defects"),
     ("danger", "security"),
+    ("reliability", "reliability"),
     ("quality", "quality"),
     ("custom_rules", "quality"),
     ("secrets", "secrets"),
@@ -26,6 +27,7 @@ _CATEGORY_KEYS = (
     "ai_defects",
     "quality",
     "security",
+    "reliability",
     "secrets",
     "dependencies",
 )

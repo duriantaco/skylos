@@ -85,6 +85,7 @@ fail_on_critical = true
 max_critical = 0 
 max_high = 5
 max_security = 0
+max_reliability = 0
 max_quality = 10
 strict = false
 """

@@ -453,7 +453,9 @@ jobs:
 def test_publish_workflow_keeps_pypi_token_out_of_tool_install():
     workflow = _publish_workflow()
     publish_steps = workflow["jobs"]["publish"]["steps"]
-    install_step = next(s for s in publish_steps if s.get("name") == "Install publish tools")
+    install_step = next(
+        s for s in publish_steps if s.get("name") == "Install publish tools"
+    )
     upload_step = next(s for s in publish_steps if s.get("name") == "Publish to PyPI")
 
     assert "TWINE_PASSWORD" not in install_step.get("env", {})
@@ -466,7 +468,9 @@ def test_publish_workflow_keeps_pypi_token_out_of_tool_install():
 def test_publish_workflow_validates_strict_semver_release_tags():
     workflow = _publish_workflow()
     build_steps = workflow["jobs"]["build"]["steps"]
-    resolve_step = next(s for s in build_steps if s.get("name") == "Resolve release tag input")
+    resolve_step = next(
+        s for s in build_steps if s.get("name") == "Resolve release tag input"
+    )
 
     assert "semver_re=" in resolve_step["run"]
     assert "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)" in resolve_step["run"]
@@ -480,7 +484,9 @@ def test_publish_workflow_verifies_required_checks_before_publish():
     assert release_please["jobs"]["publish-release"]["permissions"]["checks"] == "read"
 
     build_steps = workflow["jobs"]["build"]["steps"]
-    check_step = next(s for s in build_steps if s.get("name") == "Verify required release checks")
+    check_step = next(
+        s for s in build_steps if s.get("name") == "Verify required release checks"
+    )
     check_index = build_steps.index(check_step)
     setup_index = next(
         i for i, step in enumerate(build_steps) if step.get("name") == "Set up Python"
@@ -501,12 +507,28 @@ def test_tests_workflow_pins_codecov_and_limits_permissions():
     assert workflow["permissions"] == {"contents": "read"}
 
     steps = workflow["jobs"]["test_matrix"]["steps"]
-    codecov_step = next(s for s in steps if s.get("name") == "Upload coverage to Codecov")
+    codecov_step = next(
+        s for s in steps if s.get("name") == "Upload coverage to Codecov"
+    )
     action_ref = codecov_step["uses"].split("@", 1)[1]
 
     assert len(action_ref) == 40
     assert all(c in "0123456789abcdef" for c in action_ref)
     assert codecov_step["with"]["token"] == "${{ secrets.CODECOV_TOKEN }}"
+
+
+def test_tests_workflow_preserves_unlocked_uv_pip_environment():
+    steps = _tests_workflow()["jobs"]["test_matrix"]["steps"]
+    lock_step = next(s for s in steps if s.get("name") == "Check lockfile")
+    install_step = next(
+        s for s in steps if s.get("name") == "Create venv + install deps"
+    )
+    test_step = next(s for s in steps if s.get("name") == "Run tests with coverage")
+
+    assert lock_step["run"] == "uv lock --check"
+    assert install_step["run"].count("uv pip install --python .venv/bin/python") == 2
+    assert ".venv/bin/python -m pytest" in test_step["run"]
+    assert "uv run" not in test_step["run"]
 
 
 def test_skylos_pr_workflow_uses_trusted_scanner_package():
@@ -542,7 +564,9 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert "python -m skylos.cli" not in scan_step["run"]
     assert ".venv/bin/skylos" in scan_step["run"]
 
-    advisory_step = next(s for s in steps if s.get("name") == "Report findings (advisory)")
+    advisory_step = next(
+        s for s in steps if s.get("name") == "Report findings (advisory)"
+    )
     assert "--advisory" in advisory_step["run"]
 
     blocker_step = next(

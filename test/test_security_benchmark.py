@@ -50,14 +50,45 @@ def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypat
     def fake_analyze(path, **kwargs):
         captured["path"] = path
         captured["changed_files"] = kwargs.get("changed_files")
+        captured["source"] = (  # skylos: ignore[SKY-D215,SKY-D325] isolated temp
+            Path(path) / "app.py"
+        ).read_text(encoding="utf-8")
         return json.dumps({})
 
     monkeypatch.setattr(benchmark, "analyze", fake_analyze)
 
     benchmark._scan_case(case_dir)
 
-    assert captured["path"] == str(case_dir)
-    assert captured["changed_files"] == {str(app.resolve())}
+    isolated_path = Path(captured["path"])
+    resolved_isolated_path = isolated_path.resolve(strict=False)
+    assert isolated_path.name == case_dir.name
+    assert isolated_path != case_dir.resolve()
+    assert {
+        Path(path).relative_to(resolved_isolated_path).as_posix()
+        for path in captured["changed_files"]
+    } == {"app.py"}
+    assert captured["source"] == app.read_text(encoding="utf-8")
+    assert not isolated_path.exists()
+
+
+def test_security_benchmark_does_not_inherit_parent_project_config(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.skylos]\nignore = ["SKY-D209"]\n',
+        encoding="utf-8",
+    )
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text(
+        "import subprocess as sp\n\ndef run(command):\n"
+        "    return sp.run(command, shell=True)\n",
+        encoding="utf-8",
+    )
+
+    result = benchmark._scan_case(case_dir)
+
+    assert any(
+        finding.get("rule_id") == "SKY-D209" for finding in result.get("danger", [])
+    )
 
 
 def test_checked_in_security_benchmark_passes():

@@ -113,10 +113,7 @@ def test_agent_pre_commit_reports_ai_defects(tmp_path):
     staged = Mock(stdout="app.py\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -2 +2 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -2 +2 @@\n"
         ),
         returncode=0,
     )
@@ -157,7 +154,9 @@ def test_agent_pre_commit_reports_ai_defects(tmp_path):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
@@ -225,7 +224,90 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     assert "reviewing 1 config staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Running secrets check only." in printed
-    assert "No staged security, secrets, quality, or AI-defect issues" in printed
+    assert (
+        "No staged security, reliability, secrets, quality, or AI-defect issues"
+        in printed
+    )
+
+
+def test_agent_pre_commit_scans_staged_cross_layer_manifest(tmp_path):
+    repo = tmp_path / "repo"
+    deploy = repo / "deploy"
+    deploy.mkdir(parents=True)
+    (repo / "app.py").write_text("app.run(debug=True)\n", encoding="utf-8")
+    manifest = deploy / "rendered.yaml"
+    manifest.write_text("kind: Ingress\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="deploy/rendered.yaml\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/deploy/rendered.yaml b/deploy/rendered.yaml\n"
+            "--- a/deploy/rendered.yaml\n"
+            "+++ b/deploy/rendered.yaml\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
+    unstaged = Mock(stdout="", returncode=0)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [],
+        "reliability": [
+            {
+                "rule_id": "SKY-DEP003",
+                "file": str(repo / "app.py"),
+                "line": 1,
+                "severity": "MEDIUM",
+                "message": "External Ingress reaches reload mode.",
+                "related_locations": [
+                    {
+                        "file": str(manifest),
+                        "start_line": 1,
+                        "end_line": 1,
+                    }
+                ],
+            }
+        ],
+        "quality": [],
+        "ai_defects": [],
+        "secrets": [],
+    }
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as scan,
+        patch("skylos.core.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 1
+    assert scan.call_args.args[0] == str(repo)
+    assert scan.call_args.kwargs["changed_files"] == {str(manifest.resolve())}
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "1 reliability" in printed
+    assert "External Ingress reaches reload mode" in printed
 
 
 def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_path):
@@ -459,7 +541,10 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
     assert "reviewing 1 test staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Staged test files are secrets-only in local commit checks." in printed
-    assert "No staged security, secrets, quality, or AI-defect issues" in printed
+    assert (
+        "No staged security, reliability, secrets, quality, or AI-defect issues"
+        in printed
+    )
 
 
 def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path):
@@ -522,7 +607,10 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
     assert "reviewing 1 benchmark staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Staged benchmark files are secrets-only in local commit checks." in printed
-    assert "No staged security, secrets, quality, or AI-defect issues" in printed
+    assert (
+        "No staged security, reliability, secrets, quality, or AI-defect issues"
+        in printed
+    )
 
 
 def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(
@@ -842,7 +930,10 @@ def test_agent_pre_commit_suppresses_structural_quality_noise_locally(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "non-blocking quality finding(s)" in printed
-    assert "No staged security, secrets, quality, or AI-defect issues" in printed
+    assert (
+        "No staged security, reliability, secrets, quality, or AI-defect issues"
+        in printed
+    )
     assert "Function is 54 lines long" not in printed
 
 
@@ -855,10 +946,7 @@ def test_agent_pre_commit_blocks_high_severity_quality_findings(tmp_path):
     staged = Mock(stdout="app.py\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -1 +1 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n"
         ),
         returncode=0,
     )
@@ -985,5 +1073,8 @@ def test_agent_pre_commit_suppresses_advisory_architecture_findings(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "non-blocking quality finding(s)" in printed
-    assert "No staged security, secrets, quality, or AI-defect issues" in printed
+    assert (
+        "No staged security, reliability, secrets, quality, or AI-defect issues"
+        in printed
+    )
     assert "Main Sequence" not in printed

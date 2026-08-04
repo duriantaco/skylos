@@ -111,6 +111,24 @@ void main() {
     assert visitor.test_decorated_lines
 
 
+def test_dart_scanner_records_unqualified_and_qualified_calls(tmp_path):
+    _, refs, *_ = _scan_dart(
+        tmp_path,
+        """
+void helper() {}
+
+void main() {
+  helper();
+  Service.run();
+}
+""",
+    )
+
+    ref_names = {ref[0] for ref in refs}
+
+    assert {"helper", "run"} <= ref_names
+
+
 def test_proc_file_dispatches_dart_to_dart_scanner(tmp_path):
     file_path = tmp_path / "main.dart"
     file_path.write_text("void main() {}\n", encoding="utf-8")

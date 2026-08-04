@@ -15,6 +15,7 @@ class UploadFamilyManifest:
 _CODE_CATEGORY_LABELS = {
     "ai_defects": "AI defects",
     "danger": "security (danger)",
+    "reliability": "reliability",
     "quality": "quality",
     "secrets": "secrets",
     "dead_code": "dead code",
@@ -33,6 +34,7 @@ def build_code_scan_manifest(
             "dead_code",
             "ai_defects",
             "danger",
+            "reliability",
             "quality",
             "secrets",
             "dependency",

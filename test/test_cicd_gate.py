@@ -176,6 +176,7 @@ def test_summary_markdown_mixed_output_is_stable():
         "| Security (critical) | 1 | ❌ |\n"
         "| Security (high) | 6 | ⚠️ |\n"
         "| Security (total) | 11 | ⚠️ |\n"
+        "| Reliability | 0 | ✅ |\n"
         "| AI defects | 0 | ✅ |\n"
         "| Quality | 11 | ⚠️ |\n"
         "| Secrets | 1 | ❌ |\n"
@@ -188,3 +189,19 @@ def test_summary_markdown_mixed_output_is_stable():
         "- first failure\n"
         "- second failure"
     )
+
+
+def test_summary_markdown_marks_reliability_findings_as_blocking():
+    results = {
+        "reliability": [
+            {
+                "rule_id": "SKY-GPU001",
+                "severity": "HIGH",
+                "file": "Dockerfile",
+            }
+        ]
+    }
+
+    md = build_summary_markdown(results, False, ["1 reliability issue(s)"])
+
+    assert "| Reliability | 1 | ❌ |" in md

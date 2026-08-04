@@ -1,11 +1,13 @@
 import io
 import json
+from argparse import Namespace
 from unittest.mock import Mock, patch
 
+import pytest
 from rich.console import Console
 from rich.progress import Progress
 
-from skylos.commands.suite_cmd import run_suite_command
+from skylos.commands.suite_cmd import _write_suite_output, run_suite_command
 
 
 def _console_factory():
@@ -218,6 +220,23 @@ def test_suite_json_output_file_writes_formatted_output(tmp_path):
     )
 
 
+def test_suite_output_rejects_symlink_without_clobbering_target(tmp_path):
+    victim = tmp_path / "victim.json"
+    victim.write_text("KEEP", encoding="utf-8")
+    output_file = tmp_path / "suite.json"
+    try:
+        output_file.symlink_to(victim)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+    console = Mock()
+    args = Namespace(output_file=str(output_file), output_json=True)
+
+    assert _write_suite_output(args, console, '{"suite":true}') == 1
+    assert victim.read_text(encoding="utf-8") == "KEEP"
+    assert "Error writing output file" in console.print.call_args.args[0]
+
+
 def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     static_result = _static_result(str(tmp_path))
     report = {
@@ -295,7 +314,15 @@ def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     assert uploaded["debt_payload"] == report["debt"]
     assert "danger" in uploaded["static_payload"]
     build_code.assert_called_once_with(
-        ["danger", "ai_defects", "quality", "secrets", "dead_code", "dependency"],
+        [
+            "danger",
+            "reliability",
+            "ai_defects",
+            "quality",
+            "secrets",
+            "dead_code",
+            "dependency",
+        ],
         provenance_attached=True,
     )
     print_manifest.assert_called_once_with(

@@ -66,7 +66,7 @@ AI_VIBE_CATEGORIES = {
     "test_impact_gap",
 }
 
-_HIGH_IMPACT_CATEGORIES = {"ai_defect", "security", "danger"}
+_HIGH_IMPACT_CATEGORIES = {"ai_defect", "security", "danger", "reliability"}
 _HIGH_IMPACT_SEVERITIES = {"HIGH", "CRITICAL"}
 
 
@@ -98,7 +98,9 @@ def normalize_evidence_contract(
     *,
     finding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    limitations = _normal_list(_first_present(evidence_contract, "limitations", "limitation"))
+    limitations = _normal_list(
+        _first_present(evidence_contract, "limitations", "limitation")
+    )
 
     sources = _normal_list(_first_present(evidence_contract, "sources", "source"))
     sinks = _normal_list(_first_present(evidence_contract, "sinks", "sink"))
@@ -196,7 +198,9 @@ def _is_high_impact_finding(finding: dict[str, Any]) -> bool:
     if rule_id in AI_DEFECT_RULE_IDS:
         return True
 
-    vibe_category = str(finding.get("vibe_category") or finding.get("defect_type") or "")
+    vibe_category = str(
+        finding.get("vibe_category") or finding.get("defect_type") or ""
+    )
     if vibe_category in AI_VIBE_CATEGORIES:
         return True
 

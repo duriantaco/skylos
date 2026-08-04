@@ -74,6 +74,7 @@ def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
             for category in _DEAD_CODE_CATEGORIES
         ),
         "security": len(static_result.get("danger", []) or []),
+        "reliability": len(static_result.get("reliability", []) or []),
         "ai_defects": len(static_result.get("ai_defects", []) or []),
         "secrets": len(static_result.get("secrets", []) or []),
         "quality": len(static_result.get("quality", []) or []),
@@ -84,6 +85,7 @@ def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
 def _annotatable_findings(result: dict[str, Any]) -> list[dict[str, Any]]:
     categories = [
         "danger",
+        "reliability",
         "ai_defects",
         "quality",
         "secrets",
@@ -149,6 +151,7 @@ def format_suite_table(report: dict[str, Any]) -> str:
         "Static Analysis",
         f"  Dead code: {static_summary.get('dead_code', 0)}",
         f"  Security: {static_summary.get('security', 0)}",
+        f"  Reliability: {static_summary.get('reliability', 0)}",
         f"  Secrets: {static_summary.get('secrets', 0)}",
         f"  Quality: {static_summary.get('quality', 0)}",
         f"  Dependencies: {static_summary.get('dependencies', 0)}",
@@ -202,7 +205,7 @@ def run_suite(
         skylos/discover/detector.py detect_integrations;
         skylos/defend/engine.py run_defense_checks;
         skylos/reporting/provenance.py analyze_provenance.
-        
+
     Called from: skylos/commands/suite_cmd.py run_suite_command.
     """
     target_path = Path(target).resolve()

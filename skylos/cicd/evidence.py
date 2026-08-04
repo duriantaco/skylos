@@ -8,6 +8,7 @@ EvidenceLabel = Literal["proven", "likely", "speculative"]
 EvidenceKind = Literal[
     "security",
     "security_regression",
+    "reliability",
     "secret",
     "quality",
     "dependency",
@@ -187,6 +188,8 @@ def _evidence_kind(finding: dict[str, Any]) -> EvidenceKind:
         return "secret"
     if category in {"danger", "security"}:
         return "security"
+    if category == "reliability":
+        return "reliability"
     if category in {"dependency", "dependencies"}:
         return "dependency"
     if category == "custom_rules":
@@ -287,6 +290,8 @@ def _impact(kind: EvidenceKind, control_type: str) -> str:
         return f"The affected change may reduce protection from {_control_phrase(control_type)}."
     if kind == "security":
         return "The affected code may expose a security weakness if reachable."
+    if kind == "reliability":
+        return "The affected deployment may fail or behave inconsistently at runtime."
     if kind == "dependency":
         return "The dependency change may affect supply-chain or runtime safety."
     if kind == "custom":
@@ -317,6 +322,8 @@ def _suggested_fix(
 def _fallback_suggested_fix(kind: EvidenceKind) -> str:
     if kind == "security":
         return "Review the risky data flow and add the narrowest validation, escaping, or guard needed."
+    if kind == "reliability":
+        return "Align the declared runtime, deployment, and compatibility requirements."
     if kind == "dependency":
         return "Review the dependency change and pin, update, or remove the package as appropriate."
     if kind == "custom":

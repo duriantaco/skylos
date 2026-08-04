@@ -661,14 +661,11 @@ class TestAnalyze:
             encoding="utf-8",
         )
         (package / "payload.py").write_text(
-            "def action():\n"
-            "    return 'ok'\n",
+            "def action():\n    return 'ok'\n",
             encoding="utf-8",
         )
         (package / "consumer.py").write_text(
-            "from pkg.api import action\n\n"
-            "def run():\n"
-            "    return action()\n",
+            "from pkg.api import action\n\ndef run():\n    return action()\n",
             encoding="utf-8",
         )
 
@@ -686,7 +683,7 @@ class TestAnalyze:
             "from typing import cast\n"
             "from models import AgentActionName\n\n"
             "def normalize(action):\n"
-            "    return cast(\"AgentActionName\", action)\n",
+            '    return cast("AgentActionName", action)\n',
             encoding="utf-8",
         )
 
@@ -699,8 +696,7 @@ class TestAnalyze:
 
     def test_noqa_f401_suppresses_only_matching_unused_import(self, tmp_path):
         (tmp_path / "constants.py").write_text(
-            "USED_FOR_COMPAT = 1\n"
-            "PLAIN_UNUSED = 2\n",
+            "USED_FOR_COMPAT = 1\nPLAIN_UNUSED = 2\n",
             encoding="utf-8",
         )
         (tmp_path / "facade.py").write_text(
@@ -787,12 +783,9 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
             (write_lines[2], "SKY-D324"),
         }
 
-    def test_noqa_f401_on_multiline_import_statement_suppresses_aliases(
-        self, tmp_path
-    ):
+    def test_noqa_f401_on_multiline_import_statement_suppresses_aliases(self, tmp_path):
         (tmp_path / "constants.py").write_text(
-            "COMPAT_ONE = 1\n"
-            "COMPAT_TWO = 2\n",
+            "COMPAT_ONE = 1\nCOMPAT_TWO = 2\n",
             encoding="utf-8",
         )
         (tmp_path / "facade.py").write_text(
@@ -811,12 +804,9 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
         assert "COMPAT_ONE" not in unused_imports
         assert "COMPAT_TWO" not in unused_imports
 
-    def test_noqa_f401_on_multiline_import_close_suppresses_aliases(
-        self, tmp_path
-    ):
+    def test_noqa_f401_on_multiline_import_close_suppresses_aliases(self, tmp_path):
         (tmp_path / "constants.py").write_text(
-            "COMPAT_ONE = 1\n"
-            "COMPAT_TWO = 2\n",
+            "COMPAT_ONE = 1\nCOMPAT_TWO = 2\n",
             encoding="utf-8",
         )
         (tmp_path / "facade.py").write_text(
@@ -835,12 +825,9 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
         assert "COMPAT_ONE" not in unused_imports
         assert "COMPAT_TWO" not in unused_imports
 
-    def test_noqa_f401_on_second_import_does_not_suppress_first_import(
-        self, tmp_path
-    ):
+    def test_noqa_f401_on_second_import_does_not_suppress_first_import(self, tmp_path):
         (tmp_path / "app.py").write_text(
-            "import os\n"
-            "import sys  # noqa: F401 - compatibility re-export\n",
+            "import os\nimport sys  # noqa: F401 - compatibility re-export\n",
             encoding="utf-8",
         )
 
@@ -949,14 +936,11 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
             encoding="utf-8",
         )
         (package / "payload.py").write_text(
-            "def action():\n"
-            "    return 'ok'\n",
+            "def action():\n    return 'ok'\n",
             encoding="utf-8",
         )
         (package / "consumer.py").write_text(
-            "from pkg.api import action\n\n"
-            "def run():\n"
-            "    return action()\n",
+            "from pkg.api import action\n\ndef run():\n    return action()\n",
             encoding="utf-8",
         )
 
@@ -982,14 +966,11 @@ def ignore_symlink_write(destination: str, filename: str) -> None:
             encoding="utf-8",
         )
         (package / "payload.py").write_text(
-            "def action():\n"
-            "    return 'ok'\n",
+            "def action():\n    return 'ok'\n",
             encoding="utf-8",
         )
         (package / "consumer.py").write_text(
-            "from pkg.api import action\n\n"
-            "def run():\n"
-            "    return action()\n",
+            "from pkg.api import action\n\ndef run():\n    return action()\n",
             encoding="utf-8",
         )
 
@@ -1318,8 +1299,7 @@ max_args = false
                 encoding="utf-8",
             )
             (root / "app.py").write_text(
-                'def unused_func(a, b, c, d, e, f):\n'
-                '    return eval("1+1")\n',
+                'def unused_func(a, b, c, d, e, f):\n    return eval("1+1")\n',
                 encoding="utf-8",
             )
 
@@ -1979,13 +1959,10 @@ class TestClass:
             }
         ]
 
-    def test_analyze_marks_ast_compile_error_incomplete_and_omits_grade(
-        self, tmp_path
-    ):
+    def test_analyze_marks_ast_compile_error_incomplete_and_omits_grade(self, tmp_path):
         invalid_file = tmp_path / "duplicate_arguments.py"
         invalid_file.write_text(
-            "def broken(_: object, /, _: object) -> None:\n"
-            "    pass\n",
+            "def broken(_: object, /, _: object) -> None:\n    pass\n",
             encoding="utf-8",
         )
 
@@ -2010,7 +1987,7 @@ class TestClass:
     ):
         file_path = tmp_path / "dynamic_pattern.py"
         file_path.write_text(
-            'def hidden(name, obj):\n'
+            "def hidden(name, obj):\n"
             '    eval("1+1")\n'
             '    return getattr(obj, f"bad({name}", None)\n',
             encoding="utf-8",
@@ -2373,8 +2350,7 @@ app = Main()
 
         result = json.loads(analyze(str(tmp_path), conf=0))
         unused_methods = {
-            item["full_name"].rsplit(".", 1)[-1]
-            for item in result["unused_functions"]
+            item["full_name"].rsplit(".", 1)[-1] for item in result["unused_functions"]
         }
 
         assert "create" not in unused_methods
@@ -2409,16 +2385,12 @@ def orphan():
         )
 
         result = json.loads(analyze(str(tmp_path), conf=0))
-        unused_functions = {
-            item["simple_name"] for item in result["unused_functions"]
-        }
+        unused_functions = {item["simple_name"] for item in result["unused_functions"]}
 
         assert "boot" not in unused_functions
         assert "orphan" in unused_functions
 
-    def test_malformed_entrypoint_rule_does_not_suppress_broadly(
-        self, mock_definition
-    ):
+    def test_malformed_entrypoint_rule_does_not_suppress_broadly(self, mock_definition):
         skylos = Skylos()
         skylos._project_root = Path("/repo")
         cfg = {
@@ -3318,9 +3290,7 @@ class LegacySuite {
         result = json.loads(result_json)
 
         unreachable_classes = {item["name"] for item in result["unused_classes"]}
-        unreachable_functions = {
-            item["name"] for item in result["unused_functions"]
-        }
+        unreachable_functions = {item["name"] for item in result["unused_functions"]}
 
         assert "BillingTest" not in unreachable_classes
         assert "BillingTest.acceptsPlan" not in unreachable_functions
@@ -3650,7 +3620,9 @@ def test_config_secret_scan_skips_symlink_targets_outside_root(tmp_path):
 def test_changed_files_secret_scan_skips_symlink_targets_outside_root(tmp_path):
     (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
     outside_secret = tmp_path.parent / "outside_changed_secret"
-    outside_secret.write_text("AWS_SECRET_ACCESS_KEY=OUTSIDE_CHANGED\n", encoding="utf-8")
+    outside_secret.write_text(
+        "AWS_SECRET_ACCESS_KEY=OUTSIDE_CHANGED\n", encoding="utf-8"
+    )
     link = tmp_path / "config.yaml"
     try:
         link.symlink_to(outside_secret)
@@ -3677,9 +3649,7 @@ def test_changed_files_secret_scan_skips_symlink_targets_outside_root(tmp_path):
 
 
 class TestRepoPhantomReferences:
-    def test_resolve_analysis_root_stops_at_nested_javascript_package(
-        self, tmp_path
-    ):
+    def test_resolve_analysis_root_stops_at_nested_javascript_package(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
         package_root = tmp_path / "benchmarks" / "typescript-case"
         source_root = package_root / "src"
@@ -4089,7 +4059,14 @@ def create_invoice(order):
         monkeypatch.setattr(
             vulnerability_scanner,
             "scan_dependencies",
-            lambda root: [{"rule_id": "CVE-TEST", "file": str(root), "line": 1}],
+            lambda root: vulnerability_scanner.DependencyScanResult(
+                [{"rule_id": "CVE-TEST", "file": str(root), "line": 1}],
+                receipt={
+                    "status": "complete",
+                    "complete": True,
+                    "dependency_count": 1,
+                },
+            ),
         )
 
         result = json.loads(
@@ -4102,7 +4079,72 @@ def create_invoice(order):
         )
 
         assert result["analysis_summary"]["sca_count"] == 1
+        assert result["analysis_summary"]["sca_coverage"] == {
+            "status": "complete",
+            "complete": True,
+            "dependency_count": 1,
+        }
         assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-TEST"
+
+    def test_enable_sca_scans_manifest_only_repository(self, tmp_path, monkeypatch):
+        (tmp_path / "package.json").write_text(
+            '{"dependencies":{"requests":"2.31.0"}}', encoding="utf-8"
+        )
+
+        from skylos.rules.sca import vulnerability_scanner
+
+        monkeypatch.setattr(
+            vulnerability_scanner,
+            "scan_dependencies",
+            lambda root: vulnerability_scanner.DependencyScanResult(
+                [{"rule_id": "CVE-MANIFEST", "file": str(root), "line": 1}],
+                receipt={
+                    "status": "complete",
+                    "complete": True,
+                    "category_complete": False,
+                    "supported_manifest_count": 1,
+                },
+            ),
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_sca=True,
+                grep_verify=False,
+            )
+        )
+
+        assert result["analysis_summary"]["sca_count"] == 1
+        assert (
+            result["analysis_summary"]["sca_coverage"]["supported_manifest_count"] == 1
+        )
+        assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-MANIFEST"
+
+    def test_grep_verify_can_disable_project_cache(self, tmp_path, monkeypatch):
+        (tmp_path / "app.py").write_text("def unused():\n    return 1\n")
+        seen = []
+
+        def fake_grep_verify(self, *, use_project_cache=True):
+            seen.append(use_project_cache)
+            return 0
+
+        monkeypatch.setattr(Skylos, "_grep_verify", fake_grep_verify)
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert seen == [False]
+        assert (
+            result["analysis_summary"]["grep_verify"]["project_cache_enabled"] is False
+        )
 
     def test_ai_defect_scan_checks_manifest_dependencies_without_python_files(
         self, tmp_path, monkeypatch
@@ -4399,9 +4441,7 @@ def create_invoice(order):
         assert scanned_dirs == [tmp_path]
         assert consumed_entries == ["a.py"]
 
-    def test_prompt_injection_scan_caps_reported_findings(
-        self, tmp_path, monkeypatch
-    ):
+    def test_prompt_injection_scan_caps_reported_findings(self, tmp_path, monkeypatch):
         from skylos.security import injection_scanner
 
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")

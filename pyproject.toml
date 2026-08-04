@@ -77,19 +77,19 @@ dependencies = [
     "textual>=1.0.0",
     "keyring>=25.6.0,!=3.4.2",
     "requests",
-    "tree-sitter>=0.25.2",
-    "tree-sitter-typescript>=0.23.2",
-    "tree-sitter-go>=0.23.0",
-    "tree-sitter-java>=0.23.0",
-    "tree-sitter-php>=0.24.1",
-    "tree-sitter-rust>=0.24.2",
-    "tree-sitter-dart-orchard>=0.3.2",
+    "tree-sitter>=0.25.2,<0.27",
+    "tree-sitter-typescript>=0.23.2,<0.24",
+    "tree-sitter-go>=0.23.0,<0.26",
+    "tree-sitter-java>=0.23.0,<0.24",
+    "tree-sitter-php>=0.24.1,<0.25",
+    "tree-sitter-rust>=0.24.2,<0.25",
+    "tree-sitter-dart-orchard>=0.3.2,<0.6",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",
     "networkx",
     "pyperclip",
     "ca9>=0.1.0",
-    "mcp>=1.0.0"
+    "mcp>=1.0.0,<2"
 ]
 
 [project.urls]
@@ -104,9 +104,10 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 [project.optional-dependencies]
 llm = ["litellm>=1.84.0,<1.85.0", "aiohttp>=3.14.0"]
 lint = ["ruff>=0.15.0"]
-test = ["pytest>=9.0.2"]
+test = ["pytest>=9.0.2", "packaging>=24.2"]
 all = [
     "pytest>=9.0.2",
+    "packaging>=24.2",
     "litellm>=1.84.0,<1.85.0",
     "aiohttp>=3.14.0",
     "ruff>=0.15.0",

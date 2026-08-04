@@ -3,6 +3,13 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Sequence
 
+from skylos.core.safe_cache_io import write_text_no_symlink
+
+
+def _write_scan_output(path: str, text: str) -> None:
+    if not write_text_no_symlink(path, text, encoding="utf-8"):
+        raise OSError(f"could not safely write output file: {path}")
+
 
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     """
@@ -34,12 +41,16 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     _is_main_machine_output = cli_module._is_main_machine_output
     _is_tty = cli_module._is_tty
     _parse_main_cli_args = cli_module._parse_main_cli_args
+    _precommit_finding_targets_report_file = (
+        cli_module._precommit_finding_targets_report_file
+    )
     _print_main_scan_banner = cli_module._print_main_scan_banner
     _print_main_upload_manifest = cli_module._print_main_upload_manifest
     _print_upload_cta = cli_module._print_upload_cta
     _print_upload_destination = cli_module._print_upload_destination
     _render_upload_failure = cli_module._render_upload_failure
     _run_pre_analysis_steps = cli_module._run_pre_analysis_steps
+    _selected_rule_prerequisite_ids = cli_module._selected_rule_prerequisite_ids
     _strict_scan_exit_code = cli_module._strict_scan_exit_code
     _write_pretty_report_output = cli_module._write_pretty_report_output
     _write_rich_report_output = cli_module._write_rich_report_output
@@ -85,6 +96,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     config = context.config
     config_file = context.config_file
     machine_output = _is_main_machine_output(args)
+    selected_prerequisite_ids = _selected_rule_prerequisite_ids(args.select)
 
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
@@ -117,6 +129,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 enable_sca=bool(args.sca),
                 trace_file=trace_file,
                 config_file=config_file,
+                required_config_rules=args.select,
             )
 
         quiet_analysis_output = (
@@ -194,6 +207,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 "unused_parameters",
                 "unused_files",
                 "danger",
+                "reliability",
                 "ai_defects",
                 "quality",
                 "secrets",
@@ -204,8 +218,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     result[category] = [
                         item
                         for item in items
-                        if str((project_root / item.get("file", "")).resolve())
-                        in changed_files
+                        if _precommit_finding_targets_report_file(
+                            item, project_root, changed_files
+                        )
+                        or str(item.get("rule_id", "")).upper()
+                        in selected_prerequisite_ids
                     ]
             result_json = json.dumps(result)
 
@@ -231,6 +248,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     "unused_parameters",
                     "unused_files",
                     "danger",
+                    "reliability",
                     "ai_defects",
                     "quality",
                     "secrets",
@@ -238,9 +256,15 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 ]:
                     items = result.get(category, [])
                     if items:
-                        result[category] = filter_findings_to_diff(
-                            items, changed_ranges
-                        )
+                        diff_findings = filter_findings_to_diff(items, changed_ranges)
+                        diff_finding_ids = {id(item) for item in diff_findings}
+                        result[category] = [
+                            item
+                            for item in items
+                            if id(item) in diff_finding_ids
+                            or str(item.get("rule_id", "")).upper()
+                            in selected_prerequisite_ids
+                        ]
                 result_json = json.dumps(result)
                 if not machine_output:
                     console.print(
@@ -341,6 +365,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
                 _finding_categories = [
                     "danger",
+                    "reliability",
                     "ai_defects",
                     "quality",
                     "secrets",
@@ -389,6 +414,26 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 if args.verbose:
                     console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
 
+        output_result = result
+        json_output_result = json.loads(result_json)
+        _cli_severity = getattr(args, "severity", None)
+        _cli_category = getattr(args, "category", None)
+        _cli_file_filter = getattr(args, "file_filter", None)
+        if _cli_severity or _cli_category or _cli_file_filter:
+            output_result = _apply_display_filters(
+                result,
+                severity=_cli_severity,
+                category=_cli_category,
+                file_filter=_cli_file_filter,
+            )
+            json_output_result = _apply_display_filters(
+                json_output_result,
+                severity=_cli_severity,
+                category=_cli_category,
+                file_filter=_cli_file_filter,
+            )
+        output_result_json = json.dumps(json_output_result)
+
         if args.sarif:
             all_findings = []
 
@@ -430,62 +475,58 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                         f["severity"] = "LOW"
                     all_findings.append(f)
 
-            _add(result.get("danger", []), "SECURITY", None)
-            _add(result.get("ai_defects", []), "AI_DEFECT", None)
-            _add(result.get("quality", []), "QUALITY", None)
-            _add(result.get("secrets", []), "SECRET", None)
-            _add(result.get("custom_rules", []), "CUSTOM", None)
+            _add(output_result.get("danger", []), "SECURITY", None)
+            _add(output_result.get("reliability", []), "RELIABILITY", None)
+            _add(output_result.get("ai_defects", []), "AI_DEFECT", None)
+            _add(output_result.get("quality", []), "QUALITY", None)
+            _add(output_result.get("secrets", []), "SECRET", None)
+            _add(output_result.get("custom_rules", []), "CUSTOM", None)
             _add(
-                result.get("analysis_errors", []),
+                output_result.get("analysis_errors", []),
                 "ANALYSIS",
                 "SKY-ANALYSIS-INCOMPLETE",
             )
 
             _add(
-                result.get("unused_functions", []),
+                output_result.get("unused_functions", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_FUNCTION",
             )
             _add(
-                result.get("unused_imports", []),
+                output_result.get("unused_imports", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_IMPORT",
             )
             _add(
-                result.get("unused_variables", []),
+                output_result.get("unused_variables", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_VARIABLE",
             )
             _add(
-                result.get("unused_classes", []),
+                output_result.get("unused_classes", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_CLASS",
             )
             _add(
-                result.get("unused_parameters", []),
+                output_result.get("unused_parameters", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
             )
 
             exporter = _get_sarif_exporter_class()(all_findings, tool_name="Skylos")
             sarif_data = exporter.generate()
-            grade_data = result.get("grade")
+            grade_data = output_result.get("grade")
             if grade_data:
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
             import json as _json
 
-            with open(  # skylos: ignore[SKY-D215] user-selected SARIF output path
-                args.sarif, "w", encoding="utf-8"
-            ) as _sf:
-                _json.dump(sarif_data, _sf, indent=2)
+            _write_scan_output(args.sarif, _json.dumps(sarif_data, indent=2))
 
         if args.json:
             if args.output:
-                pathlib.Path(args.output).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-                    result_json
-                )
+                _write_scan_output(args.output, output_result_json)
             else:
-                print(result_json)
+                print(output_result_json)
 
             incomplete_exit_code = _strict_scan_exit_code(result, args)
             if incomplete_exit_code == 2:
@@ -526,18 +567,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             return
 
         if args.concise:
-            display_result = result
-            _cli_severity = getattr(args, "severity", None)
-            _cli_category = getattr(args, "category", None)
-            _cli_file_filter = getattr(args, "file_filter", None)
+            display_result = output_result
             _cli_limit = getattr(args, "limit", None)
-            if _cli_severity or _cli_category or _cli_file_filter:
-                display_result = _apply_display_filters(
-                    result,
-                    severity=_cli_severity,
-                    category=_cli_category,
-                    file_filter=_cli_file_filter,
-                )
 
             concise_output = _format_concise_results(
                 display_result,
@@ -545,9 +576,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 limit=_cli_limit,
             )
             if args.output:
-                pathlib.Path(args.output).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-                    concise_output, encoding="utf-8"
-                )
+                _write_scan_output(args.output, concise_output)
             elif concise_output:
                 print(concise_output, end="")
 
@@ -562,11 +591,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             return
 
         if args.llm:
-            llm_report = _generate_llm_report(result, project_root)
+            llm_report = _generate_llm_report(output_result, project_root)
             if args.output:
-                pathlib.Path(args.output).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-                    llm_report, encoding="utf-8"
-                )
+                _write_scan_output(args.output, llm_report)
             else:
                 print(llm_report)
 
@@ -586,7 +613,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             return
 
         if args.github:
-            _emit_github_annotations(result)
+            _emit_github_annotations(output_result)
             if args.gate:
                 exit_code = _formatted_output_gate_exit_code(
                     result,
@@ -738,20 +765,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     if args.tui:
         from skylos.ui.tui import run_tui
 
-        run_tui(result, root_path=project_root)
+        run_tui(output_result, root_path=project_root)
     elif not args.upload:
-        display_result = result
-        _cli_severity = getattr(args, "severity", None)
-        _cli_category = getattr(args, "category", None)
-        _cli_file_filter = getattr(args, "file_filter", None)
+        display_result = output_result
         _cli_limit = getattr(args, "limit", None)
-        if _cli_severity or _cli_category or _cli_file_filter:
-            display_result = _apply_display_filters(
-                result,
-                severity=_cli_severity,
-                category=_cli_category,
-                file_filter=_cli_file_filter,
-            )
         if getattr(args, "format", "rich") == "pretty":
             render_pretty_results(
                 console,
@@ -794,6 +811,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         )
     )
     danger_count = len(result.get("danger", []) or [])
+    reliability_count = len(result.get("reliability", []) or [])
     quality_count = len(result.get("quality", []) or [])
     if getattr(args, "format", "rich") != "pretty" and not result.get(
         "analysis_errors"
@@ -803,6 +821,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             logging.getLogger("skylos"),
             danger_enabled=bool(danger_count),
             danger_count=danger_count,
+            reliability_enabled=bool(reliability_count),
+            reliability_count=reliability_count,
             quality_enabled=bool(quality_count),
             quality_count=quality_count,
         )
@@ -825,6 +845,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             "unused_classes",
             "unused_parameters",
             "danger",
+            "reliability",
             "ai_defects",
             "quality",
             "secrets",

@@ -30,9 +30,9 @@ from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
     parse_go_mod,
-    parse_package_json,
-    parse_pyproject_toml,
-    parse_requirements_txt,
+    parse_package_json_candidates,
+    parse_pyproject_toml_candidates,
+    parse_requirements_txt_candidates,
 )
 
 
@@ -266,9 +266,9 @@ def _status_checker(status_checker: StatusChecker | None) -> StatusChecker:
 def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
     dependencies: list[dict[str, Any]] = []
     parsers = {
-        "requirements.txt": parse_requirements_txt,
-        "pyproject.toml": parse_pyproject_toml,
-        "package.json": parse_package_json,
+        "requirements.txt": parse_requirements_txt_candidates,
+        "pyproject.toml": parse_pyproject_toml_candidates,
+        "package.json": parse_package_json_candidates,
         "go.mod": parse_go_mod,
         "Cargo.toml": _parse_cargo_toml,
         "composer.json": _parse_composer_json,
@@ -346,7 +346,9 @@ def _pypi_dependency_has_wildcard_pin(dependency: dict[str, Any]) -> bool:
     return bool(re.search(r"==\s*[0-9][A-Za-z0-9._+-]*\*", snippet))
 
 
-def _parser_for_manifest_path(path: Path) -> Callable[[Path], list[dict[str, Any]]] | None:
+def _parser_for_manifest_path(
+    path: Path,
+) -> Callable[[Path], list[dict[str, Any]]] | None:
     name = path.name.lower()
     suffix = path.suffix.lower()
     if name in {"pom.xml", "packages.config"}:
@@ -430,7 +432,11 @@ def _tokens_have_private_pip_index(tokens: list[str]) -> bool:
             if token.startswith(prefix):
                 if _private_or_unverified_registry_value(token[len(prefix) :]):
                     return True
-            if flag in {"-i", "-f"} and token.startswith(flag) and len(token) > len(flag):
+            if (
+                flag in {"-i", "-f"}
+                and token.startswith(flag)
+                and len(token) > len(flag)
+            ):
                 if _private_or_unverified_registry_value(token[len(flag) :]):
                     return True
         idx += 1
@@ -979,8 +985,10 @@ def _xml_child_text(node: ET.Element, child_name: str) -> str:
 def _is_install_surface_file(root: Path, path: Path) -> bool:
     name = path.name.lower()
     suffix = path.suffix.lower()
-    if name == "dockerfile" or name.startswith("dockerfile.") or name.endswith(
-        ".dockerfile"
+    if (
+        name == "dockerfile"
+        or name.startswith("dockerfile.")
+        or name.endswith(".dockerfile")
     ):
         return True
     if suffix in {".sh", ".bash", ".zsh", ".ksh", ".bats"}:
@@ -992,10 +1000,15 @@ def _is_install_surface_file(root: Path, path: Path) -> bool:
             rel_parts = path.resolve().relative_to(root).parts
         except (OSError, ValueError):
             rel_parts = path.parts
-        if len(rel_parts) >= 3 and rel_parts[0] == ".github" and rel_parts[1] in {
-            "workflows",
-            "actions",
-        }:
+        if (
+            len(rel_parts) >= 3
+            and rel_parts[0] == ".github"
+            and rel_parts[1]
+            in {
+                "workflows",
+                "actions",
+            }
+        ):
             return True
         if name in {"action.yml", "action.yaml"}:
             return True
@@ -1032,8 +1045,10 @@ def _logical_install_lines(path: Path, text: str) -> list[tuple[int, str]]:
 def _install_surface_kind(path: Path) -> str:
     name = path.name.lower()
     suffix = path.suffix.lower()
-    if name == "dockerfile" or name.startswith("dockerfile.") or name.endswith(
-        ".dockerfile"
+    if (
+        name == "dockerfile"
+        or name.startswith("dockerfile.")
+        or name.endswith(".dockerfile")
     ):
         return "dockerfile"
     if suffix in {".yml", ".yaml"}:
@@ -1728,7 +1743,11 @@ def _finding_for_status(
     reason: str = "",
 ) -> dict[str, Any] | None:
     state = normalize_dependency_truth_state(status)
-    source = "registry+lookalike" if state == DependencyTruthState.SUSPICIOUS_EXISTING else "registry"
+    source = (
+        "registry+lookalike"
+        if state == DependencyTruthState.SUSPICIOUS_EXISTING
+        else "registry"
+    )
     truth = DependencyTruthResult.from_dependency(
         dependency,
         state,
@@ -1794,8 +1813,7 @@ def _suspicious_existing_finding(
     version = str(dependency["version"])
     reason = truth.reason or "name closely resembles a known dependency"
     message = (
-        f"Suspicious existing {ecosystem} dependency '{name}@{version}'. "
-        f"{reason}."
+        f"Suspicious existing {ecosystem} dependency '{name}@{version}'. {reason}."
     )
     return _finding(
         dependency,
@@ -2128,10 +2146,12 @@ def _fetch_text(url: str, *, user_agent: str) -> str:
 
     request = urllib.request.Request(url, method="GET")
     request.add_header("User-Agent", user_agent)
-    with urllib.request.urlopen(  # skylos: ignore[SKY-D216] URL is validated against fixed registry hosts above.
-        request,
-        timeout=5,
-    ) as response:
+    with (
+        urllib.request.urlopen(  # skylos: ignore[SKY-D216] URL is validated against fixed registry hosts above.
+            request,
+            timeout=5,
+        ) as response
+    ):
         raw = response.read(MAX_REGISTRY_RESPONSE_BYTES + 1)
     if len(raw) > MAX_REGISTRY_RESPONSE_BYTES:
         raise ValueError("Registry response exceeds size limit")

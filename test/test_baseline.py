@@ -165,3 +165,49 @@ class TestFilterNewFindings:
             ]
         )
         assert total == 0
+
+    def test_recomputes_counts_and_removes_unfiltered_aggregates(self):
+        result = _sample_result()
+        result["reliability"] = [
+            {
+                "rule_id": "SKY-GPU001",
+                "file": "Dockerfile",
+                "line": 1,
+                "message": "CUDA image needs a newer driver",
+            }
+        ]
+        result["ai_defects"] = []
+        result["analysis_summary"] = {
+            "total_files": 1,
+            "danger_count": 1,
+            "reliability_count": 1,
+            "quality_count": 1,
+            "by_directory": [{"path": ".", "total": 3}],
+            "dead_code_evidence": {"candidate_decisions": {"reported": 3}},
+            "grep_verify": {"verified": 3},
+        }
+        result["grade"] = {"overall": {"score": 100}}
+        result["ai_security_stats"] = {"total_findings": 3}
+        result["provenance_summary"] = {"ai_authored_findings": 1}
+        baseline = {
+            "fingerprints": [
+                "SKY-D211:app.py:50",
+                "SKY-GPU001:Dockerfile:1",
+                "SKY-Q301:app.py:80",
+            ]
+        }
+
+        filtered = filter_new_findings(result, baseline)
+
+        assert filtered["danger"] == []
+        assert filtered["reliability"] == []
+        assert filtered["quality"] == []
+        assert filtered["analysis_summary"]["danger_count"] == 0
+        assert filtered["analysis_summary"]["reliability_count"] == 0
+        assert filtered["analysis_summary"]["quality_count"] == 0
+        assert "by_directory" not in filtered["analysis_summary"]
+        assert "dead_code_evidence" not in filtered["analysis_summary"]
+        assert "grep_verify" not in filtered["analysis_summary"]
+        assert "grade" not in filtered
+        assert "ai_security_stats" not in filtered
+        assert "provenance_summary" not in filtered

@@ -25,6 +25,7 @@ EARLY_COMMAND_HANDLERS = {
     "sync": "_run_sync_command",
     "project": "_run_project_command",
     "sonar": "_run_sonar_command",
+    "compare": "_run_compare_command",
     "city": "_run_removed_city_command",
     "suite": "run_suite_command",
     "verify": "_run_verify_command",

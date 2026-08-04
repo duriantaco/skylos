@@ -12,7 +12,15 @@ def run_baseline_command(argv: list[str]) -> int:
     console = Console()
     console.print(f"[bold]Creating baseline for {path}...[/bold]")
 
-    result = json.loads(run_analyze(path))
+    result = json.loads(
+        run_analyze(
+            path,
+            enable_danger=True,
+            enable_quality=True,
+            enable_secrets=True,
+            enable_ai_defects=True,
+        )
+    )
     baseline_path = save_baseline(path, result)
     total = sum(
         len(result.get(key, []))
@@ -22,6 +30,8 @@ def run_baseline_command(argv: list[str]) -> int:
             "unused_classes",
             "unused_variables",
             "danger",
+            "reliability",
+            "ai_defects",
             "quality",
             "secrets",
         ]

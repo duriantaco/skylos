@@ -574,6 +574,10 @@ class TestAnalyzerIntegration:
 
         assert len(unused_names_on) <= len(unused_names_off)
         assert result_on["analysis_summary"]["grep_verify"]["enabled"] is True
+        assert (
+            result_on["analysis_summary"]["grep_verify"]["project_cache_enabled"]
+            is True
+        )
         assert isinstance(
             result_on["analysis_summary"]["grep_verify"]["rescued_count"], int
         )

@@ -43,6 +43,7 @@ CATEGORIES = [
     ("overview", "Overview"),
     ("dead_code", "Dead Code"),
     ("security", "Security"),
+    ("reliability", "Reliability"),
     ("secrets", "Secrets"),
     ("quality", "Quality"),
     ("dependencies", "Dependencies"),
@@ -108,6 +109,25 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         )
         sec_raw.append(item)
     data["security"] = (sec_cols, sec_rows, sec_raw)
+
+    reliability_cols = ["Rule", "Severity", "Message", "File:Line", "Symbol"]
+    reliability_rows, reliability_raw = [], []
+    for item in result.get("reliability") or []:
+        reliability_rows.append(
+            (
+                item.get("rule_id", "?"),
+                (item.get("severity") or "?").upper(),
+                item.get("message") or "",
+                _loc(item, root_path),
+                item.get("symbol") or "<module>",
+            )
+        )
+        reliability_raw.append(item)
+    data["reliability"] = (
+        reliability_cols,
+        reliability_rows,
+        reliability_raw,
+    )
 
     secret_cols = ["Provider", "Message", "File:Line"]
     secret_rows, secret_raw = [], []
@@ -253,7 +273,7 @@ def _finding_severity(category: str, item: dict, row: tuple) -> str:
         return str(raw).upper()
     if category in {"security", "secrets", "dependencies"}:
         return "HIGH"
-    if category == "quality":
+    if category in {"quality", "reliability"}:
         return "MEDIUM"
     return "LOW"
 
@@ -261,7 +281,7 @@ def _finding_severity(category: str, item: dict, row: tuple) -> str:
 def _finding_rule(category: str, item: dict, row: tuple) -> str:
     if category == "dead_code":
         return f"dead-code/{str(row[0]).lower().replace(' ', '-')}"
-    if category == "security":
+    if category in {"security", "reliability"}:
         return str(row[0])
     if category == "secrets":
         return str(row[0])
@@ -275,7 +295,7 @@ def _finding_rule(category: str, item: dict, row: tuple) -> str:
 def _finding_title(category: str, item: dict, row: tuple) -> str:
     if category == "dead_code":
         return f"Unused {str(row[0]).lower()}: {row[1]}"
-    if category == "security":
+    if category in {"security", "reliability"}:
         return str(row[2])
     if category == "secrets":
         return str(row[1])
@@ -322,7 +342,7 @@ class OverviewPanel(VerticalScroll):
             )
 
         sev_counts: dict[str, int] = {}
-        for cat in ("security", "dependencies"):
+        for cat in ("security", "reliability", "dependencies"):
             _, _, raw = self.category_data.get(cat, ([], [], []))
             for item in raw:
                 sev = (item.get("severity") or "").upper()
@@ -360,7 +380,14 @@ class OverviewPanel(VerticalScroll):
             yield Static("\n".join(lang_lines) + "\n")
 
         file_counts: dict[str, int] = {}
-        for cat_key in ("dead_code", "security", "secrets", "quality", "dependencies"):
+        for cat_key in (
+            "dead_code",
+            "security",
+            "reliability",
+            "secrets",
+            "quality",
+            "dependencies",
+        ):
             _, _, raw = self.category_data.get(cat_key, ([], [], []))
             for item in raw:
                 f = item.get("file")
@@ -394,7 +421,7 @@ class DetailPanel(Static):
             for evidence_line in dead_code_evidence_detail_lines(item):
                 lines.append(f"  {escape(evidence_line)}")
 
-        elif category == "security":
+        elif category in {"security", "reliability"}:
             lines.append(f"  [bold]Rule:[/bold]  {item.get('rule_id', '?')}")
             sev = item.get("severity", "?")
             color = (
@@ -405,7 +432,7 @@ class DetailPanel(Static):
             lines.append(f"  [bold]Severity:[/bold]  [{color}]{sev}[/{color}]")
             lines.append(f"  [bold]Message:[/bold]  {item.get('message', '')}")
             ver = item.get("verification") or {}
-            if ver.get("verdict"):
+            if category == "security" and ver.get("verdict"):
                 lines.append(f"  [bold]Verification:[/bold]  {ver['verdict']}")
                 evidence = ver.get("evidence") or {}
                 chain = evidence.get("chain")
@@ -634,10 +661,7 @@ class SkylosApp(App):
 
         filtered = self._filtered_rows(cat_key)
         finding_list.extend(
-            [
-                FindingItem(cat_key, row, item, self.root_path)
-                for row, item in filtered
-            ]
+            [FindingItem(cat_key, row, item, self.root_path) for row, item in filtered]
         )
         if filtered:
             finding_list.index = 0
@@ -819,7 +843,9 @@ class SkylosApp(App):
             f"[dim]{self.root_path or '.'}[/dim]"
         )
         bar = self.query_one("#status-bar", Static)
-        bar.update(f" findings {total}  |  severity {sev}  |  {cat}  |  j/k move  / search  o open  q quit")
+        bar.update(
+            f" findings {total}  |  severity {sev}  |  {cat}  |  j/k move  / search  o open  q quit"
+        )
 
 
 def run_tui(result: dict, root_path=None) -> None:

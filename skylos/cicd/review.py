@@ -92,6 +92,7 @@ def run_pr_review(
             pr_number,
             repo,
             evidence_cards=evidence_cards,
+            changed_ranges=changed_ranges,
         )
 
     _post_summary_comment(
@@ -154,14 +155,14 @@ def _parse_unified_diff(diff_output: str) -> list[dict]:
         if hunk_match and current_file:
             start = int(hunk_match.group(1))
             count = int(hunk_match.group(2) or 1)
-            if count > 0:
-                entries.append(
-                    {
-                        "file": current_file,
-                        "start": start,
-                        "end": start + count - 1,
-                    }
-                )
+            anchor = max(1, start)
+            entries.append(
+                {
+                    "file": current_file,
+                    "start": anchor,
+                    "end": anchor if count == 0 else start + count - 1,
+                }
+            )
 
     return entries
 
@@ -237,21 +238,93 @@ def filter_findings_to_diff(
 
     filtered = []
     for finding in findings:
-        file = finding.get("file", "")
-        line = finding.get("line", 0)
+        if _location_overlaps_diff(
+            finding.get("file", ""),
+            finding.get("line", 0),
+            finding.get("line", 0),
+            ranges_by_file,
+        ):
+            filtered.append(finding)
+            continue
 
-        file_ranges = ranges_by_file.get(file, [])
-        if not file_ranges:
-            for diff_file, ranges in ranges_by_file.items():
-                if file.endswith("/" + diff_file) or diff_file.endswith("/" + file):
-                    file_ranges = ranges
-                    break
-        for start, end in file_ranges:
-            if start <= line <= end:
+        related_locations = finding.get("related_locations")
+        if not isinstance(related_locations, list):
+            continue
+
+        for location in related_locations:
+            if not isinstance(location, dict):
+                continue
+            if _location_overlaps_diff(
+                location.get("file", ""),
+                location.get("start_line", 0),
+                location.get("end_line", location.get("start_line", 0)),
+                ranges_by_file,
+            ):
                 filtered.append(finding)
                 break
 
     return filtered
+
+
+def _validated_location_span(
+    file: object,
+    start_line: object,
+    end_line: object,
+) -> tuple[str, int, int] | None:
+    if not isinstance(file, str) or not file:
+        return None
+    if isinstance(start_line, bool) or not isinstance(start_line, int):
+        return None
+    if isinstance(end_line, bool) or not isinstance(end_line, int):
+        return None
+    if start_line < 1 or end_line < start_line:
+        return None
+    return file, start_line, end_line
+
+
+def _same_location_file(left: str, right: str) -> bool:
+    return left == right or left.endswith("/" + right) or right.endswith("/" + left)
+
+
+def _spans_overlap(
+    left_start: int,
+    left_end: int,
+    right_start: int,
+    right_end: int,
+) -> bool:
+    return left_start <= right_end and right_start <= left_end
+
+
+def _diff_ranges_for_file(
+    file: str,
+    ranges_by_file: dict[str, list[tuple[int, int]]],
+) -> list[tuple[int, int]]:
+    exact = ranges_by_file.get(file)
+    if exact:
+        return exact
+    for diff_file, ranges in ranges_by_file.items():
+        if _same_location_file(file, diff_file):
+            return ranges
+    return []
+
+
+def _location_overlaps_diff(
+    file: object,
+    start_line: object,
+    end_line: object,
+    ranges_by_file: dict[str, list[tuple[int, int]]],
+) -> bool:
+    span = _validated_location_span(file, start_line, end_line)
+    if span is None:
+        return False
+    normalized_file, normalized_start, normalized_end = span
+
+    return any(
+        _spans_overlap(normalized_start, normalized_end, changed_start, changed_end)
+        for changed_start, changed_end in _diff_ranges_for_file(
+            normalized_file, ranges_by_file
+        )
+    )
 
 
 _SAFE_FINDING_METADATA_FIELDS = (
@@ -268,7 +341,14 @@ _SAFE_VERIFICATION_FIELDS = ("verdict", "confidence", "reason")
 def _flatten_findings(results: dict) -> list[dict]:
     findings = []
 
-    for category in ("danger", "ai_defects", "quality", "secrets", "custom_rules"):
+    for category in (
+        "danger",
+        "reliability",
+        "ai_defects",
+        "quality",
+        "secrets",
+        "custom_rules",
+    ):
         for f in results.get(category, []) or []:
             finding = {
                 "file": f.get("file") or f.get("file_path") or "",
@@ -278,6 +358,9 @@ def _flatten_findings(results: dict) -> list[dict]:
                 "severity": f.get("severity", "MEDIUM"),
                 "category": category,
             }
+            related_locations = f.get("related_locations")
+            if isinstance(related_locations, list):
+                finding["related_locations"] = related_locations
             _copy_safe_finding_metadata(f, finding)
             findings.append(finding)
 
@@ -549,6 +632,7 @@ def _format_evidence_card_comment(
         "security": "security finding",
         "security_regression": "security regression",
         "secret": "secret exposure",
+        "reliability": "reliability issue",
         "quality": "quality issue",
         "dependency": "dependency issue",
         "custom": "custom rule match",
@@ -605,11 +689,13 @@ def _post_pr_review(
     repo: str,
     *,
     evidence_cards: bool = False,
+    changed_ranges: list[dict] | None = None,
 ) -> None:
     comments = []
     for f in findings:
         if not f.get("file") or not f.get("line"):
             continue
+        comment_file, comment_line = _review_comment_location(f, changed_ranges)
         body = (
             _format_evidence_card_comment(f)
             if evidence_cards
@@ -617,8 +703,8 @@ def _post_pr_review(
         )
         comments.append(
             {
-                "path": _to_relative_path(f["file"]),
-                "line": f["line"],
+                "path": _to_relative_path(comment_file),
+                "line": comment_line,
                 "body": body,
             }
         )
@@ -655,6 +741,60 @@ def _post_pr_review(
         )
     except subprocess.CalledProcessError as e:
         console.print(f"[yellow]Failed to post PR review: {e.stderr}[/yellow]")
+
+
+def _related_location_spans(finding: dict) -> list[tuple[str, int, int]]:
+    spans: list[tuple[str, int, int]] = []
+    related_locations = finding.get("related_locations")
+    if not isinstance(related_locations, list):
+        return spans
+    for location in related_locations:
+        if not isinstance(location, dict):
+            continue
+        start_line = location.get("start_line")
+        span = _validated_location_span(
+            location.get("file"),
+            start_line,
+            location.get("end_line", start_line),
+        )
+        if span is not None:
+            spans.append(span)
+    return spans
+
+
+def _changed_overlap_line(
+    span: tuple[str, int, int], changed_ranges: list[dict]
+) -> int | None:
+    file, start_line, end_line = span
+    for changed in changed_ranges:
+        changed_start = changed.get("start") or 0
+        changed_end = changed.get("end") or changed_start
+        changed_span = _validated_location_span(
+            str(changed.get("file", "")),
+            changed_start,
+            changed_end,
+        )
+        if changed_span is None or not _same_location_file(file, changed_span[0]):
+            continue
+        if _spans_overlap(start_line, end_line, changed_span[1], changed_span[2]):
+            return max(start_line, changed_span[1])
+    return None
+
+
+def _review_comment_location(
+    finding: dict, changed_ranges: list[dict] | None
+) -> tuple[str, int]:
+    primary = (str(finding.get("file", "")), int(finding.get("line") or 1))
+    if not changed_ranges:
+        return primary
+
+    candidates = [(primary[0], primary[1], primary[1])]
+    candidates.extend(_related_location_spans(finding))
+    for candidate in candidates:
+        comment_line = _changed_overlap_line(candidate, changed_ranges)
+        if comment_line is not None:
+            return candidate[0], comment_line
+    return primary
 
 
 def _post_summary_comment(
@@ -708,6 +848,7 @@ def _post_summary_comment(
         )
         for cat in (
             "danger",
+            "reliability",
             "quality",
             "secrets",
             "custom_rules",

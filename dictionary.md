@@ -23,6 +23,8 @@ Rule IDs use a stable public prefix:
 | `SKY-R` | Repository policy findings |
 | `SKY-E` | Analyzer inventory / export findings |
 | `SKY-G` | Raw Go engine findings before remapping |
+| `SKY-DEP` | Kubernetes deployment exposure findings |
+| `SKY-GPU` | GPU release compatibility findings |
 | `SKY-CIRC` | Circular dependency finding |
 
 ## Product Glossary
@@ -251,6 +253,148 @@ Finding types:
 | D334 | HIGH | Root service executes mutable path | systemd |
 | D335 | MEDIUM | Edge service missing sandboxing | systemd |
 | D336 | HIGH | Broad edge service privilege | systemd |
+
+## Kubernetes Deployment Exposure (SKY-DEP)
+
+Skylos correlates resources in one rendered multi-document Kubernetes file.
+The scan is deliberately opt-in: the `Ingress` must declare
+`skylos.dev/network-scope: external` (or `public`) and
+`skylos.dev/backend-protocol: http`. Skylos then emits a finding only when it
+can construct one unambiguous static chain inside that same file:
+
+```text
+annotated Ingress path -> Service port -> selected workload -> one container
+-> matching target port -> bare Flask/Uvicorn/Gunicorn executable, target, and binding
+```
+
+For `SKY-DEP001`, the workload Pod template also supplies the route contract:
+
+```yaml
+metadata:
+  annotations:
+    skylos.dev/source-file: app/main.py
+    skylos.dev/required-guards: require_admin, require_employee
+```
+
+`skylos.dev/source-file` is a repository-relative Python file that must match
+the server's literal module target. `skylos.dev/required-guards` is a
+comma-separated list of guard names. Skylos checks direct, top-level literal
+routes on the resolved FastAPI or Flask application symbol. A route is reported
+only when its Ingress-reachable path contains a sensitive segment such as
+`admin`, `internal`, `debug`, `manage`, `metrics`, or `pprof` and one or more
+declared guards are missing. Recognized guard locations are application or
+route dependencies, handler dependency parameters, and handler decorators.
+Guard names match the declared expression identity exactly; for example,
+`auth.require_admin` does not match `other.require_admin`. Sensitive route
+names do not bypass an explicit required-guards contract.
+
+`SKY-DEP002` is narrower: it reports an effective Flask debugger enabled by
+literal `--debug` / `--no-debug` and `--debugger` / `--no-debugger` precedence on
+the resolved externally routed container. `SKY-DEP003` separately reports a
+literal `--reload` flag on a resolved Flask, Uvicorn, or Gunicorn container, or
+Flask debug mode when it implies reload and `--no-reload` is absent.
+These two command checks do not require the source-file or required-guards
+annotations. All three rules require a literal `0.0.0.0` or `::` server bind,
+numeric server port, and a Service target port that reaches that binding.
+Backend transport evidence must be explicitly plain HTTP; HTTPS, H2, gRPC,
+passthrough, controller TLS/path rewrites, snippets, middleware chains, and
+other unproved protocols make the scanner abstain. An Ingress
+`defaultBackend` is correlated only when the Ingress has no explicit rules,
+because explicit paths take precedence before the default backend.
+
+The scanner abstains when a proof edge is missing, dynamic, invalid, or
+non-unique. Scope, backend-protocol, source-file, and required-guards
+annotations are repository-owned declarations, and emitted evidence remains a candidate
+correlated-static proof. Skylos verifies exact framework wiring, not the
+guard implementation's semantics. The source annotation also does not prove
+that the analyzed file was built into the referenced container image, and a
+literal executable name does not attest the server binary's provenance inside
+the image. Direct route ordering and obvious route-graph mutation are checked;
+ambiguous router composition makes the scanner abstain. It does not join
+resources split across different files, inspect nested routers or
+factory-registered routes for `SKY-DEP001`, render Helm or Kustomize, execute a
+manifest, query a cluster, or infer live network policy. Direct `LoadBalancer`
+and `NodePort` Services without an annotated Ingress are outside this rule
+family. Kubernetes `List` wrappers and resources whose metadata cannot be
+positioned precisely are also outside the proof surface. For security gates,
+keep the annotations in protected deployment
+policy because removing an opt-in contract makes this rule family abstain.
+
+| ID | Severity | Category | Name | Correlated static evidence |
+|:---|:---|:---|:---|:---|
+| SKY-DEP001 | HIGH | Security | Externally deployed route is missing a required auth guard | Annotated Ingress, Service, workload/container, explicit entrypoint, contracted source, direct FastAPI/Flask route, and exact required guard |
+| SKY-DEP002 | HIGH | Security | External Ingress exposes the Flask development debugger | Annotated Ingress, Service, workload/container, matching Flask binding, and an effective literal debugger flag |
+| SKY-DEP003 | MEDIUM | Reliability | External Ingress routes to a reload-mode application server | Annotated Ingress, Service, workload/container, matching Flask/Uvicorn/Gunicorn binding, and a literal flag that effectively enables reload |
+
+## GPU Release Compatibility (SKY-GPU)
+
+Skylos treats `.skylos/gpu-targets.yml` version 1 as the repository's explicit
+deployment truth. A target declares the NVIDIA driver, CUDA compute capability,
+and platform that a release must support:
+
+```yaml
+version: 1
+targets:
+  - name: inference-t4
+    vendor: nvidia
+    driver: "535.104.05"
+    compute_capability: "7.5"
+    platform: linux/amd64
+```
+
+These rules statically cross-check that target profile against Docker image,
+CUDA build, and TensorRT packaging evidence before release. They do not probe
+installed hardware or drivers, and they do not perform package CVE analysis.
+All targets in one profile are treated as recipients of the same release;
+repositories with separate per-device artifacts should scan each deployable
+with its own target contract.
+
+The contract is fail-closed once present: malformed YAML, duplicate or unknown
+keys, empty targets, invalid driver values, deletion in a changed-file scan,
+unsupported platform values, and bounded evidence discovery that cannot finish
+emit `SKY-GPU000`. Platforms are limited to `linux` or `windows`, optionally
+with `/amd64` or `/arm64`. The
+default quality gate allows zero Reliability findings, so a proved GPU release
+break blocks `--gate` without requiring `--strict`.
+
+Explicitly selecting any `SKY-GPU` rule opts the scan into this contract: a
+missing profile emits `SKY-GPU000`, and selecting `SKY-GPU001`, `SKY-GPU002`,
+or `SKY-GPU003` automatically retains that prerequisite finding. This prevents
+a narrow `--select ... --gate` command from hiding an invalid or absent
+contract and passing open.
+
+`SKY-GPU001` evaluates the effective final Docker stage, including its resolved
+stage-alias ancestry, when it is an NVIDIA CUDA image
+and compares the declared target driver with NVIDIA's CUDA-major
+minor-compatibility branch floor. Windows targets use the Windows branch floor;
+an omitted platform defaults to Linux. Skylos deliberately does not treat a
+`cuda-compat-*` token as a waiver: NVIDIA forward compatibility also depends on
+the exact package/driver matrix, loader configuration, supported GPU class, and
+feature use. Teams relying on that path must document an explicit inline rule
+waiver at the CUDA `FROM` instruction.
+
+`SKY-GPU002` models output kind and direction: unsuffixed CMake architectures
+produce both real SASS and virtual PTX, `-real` and `-virtual` are distinct, and
+PTX covers only equal-or-newer compute capabilities. A cubin covers compatible
+devices in its compute-capability major family. An actual `nvcc -arch=sm_*`
+command proves both cubin and PTX output; quoted examples and `echo` text do not
+count as build evidence. Dynamic/conditional values, `native`, target-level
+overrides, or multiple independent architecture evidence files produce
+`SKY-GPU000` rather than a confident compatibility result.
+
+`SKY-GPU003` ties a syntactically valid Python TensorRT build call to the exact
+config object, a later binary write of that result, an exact repository-relative
+engine path, and a `COPY`/`ADD` in the final Docker stage. C++ matching requires
+`NvInfer.h` and ordered builder/config/output evidence. `AMPERE_PLUS` counts only
+when applied to that config before serialization; it does not imply portability
+across different operating-system/CPU platforms.
+
+| ID | Severity | Name | Cross-file evidence |
+|:---|:---|:---|:---|
+| SKY-GPU000 | HIGH | GPU release contract is invalid or incomplete | Contract schema/deletion or bounded evidence proof could not complete |
+| SKY-GPU001 | HIGH | CUDA image requires newer NVIDIA driver | CUDA container image and declared target driver |
+| SKY-GPU002 | HIGH | CUDA target architecture missing from build | CUDA architecture flags and declared compute capability |
+| SKY-GPU003 | HIGH | TensorRT engine is not portable across target GPUs | Serialized engine packaging, compatibility flags, and heterogeneous target GPUs |
 
 ## Secrets (SKY-S)
 

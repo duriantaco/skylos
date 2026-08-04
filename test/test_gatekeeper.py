@@ -231,6 +231,81 @@ def test_check_gate_strict_blocks_enforced_iad_quality():
     assert "Strict mode" in reasons[0]
 
 
+def test_check_gate_strict_counts_reliability_findings():
+    results = {
+        "danger": [],
+        "reliability": [
+            {"rule_id": "SKY-DEP003", "severity": "MEDIUM", "file": "k8s.yml"}
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue(s) found"]
+
+
+def test_reliability_does_not_affect_security_thresholds():
+    results = {
+        "danger": [],
+        "reliability": [
+            {"rule_id": "SKY-GPU001", "severity": "CRITICAL", "file": "Dockerfile"}
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "max_critical": 0,
+            "max_high": 0,
+            "max_security": 0,
+            "max_reliability": 1,
+        }
+    }
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
+
+
+def test_reliability_has_dedicated_gate_threshold():
+    results = {
+        "danger": [],
+        "reliability": [
+            {"rule_id": "SKY-GPU001", "severity": "HIGH", "file": "Dockerfile"}
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(
+        results,
+        {"gate": {"max_reliability": 0}},
+    )
+
+    assert passed is False
+    assert reasons == ["1 reliability issues (max: 0)"]
+
+
+def test_reliability_blocks_the_default_release_gate():
+    results = {
+        "danger": [],
+        "reliability": [
+            {"rule_id": "SKY-GPU001", "severity": "HIGH", "file": "Dockerfile"}
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(results, {})
+
+    assert passed is False
+    assert reasons == ["1 reliability issues (max: 0)"]
+
+
 def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
     results = {
         "danger": [],

@@ -65,8 +65,7 @@ def _dead_code_evidence_pill(result):
     if not rescued and not abstained:
         return None
     return (
-        f"[good]Evidence rescued: {rescued}[/good] "
-        f"[warn]abstained: {abstained}[/warn]"
+        f"[good]Evidence rescued: {rescued}[/good] [warn]abstained: {abstained}[/warn]"
     )
 
 
@@ -523,6 +522,7 @@ def _render_result_tree(console: Console, result, root_path=None):
     _add_unused(result.get("unused_parameters"), "parameter")
 
     _add_findings(result.get("danger"), "security", default_sev="high")
+    _add_findings(result.get("reliability"), "reliability", default_sev="medium")
     _add_findings(result.get("ai_defects"), "AI defect", default_sev="medium")
     _add_findings(result.get("secrets"), "secret", default_sev="high")
     _add_findings(result.get("quality"), "quality", default_sev="medium")
@@ -654,13 +654,21 @@ def _render_ai_defects(console: Console, root_path, limit, items):
     )
 
 
-def _render_danger(console: Console, root_path, limit, items):
+def _render_danger(
+    console: Console,
+    root_path,
+    limit,
+    items,
+    *,
+    title="Security Issues",
+    reliability=False,
+):
     if not items:
         return
 
-    console.rule("[bold red]Security Issues")
+    console.rule(f"[bold {'yellow' if reliability else 'red'}]{title}")
 
-    has_verification = any(
+    has_verification = not reliability and any(
         isinstance(d.get("verification"), dict) and d["verification"].get("verdict")
         for d in (items or [])
     )
@@ -711,11 +719,28 @@ def _render_danger(console: Console, root_path, limit, items):
         console.print(
             f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
         )
+    if reliability:
+        issue_help = (
+            "[muted]Issue — a deployment or runtime compatibility risk.[/muted]\n"
+        )
+    else:
+        issue_help = "[muted]Issue — the type of vulnerability (e.g. SQL injection, command injection, eval).[/muted]\n"
     console.print(
-        "[muted]Issue — the type of vulnerability (e.g. SQL injection, command injection, eval).[/muted]\n"
-        "[muted]Severity — risk level: Critical > High > Medium > Low.[/muted]\n"
+        issue_help
+        + "[muted]Severity — impact level: Critical > High > Medium > Low.[/muted]\n"
         "[muted]Symbol — the function or scope where the issue was found.[/muted]\n"
         + _RESULTS_DOCS_LINK
+    )
+
+
+def _render_reliability(console: Console, root_path, limit, items):
+    _render_danger(
+        console,
+        root_path,
+        limit,
+        items,
+        title="Reliability Issues",
+        reliability=True,
     )
 
 
@@ -800,6 +825,11 @@ def render_results(
                     "Quality", len(result.get("quality", []) or []), bad_style="warn"
                 ),
                 _results_pill(
+                    "Reliability",
+                    len(result.get("reliability", []) or []),
+                    bad_style="warn",
+                ),
+                _results_pill(
                     "Custom",
                     len(result.get("custom_rules", []) or []),
                     bad_style="warn",
@@ -882,6 +912,9 @@ def render_results(
         )
         _render_secrets(console, root_path, limit, result.get("secrets", []) or [])
         _render_danger(console, root_path, limit, result.get("danger", []) or [])
+        _render_reliability(
+            console, root_path, limit, result.get("reliability", []) or []
+        )
         _render_ai_defects(
             console, root_path, limit, result.get("ai_defects", []) or []
         )
