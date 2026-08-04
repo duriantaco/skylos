@@ -1486,6 +1486,9 @@ _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES = {
     "SKY-U005": "quality",
     "SKY-UC001": "quality",
     "SKY-UC002": "quality",
+    # D223 is presented as a security finding, but dependency declaration
+    # analysis runs in the AI-defect phase.
+    "SKY-D223": "ai_defect",
     # Generic normalized IDs are not first-class catalog entries.
     "SKY-AI000": "ai_defect",
     "SKY-D000": "security",

@@ -798,6 +798,23 @@ def test_selected_rule_analysis_flags_use_catalog_categories_not_prefixes():
     assert args.danger is False
 
 
+def test_selected_d223_enables_its_ai_defect_analyzer():
+    args = types.SimpleNamespace(
+        select=["SKY-D223"],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == ["SKY-D223"]
+    assert args.ai_defects is True
+    assert args.danger is False
+
+
 def test_selected_reliability_rule_enables_danger_analysis():
     args = types.SimpleNamespace(
         select=["SKY-GPU001"],
@@ -2078,6 +2095,57 @@ def test_main_concise_clean_output_prints_nothing(monkeypatch):
 
     mock_print.assert_not_called()
     progress.assert_not_called()
+
+
+def test_main_select_d223_enables_ai_defect_execution_family(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "ai_defects": [
+            {
+                "rule_id": "SKY-D223",
+                "file": "app.py",
+                "line": 1,
+                "message": "undeclared dependency",
+            }
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--select=SKY-D223",
+            "--format",
+            "json",
+            "--no-provenance",
+        ],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as analyze,
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    assert analyze.call_args.kwargs["enable_ai_defects"] is True
+    assert analyze.call_args.kwargs["enable_danger"] is False
+    selected_result = json.loads(mock_print.call_args.args[0])
+    assert [finding["rule_id"] for finding in selected_result["ai_defects"]] == [
+        "SKY-D223"
+    ]
 
 
 def test_main_select_ai_rule_enables_family_and_filters_concise_output(monkeypatch):
