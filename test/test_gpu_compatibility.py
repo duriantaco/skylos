@@ -24,7 +24,9 @@ def _write_profile(tmp_path: Path, targets: list[dict[str, str]]) -> Path:
             lines.append(f'    compute_capability: "{compute_capability}"')
         if platform := target.get("platform"):
             lines.append(f'    platform: "{platform}"')
-    profile.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    profile.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
     return profile
 
 
@@ -35,7 +37,7 @@ def _write_cuda_dockerfile(
     body: str = "",
 ) -> Path:
     dockerfile = tmp_path / "Dockerfile"
-    dockerfile.write_text(
+    dockerfile.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
         f"FROM nvidia/cuda:{cuda}-runtime-ubuntu22.04\n{body}",
         encoding="utf-8",
     )
@@ -67,7 +69,7 @@ def _write_tensorrt_builder(
     artifact: str = "model.engine",
 ) -> Path:
     source = tmp_path / "build_engine.py"
-    source.write_text(
+    source.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
         f"""import tensorrt as trt
 
 {compatibility}
@@ -86,7 +88,7 @@ def _write_packaged_engine(
     artifact: str = "model.engine",
 ) -> Path:
     dockerfile = tmp_path / "Dockerfile"
-    dockerfile.write_text(
+    dockerfile.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
         f"FROM python:3.12-slim\nCOPY {artifact} /models/{artifact}\n",
         encoding="utf-8",
     )
@@ -1187,7 +1189,7 @@ def test_deleted_gpu_evidence_keeps_contract_finding_in_diff(
 ):
     _write_profile(tmp_path, [target])
     evidence = tmp_path / filename
-    evidence.write_text(
+    evidence.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest filename under tmp_path
         (
             "FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04\n"
             if filename == "Dockerfile"
@@ -1195,7 +1197,7 @@ def test_deleted_gpu_evidence_keeps_contract_finding_in_diff(
         ),
         encoding="utf-8",
     )
-    evidence.unlink()
+    evidence.unlink()  # skylos: ignore[SKY-D215] literal pytest filename under tmp_path
 
     finding = _finding(
         scan_gpu_compatibility(tmp_path, changed_files={str(evidence)}),

@@ -15,7 +15,7 @@ from skylos.rules.config.deployment.exposure import scan_deployment_exposure
 def _write_app(tmp_path: Path, source: str | None = None) -> Path:
     app = tmp_path / "app" / "main.py"
     app.parent.mkdir(parents=True, exist_ok=True)
-    app.write_text(
+    app.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
         source
         or """from fastapi import FastAPI
 
@@ -135,7 +135,7 @@ def _write_kubernetes(
         if ingress_annotation_lines
         else ""
     )
-    manifest.write_text(
+    manifest.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path
         f"""apiVersion: {workload_api_version}
 kind: Deployment
 metadata:
@@ -210,12 +210,16 @@ def _fake_aws_access_key_id() -> str:
 
 
 def _replace_container_args(manifest: Path, args: list[str]) -> None:
-    lines = manifest.read_text(encoding="utf-8").splitlines()
+    lines = manifest.read_text(  # skylos: ignore[SKY-D325] pytest tmp_path manifest
+        encoding="utf-8"
+    ).splitlines()
     for index, line in enumerate(lines):
         if line.strip().startswith("args:"):
             indent = line[: len(line) - len(line.lstrip())]
             lines[index] = f"{indent}args: {json.dumps(args)}"
-            manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            manifest.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path manifest
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
             return
     raise AssertionError("container args were not found")
 
@@ -1506,7 +1510,9 @@ def test_explicit_flask_debugger_semantics(tmp_path, flags, should_emit, enablin
         assert finding["value"].endswith(f":{enabling_flag}")
         assert (
             enabling_flag
-            in manifest.read_text(encoding="utf-8").splitlines()[finding["line"] - 1]
+            in manifest.read_text(  # skylos: ignore[SKY-D325] pytest tmp_path manifest
+                encoding="utf-8"
+            ).splitlines()[finding["line"] - 1]
         )
 
 

@@ -50,7 +50,9 @@ def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypat
     def fake_analyze(path, **kwargs):
         captured["path"] = path
         captured["changed_files"] = kwargs.get("changed_files")
-        captured["source"] = (Path(path) / "app.py").read_text(encoding="utf-8")
+        captured["source"] = (  # skylos: ignore[SKY-D215,SKY-D325] isolated temp
+            Path(path) / "app.py"
+        ).read_text(encoding="utf-8")
         return json.dumps({})
 
     monkeypatch.setattr(benchmark, "analyze", fake_analyze)
