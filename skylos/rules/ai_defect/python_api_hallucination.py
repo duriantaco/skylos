@@ -11,6 +11,7 @@ from skylos.rules.ai_defect.phantom_refs import (
     _build_parent_map,
     _build_scope_infos,
     _collect_module_facts,
+    _module_dunder_attributes,
     _module_has_member,
     _module_name,
     _resolve_local_module_member,
@@ -105,6 +106,7 @@ def _inspect_python_coverage(
     )
     state = _PythonCoverageState(reasons=Counter())
     target_modules = {_module_name(root, path): path for path in targets}
+    module_dunder_attributes = _module_dunder_attributes(root)
 
     for module_name, target_path in target_modules.items():
         tree = trees.get(module_name)
@@ -124,6 +126,7 @@ def _inspect_python_coverage(
             dynamic,
             package_modules,
             state,
+            module_dunder_attributes,
         )
 
     checked = state.verified + len(findings)
@@ -150,6 +153,7 @@ def _inspect_target_references(
     dynamic: set[str],
     package_modules: set[str],
     state: _PythonCoverageState,
+    module_dunder_attributes: frozenset[str],
 ) -> None:
     parent_map = _build_parent_map(tree)
     scope_infos = _build_scope_infos(tree, current_module, local_modules)
@@ -167,6 +171,7 @@ def _inspect_target_references(
         dynamic,
         package_modules,
         state,
+        module_dunder_attributes,
     )
 
     for expression, owner in _reference_expressions(tree, parent_map):
@@ -193,6 +198,7 @@ def _inspect_target_references(
             member_name,
             members,
             package_modules,
+            module_dunder_attributes,
         ):
             state.verified += 1
 
@@ -221,6 +227,7 @@ def _inspect_import_references(
     dynamic: set[str],
     package_modules: set[str],
     state: _PythonCoverageState,
+    module_dunder_attributes: frozenset[str],
 ) -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -234,6 +241,7 @@ def _inspect_import_references(
                 dynamic,
                 package_modules,
                 state,
+                module_dunder_attributes,
             )
         elif isinstance(node, ast.Import):
             _inspect_module_import(root, node, local_modules, state)
@@ -249,6 +257,7 @@ def _inspect_from_import(
     dynamic: set[str],
     package_modules: set[str],
     state: _PythonCoverageState,
+    module_dunder_attributes: frozenset[str],
 ) -> None:
     base = _resolve_import_from_base(current_module, node)
     if base not in local_modules:
@@ -276,6 +285,7 @@ def _inspect_from_import(
             alias.name,
             members,
             package_modules,
+            module_dunder_attributes,
         ):
             state.verified += 1
         elif base in package_modules:

@@ -273,6 +273,61 @@ def test_python_local_api_check_does_not_assume_versioned_module_attribute(
     assert check["outcome"] == "fail"
 
 
+def test_python_local_api_check_passes_annotate_on_314_floor(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "pyproject.toml": '[project]\nrequires-python = ">=3.14"\n',
+            "sample_module.py": "",
+            "reproduce.py": (
+                "import sample_module\n\n"
+                "annotate = sample_module.__annotate__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+
+
+def test_python_local_api_check_flags_annotate_without_pyproject(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": (
+                "import sample_module\n\n"
+                "annotate = sample_module.__annotate__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["__annotate__"]
+    assert check["outcome"] == "fail"
+
+
+def test_python_local_api_check_flags_annotate_with_future_annotations(tmp_path):
+    # from __future__ import annotations does NOT create __annotate__
+    # (maintainer-verified on 3.12). It must stay a phantom below 3.14.
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_module.py": "",
+            "reproduce.py": (
+                "from __future__ import annotations\n"
+                "import sample_module\n\n"
+                "annotate = sample_module.__annotate__\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["__annotate__"]
+    assert check["outcome"] == "fail"
+
+
 def test_python_local_api_check_passes_module_dunder_direct_import(tmp_path):
     findings, check = _scan(
         tmp_path,
