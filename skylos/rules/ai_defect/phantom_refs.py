@@ -12,6 +12,25 @@ from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 PYTHON_SOURCE_SUFFIXES = (".py", ".pyi", ".pyw")
 
+# Module attributes that the import system creates on every module (or that
+# every module object carries by definition). References to these are not
+# phantom members even when the source does not define them explicitly.
+MODULE_DUNDER_ATTRIBUTES = frozenset(
+    {
+        "__annotate__",
+        "__annotations__",
+        "__cached__",
+        "__dict__",
+        "__doc__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__path__",
+        "__spec__",
+    }
+)
+
 
 @dataclass
 class _ScopeInfo:
@@ -630,6 +649,10 @@ def _resolve_local_module_member(
         parent_map=parent_map,
         scope_infos=scope_infos,
     ):
+        return None
+
+    final_member = chain[-1]
+    if final_member in MODULE_DUNDER_ATTRIBUTES:
         return None
 
     current_module = base_module

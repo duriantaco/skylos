@@ -145,6 +145,52 @@ def test_python_local_api_check_flags_unimported_submodule_attribute(tmp_path):
     assert check["outcome"] == "fail"
 
 
+def test_python_local_api_check_passes_module_dunder_attributes(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "reproduce.py": (
+                "import sample_package\n\n"
+                "for attr in (\n"
+                "    sample_package.__name__,\n"
+                "    sample_package.__spec__,\n"
+                "    sample_package.__package__,\n"
+                "    sample_package.__loader__,\n"
+                "    sample_package.__file__,\n"
+                "    sample_package.__cached__,\n"
+                "    sample_package.__path__,\n"
+                "    sample_package.__doc__,\n"
+                "    sample_package.__dict__,\n"
+                "    sample_package.__annotations__,\n"
+                "):\n"
+                "    pass\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+
+
+def test_python_local_api_check_passes_module_dunder_attributes_via_alias(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "sample_package/__init__.py": "",
+            "reproduce.py": (
+                "import sample_package as pkg\n\n"
+                "print(pkg.__file__)\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+
+
 def test_python_local_api_check_passes_pep695_type_alias_import(tmp_path):
     if not hasattr(ast, "TypeAlias"):
         return
