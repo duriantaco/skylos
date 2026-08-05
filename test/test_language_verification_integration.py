@@ -232,6 +232,9 @@ func main() { security.VerifyToken("ok") }
         )
 
     assert result["analysis_summary"]["language_engines"]["go"]["status"] == "partial"
+    assert result["analysis_summary"]["analysis_error_count"] == 1
+    assert result["analysis_errors"][0]["kind"] == "language_engine_unavailable"
+    assert "grade" not in result
     coverage = result["analysis_summary"]["ai_verification"]
     assert coverage["state"] == "complete"
     check = next(

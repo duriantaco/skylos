@@ -74,6 +74,23 @@ def _display_cap(items, limit):
     return items[:cap], max(0, len(items) - cap)
 
 
+def _analysis_error_affected_file_count(error):
+    count = error.get("affected_file_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    return 1
+
+
+def _analysis_error_runtime(error):
+    kind = str(error.get("kind") or error.get("error_type") or "")
+    if kind == "language_engine_unavailable":
+        language = str(error.get("language") or "").strip()
+        return f"{language.title()} engine" if language else "Language engine"
+
+    runtime = str(error.get("python_version") or "?")
+    return f"Python {runtime}"
+
+
 def _render_analysis_errors(
     console: Console,
     result,
@@ -89,10 +106,16 @@ def _render_analysis_errors(
     if not errors:
         return
 
-    count = len(errors)
+    error_count = len(errors)
+    affected_file_count = sum(
+        _analysis_error_affected_file_count(error) for error in errors
+    )
+    affected_label = "file" if affected_file_count == 1 else "files"
+    error_label = "error" if error_count == 1 else "errors"
     console.print(
         Panel.fit(
-            f"[bad]Analysis incomplete: {count} file(s) could not be analyzed.[/bad]\n"
+            f"[bad]Analysis incomplete: {affected_file_count} affected "
+            f"{affected_label} across {error_count} analysis {error_label}.[/bad]\n"
             "[muted]No grade or clean result was produced; Skylos exits with code 2.[/muted]",
             border_style="bad",
         )
@@ -102,6 +125,7 @@ def _render_analysis_errors(
     table.add_column("File", style="bold", overflow="fold")
     table.add_column("Line", justify="right", width=6)
     table.add_column("Error", overflow="fold")
+    table.add_column("Affected", justify="right", width=10)
     table.add_column("Runtime", style="muted", width=14)
 
     visible, overflow = _display_cap(errors, limit)
@@ -110,12 +134,14 @@ def _render_analysis_errors(
         line = str(error.get("line") or 1)
         kind = str(error.get("kind") or error.get("error_type") or "analysis error")
         message = str(error.get("message") or "File analysis failed")
-        runtime = str(error.get("python_version") or "?")
+        affected_count = _analysis_error_affected_file_count(error)
+        affected = "1 file" if affected_count == 1 else f"{affected_count} files"
         table.add_row(
             path,
             line,
             escape(f"{kind.replace('_', ' ')}: {message}"),
-            escape(f"Python {runtime}"),
+            affected,
+            escape(_analysis_error_runtime(error)),
         )
 
     console.print(table)

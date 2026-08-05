@@ -11,6 +11,7 @@ from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.analysis.penalties import apply_penalties
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
+from skylos.engines.go_runner import GoEngineError
 
 from skylos.analyzer import (
     Skylos,
@@ -3685,7 +3686,10 @@ class TestRepoPhantomReferences:
                 "skylos.engines.go_runner.get_go_engine_status",
                 return_value={
                     "status": "unavailable",
-                    "reason": "Go engine binary not found",
+                    "reason": (
+                        "\x1b[31mGo engine binary not found\x1b[0m\n"
+                        "unsafe\x00\x85detail"
+                    ),
                     "configured_by": "discovery",
                 },
             ),
@@ -3699,7 +3703,116 @@ class TestRepoPhantomReferences:
         report = result["analysis_summary"]["language_engines"]["go"]
         assert report["status"] == "partial"
         assert report["skipped_checks"] == ["dead_code", "security"]
+        assert report["engine"]["reason"] == (
+            "Go engine binary not found unsafe detail"
+        )
         assert result["analysis_summary"]["incomplete_languages"] == ["go"]
+        assert result["analysis_summary"]["analysis_error_count"] == 1
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert "grade" not in result
+
+        assert len(result["analysis_errors"]) == 1
+        error = result["analysis_errors"][0]
+        assert error["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert error["kind"] == "language_engine_unavailable"
+        assert error["error_type"] == "GoEngineUnavailable"
+        assert error["file"] == str(source)
+        assert error["language"] == "go"
+        assert error["affected_file_count"] == 1
+        assert error["skipped_checks"] == ["dead_code", "security"]
+        assert "Go engine binary not found" in error["message"]
+        assert "python_version" not in error
+
+    def test_analyze_fails_closed_once_when_available_go_engine_crashes(self, tmp_path):
+        (tmp_path / "go.mod").write_text(
+            "module example.com/demo\n\ngo 1.22\n",
+            encoding="utf-8",
+        )
+        first_source = tmp_path / "a.go"
+        second_source = tmp_path / "z.go"
+        first_source.write_text("package demo\n", encoding="utf-8")
+        second_source.write_text("package demo\n", encoding="utf-8")
+
+        def quality_finding(_root_node, _source, file_path):
+            return [
+                {
+                    "rule_id": "SKY-Q301",
+                    "severity": "MEDIUM",
+                    "message": "Quality analysis still ran",
+                    "file": file_path,
+                    "line": 1,
+                    "col": 0,
+                    "name": "demo",
+                    "simple_name": "demo",
+                }
+            ]
+
+        with (
+            patch(
+                "skylos.engines.go_runner.get_go_engine_status",
+                return_value={
+                    "status": "available",
+                    "binary": "/tmp/skylos-go",
+                    "configured_by": "PATH",
+                },
+            ),
+            patch(
+                "skylos.visitors.languages.go.go.run_go_engine_for_module",
+                side_effect=GoEngineError(
+                    "\x1b[31mengine crashed\x1b[0m\nunsafe\x00\x85detail"
+                ),
+            ) as run_engine,
+            patch("skylos.visitors.languages.go.go.GO_LANG", object()),
+            patch("skylos.visitors.languages.go.go.Parser") as parser_type,
+            patch(
+                "skylos.visitors.languages.go.go.scan_go_quality",
+                side_effect=quality_finding,
+            ),
+        ):
+            parser_type.return_value.parse.return_value.root_node = object()
+            result = json.loads(
+                analyze(
+                    str(tmp_path),
+                    enable_quality=True,
+                    grep_verify=False,
+                )
+            )
+
+        run_engine.assert_called_once_with(tmp_path.resolve())
+        report = result["analysis_summary"]["language_engines"]["go"]
+        assert report["status"] == "partial"
+        assert report["completed_checks"] == ["quality"]
+        assert report["skipped_checks"] == ["dead_code", "security"]
+        assert report["failed_module_count"] == 1
+        assert result["analysis_summary"]["incomplete_languages"] == ["go"]
+        assert result["analysis_summary"]["analysis_error_count"] == 1
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert "grade" not in result
+
+        assert len(result["analysis_errors"]) == 1
+        error = result["analysis_errors"][0]
+        assert error["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert error["kind"] == "language_engine_unavailable"
+        assert error["error_type"] == "GoEngineError"
+        assert error["file"] == str(first_source)
+        assert error["module_root"] == str(tmp_path.resolve())
+        assert error["affected_file_count"] == 2
+        assert "engine crashed unsafe detail" in error["message"]
+        assert all(
+            not (ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F)
+            for char in error["message"]
+        )
+
+        quality = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("message") == "Quality analysis still ran"
+        ]
+        assert len(quality) == 2
 
     def test_resolve_analysis_root_ignores_home_git_root_without_project_marker(
         self, tmp_path, monkeypatch

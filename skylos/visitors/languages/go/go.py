@@ -41,18 +41,53 @@ def clear_go_cache():
     _go_module_cache.clear()
 
 
-def _get_module_result(module_root):
-    key = str(module_root)
+def get_go_engine_failures():
+    failures = []
+    for module_root in sorted(_go_module_cache):
+        entry = _go_module_cache[module_root]
+        failure = entry.get("failure") if isinstance(entry, dict) else None
+        if not isinstance(failure, dict):
+            continue
+        failures.append(
+            {
+                **failure,
+                "files": sorted(str(path) for path in entry.get("files", set())),
+            }
+        )
+    return failures
+
+
+def _get_module_result(module_root, file_path=None):
+    resolved_root = Path(module_root).resolve()
+    key = str(resolved_root)
     if key not in _go_module_cache:
         try:
-            _go_module_cache[key] = run_go_engine_for_module(module_root)
+            result = run_go_engine_for_module(resolved_root)
+            if not isinstance(result, dict):
+                raise TypeError("Go engine returned a non-object result")
+            _go_module_cache[key] = {
+                "result": result,
+                "failure": None,
+                "files": set(),
+            }
         except Exception as e:
             import os
 
             if os.getenv("SKYLOS_DEBUG"):
                 print(f"Go analysis failed: {e}")
-            _go_module_cache[key] = {"findings": [], "symbols": None}
-    return _go_module_cache[key]
+            _go_module_cache[key] = {
+                "result": {"findings": [], "symbols": None},
+                "failure": {
+                    "module_root": key,
+                    "error_type": type(e).__name__,
+                    "reason": str(e) or type(e).__name__,
+                },
+                "files": set(),
+            }
+    entry = _go_module_cache[key]
+    if file_path is not None:
+        entry["files"].add(str(Path(file_path)))
+    return entry["result"]
 
 
 def _convert_symbols(symbols_data, file_path):
@@ -95,7 +130,7 @@ def scan_go_file(file_path, cfg):
     if not _is_safe_go_file(file_path, module_root):
         return _empty_go_scan_result(cfg)
 
-    result = _get_module_result(module_root)
+    result = _get_module_result(module_root, file_path)
     is_generated = _is_generated_go_file(file_path)
 
     findings = result.get("findings", [])
