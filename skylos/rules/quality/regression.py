@@ -55,7 +55,7 @@ _VALIDATION_DECORATORS = {
 }
 
 _VALIDATION_CALLS_RE = re.compile(
-    r"(?:validate|sanitize|html\.escape|bleach\.clean|markupsafe\.escape|"
+    r"(?P<control>validate|sanitize|html\.escape|bleach\.clean|markupsafe\.escape|"
     r"(?<![.\w])escape)\("
 )
 
@@ -87,8 +87,8 @@ _AUDIT_DECORATORS = {
 }
 
 _SANITIZATION_CALLS_RE = re.compile(
-    r"(?:html\.escape\(|bleach\.clean\(|markupsafe\.escape\(|DOMPurify\.sanitize\(|"
-    r"escape_string\(|parameterized\(|(?<![.\w])text\()"
+    r"(?P<control>html\.escape|bleach\.clean|markupsafe\.escape|DOMPurify\.sanitize|"
+    r"escape_string|parameterized|(?<![.\w])text)\("
 )
 
 _PERMISSION_CALLS_RE = re.compile(
@@ -124,6 +124,12 @@ def _has_verify_setting(line: str, pattern: re.Pattern[str]) -> bool:
     if _looks_like_metadata_string(line):
         return False
     return bool(pattern.search(line))
+
+
+def _control_calls(line: str, pattern: re.Pattern[str]) -> set[str]:
+    if _looks_like_metadata_string(line):
+        return set()
+    return {match.group("control") for match in pattern.finditer(line)}
 
 
 def _removed_csrf_protection(line: str) -> str | None:
@@ -312,8 +318,12 @@ def detect_security_regressions(
                     )
                 )
 
+    added_validation_calls = set().union(
+        *(_control_calls(line, _VALIDATION_CALLS_RE) for _, line in added_lines)
+    )
     for line_no, line in removed_lines:
-        if _VALIDATION_CALLS_RE.search(line):
+        removed_validation_calls = _control_calls(line, _VALIDATION_CALLS_RE)
+        if removed_validation_calls - added_validation_calls:
             findings.append(
                 _make_finding(
                     file_path,
@@ -394,8 +404,12 @@ def detect_security_regressions(
                 )
             )
 
+    added_sanitization_calls = set().union(
+        *(_control_calls(line, _SANITIZATION_CALLS_RE) for _, line in added_lines)
+    )
     for line_no, line in removed_lines:
-        if _SANITIZATION_CALLS_RE.search(line):
+        removed_sanitization_calls = _control_calls(line, _SANITIZATION_CALLS_RE)
+        if removed_sanitization_calls - added_sanitization_calls:
             findings.append(
                 _make_finding(
                     file_path,
