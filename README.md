@@ -442,6 +442,13 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+Go dead-code and security checks require the native `skylos-go` engine. If
+Skylos discovers Go files but cannot run that engine, the report is marked
+incomplete, no grade or clean result is produced, and the CLI exits with status
+`2`. Run `skylos doctor` to verify engine availability and configure
+`SKYLOS_GO_BIN` when using a separately built engine. The official GitHub
+Action builds the matching native engine automatically.
+
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
 
