@@ -290,6 +290,11 @@ jobs:
       - name: Smoke test CLI entrypoint
         run: docker run --rm skylos:smoke --version # skylos: ignore[SKY-D296] local smoke-test image
 
+      - name: Smoke test Go engine
+        run: |
+          docker run --rm skylos:smoke doctor --format json |
+            python -c 'import json, sys; assert json.load(sys.stdin)["checks"]["go_engine"]["status"] == "available"'
+
       - name: Verify image Python runtime
         shell: bash
         run: |

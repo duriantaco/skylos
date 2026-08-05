@@ -45,6 +45,7 @@ LABEL org.opencontainers.image.python.version=${PYTHON_VERSION}
 WORKDIR /work
 
 COPY --from=build /wheelhouse /tmp/wheelhouse
+COPY --from=go-build /out/skylos-go /usr/local/bin/skylos-go
 
 RUN python -m pip install --no-index --find-links=/tmp/wheelhouse skylos && \
     rm -rf /tmp/wheelhouse

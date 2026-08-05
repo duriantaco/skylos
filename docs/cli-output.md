@@ -103,6 +103,16 @@ skylos . --format llm
 skylos . --format github
 ```
 
+## Exit Codes And Incomplete Analysis
+
+Skylos reserves exit status `0` for successful command completion, `1` for
+finding or policy failures in modes that enforce them, and `2` when required
+analysis could not complete. An unavailable native language engine is an
+incomplete analysis: Skylos emits a `SKY-ANALYSIS-INCOMPLETE` diagnostic, omits
+the grade and clean-code claim, and exits with status `2` in every output mode.
+`--force` and advisory gate settings do not convert incomplete analysis into a
+passing result.
+
 The legacy flags still work:
 
 ```bash

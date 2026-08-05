@@ -416,7 +416,9 @@ def _attach_grade(
         )
         result["analysis_summary"]["total_loc"] = total_loc
         result["analysis_summary"]["grade_categories"] = categories
-        if result.get("analysis_errors"):
+        if result.get("analysis_errors") or result["analysis_summary"].get(
+            "incomplete_languages"
+        ):
             result["analysis_summary"]["grade_unavailable_reason"] = (
                 "analysis_incomplete"
             )

@@ -41,6 +41,7 @@ SEVERITY_FG = {
 
 CATEGORIES = [
     ("overview", "Overview"),
+    ("analysis_errors", "Analysis Errors"),
     ("dead_code", "Dead Code"),
     ("security", "Security"),
     ("reliability", "Reliability"),
@@ -76,6 +77,21 @@ def _loc(item, root_path=None):
 
 def prepare_category_data(result: dict, root_path=None) -> dict:
     data = {}
+
+    analysis_cols = ["Rule", "Severity", "Message", "File:Line", "Language"]
+    analysis_rows, analysis_raw = [], []
+    for item in result.get("analysis_errors") or []:
+        analysis_rows.append(
+            (
+                item.get("rule_id") or "SKY-ANALYSIS-INCOMPLETE",
+                (item.get("severity") or "HIGH").upper(),
+                item.get("message") or "Analysis incomplete",
+                _loc(item, root_path),
+                item.get("language") or "?",
+            )
+        )
+        analysis_raw.append(item)
+    data["analysis_errors"] = (analysis_cols, analysis_rows, analysis_raw)
 
     dc_cols = ["Type", "Name", "File:Line", "Confidence", "Decision"]
     dc_rows, dc_raw = [], []
@@ -271,7 +287,7 @@ def _finding_severity(category: str, item: dict, row: tuple) -> str:
     raw = item.get("severity")
     if raw:
         return str(raw).upper()
-    if category in {"security", "secrets", "dependencies"}:
+    if category in {"analysis_errors", "security", "secrets", "dependencies"}:
         return "HIGH"
     if category in {"quality", "reliability"}:
         return "MEDIUM"
@@ -281,7 +297,7 @@ def _finding_severity(category: str, item: dict, row: tuple) -> str:
 def _finding_rule(category: str, item: dict, row: tuple) -> str:
     if category == "dead_code":
         return f"dead-code/{str(row[0]).lower().replace(' ', '-')}"
-    if category in {"security", "reliability"}:
+    if category in {"analysis_errors", "security", "reliability"}:
         return str(row[0])
     if category == "secrets":
         return str(row[0])
@@ -295,7 +311,7 @@ def _finding_rule(category: str, item: dict, row: tuple) -> str:
 def _finding_title(category: str, item: dict, row: tuple) -> str:
     if category == "dead_code":
         return f"Unused {str(row[0]).lower()}: {row[1]}"
-    if category in {"security", "reliability"}:
+    if category in {"analysis_errors", "security", "reliability"}:
         return str(row[2])
     if category == "secrets":
         return str(row[1])
@@ -342,7 +358,7 @@ class OverviewPanel(VerticalScroll):
             )
 
         sev_counts: dict[str, int] = {}
-        for cat in ("security", "reliability", "dependencies"):
+        for cat in ("analysis_errors", "security", "reliability", "dependencies"):
             _, _, raw = self.category_data.get(cat, ([], [], []))
             for item in raw:
                 sev = (item.get("severity") or "").upper()
@@ -381,6 +397,7 @@ class OverviewPanel(VerticalScroll):
 
         file_counts: dict[str, int] = {}
         for cat_key in (
+            "analysis_errors",
             "dead_code",
             "security",
             "reliability",
@@ -421,7 +438,7 @@ class DetailPanel(Static):
             for evidence_line in dead_code_evidence_detail_lines(item):
                 lines.append(f"  {escape(evidence_line)}")
 
-        elif category in {"security", "reliability"}:
+        elif category in {"analysis_errors", "security", "reliability"}:
             lines.append(f"  [bold]Rule:[/bold]  {item.get('rule_id', '?')}")
             sev = item.get("severity", "?")
             color = (
@@ -431,6 +448,13 @@ class DetailPanel(Static):
             )
             lines.append(f"  [bold]Severity:[/bold]  [{color}]{sev}[/{color}]")
             lines.append(f"  [bold]Message:[/bold]  {item.get('message', '')}")
+            if category == "analysis_errors":
+                language = item.get("language")
+                if language:
+                    lines.append(f"  [bold]Language:[/bold]  {language}")
+                suggestion = item.get("suggestion")
+                if suggestion:
+                    lines.append(f"  [bold]Next step:[/bold]  {suggestion}")
             ver = item.get("verification") or {}
             if category == "security" and ver.get("verdict"):
                 lines.append(f"  [bold]Verification:[/bold]  {ver['verdict']}")
