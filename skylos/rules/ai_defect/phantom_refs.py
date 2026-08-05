@@ -7,10 +7,47 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from skylos.analysis.control_flow import _parse_requires_python
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
 PYTHON_SOURCE_SUFFIXES = (".py", ".pyi", ".pyw")
+
+# Stable attributes supplied by the import system or inherited by module
+# objects. Version-specific attributes belong in target-aware analysis.
+_STANDARD_MODULE_ATTRIBUTES = frozenset(
+    {
+        "__annotations__",
+        "__cached__",
+        "__class__",
+        "__dict__",
+        "__doc__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__spec__",
+    }
+)
+
+# ``__annotate__`` exists only on Python 3.14+ (PEP 749). It is exempted only
+# when the scanned project declares a version floor of >= 3.14.
+ANNOTATE_MIN_VERSION = (3, 14)
+ANNOTATE_ATTRIBUTE = "__annotate__"
+
+
+def _module_dunder_attributes(project_root) -> frozenset[str]:
+    """Module dunders exempt from phantom checks for this project.
+
+    ``__annotate__`` is exempt only when pyproject.toml declares
+    ``requires-python >= 3.14`` (PEP 749). Without that declaration the
+    attribute is treated as a phantom reference.
+    """
+    attributes = set(_STANDARD_MODULE_ATTRIBUTES)
+    min_version, _ = _parse_requires_python(str(project_root))
+    if min_version is not None and min_version >= ANNOTATE_MIN_VERSION:
+        attributes.add(ANNOTATE_ATTRIBUTE)
+    return frozenset(attributes)
 
 
 @dataclass
@@ -26,6 +63,7 @@ def scan_repo_phantom_security_references(
 ):
     vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     root = Path(project_root).resolve()
+    module_dunder_attributes = _module_dunder_attributes(root)
     files = [
         Path(f).resolve() for f in py_files if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
     ]
@@ -125,6 +163,7 @@ def scan_repo_phantom_security_references(
                 dynamic_modules,
                 package_modules,
                 _ensure_module_loaded,
+                module_dunder_attributes,
             )
         )
 
@@ -153,7 +192,13 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                    module_dunder_attributes,
+                ):
                     continue
                 findings.append(
                     _build_reference_finding(
@@ -200,7 +245,13 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                    module_dunder_attributes,
+                ):
                     continue
 
                 findings.append(
@@ -239,7 +290,13 @@ def scan_repo_phantom_security_references(
                     continue
                 if target_module in dynamic_modules:
                     continue
-                if member_name in module_members.get(target_module, set()):
+                if _module_has_member(
+                    target_module,
+                    member_name,
+                    module_members,
+                    package_modules,
+                    module_dunder_attributes,
+                ):
                     continue
 
                 findings.append(
@@ -264,6 +321,7 @@ def _direct_local_import_findings(
     dynamic_modules,
     package_modules,
     ensure_module_loaded,
+    module_dunder_attributes: frozenset[str] = _STANDARD_MODULE_ATTRIBUTES,
 ):
     findings = []
     for node in ast.walk(tree):
@@ -280,7 +338,13 @@ def _direct_local_import_findings(
             full_module = f"{base}.{alias.name}"
             if full_module in local_modules:
                 continue
-            if alias.name in module_members.get(base, set()):
+            if _module_has_member(
+                base,
+                alias.name,
+                module_members,
+                package_modules,
+                module_dunder_attributes,
+            ):
                 continue
             if base in package_modules:
                 continue
@@ -297,6 +361,20 @@ def _direct_local_import_findings(
 
 def _is_package_module_file(file_path):
     return file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
+
+
+def _module_has_member(
+    module_name,
+    member_name,
+    module_members,
+    package_modules,
+    module_dunder_attributes: frozenset[str] = _STANDARD_MODULE_ATTRIBUTES,
+):
+    if member_name in module_members.get(module_name, set()):
+        return True
+    if member_name in module_dunder_attributes:
+        return True
+    return member_name == "__path__" and module_name in package_modules
 
 
 def _repo_member_names(module_members):
