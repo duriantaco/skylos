@@ -268,3 +268,19 @@ def test_real_secret_on_hash_line_still_caught_by_provider():
     ctx = _ctx_from_source(src, rel="config.json")
     providers = [f["provider"] for f in scan_ctx(ctx)]
     assert "github" in providers
+
+
+def test_lockfile_suffix_scanned_for_secrets():
+    # Issue #693: .lock files (uv.lock, Cargo.lock, package-lock.json style)
+    # were skipped entirely because ".lock" was not in the allowed suffixes.
+    src = 'access_token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"\n'
+    findings = list(scan_ctx(_ctx_from_source(src, rel="uv.lock")))
+    assert any(f["provider"] == "generic" for f in findings)
+
+
+def test_lockfile_hash_field_still_not_flagged():
+    # Checksums inside lockfiles are public integrity data, not secrets.
+    src = 'hash = "sha256-xYz1234567890AbCdEfGh1234567890AABB0011"\n'
+    ctx = _ctx_from_source(src, rel="uv.lock")
+    generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
+    assert generic == []
