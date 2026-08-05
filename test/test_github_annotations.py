@@ -106,3 +106,43 @@ class TestGitHubAnnotations:
         assert lines[0].startswith("::error")
         assert lines[1].startswith("::error")  # HIGH -> error
         assert "Unused class: OldClass" in lines[2]
+
+    def test_annotation_escapes_workflow_command_values(self):
+        result = {
+            "danger": [
+                {
+                    "rule_id": "SKY-D999,forged:title%\r\n::notice injected",
+                    "severity": "HIGH",
+                    "file": "src,bad:name%\r\n::warning injected.py",
+                    "line": "7,forged:title%\r\n::notice injected",
+                    "message": "Real issue: 100%, retry\r\n::error injected",
+                }
+            ],
+        }
+
+        lines = _capture_annotations(result)
+
+        assert lines == [
+            "::error "
+            "file=src%2Cbad%3Aname%25%0D%0A%3A%3Awarning injected.py,"
+            "line=7%2Cforged%3Atitle%25%0D%0A%3A%3Anotice injected,"
+            "title=Skylos SKY-D999%2Cforged%3Atitle%25%0D%0A%3A%3Anotice injected::"
+            "Real issue: 100%25, retry%0D%0A::error injected"
+        ]
+
+    def test_grade_escapes_workflow_command_data(self):
+        result = {
+            "grade": {
+                "overall": {
+                    "letter": "A%\r\n::error injected",
+                    "score": "100\n::warning injected",
+                }
+            }
+        }
+
+        lines = _capture_annotations(result)
+
+        assert lines == [
+            "::notice title=Skylos Grade::"
+            "A%25%0D%0A::error injected (100%0A::warning injected/100)"
+        ]
