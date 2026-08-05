@@ -1,5 +1,19 @@
 ## Changelog
 
+## [4.33.0](https://github.com/duriantaco/skylos/compare/v4.32.0...v4.33.0) (2026-08-05)
+
+
+### Features
+
+* **reliability:** add Kubernetes, GPU, and Scanner Proof gates ([#683](https://github.com/duriantaco/skylos/issues/683)) ([fa6fbd8](https://github.com/duriantaco/skylos/commit/fa6fbd8d08940636c5e34ca9423313ab8b1a95cf))
+
+
+### Bug Fixes
+
+* **ai-defect:** recognize module dunder attributes in phantom refs ([#691](https://github.com/duriantaco/skylos/issues/691)) ([d626772](https://github.com/duriantaco/skylos/commit/d626772528d0be58fbfa920a0ed2e0af9a79ed48)), closes [#684](https://github.com/duriantaco/skylos/issues/684)
+* **cli:** enable SKY-D223 when explicitly selected ([#689](https://github.com/duriantaco/skylos/issues/689)) ([9235c0d](https://github.com/duriantaco/skylos/commit/9235c0d5b3680047e5b3648a28a7fcd9c5ec1a8e))
+* **dependencies:** parse pyproject metadata with TOML ([#690](https://github.com/duriantaco/skylos/issues/690)) ([97815ff](https://github.com/duriantaco/skylos/commit/97815ffe9d772548b5b4d32e489d0fb642456759))
+
 ## [4.32.0](https://github.com/duriantaco/skylos/compare/v4.31.1...v4.32.0) (2026-07-30)
 
 
