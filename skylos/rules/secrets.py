@@ -33,6 +33,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".yml",
     ".json",
     ".toml",
+    ".lock",
     ".ini",
     ".cfg",
     ".conf",
