@@ -54,6 +54,44 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
+    - name: Detect Go sources
+      id: go_sources
+      shell: bash
+      env:
+        SKYLOS_PATH: ${{ inputs.path }}
+      run: |
+        if find "$SKYLOS_PATH" -type f -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Go
+      if: steps.go_sources.outputs.present == 'true'
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      with:
+        go-version: "1.22.x"
+        cache: false
+
+    - name: Build Skylos Go engine
+      if: steps.go_sources.outputs.present == 'true'
+      shell: bash
+      env:
+        SKYLOS_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        ENGINE_DIR="$RUNNER_TEMP/skylos-go-engine"
+        ENGINE_NAME="skylos-go"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          ENGINE_NAME="skylos-go.exe"
+        fi
+        mkdir -p "$ENGINE_DIR"
+        (
+          cd "$SKYLOS_ACTION_PATH/skylos/engines/go"
+          GOCACHE="$RUNNER_TEMP/skylos-go-build-cache" \
+          GOPATH="$RUNNER_TEMP/skylos-go-gopath" \
+            go build -trimpath -o "$ENGINE_DIR/$ENGINE_NAME" ./cmd/skylos-go
+        )
+
     - name: Install Skylos
       shell: bash
       run: python -m pip install "${{ github.action_path }}"
@@ -66,6 +104,7 @@ runs:
         SKYLOS_ANALYSIS: ${{ inputs.analysis }}
         SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
         SKYLOS_TOKEN: ${{ inputs.token }}
+        SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, runner.os == 'Windows' && '.exe' || '') }}
       run: |
         REPORT="skylos-report.json"
         echo "report=$REPORT" >> "$GITHUB_OUTPUT"
@@ -86,10 +125,18 @@ runs:
         fi
 
         # Run scan
+        set +e
         python -m skylos.cli "$SKYLOS_PATH" \
           --confidence "$SKYLOS_CONFIDENCE" \
           $FLAGS \
-          --json > "$REPORT" || true
+          --json > "$REPORT"
+        SCAN_STATUS=$?
+        set -e
+
+        if [ "$SCAN_STATUS" -ne 0 ] && [ "$SCAN_STATUS" -ne 2 ]; then
+          echo "::error::Skylos scan failed with exit code $SCAN_STATUS"
+          exit "$SCAN_STATUS"
+        fi
 
         # Count findings
         COUNT=$(python -c "
@@ -102,6 +149,11 @@ runs:
         echo "### Skylos Scan Results" >> "$GITHUB_STEP_SUMMARY"
         echo "Found **$COUNT** issue(s) in \`$SKYLOS_PATH\`" >> "$GITHUB_STEP_SUMMARY"
 
+        if [ "$SCAN_STATUS" -eq 2 ]; then
+          echo "::error::Skylos analysis was incomplete; refusing a clean result"
+          exit 2
+        fi
+
     - name: Upload to Skylos Dashboard
       shell: bash
       env:
@@ -109,6 +161,7 @@ runs:
         SKYLOS_PATH: ${{ inputs.path }}
         SKYLOS_ANALYSIS: ${{ inputs.analysis }}
         SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
+        SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, runner.os == 'Windows' && '.exe' || '') }}
       run: |
         # Upload works with SKYLOS_TOKEN or tokenless via GitHub OIDC
         FLAGS=""
@@ -159,15 +212,17 @@ runs:
       if: inputs.mode == 'gate' || inputs.mode == 'review'
       shell: bash
       run: |
+        set +e
         python -m skylos.cli cicd gate \
           --input skylos-report.json \
           --summary
         RESULT=$?
+        set -e
         if [ $RESULT -eq 0 ]; then
           echo "passed=true" >> "$GITHUB_OUTPUT"
         else
           echo "passed=false" >> "$GITHUB_OUTPUT"
-          exit 1
+          exit "$RESULT"
         fi
 
     - name: Upload Report Artifact

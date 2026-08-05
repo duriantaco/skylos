@@ -591,6 +591,62 @@ def test_composite_action_validates_and_quotes_max_comments_input():
     assert "=~ ^[0-9]+$" in run
 
 
+def test_composite_action_preserves_incomplete_scan_exit_code():
+    action = _composite_action()
+    steps = action["runs"]["steps"]
+    scan_step = next(s for s in steps if s.get("name") == "Run Skylos Scan")
+    gate_step = next(s for s in steps if s.get("name") == "Quality Gate")
+
+    assert "|| true" not in scan_step["run"]
+    assert "SCAN_STATUS=$?" in scan_step["run"]
+    assert 'if [ "$SCAN_STATUS" -eq 2 ]' in scan_step["run"]
+    assert "exit 2" in scan_step["run"]
+    assert "set +e" in gate_step["run"]
+    assert "RESULT=$?" in gate_step["run"]
+    assert 'exit "$RESULT"' in gate_step["run"]
+
+
+def test_composite_action_builds_platform_native_go_engine():
+    action = _composite_action()
+    steps = action["runs"]["steps"]
+    detect_step = next(s for s in steps if s.get("name") == "Detect Go sources")
+    setup_step = next(s for s in steps if s.get("name") == "Set up Go")
+    build_step = next(s for s in steps if s.get("name") == "Build Skylos Go engine")
+
+    assert detect_step["env"]["SKYLOS_PATH"] == "${{ inputs.path }}"
+    assert 'find "$SKYLOS_PATH"' in detect_step["run"]
+    assert "present=true" in detect_step["run"]
+    assert "present=false" in detect_step["run"]
+    go_sources_condition = "steps.go_sources.outputs.present == 'true'"
+    assert setup_step["if"] == go_sources_condition
+    assert build_step["if"] == go_sources_condition
+
+    setup_ref = setup_step["uses"].split("@", 1)[1]
+    assert len(setup_ref) == 40
+    assert all(char in "0123456789abcdef" for char in setup_ref)
+    assert setup_step["with"]["go-version"] == "1.22.x"
+    assert setup_step["with"]["cache"] is False
+
+    assert build_step["env"]["SKYLOS_ACTION_PATH"] == "${{ github.action_path }}"
+    assert 'cd "$SKYLOS_ACTION_PATH/skylos/engines/go"' in build_step["run"]
+    assert "go build -trimpath" in build_step["run"]
+    assert 'ENGINE_NAME="skylos-go.exe"' in build_step["run"]
+    assert '"$ENGINE_DIR/$ENGINE_NAME"' in build_step["run"]
+    assert "$GITHUB_ENV" not in build_step["run"]
+
+    expected_engine = (
+        "${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, "
+        "runner.os == 'Windows' && '.exe' || '') }}"
+    )
+    scan_steps = [
+        s
+        for s in steps
+        if s.get("name") in {"Run Skylos Scan", "Upload to Skylos Dashboard"}
+    ]
+    assert len(scan_steps) == 2
+    assert all(s["env"]["SKYLOS_GO_BIN"] == expected_engine for s in scan_steps)
+
+
 def test_composite_action_passes_skylos_actions_audit():
     assert scan_github_actions_file("action.yml", root=".") == []
 

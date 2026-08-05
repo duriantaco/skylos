@@ -556,6 +556,42 @@ def _build_findings_lists(results, danger, reliability, quality, secrets):
     }
 
 
+def _analysis_incomplete_reasons(results):
+    results = results if isinstance(results, dict) else {}
+    reasons = []
+
+    analysis_errors = results.get("analysis_errors")
+    if analysis_errors:
+        try:
+            error_count = len(analysis_errors)
+        except TypeError:
+            error_count = 1
+        reasons.append(
+            f"Analysis incomplete: {error_count} analysis error(s) prevented a "
+            "complete scan"
+        )
+
+    summary = results.get("analysis_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    raw_languages = summary.get("incomplete_languages")
+    if isinstance(raw_languages, (list, tuple, set)):
+        languages = sorted(
+            {
+                str(language).strip()
+                for language in raw_languages
+                if str(language).strip()
+            }
+        )
+    elif raw_languages:
+        languages = [str(raw_languages).strip()]
+    else:
+        languages = []
+    if languages:
+        reasons.append("Incomplete language engine coverage: " + ", ".join(languages))
+
+    return reasons
+
+
 def check_gate(results, config, strict=False, provenance=None):
     """
     Evaluate scan results against gate thresholds.
@@ -572,7 +608,10 @@ def check_gate(results, config, strict=False, provenance=None):
     results = results or {}
     config = config or {}
 
-    reasons = []
+    reasons = _analysis_incomplete_reasons(results)
+    if reasons:
+        return False, reasons
+
     total_findings = _count_dead_code_findings(results)
     danger = results.get("danger", []) or []
     reliability = results.get("reliability", []) or []
@@ -791,6 +830,17 @@ def _handle_advisory_gate(console, reasons):
     return 0
 
 
+def _handle_incomplete_gate(console, reasons):
+    console.print("\n[bold red]Analysis incomplete[/bold red]")
+    for reason in reasons or []:
+        console.print(f"   • {reason}")
+    console.print(
+        "[red]The quality gate cannot pass because required analysis did not "
+        "complete.[/red]"
+    )
+    return 2
+
+
 def run_gate_interaction(
     *,
     results=None,
@@ -822,11 +872,20 @@ def run_gate_interaction(
     gate_cfg = config.get("gate") or {}
 
     strict = bool(strict or gate_cfg.get("strict", False))
+    incomplete_reasons = _analysis_incomplete_reasons(results)
     passed, reasons = _resolve_gate_check(results, config, strict, provenance)
 
     if summary:
-        md = build_summary_markdown(results, passed, reasons, advisory=advisory)
+        md = build_summary_markdown(
+            results,
+            passed,
+            reasons,
+            advisory=advisory and not incomplete_reasons,
+        )
         write_github_summary(md)
+
+    if incomplete_reasons:
+        return _handle_incomplete_gate(console, reasons or incomplete_reasons)
 
     if passed:
         return _handle_passed_gate(console, command_to_run)
