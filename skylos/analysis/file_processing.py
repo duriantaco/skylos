@@ -53,6 +53,7 @@ from skylos.rules.quality.practices import (
 )
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
+from skylos.rules.secrets import SECRET_CONFIG_SUFFIXES
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.visitors.languages.csharp import scan_csharp_file
 from skylos.visitors.languages.dart import scan_dart_file
@@ -455,7 +456,7 @@ NON_PYTHON_SCANNERS = (
     ((".cs",), _scan_csharp_file),
     (KOTLIN_SOURCE_EXTS, _scan_kotlin_file),
     (SHELL_SOURCE_EXTS, _scan_shell_file),
-    ((".yaml", ".yml"), _scan_config_only_file),
+    (SECRET_CONFIG_SUFFIXES, _scan_config_only_file),
 )
 
 

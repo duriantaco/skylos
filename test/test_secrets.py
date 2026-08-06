@@ -221,19 +221,37 @@ def test_generic_scan_handles_long_non_secret_token_without_quadratic_retry():
 
 
 @pytest.mark.parametrize(
-    "line",
+    "line,relpath",
     [
-        '"integrity": "sha512-AbCdEfGh1234567890AbCdEfGh1234567890AABB"',
-        '"hash": "sha256-xYz1234567890AbCdEfGh1234567890AABB0011"',
-        '"checksum": "sha384-xYzAbCdEfGh1234567890AbCdEfGh1234567890"',
-        '"resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz"',
-        'commit = "da39a3ee5e6b4b0d3255bfef95601890afd80709"',
-        'digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+        (
+            "  integrity sha512-nJhYv8z5ti1j2f7/Bt+4YN+j4/H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5IqhvIiqoBs1XqAkONKvgjfG4Q==",
+            "yarn.lock",
+        ),
+        (
+            '    "integrity": "sha512-gQPbrbqehsdBgYdB78XpzcVywutyHjCW7lwwJRybfNc9LRmN1hu2Vv1cndQ/o5y5RaL3D/2fbxSyj16vrzQ+sA=="',
+            "package-lock.json",
+        ),
+        (
+            'sdist = { url = "https://files.pythonhosted.org/pkg.tar.gz", hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", size = 123 }',
+            "uv.lock",
+        ),
+        (
+            'checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+            "Cargo.lock",
+        ),
+        (
+            '["pkg@1.0.0", "", {}, "sha512-nJhYv8z5ti1j2f7/Bt+4YN+j4/H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5IqhvIiqoBs1XqAkONKvgjfG4Q=="],',
+            "bun.lock",
+        ),
+        (
+            '["pkg@1.0.0", "", {}, "sha512-nJhYv8z5ti1j2f7_Bt-4YN-j4_H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5IqhvIiqoBs1XqAkONKvgjfG4Q"],',
+            "bun.lock",
+        ),
     ],
 )
-def test_known_hashes_not_flagged_as_generic(line):
+def test_known_lockfile_integrity_values_not_flagged_as_generic(line, relpath):
     src = line + "\n"
-    ctx = _ctx_from_source(src, rel="package-lock.json")
+    ctx = _ctx_from_source(src, rel=relpath)
     generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
     assert generic == []
 
@@ -251,10 +269,7 @@ def test_hash_marker_does_not_suppress_generic_secret_on_same_line():
 
 def test_json_hash_field_does_not_suppress_later_generic_secret():
     token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"
-    src = (
-        '{"hash": "sha256-deadbeef", '
-        f'"api_key": "{token}"}}\n'
-    )
+    src = f'{{"hash": "sha256-deadbeef", "api_key": "{token}"}}\n'
     ctx = _ctx_from_source(src, rel="config.json")
 
     generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
@@ -263,8 +278,114 @@ def test_json_hash_field_does_not_suppress_later_generic_secret():
     assert generic[0]["preview"] == "aB3d…Y3zZ"
 
 
-def test_real_secret_on_hash_line_still_caught_by_provider():
-    src = '"integrity": "ghp_1234567890abcdef1234567890abcdef1234"\n'
-    ctx = _ctx_from_source(src, rel="config.json")
+@pytest.mark.parametrize("secret_key", ["access_token", "api_key"])
+def test_real_secret_beside_valid_integrity_value_is_still_detected(secret_key):
+    integrity = (
+        "sha512-nJhYv8z5ti1j2f7/Bt+4YN+j4/H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5Iq"
+        "hvIiqoBs1XqAkONKvgjfG4Q=="
+    )
+    token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"
+    src = f'{{"integrity": "{integrity}", "{secret_key}": "{token}"}}\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="package-lock.json"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+    assert generic[0]["preview"] == "aB3d…Y3zZ"
+
+
+@pytest.mark.parametrize(
+    "token,provider",
+    [
+        ("ghp_" + "1234567890abcdef" * 2 + "1234", "github"),
+        ("sk_live_" + "a1B2c3D4e5F6g7H8", "stripe"),
+    ],
+)
+def test_provider_secret_in_integrity_field_is_still_detected(token, provider):
+    src = f'"integrity": "{token}"\n'
+    ctx = _ctx_from_source(src, rel="package-lock.json")
     providers = [f["provider"] for f in scan_ctx(ctx)]
-    assert "github" in providers
+    assert provider in providers
+
+
+def test_unrecognized_integrity_value_is_still_detected_as_generic():
+    token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"
+    src = f'"integrity": "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="package-lock.json"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+
+
+def test_malformed_sri_value_is_still_detected_as_generic():
+    token = "sha512-AbCdEfGh1234567890AbCdEfGh1234567890AABB"
+    src = f'  integrity "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="yarn.lock"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+
+
+def test_secret_key_context_is_not_suppressed_by_valid_sri_shape():
+    token = (
+        "sha512-nJhYv8z5ti1j2f7/Bt+4YN+j4/H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5Iq"
+        "hvIiqoBs1XqAkONKvgjfG4Q=="
+    )
+    src = f'api_key = "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="uv.lock"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+
+
+def test_many_integrity_values_are_scanned_in_linear_time():
+    sri = (
+        "sha512-nJhYv8z5ti1j2f7/Bt+4YN+j4/H0uDltKcAx0fBvGG0Fa9JEOv3UJ3e6qb1d5Iq"
+        "hvIiqoBs1XqAkONKvgjfG4Q=="
+    )
+    src = (f'"integrity": "{sri}", ' * 10_000) + "\n"
+
+    started_at = time.perf_counter()
+    findings = list(scan_ctx(_ctx_from_source(src, rel="bun.lock")))
+    elapsed = time.perf_counter() - started_at
+
+    assert findings == []
+    assert elapsed < 1.0
+
+
+def test_lockfile_suffix_scanned_for_secrets():
+    # Issue #693: .lock files (uv.lock, Cargo.lock, package-lock.json style)
+    # were skipped entirely because ".lock" was not in the allowed suffixes.
+    src = 'access_token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"\n'
+    findings = list(scan_ctx(_ctx_from_source(src, rel="uv.lock")))
+    assert any(f["provider"] == "generic" for f in findings)
+
+
+def test_lockfile_hash_field_still_not_flagged():
+    # Checksums inside lockfiles are public integrity data, not secrets.
+    src = (
+        'hash = "sha256:e3b0c44298fc1c149afbf4c8996fb924'
+        '27ae41e4649b934ca495991b7852b855"\n'
+    )
+    ctx = _ctx_from_source(src, rel="uv.lock")
+    generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
+    assert generic == []

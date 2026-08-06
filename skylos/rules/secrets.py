@@ -1,5 +1,10 @@
 from __future__ import annotations
-import re, ast
+
+import ast
+import base64
+import binascii
+import re
+from bisect import bisect_right
 from math import log2
 
 __all__ = ["scan_ctx"]
@@ -24,18 +29,23 @@ CLIENT_ENV_RE = re.compile(
 
 JS_TS_SUFFIXES = (".js", ".jsx", ".ts", ".tsx")
 
+SECRET_CONFIG_SUFFIXES = (
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".lock",
+    ".ini",
+    ".cfg",
+    ".conf",
+)
+
 ALLOWED_FILE_SUFFIXES = (
     ".py",
     ".pyi",
     ".pyw",
     ".env",
-    ".yaml",
-    ".yml",
-    ".json",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".conf",
+    *SECRET_CONFIG_SUFFIXES,
     ".ts",
     ".tsx",
     ".js",
@@ -108,19 +118,42 @@ SAFE_TEST_HINTS = {
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-KNOWN_HASH_VALUE_RE = re.compile(
-    r"(?i)"
-    r"(?:sha(?:1|224|256|384|512)[-:].+)"
-    r"|(?:[0-9a-f]{40})"
-    r"|(?:[0-9a-f]{64})"
-)
-KNOWN_HASH_FIELD_PREFIX_RE = re.compile(
+KNOWN_INTEGRITY_FIELD_VALUE_RE = re.compile(
     r"""(?ix)
     (?:^|[\s,{])
-    ['"]?(?:integrity|hash|checksum|resolved)['"]?
-    \s*[:=]\s*['"]?$
+    ['"]?(?P<field>integrity|hash|checksum)['"]?
+    (?:
+        \s*[:=]\s*(?P<q>['"])(?P<quoted>[^'"]+)(?P=q)
+        |
+        \s+(?P<bare>[^\s,}\]]+)
+    )
 """
 )
+SRI_VALUE_RE = re.compile(
+    r"(?i)^(?P<algorithm>sha(?:1|224|256|384|512))-(?P<digest>[A-Za-z0-9+/_-]+={0,2})$"
+)
+SRI_TOKEN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9+/_=-])"
+    r"(?P<token>sha(?:1|224|256|384|512)-[A-Za-z0-9+/_-]+={0,2})"
+    r"(?![A-Za-z0-9+/_=-])"
+)
+PREFIXED_HEX_DIGEST_RE = re.compile(
+    r"(?i)^(?P<algorithm>sha(?:1|224|256|384|512))[-:](?P<digest>[0-9a-f]+)$"
+)
+HEX_DIGEST_LENGTHS = {
+    "sha1": 40,
+    "sha224": 56,
+    "sha256": 64,
+    "sha384": 96,
+    "sha512": 128,
+}
+SRI_DIGEST_LENGTHS = {
+    "sha1": 20,
+    "sha224": 28,
+    "sha256": 32,
+    "sha384": 48,
+    "sha512": 64,
+}
 
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"
 DEFAULT_MIN_ENTROPY = 3.9
@@ -182,32 +215,121 @@ def _has_bare_token_charset_mix(s):
 
 
 def _find_generic_value(line_content):
+    known_integrity_spans = _known_integrity_spans(line_content)
+
     keyed_match = GENERIC_KEYED_VALUE.search(line_content)
     if keyed_match:
         keyed_token = keyed_match.group("val")
         keyed_start = keyed_match.start("val")
-        if not _is_known_hash_candidate(keyed_token, line_content, keyed_start):
-            return keyed_token, False, keyed_start
+        return keyed_token, False, keyed_start
 
     for bare_match in BARE_GENERIC_VALUE.finditer(line_content):
         bare_token = bare_match.group("bare")
         bare_start = bare_match.start("bare")
         if not _has_bare_token_charset_mix(bare_token):
             continue
-        if _is_known_hash_candidate(bare_token, line_content, bare_start):
+        if _is_known_integrity_candidate(bare_token, bare_start, known_integrity_spans):
             continue
         return bare_token, True, bare_start
 
     return None
 
 
-def _is_known_hash_candidate(token: str, line_content: str, start: int) -> bool:
-    clean_token = token.strip()
-    if KNOWN_HASH_VALUE_RE.fullmatch(clean_token):
+def _known_integrity_spans(line_content: str) -> list[tuple[int, int]]:
+    spans = []
+    for match in KNOWN_INTEGRITY_FIELD_VALUE_RE.finditer(line_content):
+        field = match.group("field").lower()
+        value_group = "quoted" if match.group("quoted") is not None else "bare"
+        raw_value = match.group(value_group)
+        value = raw_value.strip()
+        if not _is_known_integrity_value(field, value):
+            continue
+
+        value_start = (
+            match.start(value_group) + len(raw_value) - len(raw_value.lstrip())
+        )
+        spans.append((value_start, value_start + len(value)))
+
+    for match in SRI_TOKEN_RE.finditer(line_content):
+        token = match.group("token")
+        if _is_valid_sri_token(token):
+            spans.append((match.start("token"), match.end("token")))
+
+    if not spans:
+        return []
+
+    spans.sort()
+    merged = [spans[0]]
+    for start, end in spans[1:]:
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _is_known_integrity_candidate(
+    token: str, start: int, known_integrity_spans: list[tuple[int, int]]
+) -> bool:
+    end = start + len(token)
+    span_index = bisect_right(known_integrity_spans, (start, float("inf"))) - 1
+    if span_index < 0:
+        return False
+    span_start, span_end = known_integrity_spans[span_index]
+    return span_start <= start and end <= span_end
+
+
+def _is_known_integrity_value(field: str, value: str) -> bool:
+    if field == "integrity":
+        sri_tokens = value.split()
+        return bool(sri_tokens) and all(
+            _is_valid_sri_token(token) for token in sri_tokens
+        )
+
+    if _is_valid_prefixed_hex_digest(value) or _is_valid_sri_token(value):
         return True
 
-    prefix = line_content[:start]
-    return bool(KNOWN_HASH_FIELD_PREFIX_RE.search(prefix))
+    return field == "checksum" and bool(re.fullmatch(r"(?i)[0-9a-f]{64}", value))
+
+
+def _is_valid_prefixed_hex_digest(value: str) -> bool:
+    match = PREFIXED_HEX_DIGEST_RE.fullmatch(value)
+    if match is None:
+        return False
+
+    algorithm = match.group("algorithm").lower()
+    return len(match.group("digest")) == HEX_DIGEST_LENGTHS[algorithm]
+
+
+def _is_valid_sri_token(value: str) -> bool:
+    match = SRI_VALUE_RE.fullmatch(value)
+    if match is None:
+        return False
+
+    algorithm = match.group("algorithm").lower()
+    expected_digest_length = SRI_DIGEST_LENGTHS[algorithm]
+    expected_encoded_length = 4 * ((expected_digest_length + 2) // 3)
+    expected_padding = (-expected_digest_length) % 3
+    encoded_digest = match.group("digest")
+    unpadded_digest = encoded_digest.rstrip("=")
+    supplied_padding = len(encoded_digest) - len(unpadded_digest)
+    if len(
+        unpadded_digest
+    ) != expected_encoded_length - expected_padding or supplied_padding not in {
+        0,
+        expected_padding,
+    }:
+        return False
+
+    normalized_digest = unpadded_digest.translate(str.maketrans("-_", "+/"))
+    normalized_digest += "=" * expected_padding
+    try:
+        digest = base64.b64decode(normalized_digest, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+
+    return len(digest) == expected_digest_length
 
 
 def _docstring_lines(tree):
