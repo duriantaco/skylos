@@ -225,6 +225,27 @@ class TestInputValidationRemoval:
         validation_findings = [f for f in findings if f["control_type"] == "validation"]
         assert len(validation_findings) >= 1
 
+    def test_escape_refactor_preserves_validation_control(self):
+        diff = _make_diff(
+            ["    safe = escape(f'Python {runtime}')"],
+            ["    safe = escape(runtime_label(error))"],
+        )
+
+        findings = detect_security_regressions(diff, "report.py")
+
+        assert not any(f["control_type"] == "validation" for f in findings)
+        assert not any(f["control_type"] == "sanitization" for f in findings)
+
+    def test_different_added_validator_does_not_hide_escape_removal(self):
+        diff = _make_diff(
+            ["    safe = escape(user_input)"],
+            ["    validate(metadata)", "    safe = user_input"],
+        )
+
+        findings = detect_security_regressions(diff, "views.py")
+
+        assert any(f["control_type"] == "validation" for f in findings)
+
     def test_read_text_removed_is_not_sanitization_regression(self):
         diff = _make_diff(
             ["    source = path.read_text(encoding='utf-8')"],

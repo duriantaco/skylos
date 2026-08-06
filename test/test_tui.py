@@ -114,12 +114,42 @@ class TestPrepareCategoryData:
 
     def test_returns_all_category_keys(self, sample_result):
         data = prepare_category_data(sample_result)
+        assert "analysis_errors" in data
         assert "dead_code" in data
         assert "security" in data
         assert "secrets" in data
         assert "quality" in data
         assert "dependencies" in data
         assert "suppressed" in data
+
+    def test_analysis_errors_are_visible(self):
+        result = {
+            "analysis_errors": [
+                {
+                    "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                    "severity": "HIGH",
+                    "message": "Go analysis incomplete: engine unavailable.",
+                    "file": "main.go",
+                    "line": 1,
+                    "language": "go",
+                    "suggestion": "Configure a runnable Go engine.",
+                }
+            ]
+        }
+
+        cols, rows, raw = prepare_category_data(result)["analysis_errors"]
+
+        assert cols == ["Rule", "Severity", "Message", "File:Line", "Language"]
+        assert rows == [
+            (
+                "SKY-ANALYSIS-INCOMPLETE",
+                "HIGH",
+                "Go analysis incomplete: engine unavailable.",
+                "main.go:1",
+                "go",
+            )
+        ]
+        assert raw[0]["suggestion"] == "Configure a runnable Go engine."
 
     def test_dead_code_aggregates_all_types(self, sample_result):
         data = prepare_category_data(sample_result)
@@ -267,6 +297,7 @@ class TestPrepareCategoryData:
     def test_empty_result(self):
         data = prepare_category_data({})
         for key in (
+            "analysis_errors",
             "dead_code",
             "security",
             "secrets",
@@ -370,6 +401,23 @@ class TestSkylosAppInit:
         assert app.category_counts["secrets"] == 0
         assert app.category_counts["quality"] == 0
         assert app.category_counts["overview"] == 3
+
+    def test_analysis_errors_count_toward_overview(self, sample_result):
+        sample_result["analysis_errors"] = [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "severity": "HIGH",
+                "message": "Go engine unavailable",
+                "file": "main.go",
+                "line": 1,
+                "language": "go",
+            }
+        ]
+
+        app = SkylosApp(sample_result)
+
+        assert app.category_counts["analysis_errors"] == 1
+        assert app.category_counts["overview"] == 4
 
     def test_root_path_stored(self, sample_result, tmp_path):
         app = SkylosApp(sample_result, root_path=tmp_path)

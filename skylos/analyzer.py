@@ -730,10 +730,16 @@ def _go_engine_analysis_report(files) -> dict | None:
 
     engine_status = get_go_engine_status()
     available = engine_status.get("status") == "available"
+    engine_report = dict(engine_status)
+    if "reason" in engine_report:
+        engine_report["reason"] = (
+            _sanitize_go_engine_reason(engine_report.get("reason"))
+            or "Go engine unavailable"
+        )
     report = {
         "status": "available" if available else "partial",
         "file_count": go_file_count,
-        "engine": dict(engine_status),
+        "engine": engine_report,
         "completed_checks": ["quality"],
         "skipped_checks": [],
     }
@@ -742,6 +748,141 @@ def _go_engine_analysis_report(files) -> dict | None:
     else:
         report["skipped_checks"] = ["dead_code", "security"]
     return report
+
+
+_ANSI_ESCAPE_RE = re.compile(
+    r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|"
+    r"\x1b[PX^_][^\x1b]*(?:\x1b\\)|\x1b[@-_]|\x9b[0-?]*[ -/]*[@-~])"
+)
+
+
+def _sanitize_go_engine_reason(value) -> str:
+    text = _ANSI_ESCAPE_RE.sub("", str(value or ""))
+    text = "".join(
+        " " if ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F else char for char in text
+    )
+    return " ".join(text.split())[:500]
+
+
+def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
+    if not isinstance(report, dict) or report.get("status") != "partial":
+        return None
+
+    go_files = sorted(
+        (Path(file_path) for file_path in files if str(file_path).endswith(".go")),
+        key=lambda path: str(path),
+    )
+    if not go_files:
+        return None
+
+    engine = report.get("engine")
+    engine = engine if isinstance(engine, dict) else {}
+    reason = (
+        _sanitize_go_engine_reason(engine.get("reason") or "Go engine unavailable")
+        or "Go engine unavailable"
+    )
+    skipped_checks = [
+        str(check)
+        for check in (report.get("skipped_checks") or [])
+        if str(check).strip()
+    ]
+    skipped_label = ", ".join(check.replace("_", " ") for check in skipped_checks)
+    message = f"Go analysis incomplete: {reason}."
+    if skipped_label:
+        message += f" Skipped checks: {skipped_label}."
+
+    return {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "severity": "HIGH",
+        "kind": "language_engine_unavailable",
+        "error_type": "GoEngineUnavailable",
+        "message": message,
+        "file": str(go_files[0]),
+        "line": 1,
+        "column": 1,
+        "language": "go",
+        "affected_file_count": len(go_files),
+        "skipped_checks": skipped_checks,
+        "suggestion": (
+            "Run `skylos doctor` and configure a runnable skylos-go engine "
+            "for this platform."
+        ),
+    }
+
+
+def _go_runtime_analysis_error(failure: dict, skipped_checks: list[str]):
+    module_files = sorted(
+        (
+            Path(file_path)
+            for file_path in (failure.get("files") or [])
+            if str(file_path).endswith(".go")
+        ),
+        key=lambda path: str(path),
+    )
+    if not module_files:
+        return None
+
+    reason = (
+        _sanitize_go_engine_reason(
+            failure.get("reason") or "Go engine failed during analysis"
+        )
+        or "Go engine failed during analysis"
+    )
+    error_type = (
+        _sanitize_go_engine_reason(failure.get("error_type") or "GoEngineError")
+        or "GoEngineError"
+    )
+    skipped_label = ", ".join(check.replace("_", " ") for check in skipped_checks)
+    return {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "severity": "HIGH",
+        "kind": "language_engine_unavailable",
+        "error_type": error_type,
+        "message": (
+            f"Go analysis incomplete: {reason}. Skipped checks: {skipped_label}."
+        ),
+        "file": str(module_files[0]),
+        "line": 1,
+        "column": 1,
+        "language": "go",
+        "module_root": str(failure.get("module_root") or ""),
+        "affected_file_count": len(module_files),
+        "skipped_checks": list(skipped_checks),
+        "suggestion": (
+            "Run `skylos doctor`, then retry the Go scan after fixing "
+            "the reported engine error."
+        ),
+    }
+
+
+def _go_runtime_analysis_errors(
+    report: dict | None,
+    failures,
+) -> list[dict]:
+    if not isinstance(report, dict) or report.get("status") != "available":
+        return []
+
+    normalized_failures = [failure for failure in failures if isinstance(failure, dict)]
+    if not normalized_failures:
+        return []
+
+    skipped_checks = ["dead_code", "security"]
+    report.update(
+        {
+            "status": "partial",
+            "completed_checks": ["quality"],
+            "skipped_checks": list(skipped_checks),
+            "failed_module_count": len(normalized_failures),
+        }
+    )
+    errors = (
+        _go_runtime_analysis_error(failure, skipped_checks)
+        for failure in sorted(
+            normalized_failures,
+            key=lambda item: str(item.get("module_root") or ""),
+        )
+    )
+    return [error for error in errors if error is not None]
 
 
 def _no_source_danger_targets(
@@ -2356,8 +2497,12 @@ class Skylos:
         self._ai_verification_checks = [] if enable_ai_defects else None
         self._language_engine_reports = {}
         go_engine_report = _go_engine_analysis_report(files)
+        language_engine_errors = []
         if go_engine_report is not None:
             self._language_engine_reports["go"] = go_engine_report
+            go_engine_error = _go_engine_analysis_error(files, go_engine_report)
+            if go_engine_error is not None:
+                language_engine_errors.append(go_engine_error)
 
         from skylos.visitors.languages.typescript.workspace import (
             discover_workspace_inventory,
@@ -2632,7 +2777,7 @@ class Skylos:
         all_quality = []
         all_ai_defects = []
         all_suppressed = []
-        analysis_errors = []
+        analysis_errors = list(language_engine_errors)
         empty_files = []
         file_contexts = []
         all_clone_fragments = []
@@ -2698,6 +2843,16 @@ class Skylos:
 
             if os.getenv("SKYLOS_DEBUG"):
                 logger.info(f"[DBG] run_proc_file_parallel returned outs={len(outs)}")
+
+            if go_engine_report is not None:
+                from skylos.visitors.languages.go.go import get_go_engine_failures
+
+                analysis_errors.extend(
+                    _go_runtime_analysis_errors(
+                        go_engine_report,
+                        get_go_engine_failures(),
+                    )
+                )
 
             for file, out in zip(files, outs):
                 if out is None:

@@ -2471,6 +2471,15 @@ def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
     upload_report.assert_not_called()
 
 
+def test_incomplete_language_summary_uses_operational_exit_code():
+    result = {
+        "analysis_errors": [],
+        "analysis_summary": {"incomplete_languages": ["go"]},
+    }
+
+    assert cli._analysis_incomplete_exit_code(result) == 2
+
+
 def test_main_incomplete_analysis_renders_without_badge_then_exits_two(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1, "analysis_error_count": 1},

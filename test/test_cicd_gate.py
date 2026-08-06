@@ -71,6 +71,41 @@ def test_gate_fails_on_dependency_vulnerability(clean_results):
     assert "1 dependency vulnerabilities (max: 0)" in reasons
 
 
+def test_gate_fails_closed_on_incomplete_language_engine(clean_results):
+    clean_results["analysis_errors"] = [
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "kind": "language_engine_unavailable",
+            "message": "Go analysis incomplete",
+        }
+    ]
+    clean_results["analysis_summary"] = {"incomplete_languages": ["go"]}
+
+    passed, reasons = check_gate(clean_results, {})
+
+    assert passed is False
+    assert any("Analysis incomplete" in reason for reason in reasons)
+    assert "Incomplete language engine coverage: go" in reasons
+
+
+def test_gate_incomplete_analysis_is_not_advisory_or_force_bypass(clean_results):
+    clean_results["analysis_errors"] = [
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "message": "Go analysis incomplete",
+        }
+    ]
+
+    exit_code = run_gate_interaction(
+        result=clean_results,
+        config={},
+        advisory=True,
+        force=True,
+    )
+
+    assert exit_code == 2
+
+
 def test_gate_strict_mode(clean_results):
     clean_results["quality"] = [
         {

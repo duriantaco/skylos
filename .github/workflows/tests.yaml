@@ -77,6 +77,11 @@ jobs:
       - name: Check CLI version
         run: docker run --rm skylos:test --version
 
+      - name: Check Go engine
+        run: |
+          docker run --rm skylos:test doctor --format json |
+            python -c 'import json, sys; assert json.load(sys.stdin)["checks"]["go_engine"]["status"] == "available"'
+
       - name: Check Python runtime
         shell: bash
         run: |

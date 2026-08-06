@@ -28,13 +28,22 @@ _GITHUB_DEAD_CODE_CATEGORIES = (
 )
 
 
+def _escape_github_command_data(value):
+    """Escape a GitHub workflow-command data value."""
+    return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_github_command_property(value):
+    """Escape a GitHub workflow-command property value."""
+    return _escape_github_command_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
 def _emit_github_grade_annotation(result):
     grade_data = result.get("grade")
     if grade_data:
         overall = grade_data["overall"]
-        print(
-            f"::notice title=Skylos Grade::{overall['letter']} ({overall['score']}/100)"
-        )
+        grade = f"{overall['letter']} ({overall['score']}/100)"
+        print(f"::notice title=Skylos Grade::{_escape_github_command_data(grade)}")
 
 
 def _github_finding_annotation(finding):
@@ -109,10 +118,11 @@ def _github_annotation_sort_key(annotation):
 
 def _emit_github_annotation(annotation):
     level = _GITHUB_ANNOTATION_LEVELS.get(annotation["severity"], "warning")
-    print(
-        f"::{level} file={annotation['file']},line={annotation['line']},"
-        f"title={annotation['title']}::{annotation['msg']}"
-    )
+    file = _escape_github_command_property(annotation["file"])
+    line = _escape_github_command_property(annotation["line"])
+    title = _escape_github_command_property(annotation["title"])
+    msg = _escape_github_command_data(annotation["msg"])
+    print(f"::{level} file={file},line={line},title={title}::{msg}")
 
 
 def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None):
