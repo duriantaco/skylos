@@ -15,6 +15,9 @@ class TestAllowedSuffixes:
     def test_toml_suffix_allowed(self):
         assert ".toml" in ALLOWED_FILE_SUFFIXES
 
+    def test_lockfile_suffix_allowed(self):
+        assert ".lock" in ALLOWED_FILE_SUFFIXES
+
     def test_ts_suffixes_allowed(self):
         assert ".ts" in ALLOWED_FILE_SUFFIXES
         assert ".tsx" in ALLOWED_FILE_SUFFIXES
