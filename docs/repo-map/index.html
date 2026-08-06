@@ -38,8 +38,8 @@
       <h2>Repo Snapshot</h2>
       <p class="lede">Use the route cards first. The folder and symbol sections are there when you need detail.</p>
       <div class="meta-grid">
-        <div class="metric"><strong>994</strong><span>Python files scanned</span></div>
-        <div class="metric"><strong>9887</strong><span>top-level classes/functions</span></div>
+        <div class="metric"><strong>995</strong><span>Python files scanned</span></div>
+        <div class="metric"><strong>9963</strong><span>top-level classes/functions</span></div>
         <div class="metric"><strong>32</strong><span>ownership areas</span></div>
         <div class="metric"><strong>12</strong><span>guided routes</span></div>
       </div>
@@ -655,7 +655,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos" rel="noopener noreferrer">skylos</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 7</span>
-          <span class="pill"><strong>symbols</strong> 296</span>
+          <span class="pill"><strong>symbols</strong> 304</span>
         </div>
       </div>
       <p>Root entrypoints and shared scan orchestration.</p>
@@ -1218,7 +1218,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core" rel="noopener noreferrer">skylos/core</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 35</span>
-          <span class="pill"><strong>symbols</strong> 505</span>
+          <span class="pill"><strong>symbols</strong> 507</span>
         </div>
       </div>
       <p>Small shared core types and helpers used across scan paths.</p>
@@ -1716,7 +1716,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/reporting" rel="noopener noreferrer">skylos/reporting</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 11</span>
-          <span class="pill"><strong>symbols</strong> 105</span>
+          <span class="pill"><strong>symbols</strong> 107</span>
         </div>
       </div>
       <p>Output formatters and exports such as SARIF, compact JSON, and human-readable reports.</p>
@@ -1766,7 +1766,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 106</span>
-          <span class="pill"><strong>symbols</strong> 1277</span>
+          <span class="pill"><strong>symbols</strong> 1288</span>
         </div>
       </div>
       <p>Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.</p>
@@ -1900,7 +1900,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/ui" rel="noopener noreferrer">skylos/ui</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 8</span>
-          <span class="pill"><strong>symbols</strong> 80</span>
+          <span class="pill"><strong>symbols</strong> 82</span>
         </div>
       </div>
       <p>Terminal UI and presentation helpers.</p>
@@ -1950,7 +1950,7 @@
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors" rel="noopener noreferrer">skylos/visitors</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 43</span>
-          <span class="pill"><strong>symbols</strong> 404</span>
+          <span class="pill"><strong>symbols</strong> 405</span>
         </div>
       </div>
       <p>AST/tree visitors that collect findings and semantic evidence.</p>
@@ -1999,8 +1999,8 @@
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/test" rel="noopener noreferrer">test</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 246</span>
-          <span class="pill"><strong>symbols</strong> 3712</span>
+          <span class="pill"><strong>files</strong> 247</span>
+          <span class="pill"><strong>symbols</strong> 3762</span>
         </div>
       </div>
       <p>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</p>
@@ -2062,7 +2062,7 @@
 
             <tr class="searchable" data-search="skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a></td>
-              <td>3 / 45</td>
+              <td>3 / 53</td>
               <td><span class="warn">many symbols</span> <span class="warn">shared path</span></td>
               <td>Root entrypoints and shared scan orchestration.</td>
             </tr>
@@ -2139,7 +2139,7 @@
 
             <tr class="searchable" data-search="test/test_cli.py unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli.py" rel="noopener noreferrer">test/test_cli.py</a></td>
-              <td>72 / 73</td>
+              <td>75 / 76</td>
               <td><span class="warn">many symbols</span></td>
               <td>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</td>
             </tr>
@@ -6745,6 +6745,27 @@
               <td>skylos/analyzer.py</td>
             </tr>
 
+            <tr class="searchable" data-search="_absolute_secret_scan_targets def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_absolute_secret_scan_targets</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_is_within_secret_scan_targets def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_is_within_secret_scan_targets</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_normalize_secret_changed_files def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_normalize_secret_changed_files</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
             <tr class="searchable" data-search="_scan_secret_config_candidate def skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_scan_secret_config_candidate</a></td>
               <td>def</td>
@@ -6754,6 +6775,13 @@
 
             <tr class="searchable" data-search="_scan_secret_config_candidates def skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_scan_secret_config_candidates</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_secret_config_read_error_payload def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_secret_config_read_error_payload</a></td>
               <td>def</td>
               <td><span class="muted">private</span></td>
               <td>skylos/analyzer.py</td>
@@ -6796,6 +6824,34 @@
 
             <tr class="searchable" data-search="_go_engine_analysis_report def skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_go_engine_analysis_report</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_sanitize_go_engine_reason def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_sanitize_go_engine_reason</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_go_engine_analysis_error def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_go_engine_analysis_error</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_go_runtime_analysis_error def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_go_runtime_analysis_error</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_go_runtime_analysis_errors def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_go_runtime_analysis_errors</a></td>
               <td>def</td>
               <td><span class="muted">private</span></td>
               <td>skylos/analyzer.py</td>
@@ -8399,62 +8455,6 @@
 
             <tr class="searchable" data-search="_create_precommit_snapshot def skylos/cli.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_create_precommit_snapshot</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_remap_precommit_result_files def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_remap_precommit_result_files</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_remap_precommit_file_value def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_remap_precommit_file_value</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_is_precommit_contract_evidence def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_is_precommit_contract_evidence</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_precommit_finding_targets_report_file def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_precommit_finding_targets_report_file</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_parse_unified_diff_ranges def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_parse_unified_diff_ranges</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_normalize_precommit_path def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_normalize_precommit_path</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_path_suffixes def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_path_suffixes</a></td>
-              <td>def</td>
-              <td><span class="muted">private</span></td>
-              <td>skylos/cli.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="_build_changed_range_index def skylos/cli.py root entrypoints and shared scan orchestration.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_build_changed_range_index</a></td>
               <td>def</td>
               <td><span class="muted">private</span></td>
               <td>skylos/cli.py</td>
