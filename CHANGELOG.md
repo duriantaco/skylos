@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.33.1](https://github.com/duriantaco/skylos/compare/v4.33.0...v4.33.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **go:** fail closed when native analysis is incomplete ([#696](https://github.com/duriantaco/skylos/issues/696)) ([e7dc79e](https://github.com/duriantaco/skylos/commit/e7dc79e5d0241ac72270cb62466c6143f70f7907))
+* **secrets:** scan lockfiles for high-entropy secrets ([#695](https://github.com/duriantaco/skylos/issues/695)) ([b3c980b](https://github.com/duriantaco/skylos/commit/b3c980bf3afeb538d063e2ad33997094d92b54b2))
+
 ## [4.33.0](https://github.com/duriantaco/skylos/compare/v4.32.0...v4.33.0) (2026-08-05)
 
 
