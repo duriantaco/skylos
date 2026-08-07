@@ -23,6 +23,12 @@ def _release_please_workflow():
     return yaml.safe_load(Path(".github/workflows/release-please.yml").read_text())
 
 
+def _release_please_config():
+    return json.loads(
+        Path("tools/release/release-please-config.json").read_text(encoding="utf-8")
+    )
+
+
 def _tests_workflow():
     return yaml.safe_load(Path(".github/workflows/tests.yaml").read_text())
 
@@ -500,6 +506,16 @@ def test_publish_workflow_verifies_required_checks_before_publish():
     assert "check-runs?per_page=100" in check_step["run"]
     assert "Required release checks failed" in check_step["run"]
     assert "Required release checks are not complete yet" in check_step["run"]
+
+
+def test_release_please_updates_skylos_version_in_uv_lock():
+    package_config = _release_please_config()["packages"]["."]
+
+    assert {
+        "type": "toml",
+        "path": "uv.lock",
+        "jsonpath": "$.package[?(@.name.value=='skylos')].version",
+    } in package_config["extra-files"]
 
 
 def test_tests_workflow_pins_codecov_and_limits_permissions():

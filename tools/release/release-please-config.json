@@ -5,7 +5,14 @@
   "bootstrap-sha": "a498b27b6902b34e469acfddac1068635aae8122",
   "packages": {
     ".": {
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='skylos')].version"
+        }
+      ]
     }
   }
 }
