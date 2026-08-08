@@ -3609,6 +3609,39 @@ wheels = [
 ]
 """
 
+_ISSUE_694_NPM_SRI = (
+    "sha512-qpw27gry1OuFb8xBSLkubCN12fvvzX68xMU+3hvGeOqMWyL3Pi0jEDWMSkyZBYyvIG"
+    "0Bgx5Cg2BN1exHl33tIA=="
+)
+
+
+def test_package_lock_integrity_suppression_requires_proven_structure(tmp_path):
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "lockfileVersion": 3,
+                "packages": {"node_modules/example": {"integrity": _ISSUE_694_NPM_SRI}},
+                "api_key": _ISSUE_694_NPM_SRI,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
+    generic = [
+        finding
+        for finding in result.get("secrets", [])
+        if finding.get("rule_id") == "SKY-S101" and finding.get("provider") == "generic"
+    ]
+
+    assert [(finding["file"], finding["preview"]) for finding in generic] == [
+        ("package-lock.json", "sha5…IA==")
+    ]
+    assert result["analysis_summary"]["secrets_count"] == 1
+
 
 def _issue_693_findings(result):
     return [
