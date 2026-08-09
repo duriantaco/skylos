@@ -25,15 +25,37 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.22"
+          cache: false
 
       - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
 
       - name: Build repo Go engine
         if: github.event_name != 'pull_request'
         run: |
-          mkdir -p /tmp/skylos-go-build /tmp/skylos-go-gopath
+          mkdir -p "$RUNNER_TEMP/skylos-go-engine" "$RUNNER_TEMP/skylos-go-build" "$RUNNER_TEMP/skylos-go-gopath"
           cd skylos/engines/go
-          GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
+          GOCACHE="$RUNNER_TEMP/skylos-go-build" GOPATH="$RUNNER_TEMP/skylos-go-gopath" \
+            go build -trimpath -o "$RUNNER_TEMP/skylos-go-engine/skylos-go" ./cmd/skylos-go
+
+      - name: Build trusted base Go engine for pull requests
+        if: github.event_name == 'pull_request'
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
+          git cat-file -e "$TRUSTED_BASE_SHA^{commit}"
+          TRUSTED_SOURCE_ROOT="$RUNNER_TEMP/skylos-trusted-base"
+          ENGINE_DIR="$RUNNER_TEMP/skylos-go-engine"
+          mkdir -p "$TRUSTED_SOURCE_ROOT" "$ENGINE_DIR" "$RUNNER_TEMP/skylos-go-build" "$RUNNER_TEMP/skylos-go-gopath"
+          git archive "$TRUSTED_BASE_SHA" -- skylos/engines/go | tar -x -C "$TRUSTED_SOURCE_ROOT"
+          cd "$TRUSTED_SOURCE_ROOT/skylos/engines/go"
+          GOCACHE="$RUNNER_TEMP/skylos-go-build" GOPATH="$RUNNER_TEMP/skylos-go-gopath" \
+            go build -trimpath -o "$ENGINE_DIR/skylos-go" ./cmd/skylos-go
+          "$ENGINE_DIR/skylos-go" --version
 
       - name: Install trusted Skylos for pull requests
         if: github.event_name == 'pull_request'
@@ -52,14 +74,26 @@ jobs:
 
       - name: Resolve diff base
         id: diff
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name || 'main' }}
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "base=origin/${{ github.base_ref || 'main' }}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Invalid pull request base SHA" >&2
+              exit 1
+            fi
+            git cat-file -e "$PR_BASE_SHA^{commit}"
+            echo "base=$PR_BASE_SHA" >> "$GITHUB_OUTPUT"
+          elif [[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git cat-file -e "$BEFORE_SHA^{commit}"
+            echo "base=$BEFORE_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "base=origin/${{ github.ref_name || 'main' }}" >> "$GITHUB_OUTPUT"
+            git check-ref-format --branch "$REF_NAME" >/dev/null
+            echo "base=origin/$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Skylos
@@ -67,6 +101,7 @@ jobs:
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
           DIFF_BASE: ${{ steps.diff.outputs.base }}
+          SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go', runner.temp) }}
         shell: bash
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
@@ -74,21 +109,30 @@ jobs:
           if .venv/bin/skylos --help | grep -q -- "--ai-defects"; then
             AI_DEFECTS_FLAG="--ai-defects"
           fi
+          set +e
           if [ -n "$DIFF_BASE" ]; then
             .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            SCAN_STATUS=$?
           else
             .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --baseline --json -o "$REPORT"
+            SCAN_STATUS=$?
+          fi
+          set -e
+          echo "status=$SCAN_STATUS" >> "$GITHUB_OUTPUT"
+          if [ "$SCAN_STATUS" -ne 0 ] && [ ! -s "$REPORT" ]; then
+            echo "Skylos exited $SCAN_STATUS without producing $REPORT" >&2
+            exit "$SCAN_STATUS"
           fi
 
       - name: Report findings (advisory)
-        if: steps.scan.outcome == 'success'
+        if: always() && steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
           .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
       - name: Block new high-risk security findings
-        if: steps.scan.outcome == 'success'
+        if: always() && steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
@@ -144,18 +188,31 @@ jobs:
           PY
 
       - name: GitHub annotations
-        if: steps.scan.outcome == 'success'
+        if: always() && steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
           .venv/bin/skylos cicd annotate --input "$REPORT"
 
       - name: Upload report artifact
-        if: steps.scan.outcome == 'success'
+        if: always() && steps.scan.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.scan.outputs.REPORT }}
           path: ${{ steps.scan.outputs.REPORT }}
+          if-no-files-found: error
+
+      - name: Preserve Skylos scan exit code
+        if: always() && steps.scan.outputs.status != '0'
+        env:
+          SCAN_STATUS: ${{ steps.scan.outputs.status }}
+        shell: bash
+        run: |
+          if [[ ! "$SCAN_STATUS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid Skylos exit status: $SCAN_STATUS" >&2
+            exit 1
+          fi
+          exit "$SCAN_STATUS"
 
       - name: Summarize in job log
         if: always()

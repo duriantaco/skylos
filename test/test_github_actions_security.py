@@ -560,6 +560,11 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert all(c in "0123456789abcdef" for c in checkout_ref)
     assert checkout_step["with"]["persist-credentials"] is False
 
+    setup_go_step = next(
+        s for s in steps if str(s.get("uses", "")).startswith("actions/setup-go@")
+    )
+    assert setup_go_step["with"]["cache"] is False
+
     go_build_step = next(s for s in steps if s.get("name") == "Build repo Go engine")
     assert go_build_step["if"] == "github.event_name != 'pull_request'"
 
@@ -588,11 +593,97 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     blocker_step = next(
         s for s in steps if s.get("name") == "Block new high-risk security findings"
     )
-    assert blocker_step["if"] == "steps.scan.outcome == 'success'"
+    assert blocker_step["if"] == "always() && steps.scan.outcome == 'success'"
     assert "HIGH" in blocker_step["run"]
     assert "CRITICAL" in blocker_step["run"]
     assert 'for category in ("danger", "secrets")' in blocker_step["run"]
     assert "raise SystemExit(1)" in blocker_step["run"]
+
+
+def test_skylos_pr_workflow_builds_go_engine_from_immutable_base():
+    steps = _skylos_workflow()["jobs"]["scan"]["steps"]
+    build_step = next(
+        s
+        for s in steps
+        if s.get("name") == "Build trusted base Go engine for pull requests"
+    )
+
+    assert build_step["if"] == "github.event_name == 'pull_request'"
+    assert build_step["env"]["TRUSTED_BASE_SHA"] == (
+        "${{ github.event.pull_request.base.sha }}"
+    )
+    build_script = build_step["run"]
+    assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in build_script
+    assert 'git cat-file -e "$TRUSTED_BASE_SHA^{commit}"' in build_script
+    assert (
+        'git archive "$TRUSTED_BASE_SHA" -- skylos/engines/go | tar -x' in build_script
+    )
+    assert 'cd "$TRUSTED_SOURCE_ROOT/skylos/engines/go"' in build_script
+    assert "go build -trimpath" in build_script
+    assert '"$ENGINE_DIR/skylos-go" --version' in build_script
+    assert "github.head_ref" not in build_script
+    assert "github.sha" not in build_script
+
+    scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
+    assert scan_step["env"]["SKYLOS_GO_BIN"] == (
+        "${{ format('{0}/skylos-go-engine/skylos-go', runner.temp) }}"
+    )
+
+
+def test_skylos_workflow_reports_incomplete_scan_before_preserving_exit_code():
+    steps = _skylos_workflow()["jobs"]["scan"]["steps"]
+    scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
+    scan_script = scan_step["run"]
+
+    assert "set +e" in scan_script
+    assert "SCAN_STATUS=$?" in scan_script
+    assert 'echo "status=$SCAN_STATUS" >> "$GITHUB_OUTPUT"' in scan_script
+    assert '[ ! -s "$REPORT" ]' in scan_script
+
+    preserve_step = next(
+        s for s in steps if s.get("name") == "Preserve Skylos scan exit code"
+    )
+    assert preserve_step["if"] == ("always() && steps.scan.outputs.status != '0'")
+    assert preserve_step["env"]["SCAN_STATUS"] == "${{ steps.scan.outputs.status }}"
+    assert 'exit "$SCAN_STATUS"' in preserve_step["run"]
+
+    preserve_index = steps.index(preserve_step)
+    report_steps = {
+        "Report findings (advisory)",
+        "Block new high-risk security findings",
+        "GitHub annotations",
+        "Upload report artifact",
+    }
+    assert all(
+        next(s for s in steps if s.get("name") == name)["if"]
+        == "always() && steps.scan.outcome == 'success'"
+        for name in report_steps
+    )
+    assert all(
+        steps.index(next(s for s in steps if s.get("name") == name)) < preserve_index
+        for name in report_steps
+    )
+    artifact_step = next(s for s in steps if s.get("name") == "Upload report artifact")
+    assert artifact_step["with"]["if-no-files-found"] == "error"
+
+
+def test_skylos_workflow_routes_github_context_through_environment():
+    steps = _skylos_workflow()["jobs"]["scan"]["steps"]
+    diff_step = next(s for s in steps if s.get("name") == "Resolve diff base")
+
+    assert diff_step["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "BEFORE_SHA": "${{ github.event.before }}",
+        "REF_NAME": "${{ github.ref_name || 'main' }}",
+    }
+    assert "${{" not in diff_step["run"]
+    assert '[[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in diff_step["run"]
+    assert 'git cat-file -e "$PR_BASE_SHA^{commit}"' in diff_step["run"]
+    assert 'echo "base=$PR_BASE_SHA"' in diff_step["run"]
+    assert '[[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]]' in diff_step["run"]
+    assert 'git cat-file -e "$BEFORE_SHA^{commit}"' in diff_step["run"]
+    assert 'git check-ref-format --branch "$REF_NAME"' in diff_step["run"]
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():
