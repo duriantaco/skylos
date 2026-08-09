@@ -1686,7 +1686,7 @@ def _scan_servlet_security_flows(
                 _add_java_flow_finding(
                     findings,
                     seen,
-                    rule_id="SKY-D253",
+                    rule_id="SKY-D254",
                     severity="HIGH",
                     message="Servlet-controlled data crosses into HTTP session state.",
                     file_path=file_path,
