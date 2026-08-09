@@ -1,5 +1,14 @@
 ## Changelog
 
+## [4.33.2](https://github.com/duriantaco/skylos/compare/v4.33.1...v4.33.2) (2026-08-09)
+
+
+### Bug Fixes
+
+* **java:** correct session trust boundary rule ID ([#703](https://github.com/duriantaco/skylos/issues/703)) ([3c1eca3](https://github.com/duriantaco/skylos/commit/3c1eca32cb087a2790a0e8a7f2ca59650ec50171))
+* **secrets:** validate lockfile checksums ([#701](https://github.com/duriantaco/skylos/issues/701)) ([e8bf0ee](https://github.com/duriantaco/skylos/commit/e8bf0eeaff617b59042bd292feeb4632c16fb062))
+* **typescript:** ignore null guards in timing comparison rule ([#704](https://github.com/duriantaco/skylos/issues/704)) ([56f666f](https://github.com/duriantaco/skylos/commit/56f666ff9e5adbb2a52af72b115a21cee2986c32))
+
 ## [4.33.1](https://github.com/duriantaco/skylos/compare/v4.33.0...v4.33.1) (2026-08-06)
 
 
