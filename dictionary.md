@@ -128,7 +128,8 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
 | D251 | HIGH | Sensitive data in logs | TS/JS | CWE-532 |
 | D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
-| D253 | MEDIUM | Timing-unsafe comparison | TS/JS, Java | CWE-208 |
+| D253 | MEDIUM | Timing-unsafe comparison | TS/JS | CWE-208 |
+| D254 | HIGH | HTTP session trust boundary violation | Java | CWE-501 |
 | D260 | HIGH-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
 | D261 | HIGH | Untrusted input to LLM prompt | Python | OWASP LLM01 |
 | D262 | CRITICAL | Unsafe LLM output handling | Python | OWASP LLM05 |

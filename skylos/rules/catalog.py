@@ -197,6 +197,12 @@ _RULES = (
     RuleCatalogEntry("SKY-D252", "Insecure cookie", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D253", "Timing-unsafe comparison", "security", "MEDIUM"),
     RuleCatalogEntry(
+        "SKY-D254",
+        "HTTP session trust boundary violation",
+        "security",
+        "HIGH",
+    ),
+    RuleCatalogEntry(
         "SKY-D260",
         "Prompt injection exposure",
         "security",

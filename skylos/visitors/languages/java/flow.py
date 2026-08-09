@@ -881,7 +881,7 @@ class JavaSecurityFlowAnalyzer:
             and self._args_tainted(args, state)
         ):
             self._add_finding(
-                "SKY-D253",
+                "SKY-D254",
                 "HIGH",
                 "Servlet-controlled data crosses into HTTP session state.",
                 line,

@@ -1305,20 +1305,62 @@ class App {
     assert "SKY-D226" not in _rule_ids(findings)
 
 
-def test_tainted_session_attribute_flags_trust_boundary(tmp_path):
-    findings = _scan_java(
-        tmp_path,
-        """import javax.servlet.http.*;
-
-class App {
-  void run(HttpServletRequest request) {
-    String param = request.getParameter("user");
-    request.getSession().setAttribute("userid", param);
+ISSUE_699_SOURCE = """final class Main {
+  static void rememberTheme(Request request) {
+    String theme = request.getParameter("theme");
+    request.getSession().setAttribute("theme", theme);
   }
 }
-""",
+
+interface Request {
+  String getParameter(String name);
+  Session getSession();
+}
+
+interface Session {
+  void setAttribute(String name, String value);
+}
+"""
+
+
+def _assert_session_trust_boundary_identity(findings: list[dict]) -> None:
+    matches = [
+        finding
+        for finding in findings
+        if finding.get("category") == "trust_boundary"
+    ]
+    assert len(matches) == 1
+    assert matches[0]["rule_id"] == "SKY-D254"
+    assert matches[0]["severity"] == "HIGH"
+    assert matches[0]["cwe"] == "CWE-501"
+    assert "SKY-D253" not in _rule_ids(findings)
+
+
+def test_tainted_session_attribute_has_distinct_rule_identity(tmp_path):
+    findings = _scan_java_primary_flow(tmp_path, ISSUE_699_SOURCE)
+    _assert_session_trust_boundary_identity(findings)
+
+
+def test_tainted_session_attribute_integration_uses_distinct_rule_identity(tmp_path):
+    findings = _scan_java(tmp_path, ISSUE_699_SOURCE)
+    _assert_session_trust_boundary_identity(findings)
+
+
+def test_tainted_session_attribute_fallback_has_same_rule_identity(
+    tmp_path, monkeypatch
+):
+    def fail_primary_flow(*_args, **_kwargs):
+        raise RuntimeError("force compatibility fallback")
+
+    monkeypatch.setattr(
+        "skylos.visitors.languages.java.danger.scan_java_security_flows",
+        fail_primary_flow,
     )
-    assert "trust_boundary" in _categories(findings)
+    findings = _scan_java(
+        tmp_path,
+        ISSUE_699_SOURCE,
+    )
+    _assert_session_trust_boundary_identity(findings)
 
 
 def test_constant_session_attribute_is_not_trust_boundary(tmp_path):
@@ -1336,6 +1378,7 @@ class App {
 """,
     )
     assert "trust_boundary" not in _categories(findings)
+    assert "SKY-D254" not in _rule_ids(findings)
 
 
 def test_cookie_value_path_traversal_flags(tmp_path):
