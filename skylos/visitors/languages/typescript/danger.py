@@ -644,6 +644,16 @@ def _unwrap_ts_expression(node):
     return node
 
 
+def _is_null_literal_expression(node) -> bool:
+    current = node
+    while current is not None:
+        unwrapped = _unwrap_ts_expression(current)
+        if unwrapped is current:
+            return current.type == "null"
+        current = unwrapped
+    return False
+
+
 def _has_dynamic_url_part(node) -> bool:
     unwrapped = _unwrap_ts_expression(node)
     if unwrapped is not node:
@@ -1853,22 +1863,26 @@ def _check_timing_comparison(
             if has_eq:
                 left = node.child_by_field_name("left")
                 right = node.child_by_field_name("right")
-                for operand in (left, right):
-                    if operand is None:
-                        continue
-                    name = _extract_var_name(operand, source_bytes)
-                    if name and _is_timing_sensitive(name):
-                        findings.append(
-                            {
-                                "rule_id": "SKY-D253",
-                                "severity": "MEDIUM",
-                                "message": f"Timing-unsafe comparison of '{name}'. Use crypto.timingSafeEqual() for constant-time comparison.",
-                                "file": str(file_path),
-                                "line": node.start_point[0] + 1,
-                                "col": 0,
-                            }
-                        )
-                        break
+                if not (
+                    _is_null_literal_expression(left)
+                    or _is_null_literal_expression(right)
+                ):
+                    for operand in (left, right):
+                        if operand is None:
+                            continue
+                        name = _extract_var_name(operand, source_bytes)
+                        if name and _is_timing_sensitive(name):
+                            findings.append(
+                                {
+                                    "rule_id": "SKY-D253",
+                                    "severity": "MEDIUM",
+                                    "message": f"Timing-unsafe comparison of '{name}'. Use crypto.timingSafeEqual() for constant-time comparison.",
+                                    "file": str(file_path),
+                                    "line": node.start_point[0] + 1,
+                                    "col": 0,
+                                }
+                            )
+                            break
         for child in node.children:
             stack.append(child)
 

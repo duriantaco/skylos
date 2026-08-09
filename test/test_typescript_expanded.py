@@ -2071,6 +2071,61 @@ class TestInsecureCookies:
 class TestTimingUnsafeComparison:
     """SKY-D253: Direct comparison of security-sensitive variables."""
 
+    def test_null_guard_is_not_timing_comparison(self, tmp_path):
+        code = (
+            "export function reportIsLoaded(digest) {\n"
+            "    return digest !== null;\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts_file(tmp_path, "reproduce.js", code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" not in ids
+
+    @pytest.mark.parametrize(
+        "expression",
+        (
+            "null === token",
+            "hash == null",
+            "null != signature",
+            "digest !== (null as null)",
+        ),
+    )
+    def test_null_guard_variants_are_not_timing_comparisons(
+        self, tmp_path, expression
+    ):
+        _, _, _, danger = _scan_ts(tmp_path, f"if ({expression}) {{ proceed(); }}\n")
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" not in ids
+
+    def test_null_guard_does_not_hide_sensitive_comparison(self, tmp_path):
+        code = "if ((digest === expectedDigest) !== null) { proceed(); }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d253 = [finding for finding in danger if finding["rule_id"] == "SKY-D253"]
+        assert len(d253) == 1
+
+    @pytest.mark.parametrize(
+        "expression",
+        (
+            "nullDigest === expectedDigest",
+            "digest === object.null",
+            'digest === "null"',
+        ),
+    )
+    def test_null_lookalikes_remain_timing_comparisons(self, tmp_path, expression):
+        _, _, _, danger = _scan_ts(tmp_path, f"if ({expression}) {{ proceed(); }}\n")
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_shadowed_undefined_remains_timing_comparison(self, tmp_path):
+        code = (
+            "function compare(token, undefined) {\n"
+            "    return token === undefined;\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
     def test_password_triple_eq(self, tmp_path):
         code = (
             "function verify(password: string, stored: string) {\n"
