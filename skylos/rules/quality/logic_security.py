@@ -1338,12 +1338,13 @@ class MockPlaceholderDataRule(SkylosRule):
 def _iter_arg_defaults(func_node):
     args = func_node.args
     num_defaults = len(args.defaults)
-    num_args = len(args.args)
+    positional_args = [*args.posonlyargs, *args.args]
+    num_args = len(positional_args)
     offset = num_args - num_defaults
 
     for i, default in enumerate(args.defaults):
         if default:
-            yield args.args[offset + i], default
+            yield positional_args[offset + i], default
     for arg, default in zip(args.kwonlyargs, args.kw_defaults):
         if default:
             yield arg, default

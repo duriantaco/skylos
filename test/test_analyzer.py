@@ -3388,6 +3388,50 @@ def fake_call():
             "low_entropy_uuid",
         }
 
+    def test_analyze_flags_protocol_and_implementation_defaults(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        src = tmp_path / "protocols.py"
+        src.write_text(
+            """
+from typing import Protocol
+
+class Notifier(Protocol):
+    def notify(
+        self,
+        protocol_email: str = "test@example.com",
+        /,
+    ) -> None:
+        ...
+
+class ConcreteNotifier(Notifier):
+    def notify(
+        self,
+        implementation_email: str = "test@example.com",
+        /,
+    ) -> None:
+        return None
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        assert result.get("analysis_errors", []) == []
+        findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
+        ]
+
+        assert {finding["name"] for finding in findings} == {
+            "protocol_email",
+            "implementation_email",
+        }
+
     def test_analyze_flags_no_effect_statement(self, tmp_path):
         src = tmp_path / "app.py"
         src.write_text(

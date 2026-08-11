@@ -387,6 +387,15 @@ password = os.environ["PASSWORD"]
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L014" for f in findings)
 
+    def test_positional_only_default(self):
+        code = """
+def connect(api_password: str = "mysecretpassword123", /) -> None:
+    return None
+"""
+        rule = HardcodedCredentialRule()
+        findings = check_code(rule, code, filename="app.py")
+        assert [finding["name"] for finding in findings] == ["api_password"]
+
 
 # --- SKY-L032: Mock Or Placeholder Data ---
 
@@ -427,6 +436,60 @@ SAMPLE_URL = "https://example.com/users"
         findings = check_code(rule, code, filename="app.py")
         assert [f["name"] for f in findings] == ["SAMPLE_URL"]
         assert findings[0]["mock_data_type"] == "placeholder_domain"
+
+    def test_positional_only_placeholder_default(self):
+        code = """
+def notify(support_email: str = "test@example.com", /) -> None:
+    return None
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="app.py")
+        assert [finding["name"] for finding in findings] == ["support_email"]
+        assert findings[0]["mock_data_type"] == "placeholder_email"
+
+    def test_mixed_positional_defaults_preserve_names(self):
+        code = """
+def notify(
+    required: str,
+    protocol_email: str = "test@example.com",
+    /,
+    implementation_email: str = "test@example.com",
+) -> None:
+    return None
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="app.py")
+        assert [finding["name"] for finding in findings] == [
+            "protocol_email",
+            "implementation_email",
+        ]
+
+    def test_protocol_and_implementation_defaults_flagged(self):
+        code = """
+from typing import Protocol
+
+class Notifier(Protocol):
+    def notify(
+        self,
+        protocol_email: str = "test@example.com",
+        /,
+    ) -> None:
+        ...
+
+class ConcreteNotifier(Notifier):
+    def notify(
+        self,
+        implementation_email: str = "test@example.com",
+        /,
+    ) -> None:
+        return None
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="app.py")
+        assert {finding["name"] for finding in findings} == {
+            "protocol_email",
+            "implementation_email",
+        }
 
 
 # --- SKY-UC001: Unreachable Code ---
