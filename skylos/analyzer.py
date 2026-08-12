@@ -4656,7 +4656,10 @@ def proc_file(
                         if line.strip() and not line.strip().startswith("#")
                     ),
                 }
-            except Exception:
+            except Exception as exc:
+                scanner_errors.append(
+                    _subsystem_error_payload(file, "Architecture metrics", exc)
+                )
                 logger.debug(
                     "Architecture metric extraction failed for %s",
                     file,
@@ -4674,7 +4677,10 @@ def proc_file(
                 clone_fragments = extract_fragments(
                     Path(file), source, clone_cfg, tree=clone_tree
                 )
-            except Exception:
+            except Exception as exc:
+                scanner_errors.append(
+                    _subsystem_error_payload(file, "Clone extraction", exc)
+                )
                 logger.debug(
                     "Clone fragment extraction failed for %s", file, exc_info=True
                 )

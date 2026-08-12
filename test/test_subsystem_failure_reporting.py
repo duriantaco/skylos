@@ -188,7 +188,52 @@ def _analyze_handlers():
 
 
 def test_analyze_has_subsystem_handlers_to_check():
-    assert len(_analyze_handlers()) >= 15
+    """Pinned near the real count so coverage cannot quietly shrink.
+
+    Raise this when a subsystem is added; a drop means handlers stopped
+    matching the markers and are no longer being checked.
+    """
+    assert len(_analyze_handlers()) >= 22
+
+
+def _worker_handlers():
+    """Broad handlers in proc_file(), which runs per file in the workers."""
+    source = textwrap.dedent(inspect.getsource(analyzer_module.proc_file))
+    tree = ast.parse(source)
+    handlers = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            exc_type = handler.type
+            broad = exc_type is None or any(
+                isinstance(name, ast.Name) and name.id in ("Exception", "BaseException")
+                for name in ast.walk(exc_type)
+            )
+            if broad:
+                handlers.append(handler)
+    return handlers
+
+
+@pytest.mark.parametrize("index", range(len(_worker_handlers())))
+def test_no_worker_handler_swallows_its_failure(index):
+    """proc_file's per-file handlers must record too.
+
+    Clone extraction and architecture metrics once logged and continued, so
+    a crash there dropped SKY-C401 with an empty analysis_errors list.
+    """
+    handler = _worker_handlers()[index]
+    body = ast.dump(ast.Module(body=handler.body, type_ignores=[]))
+    records = (
+        "scanner_errors" in body
+        or "scanner_failure_finding" in body
+        or "_analysis_error_payload" in body
+        or "_subsystem_error_payload" in body
+    )
+    assert records, (
+        f"handler at line {handler.lineno} of proc_file() only logs its failure; "
+        "the file would be reported as fully analyzed"
+    )
 
 
 @pytest.mark.parametrize("index", range(len(_analyze_handlers())))

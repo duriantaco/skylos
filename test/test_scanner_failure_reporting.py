@@ -59,6 +59,9 @@ def test_scanner_records_incomplete_analysis_instead_of_swallowing(module):
     assert payload["file"] == "app.py"
     assert payload["scanner"]
     assert payload["error_type"]
+    # Reports render "Python ?" without this; it is set independently of
+    # _analysis_error_payload, so it needs its own assertion.
+    assert payload["python_version"].count(".") == 2
 
 
 def test_taint_dispatcher_failure_reaches_analysis_errors(tmp_path, monkeypatch):
