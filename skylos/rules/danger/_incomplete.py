@@ -5,6 +5,9 @@ records this finding instead of only printing to stderr, so the failure reaches
 ``analysis_errors`` and the run fails closed.
 """
 
+import sys
+
+
 RULE_ID = "SKY-ANALYSIS-INCOMPLETE"
 
 
@@ -20,4 +23,10 @@ def scanner_failure_finding(file_path, scanner: str, error: BaseException) -> di
         "file": str(file_path),
         "line": 1,
         "column": 1,
+        # Kept in step with _analysis_error_payload; reports render "Python ?"
+        # without it. Sharing that builder would mean importing the analyzer.
+        "python_version": (
+            f"{sys.version_info.major}.{sys.version_info.minor}."
+            f"{sys.version_info.micro}"
+        ),
     }

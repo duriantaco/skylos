@@ -649,7 +649,11 @@ def _scan_secret_config_candidate(
             "tree": None,
         }
         return list(_secrets_scan_ctx(ctx))
-    except Exception:
+    except Exception as exc:
+        if analysis_errors is not None:
+            analysis_errors.append(
+                _subsystem_error_payload(resolved, "Secret scan", exc)
+            )
         logger.debug("Secret scan failed for config file: %s", candidate, exc_info=True)
         return []
 
@@ -2820,6 +2824,11 @@ class Skylos:
                         expected_checks=self._ai_verification_expectations,
                     )
                 )
+            # Recomputed last: the optional no-source subsystems above append
+            # after the earlier count was taken.
+            result["analysis_summary"]["analysis_error_count"] = len(
+                result["analysis_errors"]
+            )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -3174,7 +3183,7 @@ class Skylos:
                                 all_secrets.extend(findings)
                         except Exception as exc:
                             analysis_errors.append(
-                                _subsystem_error_payload(path, "Secret scan", exc)
+                                _subsystem_error_payload(Path(file), "Secret scan", exc)
                             )
                             logger.debug("Secret scan failed for file", exc_info=True)
 
@@ -3858,7 +3867,10 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(path, "Phantom reference scan", exc)
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
