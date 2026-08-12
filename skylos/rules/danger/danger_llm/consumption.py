@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import sys
 from dataclasses import dataclass
 
 from .utils import (
@@ -11,6 +10,7 @@ from .utils import (
     qualified_name_from_call,
     root_name,
 )
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 TOKEN_LIMIT_KEYWORDS = {
@@ -350,8 +350,5 @@ def scan(tree, file_path, findings):
         checker = _LLMConsumptionChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(
-            f"LLM consumption analysis failed for {file_path}: {e}",
-            file=sys.stderr,
-        )
+        findings.append(scanner_failure_finding(file_path, "LLM consumption", e))
 

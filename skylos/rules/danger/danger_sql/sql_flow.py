@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
-import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 DB_MODULES = frozenset(
@@ -473,4 +473,4 @@ def scan(tree, file_path, findings):
         checker = _SQLFlowChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(f"SQL flow analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "SQL flow", e))

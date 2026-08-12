@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
-import sys
 from skylos.rules.danger.taint import TaintVisitor, XSS_SANITIZERS
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 def _qualified_name_from_call(node: ast.Call):
@@ -170,4 +170,4 @@ def scan(tree, file_path, findings):
         checker = _XSSFlowChecker(file_path, findings, sanitizers=XSS_SANITIZERS)
         checker.visit(tree)
     except Exception as e:
-        print(f"XSS analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "XSS", e))

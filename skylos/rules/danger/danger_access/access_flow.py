@@ -1,6 +1,6 @@
 from __future__ import annotations
 import ast
-import sys
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 class _MassAssignmentChecker(ast.NodeVisitor):
@@ -64,4 +64,4 @@ def scan(tree, file_path, findings):
         checker = _MassAssignmentChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(f"Access control analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "Access control", e))

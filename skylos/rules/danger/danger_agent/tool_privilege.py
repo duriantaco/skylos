@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import ast
-import sys
 
 from skylos.rules.danger.calls import _qualified_name_from_call, _resolve_expr_name
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 DANGEROUS_TOOL_CONSTRUCTORS = {
@@ -359,7 +359,4 @@ def scan(tree, file_path, findings):
         checker = _AgentToolPrivilegeChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(
-            f"Agent tool privilege analysis failed for {file_path}: {e}",
-            file=sys.stderr,
-        )
+        findings.append(scanner_failure_finding(file_path, "Agent tool privilege", e))

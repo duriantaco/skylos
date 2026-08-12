@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import sys
 
 from skylos.rules.danger.taint import TaintVisitor
 
@@ -23,6 +22,7 @@ from .utils import (
     qualified_name_from_expr,
     root_name,
 )
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 class _LLMFlowChecker(SensitiveExpressionMixin, TaintVisitor):
     def __init__(self, file_path, findings):
@@ -378,7 +378,4 @@ def scan(tree, file_path, findings):
         checker = _LLMFlowChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(
-            f"LLM application flow analysis failed for {file_path}: {e}",
-            file=sys.stderr,
-        )
+        findings.append(scanner_failure_finding(file_path, "LLM application flow", e))

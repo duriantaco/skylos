@@ -3007,6 +3007,8 @@ class Skylos:
                 file_analysis_error = out[25] if len(out) > 25 else None
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
+                elif isinstance(file_analysis_error, list):
+                    analysis_errors.extend(file_analysis_error)
                 (
                     defs,
                     refs,
@@ -4434,6 +4436,7 @@ def proc_file(
 
         quality_findings = []
         danger_findings = []
+        scanner_errors = []
 
         if full_scan and enable_quality_rules:
             quality_findings = scan_python_quality(tree, source, file, cfg)
@@ -4451,15 +4454,21 @@ def proc_file(
             linter_d.visit(tree)
             danger_findings = linter_d.findings
 
+            from skylos.rules.danger._incomplete import RULE_ID as INCOMPLETE_RULE_ID
+            from skylos.rules.danger._incomplete import scanner_failure_finding
             from skylos.rules.danger.danger import scan_file_with_tree
 
             taint_findings = []
             try:
                 scan_file_with_tree(tree, Path(file), taint_findings, source=source)
-            except Exception:
+            except Exception as exc:
                 logger.debug("Taint analysis failed for %s", file, exc_info=True)
-            if taint_findings:
-                danger_findings.extend(taint_findings)
+                taint_findings.append(scanner_failure_finding(file, "Taint", exc))
+            for taint_finding in taint_findings:
+                if taint_finding.get("rule_id") == INCOMPLETE_RULE_ID:
+                    scanner_errors.append(taint_finding)
+                else:
+                    danger_findings.append(taint_finding)
 
         pro_findings = []
         if extra_visitors:
@@ -4613,7 +4622,7 @@ def proc_file(
             clone_fragments,
             architecture_metrics,
             getattr(v, "top_level_refs", set()),
-            None,
+            scanner_errors or None,
             ignore_rules_by_line,
         )
 

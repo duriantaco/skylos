@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
-import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 SYMLINK_WRITE_RULE = "SKY-D324"
@@ -626,4 +626,4 @@ def scan(tree, file_path, findings):
         checker = _PathFlowChecker(file_path, findings, sanitizers=PATH_SANITIZERS)
         checker.visit(tree)
     except Exception as e:
-        print(f"Path traversal analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "Path traversal", e))

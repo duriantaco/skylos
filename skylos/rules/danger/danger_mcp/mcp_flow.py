@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 import re
-import sys
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 _INJECTION_TAG_RE = re.compile(
@@ -362,4 +362,4 @@ def scan(tree, file_path, findings):
         checker = _MCPChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(f"MCP analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "MCP", e))

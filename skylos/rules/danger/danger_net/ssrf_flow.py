@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
-import sys
 from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 HTTP_MODULES = frozenset(
@@ -444,4 +444,4 @@ def scan(tree, file_path, findings):
         checker = _SSRFFlowChecker(file_path, findings, sanitizers=URL_SANITIZERS)
         checker.visit(tree)
     except Exception as e:
-        print(f"SSRF flow analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "SSRF flow", e))

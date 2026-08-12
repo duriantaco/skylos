@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import ast
 import re
-import sys
 from pathlib import Path
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 RULE_ID = "SKY-D282"
 
@@ -234,6 +234,4 @@ def scan(tree: ast.AST, file_path, findings, *, source: str | None = None) -> No
         checker = _WebhookSignatureChecker(file_path, findings, source)
         checker.visit(tree)
     except Exception as e:
-        print(
-            f"Webhook signature analysis failed for {file_path}: {e}", file=sys.stderr
-        )
+        findings.append(scanner_failure_finding(file_path, "Webhook signature", e))

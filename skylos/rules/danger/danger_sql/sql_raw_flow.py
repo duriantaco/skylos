@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
-import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 def _qualified_name(node: ast.Call):
@@ -128,4 +128,4 @@ def scan(tree: ast.AST, file_path, findings):
         checker = _SQLRawFlowChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(f"Raw SQL flow analysis failed for {file_path}: {e}", file=sys.stderr)
+        findings.append(scanner_failure_finding(file_path, "Raw SQL flow", e))

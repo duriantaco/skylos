@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import ast
-import sys
 
 from skylos.rules.danger.calls import _qualified_name_from_call
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger._incomplete import scanner_failure_finding
 
 
 MODEL_ARTIFACT_SUFFIXES = (
@@ -321,7 +321,4 @@ def scan(tree, file_path, findings):
         checker = _ModelDeserializationChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
-        print(
-            f"ML model deserialization analysis failed for {file_path}: {e}",
-            file=sys.stderr,
-        )
+        findings.append(scanner_failure_finding(file_path, "ML model deserialization", e))

@@ -120,7 +120,7 @@ def test_rule_sky_d228_html_plus_local_clean_is_not_flagged():
     assert _find_rule(findings, "SKY-D228") is False
 
 
-def test_scan_does_not_raise_on_exception(monkeypatch, capsys):
+def test_scan_records_incomplete_analysis_on_exception(monkeypatch):
     class Boom(xss._XSSFlowChecker):
         def visit(self, node):
             raise RuntimeError("boom")
@@ -131,8 +131,10 @@ def test_scan_does_not_raise_on_exception(monkeypatch, capsys):
     tree = ast.parse("x = 1\n")
     xss.scan(tree, "x.py", findings)
 
-    err = capsys.readouterr().err
-    assert "XSS analysis failed for x.py" in err
+    assert [finding["rule_id"] for finding in findings] == ["SKY-ANALYSIS-INCOMPLETE"]
+    assert findings[0]["scanner"] == "XSS"
+    assert findings[0]["error_type"] == "RuntimeError"
+    assert findings[0]["file"] == "x.py"
 
 
 def _scan_src(src: str):
