@@ -2701,7 +2701,12 @@ class Skylos:
                             if finding.get("rule_id") in project_ignore:
                                 continue
                             ai_defect_findings.append(finding)
-                    except Exception:
+                    except Exception as exc:
+                        result["analysis_errors"].append(
+                            _subsystem_error_payload(
+                                path, "Manifest dependency hallucination scan", exc
+                            )
+                        )
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.error(
                                 "Manifest dependency scan failed", exc_info=True
@@ -2791,6 +2796,9 @@ class Skylos:
                         result["dependency_vulnerabilities"] = list(sca_findings)
                         result["analysis_summary"]["sca_count"] = len(sca_findings)
                     except Exception as exc:
+                        result["analysis_errors"].append(
+                            _subsystem_error_payload(path, "Dependency scan", exc)
+                        )
                         self._sca_coverage = {
                             "status": "incomplete",
                             "complete": False,
@@ -3164,7 +3172,10 @@ class Skylos:
                                         )
                                     ]
                                 all_secrets.extend(findings)
-                        except Exception:
+                        except Exception as exc:
+                            analysis_errors.append(
+                                _subsystem_error_payload(path, "Secret scan", exc)
+                            )
                             logger.debug("Secret scan failed for file", exc_info=True)
 
             if enable_secrets and _secrets_scan_ctx is not None:
@@ -3319,7 +3330,10 @@ class Skylos:
                             cf,
                         )
                         all_quality.extend(reg_findings)
-            except Exception:
+            except Exception as exc:
+                analysis_errors.append(
+                    _subsystem_error_payload(path, "Security regression detection", exc)
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 
@@ -3334,7 +3348,12 @@ class Skylos:
                         changed_files=changed_files,
                     )
                 )
-            except Exception:
+            except Exception as exc:
+                analysis_errors.append(
+                    _subsystem_error_payload(
+                        path, "Security contract regression detection", exc
+                    )
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security contract scan failed", exc_info=True)
 
@@ -3637,7 +3656,10 @@ class Skylos:
                             ][:remaining]
                             all_dangers.extend(bounded_hits)
                             injection_findings += len(bounded_hits)
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(path, "Prompt injection scan", exc)
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
@@ -3666,7 +3688,12 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(
+                            path, "Python dependency hallucination scan", exc
+                        )
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
@@ -3691,7 +3718,12 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(
+                            path, "Python API signature hallucination scan", exc
+                        )
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
@@ -3711,7 +3743,12 @@ class Skylos:
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(
+                            path, "Manifest dependency hallucination scan", exc
+                        )
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
@@ -3961,7 +3998,12 @@ class Skylos:
                                 all_ai_defects=all_ai_defects,
                                 all_suppressed=all_suppressed,
                             )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(
+                            path, "Assertion weakening detection", exc
+                        )
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Assertion weakening scan failed", exc_info=True)
 
@@ -3993,7 +4035,10 @@ class Skylos:
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(path, "Test impact gap detection", exc)
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Test impact scan failed", exc_info=True)
 
@@ -4010,7 +4055,12 @@ class Skylos:
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
                     )
-                except Exception:
+                except Exception as exc:
+                    analysis_errors.append(
+                        _subsystem_error_payload(
+                            path, "AI defect diff signal scan", exc
+                        )
+                    )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("AI defect diff scan failed", exc_info=True)
 
@@ -4044,7 +4094,10 @@ class Skylos:
                         if ud_findings:
                             all_quality.extend(ud_findings)
 
-            except Exception:
+            except Exception as exc:
+                analysis_errors.append(
+                    _subsystem_error_payload(path, "Unused dependency scan", exc)
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
@@ -4056,7 +4109,10 @@ class Skylos:
                 )
                 if policy_findings:
                     all_quality.extend(policy_findings)
-            except Exception:
+            except Exception as exc:
+                analysis_errors.append(
+                    _subsystem_error_payload(path, "Repo policy analysis", exc)
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
@@ -4091,6 +4147,9 @@ class Skylos:
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.error(traceback.format_exc())
             except Exception as exc:
+                analysis_errors.append(
+                    _subsystem_error_payload(path, "Dependency scan", exc)
+                )
                 self._sca_coverage = {
                     "status": "incomplete",
                     "complete": False,
@@ -4357,6 +4416,18 @@ def _analysis_error_payload(file, error, *, kind=None):
             "project's syntax; official container images provide matching "
             "-pythonX.Y tags."
         )
+    return payload
+
+
+def _subsystem_error_payload(path, subsystem, error):
+    """Record that one analysis subsystem did not finish.
+
+    Without this the subsystem's findings are simply absent, which is
+    indistinguishable from the subsystem having found nothing.
+    """
+    payload = _analysis_error_payload(path, error, kind="processing_error")
+    payload["subsystem"] = subsystem
+    payload["message"] = f"{subsystem} did not complete: {payload['message']}"
     return payload
 
 
