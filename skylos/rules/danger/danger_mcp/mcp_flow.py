@@ -356,9 +356,9 @@ class _MCPChecker(ast.NodeVisitor):
 
 
 def scan(tree, file_path, findings):
-    if not _is_mcp_file(tree):
-        return
     try:
+        if not _is_mcp_file(tree):
+            return
         checker = _MCPChecker(file_path, findings)
         checker.visit(tree)
     except Exception as e:
