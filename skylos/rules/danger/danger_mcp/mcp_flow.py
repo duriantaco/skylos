@@ -267,11 +267,12 @@ class _MCPChecker(ast.NodeVisitor):
         defaults = []
         args_obj = node.args
 
-        num_args = len(args_obj.args)
+        positional_args = [*args_obj.posonlyargs, *args_obj.args]
+        num_args = len(positional_args)
         num_defaults = len(args_obj.defaults)
         offset = num_args - num_defaults
         for i, default in enumerate(args_obj.defaults):
-            arg = args_obj.args[offset + i]
+            arg = positional_args[offset + i]
             defaults.append((arg.arg, default))
 
         for arg, default in zip(args_obj.kwonlyargs, args_obj.kw_defaults):
