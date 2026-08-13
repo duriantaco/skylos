@@ -33,6 +33,17 @@ def test_checked_in_security_manifest_validates():
         "csharp-sql-parameterized-safe",
         "php-unserialize",
         "php-path-basename-safe",
+        "typescript-nextjs-author-shadow-missing-auth",
+        "typescript-nextjs-auth-decoys",
+        "typescript-nextjs-session-guard-safe",
+        "typescript-nextjs-authjs-v5-safe",
+        "typescript-server-action-constant-safe",
+        "typescript-server-action-inline-unsafe",
+        "typescript-webhook-unverified",
+        "typescript-webhook-nondominating-verifier",
+        "typescript-webhook-verified-safe",
+        "typescript-cookie-explicit-false",
+        "typescript-cookie-literal-safe",
     }
 
     labels = {label for case in cases for label in case["taxonomy"]}

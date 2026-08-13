@@ -25,6 +25,7 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "xss": "Untrusted data reaches HTML or script rendering sinks.",
     "open_redirect": "Untrusted URLs reach redirect/navigation sinks.",
     "auth_bypass": "Authentication or token verification is bypassed or disabled.",
+    "cookie_security": "Session cookies omit required browser or transport protections.",
     "cors": "CORS policy is overly permissive or credential unsafe.",
     "dart": "Dart security flow and sanitizer patterns.",
     "go": "Go security flow and sanitizer patterns.",
