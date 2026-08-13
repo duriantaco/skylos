@@ -80,31 +80,31 @@ jobs:
           fi
           exit 0
 
-      - name: TypeScript build advisory
+      - name: TypeScript build and test advisory
         shell: bash
         run: |
           set +e
-          echo "### TypeScript build" >> "$GITHUB_STEP_SUMMARY"
+          echo "### TypeScript build and tests" >> "$GITHUB_STEP_SUMMARY"
           overall=0
 
-          npm ci --prefix editors/vscode
+          npm ci --ignore-scripts --prefix editors/vscode
           status=$?
           if [ "$status" -eq 0 ]; then
-            npm run compile --prefix editors/vscode
+            npm test --prefix editors/vscode
             status=$?
           fi
           if [ "$status" -ne 0 ]; then
             overall=1
-            echo "::warning title=VS Code TypeScript advisory::editors/vscode build failed (exit $status)."
-            echo "editors/vscode build failed (exit $status)." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=VS Code TypeScript advisory::editors/vscode build or tests failed (exit $status)."
+            echo "editors/vscode build or tests failed (exit $status)." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "editors/vscode build passed." >> "$GITHUB_STEP_SUMMARY"
+            echo "editors/vscode build and tests passed." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ -f skylos-demo/web/package-lock.json ]; then
-            npm ci --prefix skylos-demo/web
+            npm ci --ignore-scripts --prefix skylos-demo/web
           else
-            npm install --prefix skylos-demo/web
+            npm install --ignore-scripts --prefix skylos-demo/web
           fi
           status=$?
           if [ "$status" -eq 0 ]; then
