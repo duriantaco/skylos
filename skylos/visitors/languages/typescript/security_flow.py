@@ -377,7 +377,7 @@ class SecurityFlow:
         self._work_items = 0
         self._build()
 
-    def text(self, node) -> str:
+    def node_text(self, node) -> str:
         if node is None:
             return ""
         return self.source[node.start_byte : node.end_byte].decode(
@@ -774,7 +774,7 @@ class SecurityFlow:
                 continue
             for child in clause.named_children:
                 if child.type == "identifier":
-                    local = self.text(child)
+                    local = self.node_text(child)
                     if not self._reserve_binding_slot(0):
                         continue
                     self.imports[local] = ImportIdentity(
@@ -786,7 +786,7 @@ class SecurityFlow:
                         None,
                     )
                     if ident is not None:
-                        local = self.text(ident)
+                        local = self.node_text(ident)
                         if not self._reserve_binding_slot(0):
                             continue
                         self.imports[local] = ImportIdentity(
@@ -805,8 +805,8 @@ class SecurityFlow:
                         ]
                         if not identifiers:
                             continue
-                        exported = self.text(identifiers[0])
-                        local = self.text(identifiers[-1])
+                        exported = self.node_text(identifiers[0])
+                        local = self.node_text(identifiers[-1])
                         if not self._reserve_binding_slot(0):
                             continue
                         self.imports[local] = ImportIdentity(
@@ -828,7 +828,7 @@ class SecurityFlow:
                     "require", binding.symbol.decl_byte, scope_id
                 ):
                     continue
-                local = self.text(name_node)
+                local = self.node_text(name_node)
                 self._require_imports[binding.symbol] = ImportIdentity(
                     module, "default", local, ImportKind.REQUIRE
                 )
@@ -844,7 +844,7 @@ class SecurityFlow:
             function = self.unwrap(require_call.child_by_field_name("function"))
         if function is None or function.type != "identifier":
             return None
-        if self.text(function) != "require":
+        if self.node_text(function) != "require":
             return None
         args = self.call_arguments(require_call)
         return _string_value(self.source, args[0]) if len(args) == 1 else None
@@ -899,7 +899,7 @@ class SecurityFlow:
             elif node is not self.root_node and node.type == "import_require_clause":
                 declared_name = next(
                     (
-                        self.text(child)
+                        self.node_text(child)
                         for child in node.named_children
                         if child.type == "identifier"
                     ),
@@ -995,20 +995,22 @@ class SecurityFlow:
                 if node.type == "call_expression":
                     kind = EventKind.CALL
                     callee = self._callee_identity(node, scope.id)
-                    args = tuple(self.text(arg) for arg in self.call_arguments(node))
+                    args = tuple(
+                        self.node_text(arg) for arg in self.call_arguments(node)
+                    )
                 elif node.type == "new_expression":
                     kind = EventKind.NEW
                     callee = self._constructor_identity(node, scope.id)
                     args_node = node.child_by_field_name("arguments")
                     args = tuple(
-                        self.text(arg)
+                        self.node_text(arg)
                         for arg in (
                             args_node.named_children if args_node is not None else ()
                         )
                     )
                 elif node.type == "update_expression":
                     kind = EventKind.UPDATE
-                elif node.type == "unary_expression" and self.text(
+                elif node.type == "unary_expression" and self.node_text(
                     node
                 ).lstrip().startswith("delete"):
                     # `delete target.member` is an externally visible mutation just
@@ -1099,7 +1101,7 @@ class SecurityFlow:
             if child.type != "export_statement":
                 continue
             default_export = any(
-                self.text(token) == "default" for token in child.children
+                self.node_text(token) == "default" for token in child.children
             )
             declaration = next(
                 (
@@ -1290,7 +1292,7 @@ class SecurityFlow:
             return literal
         if node is None or node.type != "identifier":
             return None
-        name = self.text(node)
+        name = self.node_text(node)
         if name in seen:
             return None
         binding = self.resolve_unique_binding(name, before_byte, scope_id)
@@ -1360,7 +1362,7 @@ class SecurityFlow:
         if node.type in _FUNCTION_TYPES:
             return node
         if node.type == "identifier":
-            name = self.text(node)
+            name = self.node_text(node)
             if name in seen:
                 return None
             binding = self.resolve_unique_binding(name, before_byte, scope_id)
@@ -1466,7 +1468,7 @@ class SecurityFlow:
                 "shorthand_property_identifier",
                 "shorthand_property_identifier_pattern",
             }:
-                source_name = self.text(child)
+                source_name = self.node_text(child)
                 if source_name in {"body", "rawBody", "headers"}:
                     result[source_name].append(source_name)
                 continue
@@ -1486,7 +1488,7 @@ class SecurityFlow:
         for node in self.iter_scope_nodes(scope):
             if node.type == "if_statement":
                 condition = node.child_by_field_name("condition")
-                text = self.text(condition)
+                text = self.node_text(condition)
                 methods = frozenset(
                     method
                     for method in _MUTATING_METHODS
@@ -1496,7 +1498,7 @@ class SecurityFlow:
                     consequence = node.child_by_field_name("consequence")
                     condition_node = self.unwrap(condition)
                     operator = (
-                        self.text(condition_node.child_by_field_name("operator"))
+                        self.node_text(condition_node.child_by_field_name("operator"))
                         if condition_node is not None
                         and condition_node.type == "binary_expression"
                         else ""
@@ -1519,7 +1521,7 @@ class SecurityFlow:
                     )
             elif node.type == "switch_case":
                 value = node.child_by_field_name("value")
-                text = self.text(value)
+                text = self.node_text(value)
                 methods = frozenset(
                     method
                     for method in _MUTATING_METHODS
@@ -1537,7 +1539,7 @@ class SecurityFlow:
                         )
                     )
         if not routes:
-            body_text = self.text(scope._body)
+            body_text = self.node_text(scope._body)
             methods = frozenset(
                 method
                 for method in _MUTATING_METHODS
@@ -1638,7 +1640,7 @@ class SecurityFlow:
             return None
         if value.type == "identifier":
             return self._route_receiver_kind(
-                self.text(value),
+                self.node_text(value),
                 binding.symbol.decl_byte,
                 binding.symbol.scope_id,
                 seen | {name},
@@ -1683,7 +1685,7 @@ class SecurityFlow:
         if node.type == "member_expression":
             obj = node.child_by_field_name("object")
             prop = node.child_by_field_name("property")
-            prop_name = _identifier_text(self.source, prop) or self.text(prop)
+            prop_name = _identifier_text(self.source, prop) or self.node_text(prop)
             return self._expression_path(obj) + ((prop_name,) if prop_name else ())
         if node.type == "subscript_expression":
             obj = node.child_by_field_name("object")
@@ -1797,7 +1799,7 @@ class SecurityFlow:
         seen = seen | {key}
 
         if node.type == "identifier":
-            name = self.text(node)
+            name = self.node_text(node)
             binding = self.resolve_unique_binding(name, before_byte, scope_id)
             if binding is None or binding.value_node is None:
                 return unknown
@@ -1865,7 +1867,7 @@ class SecurityFlow:
                 "shorthand_property_identifier",
                 "shorthand_property_identifier_pattern",
             }:
-                property_name = self.text(child)
+                property_name = self.node_text(child)
                 if property_name in states:
                     binding = self.resolve_unique_binding(
                         property_name, child.start_byte, scope_id
@@ -1993,7 +1995,7 @@ class SecurityFlow:
                     continue
                 left = assignment.child_by_field_name("left")
                 if left is not None and left.type == "identifier":
-                    if self.text(left) == name:
+                    if self.node_text(left) == name:
                         return False
         return True
 
@@ -2023,7 +2025,7 @@ class SecurityFlow:
                     "identifier",
                     "shorthand_property_identifier_pattern",
                 }
-                and self.text(current) == expected_name
+                and self.node_text(current) == expected_name
             ):
                 return True
             stack.extend(current.named_children)
@@ -2065,7 +2067,7 @@ class SecurityFlow:
                 if node.type == "update_expression"
                 or (
                     node.type == "unary_expression"
-                    and self.text(node).lstrip().startswith("delete ")
+                    and self.node_text(node).lstrip().startswith("delete ")
                 )
             )
             for declarator in declarators:
@@ -2098,7 +2100,7 @@ class SecurityFlow:
                 declared_name = _identifier_text(self.source, declared)
                 if declared_name is None or value is None:
                     continue
-                if value.type == "identifier" and self.text(value) in aliases:
+                if value.type == "identifier" and self.node_text(value) in aliases:
                     aliases.add(declared_name)
                 elif self._expression_contains_alias(
                     value,
@@ -2126,16 +2128,16 @@ class SecurityFlow:
                         return True
                     if target in aliases:
                         if right is not None and right.type == "identifier":
-                            if self.text(right) in aliases:
+                            if self.node_text(right) in aliases:
                                 continue
                         aliases.discard(target)
                         continue
                     if target in containers:
                         containers.discard(target)
                     if right is not None and right.type == "identifier":
-                        if self.text(right) in aliases:
+                        if self.node_text(right) in aliases:
                             aliases.add(target)
-                        elif self.text(right) in containers:
+                        elif self.node_text(right) in containers:
                             containers.add(target)
                     elif self._expression_contains_alias(
                         right,
@@ -2245,7 +2247,7 @@ class SecurityFlow:
             if current.type in conditional_types:
                 return True
             if current.type == "binary_expression":
-                text = self.text(current)
+                text = self.node_text(current)
                 if any(operator in text for operator in ("&&", "||", "??")):
                     return True
             current = current.parent
@@ -2278,7 +2280,7 @@ class SecurityFlow:
                     "shorthand_property_identifier",
                     "shorthand_property_identifier_pattern",
                 }
-                and self.text(current) in aliases
+                and self.node_text(current) in aliases
             ):
                 return True
             if (

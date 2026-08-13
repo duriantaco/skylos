@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import os
 from pathlib import Path
 import re
 from typing import Any
 
 from skylos.constants import get_non_library_dir_kind
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.visitors.languages.typescript.security_flow import (
     FlowEvent,
     EventKind,
@@ -260,7 +260,11 @@ def _identifier_may_be_http_response(
             if not (lower < candidate.span.start_byte < cutoff):
                 continue
             left = flow.unwrap(candidate._node.child_by_field_name("left"))
-            if left is None or left.type != "identifier" or flow.text(left) != name:
+            if (
+                left is None
+                or left.type != "identifier"
+                or flow.node_text(left) != name
+            ):
                 continue
             phases.append((phase, candidate.span.start_byte, candidate))
         if current_scope_id == binding_scope_id:
@@ -302,7 +306,7 @@ def _expression_may_be_http_response(
     if node.type == "identifier":
         return _identifier_may_be_http_response(
             flow,
-            flow.text(node),
+            flow.node_text(node),
             before_byte=before_byte,
             scope_id=scope_id,
             response_names=response_names,
@@ -1014,7 +1018,7 @@ def _is_route_side_effect(
         if left is None or left.type != "identifier":
             return True
         binding = flow.resolve_unique_binding(
-            flow.text(left), event.span.start_byte, event.scope_id
+            flow.node_text(left), event.span.start_byte, event.scope_id
         )
         return binding is None or binding.symbol.scope_id != event.scope_id
     if event.kind != EventKind.CALL:
@@ -1131,7 +1135,7 @@ def _positive_auth_fallthrough(
     if if_node is None or if_node.type != "if_statement":
         return False
     condition = flow.unwrap(if_node.child_by_field_name("condition"))
-    compact = _compact(flow.text(condition))
+    compact = _compact(flow.node_text(condition))
     if compact not in {subject, f"{subject}===true", f"{subject}==true"}:
         return False
     alternative = if_node.child_by_field_name("alternative")
@@ -1153,7 +1157,7 @@ def _positive_auth_guard(
         if parent.type == "if_statement":
             consequence = parent.child_by_field_name("consequence")
             condition = flow.unwrap(parent.child_by_field_name("condition"))
-            compact = _compact(flow.text(condition))
+            compact = _compact(flow.node_text(condition))
             if (
                 consequence is not None
                 and _node_within(current, consequence)
@@ -1180,7 +1184,7 @@ def _assigned_auth_subjects(event: FlowEvent, flow: SecurityFlow) -> tuple[str, 
         return ()
     clerk_auth_object = _is_clerk_auth_object_call(event)
     if name_node.type == "identifier":
-        name = flow.text(name_node)
+        name = flow.node_text(name_node)
         if clerk_auth_object:
             return (f"{name}.isAuthenticated", f"{name}.userId")
         return (name,)
@@ -1193,7 +1197,7 @@ def _assigned_auth_subjects(event: FlowEvent, flow: SecurityFlow) -> tuple[str, 
             "shorthand_property_identifier",
             "shorthand_property_identifier_pattern",
         }:
-            name = flow.text(child)
+            name = flow.node_text(child)
             if name in {"isAuthenticated", "userId"}:
                 subjects.append(name)
             continue
@@ -1201,11 +1205,11 @@ def _assigned_auth_subjects(event: FlowEvent, flow: SecurityFlow) -> tuple[str, 
         value_node = child.child_by_field_name("value")
         if key is None or value_node is None:
             continue
-        if flow.text(key) not in {"isAuthenticated", "userId"}:
+        if flow.node_text(key) not in {"isAuthenticated", "userId"}:
             continue
         value_node = flow.unwrap(value_node)
         if value_node is not None and value_node.type == "identifier":
-            subjects.append(flow.text(value_node))
+            subjects.append(flow.node_text(value_node))
     return tuple(subjects)
 
 
@@ -1267,7 +1271,7 @@ def _binding_is_stable(
 
 def _pattern_binds_name(flow: SecurityFlow, node, name: str) -> bool:
     return any(
-        candidate.type == "identifier" and flow.text(candidate) == name
+        candidate.type == "identifier" and flow.node_text(candidate) == name
         for candidate in flow.iter_nodes(node, skip_nested_functions=True)
     )
 
@@ -1344,13 +1348,7 @@ def _is_proven_local_authjs_adapter(
     target = _resolve_local_auth_module(project_root, importer, module)
     if target is None:
         return False
-    try:
-        stat = os.stat(target)
-    except OSError:
-        return False
-    if stat.st_size > _MAX_LOCAL_AUTH_MODULE_BYTES:
-        return False
-    return _authjs_adapter_exports_auth(target, stat.st_size, stat.st_mtime_ns)
+    return _authjs_adapter_exports_auth(project_root, target)
 
 
 def _nearest_ts_project_root(importer: str) -> str | None:
@@ -1396,23 +1394,23 @@ def _resolve_local_auth_module(
     return target if os.path.isfile(target) else None
 
 
-@lru_cache(maxsize=256)
 def _authjs_adapter_exports_auth(
+    project_root: str,
     target: str,
-    expected_size: int,
-    expected_mtime_ns: int,
 ) -> bool:
     try:
-        stat = os.stat(target)
-        if stat.st_size != expected_size or stat.st_mtime_ns != expected_mtime_ns:
+        source_text = read_project_text_no_symlink(
+            project_root,
+            target,
+            max_bytes=_MAX_LOCAL_AUTH_MODULE_BYTES,
+            errors="surrogateescape",
+            newline="",
+        )
+        if source_text is None:
             return False
-        with open(target, "rb") as handle:
-            source = handle.read(_MAX_LOCAL_AUTH_MODULE_BYTES + 1)
-    except OSError:
+        source = source_text.encode("utf-8", errors="surrogateescape")
+    except (OSError, UnicodeError):
         return False
-    if len(source) > _MAX_LOCAL_AUTH_MODULE_BYTES:
-        return False
-
     from skylos.visitors.languages.typescript.core import TypeScriptCore
 
     core = TypeScriptCore(target, source)
@@ -1559,7 +1557,7 @@ def _find_subject_guard(flow: SecurityFlow, route: RouteScope, subject: str):
             if statement.type != "if_statement":
                 continue
             condition = statement.child_by_field_name("condition")
-            if condition is not None and subject in flow.text(condition):
+            if condition is not None and subject in flow.node_text(condition):
                 return statement
     return None
 
@@ -1596,7 +1594,7 @@ def _assess_webhook_route(flow: SecurityFlow, route: RouteScope) -> dict[str, An
             body_bytes.append(event.span.start_byte)
             if _next_pages_body_parser_disabled(flow):
                 raw_events.append(event)
-                raw_expressions.add(_compact(flow.text(event._node)))
+                raw_expressions.add(_compact(flow.node_text(event._node)))
                 assigned = _assigned_identifier(event._node, flow)
                 if assigned:
                     raw_names.add(assigned)
@@ -1606,7 +1604,7 @@ def _assess_webhook_route(flow: SecurityFlow, route: RouteScope) -> dict[str, An
         leaf = path[-1]
         if leaf in _RAW_BODY_CALLS:
             raw_events.append(event)
-            raw_expressions.add(_compact(flow.text(event._node)))
+            raw_expressions.add(_compact(flow.node_text(event._node)))
             body_bytes.append(event.span.start_byte)
             assigned = _assigned_identifier(event._node, flow)
             if assigned:
@@ -1627,7 +1625,7 @@ def _assess_webhook_route(flow: SecurityFlow, route: RouteScope) -> dict[str, An
             continue
         body_bytes.append(node.start_byte)
         if _route_body_member_is_raw(flow, route, path[1]):
-            raw_expressions.add(_compact(flow.text(node)))
+            raw_expressions.add(_compact(flow.node_text(node)))
         assigned = _assigned_identifier(node, flow)
         if assigned and _route_body_member_is_raw(flow, route, path[1]):
             raw_names.add(assigned)
@@ -1842,7 +1840,7 @@ def _assigned_verifier_subjects(event: FlowEvent, flow: SecurityFlow) -> frozens
             if _same_node(right, event._node):
                 left = flow.unwrap(parent.child_by_field_name("left"))
                 if left is not None and left.type == "identifier":
-                    return frozenset({flow.text(left)})
+                    return frozenset({flow.node_text(left)})
             break
         if parent.type in {
             "expression_statement",
@@ -1944,7 +1942,7 @@ def _expression_is_unverified_request_data(
         return True
 
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return True
         if name in verified_names:
@@ -2156,7 +2154,7 @@ def _is_rejecting_non_post_branch(
         if parent.type == "if_statement":
             consequence = parent.child_by_field_name("consequence")
             condition = parent.child_by_field_name("condition")
-            compact = _compact(flow.text(condition)).lower()
+            compact = _compact(flow.node_text(condition)).lower()
             rejects_non_post = bool(
                 re.search(r"\.method(?:!=|!==)['\"]post['\"]", compact)
             )
@@ -2222,7 +2220,7 @@ def _route_can_inherit_webhook_verification(
             continue
         if path[-1] not in _RAW_BODY_CALLS:
             continue
-        raw_expressions.add(_compact(flow.text(event._node)))
+        raw_expressions.add(_compact(flow.node_text(event._node)))
         assigned = _assigned_identifier(event._node, flow)
         if assigned:
             raw_names.add(assigned)
@@ -2237,7 +2235,7 @@ def _route_can_inherit_webhook_verification(
             or not _route_body_member_is_raw(flow, route, path[1])
         ):
             continue
-        raw_expressions.add(_compact(flow.text(node)))
+        raw_expressions.add(_compact(flow.node_text(node)))
         assigned = _assigned_identifier(node, flow)
         if assigned:
             raw_names.add(assigned)
@@ -2423,7 +2421,7 @@ def _object_property_value(flow: SecurityFlow, node, property_name: str):
         if child.type != "pair":
             continue
         key = child.child_by_field_name("key")
-        if flow.text(key).strip("'\"") == property_name:
+        if flow.node_text(key).strip("'\"") == property_name:
             return child.child_by_field_name("value")
     return None
 
@@ -2661,10 +2659,10 @@ def _expression_is_signature(
                 event.span.start_byte,
             )
             and ("headers" in path or path[0] in header_names)
-            and _has_signature_marker(flow.text(node))
+            and _has_signature_marker(flow.node_text(node))
         )
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return False
         binding = flow.resolve_unique_binding(
@@ -2702,7 +2700,7 @@ def _expression_is_signature(
             and args
             and _header_call_receiver_is_trusted(flow, node, event, route)
         ):
-            return _has_signature_marker(flow.text(args[0]))
+            return _has_signature_marker(flow.node_text(args[0]))
     if node.type == "binary_expression" and len(node.named_children) == 2:
         left, right = node.named_children
         operator = flow.source[left.end_byte : right.start_byte].decode(
@@ -2731,7 +2729,7 @@ def _expression_is_server_secret(
         return False
     env_key = _server_environment_key(flow, node)
     if env_key is not None:
-        compact = _compact(flow.text(node))
+        compact = _compact(flow.node_text(node))
         if compact.startswith("process.env") and not flow.is_unshadowed_global_name(
             "process", node.start_byte, event.scope_id
         ):
@@ -2744,7 +2742,7 @@ def _expression_is_server_secret(
             and _environment_key_is_stable(flow, env_key, event)
         )
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return False
         binding = flow.resolve_unique_binding(
@@ -2786,7 +2784,7 @@ def _environment_key_is_stable(
                 target = node.child_by_field_name("left")
             elif node.type == "update_expression":
                 target = next(iter(node.named_children), None)
-            elif node.type == "unary_expression" and flow.text(
+            elif node.type == "unary_expression" and flow.node_text(
                 node
             ).lstrip().startswith("delete"):
                 target = next(iter(node.named_children), None)
@@ -2821,7 +2819,7 @@ def _expression_is_hmac_of_raw(
     if node is None:
         return False
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return False
         binding = flow.resolve_unique_binding(
@@ -2866,7 +2864,7 @@ def _expression_is_hmac_of_raw(
     function = node.child_by_field_name("function")
     if function is None or function.type != "member_expression":
         return False
-    if flow.text(function.child_by_field_name("property")) != "digest":
+    if flow.node_text(function.child_by_field_name("property")) != "digest":
         return False
     update_call = flow.unwrap(function.child_by_field_name("object"))
     if update_call is None or update_call.type != "call_expression":
@@ -2874,7 +2872,7 @@ def _expression_is_hmac_of_raw(
     update_function = update_call.child_by_field_name("function")
     if update_function is None or update_function.type != "member_expression":
         return False
-    if flow.text(update_function.child_by_field_name("property")) != "update":
+    if flow.node_text(update_function.child_by_field_name("property")) != "update":
         return False
     update_args = flow.call_arguments(update_call)
     if len(update_args) != 1 or not _expression_is_raw_request_body(
@@ -2953,7 +2951,7 @@ def _import_receiver_is_stable(flow: SecurityFlow, event: FlowEvent) -> bool:
                 path = flow._expression_path(target)
                 if path and path[0] == root_name:
                     return False
-            elif node.type == "unary_expression" and flow.text(
+            elif node.type == "unary_expression" and flow.node_text(
                 node
             ).lstrip().startswith("delete"):
                 target = next(iter(node.named_children), None)
@@ -2992,7 +2990,7 @@ def _expression_is_raw_request_body(
     if node is None:
         return False
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return False
         if name in raw_names and name in {
@@ -3102,7 +3100,7 @@ def _next_pages_body_parser_disabled(flow: SecurityFlow) -> bool:
             if declarator.type != "variable_declarator":
                 continue
             name = declarator.child_by_field_name("name")
-            if flow.text(name) != "config":
+            if flow.node_text(name) != "config":
                 continue
             config = flow.unwrap(declarator.child_by_field_name("value"))
             api = _exact_object_property_value(flow, config, "api")
@@ -3130,7 +3128,7 @@ def _exact_object_property_value(flow: SecurityFlow, node, property_name: str):
         if child.type != "pair":
             return None
         key = child.child_by_field_name("key")
-        if flow.text(key).strip("'\"") == property_name:
+        if flow.node_text(key).strip("'\"") == property_name:
             matches.append(child.child_by_field_name("value"))
     return matches[0] if len(matches) == 1 else None
 
@@ -3149,7 +3147,7 @@ def _expression_is_request_headers(
     if node is None:
         return False
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in {symbol.name for symbol in route.request_header_symbols}:
             return _request_root_is_stable(
                 flow, route, name, event, event.span.start_byte
@@ -3216,7 +3214,7 @@ def _header_call_receiver_is_trusted(
     }:
         return False
     property_node = function.child_by_field_name("property")
-    if flow.text(property_node).strip("'\"") != "get":
+    if flow.node_text(property_node).strip("'\"") != "get":
         return False
     receiver = function.child_by_field_name("object")
     return _expression_is_request_headers(flow, receiver, event, route)
@@ -3236,7 +3234,7 @@ def _expression_is_svix_headers_object(
     if node is None:
         return False
     if node.type == "identifier":
-        name = flow.text(node)
+        name = flow.node_text(node)
         if name in seen:
             return False
         binding = flow.resolve_unique_binding(
@@ -3283,7 +3281,7 @@ def _expression_reads_named_header(
     args = flow.call_arguments(node)
     return bool(
         len(args) == 1
-        and flow.text(args[0]).strip("'\"").lower() == header_name.lower()
+        and flow.node_text(args[0]).strip("'\"").lower() == header_name.lower()
         and _header_call_receiver_is_trusted(flow, node, event, route)
     )
 
@@ -3303,10 +3301,10 @@ def _request_names(flow: SecurityFlow, route: RouteScope, before_byte: int) -> s
             or declared.type != "identifier"
             or value is None
             or value.type != "identifier"
-            or flow.text(value) not in names
+            or flow.node_text(value) not in names
         ):
             continue
-        names.add(flow.text(declared))
+        names.add(flow.node_text(declared))
     return names
 
 
@@ -3340,7 +3338,7 @@ def _request_root_is_stable(
         and _request_root_is_stable(
             flow,
             route,
-            flow.text(value),
+            flow.node_text(value),
             event,
             stable_until,
             seen | {name},
@@ -3409,7 +3407,7 @@ def _resolved_name_is_stable(
 
 
 def _server_environment_key(flow: SecurityFlow, node) -> str | None:
-    compact = _compact(flow.text(node))
+    compact = _compact(flow.node_text(node))
     match = re.fullmatch(
         r"(?:process\.env|import\.meta\.env)"
         r"(?:\.([A-Za-z_$][A-Za-z0-9_$]*)|\[['\"]([^'\"]+)['\"]\])",
@@ -3426,7 +3424,7 @@ def _has_signature_marker(text: str) -> bool:
 
 
 def _is_empty_literal(flow: SecurityFlow, node) -> bool:
-    return _compact(flow.text(node)) in {'""', "''", "``"}
+    return _compact(flow.node_text(node)) in {'""', "''", "``"}
 
 
 def _condition_is_exact_negative_call(flow: SecurityFlow, condition, call_node) -> bool:
@@ -3484,7 +3482,7 @@ def _assigned_identifier(call_node, flow: SecurityFlow) -> str | None:
     name_node = declarator.child_by_field_name("name")
     if name_node is None or name_node.type != "identifier":
         return None
-    return flow.text(name_node)
+    return flow.node_text(name_node)
 
 
 def _enclosing_declarator(node):

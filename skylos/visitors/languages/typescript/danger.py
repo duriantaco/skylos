@@ -849,7 +849,7 @@ def _resolved_flow_value(flow, name: str, before_byte: int, scope_id: int):
         value = flow.unwrap(binding.value_node)
         if value is None or value.type != "identifier":
             return value
-        name = flow.text(value)
+        name = flow.node_text(value)
         before_byte = binding.symbol.decl_byte
         scope_id = binding.symbol.scope_id
     return None
@@ -2657,7 +2657,7 @@ class _ServerActionSQLTaint:
             node.type == "subscript_expression"
             and not self._computed_property_may_be_string(property_node)
         ):
-            return f"{receiver}.<non-string>"
+            return f"{receiver}.%00non-string"
         return f"{receiver}.*"
 
     @staticmethod

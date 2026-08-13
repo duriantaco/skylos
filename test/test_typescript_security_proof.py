@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,10 @@ WEBHOOK_GUARD_PROOF = "provider signature verification of request payload before
 def _scan_typescript(tmp_path: Path, relative_path: str, source: str) -> list[dict]:
     file_path = tmp_path / relative_path
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(source, encoding="utf-8")
+    file_path.write_text(  # skylos: ignore[SKY-D324] pytest-owned temporary fixture path
+        source,
+        encoding="utf-8",
+    )
     *_, danger, _, _, _, _, _ = scan_typescript_file(str(file_path))
     return danger
 
@@ -3017,6 +3021,126 @@ export async function POST(request: Request) {
     )
 
     assert _rule_findings(findings, "SKY-D280") == []
+
+
+def test_d280_authjs_adapter_read_failure_does_not_prove_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"authjs-symlink-fixture","private":true}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["./*"]}}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "auth.ts").write_text(
+        """
+import NextAuth from "next-auth";
+
+export const { auth } = NextAuth({ providers: [] });
+""",
+        encoding="utf-8",
+    )
+
+    from skylos.visitors.languages.typescript import security_proofs
+
+    safe_read_calls: list[tuple[tuple, dict]] = []
+
+    def reject_safe_read(*args, **kwargs):
+        safe_read_calls.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(
+        security_proofs,
+        "read_project_text_no_symlink",
+        reject_safe_read,
+    )
+    findings = _scan_typescript(
+        tmp_path,
+        "app/api/account/route.ts",
+        """
+import { auth } from "@/auth";
+
+export async function POST() {
+  const session = await auth();
+  if (!session) return new Response("unauthorized", { status: 401 });
+  await db.account.deleteMany();
+  return Response.json({ ok: true });
+}
+""",
+    )
+
+    finding = _one_rule_finding(findings, "SKY-D280")
+    assert len(safe_read_calls) == 1
+    (project_root, target), read_options = safe_read_calls[0]
+    assert project_root == str(tmp_path)
+    assert target == str(tmp_path / "auth.ts")
+    assert read_options == {
+        "max_bytes": security_proofs._MAX_LOCAL_AUTH_MODULE_BYTES,
+        "errors": "surrogateescape",
+        "newline": "",
+    }
+    assert _security_evidence(finding)["guards_missing"] == [AUTH_GUARD_PROOF]
+
+
+def test_d280_authjs_adapter_proof_is_not_reused_after_same_size_rewrite(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"authjs-rewrite-fixture","private":true}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["./*"]}}}\n',
+        encoding="utf-8",
+    )
+    auth_module = tmp_path / "auth.ts"
+    trusted_source = (
+        'import NextAuth from "next-auth";\n'
+        "export const { auth } = NextAuth({ providers: [] });\n"
+    )
+    untrusted_source = (
+        'import FakeAuth from "fake-auth";\n'
+        "export const { auth } = FakeAuth({ providers: [] });\n"
+    )
+    assert len(untrusted_source.encode()) == len(trusted_source.encode())
+    auth_module.write_text(trusted_source, encoding="utf-8")
+    original_stat = auth_module.stat()
+    route_source = """
+import { auth } from "@/auth";
+
+export async function POST() {
+  const session = await auth();
+  if (!session) return new Response("unauthorized", { status: 401 });
+  await db.account.deleteMany();
+  return Response.json({ ok: true });
+}
+"""
+
+    trusted_findings = _scan_typescript(
+        tmp_path,
+        "app/api/account/route.ts",
+        route_source,
+    )
+    assert _rule_findings(trusted_findings, "SKY-D280") == []
+
+    auth_module.write_text(untrusted_source, encoding="utf-8")
+    os.utime(
+        auth_module,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    rewritten_stat = auth_module.stat()
+    assert rewritten_stat.st_size == original_stat.st_size
+    assert rewritten_stat.st_mtime_ns == original_stat.st_mtime_ns
+
+    rewritten_findings = _scan_typescript(
+        tmp_path,
+        "app/api/account/route.ts",
+        route_source,
+    )
+    finding = _one_rule_finding(rewritten_findings, "SKY-D280")
+    assert _security_evidence(finding)["guards_missing"] == [AUTH_GUARD_PROOF]
 
 
 def test_d280_spoofed_local_auth_adapter_is_not_trusted(tmp_path: Path) -> None:
