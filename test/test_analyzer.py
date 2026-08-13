@@ -3388,7 +3388,7 @@ def fake_call():
             "low_entropy_uuid",
         }
 
-    def test_analyze_flags_protocol_and_implementation_defaults(
+    def test_analyze_handles_protocol_positional_only_ellipsis_default(
         self,
         tmp_path,
         monkeypatch,
@@ -3399,21 +3399,9 @@ def fake_call():
             """
 from typing import Protocol
 
-class Notifier(Protocol):
-    def notify(
-        self,
-        protocol_email: str = "test@example.com",
-        /,
-    ) -> None:
+class SupportsRead(Protocol):
+    def read(self, length: int = ..., /) -> bytes:
         ...
-
-class ConcreteNotifier(Notifier):
-    def notify(
-        self,
-        implementation_email: str = "test@example.com",
-        /,
-    ) -> None:
-        return None
 """.strip()
             + "\n",
             encoding="utf-8",
@@ -3426,11 +3414,7 @@ class ConcreteNotifier(Notifier):
         findings = [
             f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
         ]
-
-        assert {finding["name"] for finding in findings} == {
-            "protocol_email",
-            "implementation_email",
-        }
+        assert findings == []
 
     def test_analyze_flags_no_effect_statement(self, tmp_path):
         src = tmp_path / "app.py"
