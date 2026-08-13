@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import sys
 import time
@@ -638,7 +639,12 @@ class TestBatchedGrepVerify:
             findings, str(tmp_path), parallel=True, max_workers=2
         )
 
-        assert set(batched) == set(legacy) == {"pkg.bar"}
+        # Batched replay must agree with the per-pattern engine either way;
+        # only ripgrep's UTS#18 \b excludes the NFD line from the foo pattern,
+        # so the strict set is asserted only when ripgrep does the searching.
+        assert set(batched) == set(legacy)
+        if shutil.which("rg"):
+            assert set(batched) == {"pkg.bar"}
 
     def test_batch_decode_failure_falls_back_to_legacy_results(self):
         request = GrepRequest(
