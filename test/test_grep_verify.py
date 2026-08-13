@@ -1,6 +1,6 @@
-import shutil
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from skylos.core.grep_cache import GrepCache
@@ -26,6 +26,15 @@ from skylos.core.grep_verify_common import (
     execute_grep_batch,
     replay_grep_results,
 )
+
+
+def _write_fake_ripgrep(tmp_path: Path, stdout: bytes) -> str:
+    executable = tmp_path / "rg"
+    executable.write_text(
+        f"#!/usr/bin/env python3\nimport sys\nsys.stdout.buffer.write({stdout!r})\n"
+    )
+    executable.chmod(0o755)
+    return str(executable)
 
 
 class TestIsDefinitionLine:
@@ -624,10 +633,12 @@ class TestBatchedGrepVerify:
         mock_direct.assert_called_once()
 
     def test_non_utf8_matching_line_does_not_abort_verification(self, tmp_path):
-        assert shutil.which("rg") is not None
         library = tmp_path / "library.py"
         library.write_text("def helper():\n    return 1\n")
-        (tmp_path / "invalid.py").write_bytes(b"helper()  # \xe9\n")
+        invalid = tmp_path / "invalid.py"
+        invalid.write_bytes(b"helper()  # \xe9\n")
+        output = f"{invalid}:1:helper()  # ".encode() + b"\xe9\n"
+        fake_rg = _write_fake_ripgrep(tmp_path, output)
         finding = {
             "name": "helper",
             "full_name": "library.helper",
@@ -638,8 +649,9 @@ class TestBatchedGrepVerify:
             "confidence": 80,
         }
 
-        batched = grep_verify_findings([finding], str(tmp_path))
-        legacy = grep_verify_findings([finding], str(tmp_path), parallel=True)
+        with patch("skylos.core.grep_verify_common.shutil.which", return_value=fake_rg):
+            batched = grep_verify_findings([finding], str(tmp_path))
+            legacy = grep_verify_findings([finding], str(tmp_path), parallel=True)
 
         assert batched == legacy == {}
 
@@ -650,7 +662,14 @@ class TestBatchedGrepVerify:
             )
         library = tmp_path / "library.py"
         library.write_text("def helper():\n    return 1\n")
-        (tmp_path / "z_usage.py").write_text("helper()\n")
+        usage = tmp_path / "z_usage.py"
+        usage.write_text("helper()\n")
+        output_lines = [
+            f"{tmp_path / f'a{index:02}.py'}:1:def helper():" for index in range(30)
+        ]
+        output_lines.extend((f"{library}:1:def helper():", f"{usage}:1:helper()"))
+        fake_output = "\n".join(output_lines).encode() + b"\n"
+        fake_rg = _write_fake_ripgrep(tmp_path, fake_output)
         finding = {
             "name": "helper",
             "full_name": "library.helper",
@@ -661,7 +680,8 @@ class TestBatchedGrepVerify:
             "confidence": 80,
         }
 
-        verdicts = grep_verify_findings([finding], str(tmp_path))
+        with patch("skylos.core.grep_verify_common.shutil.which", return_value=fake_rg):
+            verdicts = grep_verify_findings([finding], str(tmp_path))
 
         assert set(verdicts) == {"library.helper"}
 
