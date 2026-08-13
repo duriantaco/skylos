@@ -1,4 +1,6 @@
+import shutil
 import time
+from collections.abc import Sequence
 from unittest.mock import Mock, patch
 
 from skylos.core.grep_cache import GrepCache
@@ -20,7 +22,9 @@ from skylos.core.grep_verify import (
 from skylos.core.grep_verify_common import (
     GrepRequest,
     _python_regex,
+    _run_grep,
     execute_grep_batch,
+    replay_grep_results,
 )
 
 
@@ -458,6 +462,13 @@ class TestBatchedGrepVerify:
     def test_python_regex_rejects_untranslated_posix_classes(self):
         assert _python_regex("[[:digit:]]+") is None
 
+    def test_python_regex_preserves_ascii_posix_space_semantics(self):
+        regex = _python_regex(r"\.helper[[:space:]]*\(")
+
+        assert regex is not None
+        assert regex.search(".helper \t(") is not None
+        assert regex.search(".helper\N{NO-BREAK SPACE}(") is None
+
     def test_compatible_requests_share_one_ripgrep_process(self):
         common = {
             "project_root": "/repo",
@@ -486,12 +497,9 @@ class TestBatchedGrepVerify:
                 return_value=process_result,
             ) as mock_run,
         ):
-            results, completed = execute_grep_batch(
-                [foo_request, bar_request], deadline=time.monotonic() + 10
-            )
+            results = execute_grep_batch([foo_request, bar_request])
 
         assert mock_run.call_count == 1
-        assert completed == {foo_request, bar_request}
         assert results[foo_request] == (
             "/repo/a.py:3:foo(); bar()",
             "/repo/z.py:2:foo()",
@@ -501,6 +509,188 @@ class TestBatchedGrepVerify:
             "/repo/z.py:9:bar()",
         )
         assert mock_run.call_args.kwargs["input"] == r"\bfoo\b" "\n" r"\bbar\b" "\n"
+
+    def test_non_ascii_and_newline_patterns_run_directly(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        ascii_request = GrepRequest(pattern=r"\bascii\b", **common)
+        unicode_request = GrepRequest(pattern=r"\bकु\b", **common)
+        newline_request = GrepRequest(pattern="first\nsecond", **common)
+        process_result = Mock(
+            returncode=0,
+            stdout="/repo/a.py:1:ascii()\n",
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.subprocess.run",
+                return_value=process_result,
+            ) as mock_run,
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                side_effect=lambda request: [f"direct:{request.pattern}"],
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch(
+                [ascii_request, unicode_request, newline_request]
+            )
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.kwargs["input"] == r"\bascii\b" "\n"
+        assert mock_direct.call_args_list[0].args == (unicode_request,)
+        assert mock_direct.call_args_list[1].args == (newline_request,)
+        assert results[unicode_request] == (r"direct:\bकु\b",)
+        assert results[newline_request] == ("direct:first\nsecond",)
+
+    def test_batch_decode_failure_falls_back_to_legacy_results(self):
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        decode_error = UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=decode_error,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                return_value=["/repo/main.py:1:helper()"],
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch([request])
+
+        assert results == {request: ("/repo/main.py:1:helper()",)}
+        mock_direct.assert_called_once_with(request)
+
+    def test_no_ripgrep_uses_legacy_requests(self):
+        request = GrepRequest(
+            pattern="helper",
+            project_root="/repo",
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+
+        with (
+            patch("skylos.core.grep_verify_common.shutil.which", return_value=None),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                return_value=["/repo/main.py:1:helper()"],
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch([request])
+
+        assert results == {request: ("/repo/main.py:1:helper()",)}
+        mock_direct.assert_called_once_with(request)
+
+    def test_replay_miss_executes_legacy_request(self):
+        with (
+            replay_grep_results({}),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                return_value=["/repo/main.py:1:helper()"],
+            ) as mock_direct,
+        ):
+            results = _run_grep(
+                "helper",
+                "/repo",
+                include_globs=["*.py"],
+                fixed_string=True,
+                max_results=5,
+            )
+
+        assert results == ["/repo/main.py:1:helper()"]
+        mock_direct.assert_called_once()
+
+    def test_non_utf8_matching_line_does_not_abort_verification(self, tmp_path):
+        assert shutil.which("rg") is not None
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        (tmp_path / "invalid.py").write_bytes(b"helper()  # \xe9\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        batched = grep_verify_findings([finding], str(tmp_path))
+        legacy = grep_verify_findings([finding], str(tmp_path), parallel=True)
+
+        assert batched == legacy == {}
+
+    def test_sorted_over_cap_definitions_do_not_hide_late_usage(self, tmp_path):
+        for index in range(30):
+            (tmp_path / f"a{index:02}.py").write_text(
+                "def helper():\n    return None\n"
+            )
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        (tmp_path / "z_usage.py").write_text("helper()\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        verdicts = grep_verify_findings([finding], str(tmp_path))
+
+        assert set(verdicts) == {"library.helper"}
+
+    def test_started_finding_batch_completes_after_deadline(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        (tmp_path / "main.py").write_text("helper()\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        def slow_batch(
+            requests: Sequence[GrepRequest],
+        ) -> dict[GrepRequest, tuple[str, ...]]:
+            time.sleep(0.02)
+            return execute_grep_batch(requests)
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch", side_effect=slow_batch
+        ):
+            verdicts = grep_verify_findings([finding], str(tmp_path), time_budget=0.01)
+
+        assert set(verdicts) == {"library.helper"}
 
     def test_batched_and_legacy_verdicts_match(self, tmp_path):
         library = tmp_path / "library.py"

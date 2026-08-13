@@ -5,7 +5,6 @@ import logging
 import re
 import shutil
 import subprocess
-import time
 import tokenize
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -88,11 +87,25 @@ _GREP_EXCLUDE_DIRS = (
 )
 
 _GREP_BATCH_SIZE = 128
+# Classification precedes strategy-specific definition filtering. Keep a
+# wider deterministic window so early definitions do not crowd out usages.
+_GREP_BATCH_RESULT_FLOOR = 256
+_DEFAULT_GREP_GLOBS = (
+    "*.py",
+    "*.rst",
+    "*.md",
+    "*.yaml",
+    "*.yml",
+    "*.toml",
+    "*.cfg",
+    "*.ini",
+    "*.txt",
+)
 # Python's classifier must preserve the same leftmost-first semantics as each
 # original ripgrep pattern. Keep this translation deliberately narrow: an
 # unsupported POSIX class falls back to the legacy one-pattern subprocess.
 _PYTHON_REGEX_TRANSLATIONS = {
-    "[[:space:]]": r"\s",
+    "[[:space:]]": r"[ \t\n\r\f\v]",
     "[[:alnum:]_]": r"[A-Za-z0-9_]",
 }
 _POSIX_CLASS = re.compile(r"\[\[:[^]]+:\]\]")
@@ -166,20 +179,6 @@ def replay_grep_results(
         _GREP_RESULT_REPLAY.reset(token)
 
 
-def _default_grep_globs() -> tuple[str, ...]:
-    return (
-        "*.py",
-        "*.rst",
-        "*.md",
-        "*.yaml",
-        "*.yml",
-        "*.toml",
-        "*.cfg",
-        "*.ini",
-        "*.txt",
-    )
-
-
 def _make_grep_request(
     pattern: str,
     project_root: str,
@@ -194,7 +193,7 @@ def _make_grep_request(
         project_root=project_root,
         use_regex=use_regex,
         include_globs=(
-            tuple(include_globs) if include_globs is not None else _default_grep_globs()
+            tuple(include_globs) if include_globs is not None else _DEFAULT_GREP_GLOBS
         ),
         fixed_string=fixed_string,
         max_results=max_results,
@@ -291,11 +290,28 @@ def _batch_group_key(request: GrepRequest) -> tuple[str, tuple[str, ...], bool]:
     return request.project_root, request.include_globs, request.fixed_string
 
 
-def _run_ripgrep_batch(
+def _requires_direct_grep(request: GrepRequest) -> bool:
+    if "\n" in request.pattern or "\r" in request.pattern:
+        return True
+    if not request.pattern.isascii():
+        return True
+    return not request.fixed_string and _python_regex(request.pattern) is None
+
+
+def _partition_grep_requests(
     requests: Sequence[GrepRequest],
-    rg: str,
-    timeout: float,
-) -> tuple[dict[GrepRequest, tuple[str, ...]], set[GrepRequest]]:
+) -> tuple[list[GrepRequest], list[GrepRequest]]:
+    batched: list[GrepRequest] = []
+    direct: list[GrepRequest] = []
+    for request in requests:
+        target = direct if _requires_direct_grep(request) else batched
+        target.append(request)
+    return batched, direct
+
+
+def _run_ripgrep_pattern_file(
+    requests: Sequence[GrepRequest], rg: str, timeout: float
+) -> list[str]:
     representative = requests[0]
     cmd = _ripgrep_command(representative, rg)
     cmd.extend(["-f", "-", "--", representative.project_root])
@@ -311,99 +327,105 @@ def _run_ripgrep_batch(
     if result.returncode not in (0, 1):
         msg = result.stderr.strip() or f"exit status {result.returncode}"
         raise RuntimeError(msg)
+    return sorted(_filter_grep_output(result.stdout), key=_grep_line_sort_key)
 
-    lines = sorted(_filter_grep_output(result.stdout), key=_grep_line_sort_key)
-    line_contents = [(line, _grep_line_content(line)) for line in lines]
-    compiled: dict[GrepRequest, re.Pattern[str]] = {}
-    direct_requests: set[GrepRequest] = set()
-    for request in requests:
-        if request.fixed_string:
+
+def _request_matches_line(
+    request: GrepRequest,
+    regex: re.Pattern[str] | None,
+    content: str,
+) -> bool:
+    if request.fixed_string:
+        return request.pattern in content
+    return regex is not None and regex.search(content) is not None
+
+
+def _classify_grep_request(
+    request: GrepRequest,
+    line_contents: Sequence[tuple[str, str]],
+) -> tuple[str, ...]:
+    if request.max_results <= 0:
+        return ()
+    regex = None if request.fixed_string else _python_regex(request.pattern)
+    limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+    matches: list[str] = []
+    for line, content in line_contents:
+        if not _request_matches_line(request, regex, content):
             continue
-        pattern = _python_regex(request.pattern)
-        if pattern is None:
-            direct_requests.add(request)
-        else:
-            compiled[request] = pattern
+        matches.append(line)
+        if len(matches) >= limit:
+            break
+    return tuple(matches)
 
+
+def _run_serial_grep_requests(
+    requests: Sequence[GrepRequest],
+) -> dict[GrepRequest, tuple[str, ...]]:
+    return {request: tuple(_run_grep_request(request)) for request in requests}
+
+
+def _run_ripgrep_batch(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    timeout: float = 30.0,
+) -> dict[GrepRequest, tuple[str, ...]]:
+    batched, direct = _partition_grep_requests(requests)
     batch_results: dict[GrepRequest, tuple[str, ...]] = {}
-    completed: set[GrepRequest] = set()
-    for request in requests:
-        if request in direct_requests:
-            continue
-        matches: list[str] = []
-        if request.max_results <= 0:
-            batch_results[request] = ()
-            completed.add(request)
-            continue
-        regex = compiled.get(request)
-        for line, content in line_contents:
-            is_match = (
-                request.pattern in content
-                if request.fixed_string
-                else regex is not None and regex.search(content) is not None
-            )
-            if not is_match:
-                continue
-            matches.append(line)
-            if len(matches) >= request.max_results:
-                break
-        batch_results[request] = tuple(matches)
-        completed.add(request)
+    if not batched:
+        return _run_serial_grep_requests(direct)
 
-    for request in direct_requests:
-        batch_results[request] = tuple(_run_grep_request(request))
-        completed.add(request)
-    return batch_results, completed
+    lines = _run_ripgrep_pattern_file(batched, rg, timeout)
+    line_contents = [(line, _grep_line_content(line)) for line in lines]
+    batch_results.update(
+        (request, _classify_grep_request(request, line_contents)) for request in batched
+    )
+    batch_results.update(_run_serial_grep_requests(direct))
+    return batch_results
+
+
+def _group_grep_requests(
+    requests: Sequence[GrepRequest],
+) -> dict[tuple[str, tuple[str, ...], bool], list[GrepRequest]]:
+    groups: dict[tuple[str, tuple[str, ...], bool], list[GrepRequest]] = {}
+    for request in requests:
+        groups.setdefault(_batch_group_key(request), []).append(request)
+    return groups
+
+
+def _execute_grep_chunk(
+    requests: Sequence[GrepRequest], rg: str
+) -> dict[GrepRequest, tuple[str, ...]]:
+    try:
+        return _run_ripgrep_batch(requests, rg)
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        logger.debug("batched grep failed; using serial fallback: %s", exc)
+        return _run_serial_grep_requests(requests)
 
 
 def execute_grep_batch(
     requests: Sequence[GrepRequest],
-    *,
-    deadline: float,
-) -> tuple[dict[GrepRequest, tuple[str, ...]], set[GrepRequest]]:
+) -> dict[GrepRequest, tuple[str, ...]]:
     """Execute compatible grep requests in fixed-size batches."""
     unique_requests = list(dict.fromkeys(requests))
     if not unique_requests:
-        return {}, set()
+        return {}
 
     rg = shutil.which("rg")
     if not rg:
-        results: dict[GrepRequest, tuple[str, ...]] = {}
-        completed: set[GrepRequest] = set()
-        for request in unique_requests:
-            if time.monotonic() >= deadline:
-                break
-            results[request] = tuple(_run_grep_request(request))
-            completed.add(request)
-        return results, completed
-
-    groups: dict[tuple[str, tuple[str, ...], bool], list[GrepRequest]] = {}
-    for request in unique_requests:
-        groups.setdefault(_batch_group_key(request), []).append(request)
+        return _run_serial_grep_requests(unique_requests)
 
     results: dict[GrepRequest, tuple[str, ...]] = {}
-    completed: set[GrepRequest] = set()
-    for group_requests in groups.values():
+    for group_requests in _group_grep_requests(unique_requests).values():
         for start in range(0, len(group_requests), _GREP_BATCH_SIZE):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return results, completed
             chunk = group_requests[start : start + _GREP_BATCH_SIZE]
-            try:
-                chunk_results, chunk_completed = _run_ripgrep_batch(
-                    chunk, rg, min(30.0, remaining)
-                )
-            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-                logger.debug("batched grep failed; using serial fallback: %s", exc)
-                for request in chunk:
-                    if time.monotonic() >= deadline:
-                        return results, completed
-                    results[request] = tuple(_run_grep_request(request))
-                    completed.add(request)
-            else:
-                results.update(chunk_results)
-                completed.update(chunk_completed)
-    return results, completed
+            results.update(_execute_grep_chunk(chunk, rg))
+    return results
 
 
 def _run_grep(
@@ -429,7 +451,11 @@ def _run_grep(
 
     replay = _GREP_RESULT_REPLAY.get()
     if replay is not None:
-        return list(replay.get(request, ()))[:max_results]
+        replayed = replay.get(request)
+        if replayed is not None:
+            return list(replayed)
+        logger.warning("grep replay miss for pattern %r; executing directly", pattern)
+        return _run_grep_request(request)
 
     return _run_grep_request(request)
 
