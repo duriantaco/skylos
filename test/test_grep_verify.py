@@ -570,6 +570,76 @@ class TestBatchedGrepVerify:
         assert results[unicode_request] == (r"direct:\bकु\b",)
         assert results[newline_request] == ("direct:first\nsecond",)
 
+    def test_non_ascii_content_uses_ripgrep_boundary_semantics(self):
+        # NFD: "foo" + combining acute accent. Ripgrep's UTS#18 \b treats
+        # the mark as a word character (no boundary, so no foo match); Python
+        # re does not, so unadjudicated replay would credit foo with a line
+        # ripgrep never matched for it.
+        content = "pkg.foo\u0301 = 1; pkg.bar()"
+        line = f"/repo/code.py:1:{content}"
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        foo_request = GrepRequest(pattern=r"\bpkg\.foo\b", **common)
+        bar_request = GrepRequest(pattern=r"\bpkg\.bar\b", **common)
+
+        def fake_run(cmd, **kwargs):
+            if "-f" in cmd:
+                return Mock(returncode=0, stdout=f"{line}\n", stderr="")
+            pattern = cmd[-2]
+            if pattern == foo_request.pattern:
+                return Mock(returncode=1, stdout="", stderr="")
+            return Mock(returncode=0, stdout=f"1:{content}\n", stderr="")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.subprocess.run",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([foo_request, bar_request])
+
+        assert mock_run.call_count == 3
+        assert results[foo_request] == ()
+        assert results[bar_request] == (line,)
+
+    def test_batched_and_legacy_verdicts_match_on_non_ascii_content(self, tmp_path):
+        package = tmp_path / "pkg.py"
+        package.write_text(
+            "def foo():\n    return 1\n\ndef bar():\n    return 2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "other.py").write_text(
+            "pkg.foo\u0301 = 1; pkg.bar()\n", encoding="utf-8"
+        )
+        findings = [
+            {
+                "name": name,
+                "full_name": f"pkg.{name}",
+                "simple_name": name,
+                "type": "function",
+                "file": str(package),
+                "line": line,
+                "confidence": 80,
+            }
+            for name, line in (("foo", 1), ("bar", 4))
+        ]
+
+        batched = grep_verify_findings(findings, str(tmp_path))
+        legacy = grep_verify_findings(
+            findings, str(tmp_path), parallel=True, max_workers=2
+        )
+
+        assert set(batched) == set(legacy) == {"pkg.bar"}
+
     def test_batch_decode_failure_falls_back_to_legacy_results(self):
         request = GrepRequest(
             pattern=r"\bhelper\b",

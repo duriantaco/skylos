@@ -330,6 +330,51 @@ def _run_ripgrep_pattern_file(
     return sorted(_filter_grep_output(result.stdout), key=_grep_line_sort_key)
 
 
+def _ripgrep_stdin_match_positions(
+    pattern: str, contents: Sequence[str], rg: str
+) -> set[int]:
+    """Return the 0-based positions of the given lines that ripgrep matches."""
+    result = subprocess.run(
+        [rg, "-n", "--no-heading", "--color", "never", "--", pattern, "-"],
+        input="\n".join(contents) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        msg = result.stderr.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(msg)
+    positions: set[int] = set()
+    for line in result.stdout.splitlines():
+        prefix = line.split(":", 1)[0]
+        if prefix.isdigit():
+            positions.add(int(prefix) - 1)
+    return positions
+
+
+def _non_ascii_line_overrides(
+    request: GrepRequest,
+    non_ascii_lines: Sequence[tuple[int, str]],
+    rg: str,
+) -> dict[int, bool] | None:
+    # After POSIX-class translation the only engine-sensitive construct left
+    # in classifier patterns is \b: ripgrep's UTS#18 word class includes
+    # combining marks, join controls, and non-decimal numerics that Python's
+    # re does not (and vice versa). Let ripgrep itself adjudicate non-ASCII
+    # lines so batched attribution matches what a per-pattern search returns.
+    # Fixed strings are byte-exact substring checks and never diverge.
+    if request.fixed_string or not non_ascii_lines:
+        return None
+    matched = _ripgrep_stdin_match_positions(
+        request.pattern, [content for _, content in non_ascii_lines], rg
+    )
+    return {
+        index: position in matched
+        for position, (index, _) in enumerate(non_ascii_lines)
+    }
+
+
 def _request_matches_line(
     request: GrepRequest,
     regex: re.Pattern[str] | None,
@@ -343,14 +388,21 @@ def _request_matches_line(
 def _classify_grep_request(
     request: GrepRequest,
     line_contents: Sequence[tuple[str, str]],
+    overrides: dict[int, bool] | None = None,
 ) -> tuple[str, ...]:
     if request.max_results <= 0:
         return ()
     regex = None if request.fixed_string else _python_regex(request.pattern)
     limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
     matches: list[str] = []
-    for line, content in line_contents:
-        if not _request_matches_line(request, regex, content):
+    for index, (line, content) in enumerate(line_contents):
+        override = overrides.get(index) if overrides is not None else None
+        is_match = (
+            override
+            if override is not None
+            else _request_matches_line(request, regex, content)
+        )
+        if not is_match:
             continue
         matches.append(line)
         if len(matches) >= limit:
@@ -376,8 +428,21 @@ def _run_ripgrep_batch(
 
     lines = _run_ripgrep_pattern_file(batched, rg, timeout)
     line_contents = [(line, _grep_line_content(line)) for line in lines]
+    non_ascii_lines = [
+        (index, content)
+        for index, (_, content) in enumerate(line_contents)
+        if not content.isascii()
+    ]
     batch_results.update(
-        (request, _classify_grep_request(request, line_contents)) for request in batched
+        (
+            request,
+            _classify_grep_request(
+                request,
+                line_contents,
+                _non_ascii_line_overrides(request, non_ascii_lines, rg),
+            ),
+        )
+        for request in batched
     )
     batch_results.update(_run_serial_grep_requests(direct))
     return batch_results
