@@ -16,6 +16,7 @@ def _worker(
     enable_quality_rules=True,
     enable_danger_rules=True,
     config_file=None,
+    project_root=None,
 ):
     from skylos.analyzer import proc_file
 
@@ -30,6 +31,7 @@ def _worker(
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
         config_file=config_file,
+        project_root=project_root,
     )
     return str(file_path), out
 
@@ -48,6 +50,7 @@ def run_proc_file_parallel(
     enable_quality_rules=True,
     enable_danger_rules=True,
     config_file=None,
+    project_root=None,
 ):
     import os
 
@@ -72,6 +75,7 @@ def run_proc_file_parallel(
             enable_quality_rules=enable_quality_rules,
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
+            project_root=project_root,
         )
 
     if any(str(f).endswith(".go") for f in files):
@@ -89,6 +93,7 @@ def run_proc_file_parallel(
             enable_quality_rules=enable_quality_rules,
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
+            project_root=project_root,
         )
 
     pending = []
@@ -113,6 +118,7 @@ def run_proc_file_parallel(
                 enable_quality_rules,
                 enable_danger_rules,
                 config_file,
+                project_root,
             )
             fut_to_file[fut] = f
 
@@ -146,6 +152,7 @@ def run_proc_file_parallel(
                         enable_quality_rules=enable_quality_rules,
                         enable_danger_rules=enable_danger_rules,
                         config_file=config_file,
+                        project_root=project_root,
                     )
                 except Exception:
                     logger.error(
@@ -182,6 +189,7 @@ def _run_mixed_files_with_serial_go(
     enable_quality_rules=True,
     enable_danger_rules=True,
     config_file=None,
+    project_root=None,
 ):
     go_files = []
     other_files = []
@@ -216,6 +224,7 @@ def _run_mixed_files_with_serial_go(
             enable_quality_rules=enable_quality_rules,
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
+            project_root=project_root,
         )
         for f, out in zip(other_files, other_outs):
             results[str(f)] = out
@@ -233,6 +242,7 @@ def _run_mixed_files_with_serial_go(
             enable_quality_rules=enable_quality_rules,
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
+            project_root=project_root,
         )
         for f, out in zip(go_files, go_outs):
             results[str(f)] = out
@@ -252,6 +262,7 @@ def _run_proc_files_serial(
     enable_quality_rules=True,
     enable_danger_rules=True,
     config_file=None,
+    project_root=None,
 ):
     outs = []
     total = len(files)
@@ -273,6 +284,7 @@ def _run_proc_files_serial(
             enable_quality_rules=enable_quality_rules,
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
+            project_root=project_root,
         )
         outs.append(out)
 

@@ -67,7 +67,10 @@ def test_parallel_path_preserves_order(monkeypatch, tmp_path):
 
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
+    project_roots = []
+
     def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True, **kwargs):
+        project_roots.append(kwargs.get("project_root"))
         return ("ok", str(file_path), mod)
 
     import skylos.analyzer
@@ -77,11 +80,17 @@ def test_parallel_path_preserves_order(monkeypatch, tmp_path):
     files = [tmp_path / "x.py", tmp_path / "y.py", tmp_path / "z.py"]
     modmap = {files[0]: "mx", files[1]: "my", files[2]: "mz"}
 
-    out = ps.run_proc_file_parallel(files, modmap, jobs=2)
+    out = ps.run_proc_file_parallel(
+        files,
+        modmap,
+        jobs=2,
+        project_root=tmp_path,
+    )
 
     assert out[0] == ("ok", str(files[0]), "mx")
     assert out[1] == ("ok", str(files[1]), "my")
     assert out[2] == ("ok", str(files[2]), "mz")
+    assert project_roots == [tmp_path, tmp_path, tmp_path]
 
 
 def test_go_files_use_serial_path_to_keep_module_cache_effective(monkeypatch, tmp_path):

@@ -27,6 +27,10 @@ def read_text_no_symlink(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
 
     fd: int | None = None
     try:
@@ -96,6 +100,10 @@ def read_project_text_no_symlink(
         flags = os.O_RDONLY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_NONBLOCK"):
+            flags |= os.O_NONBLOCK
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
         file_fd = os.open(relative.parts[-1], flags, dir_fd=directory_fd)
         file_stat = os.fstat(file_fd)
         if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > max_bytes:
