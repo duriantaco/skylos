@@ -65,6 +65,7 @@ from skylos.constants import (
     SUBPROCESS_TIMEOUT,
     UPLOAD_TIMEOUT,
 )
+from skylos.core.safe_cache_io import read_text_no_symlink
 
 logger = logging.getLogger(__name__)
 
@@ -263,20 +264,18 @@ def _normalize_branch(branch):
 
 def _read_json(path: Path):
     try:
-        if path and _is_bounded_regular_file(path):
-            content = path.read_text(  # skylos: ignore[SKY-D325] regular non-symlink capped at 1 MB
-                encoding="utf-8"
-            )
+        if not path:
+            return None
+        content = read_text_no_symlink(
+            path,
+            max_bytes=1_000_000,
+            encoding="utf-8",
+        )
+        if content is not None:
             return json.loads(content)
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return None
-
-
-def _is_bounded_regular_file(path: Path, *, max_bytes: int = 1_000_000) -> bool:
-    if path.is_symlink() or not path.is_file():
-        return False
-    return path.stat().st_size <= max_bytes
 
 
 def _get_repo_root_for_link():

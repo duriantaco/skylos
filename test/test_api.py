@@ -6,6 +6,7 @@ import subprocess
 import gzip
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import skylos
@@ -23,6 +24,23 @@ from skylos.api import (
 
 
 class TestSkylosApi(unittest.TestCase):
+    def test_read_json_rejects_symlinks_and_oversized_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.json"
+            target.write_text('{"token": "outside"}', encoding="utf-8")
+            link = root / "link.json"
+            try:
+                link.symlink_to(target)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks are not supported on this filesystem")
+
+            oversized = root / "oversized.json"
+            oversized.write_text("x" * 1_000_001, encoding="utf-8")
+
+            self.assertIsNone(api._read_json(link))
+            self.assertIsNone(api._read_json(oversized))
+
     def test_compact_upload_finding_preserves_dead_code_evidence(self):
         compact = api._compact_upload_finding(
             {
