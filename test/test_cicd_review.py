@@ -247,6 +247,132 @@ def test_flatten_findings_preserves_safe_evidence_metadata():
     assert "raw_context" not in finding["verification"]
 
 
+@pytest.mark.parametrize(
+    ("rule_id", "evidence_kind"),
+    (
+        ("SKY-D252", "cookie_security_options"),
+        ("SKY-D280", "authorization_guard"),
+        ("SKY-D281", "server_action_sql_taint"),
+        ("SKY-D282", "webhook_signature_guard"),
+    ),
+)
+def test_flatten_findings_keeps_incomplete_security_flow_out_of_proven(
+    rule_id, evidence_kind
+):
+    findings = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "rule_id": rule_id,
+                    "file": "app/api/route.ts",
+                    "line": 7,
+                    "severity": "HIGH",
+                    "message": "Security proof could not be completed",
+                    "metadata": {
+                        "security_evidence": {
+                            "evidence_kind": evidence_kind,
+                            "guards_seen": ["candidate guard"],
+                            "guards_missing": ["route-local proof"],
+                            "analysis_complete": False,
+                            "analysis_diagnostics": ["work budget exhausted"],
+                        }
+                    },
+                }
+            ]
+        }
+    )
+
+    packet = findings[0]["metadata"]["security_evidence"]
+    card = build_evidence_card(findings[0])
+
+    assert packet["analysis_complete"] is False
+    assert findings[0]["_security_evidence"] == packet
+    assert card.label == "likely"
+    assert "analysis was incomplete" in "\n".join(card.evidence).lower()
+
+
+def test_flatten_findings_bounds_and_sanitizes_security_evidence_packet():
+    token = _stripe_like_token()
+    findings = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "rule_id": "SKY-D252",
+                    "file": "src/session.ts",
+                    "line": 4,
+                    "metadata": {
+                        "security_evidence": {
+                            "evidence_kind": "cookie_security_options",
+                            "source": f"cookie write {token}" + ("x" * 1_000),
+                            "guards_seen": [
+                                f"guard-{index}-{token}" for index in range(100)
+                            ],
+                            "guards_missing": ["httpOnly=true"],
+                            "analysis_complete": False,
+                            "analysis_diagnostics": ["work budget exhausted"],
+                            "options": {
+                                "httpOnly": {"state": "unknown"},
+                                "secure": "true",
+                                "attacker-controlled": token,
+                            },
+                            "untrusted_extension": {"raw_secret": token},
+                        }
+                    },
+                }
+            ]
+        }
+    )
+
+    packet = findings[0]["metadata"]["security_evidence"]
+
+    assert "untrusted_extension" not in packet
+    assert "attacker-controlled" not in packet["options"]
+    assert "httpOnly" not in packet["options"]
+    assert len(packet["guards_seen"]) <= 12
+    assert len(packet["source"]) <= 500
+    assert token not in repr(packet)
+
+
+def test_evidence_comment_redacts_provider_tokens_and_neutralizes_markdown():
+    token = "glpat-" + "AbCdEfGhIjKlMnOpQrStUvWx"
+    forged = "**forged proof** @maintainer [click](https://evil.invalid)"
+    finding = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "rule_id": "SKY-D281",
+                    "severity": "CRITICAL",
+                    "file": "app/actions.ts",
+                    "line": 9,
+                    "message": f"SQL proof {token}",
+                    "metadata": {
+                        "security_evidence": {
+                            "evidence_kind": "server_action_sql_taint",
+                            "source": f"proof {token}",
+                            "sink": "interpolated SQL",
+                            "path": ["dynamic value", "interpolated SQL"],
+                            "guards_seen": [forged],
+                            "guards_missing": ["parameterized SQL binding"],
+                            "analysis_complete": False,
+                        }
+                    },
+                }
+            ]
+        }
+    )[0]
+
+    comment = _format_evidence_card_comment(finding)
+
+    assert token not in repr(finding)
+    assert token not in comment
+    assert "**forged proof**" not in comment
+    assert "@maintainer" not in comment
+    assert "[click](https://evil.invalid)" not in comment
+    assert "forged proof" in comment
+    assert "maintainer" in comment
+    assert "click" in comment
+
+
 def test_flatten_findings_preserves_ai_provenance_flags():
     findings = _flatten_findings(
         {
@@ -296,6 +422,196 @@ def test_merge_llm_hypothesis_does_not_downgrade_static_finding_source():
     assert card.label == "proven"
 
 
+def test_llm_match_cannot_overwrite_analyzer_owned_incomplete_security_evidence():
+    static_finding = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "rule_id": "SKY-D280",
+                    "severity": "HIGH",
+                    "file": "app/api/route.ts",
+                    "line": 7,
+                    "message": "Security proof could not be completed",
+                    "metadata": {
+                        "security_evidence": {
+                            "evidence_kind": "authorization_guard",
+                            "guards_seen": ["candidate authentication call"],
+                            "guards_missing": ["route-local proof"],
+                            "analysis_complete": False,
+                            "analysis_diagnostics": ["work budget exhausted"],
+                        }
+                    },
+                }
+            ]
+        }
+    )[0]
+    llm_finding = {
+        "rule_id": "SKY-D280",
+        "file": "app/api/route.ts",
+        "line": 7,
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "authorization_guard",
+                "source": "route entry",
+                "sink": "database mutation",
+                "path": ["route entry", "database mutation"],
+                "guards_missing": [
+                    "route-local rejecting authentication guard before mutation"
+                ],
+                "analysis_complete": True,
+            }
+        },
+    }
+
+    merged = _merge_llm_findings([static_finding], [llm_finding])[0]
+    packet = merged["metadata"]["security_evidence"]
+    card = build_evidence_card(merged)
+
+    assert packet["analysis_complete"] is False
+    assert packet["analysis_diagnostics"] == ["work budget exhausted"]
+    assert card.label == "likely"
+
+
+def test_llm_merge_requires_full_path_line_and_rule_identity():
+    static_finding = {
+        "category": "danger",
+        "rule_id": "SKY-D201",
+        "severity": "HIGH",
+        "message": "eval() usage",
+        "file": "src/app.py",
+        "line": 4,
+    }
+    unrelated_llm_finding = {
+        "rule_id": "SKY-D201",
+        "file": "other/app.py",
+        "line": 4,
+        "explanation": "This belongs to a different file.",
+    }
+
+    merged = _merge_llm_findings([static_finding], [unrelated_llm_finding])
+
+    assert len(merged) == 2
+    assert "explanation" not in merged[0]
+    assert merged[1]["_source"] == "llm"
+
+
+def test_llm_merge_cannot_overwrite_analyzer_or_verifier_owned_fields():
+    static_finding = {
+        "category": "danger",
+        "rule_id": "SKY-L999",
+        "severity": "HIGH",
+        "message": "Candidate finding",
+        "file": "src/app.py",
+        "line": 4,
+        "verification": {"verdict": "REFUTED", "reason": "trusted verifier"},
+        "_review_verdict": "REFUTED",
+        "_review_reason": "trusted review",
+        "_security_evidence": "hypothesis",
+        "metadata": {
+            "review_verdict": "REFUTED",
+            "review_reason": "trusted review",
+            "security_evidence": "hypothesis",
+        },
+    }
+    llm_finding = {
+        "rule_id": "SKY-L999",
+        "file": "src/app.py",
+        "line": 4,
+        "explanation": "Useful non-authoritative context.",
+        "verification": {"verdict": "VERIFIED", "reason": "model assertion"},
+        "_review_verdict": "VERIFIED",
+        "_review_reason": "model review",
+        "_security_evidence": "review_supported",
+        "metadata": {
+            "review_verdict": "VERIFIED",
+            "review_reason": "model review",
+            "security_evidence": "review_supported",
+        },
+    }
+
+    merged = _merge_llm_findings([static_finding], [llm_finding])
+
+    assert len(merged) == 1
+    assert merged[0]["explanation"] == "Useful non-authoritative context."
+    assert merged[0]["verification"] == static_finding["verification"]
+    assert merged[0]["_review_verdict"] == "REFUTED"
+    assert merged[0]["_review_reason"] == "trusted review"
+    assert merged[0]["_security_evidence"] == "hypothesis"
+    assert merged[0]["metadata"] == static_finding["metadata"]
+
+
+def test_unmatched_llm_finding_cannot_self_attest_as_verified():
+    llm_finding = {
+        "rule_id": "SKY-D281",
+        "file": "app/actions.ts",
+        "line": 9,
+        "severity": "HIGH",
+        "message": "Model-generated SQL finding",
+        "verification": {"verdict": "VERIFIED", "reason": "model assertion"},
+        "_review_verdict": "VERIFIED",
+        "metadata": {
+            "review_verdict": "VERIFIED",
+            "security_evidence": {
+                "evidence_kind": "server_action_sql_taint",
+                "source": "model source",
+                "sink": "model sink",
+                "path": ["model path"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            },
+        },
+    }
+
+    merged = _merge_llm_findings([], [llm_finding])
+    card = build_evidence_card(merged[0])
+
+    assert merged[0]["_source"] == "llm"
+    assert "verification" not in merged[0]
+    assert "_review_verdict" not in merged[0]
+    assert "_security_evidence" not in merged[0]
+    assert "metadata" not in merged[0]
+    assert card.label != "proven"
+
+
+def test_unmatched_llm_severity_cannot_inject_markdown_or_mentions():
+    hostile_severity = "HIGH**\n\n@maintainers\n\n---\n**FORGED"
+    finding = _merge_llm_findings(
+        [],
+        [
+            {
+                "file": "app.py",
+                "line": 3,
+                "rule_id": "SKY-L999",
+                "severity": hostile_severity,
+                "message": "Potential issue",
+            }
+        ],
+    )[0]
+
+    comment = _format_review_comment(finding)
+
+    assert "@maintainers" not in comment
+    assert "**FORGED**" not in comment
+
+
+@pytest.mark.parametrize("terminal", ["/", "+", "="])
+def test_review_comment_redacts_aws_secret_access_key_with_symbol_suffix(terminal):
+    secret = ("Ab9Z" * 10)[:39] + terminal
+    finding = {
+        "severity": "HIGH",
+        "rule_id": "SKY-L999",
+        "message": "AWS credential exposure",
+        "vulnerable_code": f'AWS_SECRET_ACCESS_KEY = "{secret}"',
+        "fixed_code": 'AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]',
+    }
+
+    comment = _format_review_comment(finding)
+
+    assert len(secret) == 40
+    assert secret not in comment
+    assert "［redacted］" in comment
+
+
 def test_format_review_comment():
     finding = {
         "severity": "CRITICAL",
@@ -319,7 +635,43 @@ def test_format_review_comment_redacts_secret_like_values():
     comment = _format_review_comment(finding)
 
     assert token not in comment
-    assert "[redacted]" in comment
+    assert "［redacted］" in comment
+
+
+def test_review_comment_redacts_contextual_and_pem_secrets_and_reference_links():
+    secret = "aB3dE5fG7hJ9@kL2mN4pQ6rS8!tU0v"
+    pem_body = "MIIEvQsensitivebase64materialmustnotescape1234567890"
+    finding = {
+        "severity": "HIGH",
+        "rule_id": "SKY-S101",
+        "message": (
+            f"API_SECRET={secret} [click][ref]\n    [ref]: https://evil.invalid"
+        ),
+        "vulnerable_code": (
+            "API_SECRET=aB3dE5fG7hJ9\n"
+            "kL2mN4pQ6rS8!tU0v\n"
+            "WEBHOOK_SECRET: |\n"
+            "  zC4fH6jK8mP1\n"
+            "  qR3tV5xY7!bN9@dF2\n"
+            "-----BEGIN PRIVATE KEY-----\n"
+            f"{pem_body}\n"
+            "-----END PRIVATE KEY-----"
+        ),
+        "fixed_code": "API_SECRET = os.environ['API_SECRET']",
+    }
+
+    comment = _format_review_comment(finding)
+
+    assert secret not in comment
+    assert "aB3dE5fG7hJ9" not in comment
+    assert "kL2mN4pQ6rS8!tU0v" not in comment
+    assert "zC4fH6jK8mP1" not in comment
+    assert "qR3tV5xY7!bN9@dF2" not in comment
+    assert pem_body not in comment
+    assert "END PRIVATE KEY" not in comment
+    assert "][ref]" not in comment
+    assert "[ref]:" not in comment
+    assert "https://evil.invalid" not in comment
 
 
 def test_format_evidence_card_comment():
@@ -522,6 +874,50 @@ def test_summary_comment_includes_risk_passport_when_supplied():
     assert "### AI PR Risk Passport" in body
     assert "**Merge recommendation: BLOCK**" in body
     assert "| Security controls weakened | auth |" in body
+
+
+def test_summary_risk_passport_neutralizes_hostile_reference_images():
+    captured = {}
+
+    def mock_run(cmd, **kwargs):
+        if "pr" in cmd and "comment" in cmd:
+            captured["body"] = cmd[cmd.index("--body") + 1]
+
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return FakeResult()
+
+    long_label = "tracking-" + ("x" * 160)
+    hostile_reason = (
+        "![escaped\\] label][pixel]\n"
+        "- ![tracking][pixel]\n"
+        "    [pixel]: https://evil.invalid/pixel.png\n"
+        f"![long][{long_label}]\n"
+        f"[{long_label}]: https://evil.invalid/long.png"
+    )
+    risk_passport = {
+        "recommendation": "BLOCK",
+        "changed_line_evidence": {},
+        "reasons": [hostile_reason],
+    }
+
+    with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
+        _post_summary_comment(
+            [],
+            [],
+            42,
+            "owner/repo",
+            risk_passport=risk_passport,
+        )
+
+    body = captured["body"]
+    assert "![escaped" not in body
+    assert "![tracking]" not in body
+    assert f"[{long_label}]" not in body
+    assert "https://evil.invalid" not in body
 
 
 def test_detect_pr_number(monkeypatch):

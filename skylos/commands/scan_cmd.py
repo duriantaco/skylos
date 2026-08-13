@@ -513,7 +513,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
             )
 
-            exporter = _get_sarif_exporter_class()(all_findings, tool_name="Skylos")
+            exporter = _get_sarif_exporter_class()(
+                all_findings,
+                tool_name="Skylos",
+                analyzer_owned=True,
+            )
             sarif_data = exporter.generate()
             grade_data = output_result.get("grade")
             if grade_data:
@@ -539,6 +543,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     is_forced=args.force,
                     strict=args.strict,
                     quiet=True,
+                    analyzer_owned=True,
                 )
                 if not upload_resp.get("success"):
                     raise SystemExit(1)
@@ -659,6 +664,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result,
                 is_forced=args.force,
                 strict=args.strict,
+                analyzer_owned=True,
             )
             if not upload_resp.get("success"):
                 _render_upload_failure(console, upload_resp)
@@ -960,7 +966,12 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
         _print_main_upload_manifest(console, args, result)
         _attach_upload_project_context(result, project_root)
-        upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
+        upload_resp = upload_report(
+            result,
+            is_forced=args.force,
+            strict=args.strict,
+            analyzer_owned=True,
+        )
 
         if not upload_resp.get("success"):
             _render_upload_failure(console, upload_resp)

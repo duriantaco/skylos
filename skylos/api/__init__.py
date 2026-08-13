@@ -264,7 +264,10 @@ def _normalize_branch(branch):
 def _read_json(path: Path):
     try:
         if path and _is_bounded_regular_file(path):
-            return json.loads(path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D325] _is_bounded_regular_file rejects symlinks and caps size
+            content = path.read_text(  # skylos: ignore[SKY-D325] regular non-symlink capped at 1 MB
+                encoding="utf-8"
+            )
+            return json.loads(content)
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return None
@@ -673,6 +676,7 @@ def _prepare_report_upload(
     is_forced=False,
     analysis_mode="static",
     scan_bundle_id=None,
+    analyzer_owned=False,
 ) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
@@ -686,7 +690,11 @@ def _prepare_report_upload(
     )
     _annotate_findings_with_blame(all_findings, git_root)
 
-    exporter = SarifExporter(all_findings, tool_name="Skylos")
+    exporter = SarifExporter(
+        all_findings,
+        tool_name="Skylos",
+        analyzer_owned=analyzer_owned,
+    )
     core_payload = exporter.generate()
 
     ai_code = detect_ai_code(git_root)
@@ -1048,7 +1056,9 @@ def _finalize_report_upload(
             scan_id=scan_id,
             credits_left=data.get("credits_remaining"),
         )
-    _enforce_report_quality_gate(passed, strict=strict, is_forced=is_forced, quiet=quiet)
+    _enforce_report_quality_gate(
+        passed, strict=strict, is_forced=is_forced, quiet=quiet
+    )
     return _report_upload_success_result(data, scan_id, passed, plan)
 
 
@@ -1389,7 +1399,10 @@ def _start_report_artifact_upload(
             "result": {"success": False, "error": last_err or "Unknown error"},
         }
     if init_response.status_code in (404, 405, 501):
-        return {"complete": True, "result": _build_large_upload_protocol_error(prepared)}
+        return {
+            "complete": True,
+            "result": _build_large_upload_protocol_error(prepared),
+        }
     if init_response.status_code == 400:
         return {
             "complete": True,
@@ -1531,7 +1544,9 @@ def _upload_one_report_artifact(
 ) -> dict[str, Any]:
     artifact_info = artifact_instructions.get(artifact_name)
     if not artifact_info:
-        return _handle_missing_report_artifact(artifact_name, artifact, skipped_artifacts)
+        return _handle_missing_report_artifact(
+            artifact_name, artifact, skipped_artifacts
+        )
 
     upload_spec = artifact_info.get("upload") or artifact_info
     upload_result = upload_artifact(artifact, upload_spec)
@@ -1613,6 +1628,7 @@ def upload_report(
     strict=False,
     analysis_mode="static",
     scan_bundle_id=None,
+    analyzer_owned=False,
 ) -> dict:
     token = get_project_token()
     if not token:
@@ -1632,6 +1648,7 @@ def upload_report(
         is_forced=is_forced,
         analysis_mode=analysis_mode,
         scan_bundle_id=scan_bundle_id,
+        analyzer_owned=analyzer_owned,
     )
 
     if _should_use_legacy_inline_report_upload(prepared):
@@ -2038,7 +2055,9 @@ def _merge_verified_items(items, by_id: dict) -> None:
 
 
 def _verification_item_id(item: dict) -> str:
-    rule_id = str(item.get("rule_id") or item.get("rule") or item.get("code") or "UNKNOWN")
+    rule_id = str(
+        item.get("rule_id") or item.get("rule") or item.get("code") or "UNKNOWN"
+    )
     file_path = (item.get("file_path") or item.get("file") or "unknown").replace(
         "\\", "/"
     )

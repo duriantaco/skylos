@@ -1,8 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
+import math
 import re
 from typing import Any, Literal
+import unicodedata
+
+from skylos.core.evidence_contract import (
+    STRUCTURED_SECURITY_FLOW_RULES as _STRUCTURED_SECURITY_FLOW_RULES,
+    structured_security_evidence_is_complete,
+)
+from skylos.rules.secrets import (
+    DEFAULT_MIN_ENTROPY,
+    GENERIC_KEYED_VALUE,
+    PROVIDER_PATTERNS,
+    _SECRET_KEY_NAME_RE,
+    _entropy as _secret_entropy,
+)
 
 EvidenceLabel = Literal["proven", "likely", "speculative"]
 EvidenceKind = Literal[
@@ -32,13 +47,44 @@ class EvidenceCard:
     gate_blocking: bool = False
 
 
-_SECRET_PATTERNS = (
+_SECRET_PATTERNS = tuple(pattern for _, pattern in PROVIDER_PATTERNS) + (
     re.compile(r"\bsk_(?:live|test|proj)_[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    re.compile(r"\b[A-Za-z0-9_./+=-]{40,}\b"),
+    re.compile(
+        r"(?i)AWS_SECRET_ACCESS_KEY\s*[:=]\s*['\"]?"
+        r"[A-Za-z0-9/+=]{40,}"
+    ),
 )
+
+_CONTEXTUAL_SECRET_KEY_RE = re.compile(rf"^(?:{_SECRET_KEY_NAME_RE})$")
+_CONTEXTUAL_SECRET_ASSIGNMENT_RE = re.compile(
+    rf"(?<![A-Za-z0-9_-])(?P<key_quote>['\"]?)"
+    rf"(?P<key>{_SECRET_KEY_NAME_RE})(?P=key_quote)"
+    r"(?![A-Za-z0-9_-])(?P<separator>[ \t]*[:=][ \t]*)"
+    r"(?P<value>[^\n]*)"
+)
+_ASSIGNMENT_LINE_RE = re.compile(
+    r"^(?:['\"]?[A-Za-z_$][A-Za-z0-9_$.-]*['\"]?)[ \t]*[:=]"
+)
+_YAML_BLOCK_SCALAR_RE = re.compile(r"^[|>][+-]?[1-9]?[ \t]*(?:#.*)?$")
+_MARKDOWN_URI_SCHEME_RE = re.compile(r"(?i)\b(?P<scheme>https?|ftp|mailto|data):")
+_PEM_BLOCK_RE = re.compile(
+    r"-----BEGIN (?P<label>[A-Z0-9][A-Z0-9 -]{0,63})-----"
+    r"[\s\S]{0,16000}?"
+    r"-----END (?P=label)-----"
+)
+_PEM_REMAINDER_RE = re.compile(
+    r"-----BEGIN [A-Z0-9][A-Z0-9 -]{0,63}-----[\s\S]{0,16000}"
+)
+
+_DEFAULT_UNTRUSTED_TEXT_LENGTH = 4_096
+_MAX_REDACTION_SCAN_LENGTH = 16_384
+_MAX_CONTEXTUAL_CONTINUATION_LINES = 8
+_REDACTED_SENTINEL = "\x00SKYLOS_REDACTED\x00"
+_PEM_REDACTED_SENTINEL = "\x00SKYLOS_PEM_REDACTED\x00"
+_MARKDOWN_LINE_PREFIX_RE = re.compile(r"(?m)^(?P<space>[ \t]{0,3})(?P<mark>[#>|])")
 
 _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D201": "Replace dynamic evaluation with a safe parser for the expected input format.",
@@ -97,11 +143,11 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D339": "Avoid persistent profile, scheduler, global git, or package-manager configuration changes in agent or CI tasks.",
     "SKY-D340": "Move publish commands into an explicit release workflow with protected approvals.",
     "SKY-D341": "Pin package-managed tools and avoid auto-install execution flags such as `npx -y`.",
-    "SKY-D280": "Verify webhook signatures before trusting webhook request bodies.",
-    "SKY-D281": "Keep webhook signature verification before any request body parsing or side effects.",
+    "SKY-D280": "Authenticate mutating API routes before performing protected actions.",
+    "SKY-D281": "Use parameterized queries instead of building SQL with string interpolation.",
     "SKY-D282": "Use a webhook library or HMAC comparison that verifies the provider signature.",
     "SKY-S101": "Move the secret to environment variables or a secrets manager, then rotate it.",
-    "SKY-S102": "Move the credential to a secrets manager, then rotate the exposed value.",
+    "SKY-S102": "Move the secret to server-only code and rotate it; expose only non-sensitive values through public client configuration.",
 }
 
 _REGRESSION_SUGGESTIONS: dict[str, str] = {
@@ -123,6 +169,178 @@ _SEVERITY_CONFIDENCE = {
     "likely": {"CRITICAL": 86, "HIGH": 80, "MEDIUM": 72, "LOW": 64},
     "speculative": {"CRITICAL": 58, "HIGH": 55, "MEDIUM": 50, "LOW": 45},
 }
+
+_MAX_STRUCTURED_EVIDENCE_ITEMS = 3
+
+
+def _redact_contextual_secret_match(match: re.Match[str]) -> str:
+    value = match.group("val")
+    if not _is_high_entropy_secret_value(value):
+        return match.group(0)
+    relative_start = match.start("val") - match.start()
+    relative_end = match.end("val") - match.start()
+    matched_text = match.group(0)
+    return (
+        f"{matched_text[:relative_start]}{_REDACTED_SENTINEL}"
+        f"{matched_text[relative_end:]}"
+    )
+
+
+def _is_contextual_secret_value(key: object, value: str) -> bool:
+    return bool(
+        isinstance(key, str)
+        and _CONTEXTUAL_SECRET_KEY_RE.fullmatch(key.strip())
+        and _is_high_entropy_secret_value(value)
+    )
+
+
+def _is_high_entropy_secret_value(value: str) -> bool:
+    candidate = value.strip()
+    return len(candidate) >= 20 and _secret_entropy(candidate) >= DEFAULT_MIN_ENTROPY
+
+
+def _redact_contextual_secrets(text: str) -> str:
+    """Redact secret-key assignments, including wrapped and YAML values."""
+    lines = text.splitlines(keepends=True)
+    rendered: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        content, ending = _split_line_ending(lines[index])
+        match = _CONTEXTUAL_SECRET_ASSIGNMENT_RE.search(content)
+        if match is None:
+            rendered.append(lines[index])
+            index += 1
+            continue
+
+        raw_value = match.group("value")
+        if _YAML_BLOCK_SCALAR_RE.fullmatch(raw_value.strip()):
+            block_end, candidate = _yaml_secret_block(lines, index, match.start())
+            if block_end > index + 1 and _is_high_entropy_secret_value(candidate):
+                rendered.append(
+                    f"{content[: match.start('value')]}{_REDACTED_SENTINEL}{ending}"
+                )
+                rendered.extend(
+                    _line_ending(lines[block_index])
+                    for block_index in range(index + 1, block_end)
+                )
+                index = block_end
+                continue
+
+        token = _contextual_value_token(raw_value)
+        if token is None:
+            rendered.append(lines[index])
+            index += 1
+            continue
+
+        token_start, token_end, candidate, closed_quote = token
+        continuation_indexes: list[int] = []
+        continuation_values: list[str] = []
+        if not closed_quote:
+            for continuation_index in range(
+                index + 1,
+                min(
+                    len(lines),
+                    index + 1 + _MAX_CONTEXTUAL_CONTINUATION_LINES,
+                ),
+            ):
+                continuation = _contextual_continuation_token(lines[continuation_index])
+                if continuation is None:
+                    break
+                continuation_indexes.append(continuation_index)
+                continuation_values.append(continuation)
+
+        combined_candidate = "".join([candidate, *continuation_values])
+        if not _is_high_entropy_secret_value(combined_candidate):
+            rendered.append(lines[index])
+            index += 1
+            continue
+
+        absolute_start = match.start("value") + token_start
+        absolute_end = match.start("value") + token_end
+        rendered.append(
+            f"{content[:absolute_start]}{_REDACTED_SENTINEL}"
+            f"{content[absolute_end:]}{ending}"
+        )
+        if continuation_indexes:
+            rendered.extend(_line_ending(lines[item]) for item in continuation_indexes)
+            index = continuation_indexes[-1] + 1
+        else:
+            index += 1
+
+    return "".join(rendered)
+
+
+def _yaml_secret_block(
+    lines: list[str],
+    start_index: int,
+    assignment_column: int,
+) -> tuple[int, str]:
+    values: list[str] = []
+    block_end = start_index + 1
+    minimum_indent = assignment_column + 1
+
+    while block_end < len(lines):
+        content, _ = _split_line_ending(lines[block_end])
+        if not content.strip():
+            block_end += 1
+            continue
+        indentation = len(content) - len(content.lstrip(" \t"))
+        if indentation < minimum_indent:
+            break
+        values.append(content.strip())
+        block_end += 1
+
+    return block_end, "".join(values)
+
+
+def _contextual_value_token(value: str) -> tuple[int, int, str, bool] | None:
+    leading = len(value) - len(value.lstrip(" \t"))
+    remaining = value[leading:]
+    if not remaining:
+        return None
+
+    quote = remaining[0] if remaining[0] in {"'", '"'} else ""
+    if quote:
+        closing = remaining.find(quote, 1)
+        if closing >= 0:
+            candidate = remaining[1:closing]
+            return leading, leading + closing + 1, candidate, True
+        candidate = remaining[1:]
+        return leading, len(value), candidate, False
+
+    token_end = next(
+        (offset for offset, character in enumerate(remaining) if character.isspace()),
+        len(remaining),
+    )
+    candidate = remaining[:token_end]
+    if not candidate:
+        return None
+    return leading, leading + token_end, candidate, False
+
+
+def _contextual_continuation_token(line: str) -> str | None:
+    content, _ = _split_line_ending(line)
+    stripped = content.strip()
+    if (
+        len(stripped) < 4
+        or len(stripped) > 1_024
+        or any(character.isspace() for character in stripped)
+        or _ASSIGNMENT_LINE_RE.search(stripped)
+        or not any(character.isalnum() for character in stripped)
+    ):
+        return None
+    return stripped.strip("'\"")
+
+
+def _split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
+
+
+def _line_ending(line: str) -> str:
+    return "\n" if line.endswith("\n") else ""
 
 
 def build_evidence_cards(findings: list[dict[str, Any]]) -> list[EvidenceCard]:
@@ -146,7 +364,7 @@ def build_evidence_card(finding: dict[str, Any]) -> EvidenceCard:
         line=_line_number(finding.get("line")),
         symbol=_optional_text(finding.get("symbol")),
         evidence=_evidence_lines(finding, kind, label),
-        impact=_impact(kind, control_type),
+        impact=_impact(kind, control_type, rule_id),
         suggested_fix=_suggested_fix(finding, kind, rule_id, control_type),
         gate_blocking=severity in {"CRITICAL", "HIGH"},
     )
@@ -171,11 +389,298 @@ def evidence_label_title(label: EvidenceLabel) -> str:
     }[label]
 
 
-def redact_sensitive_text(value: Any) -> str:
+def sanitize_untrusted_text(
+    value: Any,
+    *,
+    max_length: int = _DEFAULT_UNTRUSTED_TEXT_LENGTH,
+    markdown: bool = False,
+    preserve_newlines: bool = False,
+    neutralize_mentions: bool = True,
+) -> str:
+    """Bound and neutralize attacker-controlled text before CI serialization."""
+    max_length = max(0, int(max_length))
+    if max_length == 0:
+        return ""
+
     text = "" if value is None else str(value)
+    scan_length = min(
+        _MAX_REDACTION_SCAN_LENGTH,
+        max(max_length + 512, max_length * 2),
+    )
+    text = text[:scan_length]
+    text = _remove_unsafe_unicode_controls(text)
+    text = _PEM_BLOCK_RE.sub(_PEM_REDACTED_SENTINEL, text)
+    text = _PEM_REMAINDER_RE.sub(_PEM_REDACTED_SENTINEL, text)
+    text = GENERIC_KEYED_VALUE.sub(_redact_contextual_secret_match, text)
+    text = _redact_contextual_secrets(text)
     for pattern in _SECRET_PATTERNS:
-        text = pattern.sub("[redacted]", text)
-    return text
+        text = pattern.sub(_REDACTED_SENTINEL, text)
+
+    # GitHub mentions are active even when they arrive through otherwise plain
+    # evidence. A full-width at-sign stays readable without notifying users.
+    if neutralize_mentions:
+        text = text.replace("@", "＠")
+    if markdown:
+        text = _neutralize_markdown(text)
+    else:
+        text = _restore_redaction_markers(text)
+    if not preserve_newlines:
+        text = " ".join(text.split())
+    return _bounded_text(text, max_length)
+
+
+def redact_sensitive_text(
+    value: Any,
+    max_length: int = _DEFAULT_UNTRUSTED_TEXT_LENGTH,
+) -> str:
+    return sanitize_untrusted_text(
+        value,
+        max_length=max_length,
+        markdown=True,
+        preserve_newlines=True,
+    )
+
+
+def sanitize_markdown_text(
+    value: Any,
+    *,
+    max_length: int = _DEFAULT_UNTRUSTED_TEXT_LENGTH,
+    preserve_newlines: bool = False,
+) -> str:
+    return sanitize_untrusted_text(
+        value,
+        max_length=max_length,
+        markdown=True,
+        preserve_newlines=preserve_newlines,
+    )
+
+
+def sanitize_bounded_payload(
+    value: Any,
+    *,
+    max_depth: int = 4,
+    max_items: int = 32,
+    max_text_length: int = 500,
+    max_nodes: int = 256,
+    markdown: bool = False,
+    neutralize_mentions: bool = True,
+) -> Any:
+    """Recursively copy a JSON-like payload through strict size budgets."""
+    budget = [max(1, int(max_nodes))]
+    return _sanitize_payload_value(
+        value,
+        depth=0,
+        max_depth=max(0, int(max_depth)),
+        max_items=max(1, int(max_items)),
+        max_text_length=max(1, int(max_text_length)),
+        markdown=markdown,
+        neutralize_mentions=neutralize_mentions,
+        budget=budget,
+    )
+
+
+_NON_SCALAR_PAYLOAD = object()
+
+
+def _sanitize_payload_scalar(
+    value: Any,
+    *,
+    contextual_key: object | None,
+    max_text_length: int,
+    markdown: bool,
+    neutralize_mentions: bool,
+) -> Any:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if not isinstance(value, str):
+        return _NON_SCALAR_PAYLOAD
+    if _is_contextual_secret_value(contextual_key, value):
+        return "[redacted]"
+    return sanitize_untrusted_text(
+        value,
+        max_length=max_text_length,
+        markdown=markdown,
+        preserve_newlines=True,
+        neutralize_mentions=neutralize_mentions,
+    )
+
+
+def _sanitize_payload_mapping(
+    value: dict,
+    *,
+    depth: int,
+    max_depth: int,
+    max_items: int,
+    max_text_length: int,
+    markdown: bool,
+    neutralize_mentions: bool,
+    budget: list[int],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for raw_key, raw_value in islice(value.items(), max_items):
+        if budget[0] <= 0:
+            break
+        key = sanitize_untrusted_text(
+            raw_key,
+            max_length=80,
+            markdown=markdown,
+            neutralize_mentions=neutralize_mentions,
+        )
+        if not key:
+            continue
+        sanitized = _sanitize_payload_value(
+            raw_value,
+            depth=depth + 1,
+            max_depth=max_depth,
+            max_items=max_items,
+            max_text_length=max_text_length,
+            markdown=markdown,
+            neutralize_mentions=neutralize_mentions,
+            budget=budget,
+            contextual_key=raw_key,
+        )
+        if sanitized is not None or raw_value is None:
+            result[key] = sanitized
+    return result
+
+
+def _sanitize_payload_sequence(
+    value: list | tuple,
+    *,
+    depth: int,
+    max_depth: int,
+    max_items: int,
+    max_text_length: int,
+    markdown: bool,
+    neutralize_mentions: bool,
+    budget: list[int],
+) -> list[Any]:
+    result = []
+    for item in value[:max_items]:
+        if budget[0] <= 0:
+            break
+        sanitized = _sanitize_payload_value(
+            item,
+            depth=depth + 1,
+            max_depth=max_depth,
+            max_items=max_items,
+            max_text_length=max_text_length,
+            markdown=markdown,
+            neutralize_mentions=neutralize_mentions,
+            budget=budget,
+        )
+        if sanitized is not None or item is None:
+            result.append(sanitized)
+    return result
+
+
+def _sanitize_payload_value(
+    value: Any,
+    *,
+    depth: int,
+    max_depth: int,
+    max_items: int,
+    max_text_length: int,
+    markdown: bool,
+    neutralize_mentions: bool,
+    budget: list[int],
+    contextual_key: object | None = None,
+) -> Any:
+    if budget[0] <= 0:
+        return None
+    budget[0] -= 1
+
+    scalar = _sanitize_payload_scalar(
+        value,
+        contextual_key=contextual_key,
+        max_text_length=max_text_length,
+        markdown=markdown,
+        neutralize_mentions=neutralize_mentions,
+    )
+    if scalar is not _NON_SCALAR_PAYLOAD:
+        return scalar
+    if depth >= max_depth:
+        return None
+    if isinstance(value, dict):
+        return _sanitize_payload_mapping(
+            value,
+            depth=depth,
+            max_depth=max_depth,
+            max_items=max_items,
+            max_text_length=max_text_length,
+            markdown=markdown,
+            neutralize_mentions=neutralize_mentions,
+            budget=budget,
+        )
+    if isinstance(value, (list, tuple)):
+        return _sanitize_payload_sequence(
+            value,
+            depth=depth,
+            max_depth=max_depth,
+            max_items=max_items,
+            max_text_length=max_text_length,
+            markdown=markdown,
+            neutralize_mentions=neutralize_mentions,
+            budget=budget,
+        )
+    return None
+
+
+def _remove_unsafe_unicode_controls(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(
+        character
+        for character in normalized
+        if character in {"\n", "\t"}
+        or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+    )
+
+
+def _neutralize_markdown(text: str) -> str:
+    # Square brackets are Markdown control characters for inline, full,
+    # collapsed, and shortcut links/images. Neutralize every occurrence rather
+    # than attempting to parse attacker-controlled labels with a flat regex.
+    # URI schemes are also broken so a destination left as readable text cannot
+    # become a GitHub-flavored Markdown autolink.
+    text = text.replace("[", "［").replace("]", "］")
+    text = _MARKDOWN_URI_SCHEME_RE.sub(
+        lambda match: f"{match.group('scheme')}：",
+        text,
+    )
+    text = text.replace("`", "ˋ")
+    text = text.replace("**", "∗∗").replace("__", "＿＿").replace("~~", "～～")
+    text = text.replace("<", "＜").replace(">", "＞")
+    text = text.replace("|", "￨")
+    text = _MARKDOWN_LINE_PREFIX_RE.sub(
+        lambda match: (
+            match.group("space") + {"#": "＃", ">": "＞", "|": "￨"}[match.group("mark")]
+        ),
+        text,
+    )
+    return _restore_redaction_markers(text, markdown=True)
+
+
+def _restore_redaction_markers(text: str, *, markdown: bool = False) -> str:
+    if markdown:
+        pem_marker = "［redacted PEM block］"
+        marker = "［redacted］"
+    else:
+        pem_marker = "[redacted PEM block]"
+        marker = "[redacted]"
+    return text.replace(_PEM_REDACTED_SENTINEL, pem_marker).replace(
+        _REDACTED_SENTINEL,
+        marker,
+    )
+
+
+def _bounded_text(text: str, max_length: int) -> str:
+    if len(text) <= max_length:
+        return text
+    if max_length <= 3:
+        return text[:max_length]
+    return f"{text[: max_length - 3].rstrip()}..."
 
 
 def _evidence_kind(finding: dict[str, Any]) -> EvidenceKind:
@@ -200,6 +705,9 @@ def _evidence_kind(finding: dict[str, Any]) -> EvidenceKind:
 def _evidence_label(finding: dict[str, Any], kind: EvidenceKind) -> EvidenceLabel:
     if kind in {"security_regression", "secret"}:
         return "proven"
+
+    if _has_incomplete_security_flow_proof(finding, kind):
+        return "likely"
 
     if _verification_verdict(finding) == "VERIFIED":
         return "proven"
@@ -234,6 +742,8 @@ def _confidence(label: EvidenceLabel, severity: str, finding: dict[str, Any]) ->
 
 def _title(finding: dict[str, Any], kind: EvidenceKind) -> str:
     if kind == "secret":
+        if str(finding.get("rule_id") or "") == "SKY-S102":
+            return "Client-side secret exposure detected"
         return "Hardcoded secret detected"
     if kind == "security_regression":
         control_type = str(finding.get("control_type") or "")
@@ -256,6 +766,12 @@ def _evidence_lines(
     lines: list[str] = []
 
     if kind == "secret":
+        if rule_id == "SKY-S102":
+            return (
+                "Static client-exposure analysis found secret material or a "
+                "server-only environment variable in client-accessible code.",
+                "The exposed value is intentionally omitted from PR output.",
+            )
         return (
             "Static secret detection matched a credential pattern.",
             "The secret value is intentionally omitted from PR output.",
@@ -280,11 +796,41 @@ def _evidence_lines(
     if reason:
         lines.append(_limit(redact_sensitive_text(reason), 180))
 
+    packet = _security_evidence_packet(finding)
+    structured_packet_incomplete = (
+        rule_id in _STRUCTURED_SECURITY_FLOW_RULES
+        and not structured_security_evidence_is_complete(rule_id, packet)
+    )
+    if structured_packet_incomplete:
+        lines.append(
+            "Security-flow analysis was incomplete or its proof packet was "
+            "malformed; the finding remains a review candidate."
+        )
+    if packet is not None:
+        lines.extend(
+            _structured_evidence_lines(packet, "guards_seen", "Guard observed")
+        )
+        lines.extend(
+            _structured_evidence_lines(packet, "guards_missing", "Missing proof")
+        )
+        lines.extend(
+            _structured_evidence_lines(
+                packet,
+                "analysis_diagnostics",
+                "Analysis diagnostic",
+            )
+        )
+
     return tuple(lines)
 
 
-def _impact(kind: EvidenceKind, control_type: str) -> str:
+def _impact(kind: EvidenceKind, control_type: str, rule_id: str) -> str:
     if kind == "secret":
+        if rule_id == "SKY-S102":
+            return (
+                "Client-accessible code can expose the value to anyone who loads "
+                "or inspects the application bundle."
+            )
         return "A committed credential can be copied from the repository or logs."
     if kind == "security_regression":
         return f"The affected change may reduce protection from {_control_phrase(control_type)}."
@@ -306,6 +852,8 @@ def _suggested_fix(
     control_type: str,
 ) -> str | None:
     if kind == "secret":
+        if rule_id == "SKY-S102":
+            return _RULE_SUGGESTIONS[rule_id]
         return "Rotate the exposed credential and move it to a secrets manager or environment variable."
     if kind == "security_regression":
         return _REGRESSION_SUGGESTIONS.get(
@@ -362,6 +910,49 @@ def _security_evidence(finding: dict[str, Any]) -> str:
         if isinstance(evidence, str):
             return evidence
     return ""
+
+
+def _security_evidence_packet(finding: dict[str, Any]) -> dict[str, Any] | None:
+    evidence = finding.get("_security_evidence")
+    if isinstance(evidence, dict):
+        return evidence
+
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    evidence = metadata.get("security_evidence")
+    return evidence if isinstance(evidence, dict) else None
+
+
+def _has_incomplete_security_flow_proof(
+    finding: dict[str, Any], kind: EvidenceKind
+) -> bool:
+    if kind != "security":
+        return False
+    rule_id = str(finding.get("rule_id") or "")
+    if rule_id not in _STRUCTURED_SECURITY_FLOW_RULES:
+        return False
+    packet = _security_evidence_packet(finding)
+    return not structured_security_evidence_is_complete(rule_id, packet)
+
+
+def _structured_evidence_lines(
+    packet: dict[str, Any], key: str, prefix: str
+) -> list[str]:
+    raw_values = packet.get(key)
+    if isinstance(raw_values, str):
+        values = [raw_values]
+    elif isinstance(raw_values, (list, tuple)):
+        values = [value for value in raw_values if isinstance(value, str)]
+    else:
+        values = []
+
+    lines: list[str] = []
+    for value in values[:_MAX_STRUCTURED_EVIDENCE_ITEMS]:
+        safe_value = _limit(" ".join(redact_sensitive_text(value).split()), 180)
+        if safe_value:
+            lines.append(f"{prefix}: {safe_value}")
+    return lines
 
 
 def _review_reason(finding: dict[str, Any]) -> str:

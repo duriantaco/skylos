@@ -120,6 +120,7 @@ def build_verify_change_response(
     scan_target: str | Path | None = None,
     contract: Any | None = None,
     include_security_findings: bool = False,
+    analyzer_owned: bool = False,
 ) -> dict[str, Any]:
     root = _project_root(project_root)
     parsed_range = _coerce_line_range(line_range)
@@ -134,7 +135,13 @@ def build_verify_change_response(
         if not _matches_line_range(finding, parsed_range):
             continue
 
-        normalized = _normalize_finding(finding, category, root, contract=contract)
+        normalized = _normalize_finding(
+            finding,
+            category,
+            root,
+            contract=contract,
+            analyzer_owned=analyzer_owned,
+        )
         findings.append(normalized)
 
     findings.sort(
@@ -205,6 +212,7 @@ def _normalize_finding(
     root: Path,
     *,
     contract: Any | None = None,
+    analyzer_owned: bool = False,
 ) -> dict[str, Any]:
     rule_id = str(_finding_value(finding, ("rule_id", "rule"), "UNKNOWN"))
     default_vibe, default_likelihood = _rule_defaults(rule_id)
@@ -227,7 +235,10 @@ def _normalize_finding(
     metadata = finding.get("metadata")
     if isinstance(metadata, dict):
         normalized["metadata"] = dict(metadata)
-    evidence_contract = finding_evidence_contract(finding)
+    evidence_contract = finding_evidence_contract(
+        finding,
+        analyzer_owned=analyzer_owned,
+    )
     if evidence_contract is not None:
         normalized["evidence_contract"] = evidence_contract
     normalized.update(contract_finding_metadata(contract, finding))
