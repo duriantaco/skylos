@@ -1,8 +1,10 @@
-from unittest.mock import patch
+import time
+from unittest.mock import Mock, patch
 
 from skylos.core.grep_cache import GrepCache
 from skylos.core.grep_verify import (
     GrepStrategy,
+    _deterministic_suppress_multilang,
     detect_language,
     filter_grep_results,
     grep_verify_findings,
@@ -14,7 +16,11 @@ from skylos.core.grep_verify import (
     parameter_owner_name,
     repo_relative_path,
     source_globs_for_language,
-    _deterministic_suppress_multilang,
+)
+from skylos.core.grep_verify_common import (
+    GrepRequest,
+    _python_regex,
+    execute_grep_batch,
 )
 
 
@@ -433,12 +439,122 @@ class TestGrepVerifyFindings:
         cache = GrepCache()
 
         with patch(
-            "skylos.core.grep_verify._cached_group_results", return_value={}
-        ) as mock_cached_group:
+            "skylos.core.grep_verify._load_cached_group_results", return_value={}
+        ) as mock_cache_load:
             grep_verify_findings([finding], str(tmp_path), cache=cache)
 
-        assert mock_cached_group.call_args.args[0] is cache
-        assert mock_cached_group.call_args.args[1] == "serial_typescript"
+        assert mock_cache_load.call_args.args[0] is cache
+        assert mock_cache_load.call_args.args[1] == "serial_typescript"
+
+
+class TestBatchedGrepVerify:
+    def test_python_regex_preserves_ascii_posix_alnum_semantics(self):
+        regex = _python_regex(r"\.[[:alnum:]_]+")
+
+        assert regex is not None
+        assert regex.search(".ascii_name") is not None
+        assert regex.fullmatch(".café") is None
+
+    def test_python_regex_rejects_untranslated_posix_classes(self):
+        assert _python_regex("[[:digit:]]+") is None
+
+    def test_compatible_requests_share_one_ripgrep_process(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        foo_request = GrepRequest(pattern=r"\bfoo\b", **common)
+        bar_request = GrepRequest(pattern=r"\bbar\b", **common)
+        process_result = Mock(
+            returncode=0,
+            stdout=(
+                "/repo/z.py:9:bar()\n/repo/z.py:2:foo()\n/repo/a.py:3:foo(); bar()\n"
+            ),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.subprocess.run",
+                return_value=process_result,
+            ) as mock_run,
+        ):
+            results, completed = execute_grep_batch(
+                [foo_request, bar_request], deadline=time.monotonic() + 10
+            )
+
+        assert mock_run.call_count == 1
+        assert completed == {foo_request, bar_request}
+        assert results[foo_request] == (
+            "/repo/a.py:3:foo(); bar()",
+            "/repo/z.py:2:foo()",
+        )
+        assert results[bar_request] == (
+            "/repo/a.py:3:foo(); bar()",
+            "/repo/z.py:9:bar()",
+        )
+        assert mock_run.call_args.kwargs["input"] == r"\bfoo\b" "\n" r"\bbar\b" "\n"
+
+    def test_batched_and_legacy_verdicts_match(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text(
+            "def helper():\n    return 1\n\ndef orphan():\n    return 2\n"
+        )
+        (tmp_path / "main.py").write_text("from library import helper\nhelper()\n")
+        findings = [
+            {
+                "name": name,
+                "full_name": f"library.{name}",
+                "simple_name": name,
+                "type": "function",
+                "file": str(library),
+                "line": line,
+                "confidence": 80,
+            }
+            for name, line in (("helper", 1), ("orphan", 4))
+        ]
+
+        batched = grep_verify_findings(findings, str(tmp_path))
+        legacy = grep_verify_findings(
+            findings, str(tmp_path), parallel=True, max_workers=2
+        )
+
+        assert set(batched) == set(legacy) == {"library.helper"}
+        assert (
+            batched["library.helper"].suppression_code
+            == legacy["library.helper"].suppression_code
+        )
+
+    def test_warm_cache_skips_batch_execution(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        (tmp_path / "main.py").write_text("from library import helper\nhelper()\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch", wraps=execute_grep_batch
+        ) as mock_batch:
+            first = grep_verify_findings([finding], str(tmp_path), cache=cache)
+            second = grep_verify_findings([finding], str(tmp_path), cache=cache)
+
+        assert set(first) == set(second) == {"library.helper"}
+        assert mock_batch.call_count == 1
 
 
 class TestMethodCallWhitespace:
@@ -508,8 +624,9 @@ class TestAnalyzerIntegration:
         target.write_text("def _cached_helper() -> None:\n    pass\n")
         evidence.write_text("from target import _cached_helper\n\n_cached_helper()\n")
 
-        from skylos.analyzer import analyze
         import json
+
+        from skylos.analyzer import analyze
 
         def unused_functions():
             result = json.loads(analyze(str(target), conf=0, grep_verify=True))
@@ -533,8 +650,9 @@ class TestAnalyzerIntegration:
             'def unrelated(unused_value: str) -> None:\n    pass\n\nunrelated("x")\n'
         )
 
-        from skylos.analyzer import analyze
         import json
+
+        from skylos.analyzer import analyze
 
         result_on = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
         result_off = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
@@ -559,8 +677,9 @@ class TestAnalyzerIntegration:
             'import plugin\ngetattr(plugin, "handle_event")()\n'
         )
 
-        from skylos.analyzer import analyze
         import json
+
+        from skylos.analyzer import analyze
 
         result_on = json.loads(analyze(str(tmp_path), conf=60, grep_verify=True))
         result_off = json.loads(analyze(str(tmp_path), conf=60, grep_verify=False))
@@ -612,8 +731,9 @@ result = PublicClass.used_method()
             encoding="utf-8",
         )
 
-        from skylos.analyzer import analyze
         import json
+
+        from skylos.analyzer import analyze
 
         result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
         unused_methods = {
