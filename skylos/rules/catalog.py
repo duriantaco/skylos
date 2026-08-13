@@ -263,6 +263,15 @@ _RULES = (
         "SKY-D271", "Error information disclosure over HTTP", "security", "MEDIUM"
     ),
     RuleCatalogEntry(
+        "SKY-D280",
+        "Next.js mutating API route missing authentication",
+        "security",
+        "HIGH",
+    ),
+    RuleCatalogEntry(
+        "SKY-D281", "Next.js server action SQL injection", "security", "CRITICAL"
+    ),
+    RuleCatalogEntry(
         "SKY-D282", "Webhook signature verification issue", "security", "HIGH"
     ),
     RuleCatalogEntry(
@@ -526,7 +535,7 @@ _RULES = (
     RuleCatalogEntry("SKY-G260", "Go unclosed resource", "security", "HIGH"),
     RuleCatalogEntry("SKY-G280", "Go weak TLS version", "security", "HIGH"),
     RuleCatalogEntry("SKY-S101", "Secret detected", "secrets", "CRITICAL"),
-    RuleCatalogEntry("SKY-S102", "High-entropy generic secret", "secrets", "HIGH"),
+    RuleCatalogEntry("SKY-S102", "Client-side secret exposure", "secrets", "HIGH"),
     RuleCatalogEntry("SKY-SC001", "Smart contract security issue", "security", "HIGH"),
 )
 
