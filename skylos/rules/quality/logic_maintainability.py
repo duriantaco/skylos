@@ -480,6 +480,32 @@ _BOOLEAN_TRAP_ALLOWED_NAMES = {
 }
 
 
+def _property_setter_value_arg(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    positional_args: list[ast.arg],
+) -> ast.arg | None:
+    setter_decorators = (
+        decorator
+        for decorator in node.decorator_list
+        if isinstance(decorator, ast.Attribute) and decorator.attr == "setter"
+    )
+    is_matching_setter = any(
+        (isinstance(decorator.value, ast.Name) and decorator.value.id == node.name)
+        or (
+            isinstance(decorator.value, ast.Attribute)
+            and decorator.value.attr == node.name
+        )
+        for decorator in setter_decorators
+    )
+    if not is_matching_setter:
+        return None
+
+    if len(positional_args) < 2:
+        return None
+
+    return positional_args[1]
+
+
 class BooleanTrapRule(SkylosRule):
     rule_id = "SKY-L029"
     name = "Boolean Trap"
@@ -493,7 +519,8 @@ class BooleanTrapRule(SkylosRule):
             return None
 
         args = node.args
-        positional_args = args.args
+        positional_args = [*args.posonlyargs, *args.args]
+        setter_value_arg = _property_setter_value_arg(node, positional_args)
 
         num_defaults = len(args.defaults)
         num_positional = len(positional_args)
@@ -504,6 +531,8 @@ class BooleanTrapRule(SkylosRule):
         for i, arg in enumerate(positional_args):
             arg_name = arg.arg
             if arg_name in ("self", "cls"):
+                continue
+            if arg is setter_value_arg:
                 continue
             if arg_name in _BOOLEAN_TRAP_ALLOWED_NAMES:
                 continue
