@@ -343,6 +343,53 @@ def fetch(url: str, *, api_key: str = "sk-ant-1234567890abcdefghijklmnop") -> st
         findings = _scan(code)
         assert "SKY-D244" in _ids(findings)
 
+    def test_positional_only_default_preserves_later_findings(self):
+        code = '''
+from mcp.server.fastmcp import FastMCP
+server = FastMCP("demo")
+
+@server.tool()
+def fetch(api_key: str = "sk-AbCd1234EfGh5678IjKlMnOp", /) -> str:
+    """Fetch a resource using a positional-only key."""
+    return api_key
+
+@server.tool()
+def publish(token: str = "sk-ZZZZ1111YYYY2222XXXX3333") -> str:
+    """Publish with an ordinary parameter key."""
+    return token
+'''
+        findings = _scan(code)
+        d244 = [finding for finding in findings if finding["rule_id"] == "SKY-D244"]
+
+        assert [finding["message"] for finding in d244] == [
+            "Hardcoded secret in MCP tool parameter default 'api_key'.",
+            "Hardcoded secret in MCP tool parameter default 'token'.",
+        ]
+        assert {finding["severity"] for finding in d244} == {"CRITICAL"}
+
+    def test_mixed_positional_defaults_preserve_secret_name(self):
+        code = '''
+from mcp.server.fastmcp import FastMCP
+server = FastMCP("demo")
+
+@server.tool()
+def fetch(
+    url: str,
+    api_key: str = "sk-AbCd1234EfGh5678IjKlMnOp",
+    /,
+    note: str = "hi",
+) -> str:
+    """Fetch using a hardcoded key and a harmless note."""
+    return url + api_key + note
+'''
+        findings = _scan(code)
+        d244 = [finding for finding in findings if finding["rule_id"] == "SKY-D244"]
+
+        assert [finding["message"] for finding in d244] == [
+            "Hardcoded secret in MCP tool parameter default 'api_key'."
+        ]
+        assert d244[0]["severity"] == "CRITICAL"
+
 
 class TestAsyncMCPTools:
     def test_async_tool_poisoning(self):
