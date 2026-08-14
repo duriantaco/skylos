@@ -3531,6 +3531,48 @@ class SupportsRead(Protocol):
         ]
         assert findings == []
 
+    def test_analyze_handles_positional_only_boolean_traps_and_setters(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        src = tmp_path / "boolean_traps.py"
+        src.write_text(
+            """
+def render_page(page: str, recurse: bool = True, /, name: str = "index") -> str:
+    return page
+
+def paginate(page: str, deep=True, /, name: str = "index") -> str:
+    return page
+
+class Settings:
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        self._enabled = value
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        assert result.get("analysis_errors", []) == []
+        findings = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") == "SKY-L029"
+        ]
+        assert [finding["simple_name"] for finding in findings] == [
+            "recurse",
+            "deep",
+        ]
+
     def test_analyze_flags_no_effect_statement(self, tmp_path):
         src = tmp_path / "app.py"
         src.write_text(

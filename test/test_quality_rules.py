@@ -722,6 +722,117 @@ def process(data, count=5):
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L029" for f in findings)
 
+    def test_positional_only_bool_params(self):
+        code = """
+def render_page(page: str, recurse: bool = True, /, name: str = "index") -> str:
+    return page
+
+def paginate(page: str, deep=True, /, name: str = "index") -> str:
+    return page
+
+def log_page(verbose: bool = True, /) -> None:
+    return None
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+        l029 = [finding for finding in findings if finding["rule_id"] == "SKY-L029"]
+
+        assert [finding["simple_name"] for finding in l029] == [
+            "recurse",
+            "deep",
+        ]
+
+    def test_positional_only_bool_variants_preserve_default_alignment(self):
+        code = """
+async def refresh(active: "bool", /) -> None:
+    return None
+
+def configure(label="plain", /, enabled=False) -> None:
+    return None
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+        l029 = [finding for finding in findings if finding["rule_id"] == "SKY-L029"]
+
+        assert [finding["simple_name"] for finding in l029] == [
+            "active",
+            "enabled",
+        ]
+
+    def test_property_setter_value_is_not_a_boolean_trap_with_custom_receiver(self):
+        code = """
+class Settings:
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(instance, value: bool, /) -> None:
+        instance._enabled = value
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+
+        assert not any(finding["rule_id"] == "SKY-L029" for finding in findings)
+
+    def test_qualified_property_setter_value_is_not_a_boolean_trap(self):
+        code = """
+class Base:
+    @property
+    def enabled(self) -> bool:
+        return False
+
+class Settings(Base):
+    @Base.enabled.setter
+    def enabled(self, value: bool) -> None:
+        self._enabled = value
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+
+        assert not any(finding["rule_id"] == "SKY-L029" for finding in findings)
+
+    def test_property_setter_only_exempts_value_parameter(self):
+        code = """
+class Settings:
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool, announce: bool = False) -> None:
+        self._enabled = value
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+        l029 = [finding for finding in findings if finding["rule_id"] == "SKY-L029"]
+
+        assert [finding["simple_name"] for finding in l029] == ["announce"]
+
+    def test_setter_lookalikes_do_not_exempt_parameter(self):
+        code = """
+@setter
+def configure(enabled: bool) -> None:
+    return None
+
+@registry.setter
+def publish(active: bool) -> None:
+    return None
+
+@broken.setter
+def broken(value: bool) -> None:
+    return None
+"""
+        rule = BooleanTrapRule()
+        findings = check_code(rule, code)
+        l029 = [finding for finding in findings if finding["rule_id"] == "SKY-L029"]
+
+        assert [finding["simple_name"] for finding in l029] == [
+            "enabled",
+            "active",
+            "value",
+        ]
+
 
 # --- SKY-L017: Error Disclosure ---
 
