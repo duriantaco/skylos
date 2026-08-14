@@ -141,7 +141,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
 | D271 | MEDIUM | Error information disclosure in HTTP responses | TS/JS | CWE-209 |
 | D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
-| D281 | HIGH | SQL injection in server actions via template literals | TS/JS | CWE-89 |
+| D281 | CRITICAL | Untrusted server action input reaching raw SQL text | TS/JS | CWE-89 |
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
 
@@ -402,7 +402,10 @@ across different operating-system/CPU platforms.
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
 | S101 | CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
-| S102 | HIGH | Server-only environment variable exposed to client component | TS/JS, Next.js | CWE-200 |
+| S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
+
+`SKY-S102` preserves `CRITICAL` severity when it reclassifies a concrete
+hardcoded credential from `SKY-S101`; environment-reference exposure is `HIGH`.
 
 ## Security Contracts (SKY-SC)
 

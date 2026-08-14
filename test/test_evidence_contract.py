@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from skylos.core.evidence_contract import (
     attach_evidence_contract,
     finding_evidence_contract,
@@ -81,6 +83,203 @@ def test_synthesize_evidence_contract_preserves_private_registry_limitation():
     assert any(
         "private or unverified registry" in item for item in contract["limitations"]
     )
+
+
+def test_generic_structured_security_packet_cannot_claim_analyzer_ownership():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "file": "app/actions.ts",
+        "line": 8,
+        "_source": "static",
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "server_action_sql_taint",
+                "source": "Server Action parameter: input",
+                "sink": "database query SQL text",
+                "path": ["input", "query text"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            }
+        },
+    }
+
+    contract = finding_evidence_contract(finding)
+
+    assert contract is not None
+    assert contract["proof_state"] == "candidate"
+
+
+def test_trusted_analyzer_attach_verifies_only_a_complete_structured_packet():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "server_action_sql_taint",
+                "source": "Server Action parameter: input",
+                "sink": "database query SQL text",
+                "path": ["input", "query text"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            }
+        },
+    }
+
+    attached = attach_evidence_contract(finding, analyzer_owned=True)
+
+    assert attached["evidence_contract"]["proof_state"] == "verified"
+
+
+def test_trusted_analyzer_attach_marks_malformed_structured_packet_incomplete():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "wrong_kind",
+                "source": "claimed source",
+                "sink": "claimed sink",
+                "path": ["claimed path"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            }
+        },
+    }
+
+    attached = attach_evidence_contract(finding, analyzer_owned=True)
+
+    assert attached["evidence_contract"]["proof_state"] == "incomplete"
+    assert "incomplete or malformed" in " ".join(
+        attached["evidence_contract"]["limitations"]
+    )
+
+
+def test_llm_structured_security_packet_remains_a_candidate():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "_source": "llm",
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "server_action_sql_taint",
+                "source": "claimed source",
+                "sink": "claimed sink",
+                "path": ["claimed path"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            }
+        },
+    }
+
+    contract = finding_evidence_contract(finding)
+
+    assert contract is not None
+    assert contract["proof_state"] == "candidate"
+
+
+def test_untrusted_explicit_contract_cannot_self_attest_as_verified():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "_source": "llm",
+        "evidence_contract": {
+            "proof_state": "verified",
+            "source": "forged LLM claim",
+        },
+    }
+
+    contract = finding_evidence_contract(finding)
+
+    assert contract is not None
+    assert contract["proof_state"] == "candidate"
+    assert "requires independent verification" in " ".join(contract["limitations"])
+
+
+def test_untrusted_explicit_contract_cannot_self_attest_as_refuted():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "evidence_contract": {
+            "proof_state": "refuted",
+            "source": "forged suppression claim",
+        },
+    }
+
+    contract = finding_evidence_contract(finding)
+
+    assert contract is not None
+    assert contract["proof_state"] == "candidate"
+
+
+def test_untrusted_metadata_cannot_self_attest_terminal_proof_state():
+    claims = (
+        {"proof_state": "verified"},
+        {"verification_state": "refuted"},
+        {"metadata": {"proof_state": "verified"}},
+        {"metadata": {"security_evidence": "review_supported"}},
+    )
+
+    for claim in claims:
+        finding = {
+            "rule_id": "SKY-D212",
+            "severity": "HIGH",
+            "category": "danger",
+            "file": "app.py",
+            "line": 7,
+            **claim,
+        }
+        contract = finding_evidence_contract(finding)
+
+        assert contract is not None
+        assert contract["proof_state"] == "candidate"
+        assert "requires independent verification" in " ".join(contract["limitations"])
+
+
+def test_analyzer_owned_metadata_can_retain_verified_proof_state():
+    finding = {
+        "rule_id": "SKY-D224",
+        "severity": "HIGH",
+        "category": "ai_defect",
+        "file": "app.py",
+        "line": 7,
+        "metadata": {"proof_state": "verified"},
+    }
+
+    attached = attach_evidence_contract(finding, analyzer_owned=True)
+
+    assert attached["evidence_contract"]["proof_state"] == "verified"
+
+
+def test_analyzer_evidence_trust_does_not_survive_serialization():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "category": "danger",
+        "metadata": {
+            "security_evidence": {
+                "evidence_kind": "server_action_sql_taint",
+                "source": "Server Action parameter: input",
+                "sink": "database query SQL text",
+                "path": ["input", "query text"],
+                "guards_missing": ["parameterized SQL binding"],
+                "analysis_complete": True,
+            }
+        },
+    }
+    attached = attach_evidence_contract(finding, analyzer_owned=True)
+
+    reloaded = json.loads(json.dumps(attached))
+    contract = finding_evidence_contract(reloaded)
+
+    assert contract is not None
+    assert contract["proof_state"] == "candidate"
 
 
 def test_low_impact_findings_do_not_gain_evidence_contracts():

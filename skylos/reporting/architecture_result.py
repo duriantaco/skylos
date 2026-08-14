@@ -5,6 +5,11 @@ import os
 import traceback
 from pathlib import Path
 
+from skylos.analysis.architecture_support import (
+    architecture_iad_strict,
+    expand_reexported_entrypoint_modules,
+    find_package_boundary_modules,
+)
 from skylos.analysis.circular_deps import CircularDependencyRule
 
 _MAX_ARCHITECTURE_SOURCE_BYTES = 2_000_000
@@ -115,7 +120,6 @@ def _architecture_findings(
     pyproject_entrypoint_modules,
 ):
     from skylos.analysis.architecture import get_architecture_findings
-    from skylos.analyzer import _architecture_iad_strict
 
     dep_graph = dict(circular_rule._analyzer.architecture_dependencies)
     mod_files = dict(circular_rule._analyzer.modules)
@@ -138,7 +142,7 @@ def _architecture_findings(
         entrypoint_modules=entrypoint_modules,
         package_boundary_modules=package_modules,
         layer_policy=project_cfg.get("architecture"),
-        iad_findings_advisory=not _architecture_iad_strict(
+        iad_findings_advisory=not architecture_iad_strict(
             project_cfg.get("architecture")
         ),
     )
@@ -152,10 +156,8 @@ def _architecture_entrypoint_modules(
     modmap,
     mod_files,
 ):
-    from skylos.analyzer import _expand_reexported_entrypoint_modules
-
     entrypoint_modules = pyproject_entrypoint_modules | architecture_main_guard_modules
-    return _expand_reexported_entrypoint_modules(
+    return expand_reexported_entrypoint_modules(
         pyproject_entrypoint_qnames,
         entrypoint_modules,
         all_raw_imports,
@@ -165,9 +167,7 @@ def _architecture_entrypoint_modules(
 
 
 def _package_boundary_modules(all_raw_imports, modmap, mod_files):
-    from skylos.analyzer import _find_package_boundary_modules
-
-    return _find_package_boundary_modules(all_raw_imports, modmap, mod_files)
+    return find_package_boundary_modules(all_raw_imports, modmap, mod_files)
 
 
 def _architecture_module_trees(files, modmap, architecture_abstractness):

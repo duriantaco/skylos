@@ -758,6 +758,28 @@
       }
     },
     {
+      "id": "typescript-nextjs-auth-decoys",
+      "path": "fixtures/typescript_nextjs_auth_decoys",
+      "description": "Next.js mutating route without an authentication guard should be reported even when comments, imports, headers, and cookies look auth-related.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled from common App Router mutation handlers where auth-shaped syntax does not enforce authorization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D280"]
+        },
+        "absent": {}
+      }
+    },
+    {
       "id": "typescript-nextjs-session-guard-safe",
       "path": "fixtures/typescript_nextjs_session_guard",
       "description": "Next.js mutating route with an explicit server-session guard should stay quiet.",
@@ -768,6 +790,28 @@
         "repo": "https://github.com/vercel/next.js",
         "license": "MIT",
         "notes": "Distilled precision guard for App Router routes protected with server-side session checks."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D280"]
+        }
+      }
+    },
+    {
+      "id": "typescript-nextjs-authjs-v5-safe",
+      "path": "fixtures/typescript_nextjs_authjs_v5_safe",
+      "description": "Next.js mutating route guarded through the official Auth.js v5 local auth adapter should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/nextauthjs/next-auth",
+        "license": "ISC",
+        "notes": "Distilled from the official Auth.js pattern that exports auth from a local NextAuth adapter module."
       },
       "budget": {
         "max_seconds": 5.0
@@ -802,6 +846,138 @@
       }
     },
     {
+      "id": "typescript-server-action-constant-safe",
+      "path": "fixtures/typescript_server_action_constant_safe",
+      "description": "Next.js server action with compile-time constant SQL substitutions should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled precision guard for constant propagation in server-action SQL analysis."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211", "SKY-D281"]
+        }
+      }
+    },
+    {
+      "id": "typescript-server-action-inline-unsafe",
+      "path": "fixtures/typescript_server_action_inline_unsafe",
+      "description": "Inline Next.js server action with dynamic SQL interpolation should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled from canonical inline use-server actions and unsafe dynamic SQL construction."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D281"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-server-action-repository-unsafe",
+      "path": "fixtures/typescript_server_action_repository_unsafe",
+      "description": "Next.js server action input reaching concatenated SQL through a same-file repository class should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled from enterprise server-action repository layering where generic template matching has no fallback."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D281"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-server-action-query-config-safe",
+      "path": "fixtures/typescript_server_action_query_config_safe",
+      "description": "Next.js server action using a helper-built parameterized text-and-values query config should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/brianc/node-postgres",
+        "license": "MIT",
+        "notes": "Distilled precision guard for node-postgres query configuration objects returned through a helper."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211", "SKY-D281"]
+        }
+      }
+    },
+    {
+      "id": "typescript-server-action-trusted-runtime-safe",
+      "path": "fixtures/typescript_server_action_trusted_runtime_safe",
+      "description": "Next.js server action interpolating a trusted server timestamp should stay quiet because runtime variability is not user taint.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled precision guard separating trusted runtime values from Server Action input taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211", "SKY-D281"]
+        }
+      }
+    },
+    {
+      "id": "typescript-server-action-prisma-tag-safe",
+      "path": "fixtures/typescript_server_action_prisma_tag_safe",
+      "description": "Next.js server action using a proven Prisma parameterizing tagged template should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/prisma/prisma",
+        "license": "Apache-2.0",
+        "notes": "Distilled precision guard for Prisma Client parameterized tagged-template queries with import provenance."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211", "SKY-D281"]
+        }
+      }
+    },
+    {
       "id": "typescript-webhook-unverified",
       "path": "fixtures/typescript_webhook_unverified",
       "description": "Stripe webhook handler that parses raw request body before signature verification should be reported.",
@@ -812,6 +988,28 @@
         "repo": "https://github.com/stripe/stripe-node",
         "license": "MIT",
         "notes": "Distilled from provider webhook signature verification requirements."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D282"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-webhook-nondominating-verifier",
+      "path": "fixtures/typescript_webhook_nondominating_verifier",
+      "description": "Stripe webhook verification of an unrelated payload after a side effect must not prove the handler safe.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/stripe/stripe-node",
+        "license": "MIT",
+        "notes": "Distilled from provider webhook requirements that the matching request payload be verified before it is trusted."
       },
       "budget": {
         "max_seconds": 5.0
@@ -838,10 +1036,58 @@
       "budget": {
         "max_seconds": 5.0
       },
+      "scan": {
+        "enable_secrets": true
+      },
       "expect": {
         "present": {},
         "absent": {
-          "danger": ["SKY-D282"]
+          "danger": ["SKY-D282"],
+          "secrets": ["SKY-S102"]
+        }
+      }
+    },
+    {
+      "id": "typescript-cookie-explicit-false",
+      "path": "fixtures/typescript_cookie_explicit_false",
+      "description": "A session cookie with explicit false secure and httpOnly flags should be reported as insecure.",
+      "languages": ["typescript"],
+      "taxonomy": ["cookie_security", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from Session Management guidance for Secure and HttpOnly cookie attributes."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D252"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-cookie-literal-safe",
+      "path": "fixtures/typescript_cookie_literal_safe",
+      "description": "A session cookie with literal true secure and httpOnly flags should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["cookie_security", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled precision guard from Session Management guidance for Secure and HttpOnly cookie attributes."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D252"]
         }
       }
     },

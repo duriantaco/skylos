@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 import re
 import subprocess
 
@@ -15,7 +16,8 @@ from skylos.cicd.evidence import (
     build_evidence_cards,
     evidence_counts,
     evidence_label_title,
-    redact_sensitive_text,
+    sanitize_markdown_text,
+    sanitize_untrusted_text,
 )
 from skylos.cicd.risk_passport import (
     build_risk_passport,
@@ -336,6 +338,26 @@ _SAFE_FINDING_METADATA_FIELDS = (
     "review_proof_lines",
 )
 _SAFE_VERIFICATION_FIELDS = ("verdict", "confidence", "reason")
+_SAFE_SECURITY_EVIDENCE_TEXT_FIELDS = (
+    "evidence_kind",
+    "source",
+    "sink",
+    "confidence_reason",
+    "test_hint",
+    "fix_shape",
+)
+_SAFE_SECURITY_EVIDENCE_LIST_FIELDS = (
+    "path",
+    "guards_seen",
+    "guards_missing",
+    "analysis_diagnostics",
+)
+_SAFE_SECURITY_EVIDENCE_OPTIONS = frozenset({"httpOnly", "secure"})
+_SAFE_SECURITY_EVIDENCE_OPTION_STATES = frozenset(
+    {"absent", "false", "true", "unknown"}
+)
+_MAX_SECURITY_EVIDENCE_TEXT_LENGTH = 500
+_MAX_SECURITY_EVIDENCE_LIST_ITEMS = 12
 
 
 def _flatten_findings(results: dict) -> list[dict]:
@@ -353,7 +375,11 @@ def _flatten_findings(results: dict) -> list[dict]:
             finding = {
                 "file": f.get("file") or f.get("file_path") or "",
                 "line": f.get("line") or f.get("line_number") or 1,
-                "message": f.get("message") or f.get("msg") or f.get("detail") or "",
+                "message": sanitize_untrusted_text(
+                    f.get("message") or f.get("msg") or f.get("detail") or "",
+                    max_length=4_000,
+                    preserve_newlines=True,
+                ),
                 "rule_id": f.get("rule_id") or "",
                 "severity": f.get("severity", "MEDIUM"),
                 "category": category,
@@ -377,14 +403,22 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
         "_review_proof_lines",
     ):
         value = source.get(key)
-        if isinstance(value, str) or (
-            key == "_review_proof_lines" and isinstance(value, list)
-        ):
-            target[key] = value
+        if key == "_security_evidence":
+            safe_evidence = _sanitize_security_evidence(value)
+            if safe_evidence is not None:
+                target[key] = safe_evidence
+        elif isinstance(value, str):
+            target[key] = sanitize_untrusted_text(value, max_length=1_000)
+        elif key == "_review_proof_lines" and isinstance(value, list):
+            target[key] = [
+                sanitize_untrusted_text(item, max_length=500)
+                for item in value[:12]
+                if isinstance(item, str)
+            ]
 
     symbol = source.get("symbol")
     if isinstance(symbol, str):
-        target["symbol"] = symbol
+        target["symbol"] = sanitize_untrusted_text(symbol, max_length=500)
 
     confidence = source.get("confidence")
     if isinstance(confidence, int):
@@ -396,16 +430,21 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
 
     ai_agent = source.get("ai_agent")
     if isinstance(ai_agent, str):
-        target["ai_agent"] = ai_agent
+        target["ai_agent"] = sanitize_untrusted_text(ai_agent, max_length=120)
 
     verification = source.get("verification")
     if isinstance(verification, dict):
-        safe_verification = {
-            key: value
-            for key, value in verification.items()
-            if key in _SAFE_VERIFICATION_FIELDS
-            and isinstance(value, (str, int, float, bool))
-        }
+        safe_verification = {}
+        for key, value in verification.items():
+            if key not in _SAFE_VERIFICATION_FIELDS or not isinstance(
+                value, (str, int, float, bool)
+            ):
+                continue
+            safe_verification[key] = (
+                sanitize_untrusted_text(value, max_length=1_000)
+                if isinstance(value, str)
+                else value
+            )
         if safe_verification:
             target["verification"] = safe_verification
 
@@ -417,10 +456,18 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
     for key, value in metadata.items():
         if key not in _SAFE_FINDING_METADATA_FIELDS:
             continue
-        if isinstance(value, str) or (
-            key == "review_proof_lines" and isinstance(value, list)
-        ):
-            safe_metadata[key] = value
+        if key == "security_evidence":
+            safe_evidence = _sanitize_security_evidence(value)
+            if safe_evidence is not None:
+                safe_metadata[key] = safe_evidence
+        elif isinstance(value, str):
+            safe_metadata[key] = sanitize_untrusted_text(value, max_length=1_000)
+        elif key == "review_proof_lines" and isinstance(value, list):
+            safe_metadata[key] = [
+                sanitize_untrusted_text(item, max_length=500)
+                for item in value[:12]
+                if isinstance(item, str)
+            ]
     if safe_metadata:
         target["metadata"] = safe_metadata
         if "security_evidence" in safe_metadata:
@@ -437,53 +484,127 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
             target["_review_proof_lines"] = safe_metadata["review_proof_lines"]
 
 
+def _sanitize_security_evidence(value: object) -> str | dict | None:
+    if isinstance(value, str):
+        return _sanitize_security_evidence_text(value)
+    if not isinstance(value, dict):
+        return None
+
+    packet: dict = {}
+    for key in _SAFE_SECURITY_EVIDENCE_TEXT_FIELDS:
+        field_value = value.get(key)
+        if isinstance(field_value, str):
+            packet[key] = _sanitize_security_evidence_text(field_value)
+
+    for key in _SAFE_SECURITY_EVIDENCE_LIST_FIELDS:
+        field_value = value.get(key)
+        if not isinstance(field_value, (list, tuple)):
+            continue
+        items = []
+        for item in field_value[:_MAX_SECURITY_EVIDENCE_LIST_ITEMS]:
+            if not isinstance(item, str):
+                continue
+            items.append(_sanitize_security_evidence_text(item))
+        packet[key] = items
+
+    options = value.get("options")
+    if isinstance(options, dict):
+        safe_options = {}
+        for key in _SAFE_SECURITY_EVIDENCE_OPTIONS:
+            state = options.get(key)
+            if (
+                isinstance(state, str)
+                and state in _SAFE_SECURITY_EVIDENCE_OPTION_STATES
+            ):
+                safe_options[key] = state
+        packet["options"] = safe_options
+
+    analysis_complete = value.get("analysis_complete")
+    if isinstance(analysis_complete, bool):
+        packet["analysis_complete"] = analysis_complete
+
+    return packet
+
+
+def _sanitize_security_evidence_text(value: str) -> str:
+    return sanitize_untrusted_text(
+        value,
+        max_length=_MAX_SECURITY_EVIDENCE_TEXT_LENGTH,
+    )
+
+
 def _merge_llm_findings(
     static_findings: list[dict], llm_findings: list[dict]
 ) -> list[dict]:
-    llm_by_loc: dict[tuple, dict] = {}
-    for f in llm_findings:
-        file = f.get("file", "")
-        line = f.get("line", 0)
-        key = (os.path.basename(file), line)
-        llm_by_loc[key] = f
+    llm_by_identity: dict[tuple[str, int, str], list[tuple[int, dict]]] = {}
+    for index, finding in enumerate(llm_findings):
+        identity = _review_finding_identity(finding)
+        if identity is not None:
+            llm_by_identity.setdefault(identity, []).append((index, finding))
 
-    matched_keys = set()
+    matched_indices: set[int] = set()
     for finding in static_findings:
-        file = finding.get("file", "")
-        line = finding.get("line", 0)
-        key = (os.path.basename(file), line)
-        if key in llm_by_loc:
-            llm = llm_by_loc[key]
-            if llm.get("suggestion"):
-                finding["suggestion"] = llm["suggestion"]
-            if llm.get("explanation"):
-                finding["explanation"] = llm["explanation"]
-            if llm.get("vulnerable_code"):
-                finding["vulnerable_code"] = llm["vulnerable_code"]
-            if llm.get("fixed_code"):
-                finding["fixed_code"] = llm["fixed_code"]
-            _copy_safe_finding_metadata(llm, finding)
-            matched_keys.add(key)
+        identity = _review_finding_identity(finding)
+        candidates = llm_by_identity.get(identity, []) if identity else []
+        if not candidates:
+            continue
+        llm_index, llm = candidates.pop(0)
+        matched_indices.add(llm_index)
+        for key in ("suggestion", "explanation", "vulnerable_code", "fixed_code"):
+            if llm.get(key):
+                finding[key] = llm[key]
 
-    for key, llm in llm_by_loc.items():
-        if key not in matched_keys:
+    for index, llm in enumerate(llm_findings):
+        if index not in matched_indices:
+            category = str(llm.get("_category") or "security").strip().lower()
+            if category in {"secret", "secrets", "security_regression"}:
+                category = "security"
             finding = {
                 "file": llm.get("file", ""),
                 "line": llm.get("line", 0),
                 "message": llm.get("message", ""),
                 "rule_id": llm.get("rule_id", ""),
                 "severity": llm.get("severity", "MEDIUM"),
-                "category": llm.get("_category", "security"),
+                "category": category,
                 "suggestion": llm.get("suggestion"),
                 "explanation": llm.get("explanation"),
                 "vulnerable_code": llm.get("vulnerable_code"),
                 "fixed_code": llm.get("fixed_code"),
             }
-            _copy_safe_finding_metadata(llm, finding)
+            symbol = llm.get("symbol")
+            if isinstance(symbol, str):
+                finding["symbol"] = sanitize_untrusted_text(symbol, max_length=500)
             finding["_source"] = "llm"
             static_findings.append(finding)
 
     return static_findings
+
+
+def _review_finding_identity(finding: object) -> tuple[str, int, str] | None:
+    if not isinstance(finding, dict):
+        return None
+    file_path = _normalize_review_finding_path(finding.get("file"))
+    rule_id = str(finding.get("rule_id") or "").strip().upper()
+    line = finding.get("line")
+    if isinstance(line, bool):
+        return None
+    try:
+        line_number = int(line)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not file_path or not rule_id or line_number < 1:
+        return None
+    return file_path, line_number, rule_id
+
+
+def _normalize_review_finding_path(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        return ""
+    normalized = posixpath.normpath(value.strip().replace("\\", "/"))
+    cwd = posixpath.normpath(os.getcwd().replace("\\", "/"))
+    if normalized.startswith(cwd + "/"):
+        normalized = normalized[len(cwd) + 1 :]
+    return "" if normalized in {"", "."} else normalized
 
 
 _REGRESSION_SUGGESTIONS: dict[str, str] = {
@@ -566,10 +687,16 @@ _RULE_SUGGESTIONS: dict[str, str] = {
 
 def _format_review_comment(finding: dict) -> str:
     kind = finding.get("kind", "")
-    severity = finding.get("severity", "MEDIUM")
+    raw_severity = str(finding.get("severity") or "MEDIUM").upper()
+    severity = (
+        raw_severity
+        if raw_severity in {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
+        else "MEDIUM"
+    )
     rule_id = finding.get("rule_id", "")
-    message = redact_sensitive_text(finding.get("message", ""))
-    rule_str = f" `{rule_id}`" if rule_id else ""
+    message = sanitize_markdown_text(finding.get("message", ""), max_length=1_000)
+    safe_rule_id = sanitize_markdown_text(rule_id, max_length=120)
+    rule_str = f" `{safe_rule_id}`" if safe_rule_id else ""
 
     if kind == "security_regression":
         control_type = finding.get("control_type", "")
@@ -583,7 +710,7 @@ def _format_review_comment(finding: dict) -> str:
         ]
         suggestion = _REGRESSION_SUGGESTIONS.get(control_type)
         if suggestion:
-            parts.extend(["", f"**Fix:** {redact_sensitive_text(suggestion)}"])
+            parts.extend(["", f"**Fix:** {sanitize_markdown_text(suggestion)}"])
     else:
         badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}.get(
             severity, "⚪"
@@ -592,7 +719,12 @@ def _format_review_comment(finding: dict) -> str:
 
         explanation = finding.get("explanation")
         if explanation:
-            parts.extend(["", f"**Why:** {redact_sensitive_text(explanation)}"])
+            parts.extend(
+                [
+                    "",
+                    f"**Why:** {sanitize_markdown_text(explanation, max_length=1_000)}",
+                ]
+            )
 
         vulnerable_code = finding.get("vulnerable_code")
         fixed_code = finding.get("fixed_code")
@@ -603,19 +735,27 @@ def _format_review_comment(finding: dict) -> str:
                     "",
                     "**Vulnerable code:**",
                     "```python",
-                    redact_sensitive_text(vulnerable_code),
+                    sanitize_markdown_text(
+                        vulnerable_code,
+                        max_length=4_000,
+                        preserve_newlines=True,
+                    ),
                     "```",
                     "",
                     "**Fixed code:**",
                     "```python",
-                    redact_sensitive_text(fixed_code),
+                    sanitize_markdown_text(
+                        fixed_code,
+                        max_length=4_000,
+                        preserve_newlines=True,
+                    ),
                     "```",
                 ]
             )
         else:
             suggestion = finding.get("suggestion") or _RULE_SUGGESTIONS.get(rule_id)
             if suggestion:
-                parts.extend(["", f"**Fix:** {redact_sensitive_text(suggestion)}"])
+                parts.extend(["", f"**Fix:** {sanitize_markdown_text(suggestion)}"])
 
     footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
     parts.append(footer)
@@ -627,7 +767,8 @@ def _format_evidence_card_comment(
     finding: dict, card: EvidenceCard | None = None
 ) -> str:
     card = card or build_evidence_card(finding)
-    rule_str = f" `{card.rule_id}`" if card.rule_id else ""
+    safe_rule_id = sanitize_markdown_text(card.rule_id, max_length=120)
+    rule_str = f" `{safe_rule_id}`" if safe_rule_id else ""
     risk = {
         "security": "security finding",
         "security_regression": "security regression",
@@ -637,12 +778,13 @@ def _format_evidence_card_comment(
         "dependency": "dependency issue",
         "custom": "custom rule match",
     }[card.kind]
-    location = f"{card.file}:{card.line}" if card.file else str(card.line)
+    raw_location = f"{card.file}:{card.line}" if card.file else str(card.line)
+    location = sanitize_markdown_text(raw_location, max_length=600)
 
     parts = [
         f"**Risk: {evidence_label_title(card.label)} {risk}**{rule_str}",
         "",
-        redact_sensitive_text(card.title),
+        sanitize_markdown_text(card.title, max_length=120),
         "",
         f"**Location:** `{location}`",
         "",
@@ -650,14 +792,20 @@ def _format_evidence_card_comment(
     ]
 
     for item in card.evidence or ("No extra evidence attached.",):
-        parts.append(f"- {redact_sensitive_text(item)}")
+        parts.append(f"- {sanitize_markdown_text(item, max_length=500)}")
 
     if card.impact:
-        parts.extend(["", f"**Impact:** {redact_sensitive_text(card.impact)}"])
+        parts.extend(
+            ["", f"**Impact:** {sanitize_markdown_text(card.impact, max_length=500)}"]
+        )
 
     if card.suggested_fix:
         parts.extend(
-            ["", f"**Suggested fix:** {redact_sensitive_text(card.suggested_fix)}"]
+            [
+                "",
+                "**Suggested fix:** "
+                f"{sanitize_markdown_text(card.suggested_fix, max_length=500)}",
+            ]
         )
 
     parts.extend(["", f"**Confidence:** {card.confidence}%"])
@@ -872,9 +1020,13 @@ def _post_summary_comment(
             ]
         )
         for f in regression_findings:
-            control = f.get("control_type", "unknown")
-            file = os.path.basename(f.get("file", ""))
-            msg = redact_sensitive_text(f.get("message", ""))
+            control = sanitize_markdown_text(
+                f.get("control_type", "unknown"), max_length=80
+            )
+            file = sanitize_markdown_text(
+                os.path.basename(f.get("file", "")), max_length=300
+            )
+            msg = sanitize_markdown_text(f.get("message", ""), max_length=1_000)
             lines.append(f"| {control} | {file} | {msg} |")
 
     if evidence_cards:
@@ -903,11 +1055,14 @@ def _post_summary_comment(
         for f in critical_findings[:5]:
             sev = f.get("severity", "MEDIUM")
             badge = {"CRITICAL": "🔴", "HIGH": "🟠"}.get(sev, "🟡")
-            rule = f" `{f['rule_id']}`" if f.get("rule_id") else ""
-            file = os.path.basename(f.get("file", ""))
+            safe_rule_id = sanitize_markdown_text(f.get("rule_id", ""), max_length=120)
+            rule = f" `{safe_rule_id}`" if safe_rule_id else ""
+            file = sanitize_markdown_text(
+                os.path.basename(f.get("file", "")), max_length=300
+            )
             line_no = f.get("line", "")
             loc = f" ({file}:{line_no})" if file else ""
-            message = redact_sensitive_text(f.get("message", ""))
+            message = sanitize_markdown_text(f.get("message", ""), max_length=1_000)
             lines.append(f"- {badge} **{sev}**{rule}{loc}: {message}")
 
             vuln_code = f.get("vulnerable_code")
@@ -918,12 +1073,22 @@ def _post_summary_comment(
                 lines.append("")
                 lines.append("  **Vulnerable:**")
                 lines.append("  ```python")
-                for code_line in redact_sensitive_text(vuln_code).splitlines():
+                safe_vulnerable_code = sanitize_markdown_text(
+                    vuln_code,
+                    max_length=4_000,
+                    preserve_newlines=True,
+                )
+                for code_line in safe_vulnerable_code.splitlines():
                     lines.append(f"  {code_line}")
                 lines.append("  ```")
                 lines.append("  **Fixed:**")
                 lines.append("  ```python")
-                for code_line in redact_sensitive_text(fix_code).splitlines():
+                safe_fixed_code = sanitize_markdown_text(
+                    fix_code,
+                    max_length=4_000,
+                    preserve_newlines=True,
+                )
+                for code_line in safe_fixed_code.splitlines():
                     lines.append(f"  {code_line}")
                 lines.append("  ```")
                 lines.append("  </details>")
@@ -931,7 +1096,9 @@ def _post_summary_comment(
             else:
                 fix = f.get("suggestion") or _RULE_SUGGESTIONS.get(f.get("rule_id", ""))
                 if fix:
-                    lines.append(f"  - **Fix:** {redact_sensitive_text(fix)}")
+                    lines.append(
+                        f"  - **Fix:** {sanitize_markdown_text(fix, max_length=500)}"
+                    )
 
     if grade:
         overall = grade["overall"]
@@ -963,7 +1130,7 @@ def _post_summary_comment(
         for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
             cat = cats[cat_name]
             display = cat_name.replace("_", " ").title()
-            issue = redact_sensitive_text(cat.get("key_issue") or "-")[:50]
+            issue = sanitize_markdown_text(cat.get("key_issue") or "-", max_length=50)
 
             delta_str = ""
             if previous_grade and cat_name in previous_grade.get("categories", {}):

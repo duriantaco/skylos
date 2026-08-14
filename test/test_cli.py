@@ -1580,8 +1580,9 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_exporter_ctor(findings, tool_name=None):
+    def fake_exporter_ctor(findings, tool_name=None, *, analyzer_owned=False):
         captured["findings"] = findings
+        captured["analyzer_owned"] = analyzer_owned
         exp = Mock()
         exp.write = Mock()
         exp.generate = Mock(return_value={"runs": [{}]})
@@ -1597,6 +1598,7 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
 
     findings = captured.get("findings")
     assert findings, "Expected SARIF exporter to receive findings"
+    assert captured["analyzer_owned"] is True
 
     cats = set()
     for f in findings:
@@ -1678,8 +1680,9 @@ def test_main_sarif_category_reliability_excludes_security_deployment_findings(
 
     captured = {}
 
-    def fake_exporter_ctor(findings, tool_name=None):
+    def fake_exporter_ctor(findings, tool_name=None, *, analyzer_owned=False):
         captured["findings"] = findings
+        captured["analyzer_owned"] = analyzer_owned
         exporter = Mock()
         exporter.generate.return_value = {"runs": [{}]}
         return exporter
@@ -1694,6 +1697,7 @@ def test_main_sarif_category_reliability_excludes_security_deployment_findings(
 
     assert [finding["rule_id"] for finding in captured["findings"]] == ["SKY-DEP003"]
     assert captured["findings"][0]["category"] == "RELIABILITY"
+    assert captured["analyzer_owned"] is True
 
 
 def test_main_json_category_reliability_excludes_security_deployment_findings(
@@ -1855,6 +1859,7 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
         "is_forced": False,
         "strict": False,
         "quiet": True,
+        "analyzer_owned": True,
     }
     mock_print.assert_called_once()
     printed_payload = json.loads(mock_print.call_args.args[0])

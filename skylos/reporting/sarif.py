@@ -1,12 +1,20 @@
 import os
 import json
 
+from skylos.cicd.evidence import sanitize_bounded_payload, sanitize_untrusted_text
 from skylos.core.evidence_contract import finding_evidence_contract
 from skylos.deadcode.finding_evidence import dead_code_finding_evidence_payload
 
 
+_MAX_SARIF_MESSAGE_LENGTH = 4_000
+_MAX_SARIF_SNIPPET_LENGTH = 2_000
+_MAX_SARIF_METADATA_TEXT_LENGTH = 500
+_MAX_SARIF_METADATA_ITEMS = 32
+_MAX_SARIF_METADATA_NODES = 256
+
+
 def severity_to_sarif_level(severity):
-    severity_text = (severity or "").upper()
+    severity_text = str(severity or "").upper()
     if severity_text in {"CRITICAL", "HIGH"}:
         return "error"
     if severity_text == "MEDIUM":
@@ -14,8 +22,21 @@ def severity_to_sarif_level(severity):
     return "note"
 
 
+def _positive_sarif_integer(value, default=1):
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if number >= 1 else default
+
+
 def normalize_file_path_for_sarif(file_path=None):
-    raw_path = str(file_path or "")
+    raw_path = sanitize_untrusted_text(
+        file_path or "",
+        max_length=1_000,
+        preserve_newlines=False,
+        neutralize_mentions=False,
+    )
     cleaned_path = raw_path.replace("\\", "/").strip()
 
     if cleaned_path.lower().startswith("file://"):
@@ -33,10 +54,18 @@ def normalize_file_path_for_sarif(file_path=None):
 
 
 class SarifExporter:
-    def __init__(self, findings, tool_name="Skylos", version="1.0.0"):
+    def __init__(
+        self,
+        findings,
+        tool_name="Skylos",
+        version="1.0.0",
+        *,
+        analyzer_owned=False,
+    ):
         self.findings = findings
         self.tool_name = tool_name
         self.version = version
+        self.analyzer_owned = analyzer_owned
 
     def generate(self):
         from skylos.rules.quality.standards import get_cwe_taxa
@@ -81,53 +110,76 @@ class SarifExporter:
         rules = {}
 
         for finding in self.findings:
-            rule_id = str(finding.get("rule_id") or "UNKNOWN")
+            rule_id = sanitize_untrusted_text(
+                finding.get("rule_id") or "UNKNOWN",
+                max_length=120,
+            )
             if rule_id in rules:
                 continue
 
-            msg_text = str(finding.get("message") or "")
+            msg_text = sanitize_untrusted_text(
+                finding.get("message") or "",
+                max_length=_MAX_SARIF_MESSAGE_LENGTH,
+                markdown=True,
+            )
             fallback_title = msg_text.splitlines()[0] if msg_text.strip() else rule_id
 
             title_raw = (
                 finding.get("title") or finding.get("rule_name") or fallback_title
             )
-            title = str(title_raw).strip()
-            if len(title) > 120:
-                title = title[:117] + "..."
+            title = sanitize_untrusted_text(
+                title_raw,
+                max_length=120,
+                markdown=True,
+            ).strip()
 
             level = severity_to_sarif_level(finding.get("severity"))
 
-            cat = str(finding.get("category") or "").upper()
+            cat = sanitize_untrusted_text(
+                finding.get("category") or "",
+                max_length=80,
+            ).upper()
             tags = []
             if cat:
                 tags.append(cat.lower())
             if cat == "SECURITY":
                 tags.append("security")
+            tags = list(dict.fromkeys(tags))
 
             rule_entry = {
                 "id": rule_id,
                 "shortDescription": {"text": title or rule_id},
                 "defaultConfiguration": {"level": level},
                 "properties": {"tags": tags},
-                "helpUri": str(
+                "helpUri": sanitize_untrusted_text(
                     finding.get("help_uri")
-                    or f"https://docs.skylos.dev/rules/{rule_id}"
+                    or f"https://docs.skylos.dev/rules/{rule_id}",
+                    max_length=1_000,
+                    markdown=False,
+                    neutralize_mentions=False,
                 ),
             }
 
             cwe_list = finding.get("cwe", [])
-            if cwe_list:
+            if isinstance(cwe_list, list) and cwe_list:
+                safe_cwe_ids = list(
+                    dict.fromkeys(
+                        sanitize_untrusted_text(cwe.get("id"), max_length=80)
+                        for cwe in cwe_list[:_MAX_SARIF_METADATA_ITEMS]
+                        if isinstance(cwe, dict) and cwe.get("id")
+                    )
+                )
                 rule_entry["relationships"] = [
                     {
                         "target": {
-                            "id": cwe["id"],
+                            "id": cwe_id,
                             "toolComponent": {"name": "CWE"},
                         },
                         "kinds": ["superset"],
                     }
-                    for cwe in cwe_list
+                    for cwe_id in safe_cwe_ids
                 ]
-                tags.extend(cwe["id"] for cwe in cwe_list)
+                tags.extend(safe_cwe_ids)
 
             rules[rule_id] = rule_entry
 
@@ -137,49 +189,81 @@ class SarifExporter:
         results = []
 
         for finding in self.findings:
-            rule_id = str(finding.get("rule_id") or "UNKNOWN")
+            rule_id = sanitize_untrusted_text(
+                finding.get("rule_id") or "UNKNOWN",
+                max_length=120,
+            )
             level = severity_to_sarif_level(finding.get("severity"))
 
-            message_text = str(finding.get("message") or "(no message)")
+            message_text = sanitize_untrusted_text(
+                finding.get("message") or "(no message)",
+                max_length=_MAX_SARIF_MESSAGE_LENGTH,
+                markdown=True,
+            )
 
             file_path = normalize_file_path_for_sarif(
                 finding.get("file_path") or finding.get("file")
             )
 
-            line_number = int(finding.get("line_number") or finding.get("line") or 1)
-            column_number = int(finding.get("col_number") or finding.get("col") or 1)
-            if line_number < 1:
-                line_number = 1
-            if column_number < 1:
-                column_number = 1
+            line_number = _positive_sarif_integer(
+                finding.get("line_number") or finding.get("line") or 1
+            )
+            column_number = _positive_sarif_integer(
+                finding.get("col_number") or finding.get("col") or 1
+            )
 
             snippet_text = finding.get("snippet")
             if snippet_text is not None:
-                snippet_text = str(snippet_text)[:2000]
+                snippet_text = sanitize_untrusted_text(
+                    snippet_text,
+                    max_length=_MAX_SARIF_SNIPPET_LENGTH,
+                    markdown=False,
+                    preserve_newlines=True,
+                    neutralize_mentions=False,
+                )
 
-            category = str(finding.get("category") or "QUALITY").upper()
+            category = sanitize_untrusted_text(
+                finding.get("category") or "QUALITY",
+                max_length=80,
+            ).upper()
 
             properties = {"category": category}
 
             kind = finding.get("kind")
             if kind:
-                properties["kind"] = str(kind)
+                properties["kind"] = sanitize_untrusted_text(kind, max_length=120)
 
             control_type = finding.get("control_type")
             if control_type:
-                properties["control_type"] = str(control_type)
+                properties["control_type"] = sanitize_untrusted_text(
+                    control_type,
+                    max_length=120,
+                )
 
             metadata = finding.get("metadata")
             if isinstance(metadata, dict) and metadata:
-                properties["skylos_metadata"] = metadata
+                safe_metadata = _sanitize_sarif_payload(metadata)
+                if safe_metadata:
+                    properties["skylos_metadata"] = safe_metadata
 
-            evidence_contract = finding_evidence_contract(finding)
+            safe_evidence_input = _sanitize_sarif_payload(finding)
+            if not isinstance(safe_evidence_input, dict):
+                safe_evidence_input = {}
+
+            evidence_contract = finding_evidence_contract(
+                safe_evidence_input,
+                analyzer_owned=self.analyzer_owned,
+            )
             if evidence_contract is not None:
-                properties["skylos_evidence_contract"] = evidence_contract
+                safe_contract = _sanitize_sarif_payload(evidence_contract)
+                if safe_contract:
+                    properties["skylos_evidence_contract"] = safe_contract
 
-            dead_code_evidence = dead_code_finding_evidence_payload(finding)
+            dead_code_evidence = dead_code_finding_evidence_payload(safe_evidence_input)
             if dead_code_evidence is not None:
-                properties["skylos_dead_code_evidence"] = dead_code_evidence
+                safe_dead_code_evidence = _sanitize_sarif_payload(dead_code_evidence)
+                if safe_dead_code_evidence:
+                    properties["skylos_dead_code_evidence"] = safe_dead_code_evidence
 
             result_obj = {
                 "ruleId": rule_id,
@@ -207,3 +291,19 @@ class SarifExporter:
             results.append(result_obj)
 
         return results
+
+
+def _sanitize_sarif_payload(value):
+    # SARIF properties are machine-readable JSON, not a Markdown sink. Keep
+    # evidence symbols and trace arrows stable while still bounding content,
+    # removing unsafe controls, and redacting credentials. Human-facing SARIF
+    # messages and snippets are sanitized separately above.
+    return sanitize_bounded_payload(
+        value,
+        max_depth=4,
+        max_items=_MAX_SARIF_METADATA_ITEMS,
+        max_text_length=_MAX_SARIF_METADATA_TEXT_LENGTH,
+        max_nodes=_MAX_SARIF_METADATA_NODES,
+        markdown=False,
+        neutralize_mentions=False,
+    )

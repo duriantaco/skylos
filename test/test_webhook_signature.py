@@ -6,7 +6,7 @@ import textwrap
 from skylos.rules.danger.danger import scan_file_with_tree
 from skylos.rules.danger.danger_webhook import webhook_flow
 from skylos.visitors.languages.typescript import scan_typescript_file
-from skylos.visitors.languages.typescript import danger as ts_danger
+from skylos.visitors.languages.typescript.security_flow import FlowLimits
 
 
 def _scan_python(code: str, filename: str = "app.py") -> list[dict]:
@@ -156,6 +156,10 @@ def test_nextjs_stripe_webhook_without_signature_flags(tmp_path):
     findings = _scan_ts(
         tmp_path,
         """
+        import Stripe from "stripe";
+
+        const stripe = new Stripe(process.env.STRIPE_API_KEY!);
+
         export async function POST(req: Request) {
           const event = await req.json();
           if (event.type === "checkout.session.completed") {
@@ -167,13 +171,19 @@ def test_nextjs_stripe_webhook_without_signature_flags(tmp_path):
         "app/api/stripe/webhook/route.ts",
     )
 
-    assert "SKY-D282" in _rule_ids(findings)
+    ids = _rule_ids(findings)
+    assert "SKY-D282" in ids
+    assert "SKY-D280" not in ids
 
 
 def test_nextjs_stripe_webhook_with_construct_event_is_safe(tmp_path):
     findings = _scan_ts(
         tmp_path,
         """
+        import Stripe from "stripe";
+
+        const stripe = new Stripe(process.env.STRIPE_API_KEY!);
+
         export async function POST(req: Request) {
           const body = await req.text();
           const sig = req.headers.get("stripe-signature");
@@ -191,6 +201,8 @@ def test_nextjs_stripe_webhook_with_instance_verify_is_safe(tmp_path):
     findings = _scan_ts(
         tmp_path,
         """
+        import { Webhook } from "svix";
+
         export async function POST(req: Request) {
           const body = await req.text();
           const sig = req.headers.get("stripe-signature");
@@ -199,7 +211,7 @@ def test_nextjs_stripe_webhook_with_instance_verify_is_safe(tmp_path):
           return Response.json({ received: true, event });
         }
         """,
-        "app/api/stripe/webhook/route.ts",
+        "app/api/svix/webhook/route.ts",
     )
 
     assert "SKY-D282" not in _rule_ids(findings)
@@ -209,10 +221,13 @@ def test_express_github_webhook_with_hmac_is_safe(tmp_path):
     findings = _scan_ts(
         tmp_path,
         """
-        app.post("/github/webhook", async (req, res) => {
+        import { createHmac, timingSafeEqual } from "node:crypto";
+        import express from "express";
+
+        app.post("/github/webhook", express.raw({ type: "application/json" }), async (req, res) => {
           const signature = req.headers["x-hub-signature-256"];
-          const expected = createHmac("sha256", secret).update(req.body).digest("hex");
-          if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+          const expected = createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET!).update(req.body).digest("hex");
+          if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
             return res.status(401).send("bad");
           }
           return res.json({ ok: true });
@@ -274,9 +289,11 @@ def test_typescript_test_file_is_not_flagged(tmp_path):
     assert "SKY-D282" not in _rule_ids(findings)
 
 
-def test_webhook_verification_patterns_do_not_use_unbounded_cross_text_regex():
+def test_webhook_analysis_uses_bounded_patterns_and_flow_budgets():
     python_patterns = [pattern.pattern for pattern in webhook_flow._VERIFY_PATTERNS]
-    ts_patterns = [pattern.pattern for pattern in ts_danger._WEBHOOK_VERIFY_PATTERNS]
 
     assert all(".*?" not in pattern for pattern in python_patterns)
-    assert all(".*?" not in pattern for pattern in ts_patterns)
+    limits = FlowLimits()
+    assert limits.max_nodes > 0
+    assert limits.max_work_items > limits.max_nodes
+    assert limits.max_expr_depth > 0

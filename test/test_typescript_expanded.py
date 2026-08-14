@@ -47,7 +47,9 @@ class TestTSDangerRules:
         assert "SKY-D201" in ids
 
     def test_innerhtml_detected(self, tmp_path):
-        code = "const msg = req.query.msg;\ndocument.getElementById('x')!.innerHTML = msg;"
+        code = (
+            "const msg = req.query.msg;\ndocument.getElementById('x')!.innerHTML = msg;"
+        )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D226" in ids
@@ -59,7 +61,9 @@ class TestTSDangerRules:
         assert "SKY-D226" not in ids
 
     def test_innerhtml_static_executable_markup_is_flagged(self, tmp_path):
-        code = 'document.getElementById("x")!.innerHTML = "<img src=x onerror=alert(1)>";'
+        code = (
+            'document.getElementById("x")!.innerHTML = "<img src=x onerror=alert(1)>";'
+        )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D226" in ids
@@ -1105,9 +1109,7 @@ class TestTSMonorepoReachability:
 
         result = json.loads(analyze(str(src_dir), conf=0, grep_verify=False))
 
-        unused_functions = {
-            item["name"] for item in result.get("unused_functions", [])
-        }
+        unused_functions = {item["name"] for item in result.get("unused_functions", [])}
         unused_files = {
             Path(item["file"]).name for item in result.get("unused_files", [])
         }
@@ -2060,12 +2062,16 @@ class TestInsecureCookies:
         d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
         assert len(d252) == 0
 
-    def test_cookie_dynamic_options_safe(self, tmp_path):
-        """Variable options — can't analyze, should NOT trigger."""
+    def test_cookie_dynamic_options_are_unknown(self, tmp_path):
+        """Unresolved variable options cannot prove the flags are enabled."""
         code = "res.cookie('session', token, cookieOpts);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
-        assert len(d252) == 0
+        assert len(d252) == 1
+        assert d252[0]["metadata"]["security_evidence"]["options"] == {
+            "httpOnly": "unknown",
+            "secure": "unknown",
+        }
 
 
 class TestTimingUnsafeComparison:
@@ -2073,9 +2079,7 @@ class TestTimingUnsafeComparison:
 
     def test_null_guard_is_not_timing_comparison(self, tmp_path):
         code = (
-            "export function reportIsLoaded(digest) {\n"
-            "    return digest !== null;\n"
-            "}\n"
+            "export function reportIsLoaded(digest) {\n    return digest !== null;\n}\n"
         )
         _, _, _, danger = _scan_ts_file(tmp_path, "reproduce.js", code)
         ids = {f["rule_id"] for f in danger}
@@ -2090,9 +2094,7 @@ class TestTimingUnsafeComparison:
             "digest !== (null as null)",
         ),
     )
-    def test_null_guard_variants_are_not_timing_comparisons(
-        self, tmp_path, expression
-    ):
+    def test_null_guard_variants_are_not_timing_comparisons(self, tmp_path, expression):
         _, _, _, danger = _scan_ts(tmp_path, f"if ({expression}) {{ proceed(); }}\n")
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D253" not in ids
@@ -2118,9 +2120,7 @@ class TestTimingUnsafeComparison:
 
     def test_shadowed_undefined_remains_timing_comparison(self, tmp_path):
         code = (
-            "function compare(token, undefined) {\n"
-            "    return token === undefined;\n"
-            "}\n"
+            "function compare(token, undefined) {\n    return token === undefined;\n}\n"
         )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}

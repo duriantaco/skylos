@@ -8,6 +8,7 @@ from rich.console import Console
 
 from skylos import cli
 from skylos.commands import rules_cmd
+from skylos.rules.catalog import get_rule_catalog
 
 
 def test_run_rules_command_returns_validate_failure():
@@ -154,6 +155,35 @@ def test_rules_list_filters_builtin_rules_by_rough_match():
     rule_ids = {rule["id"] for rule in payload["rules"]}
     assert {"SKY-D226", "SKY-D227", "SKY-D228"}.issubset(rule_ids)
     assert "SKY-D201" not in rule_ids
+
+
+def test_builtin_catalog_exposes_nextjs_security_rule_contracts():
+    rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
+
+    assert rules_by_id["SKY-D280"] == {
+        "id": "SKY-D280",
+        "name": "Next.js mutating API route missing authentication",
+        "category": "security",
+        "severity": "HIGH",
+        "source": "builtin",
+        "aliases": [],
+    }
+    assert rules_by_id["SKY-D281"] == {
+        "id": "SKY-D281",
+        "name": "Next.js server action SQL injection",
+        "category": "security",
+        "severity": "CRITICAL",
+        "source": "builtin",
+        "aliases": [],
+    }
+    assert rules_by_id["SKY-S102"] == {
+        "id": "SKY-S102",
+        "name": "Client-side secret exposure",
+        "category": "secrets",
+        "severity": "HIGH",
+        "source": "builtin",
+        "aliases": [],
+    }
 
 
 def test_rules_list_packs_json_keeps_community_pack_listing(tmp_path, monkeypatch):

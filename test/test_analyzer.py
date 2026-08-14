@@ -139,6 +139,63 @@ class TestSkylos:
         assert skylos.dynamic == set()
         assert isinstance(skylos.exports, defaultdict)
 
+    def test_instance_can_be_reused_without_leaking_prior_scan_state(
+        self, skylos, tmp_path
+    ):
+        old_module = tmp_path / "old_module.py"
+        old_module.write_text("def old_helper():\n    return 1\n", encoding="utf-8")
+
+        first = json.loads(
+            skylos.analyze(str(tmp_path), thr=0, grep_verify=False, trace_file=False)
+        )
+
+        old_module.unlink()
+        new_module = tmp_path / "new_module.py"
+        new_module.write_text("def new_helper():\n    return 2\n", encoding="utf-8")
+        second = json.loads(
+            skylos.analyze(str(tmp_path), thr=0, grep_verify=False, trace_file=False)
+        )
+
+        first_names = {finding["simple_name"] for finding in first["unused_functions"]}
+        second_names = {
+            finding["simple_name"] for finding in second["unused_functions"]
+        }
+        assert "old_helper" in first_names
+        assert "old_helper" not in second_names
+        assert "new_helper" in second_names
+
+    def test_reused_instance_clears_full_scan_caches_before_empty_scan(
+        self, skylos, tmp_path
+    ):
+        source_root = tmp_path / "source"
+        source_root.mkdir()
+        (source_root / "module.py").write_text(
+            "def helper():\n    return 1\n", encoding="utf-8"
+        )
+
+        skylos.analyze(str(source_root), thr=0, grep_verify=False, trace_file=False)
+        stale_only_attributes = {
+            "_module_root_path",
+            "pattern_trackers",
+            "_global_type_map",
+            "_grep_verify_report",
+            "_dead_code_liveness_report",
+            "ts_consumed_exports",
+            "_ts_demoted_exports",
+        }
+        assert stale_only_attributes <= skylos.__dict__.keys()
+
+        empty_root = tmp_path / "empty"
+        empty_root.mkdir()
+        result = json.loads(
+            skylos.analyze(str(empty_root), thr=0, grep_verify=False, trace_file=False)
+        )
+
+        assert result["analysis_summary"]["total_files"] == 0
+        assert stale_only_attributes.isdisjoint(skylos.__dict__)
+        assert skylos._project_root == empty_root
+        assert skylos._analysis_scope["repository_root"] == str(empty_root)
+
     def test_module_name_generation(self, skylos):
         root = Path("/project")
 
@@ -1856,6 +1913,7 @@ class TestClass:
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
                     mock_visitor.visit.assert_called_once()
+                    mock_framework_visitor_class.assert_called_once_with()
 
                     assert defs == []
                     assert refs == []
@@ -1870,6 +1928,63 @@ class TestClass:
                     assert empty_file_finding is None
             finally:
                 Path(f.name).unlink()
+
+    def test_proc_file_rejects_symlinked_python_source(self, tmp_path):
+        scan_root = tmp_path / "repo"
+        scan_root.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text(
+            "def outside_helper():\n    return 'secret'\n",
+            encoding="utf-8",
+        )
+        source_link = scan_root / "linked.py"
+        source_link.symlink_to(outside)
+
+        result = proc_file(
+            str(source_link),
+            "linked",
+            project_root=scan_root,
+        )
+
+        assert len(result) == 27
+        assert result[0] == []
+        assert result[19] == []
+        assert result[25]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert result[25]["kind"] == "source_read_error"
+        assert result[25]["error_type"] == "SourceReadError"
+
+    def test_proc_file_rejects_oversized_python_source(self, monkeypatch, tmp_path):
+        from skylos.analysis import file_worker
+
+        monkeypatch.setattr(file_worker, "MAX_PYTHON_SOURCE_BYTES", 32)
+        source = tmp_path / "oversized.py"
+        source.write_bytes(b"#" * 33)
+
+        result = proc_file(str(source), "oversized", project_root=tmp_path)
+
+        assert len(result) == 27
+        assert result[0] == []
+        assert result[19] == []
+        assert result[25]["kind"] == "source_read_error"
+        assert result[25]["error_type"] == "SourceReadError"
+
+    def test_proc_file_accepts_source_at_size_limit(self, monkeypatch, tmp_path):
+        from skylos.analysis import file_worker
+
+        source_text = "value = 1\n"
+        monkeypatch.setattr(
+            file_worker,
+            "MAX_PYTHON_SOURCE_BYTES",
+            len(source_text.encode("utf-8")),
+        )
+        source = tmp_path / "bounded.py"
+        source.write_text(source_text, encoding="utf-8")
+
+        result = proc_file(str(source), "bounded", project_root=tmp_path)
+
+        assert len(result) == 27
+        assert result[19] == [source_text]
+        assert result[25] is None
 
     def test_proc_file_with_invalid_python(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -3387,6 +3502,34 @@ def fake_call():
             "placeholder_email",
             "low_entropy_uuid",
         }
+
+    def test_analyze_handles_protocol_positional_only_ellipsis_default(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        src = tmp_path / "protocols.py"
+        src.write_text(
+            """
+from typing import Protocol
+
+class SupportsRead(Protocol):
+    def read(self, length: int = ..., /) -> bytes:
+        ...
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        assert result.get("analysis_errors", []) == []
+        findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
+        ]
+        assert findings == []
 
     def test_analyze_flags_no_effect_statement(self, tmp_path):
         src = tmp_path / "app.py"

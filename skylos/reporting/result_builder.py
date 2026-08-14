@@ -286,12 +286,14 @@ def _attach_findings(
         core_danger, ai_defects = _split_ai_defect_findings(security_findings)
         if core_danger:
             result["danger"] = [
-                attach_evidence_contract(finding) for finding in core_danger
+                attach_evidence_contract(finding, analyzer_owned=True)
+                for finding in core_danger
             ]
             summary["danger_count"] = len(core_danger)
         if reliability:
             result["reliability"] = [
-                attach_evidence_contract(finding) for finding in reliability
+                attach_evidence_contract(finding, analyzer_owned=True)
+                for finding in reliability
             ]
             summary["reliability_count"] = len(reliability)
         if enable_ai_defects:
@@ -319,7 +321,9 @@ def _append_ai_defects(result, findings):
     if not findings:
         return
     ai_defects = result.setdefault("ai_defects", [])
-    ai_defects.extend(attach_evidence_contract(finding) for finding in findings)
+    ai_defects.extend(
+        attach_evidence_contract(finding, analyzer_owned=True) for finding in findings
+    )
     result["analysis_summary"]["ai_defects_count"] = len(ai_defects)
 
 

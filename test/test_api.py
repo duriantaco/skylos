@@ -6,6 +6,7 @@ import subprocess
 import gzip
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import skylos
@@ -23,6 +24,23 @@ from skylos.api import (
 
 
 class TestSkylosApi(unittest.TestCase):
+    def test_read_json_rejects_symlinks_and_oversized_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.json"
+            target.write_text('{"token": "outside"}', encoding="utf-8")
+            link = root / "link.json"
+            try:
+                link.symlink_to(target)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks are not supported on this filesystem")
+
+            oversized = root / "oversized.json"
+            oversized.write_text("x" * 1_000_001, encoding="utf-8")
+
+            self.assertIsNone(api._read_json(link))
+            self.assertIsNone(api._read_json(oversized))
+
     def test_compact_upload_finding_preserves_dead_code_evidence(self):
         compact = api._compact_upload_finding(
             {
@@ -401,10 +419,16 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["debt_summary"]["dimensions"], {"architecture": 2})
         self.assertNotIn("changed_files", payload["debt_summary"])
         self.assertEqual(payload["debt_summary"]["changed_file_count"], 2)
-        self.assertEqual(payload["debt_summary"]["changed_file_sample"], ["app.py", "worker.py"])
+        self.assertEqual(
+            payload["debt_summary"]["changed_file_sample"], ["app.py", "worker.py"]
+        )
         self.assertEqual(payload["debt_summary"]["upload_policy"]["hotspot_limit"], 50)
-        self.assertEqual(payload["debt_summary"]["upload_policy"]["uploaded_hotspot_count"], 1)
-        self.assertEqual(payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 2)
+        self.assertEqual(
+            payload["debt_summary"]["upload_policy"]["uploaded_hotspot_count"], 1
+        )
+        self.assertEqual(
+            payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 2
+        )
         self.assertEqual(payload["debt_hotspots"][0]["file"], "app.py")
         self.assertNotIn("project_path", payload)
 
@@ -448,8 +472,12 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(len(payload["debt_hotspots"][0]["signals"]), 5)
         self.assertEqual(payload["debt_summary"]["changed_file_count"], 80)
         self.assertEqual(len(payload["debt_summary"]["changed_file_sample"]), 25)
-        self.assertEqual(payload["debt_summary"]["upload_policy"]["omitted_hotspot_count"], 25)
-        self.assertEqual(payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 75)
+        self.assertEqual(
+            payload["debt_summary"]["upload_policy"]["omitted_hotspot_count"], 25
+        )
+        self.assertEqual(
+            payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 75
+        )
 
     def test_extract_snippet_valid(self):
         content = "line1\nline2\nline3\nline4\nline5\n"
@@ -534,9 +562,9 @@ class TestSkylosApi(unittest.TestCase):
         self.assertNotIn("snippet", findings[0])
 
         sarif = api.SarifExporter(findings).generate()
-        region = sarif["runs"][0]["results"][0]["locations"][0][
-            "physicalLocation"
-        ]["region"]
+        region = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+            "region"
+        ]
         self.assertNotIn("snippet", region)
 
         compatibility_payload = api._build_compatibility_inline_payload(
@@ -769,6 +797,15 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(finding["metadata"]["blame_email"], "dev@example.com")
         self.assertEqual(prepared.metadata["provenance"], {"agent_files": ["app.py"]})
         self.assertEqual(prepared.metadata["project_id"], "proj-1")
+        self.assertFalse(mock_exporter.call_args.kwargs["analyzer_owned"])
+
+        api._prepare_report_upload(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            analysis_mode="static",
+            analyzer_owned=True,
+        )
+
+        self.assertTrue(mock_exporter.call_args.kwargs["analyzer_owned"])
 
     @patch("skylos.reporting.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={})

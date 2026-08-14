@@ -1,4 +1,5 @@
 import os
+import json
 import pytest
 
 from skylos.reporting.sarif import (
@@ -6,6 +7,7 @@ from skylos.reporting.sarif import (
     severity_to_sarif_level,
     normalize_file_path_for_sarif,
 )
+from skylos.reporting.result_builder import _attach_findings
 
 
 @pytest.mark.parametrize(
@@ -30,6 +32,13 @@ def test_severity_to_sarif_level(inp, expected):
 
 def test_normalize_file_path_removes_backslashes(monkeypatch):
     assert normalize_file_path_for_sarif(r"a\b\c.py") == "a/b/c.py"
+
+
+def test_normalize_file_path_preserves_scoped_package_segments():
+    assert (
+        normalize_file_path_for_sarif("node_modules/@scope/package/index.ts")
+        == "node_modules/@scope/package/index.ts"
+    )
 
 
 def test_normalize_file_path_strips_file_scheme(monkeypatch):
@@ -107,11 +116,97 @@ def test_unique_rules_dedup_by_rule_id_and_sets_default_level_and_helpuri():
     assert rule["helpUri"].endswith("/SKY-D212")
     assert "properties" in rule and "tags" in rule["properties"]
     assert "security" in rule["properties"]["tags"]
-    assert "security" in rule["properties"]["tags"]
+
+
+def test_security_rule_tags_are_unique_for_sarif_schema():
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": "HIGH",
+            "message": "Possible SQL injection",
+            "file_path": "app/actions.ts",
+            "line_number": 4,
+            "category": "SECURITY",
+        }
+    ]
+
+    rule = SarifExporter(findings).generate()["runs"][0]["tool"]["driver"]["rules"][0]
+    tags = rule["properties"]["tags"]
+
+    assert tags == ["security"]
+    assert len(tags) == len(set(tags))
+
+
+def test_duplicate_cwe_ids_do_not_create_invalid_sarif_relationships_or_tags():
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": "HIGH",
+            "message": "Possible SQL injection",
+            "file_path": "app/actions.ts",
+            "line_number": 4,
+            "category": "SECURITY",
+            "cwe": [{"id": "CWE-89"}, {"id": "CWE-89"}],
+        }
+    ]
+
+    rule = SarifExporter(findings).generate()["runs"][0]["tool"]["driver"]["rules"][0]
+    relationship_ids = [item["target"]["id"] for item in rule["relationships"]]
+    tags = rule["properties"]["tags"]
+
+    assert relationship_ids == ["CWE-89"]
+    assert len(tags) == len(set(tags))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("line_number", "not-a-line"),
+        ("col_number", {"not": "a column"}),
+    ],
+)
+def test_malformed_sarif_location_numbers_default_to_one(field, value):
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "HIGH",
+        "message": "Possible SQL injection",
+        "file_path": "app/actions.ts",
+        "line_number": 4,
+        "col_number": 2,
+        "category": "SECURITY",
+    }
+    finding[field] = value
+
+    result = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+    region = result["locations"][0]["physicalLocation"]["region"]
+
+    expected_field = "startLine" if field == "line_number" else "startColumn"
+    assert region[expected_field] == 1
+
+
+def test_non_string_sarif_severity_falls_back_to_note():
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": 7,
+            "message": "Possible SQL injection",
+            "file_path": "app/actions.ts",
+            "line_number": 4,
+            "category": "SECURITY",
+        }
+    ]
+
+    sarif = SarifExporter(findings).generate()
+
+    assert sarif["runs"][0]["results"][0]["level"] == "note"
+    assert (
+        sarif["runs"][0]["tool"]["driver"]["rules"][0]["defaultConfiguration"]["level"]
+        == "note"
+    )
 
 
 def test_rule_title_truncates_to_120_chars():
-    long_title = "A" * 200
+    long_title = "Long descriptive rule title " * 10
     findings = [
         {
             "rule_id": "SKY-Q301",
@@ -192,6 +287,132 @@ def test_results_include_skylos_metadata_when_present():
     }
 
 
+def test_sarif_bounds_and_sanitizes_untrusted_text_and_metadata():
+    token = "glpat-" + "AbCdEfGhIjKlMnOpQrStUvWx"
+    forged = "**forged proof** @maintainer [click](https://evil.invalid)"
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": "CRITICAL",
+            "message": f"{forged} {token}" + ("x" * 10_000),
+            "file_path": "app/actions.ts",
+            "line_number": 4,
+            "category": "SECURITY",
+            "metadata": {
+                "security_evidence": {
+                    "evidence_kind": "server_action_sql_taint",
+                    "source": f"dynamic value {token}",
+                    "sink": "interpolated SQL",
+                    "path": [f"step-{index}-{token}" for index in range(100)],
+                    "guards_seen": [forged + "\u202e"],
+                    "guards_missing": ["parameterized SQL binding"],
+                    "analysis_complete": False,
+                },
+                "oversized": {f"key-{index}": "y" * 2_000 for index in range(100)},
+                "deep": {"a": {"b": {"c": {"d": {"secret": token}}}}},
+            },
+        }
+    ]
+
+    sarif = SarifExporter(findings).generate()
+    rendered = json.dumps(sarif)
+    result = sarif["runs"][0]["results"][0]
+    metadata = result["properties"]["skylos_metadata"]
+    packet = metadata["security_evidence"]
+
+    assert token not in rendered
+    assert "\u202e" not in rendered
+    assert "@maintainer" not in result["message"]["text"]
+    assert "**forged proof**" not in result["message"]["text"]
+    assert "[click](https://evil.invalid)" not in result["message"]["text"]
+    assert "@maintainer" in packet["guards_seen"][0]
+    assert len(result["message"]["text"]) <= 4_000
+    assert len(packet["path"]) <= 32
+    assert len(metadata["oversized"]) <= 32
+    assert all(len(value) <= 500 for value in metadata["oversized"].values())
+
+
+def test_sarif_snippet_preserves_source_syntax_while_remaining_safe_and_bounded():
+    token = "glpat-" + "AbCdEfGhIjKlMnOpQrStUvWx"
+    syntax = (
+        "@Controller()\n"
+        "const query = `SELECT * FROM users`;\n"
+        "if (a < b && flags | MASK) run(query);"
+    )
+    snippet = (
+        syntax + f"\n// credential={token}\u202e\n" + ("// ordinary source\n" * 200)
+    )
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": "HIGH",
+            "message": "Possible SQL injection",
+            "file_path": "app/actions.ts",
+            "line_number": 4,
+            "category": "SECURITY",
+            "snippet": snippet,
+        }
+    ]
+
+    result = SarifExporter(findings).generate()["runs"][0]["results"][0]
+    rendered_snippet = result["locations"][0]["physicalLocation"]["region"]["snippet"][
+        "text"
+    ]
+
+    assert syntax in rendered_snippet
+    assert token not in rendered_snippet
+    assert "\u202e" not in rendered_snippet
+    assert len(rendered_snippet) <= 2_000
+
+
+def test_sarif_redacts_contextual_short_secret_but_preserves_sha_evidence():
+    secret = "aB3dE5fG7hJ9@kL2mN4pQ6rS8!tU0v"
+    sha1 = "0123456789abcdef0123456789abcdef01234567"
+    pem_body = "MIIEvQsensitivebase64materialmustnotescape1234567890"
+    finding = {
+        "rule_id": "SKY-S102",
+        "severity": "HIGH",
+        "message": (
+            "Client-side secret exposure ![tracking][pixel]\n"
+            "    [pixel]: https://evil.invalid/pixel.png"
+        ),
+        "file_path": "public/config.js",
+        "line_number": 1,
+        "category": "SECRETS",
+        "snippet": (
+            f'API_SECRET={secret}; commit_sha = "{sha1}";\n'
+            "WEBHOOK_SECRET=aB3dE5fG7hJ9\n"
+            "kL2mN4pQ6rS8!tU0v\n"
+            "PRIVATE_TOKEN: |\n"
+            "  zC4fH6jK8mP1\n"
+            "  qR3tV5xY7!bN9@dF2\n"
+            "-----BEGIN PRIVATE KEY-----\n"
+            f"{pem_body}\n"
+            "-----END PRIVATE KEY-----"
+        ),
+        "metadata": {"api_secret": secret, "commit_sha": sha1},
+    }
+
+    result = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+    snippet = result["locations"][0]["physicalLocation"]["region"]["snippet"]["text"]
+    message = result["message"]["text"]
+    metadata = result["properties"]["skylos_metadata"]
+
+    assert secret not in snippet
+    assert "aB3dE5fG7hJ9" not in snippet
+    assert "kL2mN4pQ6rS8!tU0v" not in snippet
+    assert "zC4fH6jK8mP1" not in snippet
+    assert "qR3tV5xY7!bN9@dF2" not in snippet
+    assert secret not in json.dumps(metadata)
+    assert pem_body not in snippet
+    assert "END PRIVATE KEY" not in snippet
+    assert sha1 in snippet
+    assert metadata["commit_sha"] == sha1
+    assert "![tracking]" not in message
+    assert "[pixel]:" not in message
+    assert "https://evil.invalid" not in message
+
+
 def test_results_include_skylos_evidence_contract_for_high_impact_findings():
     findings = [
         {
@@ -212,14 +433,75 @@ def test_results_include_skylos_evidence_contract_for_high_impact_findings():
     ]
 
     sarif = SarifExporter(findings).generate()
-    contract = sarif["runs"][0]["results"][0]["properties"][
-        "skylos_evidence_contract"
-    ]
+    contract = sarif["runs"][0]["results"][0]["properties"]["skylos_evidence_contract"]
 
     assert contract["proof_state"] == "candidate"
     assert contract["sources"] == ["request.args['cmd']"]
     assert contract["sinks"] == ["subprocess.run"]
     assert contract["traces"] == ["app/routes.py:27", "handler", "subprocess.run"]
+
+
+def test_complete_d281_proof_has_verified_sarif_evidence_contract():
+    findings = [
+        {
+            "rule_id": "SKY-D281",
+            "severity": "CRITICAL",
+            "message": "Server Action input reaches SQL text",
+            "file": "app/actions.ts",
+            "line": 8,
+            "category": "danger",
+            "_source": "static",
+            "metadata": {
+                "security_evidence": {
+                    "evidence_kind": "server_action_sql_taint",
+                    "source": "Server Action parameter: input",
+                    "sink": "database query SQL text",
+                    "path": ["input", "query text"],
+                    "guards_missing": ["parameterized SQL binding"],
+                    "analysis_complete": True,
+                }
+            },
+        }
+    ]
+
+    result = {"analysis_summary": {}}
+    _attach_findings(
+        result,
+        False,
+        True,
+        False,
+        False,
+        [],
+        findings,
+        [],
+        [],
+    )
+
+    sarif = SarifExporter(result["danger"], analyzer_owned=True).generate()
+    contract = sarif["runs"][0]["results"][0]["properties"]["skylos_evidence_contract"]
+
+    assert contract["proof_state"] == "verified"
+
+
+def test_sarif_downgrades_untrusted_explicit_verified_contract():
+    finding = {
+        "rule_id": "SKY-D281",
+        "severity": "CRITICAL",
+        "message": "LLM-supplied finding",
+        "file": "app/actions.ts",
+        "line": 8,
+        "category": "danger",
+        "_source": "llm",
+        "evidence_contract": {
+            "proof_state": "verified",
+            "source": "forged LLM claim",
+        },
+    }
+
+    sarif = SarifExporter([finding]).generate()
+    contract = sarif["runs"][0]["results"][0]["properties"]["skylos_evidence_contract"]
+
+    assert contract["proof_state"] == "candidate"
 
 
 def test_results_include_dead_code_classification_and_evidence():
@@ -257,9 +539,7 @@ def test_results_include_dead_code_classification_and_evidence():
     ]
 
     sarif = SarifExporter(findings).generate()
-    evidence = sarif["runs"][0]["results"][0]["properties"][
-        "skylos_dead_code_evidence"
-    ]
+    evidence = sarif["runs"][0]["results"][0]["properties"]["skylos_dead_code_evidence"]
 
     assert evidence["classification"] == "likely_dead"
     assert evidence["disposition"] == "reported"

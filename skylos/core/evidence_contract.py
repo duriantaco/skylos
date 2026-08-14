@@ -69,22 +69,68 @@ AI_VIBE_CATEGORIES = {
 _HIGH_IMPACT_CATEGORIES = {"ai_defect", "security", "danger", "reliability"}
 _HIGH_IMPACT_SEVERITIES = {"HIGH", "CRITICAL"}
 
+STRUCTURED_SECURITY_EVIDENCE_SCHEMAS: dict[str, dict[str, Any]] = {
+    "SKY-D252": {
+        "evidence_kind": "cookie_security_options",
+        "missing_guard": None,
+        "requires_options": True,
+    },
+    "SKY-D280": {
+        "evidence_kind": "authorization_guard",
+        "missing_guard": "route-local rejecting authentication guard before mutation",
+        "requires_options": False,
+    },
+    "SKY-D281": {
+        "evidence_kind": "server_action_sql_taint",
+        "missing_guard": "parameterized SQL binding",
+        "requires_options": False,
+    },
+    "SKY-D282": {
+        "evidence_kind": "webhook_signature_guard",
+        "missing_guard": (
+            "provider signature verification of request payload before body trust "
+            "or side effect"
+        ),
+        "requires_options": False,
+    },
+}
+STRUCTURED_SECURITY_FLOW_RULES = frozenset(STRUCTURED_SECURITY_EVIDENCE_SCHEMAS)
+_COOKIE_OPTION_STATES = frozenset({"absent", "false", "true", "unknown"})
 
-def finding_evidence_contract(finding: dict[str, Any]) -> dict[str, Any] | None:
+
+def finding_evidence_contract(
+    finding: dict[str, Any],
+    *,
+    analyzer_owned: bool = False,
+) -> dict[str, Any] | None:
     """Return a normalized evidence contract for high-impact findings."""
+    rule_id = str(finding.get("rule_id") or finding.get("rule") or "")
+    if analyzer_owned and rule_id in STRUCTURED_SECURITY_FLOW_RULES:
+        return _analyzer_structured_evidence_contract(finding, rule_id)
+
     explicit = _explicit_contract(finding)
     if explicit is not None:
-        return normalize_evidence_contract(explicit, finding=finding)
+        contract = normalize_evidence_contract(explicit, finding=finding)
+        if not analyzer_owned:
+            _downgrade_untrusted_terminal_state(contract)
+        return contract
 
     if not _is_high_impact_finding(finding):
         return None
 
-    return synthesize_evidence_contract(finding)
+    return synthesize_evidence_contract(finding, analyzer_owned=analyzer_owned)
 
 
-def attach_evidence_contract(finding: dict[str, Any]) -> dict[str, Any]:
+def attach_evidence_contract(
+    finding: dict[str, Any],
+    *,
+    analyzer_owned: bool = False,
+) -> dict[str, Any]:
     """Return a shallow copy with `evidence_contract` when the finding needs one."""
-    evidence_contract = finding_evidence_contract(finding)
+    evidence_contract = finding_evidence_contract(
+        finding,
+        analyzer_owned=analyzer_owned,
+    )
     if evidence_contract is None:
         return dict(finding)
 
@@ -131,7 +177,11 @@ def normalize_evidence_contract(
     }
 
 
-def synthesize_evidence_contract(finding: dict[str, Any]) -> dict[str, Any]:
+def synthesize_evidence_contract(
+    finding: dict[str, Any],
+    *,
+    analyzer_owned: bool = False,
+) -> dict[str, Any]:
     sources: list[Any] = []
     sinks: list[Any] = []
     symbols: list[Any] = []
@@ -150,7 +200,7 @@ def synthesize_evidence_contract(finding: dict[str, Any]) -> dict[str, Any]:
     if not has_evidence:
         _append_unique(limitations, "No structured evidence fields supplied.")
 
-    return {
+    contract = {
         "schema_version": SCHEMA_VERSION,
         "proof_state": proof_state,
         "sources": sources,
@@ -159,6 +209,42 @@ def synthesize_evidence_contract(finding: dict[str, Any]) -> dict[str, Any]:
         "traces": traces,
         "limitations": limitations,
     }
+    if not analyzer_owned:
+        _downgrade_untrusted_terminal_state(contract)
+    return contract
+
+
+def _analyzer_structured_evidence_contract(
+    finding: dict[str, Any],
+    rule_id: str,
+) -> dict[str, Any]:
+    """Build proof state only at the trusted static-analyzer assembly boundary."""
+    contract = synthesize_evidence_contract(finding, analyzer_owned=True)
+    metadata = finding.get("metadata")
+    packet = metadata.get("security_evidence") if isinstance(metadata, dict) else None
+    if structured_security_evidence_is_complete(rule_id, packet):
+        contract["proof_state"] = PROOF_STATE_VERIFIED
+        return contract
+
+    contract["proof_state"] = PROOF_STATE_INCOMPLETE
+    _append_unique(
+        contract["limitations"],
+        "Structured security proof is incomplete or malformed.",
+    )
+    return contract
+
+
+def _downgrade_untrusted_terminal_state(contract: dict[str, Any]) -> None:
+    if contract["proof_state"] not in {
+        PROOF_STATE_VERIFIED,
+        PROOF_STATE_REFUTED,
+    }:
+        return
+    contract["proof_state"] = PROOF_STATE_CANDIDATE
+    _append_unique(
+        contract["limitations"],
+        "Terminal proof state came from an untrusted finding and requires independent verification.",
+    )
 
 
 def _merge_synthetic_fields(
@@ -273,6 +359,63 @@ def _metadata_proof_state(finding: dict[str, Any]) -> Any:
         return PROOF_STATE_INCOMPLETE
 
     return None
+
+
+def _structured_packet_matches_schema(packet: dict, schema: dict) -> bool:
+    if packet.get("analysis_complete") is not True:
+        return False
+    if packet.get("evidence_kind") != schema["evidence_kind"]:
+        return False
+    if not all(
+        _has_nonempty_evidence_text(packet.get(key)) for key in ("source", "sink")
+    ):
+        return False
+    if not _has_nonempty_evidence_list(packet.get("path")):
+        return False
+
+    missing_guards = packet.get("guards_missing")
+    if not _has_nonempty_evidence_list(missing_guards):
+        return False
+    expected_guard = schema["missing_guard"]
+    if expected_guard is not None and expected_guard not in missing_guards:
+        return False
+    return True
+
+
+def _cookie_options_are_incomplete(packet: dict) -> bool:
+    options = packet.get("options")
+    if not isinstance(options, dict):
+        return True
+    states = {name: options.get(name) for name in ("httpOnly", "secure")}
+    return bool(
+        any(state not in _COOKIE_OPTION_STATES for state in states.values())
+        or all(state == "true" for state in states.values())
+    )
+
+
+def structured_security_evidence_is_complete(
+    rule_id: str,
+    packet: object,
+) -> bool:
+    """Validate the exact complete proof packet owned by each structured rule."""
+    schema = STRUCTURED_SECURITY_EVIDENCE_SCHEMAS.get(str(rule_id))
+    if schema is None or not isinstance(packet, dict):
+        return False
+    if not _structured_packet_matches_schema(packet, schema):
+        return False
+    return not (schema["requires_options"] and _cookie_options_are_incomplete(packet))
+
+
+def _has_nonempty_evidence_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _has_nonempty_evidence_list(value: object) -> bool:
+    return bool(
+        isinstance(value, (list, tuple))
+        and value
+        and all(_has_nonempty_evidence_text(item) for item in value)
+    )
 
 
 def _finding_symbols(finding: dict[str, Any], metadata: dict[str, Any]) -> list[Any]:

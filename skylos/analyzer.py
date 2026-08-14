@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import traceback
-import warnings
 from pathlib import Path
 from collections import Counter, defaultdict
 
@@ -17,7 +16,11 @@ except ImportError:
 
 from skylos.visitors.base import Visitor
 
-from skylos.analysis.circular_deps import _resolve_from_import_targets
+from skylos.analysis.architecture_support import (
+    architecture_iad_strict,
+    expand_reexported_entrypoint_modules,
+    find_package_boundary_modules,
+)
 
 from skylos.constants import (
     AUTO_CALLED,
@@ -42,14 +45,10 @@ from skylos.rules.secrets import (
 )
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
-from skylos.rules.danger.calls import DangerousCallsRule
-
-
-from skylos.config import (
-    get_noqa_codes_by_line,
-    get_skylos_ignore_lines,
-    get_skylos_ignore_rules_by_line,
-    load_config,
+from skylos.config import load_config
+from skylos.analysis.errors import analysis_error_payload as _analysis_error_payload
+from skylos.analysis.finding_filter import (
+    finding_is_inline_ignored as _finding_is_inline_ignored,
 )
 from skylos.core.file_discovery import (
     discover_source_files,
@@ -57,7 +56,6 @@ from skylos.core.file_discovery import (
     should_exclude_path,
 )
 from skylos.core.safe_cache_io import read_project_text_no_symlink
-
 from skylos.core.linter import LinterVisitor
 
 from skylos.rules.quality.policy import analyze_repo_policy
@@ -66,17 +64,11 @@ from skylos.rules.quality.clones import (
     CloneConfig,
     GroupingMode,
     CloneType,
-    extract_fragments,
     detect_pairs,
     group_pairs,
 )
 from skylos.analysis.penalties import apply_penalties
-from skylos.analysis.file_processing import (
-    collect_python_raw_imports,
-    scan_python_quality,
-    scan_non_python_file,
-    set_linter_node_types,
-)
+from skylos.analysis.file_worker import process_file
 
 from skylos.scale.parallel_static import run_proc_file_parallel
 
@@ -85,6 +77,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Skylos")
 PYTHON_SIGNATURE_SUFFIXES = (".py", ".pyi", ".pyw")
+
+# Compatibility aliases for integrations that imported these private helpers from
+# skylos.analyzer before architecture reporting moved to its own dependency layer.
+_architecture_iad_strict = architecture_iad_strict
+_expand_reexported_entrypoint_modules = expand_reexported_entrypoint_modules
+_find_package_boundary_modules = find_package_boundary_modules
+
+_OPTIONAL_RUN_STATE_ATTRIBUTES = (
+    "_sca_coverage",
+    "_analysis_scope",
+    "_ai_verification_expectations",
+    "_ai_verification_checks",
+    "_language_engine_reports",
+    "_module_root_path",
+    "_project_root",
+    "pattern_trackers",
+    "_global_abc_classes",
+    "_global_protocol_classes",
+    "_global_abstract_methods",
+    "_global_abc_implementers",
+    "_global_protocol_implementers",
+    "_global_protocol_method_names",
+    "_global_django_path_converter_classes",
+    "_duck_typed_implementers",
+    "_dotted_variable_simple_name_counts",
+    "_global_type_map",
+    "_all_used_attr_names",
+    "_all_used_attr_context",
+    "_param_method_refs",
+    "_call_arg_types",
+    "_grep_verify_report",
+    "_dead_code_liveness_report",
+    "ts_consumed_exports",
+    "_ts_wildcard_edges",
+    "_ts_importers_of",
+    "_ts_demoted_exports",
+)
 
 
 def _merge_project_config_overrides(project_cfg, overrides):
@@ -150,23 +179,6 @@ def _python_verification_surface_root(surface_root):
     ):
         return root.parent
     return root
-
-
-def _finding_is_inline_ignored(
-    finding,
-    ignore_lines,
-    ignore_rules_by_line,
-):
-    line = finding.get("line")
-    if ignore_lines and line in ignore_lines:
-        return True
-
-    rule_id = str(finding.get("rule_id") or "").upper()
-    return bool(
-        rule_id
-        and ignore_rules_by_line
-        and rule_id in ignore_rules_by_line.get(line, set())
-    )
 
 
 def _extend_unsuppressed_danger_findings(
@@ -422,15 +434,6 @@ def _entrypoint_module_name(qname: str) -> str | None:
     return module_name or None
 
 
-def _architecture_iad_strict(architecture_cfg) -> bool:
-    if not isinstance(architecture_cfg, dict):
-        return False
-    for key in ("enforce_iad", "strict_iad"):
-        if key in architecture_cfg:
-            return bool(architecture_cfg.get(key))
-    return False
-
-
 def _base_class_leaf_names(class_def) -> set[str]:
     leaves: set[str] = set()
     for base in getattr(class_def, "base_classes", []):
@@ -440,65 +443,6 @@ def _base_class_leaf_names(class_def) -> set[str]:
 
 def _class_has_base_leaf(class_def, leaf_names: set[str]) -> bool:
     return bool(_base_class_leaf_names(class_def) & leaf_names)
-
-
-def _expand_reexported_entrypoint_modules(
-    entrypoint_qnames: set[str],
-    entrypoint_modules: set[str],
-    raw_imports_by_file: dict[Path, list],
-    modmap: dict[Path, str],
-    module_files: dict[str, str],
-) -> set[str]:
-    modules = set(entrypoint_modules)
-    known_modules = set(module_files)
-
-    for qname in entrypoint_qnames:
-        if "." not in qname:
-            continue
-
-        entry_module, entry_symbol = qname.rsplit(".", 1)
-        for file_path, raw_imports in raw_imports_by_file.items():
-            if modmap.get(file_path) != entry_module:
-                continue
-
-            for import_module, _line, import_type, imported_names in raw_imports:
-                if import_type != "from_import":
-                    continue
-                if entry_symbol not in imported_names:
-                    continue
-                if import_module in known_modules:
-                    modules.add(import_module)
-
-    return modules
-
-
-def _find_package_boundary_modules(
-    raw_imports_by_file: dict[Path, list],
-    modmap: dict[Path, str],
-    module_files: dict[str, str],
-) -> set[str]:
-    modules: set[str] = set()
-    known_modules = set(module_files)
-
-    for file_path, raw_imports in raw_imports_by_file.items():
-        package_module = modmap.get(file_path)
-        if not package_module or Path(file_path).name != "__init__.py":
-            continue
-
-        for import_module, _line, import_type, imported_names in raw_imports:
-            if import_type != "from_import":
-                continue
-
-            targets = _resolve_from_import_targets(
-                import_module,
-                imported_names,
-                known_modules,
-            )
-            for target in targets:
-                if target != package_module and target.startswith(package_module + "."):
-                    modules.add(target)
-
-    return modules
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
@@ -1091,10 +1035,17 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
 
 class Skylos:
     def __init__(self):
+        self._has_analyzed = False
+        self._reset_run_state()
+
+    def _reset_run_state(self) -> None:
         self.defs = {}
         self.refs = []
         self.dynamic = set()
         self.exports = defaultdict(set)
+        self._module_alias_prefix_values = ()
+        for attribute in _OPTIONAL_RUN_STATE_ATTRIBUTES:
+            self.__dict__.pop(attribute, None)
 
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
@@ -1730,7 +1681,7 @@ class Skylos:
             if target_fqn in non_import_defs:
                 return target_fqn
 
-            for prefix in getattr(self, "_module_alias_prefixes", ()):
+            for prefix in self._module_alias_prefix_values:
                 if target_fqn.startswith(prefix + "."):
                     stripped_target = target_fqn[len(prefix) + 1 :]
                     if stripped_target in non_import_defs:
@@ -2517,6 +2468,9 @@ class Skylos:
         if not (0 <= thr <= 100):
             raise ValueError(f"thr must be 0-100, got {thr}")
 
+        if self._has_analyzed:
+            self._reset_run_state()
+        self._has_analyzed = True
         clear_go_cache()
         self._sca_coverage = None
 
@@ -2573,6 +2527,7 @@ class Skylos:
             "excluded_folders": list(exclude_folders or []),
             "changed_files_only": changed_files is not None,
         }
+        self._project_root = project_root
 
         files, root = self._discover_files(path, exclude_folders)
         verification_surface_root = _verification_surface_root(
@@ -2818,7 +2773,7 @@ class Skylos:
 
         module_root = self._module_root(root, project_root)
         self._module_root_path = module_root
-        self._module_alias_prefixes = self._module_alias_prefixes(root)
+        self._module_alias_prefix_values = self._module_alias_prefixes(root)
         modmap = {}
         for f in files:
             modmap[f] = self._module(module_root, f)
@@ -2863,8 +2818,6 @@ class Skylos:
                 )
 
         root = project_root
-        self._project_root = project_root
-
         if trace_file is not False:
             trace_path = (
                 project_root / ".skylos_trace"
@@ -2951,6 +2904,7 @@ class Skylos:
                 enable_quality_rules=enable_quality,
                 enable_danger_rules=enable_danger,
                 config_file=config_file,
+                project_root=project_root,
             )
 
             if os.getenv("SKYLOS_DEBUG"):
@@ -4300,64 +4254,6 @@ class Skylos:
         return json.dumps(result, indent=2)
 
 
-def _is_truly_empty_or_docstring_only(tree):
-    if not isinstance(tree, ast.Module):
-        return False
-
-    if not tree.body:
-        return True
-
-    if len(tree.body) != 1:
-        return False
-
-    only = tree.body[0]
-    return (
-        isinstance(only, ast.Expr)
-        and isinstance(only.value, ast.Constant)
-        and isinstance(only.value.value, str)
-    )
-
-
-def _analysis_error_payload(file, error, *, kind=None):
-    is_syntax_error = isinstance(error, SyntaxError)
-    message = getattr(error, "msg", None) if is_syntax_error else None
-    message = str(message or error or type(error).__name__)
-    message = " ".join(message.splitlines())[:500]
-
-    line = getattr(error, "lineno", None) or 1
-    column = getattr(error, "offset", None) or 1
-    try:
-        line = max(1, int(line))
-    except (TypeError, ValueError):
-        line = 1
-    try:
-        column = max(1, int(column))
-    except (TypeError, ValueError):
-        column = 1
-
-    payload = {
-        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
-        "severity": "HIGH",
-        "kind": kind or ("syntax_error" if is_syntax_error else "processing_error"),
-        "error_type": type(error).__name__,
-        "message": message,
-        "file": str(file),
-        "line": line,
-        "column": column,
-        "python_version": (
-            f"{sys.version_info.major}.{sys.version_info.minor}."
-            f"{sys.version_info.micro}"
-        ),
-    }
-    if is_syntax_error:
-        payload["suggestion"] = (
-            "Fix the reported syntax, or use a Python runtime that supports the "
-            "project's syntax; official container images provide matching "
-            "-pythonX.Y tags."
-        )
-    return payload
-
-
 def proc_file(
     file_or_args,
     mod=None,
@@ -4369,290 +4265,24 @@ def proc_file(
     enable_quality_rules=True,
     enable_danger_rules=True,
     config_file=None,
-) -> dict | None:
-    if mod is None and isinstance(file_or_args, tuple):
-        file, mod = file_or_args
-    else:
-        file = file_or_args
-
-    cfg = load_config(file, config_file=config_file)
-
-    non_python_out = scan_non_python_file(
-        file,
-        cfg,
+    project_root=None,
+) -> tuple | None:
+    return process_file(
+        file_or_args,
+        mod,
+        extra_visitors=extra_visitors,
+        full_scan=full_scan,
+        collect_clone_fragments=collect_clone_fragments,
+        clone_cfg=clone_cfg,
+        collect_architecture_metrics=collect_architecture_metrics,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        config_file=config_file,
+        project_root=project_root,
+        visitor_class=Visitor,
+        test_aware_visitor_class=TestAwareVisitor,
+        framework_aware_visitor_class=FrameworkAwareVisitor,
     )
-    if non_python_out is not None:
-        return non_python_out
-
-    try:
-        source = Path(file).read_text(encoding="utf-8")
-        ignore_lines = get_skylos_ignore_lines(source)
-        ignore_rules_by_line = get_skylos_ignore_rules_by_line(source)
-        noqa_codes_by_line = get_noqa_codes_by_line(source)
-
-        tree = ast.parse(source, filename=str(file))
-        # ast.parse() can accept ASTs that Python later rejects, such as
-        # functions with duplicate argument names. Compile without executing
-        # so every compile-time SyntaxError follows the incomplete-analysis path.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            compile(tree, str(file), "exec", dont_inherit=True)
-
-        raw_imports = collect_python_raw_imports(tree, file, mod)
-
-        empty_file_finding = None
-
-        basename = Path(file).name
-        skip_empty_report = basename in {"__init__.py", "__main__.py", "main.py"}
-
-        if (
-            _is_truly_empty_or_docstring_only(tree)
-            and not skip_empty_report
-            and "SKY-E002" not in cfg["ignore"]
-        ):
-            empty_file_finding = {
-                "rule_id": "SKY-E002",
-                "message": "Empty Python file (no code, or docstring-only)",
-                "file": str(file),
-                "line": 1,
-                "severity": "LOW",
-                "category": "DEAD_CODE",
-            }
-
-        from skylos.analysis.ast_mask import (
-            apply_body_mask,
-            default_mask_spec_from_config,
-        )
-
-        mask = default_mask_spec_from_config(cfg)
-        tree, masked = apply_body_mask(tree, mask)
-
-        if masked and os.getenv("SKYLOS_DEBUG"):
-            logger.info(f"{file}: masked {masked} bodies (skipped inner analysis)")
-
-        quality_findings = []
-        danger_findings = []
-
-        if full_scan and enable_quality_rules:
-            quality_findings = scan_python_quality(tree, source, file, cfg)
-            if Path(file).suffix == ".pyi":
-                quality_findings = [
-                    finding
-                    for finding in quality_findings
-                    if finding.get("rule_id") not in {"SKY-L026", "SKY-L033"}
-                ]
-
-        if full_scan and enable_danger_rules:
-            d_rules = [DangerousCallsRule()]
-            set_linter_node_types(d_rules)
-            linter_d = LinterVisitor(d_rules, str(file))
-            linter_d.visit(tree)
-            danger_findings = linter_d.findings
-
-            from skylos.rules.danger.danger import scan_file_with_tree
-
-            taint_findings = []
-            try:
-                scan_file_with_tree(tree, Path(file), taint_findings, source=source)
-            except Exception:
-                logger.debug("Taint analysis failed for %s", file, exc_info=True)
-            if taint_findings:
-                danger_findings.extend(taint_findings)
-
-        pro_findings = []
-        if extra_visitors:
-            for VisitorClass in extra_visitors:
-                checker = VisitorClass(file, pro_findings)
-                checker.visit(tree)
-
-        suppressed_findings = []
-        if ignore_lines or ignore_rules_by_line:
-            sup_q = [
-                f
-                for f in quality_findings
-                if _finding_is_inline_ignored(
-                    f,
-                    ignore_lines,
-                    ignore_rules_by_line,
-                )
-            ]
-            sup_d = [
-                f
-                for f in danger_findings
-                if _finding_is_inline_ignored(
-                    f,
-                    ignore_lines,
-                    ignore_rules_by_line,
-                )
-            ]
-            quality_findings = [
-                f
-                for f in quality_findings
-                if not _finding_is_inline_ignored(
-                    f,
-                    ignore_lines,
-                    ignore_rules_by_line,
-                )
-            ]
-            danger_findings = [
-                f
-                for f in danger_findings
-                if not _finding_is_inline_ignored(
-                    f,
-                    ignore_lines,
-                    ignore_rules_by_line,
-                )
-            ]
-            for f in sup_q:
-                suppressed_findings.append(
-                    {**f, "category": "quality", "reason": "inline ignore comment"}
-                )
-            for f in sup_d:
-                suppressed_findings.append(
-                    {**f, "category": "security", "reason": "inline ignore comment"}
-                )
-
-        tv = TestAwareVisitor(filename=file)
-        tv.visit(tree)
-        tv.ignore_lines = ignore_lines
-        tv.noqa_codes_by_line = noqa_codes_by_line
-
-        fv = FrameworkAwareVisitor(filename=file)
-        fv.visit(tree)
-        fv.finalize()
-        v = Visitor(mod, file)
-        v.visit(tree)
-        v.finalize()
-
-        fv.dataclass_fields = getattr(v, "dataclass_fields", set())
-        fv.first_read_lineno = getattr(v, "first_read_lineno", {})
-        fv.protocol_classes = getattr(v, "protocol_classes", set())
-        fv.namedtuple_classes = getattr(v, "namedtuple_classes", set())
-        fv.enum_classes = getattr(v, "enum_classes", set())
-        fv.attrs_classes = getattr(v, "attrs_classes", set())
-        fv.orm_model_classes = getattr(v, "orm_model_classes", set())
-        fv.type_alias_names = getattr(v, "type_alias_names", set())
-        fv.abc_classes = getattr(v, "abc_classes", set())
-        fv.abstract_methods = getattr(v, "abstract_methods", {})
-        fv.abc_implementers = getattr(v, "abc_implementers", {})
-        fv.protocol_implementers = getattr(v, "protocol_implementers", {})
-        fv.protocol_method_names = getattr(v, "protocol_method_names", {})
-        fv.version_conditional_lines = getattr(v, "version_conditional_lines", set())
-
-        architecture_metrics = None
-        if collect_architecture_metrics:
-            try:
-                architecture_tree = None
-                if masked:
-                    architecture_tree = ast.parse(source)
-                else:
-                    architecture_tree = tree
-
-                from skylos.analysis.architecture import (
-                    _compute_abstractness,
-                    _has_main_guard,
-                )
-
-                architecture_metrics = {
-                    "abstractness": _compute_abstractness(architecture_tree),
-                    "has_main_guard": _has_main_guard(architecture_tree),
-                    "loc": sum(
-                        1
-                        for line in source.splitlines()
-                        if line.strip() and not line.strip().startswith("#")
-                    ),
-                }
-            except Exception:
-                logger.debug(
-                    "Architecture metric extraction failed for %s",
-                    file,
-                    exc_info=True,
-                )
-
-        clone_fragments = []
-        if (
-            collect_clone_fragments
-            and clone_cfg is not None
-            and "SKY-C401" not in cfg.get("ignore", [])
-        ):
-            try:
-                clone_tree = None if masked else tree
-                clone_fragments = extract_fragments(
-                    Path(file), source, clone_cfg, tree=clone_tree
-                )
-            except Exception:
-                logger.debug(
-                    "Clone fragment extraction failed for %s", file, exc_info=True
-                )
-
-        return (
-            v.defs,
-            v.refs,
-            v.dyn,
-            v.exports,
-            tv,
-            fv,
-            quality_findings,
-            danger_findings,
-            pro_findings,
-            v.pattern_tracker,
-            empty_file_finding,
-            cfg,
-            raw_imports,
-            ignore_lines,
-            suppressed_findings,
-            v.inferred_types,
-            v.instance_attr_types,
-            getattr(v, "_used_attr_names", set()),
-            getattr(v, "_used_attr_names_with_context", set()),
-            source.splitlines(True),
-            getattr(v, "param_method_refs", {}),
-            getattr(v, "call_arg_types", {}),
-            clone_fragments,
-            architecture_metrics,
-            getattr(v, "top_level_refs", set()),
-            None,
-            ignore_rules_by_line,
-        )
-
-    except Exception as e:
-        logger.error(f"{file}: {e}")
-        if os.getenv("SKYLOS_DEBUG"):
-            logger.error(traceback.format_exc())
-        dummy_visitor = TestAwareVisitor(filename=file)
-        dummy_visitor.ignore_lines = set()
-        dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
-        return (
-            [],
-            [],
-            set(),
-            set(),
-            dummy_visitor,
-            dummy_framework_visitor,
-            [],
-            [],
-            [],
-            None,
-            None,
-            cfg,
-            [],
-            set(),
-            [],
-            {},
-            {},
-            set(),
-            set(),
-            [],
-            {},
-            {},
-            [],
-            None,
-            set(),
-            _analysis_error_payload(file, e),
-            {},
-        )
 
 
 def analyze(

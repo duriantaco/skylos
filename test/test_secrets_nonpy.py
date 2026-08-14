@@ -22,6 +22,10 @@ class TestAllowedSuffixes:
         assert ".ts" in ALLOWED_FILE_SUFFIXES
         assert ".tsx" in ALLOWED_FILE_SUFFIXES
 
+    def test_client_artifact_suffixes_allowed(self):
+        assert ".mjs" in ALLOWED_FILE_SUFFIXES
+        assert ".html" in ALLOWED_FILE_SUFFIXES
+
     def test_go_suffix_allowed(self):
         assert ".go" in ALLOWED_FILE_SUFFIXES
 
@@ -37,6 +41,19 @@ class TestAllowedSuffixes:
     def test_kotlin_suffixes_allowed(self):
         assert ".kt" in ALLOWED_FILE_SUFFIXES
         assert ".kts" in ALLOWED_FILE_SUFFIXES
+
+
+def test_public_html_subresource_integrity_is_not_a_secret():
+    source = (
+        '<script src="/app.js" integrity="sha384-'
+        'oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC"'
+        "></script>\n"
+    )
+    findings = scan_ctx(
+        {"relpath": "public/index.html", "lines": [source], "tree": None},
+        ignore_tests=False,
+    )
+    assert findings == []
 
 
 class TestEnvFileScanning:
