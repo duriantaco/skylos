@@ -83,7 +83,7 @@ def scan_typescript_file(
     fw.scan(file_path, core.root_node, source, core.lang)
 
     d_findings: list[dict] = (
-        scan_danger(core.root_node, file_path, lang=core.lang)
+        scan_danger(core.root_node, file_path, lang=core.lang, source=source)
         if enable_danger_rules
         else []
     )

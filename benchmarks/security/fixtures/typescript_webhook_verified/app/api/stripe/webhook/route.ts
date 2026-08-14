@@ -1,6 +1,6 @@
 import Stripe from "stripe";
 
-const stripe = new Stripe(loadStripeApiKeyForFixture());
+const stripe = new Stripe(process.env.STRIPE_API_KEY!);
 
 export async function POST(request: Request) {
   const signature = request.headers.get("stripe-signature");
@@ -12,16 +12,8 @@ export async function POST(request: Request) {
   const event = stripe.webhooks.constructEvent(
     rawBody,
     signature,
-    loadStripeWebhookKeyForFixture()
+    process.env.STRIPE_WEBHOOK_SECRET!
   );
 
   return Response.json({ type: event.type });
-}
-
-function loadStripeApiKeyForFixture() {
-  return "fixture_api_key";
-}
-
-function loadStripeWebhookKeyForFixture() {
-  return "fixture_webhook_key";
 }

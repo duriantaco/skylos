@@ -57,15 +57,17 @@ def verify_change_path(
             contract_file,
             project_root=_contract_project_root_for_verify(contract_file, root),
         )
-    include_deps = include_dependency_hallucinations or contract_enables_dependency_hallucinations(
-        contract
+    include_deps = (
+        include_dependency_hallucinations
+        or contract_enables_dependency_hallucinations(contract)
     )
     changed_files = _changed_files_for_verify(
         scan_target,
         target_file,
     )
 
-    if analyze_func is None:
+    analyzer_owned = analyze_func is None
+    if analyzer_owned:
         from skylos.analyzer import analyze as analyze_func
 
     analysis_options = _analysis_options(
@@ -93,6 +95,7 @@ def verify_change_path(
         scan_target=scan_target,
         contract=contract,
         include_security_findings=include_security_findings,
+        analyzer_owned=analyzer_owned,
     )
 
 
@@ -110,7 +113,9 @@ def verify_change_stdin_payload(
     if not isinstance(code, str):
         raise ValueError("stdin manifest must include a string 'code' field")
 
-    manifest_file = _safe_manifest_file(_manifest_value(payload, ("file",), "snippet.py"))
+    manifest_file = _safe_manifest_file(
+        _manifest_value(payload, ("file",), "snippet.py")
+    )
     line_range = _manifest_value(payload, ("line_range", "range"), None)
     # Stays opt-in for snippets: they are scanned inside a temp root, where
     # project-local imports cannot resolve and would be misreported as
@@ -300,7 +305,9 @@ def _write_new_file_no_follow(path: Path, code: str) -> None:
 
     fd: int | None = None
     try:
-        fd = os.open(path, flags, 0o600)  # skylos: ignore[SKY-D215] contained temp manifest path with no-follow create
+        fd = os.open(  # skylos: ignore[SKY-D215] contained temp manifest path with no-follow create
+            path, flags, 0o600
+        )
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = None
             handle.write(code)

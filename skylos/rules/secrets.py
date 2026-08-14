@@ -6,6 +6,7 @@ import binascii
 import json
 import re
 from bisect import bisect_right
+from dataclasses import dataclass
 from hashlib import blake2s
 from math import log2
 
@@ -14,7 +15,12 @@ try:
 except ModuleNotFoundError:  # Keep non-YAML scans available in partial installs.
     yaml = None
 
-__all__ = ["scan_ctx"]
+__all__ = [
+    "is_client_exposure_context",
+    "is_public_client_env_name",
+    "iter_sensitive_client_env_references",
+    "scan_ctx",
+]
 
 CLIENT_PATHS = (
     "/static/",
@@ -28,13 +34,109 @@ CLIENT_PATHS = (
     "/out/",
 )
 
-CLIENT_ENV_RE = re.compile(
-    r"process\.env\."
-    r"(?!NEXT_PUBLIC_|REACT_APP_|VITE_|NUXT_PUBLIC_|EXPO_PUBLIC_)"
-    r"[A-Z_]*(SECRET|KEY|PASSWORD|TOKEN|PRIVATE|CREDENTIAL|AUTH)[A-Z_]*"
+_EXPLICIT_PUBLIC_CLIENT_PATHS = (
+    "/public/",
+    "/static/",
+    "/assets/",
+    "/.next/static/",
+    "/build/client/",
+    "/dist/client/",
+    "/out/",
+)
+_EXPLICIT_SERVER_OUTPUT_PATHS = (
+    "/.next/server/",
+    "/build/server/",
+    "/dist/server/",
+    "/.output/server/",
 )
 
-JS_TS_SUFFIXES = (".js", ".jsx", ".ts", ".tsx")
+PUBLIC_CLIENT_ENV_PREFIXES = (
+    "NEXT_PUBLIC_",
+    "REACT_APP_",
+    "VITE_",
+    "NUXT_PUBLIC_",
+    "EXPO_PUBLIC_",
+    "PUBLIC_",
+)
+_SENSITIVE_CLIENT_ENV_TERMS = frozenset(
+    {
+        "AUTH",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "KEY",
+        "PASSWORD",
+        "PASSWD",
+        "PRIVATE",
+        "SECRET",
+        "TOKEN",
+    }
+)
+_SENSITIVE_CLIENT_ENV_NAMES = frozenset(
+    {
+        "DATABASE_URL",
+        "DB_URL",
+        "MONGODB_URI",
+        "MONGO_URI",
+        "REDIS_URL",
+    }
+)
+_SENSITIVE_PUBLIC_ENV_TERMS = frozenset(
+    {
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "PASSWORD",
+        "PASSWD",
+        "PRIVATE",
+        "SECRET",
+        "TOKEN",
+    }
+)
+_CLIENT_ENV_OBJECT_SOURCE_PATTERN = (
+    r"(?:process\s*(?:\.\s*env|\[\s*['\"]env['\"]\s*\])|"
+    r"import\s*\.\s*meta\s*(?:\.\s*env|\[\s*['\"]env['\"]\s*\]))"
+)
+CLIENT_ENV_RE = re.compile(
+    rf"{_CLIENT_ENV_OBJECT_SOURCE_PATTERN}\s*"
+    r"(?:\.\s*(?P<dot>[A-Za-z_$][A-Za-z0-9_$]*)|"
+    r"\[\s*['\"](?P<bracket>[^'\"]+)['\"]\s*\])"
+)
+_CLIENT_ENV_OBJECT_SOURCE_RE = re.compile(rf"^{_CLIENT_ENV_OBJECT_SOURCE_PATTERN}$")
+_CLIENT_ENV_ALIAS_ASSIGNMENT_RE = re.compile(
+    rf"(?<![A-Za-z0-9_$\.\]])"
+    rf"(?:(?:const|let|var)\s+)?"
+    rf"(?P<alias>[A-Za-z_$][A-Za-z0-9_$]*)"
+    rf"(?:\s*:[^=;\r\n]{{0,256}})?\s*=\s*(?:\(\s*)?"
+    rf"(?P<target>{_CLIENT_ENV_OBJECT_SOURCE_PATTERN}|"
+    rf"[A-Za-z_$][A-Za-z0-9_$]*)"
+    rf"(?:\s*!|\s+(?:as|satisfies)\s+[^;,\r\n)]{{1,256}})?\s*"
+    rf"(?:\)\s*)?"
+    rf"(?=[;,\r\n)]|$)"
+)
+_CLIENT_ENV_ALIAS_MEMBER_RE = re.compile(
+    r"(?<![A-Za-z0-9_$\.\]])(?P<object>[A-Za-z_$][A-Za-z0-9_$]*)\s*"
+    r"(?:\.\s*(?P<dot>[A-Za-z_$][A-Za-z0-9_$]*)|"
+    r"\[\s*['\"](?P<bracket>[^'\"]+)['\"]\s*\])"
+)
+_CLIENT_ENV_ALIAS_DESTRUCTURE_RE = re.compile(
+    r"\b(?:const|let|var)\s*\{(?P<body>[^{}\r\n]{1,1024})\}\s*=\s*"
+    rf"(?P<target>{_CLIENT_ENV_OBJECT_SOURCE_PATTERN}|"
+    r"[A-Za-z_$][A-Za-z0-9_$]*)"
+)
+_CLIENT_ENV_DESTRUCTURED_NAME_RE = re.compile(
+    r"['\"](?P<quoted>[^'\"]+)['\"]|(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)"
+)
+
+JS_TS_SUFFIXES = (
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+)
+_NEXT_ROUTE_BASENAMES = frozenset(f"route{suffix}" for suffix in JS_TS_SUFFIXES)
 
 SECRET_CONFIG_SUFFIXES = (
     ".yaml",
@@ -57,6 +159,14 @@ ALLOWED_FILE_SUFFIXES = (
     ".tsx",
     ".js",
     ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+    ".html",
+    ".htm",
+    ".css",
+    ".map",
     ".go",
     ".php",
     ".rs",
@@ -199,6 +309,9 @@ SRI_CANDIDATE_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9+/_-])"
     r"(?P<token>sha(?:1|224|256|384|512)-[A-Za-z0-9+/_-]+={0,2})"
     r"(?![A-Za-z0-9+/_-])"
+)
+HTML_INTEGRITY_ATTRIBUTE_RE = re.compile(
+    r"(?i)\bintegrity\s*=\s*(?P<quote>['\"])(?P<value>[^'\"]+)(?P=quote)"
 )
 NPM_SRI_VALUE_RE = re.compile(
     r"^(?P<algorithm>sha(?:256|384|512))-(?P<digest>[A-Za-z0-9+/]+={0,2})$"
@@ -1647,6 +1760,17 @@ def _pnpm_integrity_spans(file_lines: list[str]):
 
 
 def _lockfile_integrity_spans(rel_name: str, file_lines: list[str]):
+    if rel_name.lower().endswith((".html", ".htm")):
+        approved_by_line = {}
+        for line_number, line in enumerate(file_lines, start=1):
+            spans = [
+                (match.start("value"), match.end("value"))
+                for match in HTML_INTEGRITY_ATTRIBUTE_RE.finditer(line)
+                if _is_valid_sri_list(match.group("value"), _is_valid_sri_token)
+            ]
+            if spans:
+                approved_by_line[line_number] = tuple(spans)
+        return approved_by_line, {}
     if rel_name == "yarn.lock":
         return _yarn_integrity_spans(file_lines)
     if rel_name == "pnpm-lock.yaml":
@@ -1697,6 +1821,821 @@ def _docstring_lines(tree):
     return docstring_line_numbers
 
 
+_MAX_CLIENT_ENV_PARSE_BYTES = 8_000_000
+_MAX_CLIENT_ENV_NODES = 300_000
+_MAX_CLIENT_ENV_BINDINGS = 20_000
+_MAX_CLIENT_ENV_REFERENCES = 512
+_MAX_CLIENT_ENV_ALIAS_DEPTH = 8
+_CLIENT_SCOPE_NODE_TYPES = frozenset(
+    {
+        "arrow_function",
+        "catch_clause",
+        "class_static_block",
+        "for_in_statement",
+        "for_statement",
+        "function_declaration",
+        "function_expression",
+        "generator_function",
+        "generator_function_declaration",
+        "method_definition",
+        "program",
+        "statement_block",
+        "switch_body",
+    }
+)
+_CLIENT_FUNCTION_NODE_TYPES = frozenset(
+    {
+        "arrow_function",
+        "function_declaration",
+        "function_expression",
+        "generator_function",
+        "generator_function_declaration",
+        "method_definition",
+    }
+)
+_CLIENT_EXPRESSION_WRAPPERS = frozenset(
+    {
+        "as_expression",
+        "non_null_expression",
+        "parenthesized_expression",
+        "satisfies_expression",
+        "type_assertion",
+    }
+)
+_SHADOWED_CLIENT_BINDING = object()
+
+
+@dataclass(frozen=True)
+class _ClientEnvReference:
+    source: str
+    start_offset: int
+    end_offset: int
+
+    def start(self) -> int:
+        return self.start_offset
+
+    def end(self) -> int:
+        return self.end_offset
+
+    def group(self, group=0) -> str:
+        if group != 0:
+            raise IndexError("client env references expose only group 0")
+        return self.source[self.start_offset : self.end_offset]
+
+
+@dataclass(frozen=True)
+class _RawClientEnvReference:
+    start_byte: int
+    end_byte: int
+    env_name: str
+
+
+@dataclass(frozen=True)
+class _ClientEnvScan:
+    references: tuple[_RawClientEnvReference, ...]
+    complete: bool
+    diagnostics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ClientBinding:
+    name: str
+    declaration_start: int
+    declaration_end: int
+    value_node: object | None
+    is_const: bool
+
+
+def _public_client_env_prefix(name: str) -> str | None:
+    return next(
+        (prefix for prefix in PUBLIC_CLIENT_ENV_PREFIXES if name.startswith(prefix)),
+        None,
+    )
+
+
+def is_public_client_env_name(name: str) -> bool:
+    return _public_client_env_prefix(name) is not None
+
+
+def _normalized_env_name(name: str) -> str:
+    camel_split = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+    return re.sub(r"[^A-Za-z0-9]+", "_", camel_split).strip("_").upper()
+
+
+def _is_sensitive_client_env_name(name: str) -> bool:
+    if not name:
+        return False
+
+    public_prefix = _public_client_env_prefix(name)
+    semantic_name = name[len(public_prefix) :] if public_prefix else name
+    normalized = _normalized_env_name(semantic_name)
+    terms = frozenset(part for part in normalized.split("_") if part)
+    if public_prefix:
+        return bool(
+            normalized in _SENSITIVE_CLIENT_ENV_NAMES
+            or _SENSITIVE_PUBLIC_ENV_TERMS.intersection(terms)
+        )
+    return bool(
+        normalized in _SENSITIVE_CLIENT_ENV_NAMES
+        or _SENSITIVE_CLIENT_ENV_TERMS.intersection(terms)
+    )
+
+
+def _parse_client_typescript(source_bytes: bytes):
+    if len(source_bytes) > _MAX_CLIENT_ENV_PARSE_BYTES:
+        return None
+    try:
+        from skylos.visitors.languages.typescript.core import TypeScriptCore
+
+        return TypeScriptCore("skylos-client-exposure.tsx", source_bytes).root_node
+    except Exception:  # skylos: ignore[SKY-L007]
+        # Callers convert parser failure into SKY-ANALYSIS-INCOMPLETE.
+        return None
+
+
+def _bounded_client_nodes(root_node) -> tuple[list, bool]:
+    nodes = []
+    stack = [root_node]
+    while stack and len(nodes) < _MAX_CLIENT_ENV_NODES:
+        node = stack.pop()
+        nodes.append(node)
+        stack.extend(reversed(node.named_children))
+    return nodes, not stack
+
+
+def _client_scope_key(node) -> tuple[str, int, int]:
+    return node.type, node.start_byte, node.end_byte
+
+
+def _nearest_client_scope(node):
+    current = node
+    while current is not None:
+        if current.type in _CLIENT_SCOPE_NODE_TYPES:
+            return current
+        current = current.parent
+    return None
+
+
+def _nearest_client_function_scope(node):
+    current = node
+    while current is not None:
+        if current.type in _CLIENT_FUNCTION_NODE_TYPES or current.type == "program":
+            return current
+        current = current.parent
+    return None
+
+
+def _node_text(source_bytes: bytes, node) -> str:
+    return source_bytes[node.start_byte : node.end_byte].decode(
+        "utf-8", errors="replace"
+    )
+
+
+def _binding_pattern_names(pattern, source_bytes: bytes) -> list[str]:
+    if pattern is None:
+        return []
+    if pattern.type in {
+        "identifier",
+        "shorthand_property_identifier_pattern",
+    }:
+        return [_node_text(source_bytes, pattern)]
+    if pattern.type in {"required_parameter", "optional_parameter"}:
+        return _binding_pattern_names(
+            pattern.child_by_field_name("pattern"), source_bytes
+        )
+    if pattern.type == "pair_pattern":
+        return _binding_pattern_names(
+            pattern.child_by_field_name("value"), source_bytes
+        )
+    if pattern.type == "assignment_pattern":
+        return _binding_pattern_names(pattern.child_by_field_name("left"), source_bytes)
+    if pattern.type == "rest_pattern":
+        return _binding_pattern_names(
+            next(iter(pattern.named_children), None), source_bytes
+        )
+
+    names = []
+    for child in pattern.named_children:
+        names.extend(_binding_pattern_names(child, source_bytes))
+    return names
+
+
+def _declaration_is_const(declaration) -> bool:
+    return bool(
+        declaration is not None
+        and declaration.type == "lexical_declaration"
+        and declaration.children
+        and declaration.children[0].type == "const"
+    )
+
+
+def _declaration_is_var(declaration) -> bool:
+    return bool(
+        declaration is not None
+        and declaration.type == "variable_declaration"
+        and declaration.children
+        and declaration.children[0].type == "var"
+    )
+
+
+def _client_binding(
+    name: str,
+    node,
+    *,
+    value_node=None,
+    is_const: bool = False,
+    declaration_end: int | None = None,
+) -> _ClientBinding:
+    return _ClientBinding(
+        name,
+        node.start_byte,
+        node.end_byte if declaration_end is None else declaration_end,
+        value_node,
+        is_const,
+    )
+
+
+def _collect_variable_client_bindings(node, source_bytes: bytes):
+    scope = (
+        _nearest_client_function_scope(node.parent)
+        if _declaration_is_var(node.parent)
+        else _nearest_client_scope(node.parent)
+    )
+    name_node = node.child_by_field_name("name")
+    value_node = node.child_by_field_name("value")
+    simple_name = name_node is not None and name_node.type == "identifier"
+    for name in _binding_pattern_names(name_node, source_bytes):
+        yield (
+            scope,
+            _client_binding(
+                name,
+                node,
+                value_node=value_node if simple_name else None,
+                is_const=_declaration_is_const(node.parent),
+            ),
+        )
+
+
+def _collect_function_client_bindings(node, source_bytes: bytes):
+    parameters = node.child_by_field_name("parameters")
+    if parameters is None:
+        parameters = node.child_by_field_name("parameter")
+    for name in _binding_pattern_names(parameters, source_bytes):
+        yield node, _client_binding(name, node, declaration_end=node.start_byte)
+
+    if node.type not in {"function_declaration", "generator_function_declaration"}:
+        return
+    parent_scope = _nearest_client_scope(node.parent)
+    for name in _binding_pattern_names(node.child_by_field_name("name"), source_bytes):
+        yield parent_scope, _client_binding(name, node)
+
+
+def _collect_import_client_bindings(node, source_bytes: bytes):
+    scope = _nearest_client_scope(node.parent)
+    stack = list(node.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type == "import_specifier":
+            local = child.child_by_field_name("alias") or child.child_by_field_name(
+                "name"
+            )
+            for name in _binding_pattern_names(local, source_bytes):
+                yield scope, _client_binding(name, child)
+            continue
+        if child.type == "identifier" and child.parent.type == "import_clause":
+            yield scope, _client_binding(_node_text(source_bytes, child), child)
+            continue
+        stack.extend(child.named_children)
+
+
+def _client_bindings_for_node(node, source_bytes: bytes):
+    if node.type == "variable_declarator":
+        yield from _collect_variable_client_bindings(node, source_bytes)
+    elif node.type in _CLIENT_FUNCTION_NODE_TYPES:
+        yield from _collect_function_client_bindings(node, source_bytes)
+    elif node.type == "catch_clause":
+        for name in _binding_pattern_names(
+            node.child_by_field_name("parameter"), source_bytes
+        ):
+            yield node, _client_binding(name, node, declaration_end=node.start_byte)
+    elif node.type == "for_in_statement":
+        for name in _binding_pattern_names(
+            node.child_by_field_name("left"), source_bytes
+        ):
+            yield node, _client_binding(name, node, declaration_end=node.start_byte)
+    elif node.type == "import_statement":
+        yield from _collect_import_client_bindings(node, source_bytes)
+
+
+def _collect_client_bindings(nodes, source_bytes: bytes):
+    bindings: dict[tuple[str, int, int], dict[str, list[_ClientBinding]]] = {}
+    binding_count = 0
+    for node in nodes:
+        for scope, binding in _client_bindings_for_node(node, source_bytes):
+            if scope is None:
+                continue
+            if binding_count >= _MAX_CLIENT_ENV_BINDINGS:
+                return bindings, False
+            by_name = bindings.setdefault(_client_scope_key(scope), {})
+            by_name.setdefault(binding.name, []).append(binding)
+            binding_count += 1
+    return bindings, binding_count < _MAX_CLIENT_ENV_BINDINGS
+
+
+def _visible_client_binding(bindings, name: str, use_node):
+    current = use_node
+    while current is not None:
+        if current.type in _CLIENT_SCOPE_NODE_TYPES:
+            records = bindings.get(_client_scope_key(current), {}).get(name, ())
+            if records:
+                return records[0] if len(records) == 1 else _SHADOWED_CLIENT_BINDING
+        current = current.parent
+    return None
+
+
+def _unwrap_client_expression(node):
+    current = node
+    while current is not None and current.type in _CLIENT_EXPRESSION_WRAPPERS:
+        candidate = current.child_by_field_name("expression")
+        if candidate is None:
+            candidate = current.child_by_field_name("value")
+        if candidate is None:
+            candidate = next(
+                (
+                    child
+                    for child in current.named_children
+                    if not child.type.endswith("type")
+                    and child.type not in {"type_annotation", "type_arguments"}
+                ),
+                None,
+            )
+        current = candidate
+    return current
+
+
+def _is_unshadowed_process_env(node, bindings, source_bytes: bytes) -> bool:
+    node = _unwrap_client_expression(node)
+    if node is None or node.type not in {"member_expression", "subscript_expression"}:
+        return False
+    object_node = _unwrap_client_expression(node.child_by_field_name("object"))
+    property_node = node.child_by_field_name(
+        "property" if node.type == "member_expression" else "index"
+    )
+    if object_node is None or property_node is None:
+        return False
+    if _static_env_property_name(property_node, source_bytes) != "env":
+        return False
+    if (
+        object_node.type == "identifier"
+        and _node_text(source_bytes, object_node) == "process"
+    ):
+        return _visible_client_binding(bindings, "process", object_node) is None
+    return bool(
+        object_node.type == "meta_property"
+        and _node_text(source_bytes, object_node) == "import.meta"
+    )
+
+
+def _binding_is_env_alias(
+    binding,
+    bindings,
+    source_bytes: bytes,
+    *,
+    use_offset: int,
+    depth: int,
+    seen: frozenset[tuple[str, int]],
+) -> bool:
+    if (
+        not isinstance(binding, _ClientBinding)
+        or not binding.is_const
+        or binding.value_node is None
+        or binding.declaration_end > use_offset
+        or depth >= _MAX_CLIENT_ENV_ALIAS_DEPTH
+    ):
+        return False
+    binding_key = (binding.name, binding.declaration_start)
+    if binding_key in seen:
+        return False
+
+    value_node = _unwrap_client_expression(binding.value_node)
+    if _is_unshadowed_process_env(value_node, bindings, source_bytes):
+        return True
+    if value_node is None or value_node.type != "identifier":
+        return False
+    target = _visible_client_binding(
+        bindings, _node_text(source_bytes, value_node), value_node
+    )
+    return _binding_is_env_alias(
+        target,
+        bindings,
+        source_bytes,
+        use_offset=value_node.start_byte,
+        depth=depth + 1,
+        seen=seen | {binding_key},
+    )
+
+
+def _expression_is_env_object(node, bindings, source_bytes: bytes) -> bool:
+    node = _unwrap_client_expression(node)
+    if _is_unshadowed_process_env(node, bindings, source_bytes):
+        return True
+    if node is None or node.type != "identifier":
+        return False
+    binding = _visible_client_binding(bindings, _node_text(source_bytes, node), node)
+    return _binding_is_env_alias(
+        binding,
+        bindings,
+        source_bytes,
+        use_offset=node.start_byte,
+        depth=0,
+        seen=frozenset(),
+    )
+
+
+def _decode_js_string_literal(  # skylos: ignore[SKY-Q301,SKY-Q306] bounded escape decoder state machine
+    text: str,
+) -> str | None:
+    if len(text) < 2 or text[0] not in {'"', "'"} or text[-1] != text[0]:
+        return None
+    result = []
+    index = 1
+    end = len(text) - 1
+    simple_escapes = {
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "0": "\0",
+    }
+    while index < end and len(result) <= 256:
+        character = text[index]
+        if character != "\\":
+            result.append(character)
+            index += 1
+            continue
+        index += 1
+        if index >= end:
+            return None
+        escape = text[index]
+        if escape in simple_escapes:
+            result.append(simple_escapes[escape])
+            index += 1
+            continue
+        if escape in {"\\", "'", '"'}:
+            result.append(escape)
+            index += 1
+            continue
+        if escape == "x" and index + 2 < end:
+            digits = text[index + 1 : index + 3]
+            if re.fullmatch(r"[0-9A-Fa-f]{2}", digits):
+                result.append(chr(int(digits, 16)))
+                index += 3
+                continue
+        if escape == "u":
+            if index + 1 < end and text[index + 1] == "{":
+                close = text.find("}", index + 2, min(end, index + 10))
+                digits = text[index + 2 : close] if close >= 0 else ""
+                if digits and re.fullmatch(r"[0-9A-Fa-f]{1,6}", digits):
+                    codepoint = int(digits, 16)
+                    if codepoint <= 0x10FFFF:
+                        result.append(chr(codepoint))
+                        index = close + 1
+                        continue
+            elif index + 4 < end:
+                digits = text[index + 1 : index + 5]
+                if re.fullmatch(r"[0-9A-Fa-f]{4}", digits):
+                    result.append(chr(int(digits, 16)))
+                    index += 5
+                    continue
+        return None
+    return "".join(result) if index == end and len(result) <= 256 else None
+
+
+def _static_env_property_name(node, source_bytes: bytes) -> str | None:
+    if node is None:
+        return None
+    if node.type in {
+        "identifier",
+        "property_identifier",
+        "shorthand_property_identifier_pattern",
+    }:
+        return _node_text(source_bytes, node)
+    if node.type == "string":
+        return _decode_js_string_literal(_node_text(source_bytes, node))
+    if node.type == "computed_property_name":
+        return _static_env_property_name(
+            next(iter(node.named_children), None), source_bytes
+        )
+    return None
+
+
+def _destructured_env_properties(pattern, source_bytes: bytes):
+    if pattern is None or pattern.type != "object_pattern":
+        return
+    for child in pattern.named_children:
+        key_node = None
+        if child.type == "shorthand_property_identifier_pattern":
+            key_node = child
+        elif child.type == "pair_pattern":
+            key_node = child.child_by_field_name("key")
+        elif child.type in {"assignment_pattern", "object_assignment_pattern"}:
+            key_node = child.child_by_field_name("left")
+        if key_node is None:
+            continue
+        env_name = _static_env_property_name(key_node, source_bytes)
+        if env_name:
+            yield key_node, env_name
+
+
+def _prepare_client_env_scan(source_bytes: bytes):
+    if len(source_bytes) > _MAX_CLIENT_ENV_PARSE_BYTES:
+        return None, None, False, ["client env parse byte budget exceeded"]
+    root_node = _parse_client_typescript(source_bytes)
+    if root_node is None:
+        return None, None, False, ["client env parser unavailable"]
+    diagnostics = []
+    complete = not bool(getattr(root_node, "has_error", False))
+    if not complete:
+        diagnostics.append("TypeScript parser recovered from invalid syntax")
+    nodes, nodes_complete = _bounded_client_nodes(root_node)
+    if not nodes_complete:
+        complete = False
+        diagnostics.append("client env node budget exceeded")
+    bindings, bindings_complete = _collect_client_bindings(nodes, source_bytes)
+    if not bindings_complete:
+        complete = False
+        diagnostics.append("client env binding budget exceeded")
+    return nodes, bindings, complete, diagnostics
+
+
+def _client_env_reference_candidates(node, bindings, source_bytes: bytes):
+    if node.type in {"member_expression", "subscript_expression"}:
+        object_node = node.child_by_field_name("object")
+        if not _expression_is_env_object(object_node, bindings, source_bytes):
+            return
+        property_node = node.child_by_field_name(
+            "property" if node.type == "member_expression" else "index"
+        )
+        env_name = _static_env_property_name(property_node, source_bytes)
+        if env_name and _is_sensitive_client_env_name(env_name):
+            yield _RawClientEnvReference(node.start_byte, node.end_byte, env_name)
+        return
+
+    if node.type != "variable_declarator":
+        return
+    value_node = node.child_by_field_name("value")
+    if not _expression_is_env_object(value_node, bindings, source_bytes):
+        return
+    pattern = node.child_by_field_name("name")
+    for key_node, env_name in _destructured_env_properties(pattern, source_bytes):
+        if _is_sensitive_client_env_name(env_name):
+            yield _RawClientEnvReference(
+                key_node.start_byte,
+                key_node.end_byte,
+                env_name,
+            )
+
+
+def _raw_client_env_references(source_bytes: bytes) -> _ClientEnvScan:
+    nodes, bindings, complete, diagnostics = _prepare_client_env_scan(source_bytes)
+    if nodes is None or bindings is None:
+        return _ClientEnvScan((), False, tuple(diagnostics))
+
+    references = []
+    seen = set()
+    for node in nodes:
+        if len(references) >= _MAX_CLIENT_ENV_REFERENCES:
+            complete = False
+            diagnostics.append("client env reference budget exceeded")
+            break
+        for reference in _client_env_reference_candidates(node, bindings, source_bytes):
+            key = (reference.start_byte, reference.end_byte, reference.env_name)
+            if key not in seen:
+                seen.add(key)
+                references.append(reference)
+            if len(references) >= _MAX_CLIENT_ENV_REFERENCES:
+                break
+
+    references.sort(key=lambda reference: (reference.start_byte, reference.end_byte))
+    return _ClientEnvScan(tuple(references), complete, tuple(diagnostics))
+
+
+def _reference_char_offsets(source_text: str, byte_offsets: set[int]) -> dict[int, int]:
+    if source_text.isascii():
+        return {offset: offset for offset in byte_offsets}
+    offsets = {}
+    byte_offset = 0
+    if 0 in byte_offsets:
+        offsets[0] = 0
+    for char_offset, character in enumerate(source_text, start=1):
+        byte_offset += len(character.encode("utf-8"))
+        if byte_offset in byte_offsets:
+            offsets[byte_offset] = char_offset
+    return offsets
+
+
+def _client_env_references_with_status(source_text: str):
+    source_bytes = source_text.encode("utf-8")
+    scan = _raw_client_env_references(source_bytes)
+    byte_offsets = {
+        offset
+        for reference in scan.references
+        for offset in (reference.start_byte, reference.end_byte)
+    }
+    char_offsets = _reference_char_offsets(source_text, byte_offsets)
+    references = []
+    for reference in scan.references:
+        start = char_offsets.get(reference.start_byte)
+        end = char_offsets.get(reference.end_byte)
+        if start is None or end is None:
+            continue
+        references.append(
+            (_ClientEnvReference(source_text, start, end), reference.env_name)
+        )
+    return references, scan.complete, scan.diagnostics
+
+
+def iter_sensitive_client_env_references(source_text: str):
+    """Yield bounded, structural secret-like env references in JS/TS source."""
+    references, _, _ = _client_env_references_with_status(source_text)
+    yield from references
+
+
+def _source_env_aliases(source_text: str) -> set[str]:
+    """Recover a bounded alias superset for fail-closed incomplete scans."""
+    assignments = list(_CLIENT_ENV_ALIAS_ASSIGNMENT_RE.finditer(source_text))[:512]
+    aliases: set[str] = set()
+    for _ in range(32):
+        changed = False
+        for match in assignments:
+            alias = match.group("alias")
+            target = match.group("target").strip()
+            if alias in aliases:
+                continue
+            if _CLIENT_ENV_OBJECT_SOURCE_RE.fullmatch(target) or target in aliases:
+                aliases.add(alias)
+                changed = True
+        if not changed:
+            break
+    return aliases
+
+
+def _unresolved_sensitive_client_env_alias_candidate(source_text: str):
+    aliases = _source_env_aliases(source_text)
+    if aliases:
+        for match in _CLIENT_ENV_ALIAS_MEMBER_RE.finditer(source_text):
+            env_name = match.group("dot") or match.group("bracket") or ""
+            if match.group("object") in aliases and _is_sensitive_client_env_name(
+                env_name
+            ):
+                return match
+
+    for match in _CLIENT_ENV_ALIAS_DESTRUCTURE_RE.finditer(source_text):
+        target = match.group("target").strip()
+        if not (_CLIENT_ENV_OBJECT_SOURCE_RE.fullmatch(target) or target in aliases):
+            continue
+        for name_match in _CLIENT_ENV_DESTRUCTURED_NAME_RE.finditer(
+            match.group("body")
+        ):
+            env_name = name_match.group("quoted") or name_match.group("name") or ""
+            if _is_sensitive_client_env_name(env_name):
+                return match
+    return None
+
+
+def _unresolved_sensitive_client_env_candidate(source_text: str, references):
+    proven_spans = {(match.start(), match.end()) for match, _ in references}
+    for match in CLIENT_ENV_RE.finditer(source_text):
+        env_name = match.group("dot") or match.group("bracket") or ""
+        if (
+            _is_sensitive_client_env_name(env_name)
+            and (match.start(), match.end()) not in proven_spans
+        ):
+            return match
+    alias_match = _unresolved_sensitive_client_env_alias_candidate(source_text)
+    if alias_match is None:
+        return None
+    if (alias_match.start(), alias_match.end()) in proven_spans:
+        return None
+    return alias_match
+
+
+def _use_client_directive_status(file_lines) -> tuple[bool, bool, tuple[str, ...]]:
+    source_text = "".join(file_lines)
+    source_bytes = source_text.encode("utf-8")
+    truncated = len(source_bytes) > _MAX_CLIENT_ENV_PARSE_BYTES
+    if truncated:
+        source_bytes = source_bytes[:_MAX_CLIENT_ENV_PARSE_BYTES]
+    root_node = _parse_client_typescript(source_bytes)
+    if root_node is None:
+        return False, False, ("use client directive parser unavailable",)
+    for statement in root_node.named_children:
+        if statement.type == "comment":
+            continue
+        if statement.type == "ERROR" or bool(getattr(statement, "is_missing", False)):
+            return False, False, ("use client directive parse was incomplete",)
+        if statement.type != "expression_statement":
+            # Directive prologues cannot resume after a real statement, so a
+            # later truncated suffix cannot change this ownership decision.
+            return False, True, ()
+        expression = next(iter(statement.named_children), None)
+        if expression is None or expression.type != "string":
+            return False, True, ()
+        directive = _decode_js_string_literal(_node_text(source_bytes, expression))
+        if directive == "use client":
+            return True, True, ()
+    if truncated:
+        return False, False, ("use client directive parse byte budget exceeded",)
+    if bool(getattr(root_node, "has_error", False)):
+        return False, False, ("use client directive parse was incomplete",)
+    return False, True, ()
+
+
+def _has_use_client_directive(file_lines) -> bool:
+    return _use_client_directive_status(file_lines)[0]
+
+
+def _is_explicit_server_client_context(normalized: str, basename: str) -> bool:
+    return bool(
+        "/pages/api/" in normalized
+        or any(segment in normalized for segment in _EXPLICIT_SERVER_OUTPUT_PATHS)
+        or ("/app/" in normalized and basename in _NEXT_ROUTE_BASENAMES)
+        or ".server." in basename
+    )
+
+
+def _is_named_client_context(normalized: str, basename: str) -> bool:
+    return bool(
+        ".client." in basename
+        or ".browser." in basename
+        or basename.startswith(("client.", "browser."))
+        or any(segment in normalized for segment in CLIENT_PATHS)
+    )
+
+
+def _client_exposure_context_with_status(
+    rel_path: str, file_lines
+) -> tuple[bool, bool, tuple[str, ...]]:
+    """Return client ownership plus whether a negative decision is complete."""
+    normalized = "/" + rel_path.replace("\\", "/").lower().lstrip("/")
+    basename = normalized.rsplit("/", 1)[-1]
+
+    if any(segment in normalized for segment in _EXPLICIT_PUBLIC_CLIENT_PATHS):
+        return True, True, ()
+
+    if _is_explicit_server_client_context(normalized, basename):
+        return False, True, ()
+
+    if _is_named_client_context(normalized, basename):
+        return True, True, ()
+
+    if basename.endswith(JS_TS_SUFFIXES):
+        return _use_client_directive_status(file_lines)
+    return False, True, ()
+
+
+def is_client_exposure_context(rel_path: str, file_lines) -> bool:
+    """Return whether source or output is intentionally client-accessible."""
+    return _client_exposure_context_with_status(rel_path, file_lines)[0]
+
+
+def _append_client_analysis_incomplete(
+    findings,
+    *,
+    rel_path: str,
+    line: int,
+    diagnostics,
+    ownership_unknown: bool = False,
+) -> None:
+    if any(
+        finding.get("rule_id") == "SKY-ANALYSIS-INCOMPLETE"
+        and finding.get("file") == rel_path
+        for finding in findings
+    ):
+        return
+    subject = "ownership" if ownership_unknown else "environment exposure"
+    findings.append(
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "severity": "HIGH",
+            "kind": "processing_error",
+            "message": (
+                f"Client-side {subject} analysis was bounded before a "
+                "sensitive candidate could be resolved."
+            ),
+            "file": rel_path,
+            "line": max(1, line),
+            "col": 0,
+            "metadata": {
+                "analysis_complete": False,
+                "analysis_diagnostics": list(tuple(diagnostics)[:4]),
+            },
+        }
+    )
+
+
 def scan_ctx(
     ctx,
     *,
@@ -1723,6 +2662,11 @@ def scan_ctx(
                 return []
 
     file_lines = ctx.get("lines") or []
+    (
+        is_client_context,
+        client_context_complete,
+        client_context_diagnostics,
+    ) = _client_exposure_context_with_status(rel_path, file_lines)
     syntax_tree = ctx.get("tree")
     approved_structural_spans, structural_context_spans = _lockfile_integrity_spans(
         rel_name, file_lines
@@ -1918,6 +2862,14 @@ def scan_ctx(
                 ),
                 structural_contexts=structural_context_spans.get(line_number, ()),
             )
+            if rel_name.lower().endswith((".html", ".htm", ".css", ".map")):
+                # Client artifacts commonly contain SRI hashes, content hashes,
+                # generated asset IDs, and minifier/source-map symbols. Keep
+                # keyed/provider secrets, but do not interpret bare artifact
+                # tokens as credentials merely because they have high entropy.
+                generic_values = (
+                    candidate for candidate in generic_values if not candidate[1]
+                )
 
         for generic_value in generic_values:
             extracted_token, is_bare, col_pos, source_end = generic_value
@@ -1955,11 +2907,31 @@ def scan_ctx(
                 }
                 findings.append(generic_finding)
 
-    # S102: Client-side secret exposure
-    norm_path = "/" + rel_path.replace("\\", "/")
-    is_client_path = any(seg in norm_path for seg in CLIENT_PATHS)
+    # A neutral source file can still be a client boundary when its directive
+    # prologue exceeded the parse budget. Preserve a blocking result whenever
+    # that unresolved ownership decision intersects secret-like content.
+    if not client_context_complete and rel_path.lower().endswith(JS_TS_SUFFIXES):
+        source_text = "".join(file_lines)
+        unresolved = _unresolved_sensitive_client_env_candidate(source_text, ())
+        secret_finding = next(
+            (finding for finding in findings if finding.get("rule_id") == "SKY-S101"),
+            None,
+        )
+        if unresolved is not None or secret_finding is not None:
+            if unresolved is not None:
+                line = source_text.count("\n", 0, unresolved.start()) + 1
+            else:
+                line = int(secret_finding.get("line") or 1)
+            _append_client_analysis_incomplete(
+                findings,
+                rel_path=rel_path,
+                line=line,
+                diagnostics=client_context_diagnostics,
+                ownership_unknown=True,
+            )
 
-    if is_client_path:
+    # S102: Client-side secret exposure
+    if is_client_context:
         for f in findings:
             if f["rule_id"] == "SKY-S101":
                 f["rule_id"] = "SKY-S102"
@@ -1968,23 +2940,60 @@ def scan_ctx(
                     f"Secret exposed in client-accessible path: {rel_path}"
                 )
 
-    if rel_path.endswith(JS_TS_SUFFIXES):
-        for line_number, raw_line in enumerate(file_lines, start=1):
-            line_content = raw_line.rstrip("\n")
-            for m in CLIENT_ENV_RE.finditer(line_content):
-                col_pos = m.start()
-                findings.append(
-                    {
-                        "rule_id": "SKY-S102",
-                        "severity": "CRITICAL",
-                        "message": (
-                            f"Client-side secret exposure: "
-                            f"Non-public env var '{m.group(0)}' may be bundled into client code"
-                        ),
-                        "file": rel_path,
-                        "line": line_number,
-                        "col": col_pos,
-                    }
+    if is_client_context and rel_path.lower().endswith(JS_TS_SUFFIXES):
+        source_text = "".join(file_lines)
+        line_starts = [0]
+        line_starts.extend(
+            index + 1
+            for index, character in enumerate(source_text)
+            if character == "\n"
+        )
+        references, references_complete, diagnostics = (
+            _client_env_references_with_status(source_text)
+        )
+        for match, env_name in references:
+            line_number = bisect_right(line_starts, match.start())
+            line_start = line_starts[line_number - 1]
+            col_pos = match.start() - line_start
+            reference = match.group(0)
+            is_public_env = is_public_client_env_name(env_name)
+            if is_public_env:
+                message = (
+                    "Client-side secret exposure: "
+                    f"Sensitive-looking public env var '{reference}' is "
+                    "intentionally bundled into client code"
+                )
+            else:
+                message = (
+                    "Client-side secret exposure: "
+                    f"Server-only env var '{reference}' may be bundled into "
+                    "client code"
+                )
+            findings.append(
+                {
+                    "rule_id": "SKY-S102",
+                    "severity": "HIGH",
+                    "message": message,
+                    "file": rel_path,
+                    "line": line_number,
+                    "col": col_pos,
+                    "end_col": col_pos + len(reference),
+                    "env_name": env_name,
+                    "public_env": is_public_env,
+                }
+            )
+        if not references_complete:
+            unresolved = _unresolved_sensitive_client_env_candidate(
+                source_text,
+                references,
+            )
+            if unresolved is not None:
+                line_number = bisect_right(line_starts, unresolved.start())
+                _append_client_analysis_incomplete(
+                    findings,
+                    rel_path=rel_path,
+                    line=line_number,
+                    diagnostics=diagnostics,
                 )
 
     return findings

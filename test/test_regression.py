@@ -426,6 +426,16 @@ class TestSanitizationRemoval:
         findings = detect_security_regressions(diff, "db.py")
         assert any(f["control_type"] == "sanitization" for f in findings)
 
+    def test_generic_text_helper_rename_is_not_sanitization_regression(self):
+        diff = _make_diff(
+            ["    source = flow.text(node)"],
+            ["    source = flow.node_text(node)"],
+        )
+
+        findings = detect_security_regressions(diff, "security_flow.py")
+
+        assert findings == []
+
 
 class TestPermissionCheckRemoval:
     def test_has_permission_removed(self):

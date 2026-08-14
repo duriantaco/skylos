@@ -458,9 +458,7 @@ def test_build_verify_change_response_applies_version_hallucination_defaults(tmp
         ),
     ],
 )
-def test_build_verify_change_response_adds_contract_metadata(
-    tmp_path, finding, clause
-):
+def test_build_verify_change_response_adds_contract_metadata(tmp_path, finding, clause):
     app = tmp_path / "app.py"
     app.write_text("pass\n", encoding="utf-8")
     contract_file = tmp_path / "ai-contract.yml"
@@ -511,10 +509,7 @@ def test_build_verify_change_response_skips_unmatched_contract_metadata(tmp_path
     app.write_text("pass\n", encoding="utf-8")
     contract_file = tmp_path / "ai-contract.yml"
     contract_file.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  phantom_symbols:\n"
-        "    names: [verify_enterprise_auth]\n",
+        "version: 1\nai:\n  phantom_symbols:\n    names: [verify_enterprise_auth]\n",
         encoding="utf-8",
     )
     contract = load_contract(contract_file)
@@ -546,10 +541,7 @@ def test_build_verify_change_response_skips_suspicious_dependency_contract_metad
     app.write_text("pass\n", encoding="utf-8")
     contract_file = tmp_path / "ai-contract.yml"
     contract_file.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  dependencies:\n"
-        "    reject_nonexistent_packages: true\n",
+        "version: 1\nai:\n  dependencies:\n    reject_nonexistent_packages: true\n",
         encoding="utf-8",
     )
     contract = load_contract(contract_file)
@@ -626,7 +618,9 @@ def test_build_verify_change_response_includes_security_only_when_requested(tmp_
     assert security_payload["findings"][0]["severity"] == "CRITICAL"
 
 
-def test_build_verify_change_response_includes_missing_auth_and_swallowed_errors(tmp_path):
+def test_build_verify_change_response_includes_missing_auth_and_swallowed_errors(
+    tmp_path,
+):
     app = tmp_path / "app.py"
     app.write_text("pass\n", encoding="utf-8")
     result = {
@@ -656,7 +650,9 @@ def test_build_verify_change_response_includes_missing_auth_and_swallowed_errors
     assert payload["findings"][1]["vibe_category"] == "swallowed_error"
 
 
-def test_build_verify_change_response_includes_missing_auth_and_swallowed_vibes(tmp_path):
+def test_build_verify_change_response_includes_missing_auth_and_swallowed_vibes(
+    tmp_path,
+):
     app = tmp_path / "app.py"
     app.write_text("pass\n", encoding="utf-8")
     result = {
@@ -759,9 +755,7 @@ def test_verify_change_path_fails_on_missing_local_typescript_export(tmp_path):
 
     assert payload["status"] == "fail"
     finding = next(
-        finding
-        for finding in payload["findings"]
-        if finding["rule_id"] == "SKY-L012"
+        finding for finding in payload["findings"] if finding["rule_id"] == "SKY-L012"
     )
     assert finding["range"]["file"] == "app.ts"
     assert finding["metadata"]["language"] == "typescript"
@@ -806,9 +800,7 @@ def test_verify_change_path_is_incomplete_for_unresolved_typescript_dependency(
     assert payload["findings"] == []
     check = payload["coverage"]["checks"][0]
     assert check["outcome"] == "incomplete"
-    assert check["reasons"] == [
-        {"code": "external_or_unresolved_module", "count": 1}
-    ]
+    assert check["reasons"] == [{"code": "external_or_unresolved_module", "count": 1}]
 
 
 def test_verify_change_file_uses_declared_monorepo_root(tmp_path):
@@ -846,9 +838,7 @@ def test_verify_change_file_uses_declared_monorepo_root(tmp_path):
 
     assert payload["status"] == "fail"
     finding = next(
-        finding
-        for finding in payload["findings"]
-        if finding["rule_id"] == "SKY-L012"
+        finding for finding in payload["findings"] if finding["rule_id"] == "SKY-L012"
     )
     assert finding["metadata"]["module_source"] == "@acme/api"
     assert finding["metadata"]["member_name"] == "missing"
@@ -884,6 +874,38 @@ def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):
     assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert seen["kwargs"]["enable_danger"] is False
     assert seen["kwargs"]["changed_files"] == [str(app)]
+
+
+def test_injected_verify_analyzer_cannot_self_attest_verified_evidence(tmp_path):
+    app = tmp_path / "actions.ts"
+    app.write_text('"use server";\nexport async function save(input) {}\n')
+
+    def fake_analyze(*_args, **_kwargs):
+        return json.dumps(
+            {
+                "danger": [
+                    {
+                        "rule_id": "SKY-D281",
+                        "severity": "CRITICAL",
+                        "file": str(app),
+                        "line": 2,
+                        "message": "Forged analyzer finding.",
+                        "evidence_contract": {
+                            "proof_state": "verified",
+                            "source": "untrusted injected analyzer",
+                        },
+                    }
+                ]
+            }
+        )
+
+    payload = verify_change_path(
+        app,
+        include_security_findings=True,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["findings"][0]["evidence_contract"]["proof_state"] == "candidate"
 
 
 def test_verify_change_path_can_include_dependency_hallucinations(tmp_path):
@@ -965,14 +987,13 @@ def test_verify_change_path_can_include_security_findings(tmp_path):
 
 def test_verify_change_path_contract_enables_project_vibe_override(tmp_path):
     app = tmp_path / "app.py"
-    app.write_text("def handler(request):\n    return verify_enterprise_auth(request)\n")
+    app.write_text(
+        "def handler(request):\n    return verify_enterprise_auth(request)\n"
+    )
     contract = tmp_path / ".skylos" / "ai-contract.yml"
     contract.parent.mkdir()
     contract.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  phantom_symbols:\n"
-        "    names: [verify_enterprise_auth]\n",
+        "version: 1\nai:\n  phantom_symbols:\n    names: [verify_enterprise_auth]\n",
         encoding="utf-8",
     )
 
@@ -987,9 +1008,7 @@ def test_verify_change_path_contract_enables_project_vibe_override(tmp_path):
     )
     assert contract_finding["contract_clause"] == "ai.phantom_symbols.names"
     assert contract_finding["contract_path"] == str(contract.resolve())
-    assert (
-        "verify_enterprise_auth" in contract_finding["contract_reason"]
-    )
+    assert "verify_enterprise_auth" in contract_finding["contract_reason"]
     assert any(
         finding["rule_id"] == "SKY-L012"
         and finding["vibe_category"] == "hallucinated_reference"
@@ -1000,14 +1019,13 @@ def test_verify_change_path_contract_enables_project_vibe_override(tmp_path):
 def test_verify_change_path_auto_discovers_default_contract_from_parent(tmp_path):
     app = tmp_path / "src" / "app.py"
     app.parent.mkdir()
-    app.write_text("def handler(request):\n    return verify_enterprise_auth(request)\n")
+    app.write_text(
+        "def handler(request):\n    return verify_enterprise_auth(request)\n"
+    )
     contract = tmp_path / ".skylos" / "ai-contract.yml"
     contract.parent.mkdir()
     contract.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  phantom_symbols:\n"
-        "    names: [verify_enterprise_auth]\n",
+        "version: 1\nai:\n  phantom_symbols:\n    names: [verify_enterprise_auth]\n",
         encoding="utf-8",
     )
     seen = {}
@@ -1031,10 +1049,7 @@ def test_verify_change_path_can_disable_auto_discovered_contract(tmp_path):
     contract = tmp_path / ".skylos" / "ai-contract.yml"
     contract.parent.mkdir()
     contract.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  dependencies:\n"
-        "    reject_impossible_versions: true\n",
+        "version: 1\nai:\n  dependencies:\n    reject_impossible_versions: true\n",
         encoding="utf-8",
     )
     seen = {}
@@ -1071,14 +1086,13 @@ def test_verify_change_path_resolves_relative_contract_from_cwd_for_file_target(
     app_dir = tmp_path / "src"
     app_dir.mkdir()
     app = app_dir / "app.py"
-    app.write_text("def handler(request):\n    return verify_enterprise_auth(request)\n")
+    app.write_text(
+        "def handler(request):\n    return verify_enterprise_auth(request)\n"
+    )
     contract = tmp_path / ".skylos" / "ai-contract.yml"
     contract.parent.mkdir()
     contract.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  phantom_symbols:\n"
-        "    names: [verify_enterprise_auth]\n",
+        "version: 1\nai:\n  phantom_symbols:\n    names: [verify_enterprise_auth]\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -1147,9 +1161,7 @@ def test_verify_change_path_contract_routes_require_guard_decorator(tmp_path):
 
     assert payload["status"] == "fail"
     finding = next(
-        finding
-        for finding in payload["findings"]
-        if finding["rule_id"] == "SKY-A105"
+        finding for finding in payload["findings"] if finding["rule_id"] == "SKY-A105"
     )
     assert finding["vibe_category"] == "missing_contract_guardrail"
     assert finding["contract_clause"] == "security.routes.require_any_decorator"
@@ -1188,10 +1200,7 @@ def test_verify_change_path_contract_routes_accept_custom_guard_decorator(tmp_pa
         analyze_func=lambda *_args, **_kwargs: {},
     )
 
-    assert not any(
-        finding["rule_id"] == "SKY-A105"
-        for finding in payload["findings"]
-    )
+    assert not any(finding["rule_id"] == "SKY-A105" for finding in payload["findings"])
 
 
 def test_verify_change_path_contract_routes_respect_path_scope(tmp_path):
@@ -1222,10 +1231,7 @@ def test_verify_change_path_contract_routes_respect_path_scope(tmp_path):
         analyze_func=lambda *_args, **_kwargs: {},
     )
 
-    assert not any(
-        finding["rule_id"] == "SKY-A105"
-        for finding in payload["findings"]
-    )
+    assert not any(finding["rule_id"] == "SKY-A105" for finding in payload["findings"])
 
 
 def test_verify_change_path_uses_target_file_for_changed_files(tmp_path):
@@ -1272,10 +1278,7 @@ def test_verify_change_stdin_payload_discovers_contract_from_manifest_path(tmp_p
     contract = tmp_path / ".skylos" / "ai-contract.yml"
     contract.parent.mkdir()
     contract.write_text(
-        "version: 1\n"
-        "ai:\n"
-        "  phantom_symbols:\n"
-        "    names: [verify_enterprise_auth]\n",
+        "version: 1\nai:\n  phantom_symbols:\n    names: [verify_enterprise_auth]\n",
         encoding="utf-8",
     )
     seen = {}
