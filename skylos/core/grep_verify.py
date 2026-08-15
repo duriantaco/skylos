@@ -4,21 +4,28 @@ import concurrent.futures
 import json as _json
 import logging
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from skylos.core.grep_verify_common import (
+    GrepRequest,
+    _GrepEvidence,
+    _GrepExecutionIncomplete,
     _run_grep,
     detect_language,
+    execute_grep_batch,
     filter_grep_results,
+    grep_execution_deadline,
     is_definition_line,
     is_substring_match,
     module_candidates,
     parameter_owner_name,
+    record_grep_requests,
+    replay_grep_results,
     repo_relative_path,
     source_globs_for_language,
 )
-from skylos.core.grep_verify_parallel import parallel_multi_strategy_search_impl
 from skylos.core.grep_verify_language_strategies import (
     _deterministic_suppress_multilang,
     _run_go_strategies,
@@ -26,6 +33,7 @@ from skylos.core.grep_verify_language_strategies import (
     _run_rust_strategies,
     _run_ts_strategies,
 )
+from skylos.core.grep_verify_parallel import parallel_multi_strategy_search_impl
 from skylos.core.grep_verify_python_strategy import (
     multi_strategy_search as _multi_strategy_search_impl,
 )
@@ -38,9 +46,9 @@ from skylos.core.grep_verify_strategies import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "_STRONG_ALIVE_STRATEGIES",
     "GrepStrategy",
     "GrepVerdict",
-    "_STRONG_ALIVE_STRATEGIES",
     "_cached_group_results",
     "_deterministic_suppress_multilang",
     "_run_go_strategies",
@@ -87,7 +95,18 @@ class GrepStrategy:
         return self.result_key or self.name
 
 
-_GREP_VERIFY_CACHE_VERSION = "v5"
+@dataclass(frozen=True, slots=True)
+class _PendingBatchFinding:
+    finding: dict
+    group_name: str
+    requests: tuple[GrepRequest, ...]
+
+
+_GREP_VERIFY_CACHE_VERSION = "v8"
+_GREP_FINDING_BATCH_SIZE = 32
+_GREP_CACHE_MAX_STRATEGIES = 64
+_GREP_CACHE_MAX_LINES_PER_STRATEGY = 256
+_GREP_CACHE_MAX_EVIDENCE_CHARS = 1_000_000
 
 _DETERMINISTIC_RULES: list[tuple[str, str, str]] = [
     ("method_calls", "real_method_call", "Direct method-call usage found via grep"),
@@ -106,37 +125,102 @@ def _cached_group_results(
     finding: dict,
     search_fn: Callable[[], dict[str, list[str]]],
 ) -> dict[str, list[str]]:
-    if cache is None or not group_name:
-        return search_fn()
+    cached = _load_cached_group_results(cache, group_name, finding)
+    if cached is not None:
+        return cached
+    results = search_fn()
+    _store_cached_group_results(cache, group_name, finding, results)
+    return results
 
-    from skylos.core.grep_cache import file_content_hash as _fch
+
+def _cache_key(cache: Any, group_name: str, finding: dict) -> str | None:
+    if cache is None or not group_name:
+        return None
 
     repository_fingerprint = getattr(cache, "repository_fingerprint", None)
     if not isinstance(repository_fingerprint, str) or not repository_fingerprint:
-        return search_fn()
+        return None
+
+    from skylos.core.grep_cache import file_content_hash as _fch
 
     simple_name = finding.get("simple_name", finding.get("name", ""))
     finding_file = finding.get("file", "")
     content_hash = _fch(finding_file) if finding_file else ""
-    cache_key = (
+    return (
         f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
         f"{simple_name}:{finding.get('full_name', '')}:"
         f"{finding.get('type', '')}:{content_hash}:"
         f"repo:{repository_fingerprint}"
     )
-    cached = cache.get(cache_key)
-    if cached is not None:
-        try:
-            return _json.loads(cached[0]) if cached else {}
-        except (_json.JSONDecodeError, TypeError, ValueError) as exc:
-            logger.debug("Ignoring invalid grep verification cache entry: %s", exc)
 
-    results = search_fn()
+
+def _load_cached_group_results(
+    cache: Any, group_name: str, finding: dict
+) -> dict[str, list[str]] | None:
+    cache_key = _cache_key(cache, group_name, finding)
+    if cache_key is None:
+        return None
+    cached = cache.get(cache_key)
+    if cached is None:
+        return None
     try:
-        cache.put(cache_key, [_json.dumps(results)])
+        decoded = _json.loads(cached[0]) if cached else {}
+    except (_json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.debug("Ignoring invalid grep verification cache entry: %s", exc)
+        return None
+
+    return _normalize_cached_group_results(decoded)
+
+
+def _normalize_cached_group_results(
+    decoded: object,
+) -> dict[str, list[str]] | None:
+    if not isinstance(decoded, dict) or len(decoded) > _GREP_CACHE_MAX_STRATEGIES:
+        logger.debug("Ignoring invalid grep verification cache result shape")
+        return None
+
+    normalized: dict[str, list[str]] = {}
+    evidence_chars = 0
+    for strategy, lines in decoded.items():
+        if (
+            not isinstance(strategy, str)
+            or not isinstance(lines, list)
+            or len(lines) > _GREP_CACHE_MAX_LINES_PER_STRATEGY
+            or not all(isinstance(line, str) for line in lines)
+        ):
+            logger.debug("Ignoring invalid grep verification cache strategy")
+            return None
+        evidence_chars += sum(len(line) for line in lines)
+        if evidence_chars > _GREP_CACHE_MAX_EVIDENCE_CHARS:
+            logger.debug("Ignoring oversized grep verification cache evidence")
+            return None
+        normalized[strategy] = lines
+    return normalized
+
+
+def _store_cached_group_results(
+    cache: Any,
+    group_name: str,
+    finding: dict,
+    results: dict[str, list[str]],
+) -> None:
+    normalized = _normalize_cached_group_results(results)
+    if normalized is None:
+        return
+    if any(
+        isinstance(line, _GrepEvidence) and ":" in line.path
+        for lines in normalized.values()
+        for line in lines
+    ):
+        logger.debug("Skipping cache entry with an ambiguous legacy evidence path")
+        return
+    cache_key = _cache_key(cache, group_name, finding)
+    if cache_key is None:
+        return
+    try:
+        cache.put(cache_key, [_json.dumps(normalized)])
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         logger.debug("Failed to write grep verification cache entry: %s", exc)
-    return results
 
 
 def _finding_simple_name(finding: dict) -> str:
@@ -230,6 +314,207 @@ def _apply_deterministic_rules(
     return None
 
 
+def _serial_group_name(finding: dict) -> str:
+    language = _finding_language(finding)
+    return "python_core" if language == "python" else f"serial_{language}"
+
+
+def _plan_batched_finding(
+    finding: dict,
+    project_root: str,
+    cache: Any,
+) -> tuple[GrepVerdict | None, _PendingBatchFinding | None]:
+    deterministic_verdict = _deterministic_suppression_verdict(finding)
+    if deterministic_verdict:
+        return deterministic_verdict, None
+
+    group_name = _serial_group_name(finding)
+    cached = _load_cached_group_results(cache, group_name, finding)
+    if cached is not None:
+        return _apply_deterministic_rules(cached, finding), None
+
+    with record_grep_requests() as recorded:
+        planned_results = multi_strategy_search(finding, project_root)
+    unique_requests = tuple(dict.fromkeys(recorded))
+    if unique_requests:
+        return None, _PendingBatchFinding(finding, group_name, unique_requests)
+
+    _store_cached_group_results(cache, group_name, finding, planned_results)
+    return _apply_deterministic_rules(planned_results, finding), None
+
+
+def _execute_pending_findings(
+    pending: list[_PendingBatchFinding],
+    project_root: str,
+    cache: Any,
+    deadline: float,
+) -> dict[str, GrepVerdict]:
+    requests = [request for item in pending for request in item.requests]
+    batch_results = execute_grep_batch(requests, deadline=deadline)
+    incomplete_requests = getattr(batch_results, "incomplete_requests", set())
+    verdicts: dict[str, GrepVerdict] = {}
+    for item in pending:
+        if time.monotonic() >= deadline:
+            break
+        if any(request not in batch_results for request in item.requests):
+            continue
+        try:
+            with replay_grep_results(batch_results, deadline=deadline):
+                search_results = multi_strategy_search(item.finding, project_root)
+        except _GrepExecutionIncomplete as exc:
+            logger.debug("grep replay was incomplete: %s", exc)
+            continue
+        if time.monotonic() >= deadline:
+            break
+        if not any(
+            request in incomplete_requests for request in item.requests
+        ):
+            _store_cached_group_results(
+                cache, item.group_name, item.finding, search_results
+            )
+        verdict = _apply_deterministic_rules(search_results, item.finding)
+        if verdict:
+            verdicts[_finding_full_name(item.finding)] = verdict
+    return verdicts
+
+
+def _grep_verify_findings_batched(
+    findings: list[dict],
+    project_root: str,
+    time_budget: float,
+    cache: Any,
+    start_time: float,
+) -> dict[str, GrepVerdict]:
+    verdicts: dict[str, GrepVerdict] = {}
+    pending: list[_PendingBatchFinding] = []
+    deadline = start_time + time_budget
+
+    for finding in findings:
+        if time.monotonic() >= deadline:
+            break
+        full_name = _finding_full_name(finding)
+        if not full_name:
+            continue
+
+        verdict, planned = _plan_batched_finding(finding, project_root, cache)
+        if verdict:
+            verdicts[full_name] = verdict
+        if planned:
+            pending.append(planned)
+        if len(pending) < _GREP_FINDING_BATCH_SIZE:
+            continue
+        if time.monotonic() >= deadline:
+            break
+        verdicts.update(
+            _execute_pending_findings(pending, project_root, cache, deadline)
+        )
+        pending.clear()
+
+    if pending and time.monotonic() < deadline:
+        verdicts.update(
+            _execute_pending_findings(pending, project_root, cache, deadline)
+        )
+
+    return verdicts
+
+
+def _process_finding(
+    finding: dict,
+    search_fn: Callable[[dict], dict[str, list[str]]],
+    deadline: float | None = None,
+) -> tuple[str, GrepVerdict | None]:
+    full_name = _finding_full_name(finding)
+    if not full_name:
+        return "", None
+
+    deterministic_verdict = _deterministic_suppression_verdict(finding)
+    if deterministic_verdict:
+        return full_name, deterministic_verdict
+
+    with grep_execution_deadline(deadline):
+        search_results = search_fn(finding)
+    return full_name, _apply_deterministic_rules(search_results, finding)
+
+
+_FindingFuture = concurrent.futures.Future[tuple[str, GrepVerdict | None]]
+
+
+def _submit_next_finding(
+    executor: concurrent.futures.ThreadPoolExecutor,
+    pending: set[_FindingFuture],
+    findings: Iterator[dict],
+    search_fn: Callable[[dict], dict[str, list[str]]],
+    deadline: float,
+) -> bool:
+    if time.monotonic() > deadline:
+        return False
+    for finding in findings:
+        if not _finding_full_name(finding):
+            continue
+        pending.add(
+            executor.submit(_process_finding, finding, search_fn, deadline)
+        )
+        return True
+    return False
+
+
+def _collect_finished_findings(
+    done: set[_FindingFuture],
+    verdicts: dict[str, GrepVerdict],
+) -> None:
+    for future in done:
+        try:
+            full_name, verdict = future.result()
+        except Exception as exc:
+            logger.debug("grep verification failed: %s", exc)
+            continue
+        if full_name and verdict:
+            verdicts[full_name] = verdict
+
+
+def _grep_verify_findings_parallel(
+    findings: list[dict],
+    search_fn: Callable[[dict], dict[str, list[str]]],
+    time_budget: float,
+    max_workers: int,
+    start_time: float,
+) -> dict[str, GrepVerdict]:
+    verdicts: dict[str, GrepVerdict] = {}
+    worker_count = max(1, int(max_workers or _DEFAULT_GREP_WORKERS))
+    deadline = start_time + time_budget
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+    pending: set[_FindingFuture] = set()
+    findings_iter = iter(findings)
+
+    try:
+        for _ in range(worker_count):
+            if not _submit_next_finding(
+                executor, pending, findings_iter, search_fn, deadline
+            ):
+                break
+
+        while pending and time.monotonic() <= deadline:
+            remaining = max(0.0, deadline - time.monotonic())
+            done, pending = concurrent.futures.wait(
+                pending,
+                timeout=remaining,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            if not done:
+                break
+            _collect_finished_findings(done, verdicts)
+            for _ in done:
+                _submit_next_finding(
+                    executor, pending, findings_iter, search_fn, deadline
+                )
+    finally:
+        for future in pending:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+
+    return verdicts
+
+
 def grep_verify_findings(
     findings: list[dict],
     project_root: str,
@@ -239,93 +524,24 @@ def grep_verify_findings(
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
 ) -> dict[str, GrepVerdict]:
-    verdicts: dict[str, GrepVerdict] = {}
     cache_binder = getattr(type(cache), "bind_repository", None)
     if callable(cache_binder):
         cache_binder(cache, project_root)
     start_time = time.monotonic()
+    if not parallel:
+        return _grep_verify_findings_batched(
+            findings, project_root, time_budget, cache, start_time
+        )
+
     search_fn = _build_grep_search_fn(
         project_root,
         parallel=False,
         max_workers=max_workers,
         cache=cache,
     )
-
-    def process_finding(finding: dict) -> tuple[str, GrepVerdict | None]:
-        full_name = _finding_full_name(finding)
-        if not full_name:
-            return "", None
-
-        deterministic_verdict = _deterministic_suppression_verdict(finding)
-        if deterministic_verdict:
-            return full_name, deterministic_verdict
-
-        search_results = search_fn(finding)
-        return full_name, _apply_deterministic_rules(search_results, finding)
-
-    verified_names = set(verdicts)
-    remaining_findings = [
-        finding
-        for finding in findings
-        if _finding_full_name(finding)
-        and _finding_full_name(finding) not in verified_names
-    ]
-
-    if parallel:
-        max_workers = max(1, int(max_workers or _DEFAULT_GREP_WORKERS))
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-        pending: set[concurrent.futures.Future] = set()
-        findings_iter = iter(remaining_findings)
-
-        def submit_next() -> bool:
-            if time.monotonic() - start_time > time_budget:
-                return False
-            for finding in findings_iter:
-                if not _finding_full_name(finding):
-                    continue
-                pending.add(executor.submit(process_finding, finding))
-                return True
-            return False
-
-        try:
-            for _ in range(max_workers):
-                if not submit_next():
-                    break
-
-            while pending and time.monotonic() - start_time <= time_budget:
-                remaining = max(0.0, time_budget - (time.monotonic() - start_time))
-                done, pending = concurrent.futures.wait(
-                    pending,
-                    timeout=remaining,
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                if not done:
-                    break
-                for future in done:
-                    try:
-                        full_name, verdict = future.result()
-                    except Exception as e:
-                        logger.debug("grep verification failed: %s", e)
-                        continue
-                    if full_name and verdict:
-                        verdicts[full_name] = verdict
-                    submit_next()
-        finally:
-            for future in pending:
-                future.cancel()
-            executor.shutdown(wait=True, cancel_futures=True)
-
-        return verdicts
-
-    for finding in remaining_findings:
-        if time.monotonic() - start_time > time_budget:
-            break
-
-        full_name, verdict = process_finding(finding)
-        if verdict:
-            verdicts[full_name] = verdict
-
-    return verdicts
+    return _grep_verify_findings_parallel(
+        findings, search_fn, time_budget, max_workers, start_time
+    )
 
 
 def _build_grep_search_fn(

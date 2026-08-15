@@ -9,7 +9,7 @@ from skylos.core.grep_cache import (
     CACHE_DIR,
     CACHE_FILE,
     MAX_ENTRIES,
-    MAX_CACHE_BYTES,
+    MAX_RESULT_CHARS,
     GrepCache,
     _make_key,
     file_content_hash,
@@ -165,6 +165,35 @@ class TestEviction:
             cache.put(f"k{i}", [])
         assert cache.size == 10
 
+    def test_oversized_result_is_not_cached(self) -> None:
+        cache = GrepCache()
+
+        cache.put("large", ["x" * (MAX_RESULT_CHARS + 1)])
+
+        assert cache.get("large") is None
+
+    def test_total_result_size_evicts_oldest_entry(self) -> None:
+        cache = GrepCache()
+        chunk = "x" * (MAX_RESULT_CHARS // 2 + 1)
+        cache.put("old", [chunk])
+
+        cache.put("new", [chunk])
+
+        assert cache.get("old") is None
+        assert cache.get("new") == [chunk]
+
+    def test_cached_results_do_not_share_mutable_lists(self) -> None:
+        cache = GrepCache()
+        original = ["one"]
+        cache.put("key", original)
+        original.append("two")
+
+        loaded = cache.get("key")
+        assert loaded == ["one"]
+        assert loaded is not None
+        loaded.append("three")
+        assert cache.get("key") == ["one"]
+
 
 class TestInvalidateByHash:
     def test_removes_matching_entries(self) -> None:
@@ -221,75 +250,120 @@ class TestSize:
         assert cache.size == 1
 
 
-class TestLoadSave:
-    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
+class TestDiskPersistenceDisabled:
+    def test_load_binds_stable_process_local_namespace(self, tmp_path: Path) -> None:
         cache = GrepCache()
-        cache.put("k1", ["r1", "r2"])
-        cache.put("k2", ["r3"])
-        cache.save(tmp_path)
-
-        cache2 = GrepCache()
-        cache2.load(tmp_path)
-        assert cache2.get("k1") == ["r1", "r2"]
-        assert cache2.get("k2") == ["r3"]
-        assert cache2.size == 2
-
-    def test_save_creates_directory(self, tmp_path: Path) -> None:
-        cache = GrepCache()
-        cache.put("k", ["v"])
-        cache.save(tmp_path)
-        assert (tmp_path / CACHE_DIR / CACHE_FILE).exists()
-
-    def test_save_skips_when_not_dirty(self, tmp_path: Path) -> None:
-        cache = GrepCache()
-        cache.put("k", ["v"])
-        cache.save(tmp_path)
-        path = tmp_path / CACHE_DIR / CACHE_FILE
-        path.write_text('{"version": 1, "entries": {}}')
-        cache.save(tmp_path)
-        data = json.loads(path.read_text())
-        assert data["entries"] == {}
-
-    def test_load_nonexistent_file(self, tmp_path: Path) -> None:
-        cache = GrepCache()
-        # should not raise
         cache.load(tmp_path)
-        assert cache.size == 0
+        first = cache.repository_fingerprint
+        cache.load(tmp_path)
 
-    def test_load_corrupt_json(self, tmp_path: Path) -> None:
+        assert isinstance(first, str)
+        assert len(first) == 20
+        assert cache.repository_fingerprint == first
+
+    def test_load_does_not_hash_repository_evidence(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        def reject_fingerprint(*_args, **_kwargs):
+            raise AssertionError("process-local cache must not hash the repository")
+
+        monkeypatch.setattr(
+            "skylos.core.grep_cache.repository_evidence_fingerprint",
+            reject_fingerprint,
+        )
+
+        cache = GrepCache()
+        cache.load(tmp_path)
+
+        assert len(cache.repository_fingerprint or "") == 20
+
+    def test_switching_repository_clears_process_local_entries(
+        self, tmp_path: Path
+    ) -> None:
+        first_root = tmp_path / "first"
+        second_root = tmp_path / "second"
+        first_root.mkdir()
+        second_root.mkdir()
+        cache = GrepCache()
+        cache.load(first_root)
+        first_namespace = cache.repository_fingerprint
+        cache.put("local", ["main.py:1:helper()"])
+
+        cache.load(second_root)
+
+        assert cache.get("local") is None
+        assert cache.repository_fingerprint != first_namespace
+
+    def test_failed_repository_bind_clears_process_local_entries(
+        self, tmp_path: Path
+    ) -> None:
+        cache = GrepCache()
+        cache.load(tmp_path)
+        cache.put("local", ["main.py:1:helper()"])
+
+        cache.load(tmp_path / "missing")
+
+        assert cache.get("local") is None
+        assert cache.repository_fingerprint is None
+
+    def test_load_never_imports_legacy_project_cache(self, tmp_path: Path) -> None:
         path = tmp_path / CACHE_DIR / CACHE_FILE
         path.parent.mkdir(parents=True)
-        path.write_text("NOT VALID JSON!!!")
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": {
+                        "attacker": {"results": ["fake.py:1:helper()"]}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
         cache = GrepCache()
-        # should not raise
         cache.load(tmp_path)
+
+        assert cache.get("attacker") is None
         assert cache.size == 0
 
-    def test_load_missing_entries_key(self, tmp_path: Path) -> None:
+    def test_load_never_opens_legacy_project_cache(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         path = tmp_path / CACHE_DIR / CACHE_FILE
         path.parent.mkdir(parents=True)
-        path.write_text('{"version": 1}')
-        cache = GrepCache()
-        cache.load(tmp_path)
-        assert cache.size == 0
+        path.write_text('{"entries": {}}', encoding="utf-8")
 
-    def test_save_file_contains_version(self, tmp_path: Path) -> None:
-        cache = GrepCache()
-        cache.put("k", ["v"])
-        cache.save(tmp_path)
-        data = json.loads((tmp_path / CACHE_DIR / CACHE_FILE).read_text())
-        assert data["version"] == 1
+        def reject_disk_open(*args, **kwargs):
+            raise AssertionError(f"unexpected disk cache read: {args!r} {kwargs!r}")
 
-    def test_load_clears_dirty_flag(self, tmp_path: Path) -> None:
+        monkeypatch.setattr("skylos.core.grep_cache.os.open", reject_disk_open)
+
+        GrepCache().load(tmp_path)
+
+    def test_save_never_creates_project_cache(self, tmp_path: Path) -> None:
         cache = GrepCache()
-        cache.put("k", ["v"])
+        cache.put("maintainer", ["real.py:1:helper()"])
+
         cache.save(tmp_path)
-        cache2 = GrepCache()
-        cache2.load(tmp_path)
-        assert cache2._dirty is False
+
+        assert not (tmp_path / ".skylos").exists()
+        assert cache.get("maintainer") == ["real.py:1:helper()"]
+
+    def test_save_never_overwrites_legacy_project_cache(self, tmp_path: Path) -> None:
+        path = tmp_path / CACHE_DIR / CACHE_FILE
+        path.parent.mkdir(parents=True)
+        original = '{"repository_owned": true}'
+        path.write_text(original, encoding="utf-8")
+        cache = GrepCache()
+        cache.put("maintainer", ["real.py:1:helper()"])
+
+        cache.save(tmp_path)
+
+        assert path.read_text(encoding="utf-8") == original
 
     def test_save_rejects_symlinked_cache_file(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-file"
         outside.mkdir()
         target = outside / "target.txt"
         target.write_text("DO_NOT_CLOBBER", encoding="utf-8")
@@ -310,7 +384,7 @@ class TestLoadSave:
         assert cache_path.is_symlink()
 
     def test_save_rejects_symlinked_cache_directory(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-directory"
         outside.mkdir()
         cache_dir = tmp_path / ".skylos" / "cache"
         cache_dir.parent.mkdir()
@@ -328,9 +402,9 @@ class TestLoadSave:
         assert not (outside / CACHE_FILE).exists()
 
     def test_load_rejects_symlinked_cache_file(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-load"
         outside.mkdir()
-        target = outside / "grep_results.json"
+        target = outside / CACHE_FILE
         target.write_text(
             json.dumps({"version": 1, "entries": {"k": {"results": ["v"]}}}),
             encoding="utf-8",
@@ -348,11 +422,12 @@ class TestLoadSave:
         cache.load(tmp_path)
 
         assert cache.size == 0
+        assert cache.get("k") is None
 
     def test_load_rejects_oversized_cache_file(self, tmp_path: Path) -> None:
         cache_path = tmp_path / CACHE_DIR / CACHE_FILE
         cache_path.parent.mkdir(parents=True)
-        cache_path.write_text(" " * (MAX_CACHE_BYTES + 1), encoding="utf-8")
+        cache_path.write_text(" " * (MAX_RESULT_CHARS + 1), encoding="utf-8")
 
         cache = GrepCache()
         cache.load(tmp_path)
@@ -367,8 +442,8 @@ class TestLoadSave:
                 {
                     "version": 1,
                     "entries": {
-                        "bad": {"results": [1, 2]},
-                        "ok": {"results": ["match"], "last_access": "bad"},
+                        "invalid": {"results": [1, 2]},
+                        "otherwise_valid": {"results": ["match"]},
                     },
                 }
             ),
@@ -378,8 +453,27 @@ class TestLoadSave:
         cache = GrepCache()
         cache.load(tmp_path)
 
-        assert cache.size == 1
-        assert cache.get("ok") == ["match"]
+        assert cache.get("invalid") is None
+        assert cache.get("otherwise_valid") is None
+        assert cache.size == 0
+
+    def test_load_preserves_process_local_entries(self, tmp_path: Path) -> None:
+        cache = GrepCache()
+        cache.put("local", ["main.py:1:helper()"])
+
+        cache.load(tmp_path)
+
+        assert cache.get("local") == ["main.py:1:helper()"]
+
+    def test_entries_are_not_shared_across_instances(self, tmp_path: Path) -> None:
+        cache = GrepCache()
+        cache.put("local", ["main.py:1:helper()"])
+        cache.save(tmp_path)
+
+        loaded = GrepCache()
+        loaded.load(tmp_path)
+
+        assert loaded.get("local") is None
 
 
 class TestCachedSearch:

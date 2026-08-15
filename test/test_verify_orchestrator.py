@@ -18,6 +18,8 @@ from skylos.llm.verify_orchestrator import (
     _is_public_library_symbol,
     _finding_complexity_tier,
     _entry_point_cache_path,
+    _find_parent_class_info,
+    _find_parent_class_info_ts,
     _config_files_hash,
     discover_entry_points,
     verify_with_graph_context,
@@ -28,12 +30,81 @@ from skylos.llm.verify_orchestrator import (
     SuppressionDecision,
     SurvivorVerdict,
     VerifyStats,
+    _enrich_search_results,
+    _read_context_around_match,
 )
 from skylos.llm.dead_code_verifier import (
     DeadCodeVerifierAgent,
     Verdict,
     VerificationResult,
 )
+from skylos.core.grep_verify_common import _GrepEvidence
+
+
+def test_grep_context_enrichment_preserves_colon_path(tmp_path):
+    source_dir = tmp_path / "release.v1:123"
+    source_dir.mkdir()
+    source = source_dir / "module.py"
+    source.write_text("first\nhelper()\nthird\n", encoding="utf-8")
+    evidence = _GrepEvidence(str(source), 2, "helper()")
+
+    context = _read_context_around_match(evidence, context_lines=1)
+    enriched = _enrich_search_results({"references": [evidence]})
+
+    assert context is not None
+    assert "2 >>> helper()" in context
+    assert enriched == {"references": context}
+
+
+@pytest.mark.parametrize(
+    ("finder", "file_name", "source", "class_pattern", "method_pattern"),
+    [
+        (
+            _find_parent_class_info,
+            "child.py",
+            "class Child(Parent):\n    def helper(self): ...\n",
+            r"class\s+Parent",
+            r"def\s+helper\s*\(",
+        ),
+        (
+            _find_parent_class_info_ts,
+            "child.ts",
+            "class Child extends Parent { helper() {} }\n",
+            r"class\s+Parent",
+            r"(?:public|protected|private)?\s*(?:async\s+)?helper\s*[\(<]",
+        ),
+    ],
+)
+def test_override_lookup_preserves_structured_colon_path(
+    tmp_path, finder, file_name, source, class_pattern, method_pattern
+):
+    child = tmp_path / file_name
+    parent = tmp_path / "release.v1:123" / file_name
+    parent.parent.mkdir()
+    finding = {
+        "simple_name": "helper",
+        "full_name": "pkg.Child.helper",
+        "type": "method",
+        "file": str(child),
+    }
+    roots = []
+
+    def fake_grep(pattern, root, **_kwargs):
+        roots.append(root)
+        if pattern == class_pattern:
+            return [_GrepEvidence(str(parent), 1, "class Parent")]
+        if pattern == method_pattern and root == str(parent):
+            return [_GrepEvidence(str(parent), 2, "helper")]
+        return []
+
+    with patch(
+        "skylos.llm.verify_orchestrator._run_grep", side_effect=fake_grep
+    ):
+        info = finder(finding, {str(child): source}, str(tmp_path))
+
+    assert info is not None
+    assert "CONFIRMED" in info
+    assert str(parent) in roots
 
 
 @pytest.fixture

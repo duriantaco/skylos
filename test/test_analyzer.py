@@ -3863,7 +3863,7 @@ def test_non_git_project_skips_its_generated_grep_cache(tmp_path):
     assert _issue_706_cache_findings(result) == []
 
 
-def test_removed_secret_in_grep_evidence_does_not_reappear_from_cache(tmp_path):
+def test_grep_evidence_with_secret_is_not_persisted_in_project(tmp_path):
     _issue_706_init_ignored_cache_repo(tmp_path)
     github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
     (tmp_path / "target.py").write_text(
@@ -3886,8 +3886,7 @@ def test_removed_secret_in_grep_evidence_does_not_reappear_from_cache(tmp_path):
     )
     cache_file = tmp_path / ".skylos" / "cache" / "grep_results.json"
 
-    assert cache_file.exists()
-    assert github_token in cache_file.read_text(encoding="utf-8")
+    assert list(cache_file.parent.glob(cache_file.name)) == []
     assert any(
         finding.get("file") == "evidence.yaml"
         and finding.get("provider") == "github"
@@ -3908,7 +3907,7 @@ def test_removed_secret_in_grep_evidence_does_not_reappear_from_cache(tmp_path):
         )
     )
 
-    assert github_token in cache_file.read_text(encoding="utf-8")
+    assert list(cache_file.parent.glob(cache_file.name)) == []
     assert _issue_706_cache_findings(second) == []
     assert second.get("secrets", []) == []
     assert not any(
