@@ -71,6 +71,10 @@ from skylos.core.grep_verify import (
     parameter_owner_name as _parameter_owner_name,
     detect_language as _detect_language,
 )
+from skylos.core.grep_verify_common import (
+    _grep_line_number,
+    _grep_line_path,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -333,14 +337,10 @@ def _find_git_root(path: Path) -> Path | None:
 
 def _read_context_around_match(grep_line: str, context_lines: int = 8) -> str | None:
     try:
-        parts = grep_line.split(":")
-        if len(parts) < 2:
+        file_path = _grep_line_path(grep_line)
+        line_num = _grep_line_number(grep_line)
+        if not file_path or line_num is None:
             return None
-        file_path = parts[0]
-        line_str = parts[1].strip()
-        if not line_str.isdigit():
-            return None
-        line_num = int(line_str)
 
         with open(file_path, "r", errors="replace") as f:
             all_lines = f.readlines()
@@ -367,7 +367,7 @@ def _enrich_search_results(
 ) -> dict[str, str]:
     enriched = {}
     total_contexts = 0
-    seen_file_lines: set[str] = set()  # cross-strategy dedup
+    seen_file_lines: set[object] = set()  # cross-strategy dedup
 
     enrich_strategies = [
         "references",
@@ -400,11 +400,13 @@ def _enrich_search_results(
         for line in lines[:2]:
             if total_contexts >= max_contexts:
                 break
-            parts = line.split(":", 2)
-            if len(parts) >= 2 and parts[1].strip().isdigit():
-                key = f"{parts[0]}:{parts[1]}"
-            else:
-                key = line
+            file_path = _grep_line_path(line)
+            line_number = _grep_line_number(line)
+            key = (
+                (file_path, line_number)
+                if file_path and line_number is not None
+                else line
+            )
             if key in seen_file_lines:
                 continue
             seen_file_lines.add(key)
@@ -492,7 +494,7 @@ def _find_parent_class_info_ts(
         )
         if parent_class_refs:
             for ref in parent_class_refs:
-                parent_file = ref.split(":")[0]
+                parent_file = _grep_line_path(ref)
                 method_in_parent = _run_grep(
                     rf"(?:public|protected|private)?\s*(?:async\s+)?{re.escape(simple_name)}\s*[\(<]",
                     parent_file,
@@ -522,7 +524,7 @@ def _find_parent_class_info_ts(
                 )
                 if dts_refs:
                     for ref in dts_refs:
-                        dts_file = ref.split(":")[0]
+                        dts_file = _grep_line_path(ref)
                         method_in_dts = _run_grep(
                             rf"{re.escape(simple_name)}\s*[\(<]",
                             dts_file,
@@ -726,7 +728,7 @@ def _find_parent_class_info(
             )
             if parent_method_refs:
                 for ref in parent_method_refs:
-                    parent_file = ref.split(":")[0]
+                    parent_file = _grep_line_path(ref)
                     method_in_parent = _run_grep(
                         rf"def\s+{re.escape(simple_name)}\s*\(",
                         parent_file,
@@ -785,7 +787,7 @@ def _find_parent_class_info(
                         )
                         if parent_method_refs:
                             for pmr in parent_method_refs:
-                                parent_file = pmr.split(":")[0]
+                                parent_file = _grep_line_path(pmr)
                                 class_in_file = _run_grep(
                                     rf"class\s+{re.escape(base_name)}",
                                     parent_file,

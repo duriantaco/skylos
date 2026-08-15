@@ -5,6 +5,9 @@ import re
 from skylos.core.grep_verify_common import (
     _deduplicate_grep_results,
     _filter_other_owner_same_method_calls,
+    _grep_line_content,
+    _grep_line_number,
+    _grep_line_path,
     _is_python_source_reference,
     _run_grep,
     filter_grep_results,
@@ -59,11 +62,10 @@ def _parameter_contract_search(
         line_value = finding.get("line", 0)
         line_num = int(line_value) if isinstance(line_value, (int, float)) else 0
         for ref in signature_refs:
-            parts = ref.split(":", 2)
-            if len(parts) < 2 or not parts[1].isdigit():
+            match_file = _grep_line_path(ref)
+            match_line = _grep_line_number(ref)
+            if not match_file or match_line is None:
                 continue
-            match_file = parts[0]
-            match_line = int(parts[1])
             if match_file == file_path and abs(match_line - line_num) <= 3:
                 continue
             override_refs.append(ref)
@@ -396,7 +398,7 @@ def multi_strategy_search(
                 ]
                 api_refs = []
                 for ref in doc_refs:
-                    ref_path = ref.split(":", 1)[0].replace("\\", "/").lower()
+                    ref_path = _grep_line_path(ref).replace("\\", "/").lower()
                     in_docs_dir = (
                         ref_path.startswith("docs/")
                         or ref_path.startswith("doc/")
@@ -426,10 +428,7 @@ def multi_strategy_search(
                 if class_refs:
                     usage_lines = []
                     for cr in class_refs:
-                        if ":" in cr:
-                            line_text = cr.split(":", 2)[-1]
-                        else:
-                            line_text = cr
+                        line_text = _grep_line_content(cr)
                         if re.search(
                             rf"^\s*class\s+{re.escape(class_name)}", line_text
                         ):

@@ -1,14 +1,20 @@
+import json
+import os
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
+from skylos.core import grep_verify as grep_verify_module
 from skylos.core.grep_cache import GrepCache
 from skylos.core.grep_verify import (
     GrepStrategy,
     _deterministic_suppress_multilang,
+    _store_cached_group_results,
     detect_language,
     filter_grep_results,
     grep_verify_findings,
@@ -23,28 +29,41 @@ from skylos.core.grep_verify import (
 )
 from skylos.core.grep_verify_common import (
     GrepRequest,
+    _GrepBatchResults,
+    _GrepEvidence,
+    _GrepOutputLimitExceeded,
+    _is_python_source_reference,
     _python_regex,
+    _run_bounded_subprocess,
     _run_grep,
+    _run_grep_request,
+    _trusted_which,
     execute_grep_batch,
     replay_grep_results,
 )
 
 
 def _invalid_utf8_decode_error() -> UnicodeDecodeError:
-    try:
-        subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys; sys.stdout.buffer.write(b'helper() # \\xe9\\n')",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except UnicodeDecodeError as exc:
-        return exc
-    raise AssertionError("invalid UTF-8 output did not raise UnicodeDecodeError")
+    return UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid UTF-8")
+
+
+def _rg_json_match(path: str, line_number: int, content: str) -> str:
+    return json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"text": path},
+                "lines": {"text": content},
+                "line_number": line_number,
+                "absolute_offset": 0,
+                "submatches": [],
+            },
+        }
+    )
+
+
+def _rg_json_output(*matches: tuple[str, int, str]) -> str:
+    return "\n".join(_rg_json_match(*match) for match in matches) + "\n"
 
 
 class TestIsDefinitionLine:
@@ -67,6 +86,71 @@ class TestIsDefinitionLine:
     def test_usage_not_definition(self):
         finding = {"file": "/repo/foo.py", "line": 10, "simple_name": "bar"}
         assert not is_definition_line("/repo/other.py:50:    bar()", finding)
+
+    def test_posix_paths_remain_case_sensitive(self):
+        finding = {"file": "/repo/Foo.py", "line": 10, "simple_name": "helper"}
+        assert not is_definition_line("/repo/foo.py:10:helper()", finding)
+
+    def test_windows_drive_paths_compare_case_insensitively(self):
+        finding = {
+            "file": r"C:\Repo\Foo.py",
+            "line": 10,
+            "simple_name": "helper",
+        }
+        with patch(
+            "skylos.core.grep_verify_common._HOST_PATH_CASE_INSENSITIVE",
+            True,
+        ):
+            assert is_definition_line(r"c:\repo\foo.py:10:helper()", finding)
+
+    def test_windows_path_comparison_does_not_expand_unicode(self):
+        finding = {
+            "file": r"C:\Repo\straße.py",
+            "line": 10,
+            "simple_name": "helper",
+        }
+        with patch(
+            "skylos.core.grep_verify_common._HOST_PATH_CASE_INSENSITIVE",
+            True,
+        ):
+            assert not is_definition_line(
+                r"C:\Repo\strasse.py:10:helper()", finding
+            )
+
+    def test_drive_shaped_posix_paths_remain_case_sensitive(self):
+        finding = {
+            "file": "C:/Repo/Foo.py",
+            "line": 10,
+            "simple_name": "helper",
+        }
+
+        with patch(
+            "skylos.core.grep_verify_common._HOST_PATH_CASE_INSENSITIVE",
+            False,
+        ):
+            assert not is_definition_line("c:/repo/foo.py:10:helper()", finding)
+
+    def test_unbounded_plain_line_number_is_treated_as_unstructured(self):
+        huge_line = "/repo/foo.py:" + ("9" * 5_000) + ":helper()"
+        finding = {
+            "file": "/repo/foo.py",
+            "line": 10,
+            "simple_name": "helper",
+        }
+
+        assert not is_definition_line(huge_line, finding)
+
+    def test_plain_evidence_candidate_search_is_bounded(self):
+        evidence = "prefix" + (":1:value" * 10_000)
+        finding = {"file": "/repo/foo.py", "line": 1, "simple_name": "helper"}
+
+        with patch(
+            "skylos.core.grep_verify_common._looks_like_source_path",
+            return_value=False,
+        ) as looks_like_path:
+            assert not is_definition_line(evidence, finding)
+
+        assert looks_like_path.call_count == 256
 
     def test_typevar_definition(self):
         finding = {"file": "/repo/foo.py", "line": 2, "simple_name": "T"}
@@ -500,8 +584,10 @@ class TestBatchedGrepVerify:
         bar_request = GrepRequest(pattern=r"\bbar\b", **common)
         process_result = Mock(
             returncode=0,
-            stdout=(
-                "/repo/z.py:9:bar()\n/repo/z.py:2:foo()\n/repo/a.py:3:foo(); bar()\n"
+            stdout=_rg_json_output(
+                ("/repo/z.py", 9, "bar()\n"),
+                ("/repo/z.py", 2, "foo()\n"),
+                ("/repo/a.py", 3, "foo(); bar()\n"),
             ),
             stderr="",
         )
@@ -512,7 +598,7 @@ class TestBatchedGrepVerify:
                 return_value="/usr/bin/rg",
             ),
             patch(
-                "skylos.core.grep_verify_common.subprocess.run",
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
                 return_value=process_result,
             ) as mock_run,
         ):
@@ -527,7 +613,149 @@ class TestBatchedGrepVerify:
             "/repo/a.py:3:foo(); bar()",
             "/repo/z.py:9:bar()",
         )
-        assert mock_run.call_args.kwargs["input"] == r"\bfoo\b" "\n" r"\bbar\b" "\n"
+        assert results[foo_request][0] is results[bar_request][0]
+        assert "--json" in mock_run.call_args.args[0]
+        assert mock_run.call_args.kwargs["input_text"] == (
+            r"\bfoo\b" "\n" r"\bbar\b" "\n"
+        )
+
+    def test_batch_classifier_never_matches_a_symbol_from_the_path(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        ghost_request = GrepRequest(pattern=r"\bghost\b", **common)
+        used_request = GrepRequest(pattern=r"\bused\b", **common)
+
+        for path in (
+            r"C:\repo\ghost\module.py",
+            "/repo/pkg:ghost/module.py",
+            "/repo/pkg:123:ghost/module.py",
+        ):
+            process_result = Mock(
+                returncode=0,
+                stdout=_rg_json_output((path, 9, "used()\n")),
+                stderr="",
+            )
+            with (
+                patch(
+                    "skylos.core.grep_verify_common.shutil.which",
+                    return_value="/usr/bin/rg",
+                ),
+                patch(
+                    "skylos.core.grep_verify_common._run_bounded_subprocess",
+                    return_value=process_result,
+                ),
+            ):
+                results = execute_grep_batch([ghost_request, used_request])
+
+            assert results[ghost_request] == ()
+            assert results[used_request] == (f"{path}:9:used()",)
+
+    def test_json_match_preserves_colon_path_and_crlf_content(self):
+        request = GrepRequest(
+            pattern=r"\bcall\b",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        path = r"C:\repo\pkg:part\a.py"
+        process_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output((path, 12, "call()\r\n")),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert results[request] == (f"{path}:12:call()",)
+
+    def test_structured_colon_path_remains_unambiguous_downstream(self):
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        for path in (r"C:\repo\lib.py", "/repo/pkg:123:part/lib.py"):
+            process_result = Mock(
+                returncode=0,
+                stdout=_rg_json_output((path, 1, "helper=1\n")),
+                stderr="",
+            )
+            with (
+                patch(
+                    "skylos.core.grep_verify_common.shutil.which",
+                    return_value="/usr/bin/rg",
+                ),
+                patch(
+                    "skylos.core.grep_verify_common._run_bounded_subprocess",
+                    return_value=process_result,
+                ),
+            ):
+                evidence = execute_grep_batch([request])[request][0]
+
+            definitions, usages = filter_grep_results(
+                [evidence],
+                {
+                    "file": path,
+                    "line": 1,
+                    "simple_name": "helper",
+                    "type": "variable",
+                },
+            )
+            assert definitions == [evidence]
+            assert usages == []
+
+        assert not _is_python_source_reference(
+            r"C:\repo\README.md:1:helper", "helper"
+        )
+
+    def test_json_content_with_path_fragments_and_unicode_separator_survives(self):
+        request = GrepRequest(
+            pattern="value",
+            project_root="/repo",
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+        content = 'value = "/.git/hooks/\u2028/node_modules/pkg"'
+        json_line = _rg_json_match("/repo/main.py", 4, f"{content}\n").replace(
+            r"\u2028", "\u2028"
+        )
+        process_result = Mock(returncode=0, stdout=f"{json_line}\n", stderr="")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert results[request] == (f"/repo/main.py:4:{content}",)
 
     def test_non_ascii_and_newline_patterns_run_directly(self):
         common = {
@@ -542,7 +770,7 @@ class TestBatchedGrepVerify:
         newline_request = GrepRequest(pattern="first\nsecond", **common)
         process_result = Mock(
             returncode=0,
-            stdout="/repo/a.py:1:ascii()\n",
+            stdout=_rg_json_output(("/repo/a.py", 1, "ascii()\n")),
             stderr="",
         )
 
@@ -552,12 +780,14 @@ class TestBatchedGrepVerify:
                 return_value="/usr/bin/rg",
             ),
             patch(
-                "skylos.core.grep_verify_common.subprocess.run",
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
                 return_value=process_result,
             ) as mock_run,
             patch(
                 "skylos.core.grep_verify_common._run_grep_request",
-                side_effect=lambda request: [f"direct:{request.pattern}"],
+                side_effect=lambda request, **_kwargs: [
+                    f"direct:{request.pattern}"
+                ],
             ) as mock_direct,
         ):
             results = execute_grep_batch(
@@ -565,7 +795,7 @@ class TestBatchedGrepVerify:
             )
 
         assert mock_run.call_count == 1
-        assert mock_run.call_args.kwargs["input"] == r"\bascii\b" "\n"
+        assert mock_run.call_args.kwargs["input_text"] == r"\bascii\b" "\n"
         assert mock_direct.call_args_list[0].args == (unicode_request,)
         assert mock_direct.call_args_list[1].args == (newline_request,)
         assert results[unicode_request] == (r"direct:\bकु\b",)
@@ -587,10 +817,20 @@ class TestBatchedGrepVerify:
         }
         foo_request = GrepRequest(pattern=r"\bpkg\.foo\b", **common)
         bar_request = GrepRequest(pattern=r"\bpkg\.bar\b", **common)
+        literal_request = GrepRequest(pattern=r"pkg\.literal", **common)
+
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(
+                ("/repo/code.py", 1, f"{content}\n"),
+                ("/repo/other.py", 2, "pkg.literalé()\n"),
+            ),
+            stderr="",
+        )
 
         def fake_run(cmd, **kwargs):
-            if "-f" in cmd:
-                return Mock(returncode=0, stdout=f"{line}\n", stderr="")
+            if "--json" in cmd:
+                return batch_result
             pattern = cmd[-2]
             if pattern == foo_request.pattern:
                 return Mock(returncode=1, stdout="", stderr="")
@@ -602,15 +842,21 @@ class TestBatchedGrepVerify:
                 return_value="/usr/bin/rg",
             ),
             patch(
-                "skylos.core.grep_verify_common.subprocess.run",
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
                 side_effect=fake_run,
             ) as mock_run,
         ):
-            results = execute_grep_batch([foo_request, bar_request])
+            results = execute_grep_batch(
+                [foo_request, bar_request, literal_request]
+            )
 
-        assert mock_run.call_count == 3
+        adjudication_calls = [
+            call for call in mock_run.call_args_list if "--json" not in call.args[0]
+        ]
+        assert len(adjudication_calls) == 2
         assert results[foo_request] == ()
         assert results[bar_request] == (line,)
+        assert results[literal_request] == ("/repo/other.py:2:pkg.literalé()",)
 
     def test_batched_and_legacy_verdicts_match_on_non_ascii_content(self, tmp_path):
         package = tmp_path / "pkg.py"
@@ -674,7 +920,638 @@ class TestBatchedGrepVerify:
             results = execute_grep_batch([request])
 
         assert results == {request: ("/repo/main.py:1:helper()",)}
-        mock_direct.assert_called_once_with(request)
+        mock_direct.assert_called_once_with(
+            request, deadline=None, require_complete=True
+        )
+
+    def test_structured_bytes_match_falls_back_to_legacy_results(self):
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        process_result = Mock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "match",
+                    "data": {
+                        "path": {"bytes": "L3JlcG8vaW52YWxpZC5weQ=="},
+                        "lines": {"text": "helper()\n"},
+                        "line_number": 1,
+                    },
+                }
+            )
+            + "\n",
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                return_value=["/repo/main.py:1:helper()"],
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch([request])
+
+        assert results == {request: ("/repo/main.py:1:helper()",)}
+        mock_direct.assert_called_once_with(
+            request, deadline=None, require_complete=True
+        )
+
+    def test_batch_timeout_never_retries_every_request_serially(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=rf"\bsymbol_{index}\b", **common)
+            for index in range(4)
+        ]
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=subprocess.TimeoutExpired("rg", 0.01),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request"
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch(requests, deadline=time.monotonic() + 1)
+
+        assert results == {}
+        mock_direct.assert_not_called()
+
+    def test_serial_fallback_stops_at_the_shared_deadline(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        first = GrepRequest(pattern=r"\bfirst\b", **common)
+        second = GrepRequest(pattern=r"\bsecond\b", **common)
+        now = [0.0]
+
+        def finish_first(*_args, **_kwargs):
+            now[0] = 2.0
+            return ["/repo/main.py:1:first()"]
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=RuntimeError("combined pattern rejected"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                side_effect=finish_first,
+            ) as mock_direct,
+        ):
+            results = execute_grep_batch([first, second], deadline=1.0)
+
+        assert results == {first: ("/repo/main.py:1:first()",)}
+        mock_direct.assert_called_once_with(
+            first, deadline=1.0, require_complete=True
+        )
+
+    def test_large_request_sets_are_split_into_bounded_chunks(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=rf"\bsymbol_{index}\b", **common)
+            for index in range(129)
+        ]
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=lambda chunk, _rg, **_kwargs: {
+                    request: () for request in chunk
+                },
+            ) as mock_batch,
+        ):
+            results = execute_grep_batch(requests)
+
+        assert len(results) == 129
+        assert [len(call.args[0]) for call in mock_batch.call_args_list] == [128, 1]
+
+    def test_output_limit_splits_batch_without_losing_quiet_requests(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=rf"\bsymbol_{index}\b", **common)
+            for index in range(2)
+        ]
+
+        def limited_batch(chunk, _rg, **_kwargs):
+            if len(chunk) > 1:
+                raise _GrepOutputLimitExceeded("forced output cap")
+            return {chunk[0]: ()}
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=limited_batch,
+            ) as mock_batch,
+        ):
+            results = execute_grep_batch(requests)
+
+        assert results == {request: () for request in requests}
+        assert mock_batch.call_count == 3
+
+    def test_unicode_adjudication_cap_keeps_unambiguous_ascii_matches(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=rf"\bsymbol_{index}\b", **common)
+            for index in range(20)
+        ]
+        matches = [("/repo/nfd.py", 1, "unrelated\u0301\n")]
+        matches.extend(
+            (f"/repo/use_{index}.py", 1, f"symbol_{index}()\n")
+            for index in range(20)
+        )
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(*matches),
+            stderr="",
+        )
+
+        def fake_run(cmd, **_kwargs):
+            if "--json" in cmd:
+                return batch_result
+            return Mock(returncode=1, stdout="", stderr="")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_ADJUDICATIONS",
+                1,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch(requests)
+
+        assert set(results) == set(requests)
+        for index, request in enumerate(requests):
+            assert results[request] == (
+                f"/repo/use_{index}.py:1:symbol_{index}()",
+            )
+        assert mock_run.call_count == 2
+        assert results.incomplete_requests == set(requests[1:])
+
+    def test_bounded_subprocess_rejects_oversized_output(self):
+        with (
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                64,
+            ),
+            pytest.raises(_GrepOutputLimitExceeded),
+        ):
+            _run_bounded_subprocess(
+                [sys.executable, "-c", "print('x' * 10000)"],
+                input_text="",
+                timeout=2.0,
+            )
+
+    def test_thread_start_failure_leaves_request_incomplete(self):
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value=sys.executable,
+            ),
+            patch(
+                "skylos.core.grep_verify_common.threading.Thread.start",
+                side_effect=RuntimeError("cannot start thread"),
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+
+    def test_repo_planted_search_backends_are_never_executed(self, tmp_path):
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root=str(tmp_path),
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        planted = {
+            "rg": str(tmp_path / "rg.exe"),
+            "grep": str(tmp_path / "grep.exe"),
+        }
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                side_effect=lambda executable: planted[executable],
+            ),
+            patch("skylos.core.grep_verify_common.subprocess.Popen") as popen,
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+        popen.assert_not_called()
+
+    def test_single_file_scan_rejects_sibling_search_backends(self, tmp_path):
+        target = tmp_path / "target.py"
+        target.write_text("helper()\n", encoding="utf-8")
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root=str(target),
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        planted = {
+            "rg": str(tmp_path / "rg.exe"),
+            "grep": str(tmp_path / "grep.exe"),
+        }
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                side_effect=lambda executable: planted[executable],
+            ),
+            patch("skylos.core.grep_verify_common.subprocess.Popen") as popen,
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+        popen.assert_not_called()
+
+    def test_deleted_single_file_still_rejects_sibling_search_backends(
+        self, tmp_path
+    ):
+        target = tmp_path / "target.py"
+        target.write_text("helper()\n", encoding="utf-8")
+        request = GrepRequest(
+            pattern=r"\bhelper\b",
+            project_root=str(target),
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        target.unlink()
+        planted = {
+            "rg": str(tmp_path / "rg.exe"),
+            "grep": str(tmp_path / "grep.exe"),
+        }
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                side_effect=lambda executable: planted[executable],
+            ),
+            patch("skylos.core.grep_verify_common.subprocess.Popen") as popen,
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+        popen.assert_not_called()
+
+    def test_filesystem_root_cwd_does_not_reject_system_backend(self):
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.Path.cwd",
+                return_value=Path("/"),
+            ),
+        ):
+            resolved = _trusted_which("rg", ("/workspace/repo",))
+
+        assert resolved == "/usr/bin/rg"
+
+    def test_home_cwd_does_not_reject_user_installed_backend(self):
+        expected = str(Path("/home/alice/.local/bin/rg").resolve())
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/home/alice/.local/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.Path.cwd",
+                return_value=Path("/home/alice"),
+            ),
+        ):
+            resolved = _trusted_which("rg", ("/workspace/repo",))
+
+        assert resolved == expected
+
+    def test_unrelated_cwd_backend_is_rejected(self):
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/untrusted/rg.exe",
+            ),
+            patch(
+                "skylos.core.grep_verify_common.Path.cwd",
+                return_value=Path("/untrusted"),
+            ),
+        ):
+            resolved = _trusted_which("rg", ("/workspace/repo",))
+
+        assert resolved is None
+
+    def test_missing_search_executables_leave_request_incomplete(self):
+        request = GrepRequest(
+            pattern="helper",
+            project_root="/repo",
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+
+        with patch(
+            "skylos.core.grep_verify_common.shutil.which", return_value=None
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+
+    def test_grep_fallback_treats_pattern_and_root_as_operands(self):
+        request = GrepRequest(
+            pattern="--include=*",
+            project_root="-repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        process_result = Mock(returncode=1, stdout="", stderr="")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                side_effect=lambda executable: (
+                    None if executable == "rg" else "/usr/bin/grep"
+                ),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ) as mock_run,
+        ):
+            assert _run_grep_request(request, require_complete=True) == []
+
+        assert mock_run.call_args.args[0][-4:] == [
+            "-e",
+            "--include=*",
+            "--",
+            os.path.abspath("-repo"),
+        ]
+
+    def test_direct_ripgrep_preserves_colon_path(self):
+        request = GrepRequest(
+            pattern=r"helper\s*\(",
+            project_root="/repo",
+            use_regex=True,
+            include_globs=("*.py",),
+            fixed_string=False,
+            max_results=5,
+        )
+        path = "/repo/release.v1:123/pkg/lib.py"
+        process_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output((path, 7, "helper()\n")),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ) as mock_run,
+        ):
+            evidence = _run_grep_request(request, require_complete=True)[0]
+
+        assert evidence == f"{path}:7:helper()"
+        assert isinstance(evidence, _GrepEvidence)
+        assert evidence.path == path
+        assert "--json" in mock_run.call_args.args[0]
+
+    def test_grep_fallback_preserves_colon_path(self):
+        request = GrepRequest(
+            pattern="helper",
+            project_root="/repo",
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+        path = "/repo/release.v1:123/pkg/lib.py"
+        process_result = Mock(
+            returncode=0,
+            stdout=f"{path}\0" "7:helper()\n",
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                side_effect=lambda executable: (
+                    None if executable == "rg" else "/usr/bin/grep"
+                ),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ),
+        ):
+            evidence = _run_grep_request(request, require_complete=True)[0]
+
+        assert evidence == f"{path}:7:helper()"
+        assert isinstance(evidence, _GrepEvidence)
+        assert evidence.path == path
+
+    def test_incomplete_batch_is_not_replayed_or_cached(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch", return_value={}
+        ):
+            verdicts = grep_verify_findings(
+                [finding], str(tmp_path), cache=cache, time_budget=1.0
+            )
+
+        assert verdicts == {}
+        assert cache.size == 0
+
+    def test_conservative_partial_match_can_rescue_but_is_not_cached(
+        self, tmp_path
+    ):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        usage = tmp_path / "usage.py"
+        usage.write_text("helper()\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        def partial_results(requests, **_kwargs):
+            results = _GrepBatchResults()
+            evidence = _GrepEvidence(str(usage), 1, "helper()")
+            for request in requests:
+                results[request] = (evidence,)
+            results.incomplete_requests.add(requests[0])
+            return results
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch",
+            side_effect=partial_results,
+        ):
+            verdicts = grep_verify_findings(
+                [finding], str(tmp_path), cache=cache, time_budget=1.0
+            )
+
+        assert set(verdicts) == {"library.helper"}
+        assert cache.size == 0
+
+    def test_malformed_cached_group_is_treated_as_a_cache_miss(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        with (
+            patch.object(cache, "get", return_value=["[]"]),
+            patch(
+                "skylos.core.grep_verify.execute_grep_batch", return_value={}
+            ) as mock_batch,
+        ):
+            verdicts = grep_verify_findings(
+                [finding], str(tmp_path), cache=cache, time_budget=1.0
+            )
+
+        assert verdicts == {}
+        mock_batch.assert_called_once()
+
+    def test_oversized_group_result_is_not_stored(self, tmp_path):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+        }
+        cache = GrepCache()
+        cache.bind_repository(tmp_path)
+
+        _store_cached_group_results(
+            cache,
+            "python_core",
+            finding,
+            {"references": ["x" * 1_000_001]},
+        )
+
+        assert cache.size == 0
 
     def test_no_ripgrep_uses_legacy_requests(self):
         request = GrepRequest(
@@ -696,7 +1573,9 @@ class TestBatchedGrepVerify:
             results = execute_grep_batch([request])
 
         assert results == {request: ("/repo/main.py:1:helper()",)}
-        mock_direct.assert_called_once_with(request)
+        mock_direct.assert_called_once_with(
+            request, deadline=None, require_complete=True
+        )
 
     def test_replay_miss_executes_legacy_request(self):
         with (
@@ -750,14 +1629,16 @@ class TestBatchedGrepVerify:
         library.write_text("def helper():\n    return 1\n")
         usage = tmp_path / "z_usage.py"
         usage.write_text("helper()\n")
-        output_lines = [
-            f"{tmp_path / f'a{index:02}.py'}:1:def helper():" for index in range(30)
+        output_matches = [
+            (str(tmp_path / f"a{index:02}.py"), 1, "def helper():\n")
+            for index in range(30)
         ]
-        output_lines.extend((f"{library}:1:def helper():", f"{usage}:1:helper()"))
-        stdout = "\n".join(output_lines) + "\n"
+        output_matches.extend(
+            ((str(library), 1, "def helper():\n"), (str(usage), 1, "helper()\n"))
+        )
         process_result = Mock(
             returncode=0,
-            stdout=stdout,
+            stdout=_rg_json_output(*output_matches),
             stderr="",
         )
         finding = {
@@ -776,7 +1657,7 @@ class TestBatchedGrepVerify:
                 return_value="/usr/bin/rg",
             ),
             patch(
-                "skylos.core.grep_verify_common.subprocess.run",
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
                 return_value=process_result,
             ),
         ):
@@ -784,7 +1665,7 @@ class TestBatchedGrepVerify:
 
         assert set(verdicts) == {"library.helper"}
 
-    def test_started_finding_batch_completes_after_deadline(self, tmp_path):
+    def test_final_finding_batch_is_not_started_after_deadline(self, tmp_path):
         library = tmp_path / "library.py"
         library.write_text("def helper():\n    return 1\n")
         (tmp_path / "main.py").write_text("helper()\n")
@@ -797,19 +1678,29 @@ class TestBatchedGrepVerify:
             "line": 1,
             "confidence": 80,
         }
+        now = [0.0]
+        original_plan = grep_verify_module._plan_batched_finding
 
-        def slow_batch(
-            requests: Sequence[GrepRequest],
-        ) -> dict[GrepRequest, tuple[str, ...]]:
-            time.sleep(0.02)
-            return execute_grep_batch(requests)
+        def plan_then_expire(*args, **kwargs):
+            planned = original_plan(*args, **kwargs)
+            now[0] = 1.0
+            return planned
 
-        with patch(
-            "skylos.core.grep_verify.execute_grep_batch", side_effect=slow_batch
+        with (
+            patch(
+                "skylos.core.grep_verify.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch(
+                "skylos.core.grep_verify._plan_batched_finding",
+                side_effect=plan_then_expire,
+            ),
+            patch("skylos.core.grep_verify.execute_grep_batch") as mock_batch,
         ):
-            verdicts = grep_verify_findings([finding], str(tmp_path), time_budget=0.01)
+            verdicts = grep_verify_findings([finding], str(tmp_path), time_budget=0.5)
 
-        assert set(verdicts) == {"library.helper"}
+        assert verdicts == {}
+        mock_batch.assert_not_called()
 
     def test_batched_and_legacy_verdicts_match(self, tmp_path):
         library = tmp_path / "library.py"
