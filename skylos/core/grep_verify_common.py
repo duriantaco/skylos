@@ -6,6 +6,10 @@ import re
 import shutil
 import subprocess
 import tokenize
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,50 @@ _GREP_EXCLUDE_DIRS = (
     "*.egg-info",
 )
 
+_GREP_BATCH_SIZE = 128
+# Classification precedes strategy-specific definition filtering. Keep a
+# wider deterministic window so early definitions do not crowd out usages.
+_GREP_BATCH_RESULT_FLOOR = 256
+_DEFAULT_GREP_GLOBS = (
+    "*.py",
+    "*.rst",
+    "*.md",
+    "*.yaml",
+    "*.yml",
+    "*.toml",
+    "*.cfg",
+    "*.ini",
+    "*.txt",
+)
+# Python's classifier must preserve the same leftmost-first semantics as each
+# original ripgrep pattern. Keep this translation deliberately narrow: an
+# unsupported POSIX class falls back to the legacy one-pattern subprocess.
+_PYTHON_REGEX_TRANSLATIONS = {
+    "[[:space:]]": r"[ \t\n\r\f\v]",
+    "[[:alnum:]_]": r"[A-Za-z0-9_]",
+}
+_POSIX_CLASS = re.compile(r"\[\[:[^]]+:\]\]")
+
+
+@dataclass(frozen=True, slots=True)
+class GrepRequest:
+    """One repository grep request."""
+
+    pattern: str
+    project_root: str
+    use_regex: bool
+    include_globs: tuple[str, ...]
+    fixed_string: bool
+    max_results: int
+
+
+_GREP_REQUEST_RECORDER: ContextVar[list[GrepRequest] | None] = ContextVar(
+    "grep_request_recorder", default=None
+)
+_GREP_RESULT_REPLAY: ContextVar[Mapping[GrepRequest, tuple[str, ...]] | None] = (
+    ContextVar("grep_result_replay", default=None)
+)
+
 
 def detect_language(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
@@ -108,6 +156,343 @@ def source_globs_for_language(lang: str) -> list[str]:
     return _LANG_GLOBS.get(lang, _LANG_GLOBS["python"])
 
 
+@contextmanager
+def record_grep_requests() -> Iterator[list[GrepRequest]]:
+    """Record grep requests without executing them."""
+    requests: list[GrepRequest] = []
+    token = _GREP_REQUEST_RECORDER.set(requests)
+    try:
+        yield requests
+    finally:
+        _GREP_REQUEST_RECORDER.reset(token)
+
+
+@contextmanager
+def replay_grep_results(
+    results: Mapping[GrepRequest, tuple[str, ...]],
+) -> Iterator[None]:
+    """Replay previously collected grep results."""
+    token = _GREP_RESULT_REPLAY.set(results)
+    try:
+        yield
+    finally:
+        _GREP_RESULT_REPLAY.reset(token)
+
+
+def _make_grep_request(
+    pattern: str,
+    project_root: str,
+    *,
+    use_regex: bool,
+    include_globs: list[str] | None,
+    fixed_string: bool,
+    max_results: int,
+) -> GrepRequest:
+    return GrepRequest(
+        pattern=pattern,
+        project_root=project_root,
+        use_regex=use_regex,
+        include_globs=(
+            tuple(include_globs) if include_globs is not None else _DEFAULT_GREP_GLOBS
+        ),
+        fixed_string=fixed_string,
+        max_results=max_results,
+    )
+
+
+def _ripgrep_command(request: GrepRequest, rg: str) -> list[str]:
+    cmd = [
+        rg,
+        "-n",
+        "--no-heading",
+        "--color",
+        "never",
+        "--hidden",
+        "--no-ignore",
+    ]
+    if request.fixed_string:
+        cmd.append("-F")
+    for glob in request.include_globs:
+        cmd.extend(["-g", glob])
+    for directory in _GREP_EXCLUDE_DIRS:
+        cmd.extend(["-g", f"!**/{directory}/**"])
+    return cmd
+
+
+def _filter_grep_output(stdout: str) -> list[str]:
+    filtered: list[str] = []
+    for line in stdout.strip().splitlines():
+        normalized = line.replace("\\", "/")
+        if any(part in normalized for part in _IGNORED_GREP_PATH_PARTS):
+            continue
+        filtered.append(line)
+    return filtered
+
+
+def _run_grep_request(request: GrepRequest) -> list[str]:
+    try:
+        rg = shutil.which("rg")
+        if rg:
+            cmd = _ripgrep_command(request, rg)
+            cmd.extend(["--", request.pattern, request.project_root])
+        else:
+            grep_flags = ["-rn"]
+            if request.fixed_string:
+                grep_flags.append("-F")
+            elif request.use_regex:
+                grep_flags.append("-E")
+
+            includes: list[str] = []
+            for glob in request.include_globs:
+                includes.extend(["--include", glob])
+            excludes: list[str] = []
+            for directory in _GREP_EXCLUDE_DIRS:
+                excludes.extend(["--exclude-dir", directory])
+
+            cmd = [
+                "grep",
+                *grep_flags,
+                *includes,
+                *excludes,
+                request.pattern,
+                request.project_root,
+            ]
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10, check=False
+        )
+        return _filter_grep_output(result.stdout)[: request.max_results]
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError) as exc:
+        logger.debug("grep failed for pattern %r: %s", request.pattern, exc)
+        return []
+
+
+def _python_regex(pattern: str) -> re.Pattern[str] | None:
+    translated = pattern
+    for source, replacement in _PYTHON_REGEX_TRANSLATIONS.items():
+        translated = translated.replace(source, replacement)
+    if _POSIX_CLASS.search(translated):
+        return None
+    try:
+        return re.compile(translated)
+    except re.error:
+        return None
+
+
+def _grep_line_sort_key(line: str) -> tuple[str, int, str]:
+    parts = line.split(":", 2)
+    if len(parts) >= 3 and parts[1].strip().isdigit():
+        return parts[0].replace("\\", "/"), int(parts[1]), parts[2]
+    return line.replace("\\", "/"), 0, ""
+
+
+def _batch_group_key(request: GrepRequest) -> tuple[str, tuple[str, ...], bool]:
+    return request.project_root, request.include_globs, request.fixed_string
+
+
+def _requires_direct_grep(request: GrepRequest) -> bool:
+    if "\n" in request.pattern or "\r" in request.pattern:
+        return True
+    if not request.pattern.isascii():
+        return True
+    return not request.fixed_string and _python_regex(request.pattern) is None
+
+
+def _partition_grep_requests(
+    requests: Sequence[GrepRequest],
+) -> tuple[list[GrepRequest], list[GrepRequest]]:
+    batched: list[GrepRequest] = []
+    direct: list[GrepRequest] = []
+    for request in requests:
+        target = direct if _requires_direct_grep(request) else batched
+        target.append(request)
+    return batched, direct
+
+
+def _run_ripgrep_pattern_file(
+    requests: Sequence[GrepRequest], rg: str, timeout: float
+) -> list[str]:
+    representative = requests[0]
+    cmd = _ripgrep_command(representative, rg)
+    cmd.extend(["-f", "-", "--", representative.project_root])
+    patterns = "\n".join(dict.fromkeys(request.pattern for request in requests))
+    result = subprocess.run(
+        cmd,
+        input=f"{patterns}\n",
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        msg = result.stderr.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(msg)
+    return sorted(_filter_grep_output(result.stdout), key=_grep_line_sort_key)
+
+
+def _ripgrep_stdin_match_positions(
+    pattern: str, contents: Sequence[str], rg: str
+) -> set[int]:
+    """Return the 0-based positions of the given lines that ripgrep matches."""
+    result = subprocess.run(
+        [rg, "-n", "--no-heading", "--color", "never", "--", pattern, "-"],
+        input="\n".join(contents) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        msg = result.stderr.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(msg)
+    positions: set[int] = set()
+    for line in result.stdout.splitlines():
+        prefix = line.split(":", 1)[0]
+        if prefix.isdigit():
+            positions.add(int(prefix) - 1)
+    return positions
+
+
+def _non_ascii_line_overrides(
+    request: GrepRequest,
+    non_ascii_lines: Sequence[tuple[int, str]],
+    rg: str,
+) -> dict[int, bool] | None:
+    # After POSIX-class translation the only engine-sensitive construct left
+    # in classifier patterns is \b: ripgrep's UTS#18 word class includes
+    # combining marks, join controls, and non-decimal numerics that Python's
+    # re does not (and vice versa). Let ripgrep itself adjudicate non-ASCII
+    # lines so batched attribution matches what a per-pattern search returns.
+    # Fixed strings are byte-exact substring checks and never diverge.
+    if request.fixed_string or not non_ascii_lines:
+        return None
+    matched = _ripgrep_stdin_match_positions(
+        request.pattern, [content for _, content in non_ascii_lines], rg
+    )
+    return {
+        index: position in matched
+        for position, (index, _) in enumerate(non_ascii_lines)
+    }
+
+
+def _request_matches_line(
+    request: GrepRequest,
+    regex: re.Pattern[str] | None,
+    content: str,
+) -> bool:
+    if request.fixed_string:
+        return request.pattern in content
+    return regex is not None and regex.search(content) is not None
+
+
+def _classify_grep_request(
+    request: GrepRequest,
+    line_contents: Sequence[tuple[str, str]],
+    overrides: dict[int, bool] | None = None,
+) -> tuple[str, ...]:
+    if request.max_results <= 0:
+        return ()
+    regex = None if request.fixed_string else _python_regex(request.pattern)
+    limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+    matches: list[str] = []
+    for index, (line, content) in enumerate(line_contents):
+        override = overrides.get(index) if overrides is not None else None
+        is_match = (
+            override
+            if override is not None
+            else _request_matches_line(request, regex, content)
+        )
+        if not is_match:
+            continue
+        matches.append(line)
+        if len(matches) >= limit:
+            break
+    return tuple(matches)
+
+
+def _run_serial_grep_requests(
+    requests: Sequence[GrepRequest],
+) -> dict[GrepRequest, tuple[str, ...]]:
+    return {request: tuple(_run_grep_request(request)) for request in requests}
+
+
+def _run_ripgrep_batch(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    timeout: float = 30.0,
+) -> dict[GrepRequest, tuple[str, ...]]:
+    batched, direct = _partition_grep_requests(requests)
+    batch_results: dict[GrepRequest, tuple[str, ...]] = {}
+    if not batched:
+        return _run_serial_grep_requests(direct)
+
+    lines = _run_ripgrep_pattern_file(batched, rg, timeout)
+    line_contents = [(line, _grep_line_content(line)) for line in lines]
+    non_ascii_lines = [
+        (index, content)
+        for index, (_, content) in enumerate(line_contents)
+        if not content.isascii()
+    ]
+    batch_results.update(
+        (
+            request,
+            _classify_grep_request(
+                request,
+                line_contents,
+                _non_ascii_line_overrides(request, non_ascii_lines, rg),
+            ),
+        )
+        for request in batched
+    )
+    batch_results.update(_run_serial_grep_requests(direct))
+    return batch_results
+
+
+def _group_grep_requests(
+    requests: Sequence[GrepRequest],
+) -> dict[tuple[str, tuple[str, ...], bool], list[GrepRequest]]:
+    groups: dict[tuple[str, tuple[str, ...], bool], list[GrepRequest]] = {}
+    for request in requests:
+        groups.setdefault(_batch_group_key(request), []).append(request)
+    return groups
+
+
+def _execute_grep_chunk(
+    requests: Sequence[GrepRequest], rg: str
+) -> dict[GrepRequest, tuple[str, ...]]:
+    try:
+        return _run_ripgrep_batch(requests, rg)
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        logger.debug("batched grep failed; using serial fallback: %s", exc)
+        return _run_serial_grep_requests(requests)
+
+
+def execute_grep_batch(
+    requests: Sequence[GrepRequest],
+) -> dict[GrepRequest, tuple[str, ...]]:
+    """Execute compatible grep requests in fixed-size batches."""
+    unique_requests = list(dict.fromkeys(requests))
+    if not unique_requests:
+        return {}
+
+    rg = shutil.which("rg")
+    if not rg:
+        return _run_serial_grep_requests(unique_requests)
+
+    results: dict[GrepRequest, tuple[str, ...]] = {}
+    for group_requests in _group_grep_requests(unique_requests).values():
+        for start in range(0, len(group_requests), _GREP_BATCH_SIZE):
+            chunk = group_requests[start : start + _GREP_BATCH_SIZE]
+            results.update(_execute_grep_chunk(chunk, rg))
+    return results
+
+
 def _run_grep(
     pattern: str,
     project_root: str,
@@ -116,69 +501,28 @@ def _run_grep(
     fixed_string: bool = False,
     max_results: int = 20,
 ) -> list[str]:
-    if include_globs is None:
-        include_globs = [
-            "*.py",
-            "*.rst",
-            "*.md",
-            "*.yaml",
-            "*.yml",
-            "*.toml",
-            "*.cfg",
-            "*.ini",
-            "*.txt",
-        ]
-
-    try:
-        rg = shutil.which("rg")
-        if rg:
-            cmd = [
-                rg,
-                "-n",
-                "--no-heading",
-                "--color",
-                "never",
-                "--hidden",
-                "--no-ignore",
-            ]
-            if fixed_string:
-                cmd.append("-F")
-            for g in include_globs:
-                cmd.extend(["-g", g])
-            for d in _GREP_EXCLUDE_DIRS:
-                if any(ch in d for ch in "*?["):
-                    cmd.extend(["-g", f"!**/{d}/**"])
-                else:
-                    cmd.extend(["-g", f"!**/{d}/**"])
-            cmd.extend(["--", pattern, project_root])
-        else:
-            grep_flags = ["-rn"]
-            if fixed_string:
-                grep_flags.append("-F")
-            elif use_regex:
-                grep_flags.append("-E")
-
-            includes = []
-            for g in include_globs:
-                includes.extend(["--include", g])
-            excludes = []
-            for d in _GREP_EXCLUDE_DIRS:
-                excludes.extend(["--exclude-dir", d])
-
-            cmd = ["grep", *grep_flags, *includes, *excludes, pattern, project_root]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        lines = result.stdout.strip().splitlines()
-        filtered = []
-        for line in lines:
-            normalized = line.replace("\\", "/")
-            if any(part in normalized for part in _IGNORED_GREP_PATH_PARTS):
-                continue
-            filtered.append(line)
-        return filtered[:max_results]
-    except Exception as e:
-        logger.debug("grep failed for pattern %r: %s", pattern, e)
+    request = _make_grep_request(
+        pattern,
+        project_root,
+        use_regex=use_regex,
+        include_globs=include_globs,
+        fixed_string=fixed_string,
+        max_results=max_results,
+    )
+    recorder = _GREP_REQUEST_RECORDER.get()
+    if recorder is not None:
+        recorder.append(request)
         return []
+
+    replay = _GREP_RESULT_REPLAY.get()
+    if replay is not None:
+        replayed = replay.get(request)
+        if replayed is not None:
+            return list(replayed)
+        logger.warning("grep replay miss for pattern %r; executing directly", pattern)
+        return _run_grep_request(request)
+
+    return _run_grep_request(request)
 
 
 def repo_relative_path(file_path: str, project_root: str | Path) -> str:
