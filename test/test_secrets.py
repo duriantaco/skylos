@@ -4,7 +4,11 @@ import time
 import tracemalloc
 
 import pytest
-from skylos.rules.secrets import _yarn_integrity_spans, scan_ctx
+from skylos.rules.secrets import (
+    _yaml_checksum_context_spans,
+    _yarn_integrity_spans,
+    scan_ctx,
+)
 
 ELLIPSIS = "…"
 NPM_SRI = (
@@ -235,6 +239,686 @@ def test_bare_generic_token_still_detected():
     assert generic[0]["col"] == src.index(token)
 
 
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        (
+            "reproduce.py",
+            "integrity = sum(len(project.integrity_warnings) "
+            "for project in report.projects)\n",
+        ),
+        ("app.py", "hash = calculate_digest(project.generated_contents)\n"),
+        ("app.py", "checksum = values[artifact_key]\n"),
+        ("app.ts", "const narHash = buildNarHash(pkg.derivationOutputs);\n"),
+        ("app.js", "const contentHash = computeContentHash(asset.generatedBytes);\n"),
+        (
+            "app.py",
+            "# integrity = sum(len(project.integrity_warnings) "
+            "for project in report.projects)\n",
+        ),
+        (
+            "app.py",
+            'text = "integrity = sum(len(project.integrity_warnings) '
+            'for project in report.projects)"\n',
+        ),
+        ("app.go", "checksum := calculateChecksum(artifactContents)\n"),
+        ("app.rs", "let hash = calculate_hash(artifact_contents);\n"),
+        ("app.dart", "final contentHash = calculateContentHash(assetBytes);\n"),
+        ("app.js", "const integrity = `${computeIntegrity(payload)}`;\n"),
+        (
+            "app.ts",
+            "const checksum = `checksum-${artifact.generatedIdentifier}`;\n",
+        ),
+        ("app.php", "$integrity = `calculate-integrity $artifact`;\n"),
+        (
+            "index.html",
+            "<script>const integrity = calculateDigest(artifact.contents);</script>\n",
+        ),
+        (
+            "index.html",
+            "<script>const integrity = `${computeIntegrity(payload)}`;</script>\n",
+        ),
+        (
+            "styles.css",
+            "/* integrity = calculateDigest(project.generatedContents) */\n",
+        ),
+        ("metadata.yaml", "# integrity: calculateDigest(project.contents)\n"),
+        (
+            "metadata.yaml",
+            'text: "integrity = calculateDigest(project.generatedContents)"\n',
+        ),
+        (
+            "metadata.json",
+            '{"text":"integrity = calculateDigest(project.generatedContents)"}\n',
+        ),
+        (
+            "bundle.js.map",
+            '{"text":"integrity = calculateDigest(project.generatedContents)"}\n',
+        ),
+    ],
+)
+def test_computed_checksum_fields_in_source_are_not_secrets(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["integrity", "hash", "checksum", "narHash", "contentHash"],
+)
+def test_quoted_checksum_fields_in_source_still_detect_secrets(field):
+    token = "aB3dE5fG7hJ9$kL2mN4pQ"
+    src = f'{field} = "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="app.py"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+    assert generic[0]["end_col"] == src.index(token) + len(token)
+
+
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        ("app.js", "const integrity = `aB3dE5fG7hJ9kL2mN4pQ`;\n"),
+        (
+            "app.js",
+            "const integrity = `aB3dE5fG7hJ9kL2mN4pQ\\${literal}`;\n",
+        ),
+        (
+            "app.js",
+            "const integrity = `prefix\\`aB3dE5fG7hJ9$kL2mN4pQ`;\n",
+        ),
+        ("app.go", "checksum := `aB3dE5fG7hJ9kL2mN4pQ`\n"),
+        (
+            "app.go",
+            "checksum := `aB3dE5fG7hJ9kL2mN4pQ${literal}`\n",
+        ),
+        (
+            "index.html",
+            "<script>const integrity = `aB3dE5fG7hJ9kL2mN4pQ`;</script>\n",
+        ),
+        ("app.js", "const integrity = `AbCdEfGhIjKlMnOpQrStUvWxYz`;\n"),
+        ("app.go", "checksum := `AbCdEfGhIjKlMnOpQrStUvWxYz`\n"),
+        (
+            "index.html",
+            "<script>const integrity = `AbCdEfGhIjKlMnOpQrStUvWxYz`;</script>\n",
+        ),
+    ],
+)
+def test_static_backtick_checksum_fields_still_detect_secrets(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+@pytest.mark.parametrize(
+    "src,expected_line",
+    [
+        (
+            "<script src=x integrity=aB3dE5fG7hJ9$kL2mN4pQ></script>\n",
+            1,
+        ),
+        (
+            "<script\n  integrity=aB3dE5fG7hJ9$kL2mN4pQ\n  src=x></script>\n",
+            2,
+        ),
+    ],
+)
+def test_unquoted_html_integrity_values_still_detect_secrets(src, expected_line):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="index.html"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == expected_line
+
+
+def test_html_attribute_text_is_not_mistaken_for_integrity_attribute():
+    src = '<div data-note="integrity=aB3dE5fG7hJ9$kL2mN4pQ">metadata</div>\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="index.html"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+def test_html_integrity_location_handles_mixed_cr_and_lf():
+    token = "aB3dE5fG7hJ9$kL2mN4pQ"
+    src = f"<div>one</div>\rnoise\n<script integrity={token}>\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="index.html"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 3
+    assert generic[0]["col"] == src.splitlines()[2].index(token)
+
+
+def test_html_context_budget_fails_closed(monkeypatch):
+    monkeypatch.setattr("skylos.rules.secrets._MAX_JSON_CAPTURED_STRINGS", 1)
+    src = (
+        "<script integrity=aB3dE5fG7hJ9$kL2mN4pQ></script>\n"
+        "<script integrity=bC4eF6gH8iK0$lM3nP5qR></script>\n"
+    )
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel="index.html")))
+
+    assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        ("metadata.yaml", "integrity: aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        ("metadata.yml", "HASH: aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (".env", "checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (
+            ".env",
+            "checksum=aB3dE5fG7hJ9#kL2mN4pQ\n",
+        ),
+        (
+            ".env",
+            "checksum=aB3dE5fG7hJ9$kL2mN4pQ  # deployment value\n",
+        ),
+        (".env", "  checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (".env", "checksum=`aB3dE5fG7hJ9$kL2mN4pQ`\n"),
+        (".env", "checksum=#aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (".env", "'checksum'=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (".env", "export 'checksum'=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        ("example.env", "checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (".env.production", "export checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        ("settings.ini", "checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (
+            "settings.ini",
+            "checksum=aB3dE5fG7hJ9$kL2mN4pQ ; deployment value\n",
+        ),
+        (
+            "settings.ini",
+            "[artifact]\n  checksum=aB3dE5fG7hJ9$kL2mN4pQ\n",
+        ),
+        ("settings.ini", "checksum=`aB3dE5fG7hJ9$kL2mN4pQ`\n"),
+        ("settings.ini", "checksum=;aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        ("settings.cfg", "NARHASH: aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        (
+            "metadata.yaml",
+            "- integrity: aB3dE5fG7hJ9$kL2mN4pQ\n",
+        ),
+        (
+            "metadata.yaml",
+            "metadata: {name: pkg, integrity: aB3dE5fG7hJ9$kL2mN4pQ}\n",
+        ),
+    ],
+)
+def test_unquoted_checksum_fields_in_data_files_still_detect_secrets(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        ("metadata.yaml", f"hash: {LOWERCASE_SHA256_HEX}\n"),
+        ("metadata.yaml", f"checksum: sha256:{LOWERCASE_SHA256_HEX}\n"),
+        (".env", f"hash={LOWERCASE_SHA256_HEX}\n"),
+        ("settings.ini", f"checksum={LOWERCASE_SHA256_HEX}\n"),
+    ],
+)
+def test_conventional_unquoted_config_hashes_are_not_secrets(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        ("metadata.yaml", f"integrity: {LOWERCASE_SHA256_HEX}\n"),
+        (".env", f"integrity={LOWERCASE_SHA256_HEX}\n"),
+    ],
+)
+def test_integrity_fields_do_not_inherit_hash_exemptions(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+def test_pnpm_wrong_path_integrity_does_not_inherit_hash_exemption():
+    src = f"metadata:\n  integrity: {LOWERCASE_SHA256_HEX}\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="pnpm-lock.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+@pytest.mark.parametrize(
+    "relpath,src",
+    [
+        (
+            "metadata.yaml",
+            "description: |\n"
+            "  integrity = calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            "metadata.yaml",
+            "integrity: >\n  calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            "metadata.yaml",
+            "description: verify generated metadata,\n"
+            "  integrity = calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            "metadata.toml",
+            'description = """\n'
+            "integrity = calculateDigest(project.generatedContents)\n"
+            '"""\n',
+        ),
+        (
+            "settings.ini",
+            "[metadata]\n"
+            "description = verify generated metadata\n"
+            "  integrity = calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            ".env",
+            "MESSAGE=verify package, integrity="
+            "calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            ".env",
+            "'message'=verify package, integrity="
+            "calculateDigest(project.generatedContents)\n",
+        ),
+        (
+            ".env",
+            '"checksum"=calculateDigest(project.generatedContents)\n',
+        ),
+        (
+            ".env",
+            'MESSAGE="first line\nchecksum=aB3dE5fG7hJ9$kL2mN4pQ\n"\n',
+        ),
+    ],
+)
+def test_checksum_lookalikes_inside_multiline_or_other_values_are_clean(relpath, src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=relpath))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        (
+            "defaults: &defaults\n"
+            "  description: tagged metadata\n"
+            "checksum: aB3dE5fG7hJ9$kL2mN4pQ\n"
+        ),
+        "description: !!str metadata\nhash: aB3dE5fG7hJ9$kL2mN4pQ\n",
+        ("description: first\ndescription: second\nintegrity: aB3dE5fG7hJ9$kL2mN4pQ\n"),
+        ("description: first document\n---\ncontentHash: aB3dE5fG7hJ9$kL2mN4pQ\n"),
+    ],
+)
+def test_valid_yaml_features_do_not_disable_checksum_scanning(src):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding.get("provider") == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+def test_yaml_checksum_before_malformed_tail_is_still_scanned():
+    src = "checksum: aB3dE5fG7hJ9$kL2mN4pQ\nbroken: [\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding.get("provider") == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 1
+
+
+def test_deep_yaml_checksum_value_is_not_silently_skipped():
+    token = "aB3dE5fG7hJ9$kL2mN4pQ"
+    src = ("[" * 300) + f"{{integrity: {token}}}" + ("]" * 300) + "\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+def test_malformed_yaml_before_checksum_fails_closed():
+    src = "broken: [\nintegrity: aB3dE5fG7hJ9$kL2mN4pQ\n"
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel="metadata.yaml")))
+
+    assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
+
+
+def test_yaml_context_budget_fails_closed(monkeypatch):
+    monkeypatch.setattr("skylos.rules.secrets._MAX_GENERIC_YAML_EVENTS", 32)
+    src = "items: [" + ("x, " * 40) + ("x]\nintegrity: aB3dE5fG7hJ9$kL2mN4pQ\n")
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel="metadata.yaml")))
+
+    assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
+
+
+def test_yaml_checksum_alias_scans_the_anchored_scalar():
+    src = "value: &artifact_hash aB3dE5fG7hJ9$kL2mN4pQ\nintegrity: *artifact_hash\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 1
+    assert generic[0]["col"] == src.splitlines()[0].index("aB3")
+
+
+def test_yaml_complex_key_does_not_leave_stale_checksum_state():
+    src = (
+        "? [integrity]\n"
+        ": harmless\n"
+        "checksum: aB3dE5fG7hJ9$kL2mN4pQ\n"
+    )
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 3
+
+
+def test_yaml_scalar_alias_can_supply_checksum_mapping_key():
+    src = (
+        "field: &checksum_field integrity\n"
+        "*checksum_field: aB3dE5fG7hJ9$kL2mN4pQ\n"
+    )
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 2
+
+
+def test_yaml_aliases_do_not_cross_document_boundaries():
+    src = (
+        "value: &artifact_hash aB3dE5fG7hJ9$kL2mN4pQ\n---\nintegrity: *artifact_hash\n"
+    )
+
+    generic_contexts, decoded_contexts, incomplete_line = _yaml_checksum_context_spans(
+        src.splitlines(True)
+    )
+
+    assert generic_contexts == {}
+    assert decoded_contexts == {}
+    assert incomplete_line is None
+
+
+def test_generic_yaml_multiline_escape_cannot_hide_provider_signature():
+    src = f'checksum: "S\\\n  {_TWILIO_DIGEST_PREFIX[1:]}"\n'
+
+    providers = {
+        finding["provider"]
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+    }
+
+    assert "twilio" in providers
+
+
+def test_many_yaml_checksum_fields_remain_bounded():
+    token = "aB3dE5fG7hJ9$kL2mN4pQ"
+    src = "items: [" + ", ".join(f"{{integrity: {token}}}" for _ in range(600)) + "]\n"
+
+    started_at = time.perf_counter()
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="metadata.yaml"))
+        if finding["provider"] == "generic"
+    ]
+    elapsed = time.perf_counter() - started_at
+
+    assert len(generic) == 600
+    assert elapsed < 2.0
+
+
+def test_computed_checksum_field_does_not_hide_provider_secret():
+    token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    src = f'integrity = build("{token}")\n'
+
+    providers = {finding["provider"] for finding in scan_ctx(_ctx_from_source(src))}
+
+    assert "github" in providers
+
+
+def test_dynamic_checksum_template_does_not_hide_provider_secret():
+    token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    src = (
+        "const integrity = `prefix-${suffix}-"
+        f"{token}`;\n"
+    )
+
+    providers = {
+        finding["provider"] for finding in scan_ctx(_ctx_from_source(src, rel="app.js"))
+    }
+
+    assert "github" in providers
+
+
+def test_dynamic_checksum_template_does_not_hide_long_bare_secret():
+    src = f"const integrity = `${{prefix}}-{GENERIC_SECRET}`;\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="app.js"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    token_col = src.index(GENERIC_SECRET)
+    assert generic[0]["col"] <= token_col < generic[0]["end_col"]
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "aB3dE5fG7hJ9$kL2mN4pQ",
+        "AbCdEfGhIjKlMnOpQrStUvWxYz",
+    ],
+)
+def test_dynamic_checksum_template_preserves_suspicious_literal_prefix(prefix):
+    src = f"const integrity = `{prefix}-${{suffix}}`;\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="app.js"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(prefix)
+    assert generic[0]["end_col"] == src.index("${")
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "const integrity = `integrity-checksum-for-build-${artifact.id}`;\n",
+        "const integrity = `calculateIntegrityChecksum2-${artifact.id}`;\n",
+        "const integrity = `integrity-sha256-checksum-${artifact.id}`;\n",
+        "const integrity = `calculateSHA256Integrity-${artifact.id}`;\n",
+        "const integrity = `sha512ChecksumGenerated-${artifact.id}`;\n",
+        "const integrity = `contentHashV2ForDeployment-${artifact.id}`;\n",
+        "const integrity = `version20260815Integrity-${artifact.id}`;\n",
+    ],
+)
+def test_readable_dynamic_checksum_template_is_not_a_secret(src):
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="app.js"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+def test_dotenv_backslash_does_not_suppress_next_assignment():
+    src = "MESSAGE=abc\\\nchecksum=aB3dE5fG7hJ9$kL2mN4pQ\n"
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=".env"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 2
+
+
+def test_unterminated_dotenv_quote_recovers_later_assignment():
+    src = 'MESSAGE="unterminated\nchecksum=aB3dE5fG7hJ9$kL2mN4pQ\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel=".env"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["line"] == 2
+
+
+def test_closed_dotenv_multiline_clears_pending_context_budget(monkeypatch):
+    monkeypatch.setattr("skylos.rules.secrets._MAX_JSON_CAPTURED_STRINGS", 1)
+    src = (
+        'MESSAGE="first line\n'
+        "checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"
+        "integrity=bC4eF6gH8iK0$lM3nP5qR\n"
+        '"\n'
+        "checksum=cD5fG7hI9jL1$mN4pQ6rS\n"
+    )
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel=".env")))
+    generic = [finding for finding in findings if finding.get("provider") == "generic"]
+
+    assert [finding["line"] for finding in generic] == [5]
+    assert not any(
+        finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings
+    )
+
+
+def test_unterminated_dotenv_multiline_reports_first_context_overflow(monkeypatch):
+    monkeypatch.setattr("skylos.rules.secrets._MAX_JSON_CAPTURED_STRINGS", 2)
+    src = (
+        'MESSAGE="unterminated\n'
+        "checksum=aB3dE5fG7hJ9$kL2mN4pQ\n"
+        "integrity=bC4eF6gH8iK0$lM3nP5qR\n"
+        "narHash=cD5fG7hI9jL1$mN4pQ6rS\n"
+    )
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel=".env")))
+    generic = [finding for finding in findings if finding.get("provider") == "generic"]
+    incomplete = [
+        finding
+        for finding in findings
+        if finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+    ]
+
+    assert [finding["line"] for finding in generic] == [2, 3]
+    assert len(incomplete) == 1
+    assert incomplete[0]["line"] == 4
+
+
+def test_config_context_budget_fails_closed(monkeypatch):
+    monkeypatch.setattr("skylos.rules.secrets._MAX_JSON_CAPTURED_STRINGS", 2)
+    src = (
+        "integrity=aB3dE5fG7hJ9$kL2mN4pQ\n"
+        "narHash=bC4eF6gH8iK0$lM3nP5qR\n"
+        "contentHash=cD5fG7hI9jL1$mN4pQ6rS\n"
+    )
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel=".env")))
+
+    assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
+
+
+def test_deep_computed_checksum_expression_is_bounded():
+    expression = ("(" * 5_000) + "value" + (")" * 5_000)
+    src = f"integrity = calculate({expression})\n"
+
+    started_at = time.perf_counter()
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src))
+        if finding["provider"] == "generic"
+    ]
+    elapsed = time.perf_counter() - started_at
+
+    assert generic == []
+    assert elapsed < 1.0
+
+
 def test_generic_scan_handles_long_non_secret_token_without_quadratic_retry():
     src = ("a" * 12_000) + "\n"
     ctx = _ctx_from_source(src)
@@ -273,6 +957,47 @@ def test_known_lockfile_integrity_values_not_flagged_as_generic(line, relpath):
     ctx = _ctx_from_source(src, rel=relpath)
     generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
     assert generic == []
+
+
+def test_yarn_invalid_integrity_value_remains_visible():
+    src = (
+        YARN_V1_PREAMBLE
+        + "pkg@^1.0.0:\n"
+        + '  version "1.0.0"\n'
+        + "  integrity aB3dE5fG7hJ9$kL2mN4pQ\n"
+    )
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="yarn.lock"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+@pytest.mark.parametrize(
+    "src,expected_line",
+    [
+        (
+            YARN_V1_PREAMBLE
+            + "pkg@^1.0.0:\n"
+            + '  version "1.0.0"\n'
+            + f"  integrity {NPM_SRI}\n"
+            + "  integrity aB3dE5fG7hJ9$kL2mN4pQ\n",
+            6,
+        ),
+        ("  integrity aB3dE5fG7hJ9$kL2mN4pQ\n", 1),
+    ],
+)
+def test_yarn_integrity_values_survive_invalid_structure(src, expected_line):
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src, rel="yarn.lock"))
+        if finding["provider"] == "generic"
+    ]
+
+    assert any(finding["line"] == expected_line for finding in generic)
 
 
 @pytest.mark.parametrize(

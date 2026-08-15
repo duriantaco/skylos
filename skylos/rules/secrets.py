@@ -8,6 +8,8 @@ import re
 from bisect import bisect_right
 from dataclasses import dataclass
 from hashlib import blake2s
+from html import unescape
+from html.parser import HTMLParser
 from math import log2
 
 try:
@@ -278,11 +280,11 @@ INTEGRITY_FIELD_VALUE_RE = re.compile(
     (?P<field_quote>['"]?)(?:integrity|narhash|contenthash)(?P=field_quote)
     (?![A-Za-z0-9_-])
     (?:
-        \s*[:=]\s*(?P<q>['"])(?P<quoted>[^'"]{16,})(?P=q)
+        \s*(?::=|[:=])\s*(?P<q>['"])(?P<quoted>[^'"]{16,})(?P=q)
         |
-        \s*[:=]\s*(?P<assigned_bare>[^'"\s,}\]]{16,})
+        \s*(?::=|[:=])\s*`(?P<template>(?:\\[^\r\n]|[^`\\\r\n])*)`
         |
-        \s+(?P<bare_q>['"]?)(?P<bare>[^'"\s,}\]]{16,})(?P=bare_q)
+        \s+(?P<bare_q>['"])(?P<bare>[^'"]{16,})(?P=bare_q)
     )
 """
 )
@@ -292,11 +294,26 @@ HASH_FIELD_VALUE_RE = re.compile(
     (?P<field_quote>['"]?)(?:hash|checksum)(?P=field_quote)
     (?![A-Za-z0-9_-])
     (?:
-        \s*[:=]\s*(?P<q>['"])(?P<quoted>[^'"]{16,})(?P=q)
+        \s*(?::=|[:=])\s*(?P<q>['"])(?P<quoted>[^'"]{16,})(?P=q)
         |
-        \s*[:=]\s*(?P<assigned_bare>[^'"\s,}\]]{16,})
+        \s*(?::=|[:=])\s*`(?P<template>(?:\\[^\r\n]|[^`\\\r\n])*)`
     )
 """
+)
+_DOTENV_ASSIGNMENT_RE = re.compile(
+    r"(?i)^[ \t]*(?:export[ \t]+)?"
+    r"(?:'(?P<quoted_field>[A-Za-z_][A-Za-z0-9_.-]*)'|"
+    r"(?P<field>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*="
+    r"[ \t]*(?P<value>[^\r\n]*)$"
+)
+_INI_CHECKSUM_VALUE_RE = re.compile(
+    r"(?i)^[ \t]*(?P<field>integrity|narhash|contenthash|hash|checksum)"
+    r"[ \t]*[:=][ \t]*(?P<value>[^'\"\r\n][^\r\n]*?)"
+    r"(?:[ \t]+[;#][^\r\n]*)?$"
+)
+_INI_OPTION_RE = re.compile(r"^[ \t]*(?P<key>[^:=\s][^:=]*?)[ \t]*(?P<delimiter>[:=])")
+_CHECKSUM_FIELD_NAMES = frozenset(
+    {"integrity", "narhash", "contenthash", "hash", "checksum"}
 )
 YAML_DECORATED_VALUE_RE = re.compile(
     r"(?<!\S)(?:(?:&[A-Za-z0-9_-]+|!!?[A-Za-z0-9_:/.-]+)\s+)+"
@@ -309,9 +326,6 @@ SRI_CANDIDATE_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9+/_-])"
     r"(?P<token>sha(?:1|224|256|384|512)-[A-Za-z0-9+/_-]+={0,2})"
     r"(?![A-Za-z0-9+/_-])"
-)
-HTML_INTEGRITY_ATTRIBUTE_RE = re.compile(
-    r"(?i)\bintegrity\s*=\s*(?P<quote>['\"])(?P<value>[^'\"]+)(?P=quote)"
 )
 NPM_SRI_VALUE_RE = re.compile(
     r"^(?P<algorithm>sha(?:256|384|512))-(?P<digest>[A-Za-z0-9+/]+={0,2})$"
@@ -475,8 +489,8 @@ def _decorated_generic_candidates(
 def _integrity_value_group(match):
     if match.group("quoted") is not None:
         return "quoted"
-    if match.group("assigned_bare") is not None:
-        return "assigned_bare"
+    if match.group("template") is not None:
+        return "template"
     return "bare"
 
 
@@ -487,36 +501,107 @@ def _trimmed_match_value(match, group):
     return value, start, start + len(value)
 
 
+def _first_unescaped_js_interpolation(value: str) -> int | None:
+    search_start = 0
+    while True:
+        marker = value.find("${", search_start)
+        if marker < 0:
+            return None
+        backslashes = 0
+        index = marker - 1
+        while index >= 0 and value[index] == "\\":
+            backslashes += 1
+            index -= 1
+        if backslashes % 2 == 0:
+            return marker
+        search_start = marker + 2
+
+
+def _looks_like_secret_template_prefix(value: str) -> bool:
+    if len(value) < 16:
+        return False
+    if any(char in "$+/=" for char in value):
+        return True
+
+    character_classes = []
+    for char in value:
+        if char.islower():
+            character_classes.append("lower")
+        elif char.isupper():
+            character_classes.append("upper")
+        elif char.isdigit():
+            character_classes.append("digit")
+    transitions = sum(
+        left != right
+        for left, right in zip(character_classes, character_classes[1:])
+    )
+    return transitions >= 10
+
+
+def _checksum_match_values(
+    match, group: str, rel_name: str
+) -> tuple[tuple[str, int, int], ...]:
+    value, start, end = _trimmed_match_value(match, group)
+    if group == "template":
+        normalized = rel_name.lower()
+        if normalized.endswith(".go"):
+            return ((value, start, end),) if len(value) >= 16 else ()
+        if not normalized.endswith((*JS_TS_SUFFIXES, ".html", ".htm")):
+            return ()
+        interpolation = _first_unescaped_js_interpolation(value)
+        if interpolation is not None:
+            prefix = value[:interpolation].rstrip()
+            if not _looks_like_secret_template_prefix(prefix):
+                return ()
+            return ((prefix, start, start + len(prefix)),)
+        return ((value, start, end),) if len(value) >= 16 else ()
+    return ((value, start, end),)
+
+
 def _integrity_field_candidates(
-    line_content: str, keyed_spans, context_spans, approved_spans
+    line_content: str,
+    keyed_spans,
+    context_spans,
+    approved_spans,
+    *,
+    rel_name: str,
 ):
     candidates = []
     value_spans = []
     for match in INTEGRITY_FIELD_VALUE_RE.finditer(line_content):
-        value, start, end = _trimmed_match_value(match, _integrity_value_group(match))
-        value_spans.append((start, end))
-        if _is_covered_by_span(
-            value, start, keyed_spans, context_spans, approved_spans
-        ):
-            continue
-        candidates.append((start, 1, value, False, end))
+        group = _integrity_value_group(match)
+        for value, start, end in _checksum_match_values(match, group, rel_name):
+            value_spans.append((start, end))
+            if _is_covered_by_span(
+                value, start, keyed_spans, context_spans, approved_spans
+            ):
+                continue
+            candidates.append((start, 1, value, False, end))
     return candidates, value_spans
 
 
 def _hash_field_candidates(
-    line_content: str, keyed_spans, context_spans, approved_spans
+    line_content: str,
+    keyed_spans,
+    context_spans,
+    approved_spans,
+    *,
+    rel_name: str,
 ):
     candidates = []
     value_spans = []
     for match in HASH_FIELD_VALUE_RE.finditer(line_content):
-        group = "quoted" if match.group("quoted") is not None else "assigned_bare"
-        value, start, end = _trimmed_match_value(match, group)
-        value_spans.append((start, end))
-        if _is_conventional_lowercase_hash(value) or _is_covered_by_span(
-            value, start, keyed_spans, context_spans, approved_spans
-        ):
-            continue
-        candidates.append((start, 1, value, False, end))
+        if match.group("quoted") is not None:
+            group = "quoted"
+        else:
+            group = "template"
+        for value, start, end in _checksum_match_values(match, group, rel_name):
+            value_spans.append((start, end))
+            if _is_conventional_lowercase_hash(value) or _is_covered_by_span(
+                value, start, keyed_spans, context_spans, approved_spans
+            ):
+                continue
+            candidates.append((start, 1, value, False, end))
     return candidates, value_spans
 
 
@@ -558,7 +643,21 @@ def _find_generic_values(
     *,
     approved_structural_spans: tuple[tuple[int, int], ...],
     structural_contexts: tuple[tuple[int, int, str, str], ...],
+    rel_name: str,
 ):
+    if rel_name == "yarn.lock":
+        yarn_match = YARN_INTEGRITY_RE.fullmatch(line_content)
+        if yarn_match is not None:
+            value = yarn_match.group("value")
+            structural_contexts = (
+                *structural_contexts,
+                (
+                    yarn_match.start("value"),
+                    yarn_match.end("value"),
+                    value,
+                    value,
+                ),
+            )
     approved_spans = _merge_spans(approved_structural_spans)
     context_spans = _merge_spans(
         (start, end) for start, end, _, _ in structural_contexts
@@ -573,10 +672,18 @@ def _find_generic_values(
         line_content, keyed_spans, context_spans, approved_spans
     )
     integrity, field_spans = _integrity_field_candidates(
-        line_content, keyed_spans, context_spans, approved_spans
+        line_content,
+        keyed_spans,
+        context_spans,
+        approved_spans,
+        rel_name=rel_name,
     )
     hashes, hash_spans = _hash_field_candidates(
-        line_content, keyed_spans, context_spans, approved_spans
+        line_content,
+        keyed_spans,
+        context_spans,
+        approved_spans,
+        rel_name=rel_name,
     )
     candidates.extend((*decorated, *integrity, *hashes))
     integrity_spans.extend((*decorated_spans, *field_spans, *hash_spans))
@@ -731,10 +838,18 @@ _MAX_JSON_DEPTH = 256
 _MAX_JSON_NODES = 500_000
 _MAX_JSON_CAPTURED_STRINGS = 100_000
 _MAX_PNPM_YAML_NODES = 500_000
+_MAX_GENERIC_YAML_EVENTS = 500_000
+_MAX_GENERIC_YAML_NODES = 500_000
 _MAX_YARN_ENTRIES = 100_000
 _MAX_YARN_HEADER_LENGTH = 65_536
 _MAX_YARN_SELECTORS = 4_096
 _MAX_YARN_ENTRY_DEPENDENCIES = 100_000
+
+
+class _SecretContextLimit(ValueError):
+    def __init__(self, message: str, line: int):
+        super().__init__(message)
+        self.line = max(1, line)
 
 
 class _JsonSpanParser:
@@ -1583,8 +1698,15 @@ def _yaml_scalar_content_span(source: str, event):
     start = event.start_mark.index
     end = event.end_mark.index
     if event.style in {'"', "'"}:
-        start += 1
+        quote_offset = source.find(event.style, start, end)
+        if quote_offset < 0:
+            return None
+        start = quote_offset + 1
         end -= 1
+    elif source.startswith(event.value, end - len(event.value), end):
+        # Event start marks include an optional tag/anchor prefix. Anchor
+        # aliases should report the scalar itself, not the `&name` marker.
+        start = end - len(event.value)
     if start > end:
         return None
     return start, end
@@ -1759,23 +1881,513 @@ def _pnpm_integrity_spans(file_lines: list[str]):
     return _finish_pnpm_spans(source, document, scalar_spans)
 
 
+def _yaml_checksum_kind(key):
+    if not isinstance(key, str):
+        return None
+    normalized = key.lower()
+    if normalized in {"hash", "checksum"}:
+        return "hash"
+    if normalized in _CHECKSUM_FIELD_NAMES:
+        return "integrity"
+    return None
+
+
+class _YamlChecksumCollector:
+    def __init__(self, source: str, scalar_spans):
+        self.source = source
+        self.scalar_spans = scalar_spans
+        self.stack = []
+        self.scalar_anchors = {}
+        self.event_count = 0
+        self.node_count = 0
+
+    def collect(self, loader):
+        for event in yaml.parse(self.source, Loader=loader):
+            self._handle_event(event)
+
+    @staticmethod
+    def _event_line(event) -> int:
+        return getattr(getattr(event, "start_mark", None), "line", 0) + 1
+
+    def _count_event(self, event) -> int:
+        self.event_count += 1
+        event_line = self._event_line(event)
+        if self.event_count > _MAX_GENERIC_YAML_EVENTS:
+            raise _SecretContextLimit("YAML event limit exceeded", event_line)
+        return event_line
+
+    def _count_node(self, event_line: int):
+        self.node_count += 1
+        if self.node_count > _MAX_GENERIC_YAML_NODES:
+            raise _SecretContextLimit("YAML node limit exceeded", event_line)
+
+    def _start_document(self):
+        if self.stack:
+            raise ValueError("nested YAML document")
+        self.scalar_anchors.clear()
+
+    def _end_document(self):
+        if self.stack:
+            raise ValueError("incomplete YAML document")
+
+    def _consume_parent_collection(self):
+        if not self.stack or not self.stack[-1][0]:
+            return
+        parent = self.stack[-1]
+        parent[1] = not parent[1]
+        parent[2] = None
+
+    def _start_collection(self, event, event_line: int):
+        self._count_node(event_line)
+        self._consume_parent_collection()
+        is_mapping = isinstance(event, yaml.events.MappingStartEvent)
+        self.stack.append([is_mapping, True, None])
+
+    def _end_collection(self, event):
+        expected_mapping = isinstance(event, yaml.events.MappingEndEvent)
+        if not self.stack or self.stack[-1][0] != expected_mapping:
+            raise ValueError("unexpected YAML collection end")
+        self.stack.pop()
+
+    def _consume_mapping_scalar(self, value):
+        if not self.stack or not self.stack[-1][0]:
+            return None
+        parent = self.stack[-1]
+        if parent[1]:
+            parent[1] = False
+            parent[2] = value
+            return None
+        kind = _yaml_checksum_kind(parent[2])
+        parent[1] = True
+        parent[2] = None
+        return kind
+
+    def _capture(self, kind, value, span, event_line: int):
+        if kind is None or span is None:
+            return
+        if len(self.scalar_spans) >= _MAX_JSON_CAPTURED_STRINGS:
+            raise _SecretContextLimit("YAML capture limit exceeded", event_line)
+        self.scalar_spans.append((kind, value, *span))
+
+    def _handle_scalar(self, event, event_line: int):
+        self._count_node(event_line)
+        span = _yaml_scalar_content_span(self.source, event)
+        if event.anchor is not None and span is not None:
+            self.scalar_anchors[event.anchor] = (event.value, *span)
+        kind = self._consume_mapping_scalar(event.value)
+        self._capture(kind, event.value, span, event_line)
+
+    def _handle_alias(self, event, event_line: int):
+        self._count_node(event_line)
+        anchored = self.scalar_anchors.get(event.anchor)
+        value = anchored[0] if anchored is not None else None
+        kind = self._consume_mapping_scalar(value)
+        self._capture(kind, value, anchored[1:] if anchored else None, event_line)
+
+    def _handle_event(self, event):
+        event_line = self._count_event(event)
+        if isinstance(event, yaml.events.DocumentStartEvent):
+            self._start_document()
+        elif isinstance(event, yaml.events.DocumentEndEvent):
+            self._end_document()
+        elif isinstance(
+            event, (yaml.events.StreamStartEvent, yaml.events.StreamEndEvent)
+        ):
+            return
+        elif isinstance(
+            event, (yaml.events.MappingStartEvent, yaml.events.SequenceStartEvent)
+        ):
+            self._start_collection(event, event_line)
+        elif isinstance(
+            event, (yaml.events.MappingEndEvent, yaml.events.SequenceEndEvent)
+        ):
+            self._end_collection(event)
+        elif isinstance(event, yaml.events.ScalarEvent):
+            self._handle_scalar(event, event_line)
+        elif isinstance(event, yaml.events.AliasEvent):
+            self._handle_alias(event, event_line)
+        else:
+            raise ValueError("unsupported YAML event")
+
+
+def _collect_yaml_checksum_spans(source: str, loader, scalar_spans):
+    _YamlChecksumCollector(source, scalar_spans).collect(loader)
+
+
+def _yaml_checksum_context_spans(file_lines: list[str]):
+    if yaml is None:
+        return {}, {}, None
+
+    source = "".join(file_lines)
+    loader = getattr(yaml, "CSafeLoader", None) or yaml.SafeLoader
+    scalar_spans = []
+    incomplete_line = None
+    try:
+        _collect_yaml_checksum_spans(source, loader, scalar_spans)
+    except MemoryError:
+        return {}, {}, 1
+    except _SecretContextLimit as exc:
+        incomplete_line = exc.line
+    except RecursionError:
+        incomplete_line = 1
+    except yaml.YAMLError as exc:
+        incomplete_line = getattr(getattr(exc, "problem_mark", None), "line", 0) + 1
+    except ValueError:
+        incomplete_line = 1
+
+    all_contexts = []
+    single_line_contexts = []
+    for kind, value, start, end in scalar_spans:
+        raw_value = source[start:end]
+        context = (start, end, value)
+        all_contexts.append(context)
+        if "\n" in raw_value or "\r" in raw_value:
+            # Mapping a decoded multiline scalar back to one physical line is
+            # ambiguous for generic entropy. Keep it for decoded provider
+            # signatures, whose location can safely point to the scalar start.
+            continue
+        if kind == "hash" and _is_conventional_lowercase_hash(value.strip()):
+            continue
+        single_line_contexts.append(context)
+    return (
+        _line_contexts(source, single_line_contexts),
+        _line_contexts(source, all_contexts),
+        incomplete_line,
+    )
+
+
+def _line_value_context(line: str, raw_value: str, value_start: int):
+    value = raw_value.strip()
+    if not value or value[0] in {'"', "'"}:
+        return None
+    start = value_start + len(raw_value) - len(raw_value.lstrip())
+    end = start + len(value)
+    return start, end, value, line[start:end]
+
+
+def _trimmed_line_context(match, line: str):
+    return _line_value_context(line, match.group("value"), match.start("value"))
+
+
+def _closing_quote_index(value: str, quote: str, start: int) -> int | None:
+    for index in range(start, len(value)):
+        if value[index] != quote:
+            continue
+        backslashes = 0
+        preceding = index - 1
+        while preceding >= 0 and value[preceding] == "\\":
+            backslashes += 1
+            preceding -= 1
+        if backslashes % 2 == 0:
+            return index
+    return None
+
+
+def _is_dotenv_name(rel_name: str) -> bool:
+    normalized = rel_name.lower()
+    return (
+        normalized == ".env"
+        or normalized.startswith(".env.")
+        or normalized.endswith(".env")
+    )
+
+
+def _dotenv_line_details(line: str):
+    assignment = _DOTENV_ASSIGNMENT_RE.fullmatch(line)
+    if assignment is None:
+        return None, None, None
+
+    field = (assignment.group("quoted_field") or assignment.group("field")).lower()
+    raw_value = assignment.group("value")
+    leading = len(raw_value) - len(raw_value.lstrip())
+    stripped_value = raw_value[leading:]
+    if stripped_value.startswith(("'", '"')):
+        quote = stripped_value[0]
+        if _closing_quote_index(stripped_value, quote, 1) is not None:
+            return None, None, None
+        context = None
+        if field in _CHECKSUM_FIELD_NAMES:
+            quoted_content = stripped_value[1:]
+            context = _line_value_context(
+                line,
+                quoted_content,
+                assignment.start("value") + leading + 1,
+            )
+        return quote, field, context
+
+    comment = re.search(r"[ \t]+#", raw_value)
+    if comment is not None:
+        raw_value = raw_value[: comment.start()]
+    if field not in _CHECKSUM_FIELD_NAMES:
+        return None, None, None
+    return (
+        None,
+        field,
+        _line_value_context(line, raw_value, assignment.start("value")),
+    )
+
+
+class _ChecksumContextAccumulator:
+    def __init__(self):
+        self.generic_by_line = {}
+        self.incomplete_line = None
+
+    def add(self, line_number, field, context):
+        if context is None:
+            return
+        if field in {"hash", "checksum"} and _is_conventional_lowercase_hash(
+            context[2]
+        ):
+            return
+        if len(self.generic_by_line) >= _MAX_JSON_CAPTURED_STRINGS:
+            if self.incomplete_line is None:
+                self.incomplete_line = line_number
+            return
+        self.generic_by_line[line_number] = (context,)
+
+    def result(self):
+        return self.generic_by_line, {}, self.incomplete_line
+
+
+class _DotenvChecksumContexts(_ChecksumContextAccumulator):
+    def __init__(self):
+        super().__init__()
+        self.quote = None
+        self.pending = []
+        self.pending_overflow_line = None
+
+    def consume(self, line_number: int, line: str):
+        if self.quote is None:
+            self._consume_assignment(line_number, line)
+        else:
+            self._consume_quoted_line(line_number, line)
+
+    def _consume_assignment(self, line_number: int, line: str):
+        opened_quote, field, context = _dotenv_line_details(line)
+        if opened_quote is None:
+            self.add(line_number, field, context)
+            return
+        self.quote = opened_quote
+        if context is not None:
+            self.pending.append((line_number, field, context))
+
+    def _consume_quoted_line(self, line_number: int, line: str):
+        if _closing_quote_index(line, self.quote, 0) is not None:
+            self.quote = None
+            self.pending.clear()
+            self.pending_overflow_line = None
+            return
+        _, field, context = _dotenv_line_details(line)
+        if context is None:
+            return
+        if len(self.pending) < _MAX_JSON_CAPTURED_STRINGS:
+            self.pending.append((line_number, field, context))
+        elif self.pending_overflow_line is None:
+            self.pending_overflow_line = line_number
+
+    def finish(self):
+        if self.quote is None:
+            return self.result()
+        for line_number, field, context in self.pending:
+            self.add(line_number, field, context)
+        if self.pending_overflow_line is not None and self.incomplete_line is None:
+            self.incomplete_line = self.pending_overflow_line
+        return self.result()
+
+
+def _dotenv_checksum_contexts(file_lines: list[str]):
+    contexts = _DotenvChecksumContexts()
+    for index, raw_line in enumerate(file_lines):
+        contexts.consume(index + 1, raw_line.rstrip("\r\n"))
+    return contexts.finish()
+
+
+def _ini_checksum_contexts(file_lines: list[str]):
+    contexts = _ChecksumContextAccumulator()
+    option_indent = None
+    for index, raw_line in enumerate(file_lines):
+        line = raw_line.rstrip("\r\n")
+        stripped = line.lstrip(" \t")
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        indent = len(line) - len(stripped)
+        if option_indent is not None and indent > option_indent:
+            continue
+        if stripped.startswith("["):
+            option_indent = None
+            continue
+        option = _INI_OPTION_RE.match(line)
+        if option is None:
+            continue
+        option_indent = indent
+        match = _INI_CHECKSUM_VALUE_RE.fullmatch(line)
+        if match is None:
+            continue
+        context = _trimmed_line_context(match, line)
+        contexts.add(index + 1, match.group("field").lower(), context)
+    return contexts.result()
+
+
+def _line_config_checksum_contexts(rel_name: str, file_lines: list[str]):
+    normalized = rel_name.lower()
+    if _is_dotenv_name(normalized):
+        return _dotenv_checksum_contexts(file_lines)
+    if normalized.endswith((".ini", ".cfg", ".conf")):
+        return _ini_checksum_contexts(file_lines)
+    return {}, {}, None
+
+
+def _merge_context_maps(*context_maps):
+    merged = {}
+    for contexts_by_line in context_maps:
+        for line_number, contexts in contexts_by_line.items():
+            merged.setdefault(line_number, []).extend(contexts)
+    return {
+        line_number: tuple(sorted(set(contexts)))
+        for line_number, contexts in merged.items()
+    }
+
+
+def _data_checksum_context_spans(rel_name: str, file_lines: list[str]):
+    normalized = rel_name.lower()
+    if normalized.endswith((".yaml", ".yml")) and normalized != "pnpm-lock.yaml":
+        return _yaml_checksum_context_spans(file_lines)
+    return _line_config_checksum_contexts(normalized, file_lines)
+
+
+def _skip_html_whitespace(raw_tag: str, index: int) -> int:
+    while index < len(raw_tag) and raw_tag[index].isspace():
+        index += 1
+    return index
+
+
+def _html_token_end(raw_tag: str, index: int, forbidden: str) -> int:
+    while (
+        index < len(raw_tag)
+        and not raw_tag[index].isspace()
+        and raw_tag[index] not in forbidden
+    ):
+        index += 1
+    return index
+
+
+def _html_attribute_value_span(raw_tag: str, index: int):
+    length = len(raw_tag)
+    index = _skip_html_whitespace(raw_tag, index)
+    if index >= length or raw_tag[index] != "=":
+        return None
+
+    index = _skip_html_whitespace(raw_tag, index + 1)
+    if index >= length:
+        return None
+    if raw_tag[index] not in {'"', "'"}:
+        value_end = _html_token_end(raw_tag, index, "<=>")
+        return index, value_end, value_end
+
+    value_start = index + 1
+    value_end = raw_tag.find(raw_tag[index], value_start)
+    if value_end < 0:
+        return value_start, length, length
+    return value_start, value_end, value_end + 1
+
+
+def _iter_html_attributes(raw_tag: str):
+    length = len(raw_tag)
+    index = _html_token_end(raw_tag, 1, "/>")
+
+    while index < length:
+        index = _skip_html_whitespace(raw_tag, index)
+        if index >= length or raw_tag[index] in "/>":
+            return
+
+        name_start = index
+        index = _html_token_end(raw_tag, index, "/=>")
+        if index == name_start:
+            index += 1
+            continue
+        name = raw_tag[name_start:index]
+
+        value_span = _html_attribute_value_span(raw_tag, index)
+        if value_span is None:
+            index = _skip_html_whitespace(raw_tag, index)
+            continue
+        value_start, value_end, index = value_span
+        yield name, value_start, value_end
+
+
+class _HtmlIntegrityParser(HTMLParser):
+    def __init__(self, source: str):
+        super().__init__(convert_charrefs=False)
+        self.source = source
+        self.line_starts = [0]
+        # HTMLParser.getpos() advances lines on LF only; bare CR remains part
+        # of the current column even though scan_ctx later treats it as EOL.
+        self.line_starts.extend(match.end() for match in re.finditer("\n", source))
+        self.tag_count = 0
+        self.contexts = []
+
+    def handle_starttag(self, tag, attrs):
+        del tag, attrs
+        self.tag_count += 1
+        line_number, line_offset = self.getpos()
+        if self.tag_count > _MAX_JSON_NODES:
+            raise _SecretContextLimit("HTML tag limit exceeded", line_number)
+        raw_tag = self.get_starttag_text()
+        if not raw_tag:
+            return
+        tag_start = self.line_starts[line_number - 1] + line_offset
+        for name, relative_start, relative_end in _iter_html_attributes(raw_tag):
+            if name.lower() != "integrity":
+                continue
+            start = tag_start + relative_start
+            end = tag_start + relative_end
+            raw_value = self.source[start:end]
+            if "\n" in raw_value or "\r" in raw_value:
+                continue
+            if len(self.contexts) >= _MAX_JSON_CAPTURED_STRINGS:
+                raise _SecretContextLimit(
+                    "HTML integrity capture limit exceeded", line_number
+                )
+            self.contexts.append((start, end, unescape(raw_value)))
+
+
+def _html_integrity_spans(file_lines: list[str]):
+    source = "".join(file_lines)
+    parser = _HtmlIntegrityParser(source)
+    incomplete_line = None
+    try:
+        parser.feed(source)
+        parser.close()
+    except MemoryError:
+        return {}, {}, 1
+    except _SecretContextLimit as exc:
+        incomplete_line = exc.line
+    except (RecursionError, ValueError):
+        incomplete_line = 1
+
+    approved = [
+        (start, end)
+        for start, end, value in parser.contexts
+        if _is_valid_sri_list(value, _is_valid_sri_token)
+    ]
+    return (
+        _line_spans(source, approved),
+        _line_contexts(source, parser.contexts),
+        incomplete_line,
+    )
+
+
 def _lockfile_integrity_spans(rel_name: str, file_lines: list[str]):
     if rel_name.lower().endswith((".html", ".htm")):
-        approved_by_line = {}
-        for line_number, line in enumerate(file_lines, start=1):
-            spans = [
-                (match.start("value"), match.end("value"))
-                for match in HTML_INTEGRITY_ATTRIBUTE_RE.finditer(line)
-                if _is_valid_sri_list(match.group("value"), _is_valid_sri_token)
-            ]
-            if spans:
-                approved_by_line[line_number] = tuple(spans)
-        return approved_by_line, {}
+        return _html_integrity_spans(file_lines)
     if rel_name == "yarn.lock":
-        return _yarn_integrity_spans(file_lines)
+        approved, contexts = _yarn_integrity_spans(file_lines)
+        return approved, contexts, None
     if rel_name == "pnpm-lock.yaml":
-        return _pnpm_integrity_spans(file_lines)
-    return _json_integrity_spans(rel_name, file_lines)
+        approved, contexts = _pnpm_integrity_spans(file_lines)
+        return approved, contexts, None
+    approved, contexts = _json_integrity_spans(rel_name, file_lines)
+    return approved, contexts, None
 
 
 def _docstring_lines(tree):
@@ -2636,6 +3248,27 @@ def _append_client_analysis_incomplete(
     )
 
 
+def _append_secret_context_incomplete(findings, *, rel_path: str, line: int) -> None:
+    findings.append(
+        {
+            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+            "severity": "HIGH",
+            "kind": "processing_error",
+            "message": (
+                "Secret-field context analysis reached its safety limit; "
+                "later contextual findings may be incomplete."
+            ),
+            "file": rel_path,
+            "line": max(1, line),
+            "col": 0,
+            "metadata": {
+                "analysis_complete": False,
+                "analysis_diagnostics": ["secret_context_limit"],
+            },
+        }
+    )
+
+
 def scan_ctx(
     ctx,
     *,
@@ -2668,8 +3301,29 @@ def scan_ctx(
         client_context_diagnostics,
     ) = _client_exposure_context_with_status(rel_path, file_lines)
     syntax_tree = ctx.get("tree")
-    approved_structural_spans, structural_context_spans = _lockfile_integrity_spans(
-        rel_name, file_lines
+    (
+        approved_structural_spans,
+        structural_context_spans,
+        lock_context_incomplete_line,
+    ) = _lockfile_integrity_spans(rel_name, file_lines)
+    (
+        data_context_spans,
+        data_decoded_context_spans,
+        data_context_incomplete_line,
+    ) = _data_checksum_context_spans(rel_name, file_lines)
+    incomplete_lines = [
+        line
+        for line in (lock_context_incomplete_line, data_context_incomplete_line)
+        if line is not None
+    ]
+    context_incomplete_line = min(incomplete_lines) if incomplete_lines else None
+    decoded_context_spans = _merge_context_maps(
+        structural_context_spans,
+        data_decoded_context_spans,
+    )
+    structural_context_spans = _merge_context_maps(
+        structural_context_spans,
+        data_context_spans,
     )
 
     allowlist_regexes = []
@@ -2684,6 +3338,12 @@ def scan_ctx(
         docstring_lines = _docstring_lines(syntax_tree)
 
     findings = []
+    if context_incomplete_line is not None:
+        _append_secret_context_incomplete(
+            findings,
+            rel_path=rel_path,
+            line=min(context_incomplete_line, max(1, len(file_lines))),
+        )
 
     for line_number, raw_line in enumerate(file_lines, start=1):
         line_content = raw_line.rstrip("\n")
@@ -2740,14 +3400,14 @@ def scan_ctx(
                 findings.append(finding)
 
         decoded_provider_matches = set()
-        structural_contexts = structural_context_spans.get(line_number, ())
+        decoded_contexts = decoded_context_spans.get(line_number, ())
         line_approved_spans = approved_structural_spans.get(line_number, ())
         for (
             context_start,
             context_end,
             decoded_value,
             raw_context,
-        ) in structural_contexts:
+        ) in decoded_contexts:
             if raw_context != decoded_value:
                 for provider_name, pattern_regex in PROVIDER_PATTERNS:
                     raw_provider_tokens = {
@@ -2861,6 +3521,7 @@ def scan_ctx(
                     line_number, ()
                 ),
                 structural_contexts=structural_context_spans.get(line_number, ()),
+                rel_name=rel_name,
             )
             if rel_name.lower().endswith((".html", ".htm", ".css", ".map")):
                 # Client artifacts commonly contain SRI hashes, content hashes,

@@ -3780,6 +3780,29 @@ def test_changed_files_scans_dotenv_for_secrets(tmp_path):
     assert ".env" in scanned
 
 
+def test_computed_checksum_field_does_not_hide_real_secret_in_analyzer(tmp_path):
+    github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    (tmp_path / "app.py").write_text(
+        "integrity = sum(len(project.integrity_warnings) "
+        "for project in report.projects)\n"
+        f'checksum = "{github_token}"\n',
+        encoding="utf-8",
+    )
+
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
+    findings = [
+        finding
+        for finding in result.get("secrets", [])
+        if finding.get("rule_id") == "SKY-S101" and finding.get("file") == "app.py"
+    ]
+
+    assert not any(finding.get("line") == 1 for finding in findings)
+    assert any(
+        finding.get("line") == 2 and finding.get("provider") == "github"
+        for finding in findings
+    )
+
+
 _ISSUE_693_UV_LOCK = """\
 version = 1
 revision = 1
