@@ -10,6 +10,8 @@ from typing import Any, Callable
 from rich.console import Console
 from rich.table import Table
 
+from skylos.analysis.errors import analysis_result_incomplete
+
 
 UploadAgentRun = Callable[..., None]
 
@@ -131,6 +133,12 @@ def run_agent_verify_command(
         conf=args.conf,
         exclude_folders=exclude_folders,
     )
+    if analysis_result_incomplete(static_result):
+        console.print(
+            "[bad]Static analysis did not complete; refusing to verify or "
+            "generate fixes.[/bad]"
+        )
+        return 2
     all_findings = _collect_dead_code_findings(static_result)
     defs_map = static_result.get("definitions", {})
 
