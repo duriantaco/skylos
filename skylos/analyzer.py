@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import traceback
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -365,6 +366,8 @@ def _scan_ai_defect_diff_signals(
 
 
 MAX_SECRET_CONFIG_BYTES = 8_000_000
+_GENERATED_GREP_CACHE_RELATIVE = Path(".skylos/cache/grep_results.json")
+_GIT_TRACKING_TIMEOUT_SECONDS = 5
 
 _TS_JS_SOURCE_EXTS = (
     ".ts",
@@ -519,6 +522,70 @@ def _absolute_secret_scan_targets(scan_target) -> tuple[Path, ...]:
     return tuple(targets)
 
 
+def _is_generated_grep_cache(candidate: Path, root: Path) -> bool:
+    try:
+        return candidate.relative_to(root) == _GENERATED_GREP_CACHE_RELATIVE
+    except ValueError:
+        return False
+
+
+def _explicitly_targets_generated_grep_cache(
+    candidate: Path,
+    scan_target,
+) -> bool:
+    if scan_target is None:
+        return False
+    cache_dir = candidate.parent
+    cache_root = cache_dir.parent
+    return any(
+        target in {candidate, cache_dir, cache_root}
+        for target in _absolute_secret_scan_targets(scan_target)
+    )
+
+
+def _git_tracking_status(candidate: Path) -> bool | None:
+    try:
+        candidate = candidate.resolve(strict=False)
+    except OSError:
+        return None
+    git_root = find_git_root(candidate.parent)
+    if git_root is None:
+        return False
+    try:
+        relative = candidate.relative_to(git_root).as_posix()
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=git_root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_TRACKING_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    return None
+
+
+def _should_scan_generated_grep_cache(
+    candidate: Path,
+    *,
+    root: Path,
+    scan_target,
+    selected_by_changed_files: bool,
+) -> bool:
+    if not _is_generated_grep_cache(candidate, root):
+        return True
+    if selected_by_changed_files:
+        return True
+    if _explicitly_targets_generated_grep_cache(candidate, scan_target):
+        return True
+    return _git_tracking_status(candidate) is not False
+
+
 def _is_within_secret_scan_targets(
     candidate: Path, scan_targets: tuple[Path, ...]
 ) -> bool:
@@ -566,6 +633,8 @@ def _scan_secret_config_candidate(
     root: Path,
     excluded: set[str],
     scanned: set[str],
+    scan_target=None,
+    selected_by_changed_files: bool = False,
     analysis_errors: list[dict] | None = None,
 ) -> list[dict]:
     resolved = _resolve_secret_config_candidate(candidate, root)
@@ -574,6 +643,14 @@ def _scan_secret_config_candidate(
     try:
         rel = str(resolved.relative_to(root))
         if excluded.intersection(Path(rel).parts):
+            return []
+        if not _should_scan_generated_grep_cache(
+            resolved,
+            root=root,
+            scan_target=scan_target,
+            selected_by_changed_files=selected_by_changed_files,
+        ):
+            scanned.add(str(resolved))
             return []
         scanned.add(str(resolved))
         source = read_project_text_no_symlink(
@@ -623,6 +700,8 @@ def _scan_secret_config_candidates(
                 root=root,
                 excluded=excluded,
                 scanned=scanned,
+                scan_target=scan_target,
+                selected_by_changed_files=changed_files is not None,
                 analysis_errors=analysis_errors,
             )
         )
@@ -3135,6 +3214,8 @@ class Skylos:
                             root=root,
                             excluded=excluded,
                             scanned=scanned,
+                            scan_target=secret_scan_target,
+                            selected_by_changed_files=secret_changed_files is not None,
                             analysis_errors=analysis_errors,
                         )
                     )
