@@ -3807,7 +3807,7 @@ def _issue_706_cache_file(root):
     github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
     cache_file = root / ".skylos" / "cache" / "grep_results.json"
     cache_file.parent.mkdir(parents=True)
-    cache_file.write_text(
+    cache_file.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
         json.dumps(
             {
                 "version": 1,
@@ -3835,7 +3835,9 @@ def _issue_706_cache_findings(result):
 
 def _issue_706_init_ignored_cache_repo(root):
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    (root / ".gitignore").write_text(".skylos/\n", encoding="utf-8")
+    (root / ".gitignore").write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
+        ".skylos/\n", encoding="utf-8"
+    )
 
 
 def test_recursive_secret_scan_skips_untracked_generated_grep_cache(tmp_path):
@@ -4019,7 +4021,9 @@ def test_grep_cache_lookalike_paths_remain_scannable(tmp_path, relative_path):
     github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
     lookalike = tmp_path / relative_path
     lookalike.parent.mkdir(parents=True, exist_ok=True)
-    lookalike.write_text(json.dumps({"token": github_token}), encoding="utf-8")
+    lookalike.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
+        json.dumps({"token": github_token}), encoding="utf-8"
+    )
 
     result = json.loads(
         analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
