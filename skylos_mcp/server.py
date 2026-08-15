@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from skylos.analysis.errors import analysis_result_incomplete
 from skylos_mcp.auth import (
     build_mcp_network_auth,
     check_mcp_client_context,
@@ -797,6 +798,8 @@ def _is_architecture_finding(finding: dict) -> bool:
 def _make_summary(result: dict, focus: str | None = None) -> dict:
     summary = result.get("analysis_summary", {})
     out: dict[str, Any] = {"analysis_summary": summary}
+    if result.get("analysis_errors"):
+        out["analysis_errors"] = result["analysis_errors"]
 
     workspace_info = result.get("workspaces") or {}
     if (
@@ -1136,6 +1139,19 @@ def _register_tools(mcp):
 
             raw = run_analyze(str(path), conf=confidence, exclude_folders=excl)
             static_result = json.loads(raw) if isinstance(raw, str) else raw
+            if analysis_result_incomplete(static_result):
+                return json.dumps(
+                    {
+                        "error": "Cannot verify dead code from incomplete analysis.",
+                        "analysis_errors": static_result.get(
+                            "analysis_errors", []
+                        ),
+                        "incomplete_languages": static_result.get(
+                            "analysis_summary", {}
+                        ).get("incomplete_languages", []),
+                    },
+                    indent=2,
+                )
 
             all_findings = []
             for key in (
@@ -1203,8 +1219,8 @@ def _register_tools(mcp):
 
         try:
             from skylos.analyzer import analyze as run_static
-            from skylos.dead_code import collect_dead_code_findings
-            from skylos.fixgen import (
+            from skylos.deadcode.collect import collect_dead_code_findings
+            from skylos.remediation.fixgen import (
                 generate_removal_plan,
                 generate_unified_diff,
                 apply_patches,
@@ -1222,11 +1238,54 @@ def _register_tools(mcp):
                 enable_secrets=False,
             )
             static_result = json.loads(raw) if isinstance(raw, str) else raw
+            analysis_errors = static_result.get("analysis_errors") or []
+            incomplete_languages = (
+                static_result.get("analysis_summary", {}).get(
+                    "incomplete_languages"
+                )
+                or []
+            )
+            if analysis_result_incomplete(static_result):
+                return json.dumps(
+                    {
+                        "error": "Cannot generate fixes from incomplete analysis.",
+                        "analysis_errors": analysis_errors,
+                        "incomplete_languages": incomplete_languages,
+                    },
+                    indent=2,
+                )
             all_findings = collect_dead_code_findings(static_result)
             defs_map = static_result.get("definitions", {})
 
             # use grep verification to filter
-            verdicts = grep_verify_findings(all_findings, target, time_budget=30.0)
+            grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
+            verdicts = grep_verify_findings(
+                all_findings,
+                target,
+                time_budget=grep_budget,
+            )
+            if not getattr(verdicts, "complete", True):
+                return json.dumps(
+                    {
+                        "error": (
+                            "Cannot generate fixes because grep verification "
+                            "did not complete. Increase SKYLOS_GREP_BUDGET and rerun."
+                        ),
+                        "grep_verify": {
+                            "complete": False,
+                            "candidate_count": getattr(
+                                verdicts, "candidate_count", len(all_findings)
+                            ),
+                            "time_budget_seconds": grep_budget,
+                            "incomplete_reason": getattr(
+                                verdicts,
+                                "incomplete_reason",
+                                "verification_incomplete",
+                            ),
+                        },
+                    },
+                    indent=2,
+                )
             dead_findings = [
                 f
                 for f in all_findings

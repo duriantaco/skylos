@@ -114,11 +114,20 @@ def filter_new_findings(result: dict, baseline: dict) -> dict:
 
     if "analysis_summary" in result:
         summary = dict(result.get("analysis_summary") or {})
+        grep_verify = summary.get("grep_verify")
+        incomplete_grep_verify = (
+            grep_verify
+            if isinstance(grep_verify, dict)
+            and grep_verify.get("complete") is False
+            else None
+        )
         for section, count_key in _SUMMARY_COUNT_KEYS.items():
             if section in result or count_key in summary:
                 summary[count_key] = len(filtered.get(section) or [])
         for key in _STALE_SUMMARY_AGGREGATES:
             summary.pop(key, None)
+        if incomplete_grep_verify is not None:
+            summary["grep_verify"] = incomplete_grep_verify
         filtered["analysis_summary"] = summary
 
     for key in _STALE_RESULT_AGGREGATES:

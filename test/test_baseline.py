@@ -211,3 +211,17 @@ class TestFilterNewFindings:
         assert "grade" not in filtered
         assert "ai_security_stats" not in filtered
         assert "provenance_summary" not in filtered
+
+    def test_preserves_incomplete_grep_status(self):
+        result = _sample_result()
+        grep_verify = {
+            "enabled": True,
+            "complete": False,
+            "status": "incomplete",
+            "incomplete_reason": "budget_exhausted",
+        }
+        result["analysis_summary"] = {"grep_verify": grep_verify}
+
+        filtered = filter_new_findings(result, {"fingerprints": []})
+
+        assert filtered["analysis_summary"]["grep_verify"] == grep_verify

@@ -54,6 +54,12 @@ def _grep_verify_pill(summary):
         return None
     if not grep_verify.get("enabled"):
         return "[muted]Grep verify: off[/muted]"
+    if grep_verify.get("complete") is False:
+        candidate_count = int(grep_verify.get("candidate_count") or 0)
+        return (
+            "[warn]Grep verify: incomplete[/warn] "
+            f"[muted]({candidate_count} candidates affected)[/muted]"
+        )
     rescued_count = int(grep_verify.get("rescued_count") or 0)
     return f"[brand]Grep verify: on[/brand] [muted](rescued {rescued_count})[/muted]"
 

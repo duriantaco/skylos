@@ -1553,6 +1553,13 @@ def _display_filter_items(items, file_filter, min_rank):
     return kept
 
 
+def _incomplete_grep_verify_report(summary):
+    report = summary.get("grep_verify") if isinstance(summary, dict) else None
+    if isinstance(report, dict) and report.get("complete") is False:
+        return report
+    return None
+
+
 def _apply_display_filters(result, severity=None, category=None, file_filter=None):
     import copy
 
@@ -1573,9 +1580,12 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
         filtered[key] = _display_filter_items(items, file_filter, min_rank)
 
     summary = copy.copy(result.get("analysis_summary") or {})
+    incomplete_grep_verify = _incomplete_grep_verify_report(summary)
     summary.pop("by_directory", None)
     summary.pop("dead_code_evidence", None)
     summary.pop("grep_verify", None)
+    if incomplete_grep_verify is not None:
+        summary["grep_verify"] = incomplete_grep_verify
     for key, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if key in result or count_key in summary:
             summary[count_key] = len(filtered.get(key) or [])
@@ -1650,10 +1660,13 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
         ]
 
     summary = copy.copy(result.get("analysis_summary") or {})
+    incomplete_grep_verify = _incomplete_grep_verify_report(summary)
     summary["selected_rules"] = selected_rules
     summary.pop("by_directory", None)
     summary.pop("dead_code_evidence", None)
     summary.pop("grep_verify", None)
+    if incomplete_grep_verify is not None:
+        summary["grep_verify"] = incomplete_grep_verify
     for category, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if category in result or count_key in summary:
             summary[count_key] = len(filtered.get(category) or [])

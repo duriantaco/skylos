@@ -458,6 +458,60 @@ def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
     assert kwargs["verification_mode"] == "judge_all"
 
 
+def test_agent_verify_refuses_fixes_from_incomplete_static_analysis(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("def old_func():\n    pass\n")
+    collect = MagicMock()
+    verify = MagicMock()
+
+    with (
+        patch(
+            "skylos.analyzer.analyze",
+            return_value=json.dumps(
+                {
+                    "analysis_summary": {
+                        "grade_unavailable_reason": "analysis_incomplete"
+                    },
+                    "analysis_errors": [
+                        {
+                            "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                            "kind": "grep_budget_exhausted",
+                        }
+                    ],
+                }
+            ),
+        ),
+        patch(
+            "skylos.deadcode.collect.collect_dead_code_findings",
+            collect,
+        ),
+        patch("skylos.llm.harness.run_verification_harness", verify),
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "verify",
+                str(sample),
+                "--fix",
+                "--apply",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    collect.assert_not_called()
+    verify.assert_not_called()
+
+
 def _write_sample_harness_run(tmp_path):
     from skylos.llm.harness.runner import HarnessRunner
 

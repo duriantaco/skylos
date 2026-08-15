@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
 import skylos_mcp.server as mcp_server
 from skylos_mcp.server import (
@@ -9,6 +10,24 @@ from skylos_mcp.server import (
     _make_summary,
     _register_tools,
 )
+
+
+class _FakeMCP:
+    def __init__(self):
+        self.tools = {}
+
+    def tool(self):
+        def decorate(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return decorate
+
+    def resource(self, *_args, **_kwargs):
+        def decorate(fn):
+            return fn
+
+        return decorate
 
 
 def test_make_summary_includes_workspace_report_when_present():
@@ -40,6 +59,243 @@ def test_make_summary_omits_empty_workspace_report():
     summary = _make_summary(result)
 
     assert "workspaces" not in summary
+
+
+def test_make_summary_preserves_analysis_errors():
+    error = {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "kind": "grep_budget_exhausted",
+    }
+    summary = _make_summary(
+        {
+            "analysis_summary": {"total_files": 1},
+            "analysis_errors": [error],
+        }
+    )
+
+    assert summary["analysis_errors"] == [error]
+
+
+def test_generate_fix_rejects_explicit_incomplete_grep_summary(
+    monkeypatch, tmp_path
+):
+    import skylos.analyzer as analyzer_module
+    import skylos.deadcode.collect as dead_code_module
+
+    fake = _FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        analyzer_module,
+        "analyze",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "analysis_summary": {
+                    "grep_verify": {"complete": False, "status": "incomplete"}
+                },
+                "analysis_errors": [],
+            }
+        ),
+    )
+    collect = Mock(side_effect=AssertionError("must not collect partial findings"))
+    monkeypatch.setattr(dead_code_module, "collect_dead_code_findings", collect)
+
+    result = json.loads(fake.tools["generate_fix"](str(tmp_path), apply=True))
+
+    assert result["error"] == "Cannot generate fixes from incomplete analysis."
+    collect.assert_not_called()
+
+
+def test_generate_fix_rejects_incomplete_static_analysis(monkeypatch, tmp_path):
+    import skylos.analyzer as analyzer_module
+    import skylos.deadcode.collect as dead_code_module
+
+    fake = _FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        analyzer_module,
+        "analyze",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "analysis_summary": {},
+                "analysis_errors": [
+                    {
+                        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                        "kind": "grep_budget_exhausted",
+                    }
+                ],
+            }
+        ),
+    )
+    collect = Mock(side_effect=AssertionError("must not collect partial findings"))
+    monkeypatch.setattr(dead_code_module, "collect_dead_code_findings", collect)
+
+    result = json.loads(
+        fake.tools["generate_fix"](str(tmp_path), apply=True)
+    )
+
+    assert result["error"] == "Cannot generate fixes from incomplete analysis."
+    assert result["analysis_errors"][0]["kind"] == "grep_budget_exhausted"
+    collect.assert_not_called()
+
+
+def test_verify_dead_code_rejects_incomplete_static_analysis(
+    monkeypatch, tmp_path
+):
+    import skylos.analyzer as analyzer_module
+    import skylos.llm.verify_orchestrator as verify_module
+
+    fake = _FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        analyzer_module,
+        "analyze",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "analysis_summary": {
+                    "grade_unavailable_reason": "analysis_incomplete"
+                },
+                "analysis_errors": [
+                    {
+                        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                        "kind": "grep_budget_exhausted",
+                    }
+                ],
+                "unused_functions": [{"full_name": "app.orphan"}],
+            }
+        ),
+    )
+    verify = Mock(side_effect=AssertionError("must not verify partial analysis"))
+    monkeypatch.setattr(verify_module, "run_verification", verify)
+
+    result = json.loads(fake.tools["verify_dead_code"](str(tmp_path)))
+
+    assert result["error"] == (
+        "Cannot verify dead code from incomplete analysis."
+    )
+    assert result["analysis_errors"][0]["kind"] == "grep_budget_exhausted"
+    verify.assert_not_called()
+
+
+def test_generate_fix_rejects_incomplete_direct_grep(monkeypatch, tmp_path):
+    import skylos.analyzer as analyzer_module
+    import skylos.core.grep_verify as grep_verify_module
+    import skylos.deadcode.collect as dead_code_module
+    import skylos.remediation.fixgen as fixgen_module
+
+    class IncompleteVerdicts(dict):
+        complete = False
+        candidate_count = 1
+        incomplete_reason = "budget_exhausted"
+
+    finding = {
+        "name": "orphan",
+        "full_name": "app.orphan",
+        "file": str(tmp_path / "app.py"),
+        "line": 1,
+        "type": "function",
+    }
+    fake = _FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setenv("SKYLOS_GREP_BUDGET", "0.25")
+    monkeypatch.setattr(
+        analyzer_module,
+        "analyze",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "analysis_summary": {},
+                "analysis_errors": [],
+                "definitions": {},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        dead_code_module,
+        "collect_dead_code_findings",
+        lambda _result: [finding],
+    )
+    grep = Mock(return_value=IncompleteVerdicts())
+    monkeypatch.setattr(grep_verify_module, "grep_verify_findings", grep)
+    plan = Mock(side_effect=AssertionError("must not plan from partial grep"))
+    monkeypatch.setattr(fixgen_module, "generate_removal_plan", plan)
+
+    result = json.loads(
+        fake.tools["generate_fix"](str(tmp_path), apply=True)
+    )
+
+    assert "grep verification did not complete" in result["error"]
+    assert result["grep_verify"]["complete"] is False
+    assert result["grep_verify"]["time_budget_seconds"] == 0.25
+    assert grep.call_args.kwargs["time_budget"] == 0.25
+    plan.assert_not_called()
+
+
+def test_generate_fix_keeps_complete_mapping_compatibility(monkeypatch, tmp_path):
+    import skylos.analyzer as analyzer_module
+    import skylos.core.grep_verify as grep_verify_module
+    import skylos.deadcode.collect as dead_code_module
+    import skylos.remediation.fixgen as fixgen_module
+
+    finding = {
+        "name": "orphan",
+        "full_name": "app.orphan",
+        "file": str(tmp_path / "app.py"),
+        "line": 1,
+        "type": "function",
+    }
+    fake = _FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        analyzer_module,
+        "analyze",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "analysis_summary": {},
+                "analysis_errors": [],
+                "definitions": {},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        dead_code_module,
+        "collect_dead_code_findings",
+        lambda _result: [finding],
+    )
+    monkeypatch.setattr(
+        grep_verify_module,
+        "grep_verify_findings",
+        lambda *_args, **_kwargs: {},
+    )
+    plan = Mock(return_value=[])
+    monkeypatch.setattr(fixgen_module, "generate_removal_plan", plan)
+    monkeypatch.setattr(fixgen_module, "validate_patches", lambda *_args: [])
+    monkeypatch.setattr(
+        fixgen_module,
+        "generate_unified_diff",
+        lambda _patches, _target: "",
+    )
+    monkeypatch.setattr(
+        fixgen_module,
+        "generate_fix_summary",
+        lambda _patches: {"files": 0},
+    )
+    monkeypatch.setattr(mcp_server, "_store_result", Mock())
+
+    result = json.loads(fake.tools["generate_fix"](str(tmp_path)))
+
+    assert result["patches"] == 0
+    assert result["errors"] == []
+    plan.assert_called_once_with(
+        [finding],
+        {},
+        str(tmp_path),
+        mode="delete",
+        min_safety=0.0,
+    )
 
 
 def test_architecture_payload_filters_architecture_findings():

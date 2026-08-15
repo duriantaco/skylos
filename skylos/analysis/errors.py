@@ -1,7 +1,28 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from typing import Any
+
+
+def analysis_result_incomplete(result: object) -> bool:
+    """Return whether a serialized analyzer result is unsafe to trust as complete."""
+    if not isinstance(result, Mapping):
+        return True
+    if result.get("analysis_errors"):
+        return True
+    summary = result.get("analysis_summary")
+    if not isinstance(summary, Mapping):
+        return False
+    grep_verify = summary.get("grep_verify")
+    return bool(
+        summary.get("incomplete_languages")
+        or summary.get("grade_unavailable_reason") == "analysis_incomplete"
+        or (
+            isinstance(grep_verify, Mapping)
+            and grep_verify.get("complete") is False
+        )
+    )
 
 
 def analysis_error_payload(
