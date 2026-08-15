@@ -60,7 +60,7 @@ advisory checks first.
 | Error disclosure | SKY-L017 | Exception details returned from handlers |
 | Broad file permissions | SKY-L020 | World-writable or overly broad file modes |
 | Stale mock | SKY-L024 | Tests mocking symbols that no longer exist |
-| Unfinished generation | SKY-L026 | Placeholder/generated functions left incomplete |
+| Unfinished generation | SKY-L026 | Incomplete functions or unhandled `...` defaults |
 | Duplicate string literal | SKY-L027 | Repeated long literals that should be named constants |
 | Too many returns | SKY-L028 | Functions with excessive exit paths |
 | Boolean trap | SKY-L029 | Public APIs with unclear boolean flags |

@@ -55,7 +55,10 @@ SUGGESTED_FIX_BY_VIBE = {
     "hallucinated_reference": (
         "Define or import the referenced symbol, or replace it with an existing helper."
     ),
-    "incomplete_generation": "Implement the stub or remove the unfinished code path.",
+    "incomplete_generation": (
+        "Implement the stub, replace or handle placeholder defaults, or remove "
+        "the unfinished code path."
+    ),
     "ghost_config": "Define the referenced config value or remove the stale flag check.",
     "stale_reference": "Update the reference to the renamed symbol or remove it.",
     "missing_resilience_control": "Add the missing timeout or resilience control.",

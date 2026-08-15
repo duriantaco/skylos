@@ -3507,6 +3507,36 @@ def fake_call():
             "low_entropy_uuid",
         }
 
+    def test_analyze_flags_concrete_ellipsis_default(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        src = tmp_path / "app.py"
+        src.write_text(
+            "def read(length: int = ...) -> int:\n"
+            "    return length + 5\n"
+            "\n"
+            "read()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        findings = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") == "SKY-L026"
+        ]
+
+        assert result.get("analysis_errors", []) == []
+        assert len(findings) == 1
+        assert findings[0]["name"] == "read"
+        assert findings[0]["parameter"] == "length"
+        assert findings[0]["line"] == 1
+
     def test_analyze_handles_protocol_positional_only_ellipsis_default(
         self,
         tmp_path,
@@ -3530,10 +3560,37 @@ class SupportsRead(Protocol):
             analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
         )
         assert result.get("analysis_errors", []) == []
-        findings = [
+        l032 = [
             f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
         ]
-        assert findings == []
+        l026 = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L026"
+        ]
+        assert l032 == []
+        assert l026 == []
+
+    def test_analyze_keeps_ellipsis_defaults_valid_in_stub_files(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("SKYLOS_JOBS", "1")
+        (tmp_path / "contracts.pyi").write_text(
+            "def read(length: int = ...) -> int: ...\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        l026 = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") == "SKY-L026"
+        ]
+
+        assert result.get("analysis_errors", []) == []
+        assert l026 == []
 
     def test_analyze_handles_positional_only_boolean_traps_and_setters(
         self,

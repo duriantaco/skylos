@@ -65,3 +65,57 @@ def protocol_method_ids(module: ast.Module) -> set[int]:
         for stmt in candidate.body
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+
+
+def _type_checking_import_bindings(module: ast.Module) -> tuple[set[str], set[str]]:
+    type_checking_names: set[str] = set()
+    typing_modules: set[str] = set()
+
+    for stmt in module.body:
+        if isinstance(stmt, ast.ImportFrom) and stmt.module in _PROTOCOL_MODULES:
+            for imported in stmt.names:
+                if imported.name == "TYPE_CHECKING":
+                    type_checking_names.add(imported.asname or imported.name)
+        elif isinstance(stmt, ast.Import):
+            for imported in stmt.names:
+                if imported.name in _PROTOCOL_MODULES:
+                    typing_modules.add(imported.asname or imported.name)
+
+    return type_checking_names, typing_modules
+
+
+def _is_type_checking_guard(
+    test: ast.expr,
+    type_checking_names: set[str],
+    typing_modules: set[str],
+) -> bool:
+    if isinstance(test, ast.Name):
+        return test.id in type_checking_names
+    return (
+        isinstance(test, ast.Attribute)
+        and test.attr == "TYPE_CHECKING"
+        and isinstance(test.value, ast.Name)
+        and test.value.id in typing_modules
+    )
+
+
+def type_checking_function_ids(module: ast.Module) -> set[int]:
+    type_checking_names, typing_modules = _type_checking_import_bindings(module)
+    if not type_checking_names and not typing_modules:
+        return set()
+
+    function_ids: set[int] = set()
+    for candidate in ast.walk(module):
+        if not isinstance(candidate, ast.If) or not _is_type_checking_guard(
+            candidate.test,
+            type_checking_names,
+            typing_modules,
+        ):
+            continue
+        for stmt in candidate.body:
+            function_ids.update(
+                id(child)
+                for child in ast.walk(stmt)
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+    return function_ids

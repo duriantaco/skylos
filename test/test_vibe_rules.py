@@ -2027,6 +2027,348 @@ class TestUnfinishedGeneration:
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
 
+    def test_concrete_ellipsis_default_is_flagged(self):
+        code = """
+        def read(length: int = ...) -> int:
+            return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert len(l026) == 1
+        assert l026[0]["name"] == "read"
+        assert l026[0]["simple_name"] == "read"
+        assert l026[0]["parameter"] == "length"
+        assert l026[0]["value"] == "..."
+        assert "receive Ellipsis at runtime" in l026[0]["message"]
+
+    def test_ellipsis_defaults_preserve_argument_kinds_and_order(self):
+        code = """
+        def configure(
+            required: int,
+            positional: int = ...,
+            /,
+            regular: int = 1,
+            *,
+            keyword: int = ...,
+        ) -> int:
+            return required + regular
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == [
+            "positional",
+            "keyword",
+        ]
+        assert [finding["line"] for finding in l026] == [
+            4,
+            8,
+        ]
+
+    def test_async_method_ellipsis_default_is_flagged(self):
+        code = """
+        class Reader:
+            async def read(self, length: int = ...) -> int:
+                return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            """
+            if length is ...:
+                length = 0
+            return length + 5
+            """,
+            """
+            if Ellipsis == length:
+                length = 0
+            return length + 5
+            """,
+            "return consume(length=length)",
+            "callback = partial(run, length=length)\nreturn schedule(callback)",
+        ],
+    )
+    def test_intentional_ellipsis_sentinel_is_not_flagged(self, body):
+        code = "def read(length: object = ...):\n" + textwrap.indent(
+            textwrap.dedent(body).strip(),
+            "    ",
+        )
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert l026 == []
+
+    def test_forwarding_does_not_hide_a_later_unsafe_use(self):
+        code = """
+        def read(length: int = ...):
+            print(length)
+            return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "return int(length)",
+            "return int(length) + 5",
+            "result = convert(length)\nreturn result",
+            "return consume(value=length)",
+            "consume(length=length)\nreturn length + 5",
+        ],
+    )
+    def test_call_does_not_prove_the_callee_accepts_ellipsis(self, body):
+        code = "def read(length: int = ...):\n" + textwrap.indent(body, "    ")
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    def test_nested_sentinel_comparison_does_not_exempt_outer_default(self):
+        code = """
+        def read(length: int = ...):
+            def normalize():
+                return length is ...
+            return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    def test_each_ellipsis_default_is_checked_independently(self):
+        code = """
+        def combine(left: int = ..., right: int = ...):
+            if left is ...:
+                left = 0
+            return left + right
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["right"]
+
+    @pytest.mark.parametrize(
+        ("import_statement", "annotation"),
+        [
+            ("from types import EllipsisType", "int | EllipsisType"),
+            ("from types import EllipsisType as ET", "int | ET"),
+            ("import types as runtime_types", "runtime_types.EllipsisType | int"),
+            (
+                "from types import EllipsisType\nfrom typing import Union",
+                "Union[int, EllipsisType]",
+            ),
+            (
+                "from types import EllipsisType\nfrom typing import Optional",
+                "Optional[EllipsisType]",
+            ),
+            (
+                "from types import EllipsisType\nfrom typing import Annotated",
+                "Annotated[int | EllipsisType, 'sentinel']",
+            ),
+        ],
+    )
+    def test_ellipsis_type_annotation_marks_an_intentional_sentinel(
+        self,
+        import_statement,
+        annotation,
+    ):
+        code = (
+            f"{import_statement}\n\n"
+            f"def read(length: {annotation} = ...):\n"
+            "    return length\n"
+        )
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert l026 == []
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            "Callable[[EllipsisType], int]",
+            "list[EllipsisType]",
+            "Annotated[int, EllipsisType]",
+        ],
+    )
+    def test_nested_ellipsis_type_annotation_does_not_exempt_default(
+        self,
+        annotation,
+    ):
+        code = f"""
+        from collections.abc import Callable
+        from types import EllipsisType
+        from typing import Annotated
+
+        def register(callback: {annotation} = ...):
+            return callback + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["callback"]
+
+    def test_unrelated_ellipsis_type_name_does_not_exempt_default(self):
+        code = """
+        import application_types
+
+        def read(length: int | application_types.EllipsisType = ...):
+            return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    def test_ellipsis_in_an_unrelated_annotation_does_not_exempt_default(self):
+        code = """
+        from collections.abc import Callable
+
+        def register(callback: Callable[..., int] = ...):
+            return callback()
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["callback"]
+
+    @pytest.mark.parametrize(
+        ("import_statement", "guard"),
+        [
+            ("from typing import TYPE_CHECKING", "TYPE_CHECKING"),
+            ("import typing as t", "t.TYPE_CHECKING"),
+            (
+                "from typing_extensions import TYPE_CHECKING as CHECKING",
+                "CHECKING",
+            ),
+        ],
+    )
+    def test_type_checking_only_signatures_are_not_flagged(
+        self,
+        import_statement,
+        guard,
+    ):
+        code = f"""
+        {import_statement}
+
+        if {guard}:
+            def read(length: int = ...) -> int:
+                return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert l026 == []
+
+    def test_runtime_branch_under_not_type_checking_is_still_flagged(self):
+        code = """
+        from typing import TYPE_CHECKING
+
+        if not TYPE_CHECKING:
+            def read(length: int = ...) -> int:
+                return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
+    def test_ellipsis_default_and_stub_body_emit_one_finding(self):
+        code = """
+        def read(length: int = ...) -> int:
+            ...
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert len(l026) == 1
+        assert l026[0]["name"] == "read"
+        assert "parameter" not in l026[0]
+        assert "only `...` in its body" in l026[0]["message"]
+
     def test_not_implemented_error(self):
         code = """
         def send_notification(user, message):
@@ -2082,12 +2424,37 @@ class TestUnfinishedGeneration:
 
         class Base:
             @abstractmethod
-            def process(self):
+            def process(self, value = ...):
                 pass
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
         assert len(l026) == 0
+
+    def test_overloads_are_exempt_but_concrete_implementation_is_flagged(self):
+        code = """
+        from typing import overload
+
+        @overload
+        def parse(value: int = ...) -> int: ...
+
+        @overload
+        def parse(value: str = ...) -> str: ...
+
+        def parse(value = ...):
+            return value + 1
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert len(l026) == 1
+        assert l026[0]["name"] == "parse"
+        assert l026[0]["parameter"] == "value"
 
     def test_runtime_checkable_protocol_methods_not_flagged(self):
         code = """
@@ -2137,6 +2504,29 @@ class TestUnfinishedGeneration:
         findings = check_code(UnfinishedGenerationRule(), code)
         l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
         assert [finding["name"] for finding in l026] == ["operation"]
+
+    def test_protocol_default_is_exempt_but_concrete_default_is_flagged(self):
+        code = """
+        from typing import Protocol
+
+        class ReaderContract(Protocol):
+            def read(self, length: int = ...) -> int: ...
+
+        class Reader(ReaderContract):
+            def read(self, length: int = ...) -> int:
+                return length + 5
+        """
+
+        findings = check_code(
+            UnfinishedGenerationRule(),
+            code,
+            filename="app.py",
+        )
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert len(l026) == 1
+        assert l026[0]["name"] == "read"
+        assert l026[0]["parameter"] == "length"
 
     def test_generic_protocol_method_not_flagged(self):
         code = """
@@ -2207,6 +2597,16 @@ class TestUnfinishedGeneration:
         l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
         assert len(l026) == 0
 
+    def test_concrete_default_in_init_file_is_still_flagged(self):
+        code = """
+        def read(length: int = ...):
+            return length + 5
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="__init__.py")
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
+
     def test_dunder_method_not_flagged(self):
         code = """
         class MyClass:
@@ -2216,6 +2616,17 @@ class TestUnfinishedGeneration:
         findings = check_code(UnfinishedGenerationRule(), code)
         l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
         assert len(l026) == 0
+
+    def test_concrete_default_in_dunder_method_is_still_flagged(self):
+        code = """
+        class Reader:
+            def __call__(self, length: int = ...):
+                return length + 5
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")
+        l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
+
+        assert [finding["parameter"] for finding in l026] == ["length"]
 
     def test_async_function_flagged(self):
         code = """
