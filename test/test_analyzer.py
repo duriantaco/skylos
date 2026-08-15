@@ -3803,6 +3803,278 @@ def test_computed_checksum_field_does_not_hide_real_secret_in_analyzer(tmp_path)
     )
 
 
+def _issue_706_cache_file(root):
+    github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    cache_file = root / ".skylos" / "cache" / "grep_results.json"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "stale": {
+                        "results": [f"app.py:1:cached_helper(); token={github_token}"],
+                        "last_access": 1,
+                        "created": 1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return cache_file
+
+
+def _issue_706_cache_findings(result):
+    return [
+        finding
+        for finding in result.get("secrets", [])
+        if finding.get("file") == ".skylos/cache/grep_results.json"
+    ]
+
+
+def _issue_706_init_ignored_cache_repo(root):
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
+        ".skylos/\n", encoding="utf-8"
+    )
+
+
+def test_recursive_secret_scan_skips_untracked_generated_grep_cache(tmp_path):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_init_ignored_cache_repo(tmp_path)
+    _issue_706_cache_file(tmp_path)
+
+    result = json.loads(
+        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
+    )
+
+    assert _issue_706_cache_findings(result) == []
+
+
+def test_non_git_project_skips_its_generated_grep_cache(tmp_path):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_cache_file(tmp_path)
+
+    result = json.loads(
+        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
+    )
+
+    assert _issue_706_cache_findings(result) == []
+
+
+def test_removed_secret_in_grep_evidence_does_not_reappear_from_cache(tmp_path):
+    _issue_706_init_ignored_cache_repo(tmp_path)
+    github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    (tmp_path / "target.py").write_text(
+        "def cached_helper():\n    pass\n",
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "evidence.yaml"
+    evidence.write_text(
+        f"entry: target.py # {github_token}\n",
+        encoding="utf-8",
+    )
+
+    first = json.loads(
+        analyze(
+            str(tmp_path),
+            conf=0,
+            enable_secrets=True,
+            grep_verify=True,
+        )
+    )
+    cache_file = tmp_path / ".skylos" / "cache" / "grep_results.json"
+
+    assert cache_file.exists()
+    assert github_token in cache_file.read_text(encoding="utf-8")
+    assert any(
+        finding.get("file") == "evidence.yaml"
+        and finding.get("provider") == "github"
+        for finding in first.get("secrets", [])
+    )
+    assert not any(
+        finding.get("full_name") == "target.cached_helper"
+        for finding in first.get("unused_functions", [])
+    )
+
+    evidence.write_text("entry: target.py\n", encoding="utf-8")
+    second = json.loads(
+        analyze(
+            str(tmp_path),
+            conf=0,
+            enable_secrets=True,
+            grep_verify=True,
+        )
+    )
+
+    assert github_token in cache_file.read_text(encoding="utf-8")
+    assert _issue_706_cache_findings(second) == []
+    assert second.get("secrets", []) == []
+    assert not any(
+        finding.get("full_name") == "target.cached_helper"
+        for finding in second.get("unused_functions", [])
+    )
+
+
+def test_recursive_secret_scan_keeps_tracked_grep_cache_visible(tmp_path):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_init_ignored_cache_repo(tmp_path)
+    cache_file = _issue_706_cache_file(tmp_path)
+    subprocess.run(
+        ["git", "add", "-f", "--", ".skylos/cache/grep_results.json"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    result = json.loads(
+        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
+    )
+
+    cache_findings = _issue_706_cache_findings(result)
+    assert cache_findings
+    assert any(finding.get("provider") == "github" for finding in cache_findings)
+    assert cache_file.exists()
+
+
+def test_nested_git_repo_uses_its_own_tracked_cache_state(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_init_ignored_cache_repo(nested)
+    _issue_706_cache_file(nested)
+    subprocess.run(
+        ["git", "add", "-f", "--", ".skylos/cache/grep_results.json"],
+        cwd=nested,
+        check=True,
+    )
+
+    result = json.loads(
+        analyze(str(nested), enable_secrets=True, grep_verify=False)
+    )
+
+    assert _issue_706_cache_findings(result)
+
+
+def test_generated_grep_cache_git_probe_failure_scans_fail_closed(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_cache_file(tmp_path)
+    monkeypatch.setattr("skylos.analyzer._git_tracking_status", lambda _path: None)
+
+    result = json.loads(
+        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
+    )
+
+    assert _issue_706_cache_findings(result)
+
+
+@pytest.mark.parametrize("target_kind", ["file", "cache_dir", "cache_root"])
+def test_explicit_generated_grep_cache_scan_is_not_suppressed(tmp_path, target_kind):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_init_ignored_cache_repo(tmp_path)
+    cache_file = _issue_706_cache_file(tmp_path)
+    targets = {
+        "file": cache_file,
+        "cache_dir": cache_file.parent,
+        "cache_root": cache_file.parent.parent,
+    }
+
+    result = json.loads(
+        analyze(str(targets[target_kind]), enable_secrets=True, grep_verify=False)
+    )
+
+    assert any(
+        finding.get("provider") == "github"
+        for finding in result.get("secrets", [])
+    )
+
+
+def test_changed_files_explicitly_selected_grep_cache_is_scanned(tmp_path):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    _issue_706_init_ignored_cache_repo(tmp_path)
+    cache_file = _issue_706_cache_file(tmp_path)
+
+    result = json.loads(
+        analyze(
+            str(tmp_path),
+            enable_secrets=True,
+            grep_verify=False,
+            changed_files={str(cache_file)},
+        )
+    )
+
+    assert _issue_706_cache_findings(result)
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".skylos/cache/other.json",
+        "src/.skylos/cache/grep_results.json",
+    ],
+)
+def test_grep_cache_lookalike_paths_remain_scannable(tmp_path, relative_path):
+    (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
+    github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
+    lookalike = tmp_path / relative_path
+    lookalike.parent.mkdir(parents=True, exist_ok=True)
+    lookalike.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
+        json.dumps({"token": github_token}), encoding="utf-8"
+    )
+
+    result = json.loads(
+        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
+    )
+
+    assert any(
+        finding.get("file") == relative_path
+        and finding.get("provider") == "github"
+        for finding in result.get("secrets", [])
+    )
+
+
+@pytest.mark.parametrize(
+    "returncode,expected",
+    [(0, True), (1, False), (2, None)],
+)
+def test_generated_grep_cache_tracking_status_is_fail_closed(
+    tmp_path, returncode, expected
+):
+    from skylos.analyzer import _git_tracking_status
+
+    (tmp_path / ".git").mkdir()
+    candidate = tmp_path / ".skylos" / "cache" / "grep_results.json"
+    with patch(
+        "skylos.analyzer.subprocess.run",
+        return_value=subprocess.CompletedProcess([], returncode),
+    ) as git_run:
+        actual = _git_tracking_status(candidate)
+
+    assert actual is expected
+    assert git_run.call_args.args[0] == [
+        "git",
+        "ls-files",
+        "--error-unmatch",
+        "--",
+        ".skylos/cache/grep_results.json",
+    ]
+
+
+def test_generated_grep_cache_tracking_timeout_is_unknown(tmp_path):
+    from skylos.analyzer import _git_tracking_status
+
+    (tmp_path / ".git").mkdir()
+    candidate = tmp_path / ".skylos" / "cache" / "grep_results.json"
+    with patch(
+        "skylos.analyzer.subprocess.run",
+        side_effect=subprocess.TimeoutExpired("git", 5),
+    ):
+        assert _git_tracking_status(candidate) is None
+
+
 _ISSUE_693_UV_LOCK = """\
 version = 1
 revision = 1
