@@ -188,9 +188,13 @@ def _quality_findings(
     return findings
 
 
-def _danger_findings(file, prepared: _PreparedPython, options: _WorkerOptions) -> list:
+def _danger_findings(
+    file,
+    prepared: _PreparedPython,
+    options: _WorkerOptions,
+) -> tuple[list, dict | None]:
     if not options.full_scan or not options.enable_danger_rules:
-        return []
+        return [], None
 
     danger_rules = [DangerousCallsRule()]
     set_linter_node_types(danger_rules)
@@ -201,6 +205,7 @@ def _danger_findings(file, prepared: _PreparedPython, options: _WorkerOptions) -
     from skylos.rules.danger.danger import scan_file_with_tree
 
     taint_findings = []
+    analysis_error = None
     try:
         scan_file_with_tree(
             prepared.tree,
@@ -208,10 +213,15 @@ def _danger_findings(file, prepared: _PreparedPython, options: _WorkerOptions) -
             taint_findings,
             source=prepared.source,
         )
-    except Exception:
+    except Exception as error:
         logger.debug("Taint analysis failed for %s", file, exc_info=True)
+        analysis_error = analysis_error_payload(
+            file,
+            error,
+            kind="security_scan_error",
+        )
     findings.extend(taint_findings)
-    return findings
+    return findings, analysis_error
 
 
 def _custom_findings(tree, file, extra_visitors: Iterable[type] | None) -> list:
@@ -381,6 +391,8 @@ def _success_result(
     findings: _FindingResults,
     visitors: _VisitorResults,
     artifacts: _Artifacts,
+    *,
+    analysis_error: dict | None = None,
 ) -> tuple:
     visitor = visitors.visitor
     return (
@@ -409,7 +421,7 @@ def _success_result(
         artifacts.clone_fragments,
         artifacts.architecture_metrics,
         getattr(visitor, "top_level_refs", set()),
-        None,
+        analysis_error,
         prepared.ignore_rules_by_line,
     )
 
@@ -485,7 +497,7 @@ def _prepare_python(file, mod, cfg, source: str) -> _PreparedPython:
 def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tuple:
     prepared = _prepare_python(file, mod, cfg, source)
     quality = _quality_findings(file, prepared, cfg, options)
-    danger = _danger_findings(file, prepared, options)
+    danger, analysis_error = _danger_findings(file, prepared, options)
     custom = _custom_findings(prepared.tree, file, options.extra_visitors)
     quality, danger, suppressed = _apply_inline_ignores(
         quality,
@@ -503,7 +515,14 @@ def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tup
             options.collect_architecture_metrics,
         ),
     )
-    return _success_result(cfg, prepared, findings, visitors, artifacts)
+    return _success_result(
+        cfg,
+        prepared,
+        findings,
+        visitors,
+        artifacts,
+        analysis_error=analysis_error,
+    )
 
 
 def _process_python_entry(file, mod, config_file, options: _WorkerOptions) -> tuple:
