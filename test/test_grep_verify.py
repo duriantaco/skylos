@@ -13,6 +13,8 @@ from skylos.core import grep_verify as grep_verify_module
 from skylos.core.grep_cache import GrepCache
 from skylos.core.grep_verify import (
     GrepStrategy,
+    GrepVerdict,
+    GrepVerificationResult,
     _deterministic_suppress_multilang,
     _store_cached_group_results,
     detect_language,
@@ -30,7 +32,9 @@ from skylos.core.grep_verify import (
 from skylos.core.grep_verify_common import (
     GrepRequest,
     _GrepBatchResults,
+    _GrepDeadlineExceeded,
     _GrepEvidence,
+    _GrepExecutionIncomplete,
     _GrepOutputLimitExceeded,
     _is_python_source_reference,
     _python_regex,
@@ -416,7 +420,93 @@ class TestGrepVerifyFindings:
             for i in range(100)
         ]
         verdicts = grep_verify_findings(findings, str(tmp_path), time_budget=0.0)
-        assert len(verdicts) < 50
+        assert verdicts == {}
+        assert verdicts.complete is False
+        assert verdicts.budget_exhausted is True
+        assert verdicts.candidate_count == 100
+        assert verdicts.verified_count == 0
+
+    def test_different_deadline_prefixes_produce_the_same_fail_closed_result(
+        self, tmp_path
+    ):
+        findings = [
+            {
+                "name": f"func_{index}",
+                "full_name": f"mod.func_{index}",
+                "simple_name": f"func_{index}",
+                "type": "function",
+                "file": str(tmp_path / "mod.py"),
+                "line": index + 1,
+                "confidence": 80,
+            }
+            for index in range(3)
+        ]
+
+        def run_with_clock(clock):
+            with (
+                patch(
+                    "skylos.core.grep_verify.time.monotonic",
+                    side_effect=clock,
+                ),
+                patch(
+                    "skylos.core.grep_verify._plan_batched_finding",
+                    side_effect=lambda finding, *_args: (
+                        GrepVerdict(alive=True, rationale=finding["full_name"]),
+                        None,
+                    ),
+                ),
+            ):
+                return grep_verify_findings(
+                    findings,
+                    str(tmp_path),
+                    time_budget=0.15,
+                )
+
+        one_candidate_checked = run_with_clock([0.0, 0.1, 0.2])
+        two_candidates_checked = run_with_clock([0.0, 0.05, 0.1, 0.2])
+
+        assert one_candidate_checked == two_candidates_checked == {}
+        assert one_candidate_checked.verified_count == 1
+        assert two_candidates_checked.verified_count == 2
+        assert one_candidate_checked.budget_exhausted is True
+        assert two_candidates_checked.budget_exhausted is True
+
+    def test_last_candidate_finishing_at_deadline_is_complete(self, tmp_path):
+        finding = {
+            "name": "helper",
+            "full_name": "mod.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "mod.py"),
+            "line": 1,
+            "confidence": 80,
+        }
+        now = [0.0]
+
+        def complete_at_deadline(*_args):
+            now[0] = 0.5
+            return None, None
+
+        with (
+            patch(
+                "skylos.core.grep_verify.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch(
+                "skylos.core.grep_verify._plan_batched_finding",
+                side_effect=complete_at_deadline,
+            ),
+        ):
+            verdicts = grep_verify_findings(
+                [finding],
+                str(tmp_path),
+                time_budget=0.5,
+            )
+
+        assert verdicts == {}
+        assert verdicts.complete is True
+        assert verdicts.candidate_count == 1
+        assert verdicts.verified_count == 1
 
     def test_import_rescues(self, tmp_path):
         (tmp_path / "types.py").write_text("class MyType:\n    pass\n")
@@ -1464,6 +1554,8 @@ class TestBatchedGrepVerify:
             )
 
         assert verdicts == {}
+        assert verdicts.complete is False
+        assert verdicts.incomplete_reason == "verification_incomplete"
         assert cache.size == 0
 
     def test_conservative_partial_match_can_rescue_but_is_not_cached(
@@ -1501,6 +1593,43 @@ class TestBatchedGrepVerify:
             )
 
         assert set(verdicts) == {"library.helper"}
+        assert verdicts.complete is True
+        assert cache.size == 0
+
+    def test_incomplete_request_without_alive_evidence_fails_closed(
+        self, tmp_path
+    ):
+        library = tmp_path / "library.py"
+        library.write_text("def helper():\n    return 1\n")
+        finding = {
+            "name": "helper",
+            "full_name": "library.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(library),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        def incomplete_negative_results(requests, **_kwargs):
+            results = _GrepBatchResults()
+            for request in requests:
+                results[request] = ()
+            results.incomplete_requests.add(requests[0])
+            return results
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch",
+            side_effect=incomplete_negative_results,
+        ):
+            verdicts = grep_verify_findings(
+                [finding], str(tmp_path), cache=cache, time_budget=1.0
+            )
+
+        assert verdicts == {}
+        assert verdicts.complete is False
+        assert verdicts.incomplete_reason == "verification_incomplete"
         assert cache.size == 0
 
     def test_malformed_cached_group_is_treated_as_a_cache_miss(self, tmp_path):
@@ -1700,6 +1829,8 @@ class TestBatchedGrepVerify:
             verdicts = grep_verify_findings([finding], str(tmp_path), time_budget=0.5)
 
         assert verdicts == {}
+        assert verdicts.complete is False
+        assert verdicts.budget_exhausted is True
         mock_batch.assert_not_called()
 
     def test_batched_and_legacy_verdicts_match(self, tmp_path):
@@ -1818,6 +1949,94 @@ class TestQualifiedReferenceSubstring:
 
 
 class TestAnalyzerIntegration:
+    def test_exhausted_budget_withholds_candidates_and_marks_scan_incomplete(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "app.py").write_text(
+            "import os\n\ndef orphan(unused_arg):\n    return 1\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "utils.py").write_text(
+            "def another_orphan():\n    return 2\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("SKYLOS_GREP_BUDGET", "0")
+
+        from skylos import cli
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+
+        assert result["analysis_errors"][0]["rule_id"] == (
+            "SKY-ANALYSIS-INCOMPLETE"
+        )
+        assert result["analysis_errors"][0]["kind"] == "grep_budget_exhausted"
+        assert result["analysis_summary"]["grep_verify"] == {
+            "enabled": True,
+            "rescued_count": 0,
+            "project_cache_enabled": True,
+            "complete": False,
+            "status": "incomplete",
+            "candidate_count": 4,
+            "candidate_file_count": 2,
+            "time_budget_seconds": 0.0,
+            "incomplete_reason": "budget_exhausted",
+        }
+        assert result["analysis_errors"][0]["file"] == str(tmp_path / "app.py")
+        assert result["analysis_errors"][0]["affected_file_count"] == 2
+        assert "grade" not in result
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert cli._analysis_incomplete_exit_code(result) == 2
+
+        assert result["unused_functions"] == []
+        assert result["unused_imports"] == []
+        assert result["unused_parameters"] == []
+        abstentions = result["dead_code_abstentions"]
+        assert {finding["type"] for finding in abstentions} >= {
+            "function",
+            "import",
+            "parameter",
+        }
+        grep_uncertainty = [
+            evidence
+            for finding in abstentions
+            for evidence in finding.get("dead_code_evidence", [])
+            if evidence.get("source") == "grep_verify"
+        ]
+        assert grep_uncertainty
+        assert all(
+            evidence["kind"] == "uncertainty" for evidence in grep_uncertainty
+        )
+
+    def test_incomplete_grep_state_is_reset_between_analyzer_runs(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "app.py").write_text(
+            "def orphan():\n    return 1\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import Skylos
+
+        analyzer = Skylos()
+        monkeypatch.setenv("SKYLOS_GREP_BUDGET", "0")
+        incomplete = json.loads(
+            analyzer.analyze(str(tmp_path), thr=0, grep_verify=True)
+        )
+        complete = json.loads(
+            analyzer.analyze(str(tmp_path), thr=0, grep_verify=False)
+        )
+
+        assert incomplete["unused_functions"] == []
+        assert incomplete["dead_code_abstentions"]
+        assert complete["analysis_errors"] == []
+        assert complete["dead_code_abstentions"] == []
+        assert {item["simple_name"] for item in complete["unused_functions"]} == {
+            "orphan"
+        }
+
     def test_grep_cache_invalidates_when_repository_evidence_changes(self, tmp_path):
         target = tmp_path / "target.py"
         evidence = tmp_path / "evidence.py"
@@ -1945,6 +2164,51 @@ result = PublicClass.used_method()
 
 
 class TestAnalyzerGrepVerifyOrdering:
+    def test_incomplete_result_does_not_apply_partial_rescues(
+        self, tmp_path, monkeypatch
+    ):
+        from skylos.analyzer import Skylos
+        from skylos.visitors.base import Definition
+
+        source = tmp_path / "mod.py"
+        source.write_text("def helper():\n    return 1\n")
+        analyzer = Skylos()
+        analyzer._project_root = tmp_path
+        definition = Definition("mod.helper", "function", source, 1)
+        definition.confidence = 80
+        analyzer.defs = {"mod.helper": definition}
+        incomplete = GrepVerificationResult(
+            {"mod.helper": GrepVerdict(alive=True)},
+            candidate_count=1,
+            verified_count=0,
+            time_budget=0.0,
+            incomplete_reason="budget_exhausted",
+        )
+        monkeypatch.setenv("SKYLOS_GREP_BUDGET", "0")
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings",
+            return_value=incomplete,
+        ):
+            rescued = analyzer._grep_verify()
+
+        assert rescued == 0
+        assert definition.references == 0
+        assert definition.heuristic_refs.get("grep_verify") is None
+        assert analyzer._grep_verify_report["complete"] is False
+        assert analyzer._grep_verify_incomplete_candidates[0]["full_name"] == (
+            "mod.helper"
+        )
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings",
+            return_value={},
+        ):
+            analyzer._grep_verify()
+
+        assert not hasattr(analyzer, "_grep_verify_incomplete_candidates")
+        assert "complete" not in analyzer._grep_verify_report
+
     def test_candidates_are_sorted_by_rescue_priority(self, tmp_path):
         from skylos.analyzer import Skylos
         from skylos.visitors.base import Definition
@@ -2353,6 +2617,60 @@ class TestParallelMultiStrategySearch:
 
 
 class TestGrepVerifyParallel:
+    def test_parallel_incomplete_operation_at_deadline_is_budget_exhaustion(self):
+        incomplete = grep_verify_module.concurrent.futures.Future()
+        incomplete.set_exception(_GrepExecutionIncomplete("request timed out"))
+
+        with patch("skylos.core.grep_verify.time.monotonic", return_value=1.0):
+            verified_count, reason = (
+                grep_verify_module._collect_finished_findings(
+                    {incomplete}, {}, deadline=1.0
+                )
+            )
+
+        assert verified_count == 0
+        assert reason == "budget_exhausted"
+
+    def test_parallel_completion_reason_is_order_independent(self):
+        success = grep_verify_module.concurrent.futures.Future()
+        success.set_result(("lib.helper", GrepVerdict(alive=True)))
+        deadline = grep_verify_module.concurrent.futures.Future()
+        deadline.set_exception(_GrepDeadlineExceeded("budget"))
+        failure = grep_verify_module.concurrent.futures.Future()
+        failure.set_exception(RuntimeError("backend failed"))
+        verdicts = {}
+
+        verified_count, reason = grep_verify_module._collect_finished_findings(
+            {deadline, success, failure}, verdicts
+        )
+
+        assert verified_count == 1
+        assert reason == "verification_incomplete"
+        assert set(verdicts) == {"lib.helper"}
+
+    def test_parallel_budget_exhaustion_discards_partial_results(self, tmp_path):
+        finding = {
+            "name": "helper",
+            "full_name": "lib.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "lib.py"),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        verdicts = grep_verify_findings(
+            [finding],
+            str(tmp_path),
+            time_budget=0.0,
+            parallel=True,
+            max_workers=1,
+        )
+
+        assert verdicts == {}
+        assert verdicts.complete is False
+        assert verdicts.budget_exhausted is True
+
     def test_parallel_mode(self, tmp_path):
         (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
         (tmp_path / "main.py").write_text("from lib import helper\nhelper()\n")

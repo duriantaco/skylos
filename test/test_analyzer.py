@@ -1843,7 +1843,11 @@ max_args = false
                     None,
                 )
 
-                result_json = skylos.analyze("/fake/path", thr=60)
+                result_json = skylos.analyze(
+                    "/fake/path",
+                    thr=60,
+                    grep_verify=False,
+                )
                 result = json.loads(result_json)
 
                 assert len(result["unused_functions"]) == 1

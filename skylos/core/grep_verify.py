@@ -10,6 +10,7 @@ from typing import Any
 
 from skylos.core.grep_verify_common import (
     GrepRequest,
+    _GrepDeadlineExceeded,
     _GrepEvidence,
     _GrepExecutionIncomplete,
     _run_grep,
@@ -49,6 +50,7 @@ __all__ = [
     "_STRONG_ALIVE_STRATEGIES",
     "GrepStrategy",
     "GrepVerdict",
+    "GrepVerificationResult",
     "_cached_group_results",
     "_deterministic_suppress_multilang",
     "_run_go_strategies",
@@ -76,6 +78,31 @@ class GrepVerdict:
     suppression_code: str | None = None
     rationale: str = ""
     evidence: list[str] = field(default_factory=list)
+
+
+class GrepVerificationResult(dict[str, GrepVerdict]):
+    """Verdicts plus whether every candidate was safely verified.
+
+    This remains a ``dict`` so existing callers can keep using membership,
+    indexing, and equality without an API migration.
+    """
+
+    def __init__(
+        self,
+        verdicts: dict[str, GrepVerdict] | None = None,
+        *,
+        candidate_count: int,
+        verified_count: int,
+        time_budget: float,
+        incomplete_reason: str | None = None,
+    ) -> None:
+        super().__init__(verdicts or {})
+        self.candidate_count = candidate_count
+        self.verified_count = verified_count
+        self.time_budget = time_budget
+        self.incomplete_reason = incomplete_reason
+        self.complete = incomplete_reason is None
+        self.budget_exhausted = incomplete_reason == "budget_exhausted"
 
 
 @dataclass
@@ -348,34 +375,59 @@ def _execute_pending_findings(
     project_root: str,
     cache: Any,
     deadline: float,
-) -> dict[str, GrepVerdict]:
+) -> tuple[dict[str, GrepVerdict], int, str | None]:
     requests = [request for item in pending for request in item.requests]
-    batch_results = execute_grep_batch(requests, deadline=deadline)
+    try:
+        batch_results = execute_grep_batch(requests, deadline=deadline)
+    except _GrepExecutionIncomplete as exc:
+        reason = (
+            "budget_exhausted"
+            if isinstance(exc, _GrepDeadlineExceeded)
+            or time.monotonic() >= deadline
+            else "verification_incomplete"
+        )
+        return {}, 0, reason
     incomplete_requests = getattr(batch_results, "incomplete_requests", set())
     verdicts: dict[str, GrepVerdict] = {}
-    for item in pending:
+    verified_count = 0
+    for index, item in enumerate(pending):
         if time.monotonic() >= deadline:
-            break
+            return verdicts, verified_count, "budget_exhausted"
         if any(request not in batch_results for request in item.requests):
-            continue
+            reason = (
+                "budget_exhausted"
+                if time.monotonic() >= deadline
+                else "verification_incomplete"
+            )
+            return verdicts, verified_count, reason
         try:
             with replay_grep_results(batch_results, deadline=deadline):
                 search_results = multi_strategy_search(item.finding, project_root)
         except _GrepExecutionIncomplete as exc:
             logger.debug("grep replay was incomplete: %s", exc)
-            continue
-        if time.monotonic() >= deadline:
-            break
-        if not any(
+            reason = (
+                "budget_exhausted"
+                if isinstance(exc, _GrepDeadlineExceeded)
+                or time.monotonic() >= deadline
+                else "verification_incomplete"
+            )
+            return verdicts, verified_count, reason
+        request_incomplete = any(
             request in incomplete_requests for request in item.requests
-        ):
+        )
+        if not request_incomplete:
             _store_cached_group_results(
                 cache, item.group_name, item.finding, search_results
             )
         verdict = _apply_deterministic_rules(search_results, item.finding)
+        if request_incomplete and not (verdict and verdict.alive):
+            return verdicts, verified_count, "verification_incomplete"
         if verdict:
             verdicts[_finding_full_name(item.finding)] = verdict
-    return verdicts
+        verified_count += 1
+        if time.monotonic() >= deadline and index + 1 < len(pending):
+            return verdicts, verified_count, "budget_exhausted"
+    return verdicts, verified_count, None
 
 
 def _grep_verify_findings_batched(
@@ -384,38 +436,62 @@ def _grep_verify_findings_batched(
     time_budget: float,
     cache: Any,
     start_time: float,
-) -> dict[str, GrepVerdict]:
+) -> GrepVerificationResult:
+    eligible_findings = [finding for finding in findings if _finding_full_name(finding)]
     verdicts: dict[str, GrepVerdict] = {}
     pending: list[_PendingBatchFinding] = []
     deadline = start_time + time_budget
+    verified_count = 0
+    incomplete_reason: str | None = None
 
-    for finding in findings:
+    for finding in eligible_findings:
         if time.monotonic() >= deadline:
+            incomplete_reason = "budget_exhausted"
             break
         full_name = _finding_full_name(finding)
-        if not full_name:
-            continue
 
         verdict, planned = _plan_batched_finding(finding, project_root, cache)
         if verdict:
             verdicts[full_name] = verdict
         if planned:
             pending.append(planned)
+        else:
+            verified_count += 1
         if len(pending) < _GREP_FINDING_BATCH_SIZE:
             continue
         if time.monotonic() >= deadline:
+            incomplete_reason = "budget_exhausted"
             break
-        verdicts.update(
+        batch_verdicts, batch_verified, incomplete_reason = (
             _execute_pending_findings(pending, project_root, cache, deadline)
         )
+        verdicts.update(batch_verdicts)
+        verified_count += batch_verified
         pending.clear()
+        if incomplete_reason:
+            break
 
-    if pending and time.monotonic() < deadline:
-        verdicts.update(
-            _execute_pending_findings(pending, project_root, cache, deadline)
-        )
+    if pending and incomplete_reason is None:
+        if time.monotonic() >= deadline:
+            incomplete_reason = "budget_exhausted"
+        else:
+            batch_verdicts, batch_verified, incomplete_reason = (
+                _execute_pending_findings(pending, project_root, cache, deadline)
+            )
+            verdicts.update(batch_verdicts)
+            verified_count += batch_verified
 
-    return verdicts
+    candidate_count = len(eligible_findings)
+    if incomplete_reason is None and verified_count != candidate_count:
+        incomplete_reason = "verification_incomplete"
+
+    return GrepVerificationResult(
+        verdicts if incomplete_reason is None else {},
+        candidate_count=candidate_count,
+        verified_count=verified_count,
+        time_budget=time_budget,
+        incomplete_reason=incomplete_reason,
+    )
 
 
 def _process_finding(
@@ -446,7 +522,7 @@ def _submit_next_finding(
     search_fn: Callable[[dict], dict[str, list[str]]],
     deadline: float,
 ) -> bool:
-    if time.monotonic() > deadline:
+    if time.monotonic() >= deadline:
         return False
     for finding in findings:
         if not _finding_full_name(finding):
@@ -461,15 +537,35 @@ def _submit_next_finding(
 def _collect_finished_findings(
     done: set[_FindingFuture],
     verdicts: dict[str, GrepVerdict],
-) -> None:
+    deadline: float | None = None,
+) -> tuple[int, str | None]:
+    completed: list[tuple[str, GrepVerdict | None]] = []
+    incomplete_reasons: set[str] = set()
     for future in done:
         try:
-            full_name, verdict = future.result()
+            completed.append(future.result())
         except Exception as exc:
             logger.debug("grep verification failed: %s", exc)
-            continue
+            incomplete_reasons.add(
+                "budget_exhausted"
+                if isinstance(exc, _GrepDeadlineExceeded)
+                or (
+                    isinstance(exc, _GrepExecutionIncomplete)
+                    and deadline is not None
+                    and time.monotonic() >= deadline
+                )
+                else "verification_incomplete"
+            )
+    for full_name, verdict in sorted(completed, key=lambda item: item[0]):
         if full_name and verdict:
             verdicts[full_name] = verdict
+    if "verification_incomplete" in incomplete_reasons:
+        reason = "verification_incomplete"
+    elif "budget_exhausted" in incomplete_reasons:
+        reason = "budget_exhausted"
+    else:
+        reason = None
+    return len(completed), reason
 
 
 def _grep_verify_findings_parallel(
@@ -478,13 +574,16 @@ def _grep_verify_findings_parallel(
     time_budget: float,
     max_workers: int,
     start_time: float,
-) -> dict[str, GrepVerdict]:
+) -> GrepVerificationResult:
+    eligible_findings = [finding for finding in findings if _finding_full_name(finding)]
     verdicts: dict[str, GrepVerdict] = {}
     worker_count = max(1, int(max_workers or _DEFAULT_GREP_WORKERS))
     deadline = start_time + time_budget
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
     pending: set[_FindingFuture] = set()
-    findings_iter = iter(findings)
+    findings_iter = iter(eligible_findings)
+    verified_count = 0
+    incomplete_reason: str | None = None
 
     try:
         for _ in range(worker_count):
@@ -493,7 +592,7 @@ def _grep_verify_findings_parallel(
             ):
                 break
 
-        while pending and time.monotonic() <= deadline:
+        while pending and time.monotonic() < deadline:
             remaining = max(0.0, deadline - time.monotonic())
             done, pending = concurrent.futures.wait(
                 pending,
@@ -502,7 +601,12 @@ def _grep_verify_findings_parallel(
             )
             if not done:
                 break
-            _collect_finished_findings(done, verdicts)
+            newly_verified, incomplete_reason = _collect_finished_findings(
+                done, verdicts, deadline
+            )
+            verified_count += newly_verified
+            if incomplete_reason:
+                break
             for _ in done:
                 _submit_next_finding(
                     executor, pending, findings_iter, search_fn, deadline
@@ -512,7 +616,20 @@ def _grep_verify_findings_parallel(
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
 
-    return verdicts
+    candidate_count = len(eligible_findings)
+    if incomplete_reason is None and verified_count != candidate_count:
+        incomplete_reason = (
+            "budget_exhausted"
+            if time.monotonic() >= deadline
+            else "verification_incomplete"
+        )
+    return GrepVerificationResult(
+        verdicts if incomplete_reason is None else {},
+        candidate_count=candidate_count,
+        verified_count=verified_count,
+        time_budget=time_budget,
+        incomplete_reason=incomplete_reason,
+    )
 
 
 def grep_verify_findings(
@@ -523,7 +640,7 @@ def grep_verify_findings(
     parallel: bool = False,
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
-) -> dict[str, GrepVerdict]:
+) -> GrepVerificationResult:
     cache_binder = getattr(type(cache), "bind_repository", None)
     if callable(cache_binder):
         cache_binder(cache, project_root)

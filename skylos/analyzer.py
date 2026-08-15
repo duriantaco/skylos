@@ -109,6 +109,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_param_method_refs",
     "_call_arg_types",
     "_grep_verify_report",
+    "_grep_verify_incomplete_candidates",
     "_dead_code_liveness_report",
     "ts_consumed_exports",
     "_ts_wildcard_edges",
@@ -725,6 +726,54 @@ def _secret_config_read_error_payload(path: Path) -> dict:
         message = f"Secret scan could not safely read {path.name}"
 
     return _analysis_error_payload(path, RuntimeError(message), kind=kind)
+
+
+def _grep_verify_error_payload(
+    path: Path,
+    report: dict,
+    candidates: tuple[dict, ...] | list[dict] = (),
+) -> dict:
+    reason = str(report.get("incomplete_reason") or "verification_incomplete")
+    if reason == "budget_exhausted":
+        budget = report.get("time_budget_seconds", 30)
+        message = (
+            f"Grep verification exceeded its {budget:g}-second budget. "
+            "Dead-code findings that required grep verification were withheld. "
+            "Increase SKYLOS_GREP_BUDGET and rerun."
+        )
+        kind = "grep_budget_exhausted"
+    else:
+        message = (
+            "Grep verification could not complete safely. Dead-code findings "
+            "that required grep verification were withheld."
+        )
+        kind = "grep_verification_incomplete"
+    located_candidates = sorted(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, dict) and candidate.get("file")
+        ),
+        key=lambda candidate: (
+            str(candidate.get("file")),
+            int(candidate.get("line") or 0),
+        ),
+    )
+    error_path = (
+        Path(str(located_candidates[0]["file"])) if located_candidates else path
+    )
+    payload = _analysis_error_payload(
+        error_path,
+        RuntimeError(message),
+        kind=kind,
+    )
+    if located_candidates:
+        payload["line"] = max(1, int(located_candidates[0].get("line") or 1))
+    payload["affected_file_count"] = max(
+        1,
+        int(report.get("candidate_file_count") or 0),
+    )
+    return payload
 
 
 _GREP_VERIFY_TYPE_PRIORITY = {
@@ -1674,6 +1723,25 @@ class Skylos:
         from skylos.core.grep_cache import GrepCache
         from skylos.core.grep_verify import grep_verify_findings
 
+        self.__dict__.pop("_grep_verify_incomplete_candidates", None)
+        report = getattr(self, "_grep_verify_report", None)
+        if not isinstance(report, dict):
+            report = {
+                "enabled": True,
+                "rescued_count": 0,
+                "project_cache_enabled": bool(use_project_cache),
+            }
+            self._grep_verify_report = report
+        for key in (
+            "complete",
+            "status",
+            "candidate_count",
+            "candidate_file_count",
+            "time_budget_seconds",
+            "incomplete_reason",
+        ):
+            report.pop(key, None)
+
         candidates, candidate_defs = _collect_grep_verify_candidates(self.defs)
         if not candidates:
             return 0
@@ -1697,6 +1765,31 @@ class Skylos:
         finally:
             if use_project_cache:
                 grep_cache.save(grep_root)
+
+        if not getattr(verdicts, "complete", True):
+            self._grep_verify_incomplete_candidates = tuple(candidates)
+            candidate_file_count = len(
+                {
+                    str(candidate.get("file"))
+                    for candidate in candidates
+                    if candidate.get("file")
+                }
+            )
+            report.update(
+                {
+                    "complete": False,
+                    "status": "incomplete",
+                    "candidate_count": len(candidates),
+                    "candidate_file_count": candidate_file_count,
+                    "time_budget_seconds": grep_budget,
+                    "incomplete_reason": getattr(
+                        verdicts,
+                        "incomplete_reason",
+                        "verification_incomplete",
+                    ),
+                }
+            )
+            return 0
 
         rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
 
@@ -4282,6 +4375,7 @@ class Skylos:
             "enabled": bool(grep_verify),
             "rescued_count": 0,
         }
+        self._grep_verify_report = grep_verify_report
         if grep_verify:
             grep_verify_report["project_cache_enabled"] = bool(grep_cache)
             if progress_callback:
@@ -4289,7 +4383,14 @@ class Skylos:
             grep_verify_report["rescued_count"] = self._grep_verify(
                 use_project_cache=grep_cache
             )
-        self._grep_verify_report = grep_verify_report
+            if grep_verify_report.get("complete") is False:
+                analysis_errors.append(
+                    _grep_verify_error_payload(
+                        project_root,
+                        grep_verify_report,
+                        getattr(self, "_grep_verify_incomplete_candidates", ()),
+                    )
+                )
 
         dead_ts_files = self._find_dead_ts_files(
             files, exclude_folders, workspace_inventory=workspace_inventory
