@@ -4,7 +4,17 @@ from functools import lru_cache
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
-from skylos.rules.quality._protocols import protocol_method_ids
+from skylos.rules.quality._function_defaults import (
+    annotation_accepts_ellipsis,
+    ellipsis_type_bindings,
+    function_handles_ellipsis_parameter,
+    is_ellipsis_literal,
+    iter_arg_defaults as _iter_arg_defaults,
+)
+from skylos.rules.quality._protocols import (
+    protocol_method_ids,
+    type_checking_function_ids,
+)
 from skylos.rules.quality.logic_foundation import _string_literal_value
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
@@ -345,14 +355,26 @@ class UnfinishedGenerationRule(SkylosRule):
 
     def __init__(self):
         self._protocol_method_ids: set[int] = set()
+        self._type_checking_function_ids: set[int] = set()
+        self._ellipsis_type_names: set[str] = set()
+        self._ellipsis_type_modules: set[str] = set()
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
             self._protocol_method_ids = protocol_method_ids(node)
+            self._type_checking_function_ids = type_checking_function_ids(node)
+            (
+                self._ellipsis_type_names,
+                self._ellipsis_type_modules,
+            ) = ellipsis_type_bindings(node)
             return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
-        if id(node) in self._protocol_method_ids:
+        node_id = id(node)
+        if (
+            node_id in self._protocol_method_ids
+            or node_id in self._type_checking_function_ids
+        ):
             return None
 
         filename = context.get("filename", "")
@@ -367,36 +389,44 @@ class UnfinishedGenerationRule(SkylosRule):
                 return None
 
         basename = Path(filename).name
-        if basename == "__init__.py":
-            return None
         if basename.startswith("test_") or basename.startswith("conftest"):
             return None
 
+        default_findings = _ellipsis_default_findings(
+            node,
+            filename=filename,
+            basename=basename,
+            ellipsis_type_names=self._ellipsis_type_names,
+            ellipsis_type_modules=self._ellipsis_type_modules,
+        )
+
+        if basename == "__init__.py":
+            return default_findings or None
         if node.name.startswith("__") and node.name.endswith("__"):
-            return None
+            return default_findings or None
 
         body = node.body
         if not body:
-            return None
+            return default_findings or None
 
         stmts = body
         if isinstance(body[0], ast.Expr) and _string_literal_value(body[0].value):
             stmts = body[1:]
 
         if not stmts:
-            return None
+            return default_findings or None
 
         if len(stmts) != 1:
-            return None
+            return default_findings or None
 
         stmt = stmts[0]
         marker = _unfinished_generation_marker(stmt)
         marker_line = stmt.lineno
 
         if not marker:
-            return None
+            return default_findings or None
         if _is_empty_collection_route_response(marker, node):
-            return None
+            return default_findings or None
 
         return [
             {
@@ -421,6 +451,57 @@ class UnfinishedGenerationRule(SkylosRule):
                 "ai_likelihood": "medium",
             }
         ]
+
+
+def _ellipsis_default_findings(
+    node,
+    *,
+    filename,
+    basename,
+    ellipsis_type_names,
+    ellipsis_type_modules,
+):
+    findings = []
+    for arg, default in _iter_arg_defaults(node):
+        if not is_ellipsis_literal(default):
+            continue
+
+        parameter = arg.arg
+        if annotation_accepts_ellipsis(
+            arg.annotation,
+            type_names=ellipsis_type_names,
+            type_modules=ellipsis_type_modules,
+        ):
+            continue
+        if function_handles_ellipsis_parameter(node, parameter):
+            continue
+
+        findings.append(
+            {
+                "rule_id": "SKY-L026",
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "function",
+                "name": node.name,
+                "simple_name": node.name,
+                "parameter": parameter,
+                "value": "...",
+                "threshold": 0,
+                "message": (
+                    f"Function '{node.name}' uses `...` as the default for "
+                    f"parameter '{parameter}'. Calls that omit this argument "
+                    "receive Ellipsis at runtime; use a real default or handle "
+                    "Ellipsis explicitly."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": getattr(default, "lineno", getattr(node, "lineno", 1)),
+                "col": getattr(default, "col_offset", getattr(node, "col_offset", 0)),
+                "vibe_category": "incomplete_generation",
+                "ai_likelihood": "medium",
+            }
+        )
+    return findings
 
 
 def _unfinished_generation_marker(stmt):
@@ -1333,21 +1414,6 @@ class MockPlaceholderDataRule(SkylosRule):
                 "col": col,
             }
         )
-
-
-def _iter_arg_defaults(func_node):
-    args = func_node.args
-    num_defaults = len(args.defaults)
-    positional_args = [*args.posonlyargs, *args.args]
-    num_args = len(positional_args)
-    offset = num_args - num_defaults
-
-    for i, default in enumerate(args.defaults):
-        if default:
-            yield positional_args[offset + i], default
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
-        if default:
-            yield arg, default
 
 
 _HTTP_RESPONSE_CONSTRUCTORS = {

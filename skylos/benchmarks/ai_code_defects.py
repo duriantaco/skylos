@@ -25,7 +25,10 @@ from skylos.verify_change import verify_change_path
 
 AI_CODE_DEFECT_TAXONOMY: dict[str, str] = {
     "hallucinated_reference": "Generated code references symbols that do not exist.",
-    "incomplete_generation": "Generated code leaves stubs or unfinished bodies behind.",
+    "incomplete_generation": (
+        "Generated code leaves stubs, placeholder defaults, or unfinished bodies "
+        "behind."
+    ),
     "dependency_hallucination": "Generated manifests cite packages or versions that do not exist.",
     "api_signature_hallucination": "Generated calls use real packages with invented APIs.",
     "assertion_weakening": "Generated test edits weaken assertions instead of preserving behavior.",

@@ -77,7 +77,7 @@ _RULES = (
     RuleCatalogEntry("SKY-L021", "Security regression", "quality"),
     RuleCatalogEntry("SKY-L023", "Phantom decorator", "ai_defect"),
     RuleCatalogEntry("SKY-L024", "Stale mock", "quality"),
-    RuleCatalogEntry("SKY-L026", "Unfinished generated code", "quality"),
+    RuleCatalogEntry("SKY-L026", "Unfinished code or placeholder default", "quality"),
     RuleCatalogEntry("SKY-L027", "Duplicate string literal", "quality"),
     RuleCatalogEntry("SKY-L028", "Too many returns", "quality"),
     RuleCatalogEntry("SKY-L029", "Boolean trap", "quality"),

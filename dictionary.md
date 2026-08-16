@@ -480,7 +480,7 @@ use the `SKY-A` prefix.
 | L020 | HIGH | Overly broad file permissions | Python |
 | L021 | HIGH | Security control regression | Diff-aware review |
 | L024 | HIGH | Stale mock target | Python |
-| L026 | MEDIUM | Unfinished generated function | Python |
+| L026 | MEDIUM | Unfinished function or placeholder default | Python |
 | L027 | LOW-MEDIUM | Duplicate string literal | Python |
 | L028 | MEDIUM | Too many return statements | Python |
 | L029 | MEDIUM | Boolean positional parameter trap | Python |
