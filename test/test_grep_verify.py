@@ -1000,6 +1000,93 @@ class TestBatchedGrepVerify:
         assert results[bar_request] == (line,)
         assert results[literal_request] == ("/repo/other.py:2:pkg.literalé()",)
 
+    def test_engine_sensitive_space_patterns_are_batched(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        space_request = GrepRequest(pattern=r"alpha\somega", **common)
+        negated_request = GrepRequest(pattern=r"alpha\Somega", **common)
+        process_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(("/repo/a.py", 1, "alpha omega\n")),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ) as mock_run,
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                side_effect=AssertionError("space patterns must stay batched"),
+            ),
+        ):
+            results = execute_grep_batch([space_request, negated_request])
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.kwargs["input_text"] == (
+            "alpha\\somega\nalpha\\Somega\n"
+        )
+        assert results[space_request] == ("/repo/a.py:1:alpha omega",)
+        assert results[negated_request] == ()
+
+    def test_ascii_separator_content_uses_ripgrep_space_semantics(self):
+        # U+001C-U+001F are the complete divergence between Python re \s and
+        # ripgrep's Unicode White_Space \s: Python matches them, ripgrep does
+        # not. They are ASCII, so the non-ASCII sensitivity check never sees
+        # them and unadjudicated replay would credit a line ripgrep never
+        # matched for that pattern.
+        content = "alpha\x1comega = 1"
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        space_request = GrepRequest(pattern=r"alpha\somega", **common)
+        companion_request = GrepRequest(pattern=r"alpha", **common)
+
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(("/repo/code.py", 1, f"{content}\n")),
+            stderr="",
+        )
+
+        def fake_run(cmd, **kwargs):
+            if "--json" in cmd:
+                return batch_result
+            assert cmd[-2] == space_request.pattern
+            return Mock(returncode=1, stdout="", stderr="")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([space_request, companion_request])
+
+        adjudication_calls = [
+            call for call in mock_run.call_args_list if "--json" not in call.args[0]
+        ]
+        assert len(adjudication_calls) == 1
+        assert results[space_request] == ()
+        assert results[companion_request] == (f"/repo/code.py:1:{content}",)
+
     def test_batched_and_legacy_verdicts_match_on_non_ascii_content(self, tmp_path):
         package = tmp_path / "pkg.py"
         package.write_text(
