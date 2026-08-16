@@ -36,6 +36,7 @@ from skylos.core.grep_verify_common import (
     _GrepDeadlineExceeded,
     _GrepEvidence,
     _GrepExecutionIncomplete,
+    _GrepInputLimitExceeded,
     _GrepOutputLimitExceeded,
     _is_python_source_reference,
     _python_regex,
@@ -1035,6 +1036,90 @@ class TestBatchedGrepVerify:
         assert len(adjudication_calls) == 1
         assert results[space_request] == ()
         assert results[companion_request] == (f"/repo/code.py:1:{content}",)
+
+    def test_large_space_adjudication_payload_is_chunked(self):
+        # Adjudication stdin is capped. A repository with more divergent
+        # candidate lines than that cap must still be adjudicated, because a
+        # direct per-pattern search would have completed. Alternating lines
+        # match under ripgrep semantics and do not, so a chunked adjudication
+        # that mismapped positions would surface here as wrong evidence.
+        padding = "p" * 190
+        contents = [
+            f"alpha omega\x1c{padding}"
+            if index % 2 == 0
+            else f"alpha\x1comega{padding}"
+            for index in range(40)
+        ]
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 100,
+        }
+        space_request = GrepRequest(pattern=r"alpha\somega", **common)
+
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(
+                *(
+                    (f"/repo/code{index:02d}.py", 1, f"{content}\n")
+                    for index, content in enumerate(contents)
+                )
+            ),
+            stderr="",
+        )
+
+        def fake_run(cmd, **kwargs):
+            if "--json" in cmd:
+                return batch_result
+            payload = kwargs["input_text"]
+            if len(payload.encode("utf-8")) > kwargs["input_limit"]:
+                raise _GrepInputLimitExceeded("grep subprocess input is too large")
+            # Ripgrep's \s excludes U+001C, so only the space lines match.
+            matched = [
+                f"{position}:{line}"
+                for position, line in enumerate(payload.split("\n")[:-1], start=1)
+                if "alpha omega" in line
+            ]
+            return Mock(
+                returncode=0 if matched else 1,
+                stdout="".join(f"{line}\n" for line in matched),
+                stderr="",
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_INPUT_BYTES",
+                4096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([space_request])
+
+        adjudication_calls = [
+            call for call in mock_run.call_args_list if "--json" not in call.args[0]
+        ]
+        assert len(adjudication_calls) > 1
+        for call in adjudication_calls:
+            assert (
+                len(call.kwargs["input_text"].encode("utf-8"))
+                <= call.kwargs["input_limit"]
+            )
+        # Sorted by path, so the fixture names are zero-padded to keep
+        # lexicographic and numeric order the same.
+        assert results[space_request] == tuple(
+            f"/repo/code{index:02d}.py:1:{content}"
+            for index, content in enumerate(contents)
+            if index % 2 == 0
+        )
 
     def test_batched_and_legacy_verdicts_match_on_non_ascii_content(self, tmp_path):
         package = tmp_path / "pkg.py"
