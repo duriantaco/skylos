@@ -88,7 +88,10 @@ _GREP_BATCH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _GREP_BATCH_MAX_STDERR_BYTES = 128 * 1024
 _GREP_BATCH_MAX_MATCHES = _GREP_BATCH_SIZE * 256
 _GREP_UNICODE_MAX_INPUT_BYTES = 512 * 1024
-_GREP_UNICODE_MAX_ADJUDICATIONS = 16
+# Every request in a bounded batch must receive the same Unicode-boundary
+# adjudication. Skipping later requests makes a successful batch partial and
+# forces the analyzer to abstain from all grep-verified dead-code candidates.
+_GREP_UNICODE_MAX_ADJUDICATIONS = _GREP_BATCH_SIZE
 _GREP_PIPE_READ_BYTES = 64 * 1024
 _GREP_PROCESS_CLEANUP_SECONDS = 0.25
 # Classification precedes strategy-specific definition filtering. Keep a

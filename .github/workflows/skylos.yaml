@@ -12,6 +12,7 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -101,6 +102,9 @@ jobs:
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
           DIFF_BASE: ${{ steps.diff.outputs.base }}
+          # Give the large self-scan additional verification time while
+          # retaining a two-minute grep-verification limit.
+          SKYLOS_GREP_BUDGET: "120"
           SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go', runner.temp) }}
         shell: bash
         run: |

@@ -31,6 +31,7 @@ from skylos.core.grep_verify import (
 )
 from skylos.core.grep_verify_common import (
     GrepRequest,
+    _GREP_BATCH_SIZE,
     _GrepBatchResults,
     _GrepDeadlineExceeded,
     _GrepEvidence,
@@ -1195,7 +1196,7 @@ class TestBatchedGrepVerify:
         assert results == {request: () for request in requests}
         assert mock_batch.call_count == 3
 
-    def test_unicode_adjudication_cap_keeps_unambiguous_ascii_matches(self):
+    def test_unicode_adjudication_covers_every_request_in_a_bounded_batch(self):
         common = {
             "project_root": "/repo",
             "use_regex": True,
@@ -1205,12 +1206,12 @@ class TestBatchedGrepVerify:
         }
         requests = [
             GrepRequest(pattern=rf"\bsymbol_{index}\b", **common)
-            for index in range(20)
+            for index in range(_GREP_BATCH_SIZE)
         ]
         matches = [("/repo/nfd.py", 1, "unrelated\u0301\n")]
         matches.extend(
             (f"/repo/use_{index}.py", 1, f"symbol_{index}()\n")
-            for index in range(20)
+            for index in range(_GREP_BATCH_SIZE)
         )
         batch_result = Mock(
             returncode=0,
@@ -1229,10 +1230,6 @@ class TestBatchedGrepVerify:
                 return_value="/usr/bin/rg",
             ),
             patch(
-                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_ADJUDICATIONS",
-                1,
-            ),
-            patch(
                 "skylos.core.grep_verify_common._run_bounded_subprocess",
                 side_effect=fake_run,
             ) as mock_run,
@@ -1244,8 +1241,8 @@ class TestBatchedGrepVerify:
             assert results[request] == (
                 f"/repo/use_{index}.py:1:symbol_{index}()",
             )
-        assert mock_run.call_count == 2
-        assert results.incomplete_requests == set(requests[1:])
+        assert mock_run.call_count == len(requests) + 1
+        assert results.incomplete_requests == set()
 
     def test_bounded_subprocess_rejects_oversized_output(self):
         with (
