@@ -1,0 +1,85 @@
+name: Analyzer Blast Radius
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "skylos/**"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - ".github/workflows/liveness-primer.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liveness-primer-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  blast-radius:
+    name: Python dead-code blast radius
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out pinned liveness_primer
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: mcdigman/liveness_primer
+          ref: d6f3118a2cfc465426500eab449005fe56845c58 # v0.1.0
+          path: _liveness_primer
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          version: "0.12.5"
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Compare base with the pull request merge result
+        env:
+          SKYLOS_REPOSITORY: https://github.com/duriantaco/skylos
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The base repository owns this synthetic merge commit, including
+          # for fork PRs, so the comparison tests what would actually land.
+          MERGE_SHA: ${{ github.sha }}
+          REPORT_JSON: liveness-primer-report.json
+          REPORT_MARKDOWN: liveness-primer-report.md
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for revision in "$BASE_SHA" "$MERGE_SHA"; do
+            if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Invalid comparison revision" >&2
+              exit 1
+            fi
+          done
+
+          uv run --project _liveness_primer --locked liveness-primer run \
+            --tool skylos \
+            --repo "$SKYLOS_REPOSITORY" \
+            --old "$BASE_SHA" \
+            --new "$MERGE_SHA" \
+            --all \
+            --output github \
+            --json-out "$REPORT_JSON" \
+            --jobs 2 \
+            --timeout 300 \
+            | tee "$REPORT_MARKDOWN" >> "$GITHUB_STEP_SUMMARY"
+
+          test -s "$REPORT_JSON"
+
+      - name: Upload blast-radius evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: liveness-primer-report
+          path: |
+            liveness-primer-report.md
+            liveness-primer-report.json
+          if-no-files-found: error
+          retention-days: 14
