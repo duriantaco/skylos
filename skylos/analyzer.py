@@ -110,6 +110,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_call_arg_types",
     "_grep_verify_report",
     "_grep_verify_incomplete_candidates",
+    "_dead_code_scope_keys",
     "_dead_code_liveness_report",
     "ts_consumed_exports",
     "_ts_wildcard_edges",
@@ -1076,10 +1077,52 @@ def _grep_verify_rescue_priority(candidate: dict) -> tuple:
     )
 
 
-def _collect_grep_verify_candidates(definitions: dict) -> tuple[list[dict], dict]:
+def _canonical_analysis_path(value: str | Path, project_root: Path) -> str:
+    path = Path(value)
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        resolved = Path(os.path.abspath(path))
+    return os.path.normcase(str(resolved))
+
+
+def _changed_definition_keys(
+    definitions: dict,
+    project_root: str | Path,
+    changed_files,
+) -> frozenset | None:
+    """Select definitions eligible for changed-file dead-code reporting.
+
+    Diff scans still analyze and search the complete repository so references
+    remain sound. Only definitions that can be reported in the changed-file
+    result need the comparatively expensive grep-verification pass.
+    """
+    if changed_files is None:
+        return None
+
+    root = Path(project_root)
+    changed_paths = {
+        _canonical_analysis_path(changed_file, root)
+        for changed_file in changed_files
+    }
+    return frozenset(
+        key
+        for key, definition in definitions.items()
+        if _canonical_analysis_path(definition.filename, root) in changed_paths
+    )
+
+
+def _collect_grep_verify_candidates(
+    definitions: dict,
+    candidate_keys: frozenset | None = None,
+) -> tuple[list[dict], dict]:
     candidates: list[dict] = []
     candidate_defs: dict = {}
-    for defn in definitions.values():
+    for key, defn in definitions.items():
+        if candidate_keys is not None and key not in candidate_keys:
+            continue
         if defn.references != 0 or defn.is_exported or defn.confidence <= 0:
             continue
         payload = defn.to_dict()
@@ -1742,7 +1785,10 @@ class Skylos:
         ):
             report.pop(key, None)
 
-        candidates, candidate_defs = _collect_grep_verify_candidates(self.defs)
+        candidates, candidate_defs = _collect_grep_verify_candidates(
+            self.defs,
+            getattr(self, "_dead_code_scope_keys", None),
+        )
         if not candidates:
             return 0
 
@@ -4375,6 +4421,11 @@ class Skylos:
             "enabled": bool(grep_verify),
             "rescued_count": 0,
         }
+        self._dead_code_scope_keys = _changed_definition_keys(
+            self.defs,
+            project_root,
+            requested_changed_files,
+        )
         self._grep_verify_report = grep_verify_report
         if grep_verify:
             grep_verify_report["project_cache_enabled"] = bool(grep_cache)

@@ -2161,6 +2161,125 @@ result = PublicClass.used_method()
 
 
 class TestAnalyzerGrepVerifyOrdering:
+    @pytest.mark.parametrize("changed_file_style", ["absolute", "relative"])
+    def test_changed_file_scan_only_verifies_reportable_definitions(
+        self, tmp_path, changed_file_style
+    ):
+        from skylos.analyzer import analyze
+
+        changed = tmp_path / "changed.py"
+        unchanged = tmp_path / "unchanged.py"
+        changed.write_text("def _changed_dead():\n    return 1\n", encoding="utf-8")
+        unchanged.write_text(
+            "def _unchanged_dead():\n    return 2\n", encoding="utf-8"
+        )
+        selected = (
+            str(changed.resolve())
+            if changed_file_style == "absolute"
+            else changed.name
+        )
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings", return_value={}
+        ) as mock_grep:
+            result = json.loads(
+                analyze(
+                    str(tmp_path),
+                    conf=0,
+                    changed_files={selected},
+                    grep_verify=True,
+                )
+            )
+
+        candidates = mock_grep.call_args.args[0]
+        assert {Path(item["file"]).resolve() for item in candidates} == {
+            changed.resolve()
+        }
+        assert Path(mock_grep.call_args.args[1]).resolve() == tmp_path.resolve()
+        assert {
+            Path(item["file"]).resolve()
+            for item in result["unused_functions"]
+        } == {changed.resolve()}
+
+    def test_changed_definition_can_be_rescued_from_unchanged_repository_file(
+        self, tmp_path
+    ):
+        from skylos.analyzer import analyze
+
+        changed = tmp_path / "handlers.py"
+        changed.write_text(
+            "def payment_webhook():\n    return 'ok'\n", encoding="utf-8"
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: handlers.py\n", encoding="utf-8"
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                changed_files={str(changed)},
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert not result["unused_functions"]
+        assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 1
+
+    def test_empty_changed_file_scope_skips_dead_code_verification(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "unchanged.py").write_text(
+            "def _unchanged_dead():\n    return 1\n", encoding="utf-8"
+        )
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings"
+        ) as mock_grep:
+            result = json.loads(
+                analyze(
+                    str(tmp_path),
+                    conf=0,
+                    changed_files=set(),
+                    grep_verify=True,
+                )
+            )
+
+        mock_grep.assert_not_called()
+        assert result["unused_functions"] == []
+        assert result["analysis_errors"] == []
+
+    def test_full_scan_keeps_all_dead_code_candidates(self, tmp_path):
+        from skylos.analyzer import Skylos
+
+        first = tmp_path / "first.py"
+        second = tmp_path / "second.py"
+        first.write_text("def _first_dead():\n    return 1\n", encoding="utf-8")
+        second.write_text("def _second_dead():\n    return 2\n", encoding="utf-8")
+
+        analyzer = Skylos()
+        scoped = json.loads(
+            analyzer.analyze(
+                str(tmp_path),
+                thr=0,
+                changed_files={str(first)},
+                grep_verify=False,
+            )
+        )
+        result = json.loads(
+            analyzer.analyze(str(tmp_path), thr=0, grep_verify=False)
+        )
+
+        assert {
+            Path(item["file"]).resolve()
+            for item in scoped["unused_functions"]
+        } == {first.resolve()}
+        assert {
+            Path(item["file"]).resolve()
+            for item in result["unused_functions"]
+        } == {first.resolve(), second.resolve()}
+
     def test_incomplete_result_does_not_apply_partial_rescues(
         self, tmp_path, monkeypatch
     ):

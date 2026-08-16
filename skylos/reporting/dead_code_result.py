@@ -200,8 +200,12 @@ def unused_definitions(analyzer, thr, dead_code_evidence_payload):
 
 def dead_code_candidate_decisions(analyzer, thr, dead_code_evidence_payload):
     evidence_by_name = _evidence_by_name(dead_code_evidence_payload)
+    scoped_keys = getattr(analyzer, "_dead_code_scope_keys", None)
     dispositions = {}
     for key, definition in analyzer.defs.items():
+        if scoped_keys is not None and key not in scoped_keys:
+            dispositions[key] = None
+            continue
         dispositions[key] = _candidate_disposition(
             definition,
             thr,
