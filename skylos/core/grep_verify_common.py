@@ -1395,6 +1395,33 @@ def _run_ripgrep_pattern_file(
     return _parse_ripgrep_json_matches(result.stdout, deadline=deadline)
 
 
+def _grep_stdin_chunks(
+    contents: Sequence[str],
+    limit: int,
+) -> Iterator[tuple[int, list[str]]]:
+    """Yield ``(offset, lines)`` groups whose encoded stdin fits in ``limit``.
+
+    A single line wider than the cap cannot be sent at all, so it keeps the
+    fail-closed behavior rather than being silently dropped from adjudication.
+    """
+    chunk: list[str] = []
+    chunk_bytes = 0
+    offset = 0
+    for index, content in enumerate(contents):
+        line_bytes = len(content.encode("utf-8")) + 1
+        if line_bytes > limit:
+            raise _GrepInputLimitExceeded("grep adjudication line is too large")
+        if chunk and chunk_bytes + line_bytes > limit:
+            yield offset, chunk
+            chunk = []
+            chunk_bytes = 0
+            offset = index
+        chunk.append(content)
+        chunk_bytes += line_bytes
+    if chunk:
+        yield offset, chunk
+
+
 def _ripgrep_stdin_match_positions(
     pattern: str,
     contents: Sequence[str],
@@ -1402,32 +1429,42 @@ def _ripgrep_stdin_match_positions(
     *,
     deadline: float | None = None,
 ) -> set[int]:
-    """Return the 0-based positions of the given lines that ripgrep matches."""
-    stdin = "\n".join(contents) + "\n"
-    result = _run_bounded_subprocess(
-        [
-            rg,
-            "--no-config",
-            "-n",
-            "--no-heading",
-            "--color",
-            "never",
-            "--",
-            pattern,
-            "-",
-        ],
-        input_text=stdin,
-        timeout=_remaining_timeout(deadline, _GREP_REQUEST_TIMEOUT_SECONDS),
-        input_limit=_GREP_UNICODE_MAX_INPUT_BYTES,
-    )
-    if result.returncode not in (0, 1):
-        msg = result.stderr.strip() or f"exit status {result.returncode}"
-        raise RuntimeError(msg)
+    """Return the 0-based positions of the given lines that ripgrep matches.
+
+    The candidate lines are adjudicated in stdin-sized chunks. A repository
+    can hold more divergent lines than one bounded stdin write allows, and a
+    direct per-pattern search would have resolved all of them, so refusing the
+    whole request there would drop real evidence.
+    """
     positions: set[int] = set()
-    for line in result.stdout.split("\n"):
-        prefix = line.split(":", 1)[0]
-        if prefix.isdigit():
-            positions.add(int(prefix) - 1)
+    for offset, chunk in _grep_stdin_chunks(
+        contents, _GREP_UNICODE_MAX_INPUT_BYTES
+    ):
+        if _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded while adjudicating grep")
+        result = _run_bounded_subprocess(
+            [
+                rg,
+                "--no-config",
+                "-n",
+                "--no-heading",
+                "--color",
+                "never",
+                "--",
+                pattern,
+                "-",
+            ],
+            input_text="\n".join(chunk) + "\n",
+            timeout=_remaining_timeout(deadline, _GREP_REQUEST_TIMEOUT_SECONDS),
+            input_limit=_GREP_UNICODE_MAX_INPUT_BYTES,
+        )
+        if result.returncode not in (0, 1):
+            msg = result.stderr.strip() or f"exit status {result.returncode}"
+            raise RuntimeError(msg)
+        for line in result.stdout.split("\n"):
+            prefix = line.split(":", 1)[0]
+            if prefix.isdigit():
+                positions.add(offset + int(prefix) - 1)
     return positions
 
 
