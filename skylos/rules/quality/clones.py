@@ -501,7 +501,11 @@ def _group_connected(
                     types.append(p.clone_type)
 
         avg_sim = sum(sims) / len(sims) if sims else cfg.grouping_threshold
-        clone_type = max(set(types), key=types.count) if types else CloneType.TYPE3
+        clone_type = (
+            min(set(types), key=lambda t: (-types.count(t), t.value))
+            if types
+            else CloneType.TYPE3
+        )
 
         groups.append(
             CloneGroup(
