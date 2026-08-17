@@ -1989,22 +1989,31 @@ def _check_npm_version(name: str, version: str) -> str:
     if package_path is None:
         return STATUS_UNKNOWN
 
-    url = f"{NPM_REGISTRY_ORIGIN}/{package_path}"
+    raw_version = version.strip()
+    if not raw_version:
+        return STATUS_UNKNOWN
+
+    safe_version = quote(raw_version, safe="")
+    version_url = f"{NPM_REGISTRY_ORIGIN}/{package_path}/{safe_version}"
     try:
-        data = _fetch_json(url, user_agent="skylos-npm-dep-scanner/1.0")
+        _fetch_json(version_url, user_agent="skylos-npm-dep-scanner/1.0")
+        return STATUS_PRESENT
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return STATUS_UNKNOWN
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return STATUS_UNKNOWN
+
+    package_url = f"{NPM_REGISTRY_ORIGIN}/{package_path}"
+    try:
+        _fetch_head(package_url, user_agent="skylos-npm-dep-scanner/1.0")
+        return STATUS_MISSING_VERSION
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return STATUS_MISSING_PACKAGE
         return STATUS_UNKNOWN
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return STATUS_UNKNOWN
-
-    versions = data.get("versions")
-    if not isinstance(versions, dict):
-        return STATUS_UNKNOWN
-    if version in versions:
-        return STATUS_PRESENT
-    return STATUS_MISSING_VERSION
 
 
 def _check_go_version(name: str, version: str) -> str:
@@ -2138,6 +2147,19 @@ def _fetch_json(url: str, *, user_agent: str) -> dict[str, Any]:
     if isinstance(data, dict):
         return data
     return {}
+
+
+def _fetch_head(url: str, *, user_agent: str) -> None:
+    if not _allowed_registry_url(url):
+        raise ValueError("Registry URL host is not allowed")
+
+    request = urllib.request.Request(url, method="HEAD")
+    request.add_header("User-Agent", user_agent)
+    with urllib.request.urlopen(  # skylos: ignore[SKY-D216] URL is validated against fixed registry hosts above.
+        request,
+        timeout=5,
+    ):
+        pass
 
 
 def _fetch_text(url: str, *, user_agent: str) -> str:

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.request
+from unittest.mock import MagicMock
 
+from skylos.rules.ai_defect import manifest_dependency_hallucination as manifest_rule
+from skylos.rules.ai_defect.dependency_truth import (
+    DependencyTruthState,
+    normalize_dependency_truth_state,
+)
 from skylos.rules.ai_defect.manifest_dependency_hallucination import (
+    INSTALL_SURFACE_SOURCE,
     RULE_ID_DEPENDENCY_HALLUCINATION,
     RULE_ID_VERSION_HALLUCINATION,
-    INSTALL_SURFACE_SOURCE,
     STATUS_EXISTS,
     STATUS_MISSING_PACKAGE,
     STATUS_MISSING_VERSION,
@@ -16,15 +24,31 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     VERSION_CACHE_SCHEMA_VERSION,
     scan_manifest_dependency_hallucinations,
 )
-from skylos.rules.ai_defect.dependency_truth import (
-    DependencyTruthState,
-    normalize_dependency_truth_state,
-)
 from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
 )
+
+
+def _registry_response(body: bytes = b"{}") -> MagicMock:
+    response = MagicMock()
+    response.read.return_value = body
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
+    return response
+
+
+def _not_found(url: str) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+
+def _request_calls(urlopen: MagicMock) -> list[tuple[str, str, int]]:
+    calls: list[tuple[str, str, int]] = []
+    for call in urlopen.call_args_list:
+        request: urllib.request.Request = call.args[0]
+        calls.append((request.full_url, request.get_method(), call.kwargs["timeout"]))
+    return calls
 
 
 def _status_checker(statuses, calls):
@@ -689,6 +713,106 @@ def test_scan_manifest_dependency_statuses_are_cached(tmp_path):
     assert len(first) == 1
     assert len(second) == 1
     assert calls == [(ECOSYSTEM_NPM, "stale-version", "99.0.0")]
+
+
+def test_scan_npm_missing_version_uses_bodyless_package_probe_and_caches(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = {"dependencies": {"react": "999999.0.0"}}
+    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    version_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react/999999.0.0"
+    package_response = _registry_response()
+    package_response.read.side_effect = AssertionError("HEAD response body was read")
+    urlopen = MagicMock(side_effect=[_not_found(version_url), package_response])
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    first = scan_manifest_dependency_hallucinations(repo)
+    second = scan_manifest_dependency_hallucinations(repo)
+
+    assert [finding["rule_id"] for finding in first] == [RULE_ID_VERSION_HALLUCINATION]
+    assert [finding["rule_id"] for finding in second] == [RULE_ID_VERSION_HALLUCINATION]
+    assert _request_calls(urlopen) == [
+        (version_url, "GET", 5),
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react", "HEAD", 5),
+    ]
+    package_response.read.assert_not_called()
+    cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
+    assert cache["statuses"]["npm:react:999999.0.0"] == STATUS_MISSING_VERSION
+
+
+def test_scan_npm_present_version_uses_version_document_and_caches(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = {"dependencies": {"react": "19.1.0"}}
+    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    response = _registry_response(b'{"name":"react","version":"19.1.0"}')
+    urlopen = MagicMock(return_value=response)
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    assert scan_manifest_dependency_hallucinations(repo) == []
+    assert scan_manifest_dependency_hallucinations(repo) == []
+    assert _request_calls(urlopen) == [
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react/19.1.0", "GET", 5),
+    ]
+    response.read.assert_called_once_with(manifest_rule.MAX_REGISTRY_RESPONSE_BYTES + 1)
+    cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
+    assert cache["statuses"]["npm:react:19.1.0"] == STATUS_PRESENT
+
+
+def test_scan_npm_missing_package_uses_version_then_package_probe(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    package = "definitely-not-a-real-skylos-package"
+    manifest = {"dependencies": {package: "1.2.3"}}
+    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    package_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/{package}"
+    version_url = f"{package_url}/1.2.3"
+    urlopen = MagicMock(side_effect=[_not_found(version_url), _not_found(package_url)])
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    findings = scan_manifest_dependency_hallucinations(repo)
+
+    assert [finding["rule_id"] for finding in findings] == [
+        RULE_ID_DEPENDENCY_HALLUCINATION
+    ]
+    assert _request_calls(urlopen) == [
+        (version_url, "GET", 5),
+        (package_url, "HEAD", 5),
+    ]
+
+
+def test_scan_npm_oversized_version_document_is_bounded_and_not_cached(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = {"dependencies": {"oversized-package": "1.2.3"}}
+    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    response = _registry_response(
+        b"x" * (manifest_rule.MAX_REGISTRY_RESPONSE_BYTES + 1)
+    )
+    urlopen = MagicMock(return_value=response)
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    assert scan_manifest_dependency_hallucinations(repo) == []
+    assert scan_manifest_dependency_hallucinations(repo) == []
+    version_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/oversized-package/1.2.3"
+    assert _request_calls(urlopen) == [
+        (version_url, "GET", 5),
+        (version_url, "GET", 5),
+    ]
+    assert response.read.call_count == 2
+    assert not (repo / VERSION_CACHE_PATH).exists()
 
 
 def test_scan_manifest_dependency_cache_key_normalizes_pypi_identity(tmp_path):
