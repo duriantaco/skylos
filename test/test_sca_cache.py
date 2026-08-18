@@ -148,7 +148,8 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     )
     package_json = tmp_path / "package.json"
     package_json.write_text(
-        '{"dependencies":{"exact":"1.2.3","caret":"^2.0.0","tag":"latest"}}',
+        '{"dependencies":{"exact":"1.2.3","equals":"=2.3.4",'
+        '"spaced_equals":"= 3.4.5","caret":"^2.0.0","tag":"latest"}}',
         encoding="utf-8",
     )
     pyproject = tmp_path / "pyproject.toml"
@@ -163,7 +164,11 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     ] == [("exact", "1.2.3")]
     assert [
         (item["name"], item["version"]) for item in sca.parse_package_json(package_json)
-    ] == [("exact", "1.2.3")]
+    ] == [
+        ("exact", "1.2.3"),
+        ("equals", "2.3.4"),
+        ("spaced_equals", "3.4.5"),
+    ]
     assert [
         (item["name"], item["version"]) for item in sca.parse_pyproject_toml(pyproject)
     ] == [("exact", "1.2.3")]

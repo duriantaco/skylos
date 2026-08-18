@@ -774,13 +774,13 @@ def test_scan_manifest_dependency_statuses_are_cached(tmp_path):
     assert calls == [(ECOSYSTEM_NPM, "stale-version", "99.0.0")]
 
 
-def test_scan_npm_missing_version_uses_bodyless_package_probe_and_caches(
+def test_scan_npm_spaced_equality_checks_exact_version_and_caches(
     tmp_path,
     monkeypatch,
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
-    manifest = {"dependencies": {"react": "999999.0.0"}}
+    manifest = {"dependencies": {"react": "= 999999.0.0"}}
     (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
     version_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react/999999.0.0"
     package_response = _registry_response()
