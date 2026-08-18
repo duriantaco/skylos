@@ -29,6 +29,7 @@ from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
+    _extract_exact_npm_version,
     parse_go_mod,
     parse_package_json_candidates,
     parse_pyproject_toml_candidates,
@@ -1992,7 +1993,11 @@ def _check_npm_version(name: str, version: str) -> str:
     if not raw_version:
         return STATUS_UNKNOWN
 
-    safe_version = quote(raw_version, safe="")
+    exact_version = _extract_exact_npm_version(raw_version)
+    if exact_version is None:
+        return _check_npm_package(package_path)
+
+    safe_version = quote(exact_version, safe="")
     version_url = f"{NPM_REGISTRY_ORIGIN}/{package_path}/{safe_version}"
     try:
         _fetch_head(version_url, user_agent="skylos-npm-dep-scanner/1.0")
@@ -2003,10 +2008,17 @@ def _check_npm_version(name: str, version: str) -> str:
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return STATUS_UNKNOWN
 
+    package_status = _check_npm_package(package_path)
+    if package_status == STATUS_PRESENT:
+        return STATUS_MISSING_VERSION
+    return package_status
+
+
+def _check_npm_package(package_path: str) -> str:
     package_url = f"{NPM_REGISTRY_ORIGIN}/{package_path}"
     try:
         _fetch_head(package_url, user_agent="skylos-npm-dep-scanner/1.0")
-        return STATUS_MISSING_VERSION
+        return STATUS_PRESENT
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return STATUS_MISSING_PACKAGE

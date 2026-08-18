@@ -89,7 +89,7 @@ def test_scan_package_json_flags_missing_npm_package_and_version(tmp_path):
     manifest = {
         "dependencies": {
             "leftpadz": "9.9.9",
-            "stale-version": "^99.0.0",
+            "stale-version": "99.0.0",
             "realpkg": "1.2.3",
         },
         "devDependencies": {
@@ -123,6 +123,65 @@ def test_scan_package_json_flags_missing_npm_package_and_version(tmp_path):
     assert any("leftpadz" in message for message in _messages(findings))
     assert any("stale-version@99.0.0" in message for message in _messages(findings))
     assert (ECOSYSTEM_NPM, "realpkg", "1.2.3") in calls
+
+
+def test_scan_npm_ranges_check_package_without_literal_version_false_positives(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = {
+        "dependencies": {
+            "through2": ">=2",
+            "react": ">=16",
+            "ghost-range": ">=2",
+            "recat": "^1.0.0",
+        }
+    }
+    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    response = _registry_response()
+    response.read.side_effect = AssertionError("HEAD response body was read")
+    missing_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/ghost-range"
+
+    def registry_response(
+        request: urllib.request.Request,
+        *,
+        timeout: int,
+    ) -> MagicMock:
+        assert timeout == 5
+        if request.full_url == missing_url:
+            raise _not_found(request.full_url)
+        return response
+
+    urlopen = MagicMock(side_effect=registry_response)
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    first = scan_manifest_dependency_hallucinations(repo)
+    second = scan_manifest_dependency_hallucinations(repo)
+
+    assert {finding["metadata"]["package_name"] for finding in first} == {
+        "ghost-range",
+        "recat",
+    }
+    assert {finding["rule_id"] for finding in first} == {
+        RULE_ID_DEPENDENCY_HALLUCINATION
+    }
+    assert second == first
+    assert _request_calls(urlopen) == [
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/through2", "HEAD", 5),
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react", "HEAD", 5),
+        (missing_url, "HEAD", 5),
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/recat", "HEAD", 5),
+    ]
+    response.read.assert_not_called()
+    cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
+    assert cache["statuses"] == {
+        "npm:ghost-range:>=2": STATUS_MISSING_PACKAGE,
+        "npm:react:>=16": STATUS_PRESENT,
+        "npm:recat:^1.0.0": STATUS_PRESENT,
+        "npm:through2:>=2": STATUS_PRESENT,
+    }
 
 
 def test_scan_go_mod_flags_missing_go_module_and_version(tmp_path):
