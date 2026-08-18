@@ -735,7 +735,7 @@ def test_scan_npm_missing_version_uses_bodyless_package_probe_and_caches(
     assert [finding["rule_id"] for finding in first] == [RULE_ID_VERSION_HALLUCINATION]
     assert [finding["rule_id"] for finding in second] == [RULE_ID_VERSION_HALLUCINATION]
     assert _request_calls(urlopen) == [
-        (version_url, "GET", 5),
+        (version_url, "HEAD", 5),
         (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react", "HEAD", 5),
     ]
     package_response.read.assert_not_called()
@@ -743,26 +743,35 @@ def test_scan_npm_missing_version_uses_bodyless_package_probe_and_caches(
     assert cache["statuses"]["npm:react:999999.0.0"] == STATUS_MISSING_VERSION
 
 
-def test_scan_npm_present_version_uses_version_document_and_caches(
+def test_scan_npm_large_present_version_preserves_lookalike_check_and_cache(
     tmp_path,
     monkeypatch,
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
-    manifest = {"dependencies": {"react": "19.1.0"}}
+    manifest = {"dependencies": {"recat": "1.2.3"}}
     (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
-    response = _registry_response(b'{"name":"react","version":"19.1.0"}')
+    response = _registry_response()
+    response.read.side_effect = AssertionError("HEAD response body was read")
     urlopen = MagicMock(return_value=response)
     monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
 
-    assert scan_manifest_dependency_hallucinations(repo) == []
-    assert scan_manifest_dependency_hallucinations(repo) == []
-    assert _request_calls(urlopen) == [
-        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/react/19.1.0", "GET", 5),
+    first = scan_manifest_dependency_hallucinations(repo)
+    second = scan_manifest_dependency_hallucinations(repo)
+
+    assert [finding["rule_id"] for finding in first] == [
+        RULE_ID_DEPENDENCY_HALLUCINATION
     ]
-    response.read.assert_called_once_with(manifest_rule.MAX_REGISTRY_RESPONSE_BYTES + 1)
+    assert [finding["rule_id"] for finding in second] == [
+        RULE_ID_DEPENDENCY_HALLUCINATION
+    ]
+    assert first[0]["metadata"]["dependency_truth_state"] == "suspicious_existing"
+    assert _request_calls(urlopen) == [
+        (f"{manifest_rule.NPM_REGISTRY_ORIGIN}/recat/1.2.3", "HEAD", 5),
+    ]
+    response.read.assert_not_called()
     cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
-    assert cache["statuses"]["npm:react:19.1.0"] == STATUS_PRESENT
+    assert cache["statuses"]["npm:recat:1.2.3"] == STATUS_PRESENT
 
 
 def test_scan_npm_missing_package_uses_version_then_package_probe(
@@ -785,34 +794,69 @@ def test_scan_npm_missing_package_uses_version_then_package_probe(
         RULE_ID_DEPENDENCY_HALLUCINATION
     ]
     assert _request_calls(urlopen) == [
-        (version_url, "GET", 5),
+        (version_url, "HEAD", 5),
         (package_url, "HEAD", 5),
     ]
 
 
-def test_scan_npm_oversized_version_document_is_bounded_and_not_cached(
+def test_scan_pypi_large_package_missing_version_is_reported_and_cached(
     tmp_path,
     monkeypatch,
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
-    manifest = {"dependencies": {"oversized-package": "1.2.3"}}
-    (repo / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
-    response = _registry_response(
-        b"x" * (manifest_rule.MAX_REGISTRY_RESPONSE_BYTES + 1)
-    )
-    urlopen = MagicMock(return_value=response)
+    (repo / "requirements.txt").write_text("numpy==999999.0.0\n", encoding="utf-8")
+    version_url = f"{manifest_rule.PYPI_JSON_ORIGIN}/numpy/999999.0.0/json"
+    package_url = f"{manifest_rule.PYPI_JSON_ORIGIN}/numpy/json"
+    package_response = _registry_response()
+    package_response.read.side_effect = AssertionError("HEAD response body was read")
+    urlopen = MagicMock(side_effect=[_not_found(version_url), package_response])
     monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
 
-    assert scan_manifest_dependency_hallucinations(repo) == []
-    assert scan_manifest_dependency_hallucinations(repo) == []
-    version_url = f"{manifest_rule.NPM_REGISTRY_ORIGIN}/oversized-package/1.2.3"
+    first = scan_manifest_dependency_hallucinations(repo)
+    second = scan_manifest_dependency_hallucinations(repo)
+
+    assert [finding["rule_id"] for finding in first] == [RULE_ID_VERSION_HALLUCINATION]
+    assert [finding["rule_id"] for finding in second] == [RULE_ID_VERSION_HALLUCINATION]
     assert _request_calls(urlopen) == [
-        (version_url, "GET", 5),
-        (version_url, "GET", 5),
+        (version_url, "HEAD", 5),
+        (package_url, "HEAD", 5),
     ]
-    assert response.read.call_count == 2
-    assert not (repo / VERSION_CACHE_PATH).exists()
+    package_response.read.assert_not_called()
+    cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
+    assert cache["statuses"]["PyPI:numpy:999999.0.0"] == STATUS_MISSING_VERSION
+
+
+def test_scan_go_large_module_missing_version_is_reported_and_cached(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    module = "github.com/stretchr/testify"
+    (repo / "go.mod").write_text(
+        f"module example.com/demo\n\ngo 1.22\n\nrequire {module} v999.0.0\n",
+        encoding="utf-8",
+    )
+    info_url = f"{manifest_rule.GO_PROXY_ORIGIN}/{module}/@v/v999.0.0.info"
+    list_url = f"{manifest_rule.GO_PROXY_ORIGIN}/{module}/@v/list"
+    list_response = _registry_response()
+    list_response.read.side_effect = AssertionError("HEAD response body was read")
+    urlopen = MagicMock(side_effect=[_not_found(info_url), list_response])
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", urlopen)
+
+    first = scan_manifest_dependency_hallucinations(repo)
+    second = scan_manifest_dependency_hallucinations(repo)
+
+    assert [finding["rule_id"] for finding in first] == [RULE_ID_VERSION_HALLUCINATION]
+    assert [finding["rule_id"] for finding in second] == [RULE_ID_VERSION_HALLUCINATION]
+    assert _request_calls(urlopen) == [
+        (info_url, "HEAD", 5),
+        (list_url, "HEAD", 5),
+    ]
+    list_response.read.assert_not_called()
+    cache = json.loads((repo / VERSION_CACHE_PATH).read_text(encoding="utf-8"))
+    assert cache["statuses"][f"Go:{module}:999.0.0"] == STATUS_MISSING_VERSION
 
 
 def test_scan_manifest_dependency_cache_key_normalizes_pypi_identity(tmp_path):
