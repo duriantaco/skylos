@@ -1,0 +1,21 @@
+{
+  "name": "route-helper",
+  "description": "A route handler calls one live helper and leaves one stale helper unused.",
+  "cases": [
+    {
+      "qualified_name": "app.index",
+      "expected": "alive",
+      "note": "framework route root"
+    },
+    {
+      "qualified_name": "app.render_dashboard",
+      "expected": "alive",
+      "note": "reachable from the route root"
+    },
+    {
+      "qualified_name": "app.stale_helper",
+      "expected": "dead",
+      "note": "not referenced by any root-reachable path"
+    }
+  ]
+}
