@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from skylos.core import python_api_surface
 from skylos.core.api_symbol_truth import (
     SURFACE_KIND_PYTHON_MODULE,
     cache_api_symbol_surface,
@@ -440,6 +441,86 @@ def test_scan_rejects_malformed_shared_truth_and_falls_back_to_current_surface(
 
     assert len(findings) == 1
     assert "argument 'imaginary'" in findings[0]["message"]
+
+
+def test_scan_batches_api_surface_cache_io(tmp_path, monkeypatch):
+    site_root = tmp_path / "site"
+    _write_sample_package(site_root)
+    other_package = site_root / "otherapi"
+    other_package.mkdir(parents=True)
+    (other_package / "__init__.py").write_text(
+        "def known():\n    return None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(site_root))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    py_file = _write_py(
+        repo / "app.py",
+        "import sampleapi\nimport otherapi\nsampleapi.missing()\notherapi.missing()\n",
+    )
+    load_counts = {"python": 0, "shared": 0}
+    save_counts = {"python": 0, "shared": 0}
+    original_python_load = python_api_surface.load_python_api_surface_cache
+    original_shared_load = python_api_surface.load_api_symbol_truth_cache
+    original_python_save = python_api_surface.save_python_api_surface_cache
+    original_shared_save = python_api_surface.save_api_symbol_truth_cache
+
+    def load_python(*args, **kwargs):
+        load_counts["python"] += 1
+        return original_python_load(*args, **kwargs)
+
+    def load_shared(*args, **kwargs):
+        load_counts["shared"] += 1
+        return original_shared_load(*args, **kwargs)
+
+    def save_python(*args, **kwargs):
+        save_counts["python"] += 1
+        return original_python_save(*args, **kwargs)
+
+    def save_shared(*args, **kwargs):
+        save_counts["shared"] += 1
+        return original_shared_save(*args, **kwargs)
+
+    monkeypatch.setattr(
+        python_api_surface,
+        "load_python_api_surface_cache",
+        load_python,
+    )
+    monkeypatch.setattr(
+        python_api_surface,
+        "load_api_symbol_truth_cache",
+        load_shared,
+    )
+    monkeypatch.setattr(
+        python_api_surface,
+        "save_python_api_surface_cache",
+        save_python,
+    )
+    monkeypatch.setattr(
+        python_api_surface,
+        "save_api_symbol_truth_cache",
+        save_shared,
+    )
+
+    cold_findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi", "otherapi"),
+    )
+    warm_findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi", "otherapi"),
+    )
+
+    assert [finding["symbol"] for finding in cold_findings] == [
+        "sampleapi.missing",
+        "otherapi.missing",
+    ]
+    assert warm_findings == cold_findings
+    assert load_counts == {"python": 1, "shared": 2}
+    assert save_counts == {"python": 1, "shared": 1}
 
 
 def test_scan_skips_local_modules_named_like_allowlisted_package(

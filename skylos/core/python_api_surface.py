@@ -8,13 +8,18 @@ import re
 import site
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any
 
 from skylos.core.api_symbol_truth import (
+    SURFACE_KIND_PYTHON_MODULE,
+    api_symbol_surface_key,
     cache_api_symbol_surface,
+    load_api_symbol_truth_cache,
     python_module_api_symbol_surface,
+    save_api_symbol_truth_cache,
 )
 from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
 
@@ -26,6 +31,77 @@ MAX_MODULE_MEMBERS = 500
 MAX_CLASS_MEMBERS = 200
 
 Importer = Callable[[str], ModuleType]
+
+
+class PythonApiSurfaceCacheSession:
+    """Load API caches once and persist new surfaces together."""
+
+    def __init__(self, project_root: str | Path) -> None:
+        self._project_root = project_root
+        self._environment_key = python_environment_key()
+        self._python_payload: dict[str, Any] | None = None
+        self._python_module_map: dict[str, Any] | None = None
+        self._shared_payload: dict[str, Any] | None = None
+        self._shared_surface_map: dict[str, Any] | None = None
+        self._dirty = False
+
+    def load_surface(
+        self,
+        _project_root: str | Path,
+        module_name: str,
+    ) -> dict[str, Any] | None:
+        """Return a cached or newly captured module surface."""
+        safe_name = _safe_module_name(module_name)
+        if safe_name is None:
+            return None
+
+        key = api_symbol_surface_key(SURFACE_KIND_PYTHON_MODULE, safe_name)
+        if key is None:
+            return None
+        shared_surfaces = self._shared_surfaces()
+        shared_surface = shared_surfaces.get(key)
+        if isinstance(shared_surface, dict) and (
+            shared_surface.get("environment_key") == self._environment_key
+        ):
+            return shared_surface
+
+        surface = build_python_api_surface(safe_name)
+        if surface is None:
+            return None
+
+        self._python_modules()[safe_name] = surface
+        shared_surface = python_module_api_symbol_surface(
+            surface,
+            environment_key=self._environment_key,
+        )
+        if shared_surface is not None:
+            shared_surfaces[key] = shared_surface
+        self._dirty = True
+        return surface
+
+    def flush(self) -> None:
+        """Persist all newly captured surfaces."""
+        if not self._dirty:
+            return
+        if self._python_payload is not None:
+            save_python_api_surface_cache(self._project_root, self._python_payload)
+        if self._shared_payload is not None:
+            save_api_symbol_truth_cache(self._project_root, self._shared_payload)
+        self._dirty = False
+
+    def _python_modules(self) -> dict[str, Any]:
+        if self._python_module_map is None:
+            self._python_payload = load_python_api_surface_cache(self._project_root)
+            self._python_module_map = _modules_map(self._python_payload)
+            self._python_payload["modules"] = self._python_module_map
+        return self._python_module_map
+
+    def _shared_surfaces(self) -> dict[str, Any]:
+        if self._shared_surface_map is None:
+            self._shared_payload = load_api_symbol_truth_cache(self._project_root)
+            self._shared_surface_map = _surfaces_map(self._shared_payload)
+            self._shared_payload["surfaces"] = self._shared_surface_map
+        return self._shared_surface_map
 
 
 def load_python_api_surface_cache(
@@ -176,6 +252,13 @@ def _modules_map(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(surface, dict):
             safe_modules[safe_name] = surface
     return safe_modules
+
+
+def _surfaces_map(payload: dict[str, Any]) -> dict[str, Any]:
+    surfaces = payload.get("surfaces")
+    if isinstance(surfaces, dict):
+        return surfaces
+    return {}
 
 
 def _safe_module_name(value: str) -> str | None:
