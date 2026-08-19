@@ -37,11 +37,15 @@ from skylos.core.grep_verify_common import (
     _GrepEvidence,
     _GrepExecutionIncomplete,
     _GrepOutputLimitExceeded,
+    _BoundedProcessResult,
     _is_python_source_reference,
+    _ordered_fixed_string_paths,
     _python_regex,
     _run_bounded_subprocess,
     _run_grep,
     _run_grep_request,
+    _run_ordered_fixed_string_batch,
+    _run_ripgrep_batch,
     _trusted_which,
     execute_grep_batch,
     replay_grep_results,
@@ -67,8 +71,60 @@ def _rg_json_match(path: str, line_number: int, content: str) -> str:
     )
 
 
-def _rg_json_output(*matches: tuple[str, int, str]) -> str:
-    return "\n".join(_rg_json_match(*match) for match in matches) + "\n"
+def _rg_json_file_event(
+    event_type: str, path: str, binary_offset: int | None = None
+) -> str:
+    data: dict[str, object] = {"path": {"text": path}}
+    if event_type == "end":
+        data["binary_offset"] = binary_offset
+    return json.dumps({"type": event_type, "data": data})
+
+
+def _rg_json_output(
+    *matches: tuple[str, int, str],
+    binary_paths: frozenset[str] = frozenset(),
+    close_last_file: bool = True,
+) -> str:
+    """Render a ripgrep --json stream, bracketing each file as rg does."""
+    events: list[str] = []
+    current: str | None = None
+    for path, line_number, content in matches:
+        if path != current:
+            if current is not None:
+                events.append(
+                    _rg_json_file_event(
+                        "end",
+                        current,
+                        1 if current in binary_paths else None,
+                    )
+                )
+            events.append(_rg_json_file_event("begin", path))
+            current = path
+        events.append(_rg_json_match(path, line_number, content))
+    if current is not None and close_last_file:
+        events.append(
+            _rg_json_file_event(
+                "end", current, 1 if current in binary_paths else None
+            )
+        )
+    return "\n".join(events) + "\n"
+
+
+def _fixed_request(root, pattern: str, **overrides) -> GrepRequest:
+    fields = {
+        "project_root": str(root),
+        "use_regex": False,
+        "include_globs": ("*.py", "*.txt"),
+        "fixed_string": True,
+        "max_results": 5,
+    }
+    fields.update(overrides)
+    return GrepRequest(pattern=pattern, **fields)
+
+
+requires_ripgrep = pytest.mark.skipif(
+    shutil.which("rg") is None, reason="ripgrep is not installed"
+)
 
 
 class TestIsDefinitionLine:
@@ -1235,7 +1291,7 @@ class TestBatchedGrepVerify:
         assert results == ordered
         mock_batch.assert_called_once()
         mock_ordered.assert_called_once_with(
-            requests, "/usr/bin/rg", deadline=None
+            requests, "/usr/bin/rg", deadline=None, inventory={}
         )
 
     def test_fixed_ordered_retry_failure_preserves_split_fallback(self):
@@ -1650,6 +1706,371 @@ class TestBatchedGrepVerify:
         assert results[batched] == (f"{source}:1:alpha used",)
         assert results[direct] == serial_results[direct]
         mock_serial.assert_called_once_with([direct], deadline=None)
+
+    @requires_ripgrep
+    def test_ordered_inventory_lists_searchable_paths_in_skylos_order(
+        self, tmp_path
+    ):
+        # Same-prefix file and directory: "." sorts before "/", so the
+        # inventory has to agree with _grep_match_sort_key, not with the
+        # order ripgrep happens to walk in.
+        (tmp_path / "release.py").write_text("numpy\n")
+        (tmp_path / "release").mkdir()
+        (tmp_path / "release" / "template.py").write_text("numpy\n")
+        (tmp_path / "notes.rst").write_text("numpy\n")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "cached.py").write_text("numpy\n")
+        (tmp_path / ".venv").mkdir()
+        (tmp_path / ".venv" / "vendored.py").write_text("numpy\n")
+        request = _fixed_request(tmp_path, "numpy", include_globs=("*.py",))
+
+        paths = _ordered_fixed_string_paths(
+            request, shutil.which("rg"), deadline=None
+        )
+
+        assert paths == [
+            str(tmp_path / "release.py"),
+            str(tmp_path / "release" / "template.py"),
+        ]
+
+    @requires_ripgrep
+    def test_ordered_inventory_of_a_single_file_root_is_that_file(
+        self, tmp_path
+    ):
+        source = tmp_path / "only.py"
+        source.write_text("numpy\n")
+        request = _fixed_request(source, "numpy")
+
+        paths = _ordered_fixed_string_paths(
+            request, shutil.which("rg"), deadline=None
+        )
+
+        assert paths == [str(source)]
+
+    def test_ordered_inventory_rejects_colliding_sort_keys(self, tmp_path):
+        # A file literally named "sub\\name.py" and the file "sub/name.py"
+        # are distinct on POSIX but share one Skylos sort key, so no chunk
+        # order can reproduce the canonical window and the sweep has to
+        # refuse the tree. Ripgrep's listing is stubbed so the guard is
+        # exercised wherever the suite runs.
+        request = _fixed_request(tmp_path, "numpy", include_globs=("*.py",))
+        listing = "\0".join(
+            [
+                str(tmp_path / "sub" / "name.py"),
+                str(tmp_path) + "/sub\\name.py",
+            ]
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=_BoundedProcessResult(
+                    returncode=0, stdout=listing, stderr=""
+                ),
+            ),
+            pytest.raises(_GrepExecutionIncomplete, match="same Skylos sort"),
+        ):
+            _ordered_fixed_string_paths(request, "/usr/bin/rg", deadline=None)
+
+    @requires_ripgrep
+    def test_ordered_retry_reproduces_the_canonical_batch_exactly(
+        self, tmp_path
+    ):
+        # Same-prefix names, CRLF, non-ASCII content, an excluded cache
+        # directory, and a file the globs do not cover.
+        (tmp_path / "release.py").write_text("numpy one\narray one\n")
+        (tmp_path / "release").mkdir()
+        (tmp_path / "release" / "template.py").write_bytes(
+            b"numpy two\r\narray two\r\n"
+        )
+        (tmp_path / "unicode.txt").write_text("numpy \u2118 three\n")
+        (tmp_path / "skipped.rst").write_text("numpy four\n")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "cached.py").write_text("numpy five\n")
+        requests = [
+            _fixed_request(tmp_path, "numpy", max_results=1),
+            _fixed_request(tmp_path, "array", max_results=5),
+        ]
+        rg = shutil.which("rg")
+
+        canonical = _run_ripgrep_batch(requests, rg, deadline=None)
+        with patch(
+            "skylos.core.grep_verify_common._GREP_ORDERED_MAX_PATHS", 1
+        ):
+            ordered = _run_ordered_fixed_string_batch(
+                requests, rg, deadline=None
+            )
+
+        assert ordered == canonical
+        assert canonical[requests[1]]
+
+    @requires_ripgrep
+    def test_ordered_retry_refuses_a_tree_holding_binary_content(
+        self, tmp_path
+    ):
+        # ripgrep quits at the NUL when it walks to a file but converts it
+        # for an explicitly named one, which would add both extra matches
+        # and shifted line numbers. The sweep must abstain, not guess.
+        (tmp_path / "binary.py").write_bytes(b"numpy one\n\x00\nnumpy two\n")
+        (tmp_path / "plain.py").write_text("numpy plain\n")
+        request = _fixed_request(tmp_path, "numpy")
+        rg = shutil.which("rg")
+
+        canonical = _run_ripgrep_batch([request], rg, deadline=None)
+        with pytest.raises((OSError, _GrepExecutionIncomplete)):
+            _run_ordered_fixed_string_batch([request], rg, deadline=None)
+
+        assert canonical[request] == (
+            f"{tmp_path / 'plain.py'}:1:numpy plain",
+        )
+
+    @requires_ripgrep
+    def test_ordered_retry_accepts_binary_files_that_matched_nothing(
+        self, tmp_path
+    ):
+        # A canonical walk searches a prefix of what an explicit path gets
+        # converted into, so a converted file with no match cannot hide
+        # one either. Abstaining here would be pure lost throughput.
+        (tmp_path / "binary.py").write_bytes(b"unrelated\n\x00\nalso\n")
+        (tmp_path / "plain.py").write_text("numpy plain\n")
+        request = _fixed_request(tmp_path, "numpy")
+        rg = shutil.which("rg")
+
+        canonical = _run_ripgrep_batch([request], rg, deadline=None)
+        ordered = _run_ordered_fixed_string_batch([request], rg, deadline=None)
+
+        assert ordered == canonical
+        assert canonical[request] == (
+            f"{tmp_path / 'plain.py'}:1:numpy plain",
+        )
+
+    def test_ordered_retry_abstains_when_a_saturating_file_was_converted(
+        self, tmp_path
+    ):
+        # The request saturates on the converted file's first match, so the
+        # binary verdict only arrives if matches are held to the end event.
+        source = tmp_path / "a.py"
+        request = GrepRequest(
+            pattern="numpy",
+            project_root=str(tmp_path),
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=1,
+        )
+        output = _rg_json_output(
+            (str(source), 1, "numpy one\n"),
+            (str(source), 4, "numpy two\n"),
+            binary_paths=frozenset({str(source)}),
+        )
+
+        def fake_open(_cmd):
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stdout.write({output!r})",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(source)],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR", 1
+            ),
+            pytest.raises((OSError, _GrepExecutionIncomplete)),
+        ):
+            _run_ordered_fixed_string_batch(
+                [request], "/usr/bin/rg", deadline=None
+            )
+
+    def test_ordered_retry_rejects_a_stream_that_never_closes_its_file(
+        self, tmp_path
+    ):
+        # Matches with no end event carry no binary verdict, so treating
+        # them as complete would answer from unvetted evidence.
+        source = tmp_path / "a.py"
+        request = _fixed_request(tmp_path, "numpy")
+        output = _rg_json_output(
+            (str(source), 1, "numpy one\n"), close_last_file=False
+        )
+
+        def fake_open(_cmd):
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stdout.write({output!r})",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(source)],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+            pytest.raises((OSError, _GrepExecutionIncomplete)),
+        ):
+            _run_ordered_fixed_string_batch(
+                [request], "/usr/bin/rg", deadline=None
+            )
+
+    def _run_ordered_against_stream(self, tmp_path, output, request):
+        def fake_open(_cmd):
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stdout.write({output!r})",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(tmp_path / "a.py")],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+        ):
+            return _run_ordered_fixed_string_batch(
+                [request], "/usr/bin/rg", deadline=None
+            )
+
+    def test_ordered_retry_rejects_output_that_leaves_skylos_order(
+        self, tmp_path
+    ):
+        request = _fixed_request(tmp_path, "numpy")
+        output = _rg_json_output(
+            (str(tmp_path / "b.py"), 1, "numpy later\n"),
+            (str(tmp_path / "a.py"), 1, "numpy earlier\n"),
+        )
+
+        with pytest.raises((OSError, _GrepExecutionIncomplete)):
+            self._run_ordered_against_stream(tmp_path, output, request)
+
+    def test_ordered_retry_rejects_a_malformed_file_end_event(self, tmp_path):
+        request = _fixed_request(tmp_path, "numpy")
+        source = str(tmp_path / "a.py")
+        output = (
+            _rg_json_file_event("begin", source)
+            + "\n"
+            + _rg_json_match(source, 1, "numpy one\n")
+            + "\n"
+            + json.dumps({"type": "end", "data": "not-an-object"})
+            + "\n"
+        )
+
+        with pytest.raises((OSError, _GrepExecutionIncomplete)):
+            self._run_ordered_against_stream(tmp_path, output, request)
+
+    def test_ordered_retry_bounds_one_file_to_the_retained_data_limit(
+        self, tmp_path
+    ):
+        request = _fixed_request(tmp_path, "numpy", max_results=10)
+        source = str(tmp_path / "a.py")
+        content = f"numpy {'x' * 200}\n"
+        output = _rg_json_output(
+            (source, 1, content), (source, 2, content)
+        )
+
+        # Overflow abstains rather than answering from a truncated file.
+        with (
+            patch(
+                "skylos.core.grep_verify_common."
+                "_GREP_ORDERED_MAX_RETAINED_BYTES",
+                len(f"{source}:1:{content.rstrip()}".encode()) * 3 // 2,
+            ),
+            pytest.raises(_GrepOutputLimitExceeded),
+        ):
+            self._run_ordered_against_stream(tmp_path, output, request)
+
+    def test_ordered_inventory_is_resolved_once_for_a_splitting_batch(self):
+        requests = [
+            GrepRequest(
+                pattern=pattern,
+                project_root="/repo",
+                use_regex=False,
+                include_globs=("*.py",),
+                fixed_string=True,
+                max_results=5,
+            )
+            for pattern in ("a", "b", "c", "d")
+        ]
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                side_effect=_GrepExecutionIncomplete("inventory failed"),
+            ) as mock_inventory,
+        ):
+            results = execute_grep_batch(requests)
+
+        # Every one of the 2N-1 split nodes retries the ordered path; only
+        # the first may pay for the tree walk.
+        assert results == _GrepBatchResults()
+        assert mock_inventory.call_count == 1
+
+    def test_ordered_inventory_deadline_failures_are_not_cached(self):
+        requests = [
+            GrepRequest(
+                pattern=pattern,
+                project_root="/repo",
+                use_regex=False,
+                include_globs=("*.py",),
+                fixed_string=True,
+                max_results=5,
+            )
+            for pattern in ("a", "b")
+        ]
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                side_effect=_GrepDeadlineExceeded("deadline exceeded"),
+            ) as mock_inventory,
+        ):
+            execute_grep_batch(requests)
+
+        assert mock_inventory.call_count == 3
 
     def test_unicode_adjudication_covers_every_request_in_a_bounded_batch(self):
         common = {

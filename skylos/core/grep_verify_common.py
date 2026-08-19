@@ -218,6 +218,12 @@ class _BoundedProcessState:
     timed_out: bool = False
 
 
+# One ordered sweep's file inventory per (project root, include globs).
+# None records that the inventory could not be resolved, so the rest of a
+# splitting batch stops repaying a failure that will not change.
+_OrderedInventory = dict[tuple[str, tuple[str, ...]], list[str] | None]
+
+
 @dataclass(slots=True)
 class _OrderedFixedStringState:
     active: set[GrepRequest]
@@ -951,6 +957,48 @@ def _ordered_fixed_string_paths(
     return ordered
 
 
+def _ordered_fixed_string_inventory(
+    request: GrepRequest,
+    rg: str,
+    *,
+    deadline: float | None,
+    inventory: _OrderedInventory | None,
+) -> list[str]:
+    """Resolve one root's ordered file list at most once per batch.
+
+    _execute_grep_chunk retries the ordered path at every node of its
+    split cascade, so an inventory that keeps failing would otherwise
+    cost 2N-1 full-tree walks for an N-request batch that keeps
+    overflowing. A deadline failure stays uncached because it says
+    nothing about whether the walk itself can complete.
+    """
+    if inventory is None:
+        return _ordered_fixed_string_paths(request, rg, deadline=deadline)
+    key = (request.project_root, request.include_globs)
+    if key in inventory:
+        cached = inventory[key]
+        if cached is None:
+            raise _GrepExecutionIncomplete(
+                "ordered inventory is unavailable for this root"
+            )
+        return cached
+    try:
+        paths = _ordered_fixed_string_paths(request, rg, deadline=deadline)
+    except _GrepDeadlineExceeded:
+        raise
+    except (
+        _GrepExecutionIncomplete,
+        OSError,
+        subprocess.TimeoutExpired,
+        UnicodeError,
+        ValueError,
+    ):
+        inventory[key] = None
+        raise
+    inventory[key] = paths
+    return paths
+
+
 def _ordered_fixed_string_path_chunks(
     paths: Sequence[str],
 ) -> Iterator[list[str]]:
@@ -996,31 +1044,87 @@ def _record_ordered_fixed_string_match(
             search.active.remove(request)
 
 
+def _reject_converted_binary_file(event: Mapping[str, object]) -> None:
+    """Refuse a file whose binary handling an ordered sweep cannot match.
+
+    ripgrep quits at the first NUL byte in a file it walked to, but for a
+    path named explicitly on the command line it converts NUL to a line
+    terminator and keeps searching. The ordered sweep names every path
+    explicitly, so such a file can yield both extra matches and shifted
+    line numbers that the canonical batch never produces. Ripgrep reports
+    the offset it detected on the file's end event, so fail closed there
+    and let the split path answer this batch. Files that matched nothing
+    never reach this check: ripgrep does not bracket them at all.
+    """
+    data = event.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("ripgrep end event has no data object")
+    if data.get("binary_offset") is not None:
+        raise _GrepExecutionIncomplete(
+            "ripgrep found binary content in an explicitly listed file"
+        )
+
+
+def _ordered_ripgrep_file_matches(
+    process: subprocess.Popen[bytes],
+) -> Iterator[list[_GrepMatch]]:
+    """Yield each searched file's retainable matches, in Skylos order.
+
+    A file's matches are held until ripgrep reports its end event, whose
+    binary-detection offset is the only signal that the file was searched
+    in a way a canonical walk would not reproduce. Releasing matches any
+    earlier would let a saturating sweep stop before that verdict lands.
+    One file may not buffer more evidence than the whole sweep is allowed
+    to retain.
+    """
+    pipe = process.stdout
+    assert pipe is not None
+    previous_key: tuple[str, int, str] | None = None
+    buffered: list[_GrepMatch] = []
+    buffered_bytes = 0
+    while raw_line := pipe.readline(_GREP_BATCH_MAX_OUTPUT_BYTES + 1):
+        if len(raw_line) > _GREP_BATCH_MAX_OUTPUT_BYTES:
+            raise _GrepOutputLimitExceeded(
+                "ripgrep emitted an oversized JSON event"
+            )
+        event = _load_ripgrep_json_event(raw_line.decode("utf-8"))
+        match = _ripgrep_match_from_event(event)
+        if match is None:
+            if event.get("type") == "end":
+                _reject_converted_binary_file(event)
+                yield buffered
+                buffered = []
+                buffered_bytes = 0
+            continue
+        if _is_ignored_grep_path(match.path):
+            continue
+        key = _grep_match_sort_key(match)
+        if previous_key is not None and key < previous_key:
+            raise _GrepExecutionIncomplete(
+                "ripgrep sorted output disagrees with Skylos ordering"
+            )
+        previous_key = key
+        buffered_bytes += len(match.evidence.encode("utf-8"))
+        if buffered_bytes > _GREP_ORDERED_MAX_RETAINED_BYTES:
+            raise _GrepOutputLimitExceeded(
+                "one ripgrep file exceeded the retained-data limit"
+            )
+        buffered.append(match)
+    if buffered:
+        raise _GrepExecutionIncomplete(
+            "ripgrep ended its output without closing the last file"
+        )
+
+
 def _read_ordered_fixed_string_output(
     process: subprocess.Popen[bytes],
     state: _BoundedProcessState,
     search: _OrderedFixedStringState,
 ) -> None:
-    pipe = process.stdout
-    assert pipe is not None
-    previous_key: tuple[str, int, str] | None = None
     try:
-        while raw_line := pipe.readline(_GREP_BATCH_MAX_OUTPUT_BYTES + 1):
-            if len(raw_line) > _GREP_BATCH_MAX_OUTPUT_BYTES:
-                raise _GrepOutputLimitExceeded(
-                    "ripgrep emitted an oversized JSON event"
-                )
-            event = _load_ripgrep_json_event(raw_line.decode("utf-8"))
-            match = _ripgrep_match_from_event(event)
-            if match is None or _is_ignored_grep_path(match.path):
-                continue
-            key = _grep_match_sort_key(match)
-            if previous_key is not None and key < previous_key:
-                raise _GrepExecutionIncomplete(
-                    "ripgrep sorted output disagrees with Skylos ordering"
-                )
-            previous_key = key
-            _record_ordered_fixed_string_match(match, search)
+        for file_matches in _ordered_ripgrep_file_matches(process):
+            for match in file_matches:
+                _record_ordered_fixed_string_match(match, search)
             if not search.active:
                 state.short_circuited.set()
                 _terminate_process(process)
@@ -1141,6 +1245,7 @@ def _run_ordered_fixed_string_batch(
     rg: str,
     *,
     deadline: float | None,
+    inventory: _OrderedInventory | None = None,
 ) -> _GrepBatchResults:
     if not _supports_ordered_fixed_string_batch(requests):
         raise _GrepExecutionIncomplete(
@@ -1153,8 +1258,11 @@ def _run_ordered_fixed_string_batch(
         ordered_deadline = deadline
         if ordered_deadline is None:
             ordered_deadline = time.monotonic() + _GREP_BATCH_TIMEOUT_SECONDS
-        paths = _ordered_fixed_string_paths(
-            representative, rg, deadline=ordered_deadline
+        paths = _ordered_fixed_string_inventory(
+            representative,
+            rg,
+            deadline=ordered_deadline,
+            inventory=inventory,
         )
         for path_chunk in _ordered_fixed_string_path_chunks(paths):
             # A line whose only matching patterns belong to saturated
@@ -1534,6 +1642,7 @@ def _execute_grep_chunk(
     rg: str,
     *,
     deadline: float | None = None,
+    inventory: _OrderedInventory | None = None,
 ) -> _GrepBatchResults:
     try:
         return _run_ripgrep_batch(requests, rg, deadline=deadline)
@@ -1543,7 +1652,7 @@ def _execute_grep_chunk(
         ):
             try:
                 return _run_ordered_fixed_string_batch(
-                    requests, rg, deadline=deadline
+                    requests, rg, deadline=deadline, inventory=inventory
                 )
             except (
                 _GrepExecutionIncomplete,
@@ -1565,13 +1674,16 @@ def _execute_grep_chunk(
         results = _GrepBatchResults()
         results.merge(
             _execute_grep_chunk(
-                requests[:midpoint], rg, deadline=deadline
+                requests[:midpoint], rg, deadline=deadline, inventory=inventory
             )
         )
         if not _deadline_expired(deadline):
             results.merge(
                 _execute_grep_chunk(
-                    requests[midpoint:], rg, deadline=deadline
+                    requests[midpoint:],
+                    rg,
+                    deadline=deadline,
+                    inventory=inventory,
                 )
             )
         return results
@@ -1633,11 +1745,16 @@ def execute_grep_batch(
         return _run_serial_grep_requests(unique_requests, deadline=deadline)
 
     results = _GrepBatchResults()
+    inventory: _OrderedInventory = {}
     for group_requests in _group_grep_requests(unique_requests).values():
         for chunk in _grep_request_chunks(group_requests):
             if _deadline_expired(deadline):
                 return results
-            results.merge(_execute_grep_chunk(chunk, rg, deadline=deadline))
+            results.merge(
+                _execute_grep_chunk(
+                    chunk, rg, deadline=deadline, inventory=inventory
+                )
+            )
     return results
 
 
