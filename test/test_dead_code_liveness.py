@@ -228,28 +228,69 @@ def test_documented_method_index_preserves_legacy_match_forms():
     candidates = {
         ("Dataset", "sel"),
         ("Widget", "from_role"),
+        ("Widget", "foo-bar"),
+        ("Widget", "foo-bar-baz"),
         ("OtherWidget", "from_role"),
         ("Widget", "open_instance_resource"),
         ("Widget", "tiny_name"),
         ("Widget", "absent"),
         ("कु", "मूल"),
+        ("कु", "m1"),
+        ("कु", "m1℮y"),
     }
     docs = """
     xarray.Dataset.sel(value)
     :meth:`~package.Widget.from_role`
+    Widget.foo-bar-baz(value)
     proxy. open_instance_resource(value)
     proxy.tiny_name(value)
     Widget.absentExtra(value)
     package.कु.मूल(value)
+    package.कु.m1℮y(value)
     """
 
     assert liveness._documented_method_keys(docs, candidates) == {
         ("Dataset", "sel"),
         ("Widget", "from_role"),
+        ("Widget", "foo-bar"),
+        ("Widget", "foo-bar-baz"),
         ("OtherWidget", "from_role"),
         ("Widget", "open_instance_resource"),
         ("कु", "मूल"),
+        ("कु", "m1"),
+        ("कु", "m1℮y"),
     }
+
+
+def test_documented_kotlin_backtick_method_prefixes_are_live(tmp_path):
+    _write(
+        tmp_path / "app.kt",
+        """
+        class Widget {
+            fun `foo-bar`() = Unit
+            fun `foo-bar-baz`() = Unit
+        }
+
+        fun main() {
+            Widget()
+        }
+        """,
+    )
+    _write(
+        tmp_path / "README.md",
+        """
+        Call `Widget.foo-bar-baz()` to use the widget.
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    rescues = {
+        item["name"]
+        for item in result["analysis_summary"]["dead_code_liveness"]["rescued"]
+        if item["reason"] == "documented_public_api"
+    }
+
+    assert {"Widget.foo-bar", "Widget.foo-bar-baz"} <= rescues
 
 
 def test_framework_proxy_attr_call_is_live(tmp_path):

@@ -496,10 +496,9 @@ def _qualified_documented_method_keys(
         for name, keys in qualified.items()
         if keys - word_candidates
     }
-    if unusual_qualified:
-        qualified_pattern = _literal_alternation(unusual_qualified)
-        for match in re.finditer(rf"(?=\b({qualified_pattern})\b)", text):
-            referenced.update(unusual_qualified[match.group(1)])
+    for qualified_name, keys in unusual_qualified.items():
+        if re.search(rf"\b{re.escape(qualified_name)}\b", text):
+            referenced.update(keys)
     return referenced
 
 
@@ -525,9 +524,6 @@ def _long_call_documented_method_keys(
         for method_name, keys in by_method.items()
         if "_" in method_name and len(method_name) >= 10
     }
-    if not long_methods:
-        return referenced
-
     for match in re.finditer(r"\.[ \t]*([^\W\d]\w*)\(", text):
         referenced.update(long_methods.get(match.group(1), ()))
 
@@ -536,18 +532,10 @@ def _long_call_documented_method_keys(
         for method_name, keys in long_methods.items()
         if not _is_regex_word_identifier(method_name)
     }
-    if not unusual_methods:
-        return referenced
-
-    method_pattern = _literal_alternation(unusual_methods)
-    for match in re.finditer(rf"\.[ \t]*({method_pattern})\(", text):
-        referenced.update(unusual_methods[match.group(1)])
+    for method_name, keys in unusual_methods.items():
+        if re.search(rf"\.[ \t]*{re.escape(method_name)}\(", text):
+            referenced.update(keys)
     return referenced
-
-
-def _literal_alternation(values: Iterable[str]) -> str:
-    ordered = sorted(values, key=lambda value: (-len(value), value))
-    return "|".join(re.escape(value) for value in ordered)
 
 
 def _is_regex_word_identifier(value: str) -> bool:
