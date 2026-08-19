@@ -4,8 +4,14 @@ from skylos.core import python_api_surface
 from skylos.core.api_symbol_truth import (
     SURFACE_KIND_PYTHON_MODULE,
     cache_api_symbol_surface,
+    cached_api_symbol_surface,
 )
-from skylos.core.python_api_surface import python_environment_key
+from skylos.core.python_api_surface import (
+    cached_python_api_surface,
+    load_python_api_surface_cache,
+    python_environment_key,
+    save_python_api_surface_cache,
+)
 from skylos.rules.ai_defect.api_signature_hallucination import (
     RULE_ID_API_SIGNATURE,
     scan_python_api_signature_hallucinations,
@@ -521,6 +527,130 @@ def test_scan_batches_api_surface_cache_io(tmp_path, monkeypatch):
     assert warm_findings == cold_findings
     assert load_counts == {"python": 1, "shared": 2}
     assert save_counts == {"python": 1, "shared": 1}
+
+
+def test_scan_preserves_surfaces_cached_during_batch(tmp_path, monkeypatch):
+    from skylos.rules.ai_defect import api_signature_hallucination as api_sig
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    py_file = _write_py(
+        repo / "app.py",
+        "import pkg_a\nimport pkg_b\npkg_a.missing()\npkg_b.known()\n",
+    )
+    pkg_b_members = {"known": {"kind": "function", "parameters": []}}
+
+    def build_surface(module_name):
+        if module_name == "pkg_a":
+            return {
+                "module": "pkg_a",
+                "members": {},
+                "members_truncated": False,
+            }
+        return None
+
+    original_add_missing = api_sig._ApiSignatureChecker._add_missing_finding
+
+    def add_missing_and_cache_pkg_b(checker, node, target):
+        original_add_missing(checker, node, target)
+        if target.module_name != "pkg_a":
+            return
+
+        python_payload = load_python_api_surface_cache(repo)
+        python_payload["modules"] = {
+            "pkg_b": {
+                "module": "pkg_b",
+                "members": pkg_b_members,
+                "members_truncated": False,
+            }
+        }
+        assert save_python_api_surface_cache(repo, python_payload)
+        assert cache_api_symbol_surface(
+            repo,
+            {
+                "kind": SURFACE_KIND_PYTHON_MODULE,
+                "name": "pkg_b",
+                "environment_key": python_environment_key(),
+                "members": pkg_b_members,
+            },
+        )
+
+    monkeypatch.setattr(python_api_surface, "build_python_api_surface", build_surface)
+    monkeypatch.setattr(
+        api_sig._ApiSignatureChecker,
+        "_add_missing_finding",
+        add_missing_and_cache_pkg_b,
+    )
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("pkg_a", "pkg_b"),
+    )
+
+    assert [finding["symbol"] for finding in findings] == ["pkg_a.missing"]
+    assert cached_python_api_surface(repo, "pkg_b") is not None
+    assert (
+        cached_api_symbol_surface(
+            repo,
+            SURFACE_KIND_PYTHON_MODULE,
+            "pkg_b",
+            environment_key=python_environment_key(),
+        )
+        is not None
+    )
+
+
+def test_scan_skips_parsing_files_without_allowed_roots(tmp_path, monkeypatch):
+    from skylos.rules.ai_defect import api_signature_hallucination as api_sig
+
+    unrelated_file = _write_py(tmp_path / "unrelated.py", "print('hello')\n")
+    relevant_file = _write_py(
+        tmp_path / "relevant.py",
+        "import sampleapi\nsampleapi.missing()\n",
+    )
+    parsed_sources = []
+    original_parse = api_sig.ast.parse
+
+    def parse(source, *args, **kwargs):
+        parsed_sources.append(source)
+        return original_parse(source, *args, **kwargs)
+
+    def loader(_root, module_name):
+        assert module_name == "sampleapi"
+        return {"members": {}, "members_truncated": False}
+
+    monkeypatch.setattr(api_sig.ast, "parse", parse)
+
+    findings = scan_python_api_signature_hallucinations(
+        tmp_path,
+        [unrelated_file, relevant_file],
+        allowed_modules=("sampleapi",),
+        surface_loader=loader,
+    )
+
+    assert parsed_sources == ["import sampleapi\nsampleapi.missing()\n"]
+    assert [finding["symbol"] for finding in findings] == ["sampleapi.missing"]
+
+
+def test_scan_prefilter_handles_normalized_import_identifiers(tmp_path):
+    py_file = _write_py(
+        tmp_path / "app.py",
+        "import 𝕡andas as pd\npd.missing()\n",
+    )
+
+    def loader(_root, module_name):
+        assert module_name == "pandas"
+        return {"members": {}, "members_truncated": False}
+
+    findings = scan_python_api_signature_hallucinations(
+        tmp_path,
+        [py_file],
+        allowed_modules=("pandas",),
+        surface_loader=loader,
+    )
+
+    assert [finding["symbol"] for finding in findings] == ["pandas.missing"]
 
 
 def test_scan_skips_local_modules_named_like_allowlisted_package(

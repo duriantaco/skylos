@@ -14,6 +14,7 @@ from types import ModuleType
 from typing import Any
 
 from skylos.core.api_symbol_truth import (
+    API_SYMBOL_TRUTH_CACHE_PATH,
     SURFACE_KIND_PYTHON_MODULE,
     api_symbol_surface_key,
     cache_api_symbol_surface,
@@ -22,7 +23,6 @@ from skylos.core.api_symbol_truth import (
     save_api_symbol_truth_cache,
 )
 from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
-
 
 PYTHON_API_SURFACE_SCHEMA_VERSION = 1
 PYTHON_API_SURFACE_CACHE_PATH = Path(".skylos") / "cache" / "python_api_surface.json"
@@ -41,9 +41,14 @@ class PythonApiSurfaceCacheSession:
         self._environment_key = python_environment_key()
         self._python_payload: dict[str, Any] | None = None
         self._python_module_map: dict[str, Any] | None = None
+        self._python_cache_state: tuple[int, int, int, int] | None = None
         self._shared_payload: dict[str, Any] | None = None
         self._shared_surface_map: dict[str, Any] | None = None
-        self._dirty = False
+        self._shared_cache_state: tuple[int, int, int, int] | None = None
+        self._pending_python_modules: dict[str, dict[str, Any]] = {}
+        self._pending_shared_surfaces: dict[str, dict[str, Any]] = {}
+        self._observed_python_modules: dict[str, Any] = {}
+        self._observed_shared_surfaces: dict[str, Any] = {}
 
     def load_surface(
         self,
@@ -69,38 +74,93 @@ class PythonApiSurfaceCacheSession:
         if surface is None:
             return None
 
-        self._python_modules()[safe_name] = surface
+        python_modules = self._python_modules()
+        if safe_name in python_modules:
+            self._observed_python_modules[safe_name] = python_modules[safe_name]
+        self._pending_python_modules[safe_name] = surface
         shared_surface = python_module_api_symbol_surface(
             surface,
             environment_key=self._environment_key,
         )
         if shared_surface is not None:
+            if key in shared_surfaces:
+                self._observed_shared_surfaces[key] = shared_surfaces[key]
             shared_surfaces[key] = shared_surface
-        self._dirty = True
+            self._pending_shared_surfaces[key] = shared_surface
         return surface
 
     def flush(self) -> None:
         """Persist all newly captured surfaces."""
-        if not self._dirty:
+        if not self._pending_python_modules and not self._pending_shared_surfaces:
             return
-        if self._python_payload is not None:
-            save_python_api_surface_cache(self._project_root, self._python_payload)
-        if self._shared_payload is not None:
-            save_api_symbol_truth_cache(self._project_root, self._shared_payload)
-        self._dirty = False
+
+        python_cache_state = _cache_file_state(
+            Path(self._project_root) / PYTHON_API_SURFACE_CACHE_PATH
+        )
+        if self._python_payload is None or python_cache_state != self._python_cache_state:
+            python_payload = load_python_api_surface_cache(self._project_root)
+            python_modules = _modules_map(python_payload)
+        else:
+            python_payload = self._python_payload
+            python_modules = self._python_module_map or {}
+        _merge_unchanged_entries(
+            python_modules,
+            self._pending_python_modules,
+            self._observed_python_modules,
+        )
+        python_payload["modules"] = python_modules
+        save_python_api_surface_cache(self._project_root, python_payload)
+
+        shared_cache_state = _cache_file_state(
+            Path(self._project_root) / API_SYMBOL_TRUTH_CACHE_PATH
+        )
+        if self._shared_payload is None or shared_cache_state != self._shared_cache_state:
+            shared_payload = load_api_symbol_truth_cache(self._project_root)
+            shared_surfaces = _surfaces_map(shared_payload)
+        else:
+            shared_payload = self._shared_payload
+            shared_surfaces = self._shared_surface_map or {}
+        _merge_unchanged_entries(
+            shared_surfaces,
+            self._pending_shared_surfaces,
+            self._observed_shared_surfaces,
+        )
+        shared_payload["surfaces"] = shared_surfaces
+        save_api_symbol_truth_cache(self._project_root, shared_payload)
+
+        self._pending_python_modules.clear()
+        self._pending_shared_surfaces.clear()
+        self._observed_python_modules.clear()
+        self._observed_shared_surfaces.clear()
 
     def _python_modules(self) -> dict[str, Any]:
         if self._python_module_map is None:
             self._python_payload = load_python_api_surface_cache(self._project_root)
             self._python_module_map = _modules_map(self._python_payload)
             self._python_payload["modules"] = self._python_module_map
+            self._python_cache_state = _cache_file_state(
+                Path(self._project_root) / PYTHON_API_SURFACE_CACHE_PATH
+            )
         return self._python_module_map
 
     def _shared_surfaces(self) -> dict[str, Any]:
-        if self._shared_surface_map is None:
-            self._shared_payload = load_api_symbol_truth_cache(self._project_root)
-            self._shared_surface_map = _surfaces_map(self._shared_payload)
-            self._shared_payload["surfaces"] = self._shared_surface_map
+        cache_state = _cache_file_state(
+            Path(self._project_root) / API_SYMBOL_TRUTH_CACHE_PATH
+        )
+        if self._shared_surface_map is None or cache_state != self._shared_cache_state:
+            shared_payload = load_api_symbol_truth_cache(self._project_root)
+            shared_surfaces = _surfaces_map(shared_payload)
+            _merge_unchanged_entries(
+                shared_surfaces,
+                self._pending_shared_surfaces,
+                self._observed_shared_surfaces,
+            )
+            shared_payload["surfaces"] = shared_surfaces
+            self._shared_payload = shared_payload
+            self._shared_surface_map = shared_surfaces
+            self._shared_cache_state = _cache_file_state(
+                Path(self._project_root) / API_SYMBOL_TRUTH_CACHE_PATH
+            )
         return self._shared_surface_map
 
 
@@ -259,6 +319,33 @@ def _surfaces_map(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(surfaces, dict):
         return surfaces
     return {}
+
+
+def _merge_unchanged_entries(
+    current: dict[str, Any],
+    pending: dict[str, dict[str, Any]],
+    observed: dict[str, Any],
+) -> None:
+    for key, value in pending.items():
+        if key in observed:
+            if current.get(key) != observed[key]:
+                continue
+        elif key in current:
+            continue
+        current[key] = value
+
+
+def _cache_file_state(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        cache_stat = path.stat()
+    except OSError:
+        return None
+    return (
+        cache_stat.st_ino,
+        cache_stat.st_size,
+        cache_stat.st_mtime_ns,
+        cache_stat.st_ctime_ns,
+    )
 
 
 def _safe_module_name(value: str) -> str | None:
