@@ -2,6 +2,7 @@ import json
 import textwrap
 
 from skylos.analyzer import analyze
+from skylos.deadcode import liveness
 
 
 def _write(path, body):
@@ -221,6 +222,34 @@ def test_documented_public_method_is_live(tmp_path):
     result = json.loads(analyze(str(tmp_path), grep_verify=False))
 
     assert "app.App.open_instance_resource" not in _unused_function_names(result)
+
+
+def test_documented_method_index_preserves_legacy_match_forms():
+    candidates = {
+        ("Dataset", "sel"),
+        ("Widget", "from_role"),
+        ("OtherWidget", "from_role"),
+        ("Widget", "open_instance_resource"),
+        ("Widget", "tiny_name"),
+        ("Widget", "absent"),
+        ("कु", "मूल"),
+    }
+    docs = """
+    xarray.Dataset.sel(value)
+    :meth:`~package.Widget.from_role`
+    proxy. open_instance_resource(value)
+    proxy.tiny_name(value)
+    Widget.absentExtra(value)
+    package.कु.मूल(value)
+    """
+
+    assert liveness._documented_method_keys(docs, candidates) == {
+        ("Dataset", "sel"),
+        ("Widget", "from_role"),
+        ("OtherWidget", "from_role"),
+        ("Widget", "open_instance_resource"),
+        ("कु", "मूल"),
+    }
 
 
 def test_framework_proxy_attr_call_is_live(tmp_path):
