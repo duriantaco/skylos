@@ -201,6 +201,7 @@ class _BoundedProcessResult:
 @dataclass(slots=True)
 class _BoundedProcessState:
     overflow: threading.Event = field(default_factory=threading.Event)
+    short_circuited: threading.Event = field(default_factory=threading.Event)
     captured: dict[str, list[bytes]] = field(
         default_factory=lambda: {"stdout": [], "stderr": []}
     )
@@ -209,6 +210,13 @@ class _BoundedProcessState:
     writer: threading.Thread | None = None
     started_threads: list[threading.Thread] = field(default_factory=list)
     timed_out: bool = False
+
+
+@dataclass(slots=True)
+class _OrderedFixedStringState:
+    active: set[GrepRequest]
+    matches: dict[GrepRequest, list[_GrepMatch]]
+    retained_bytes: int = 0
 
 
 class _GrepExecutionIncomplete(RuntimeError):
@@ -574,7 +582,7 @@ def _write_bounded_process_input(
         pipe.write(encoded_input)
         pipe.flush()
     except (BrokenPipeError, OSError, ValueError) as exc:
-        if process.poll() is None:
+        if process.poll() is None and not state.short_circuited.is_set():
             state.thread_errors.append(exc)
     finally:
         try:
@@ -672,6 +680,14 @@ def _raise_for_bounded_process_failure(
     assert writer is not None
     if writer.is_alive() or any(thread.is_alive() for thread in state.readers):
         raise _GrepExecutionIncomplete("ripgrep pipe did not close cleanly")
+    if state.short_circuited.is_set():
+        if state.overflow.is_set():
+            raise _GrepOutputLimitExceeded(
+                "ripgrep output exceeded its size limit"
+            )
+        if state.thread_errors:
+            raise OSError(str(state.thread_errors[0]))
+        return
     if state.timed_out:
         raise subprocess.TimeoutExpired(list(cmd), timeout)
     if state.overflow.is_set():
@@ -951,24 +967,37 @@ def _ordered_fixed_string_path_chunks(
 
 def _record_ordered_fixed_string_match(
     match: _GrepMatch,
-    active: set[GrepRequest],
-    matches: dict[GrepRequest, list[_GrepMatch]],
+    search: _OrderedFixedStringState,
 ) -> None:
-    for request in tuple(active):
-        if request.pattern not in match.content:
-            continue
-        request_matches = matches[request]
+    matched_requests = [
+        request
+        for request in tuple(search.active)
+        if request.pattern in match.content
+    ]
+    if not matched_requests:
+        return
+    retained_bytes = (
+        len(match.path.encode("utf-8"))
+        + len(match.content.encode("utf-8"))
+        + len(match.evidence.encode("utf-8"))
+    )
+    if search.retained_bytes + retained_bytes > _GREP_BATCH_MAX_OUTPUT_BYTES:
+        raise _GrepOutputLimitExceeded(
+            "ordered ripgrep matches exceeded the retained-data limit"
+        )
+    search.retained_bytes += retained_bytes
+    for request in matched_requests:
+        request_matches = search.matches[request]
         request_matches.append(match)
         limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
         if len(request_matches) >= limit:
-            active.remove(request)
+            search.active.remove(request)
 
 
 def _read_ordered_fixed_string_output(
     process: subprocess.Popen[bytes],
     state: _BoundedProcessState,
-    active: set[GrepRequest],
-    matches: dict[GrepRequest, list[_GrepMatch]],
+    search: _OrderedFixedStringState,
 ) -> None:
     pipe = process.stdout
     assert pipe is not None
@@ -989,7 +1018,14 @@ def _read_ordered_fixed_string_output(
                     "ripgrep sorted output disagrees with Skylos ordering"
                 )
             previous_key = key
-            _record_ordered_fixed_string_match(match, active, matches)
+            _record_ordered_fixed_string_match(match, search)
+            if not search.active:
+                state.short_circuited.set()
+                _terminate_process(process)
+                return
+    except _GrepOutputLimitExceeded:
+        state.overflow.set()
+        _terminate_process(process)
     except (
         _GrepExecutionIncomplete,
         OSError,
@@ -1004,13 +1040,12 @@ def _ordered_fixed_string_process_threads(
     process: subprocess.Popen[bytes],
     encoded_input: bytes,
     state: _BoundedProcessState,
-    active: set[GrepRequest],
-    matches: dict[GrepRequest, list[_GrepMatch]],
+    search: _OrderedFixedStringState,
 ) -> None:
     state.readers = [
         threading.Thread(
             target=_read_ordered_fixed_string_output,
-            args=(process, state, active, matches),
+            args=(process, state, search),
             daemon=True,
         ),
         threading.Thread(
@@ -1048,36 +1083,35 @@ def _ordered_fixed_string_pattern_input(
 def _run_ordered_fixed_string_path_chunk(
     cmd: Sequence[str],
     encoded_input: bytes,
-    active: set[GrepRequest],
-    matches: dict[GrepRequest, list[_GrepMatch]],
+    search: _OrderedFixedStringState,
     *,
     timeout: float,
 ) -> None:
     process = _open_grep_process(cmd)
     state = _BoundedProcessState()
     _ordered_fixed_string_process_threads(
-        process, encoded_input, state, active, matches
+        process, encoded_input, state, search
     )
     _run_bounded_process_workers(process, state, timeout)
     _raise_for_bounded_process_failure(cmd, timeout, state)
-    if process.returncode not in (0, 1):
+    if (
+        not state.short_circuited.is_set()
+        and process.returncode not in (0, 1)
+    ):
         stderr = b"".join(state.captured["stderr"]).decode("utf-8").strip()
         raise _GrepBatchRejected(stderr or f"exit status {process.returncode}")
 
 
 def _ordered_fixed_string_request_state(
     requests: Sequence[GrepRequest],
-) -> tuple[
-    dict[GrepRequest, list[_GrepMatch]],
-    set[GrepRequest],
-]:
+) -> _OrderedFixedStringState:
     matches: dict[GrepRequest, list[_GrepMatch]] = {}
     active: set[GrepRequest] = set()
     for request in requests:
         matches[request] = []
         if request.max_results > 0:
             active.add(request)
-    return matches, active
+    return _OrderedFixedStringState(active=active, matches=matches)
 
 
 def _ordered_fixed_string_results(
@@ -1111,8 +1145,8 @@ def _run_ordered_fixed_string_batch(
             "ordered prefix search requires fixed-string requests"
         )
     batched, direct = _partition_grep_requests(requests)
-    matches, active = _ordered_fixed_string_request_state(batched)
-    if active:
+    search = _ordered_fixed_string_request_state(batched)
+    if search.active:
         representative = batched[0]
         ordered_deadline = deadline
         if ordered_deadline is None:
@@ -1125,7 +1159,7 @@ def _run_ordered_fixed_string_batch(
             # requests is discarded during recording, so retired patterns
             # can be dropped from later chunks without changing results.
             encoded_input = _ordered_fixed_string_pattern_input(
-                [request for request in batched if request in active]
+                [request for request in batched if request in search.active]
             )
             cmd = _ripgrep_command(representative, rg)
             cmd.extend(
@@ -1135,12 +1169,12 @@ def _run_ordered_fixed_string_batch(
                 ordered_deadline, _GREP_BATCH_TIMEOUT_SECONDS
             )
             _run_ordered_fixed_string_path_chunk(
-                cmd, encoded_input, active, matches, timeout=timeout
+                cmd, encoded_input, search, timeout=timeout
             )
-            if not active:
+            if not search.active:
                 break
 
-    results = _ordered_fixed_string_results(batched, matches)
+    results = _ordered_fixed_string_results(batched, search.matches)
     results.merge(_run_serial_grep_requests(direct, deadline=deadline))
     return results
 
