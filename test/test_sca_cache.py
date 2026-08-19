@@ -169,6 +169,51 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     ] == [("exact", "1.2.3")]
 
 
+def test_npm_finding_line_anchors_to_dependency_entry_not_first_occurrence(tmp_path):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "line-anchor-mre",
+  "keywords": [
+    "through2"
+  ],
+  "dependencies": {
+    "through2": "999999.0.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [item] = sca.parse_package_json_candidates(package_json)
+    assert item["line"] == 7
+
+
+def test_npm_finding_line_distinguishes_same_name_in_dependencies_and_devdependencies(
+    tmp_path,
+):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "dependencies": {
+    "react": "18.0.0"
+  },
+  "devDependencies": {
+    "react": "17.0.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    lines = [item["line"] for item in sca.parse_package_json_candidates(package_json)]
+    assert lines == [3, 6]
+
+
 def test_poetry_multiple_constraint_versions_are_preserved(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(
