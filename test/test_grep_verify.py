@@ -1343,6 +1343,132 @@ class TestBatchedGrepVerify:
         assert results[request][200] == f"{second}:1:numpy"
         assert results[request][-1] == f"{second}:56:numpy"
 
+    def test_ordered_search_drops_saturated_patterns_from_later_chunks(
+        self, tmp_path
+    ):
+        first = tmp_path / "a.py"
+        second = tmp_path / "b.py"
+        stdin_log = tmp_path / "stdin.log"
+        common = {
+            "project_root": str(tmp_path),
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+        }
+        saturating = GrepRequest(pattern="alpha", max_results=1, **common)
+        remaining = GrepRequest(pattern="beta", max_results=5, **common)
+
+        def fake_open(cmd):
+            path = cmd[-1]
+            output = _rg_json_output((path, 1, "alpha beta\n"))
+            script = (
+                "import sys; data = sys.stdin.read(); "
+                f"open({str(stdin_log)!r}, 'a').write(data + chr(0)); "
+                f"sys.stdout.write({output!r})"
+            )
+            return subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(first), str(second)],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+                1,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_ORDERED_MAX_PATHS",
+                1,
+            ),
+        ):
+            results = execute_grep_batch([saturating, remaining])
+
+        stdin_payloads = stdin_log.read_text().split("\0")[:-1]
+        assert stdin_payloads == ["alpha\nbeta\n", "beta\n"]
+        assert results[saturating] == (f"{first}:1:alpha beta",)
+        assert results[remaining] == (
+            f"{first}:1:alpha beta",
+            f"{second}:1:alpha beta",
+        )
+
+    def test_direct_grep_requests_do_not_veto_the_ordered_retry(
+        self, tmp_path
+    ):
+        source = tmp_path / "a.py"
+        common = {
+            "project_root": str(tmp_path),
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+            "max_results": 5,
+        }
+        batched = GrepRequest(pattern="alpha", **common)
+        direct = GrepRequest(pattern="π", **common)
+        serial_results = _GrepBatchResults()
+        serial_results[direct] = (
+            _GrepEvidence(str(source), 2, "π = 3"),
+        )
+
+        def fake_open(cmd):
+            path = cmd[-1]
+            output = _rg_json_output((path, 1, "alpha used\n"))
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stdout.write({output!r})",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(source)],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_serial_grep_requests",
+                return_value=serial_results,
+            ) as mock_serial,
+        ):
+            results = execute_grep_batch([batched, direct])
+
+        assert results[batched] == (f"{source}:1:alpha used",)
+        assert results[direct] == serial_results[direct]
+        mock_serial.assert_called_once_with([direct], deadline=None)
+
     def test_unicode_adjudication_covers_every_request_in_a_bounded_batch(self):
         common = {
             "project_root": "/repo",

@@ -1096,8 +1096,7 @@ def _supports_ordered_fixed_string_batch(
     requests: Sequence[GrepRequest],
 ) -> bool:
     return bool(requests) and all(
-        request.fixed_string and not _requires_direct_grep(request)
-        for request in requests
+        request.fixed_string for request in requests
     )
 
 
@@ -1111,34 +1110,39 @@ def _run_ordered_fixed_string_batch(
         raise _GrepExecutionIncomplete(
             "ordered prefix search requires fixed-string requests"
         )
-    matches, active = _ordered_fixed_string_request_state(requests)
-    if not active:
-        return _ordered_fixed_string_results(requests, matches)
-
-    representative = requests[0]
-    ordered_deadline = deadline
-    if ordered_deadline is None:
-        ordered_deadline = time.monotonic() + _GREP_BATCH_TIMEOUT_SECONDS
-    paths = _ordered_fixed_string_paths(
-        representative, rg, deadline=ordered_deadline
-    )
-    encoded_input = _ordered_fixed_string_pattern_input(requests)
-
-    for path_chunk in _ordered_fixed_string_path_chunks(paths):
-        cmd = _ripgrep_command(representative, rg)
-        cmd.extend(
-            ["--threads", "1", "--json", "-f", "-", "--", *path_chunk]
+    batched, direct = _partition_grep_requests(requests)
+    matches, active = _ordered_fixed_string_request_state(batched)
+    if active:
+        representative = batched[0]
+        ordered_deadline = deadline
+        if ordered_deadline is None:
+            ordered_deadline = time.monotonic() + _GREP_BATCH_TIMEOUT_SECONDS
+        paths = _ordered_fixed_string_paths(
+            representative, rg, deadline=ordered_deadline
         )
-        timeout = _remaining_timeout(
-            ordered_deadline, _GREP_BATCH_TIMEOUT_SECONDS
-        )
-        _run_ordered_fixed_string_path_chunk(
-            cmd, encoded_input, active, matches, timeout=timeout
-        )
-        if not active:
-            break
+        for path_chunk in _ordered_fixed_string_path_chunks(paths):
+            # A line whose only matching patterns belong to saturated
+            # requests is discarded during recording, so retired patterns
+            # can be dropped from later chunks without changing results.
+            encoded_input = _ordered_fixed_string_pattern_input(
+                [request for request in batched if request in active]
+            )
+            cmd = _ripgrep_command(representative, rg)
+            cmd.extend(
+                ["--threads", "1", "--json", "-f", "-", "--", *path_chunk]
+            )
+            timeout = _remaining_timeout(
+                ordered_deadline, _GREP_BATCH_TIMEOUT_SECONDS
+            )
+            _run_ordered_fixed_string_path_chunk(
+                cmd, encoded_input, active, matches, timeout=timeout
+            )
+            if not active:
+                break
 
-    return _ordered_fixed_string_results(requests, matches)
+    results = _ordered_fixed_string_results(batched, matches)
+    results.merge(_run_serial_grep_requests(direct, deadline=deadline))
+    return results
 
 
 def _batch_group_key(request: GrepRequest) -> tuple[str, tuple[str, ...], bool]:
