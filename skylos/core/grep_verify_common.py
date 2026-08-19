@@ -89,6 +89,12 @@ _GREP_BATCH_MAX_STDERR_BYTES = 128 * 1024
 _GREP_BATCH_MAX_MATCHES = _GREP_BATCH_SIZE * 256
 _GREP_ORDERED_MAX_PATHS = 64
 _GREP_ORDERED_MAX_PATH_BYTES = 64 * 1024
+# Bounds the canonical evidence an ordered sweep may retain, accounted as
+# the evidence bytes each distinct match contributes to results. Counting
+# a match's fields beyond its evidence would halve the usable window and
+# push full hot batches on scipy-sized trees into a pointless sweep that
+# is then redone in split halves.
+_GREP_ORDERED_MAX_RETAINED_BYTES = _GREP_BATCH_MAX_OUTPUT_BYTES
 _GREP_UNICODE_MAX_INPUT_BYTES = 512 * 1024
 # Every request in a bounded batch must receive the same Unicode-boundary
 # adjudication. Skipping later requests makes a successful batch partial and
@@ -976,12 +982,8 @@ def _record_ordered_fixed_string_match(
     ]
     if not matched_requests:
         return
-    retained_bytes = (
-        len(match.path.encode("utf-8"))
-        + len(match.content.encode("utf-8"))
-        + len(match.evidence.encode("utf-8"))
-    )
-    if search.retained_bytes + retained_bytes > _GREP_BATCH_MAX_OUTPUT_BYTES:
+    retained_bytes = len(match.evidence.encode("utf-8"))
+    if search.retained_bytes + retained_bytes > _GREP_ORDERED_MAX_RETAINED_BYTES:
         raise _GrepOutputLimitExceeded(
             "ordered ripgrep matches exceeded the retained-data limit"
         )
