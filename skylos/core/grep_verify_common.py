@@ -87,6 +87,8 @@ _GREP_BATCH_MAX_PATTERN_BYTES = 64 * 1024
 _GREP_BATCH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _GREP_BATCH_MAX_STDERR_BYTES = 128 * 1024
 _GREP_BATCH_MAX_MATCHES = _GREP_BATCH_SIZE * 256
+_GREP_ORDERED_MAX_PATHS = 64
+_GREP_ORDERED_MAX_PATH_BYTES = 64 * 1024
 _GREP_UNICODE_MAX_INPUT_BYTES = 512 * 1024
 # Every request in a bounded batch must receive the same Unicode-boundary
 # adjudication. Skipping later requests makes a successful batch partial and
@@ -888,6 +890,257 @@ def _parse_ripgrep_json_matches(
     return sorted(matches, key=_grep_match_sort_key)
 
 
+def _ordered_fixed_string_paths(
+    request: GrepRequest,
+    rg: str,
+    *,
+    deadline: float | None,
+) -> list[str]:
+    if request.project_root_is_file:
+        return [os.path.abspath(request.project_root)]
+    cmd = [rg, "--no-config", "--hidden", "--no-ignore"]
+    for glob in request.include_globs:
+        cmd.extend(["-g", glob])
+    for directory in _GREP_EXCLUDE_DIRS:
+        cmd.extend(["-g", f"!**/{directory}/**"])
+    cmd.extend(
+        [
+            "--files",
+            "--null",
+            "--",
+            os.path.abspath(request.project_root),
+        ]
+    )
+    result = _run_bounded_subprocess(
+        cmd,
+        input_text="",
+        timeout=_remaining_timeout(deadline, _GREP_REQUEST_TIMEOUT_SECONDS),
+    )
+    if result.returncode not in (0, 1):
+        message = result.stderr.strip() or f"exit status {result.returncode}"
+        raise _GrepExecutionIncomplete(message)
+    paths = [path for path in result.stdout.split("\0") if path]
+    ordered = sorted(paths, key=lambda path: path.replace("\\", "/"))
+    sort_keys = [path.replace("\\", "/") for path in ordered]
+    if len(sort_keys) != len(set(sort_keys)):
+        raise _GrepExecutionIncomplete(
+            "distinct ripgrep paths have the same Skylos sort key"
+        )
+    return ordered
+
+
+def _ordered_fixed_string_path_chunks(
+    paths: Sequence[str],
+) -> Iterator[list[str]]:
+    chunk: list[str] = []
+    chunk_bytes = 0
+    for path in paths:
+        path_bytes = len(path.encode("utf-8")) + 1
+        if chunk and (
+            len(chunk) >= _GREP_ORDERED_MAX_PATHS
+            or chunk_bytes + path_bytes > _GREP_ORDERED_MAX_PATH_BYTES
+        ):
+            yield chunk
+            chunk = []
+            chunk_bytes = 0
+        chunk.append(path)
+        chunk_bytes += path_bytes
+    if chunk:
+        yield chunk
+
+
+def _record_ordered_fixed_string_match(
+    match: _GrepMatch,
+    active: set[GrepRequest],
+    matches: dict[GrepRequest, list[_GrepMatch]],
+) -> None:
+    for request in tuple(active):
+        if request.pattern not in match.content:
+            continue
+        request_matches = matches[request]
+        request_matches.append(match)
+        limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+        if len(request_matches) >= limit:
+            active.remove(request)
+
+
+def _read_ordered_fixed_string_output(
+    process: subprocess.Popen[bytes],
+    state: _BoundedProcessState,
+    active: set[GrepRequest],
+    matches: dict[GrepRequest, list[_GrepMatch]],
+) -> None:
+    pipe = process.stdout
+    assert pipe is not None
+    previous_key: tuple[str, int, str] | None = None
+    try:
+        while raw_line := pipe.readline(_GREP_BATCH_MAX_OUTPUT_BYTES + 1):
+            if len(raw_line) > _GREP_BATCH_MAX_OUTPUT_BYTES:
+                raise _GrepOutputLimitExceeded(
+                    "ripgrep emitted an oversized JSON event"
+                )
+            event = _load_ripgrep_json_event(raw_line.decode("utf-8"))
+            match = _ripgrep_match_from_event(event)
+            if match is None or _is_ignored_grep_path(match.path):
+                continue
+            key = _grep_match_sort_key(match)
+            if previous_key is not None and key < previous_key:
+                raise _GrepExecutionIncomplete(
+                    "ripgrep sorted output disagrees with Skylos ordering"
+                )
+            previous_key = key
+            _record_ordered_fixed_string_match(match, active, matches)
+    except (
+        _GrepExecutionIncomplete,
+        OSError,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        state.thread_errors.append(exc)
+        _terminate_process(process)
+
+
+def _ordered_fixed_string_process_threads(
+    process: subprocess.Popen[bytes],
+    encoded_input: bytes,
+    state: _BoundedProcessState,
+    active: set[GrepRequest],
+    matches: dict[GrepRequest, list[_GrepMatch]],
+) -> None:
+    state.readers = [
+        threading.Thread(
+            target=_read_ordered_fixed_string_output,
+            args=(process, state, active, matches),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_read_bounded_process_pipe,
+            args=(
+                process,
+                "stderr",
+                _GREP_BATCH_MAX_STDERR_BYTES,
+                state,
+            ),
+            daemon=True,
+        ),
+    ]
+    state.writer = threading.Thread(
+        target=_write_bounded_process_input,
+        args=(process, encoded_input, state),
+        daemon=True,
+    )
+
+
+def _ordered_fixed_string_pattern_input(
+    requests: Sequence[GrepRequest],
+) -> bytes:
+    patterns = "\n".join(
+        dict.fromkeys(
+            request.pattern for request in requests if request.max_results > 0
+        )
+    )
+    encoded_input = f"{patterns}\n".encode()
+    if len(encoded_input) > _GREP_BATCH_MAX_PATTERN_BYTES:
+        raise _GrepInputLimitExceeded("grep subprocess input is too large")
+    return encoded_input
+
+
+def _run_ordered_fixed_string_path_chunk(
+    cmd: Sequence[str],
+    encoded_input: bytes,
+    active: set[GrepRequest],
+    matches: dict[GrepRequest, list[_GrepMatch]],
+    *,
+    timeout: float,
+) -> None:
+    process = _open_grep_process(cmd)
+    state = _BoundedProcessState()
+    _ordered_fixed_string_process_threads(
+        process, encoded_input, state, active, matches
+    )
+    _run_bounded_process_workers(process, state, timeout)
+    _raise_for_bounded_process_failure(cmd, timeout, state)
+    if process.returncode not in (0, 1):
+        stderr = b"".join(state.captured["stderr"]).decode("utf-8").strip()
+        raise _GrepBatchRejected(stderr or f"exit status {process.returncode}")
+
+
+def _ordered_fixed_string_request_state(
+    requests: Sequence[GrepRequest],
+) -> tuple[
+    dict[GrepRequest, list[_GrepMatch]],
+    set[GrepRequest],
+]:
+    matches: dict[GrepRequest, list[_GrepMatch]] = {}
+    active: set[GrepRequest] = set()
+    for request in requests:
+        matches[request] = []
+        if request.max_results > 0:
+            active.add(request)
+    return matches, active
+
+
+def _ordered_fixed_string_results(
+    requests: Sequence[GrepRequest],
+    matches: Mapping[GrepRequest, Sequence[_GrepMatch]],
+) -> _GrepBatchResults:
+    results = _GrepBatchResults()
+    for request in requests:
+        results[request] = tuple(
+            match.legacy_line() for match in matches[request]
+        )
+    return results
+
+
+def _supports_ordered_fixed_string_batch(
+    requests: Sequence[GrepRequest],
+) -> bool:
+    return bool(requests) and all(
+        request.fixed_string and not _requires_direct_grep(request)
+        for request in requests
+    )
+
+
+def _run_ordered_fixed_string_batch(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    *,
+    deadline: float | None,
+) -> _GrepBatchResults:
+    if not _supports_ordered_fixed_string_batch(requests):
+        raise _GrepExecutionIncomplete(
+            "ordered prefix search requires fixed-string requests"
+        )
+    matches, active = _ordered_fixed_string_request_state(requests)
+    if not active:
+        return _ordered_fixed_string_results(requests, matches)
+
+    representative = requests[0]
+    ordered_deadline = deadline
+    if ordered_deadline is None:
+        ordered_deadline = time.monotonic() + _GREP_BATCH_TIMEOUT_SECONDS
+    paths = _ordered_fixed_string_paths(
+        representative, rg, deadline=ordered_deadline
+    )
+    encoded_input = _ordered_fixed_string_pattern_input(requests)
+
+    for path_chunk in _ordered_fixed_string_path_chunks(paths):
+        cmd = _ripgrep_command(representative, rg)
+        cmd.extend(
+            ["--threads", "1", "--json", "-f", "-", "--", *path_chunk]
+        )
+        timeout = _remaining_timeout(
+            ordered_deadline, _GREP_BATCH_TIMEOUT_SECONDS
+        )
+        _run_ordered_fixed_string_path_chunk(
+            cmd, encoded_input, active, matches, timeout=timeout
+        )
+        if not active:
+            break
+
+    return _ordered_fixed_string_results(requests, matches)
+
+
 def _batch_group_key(request: GrepRequest) -> tuple[str, tuple[str, ...], bool]:
     return request.project_root, request.include_globs, request.fixed_string
 
@@ -1245,6 +1498,25 @@ def _execute_grep_chunk(
     try:
         return _run_ripgrep_batch(requests, rg, deadline=deadline)
     except (_GrepOutputLimitExceeded, _GrepInputLimitExceeded) as exc:
+        if isinstance(exc, _GrepOutputLimitExceeded) and not _deadline_expired(
+            deadline
+        ):
+            try:
+                return _run_ordered_fixed_string_batch(
+                    requests, rg, deadline=deadline
+                )
+            except (
+                _GrepExecutionIncomplete,
+                _GrepBatchRejected,
+                OSError,
+                subprocess.TimeoutExpired,
+                UnicodeError,
+                ValueError,
+            ) as ordered_exc:
+                logger.debug(
+                    "ordered fixed-string grep was unavailable: %s",
+                    ordered_exc,
+                )
         if len(requests) <= 1 or _deadline_expired(deadline):
             logger.debug("grep request exceeded a resource limit: %s", exc)
             return _GrepBatchResults()

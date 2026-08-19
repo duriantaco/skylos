@@ -1196,6 +1196,153 @@ class TestBatchedGrepVerify:
         assert results == {request: () for request in requests}
         assert mock_batch.call_count == 3
 
+    def test_fixed_output_limit_uses_ordered_retry_before_splitting(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=pattern, **common)
+            for pattern in ("numpy", "array")
+        ]
+        ordered = _GrepBatchResults()
+        ordered.update(
+            {
+                requests[0]: (_GrepEvidence("/repo/a.py", 1, "numpy"),),
+                requests[1]: (_GrepEvidence("/repo/a.py", 2, "array"),),
+            }
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ) as mock_batch,
+            patch(
+                "skylos.core.grep_verify_common._run_ordered_fixed_string_batch",
+                return_value=ordered,
+            ) as mock_ordered,
+        ):
+            results = execute_grep_batch(requests)
+
+        assert results == ordered
+        mock_batch.assert_called_once()
+        mock_ordered.assert_called_once_with(
+            requests, "/usr/bin/rg", deadline=None
+        )
+
+    def test_fixed_ordered_retry_failure_preserves_split_fallback(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+            "max_results": 5,
+        }
+        requests = [
+            GrepRequest(pattern=pattern, **common)
+            for pattern in ("numpy", "array")
+        ]
+
+        def limited_batch(chunk, _rg, **_kwargs):
+            if len(chunk) > 1:
+                raise _GrepOutputLimitExceeded("forced output cap")
+            return {chunk[0]: ()}
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=limited_batch,
+            ) as mock_batch,
+            patch(
+                "skylos.core.grep_verify_common."
+                "_ordered_fixed_string_paths",
+                side_effect=_GrepExecutionIncomplete("inventory failed"),
+            ) as mock_ordered,
+        ):
+            results = execute_grep_batch(requests)
+
+        assert results == {request: () for request in requests}
+        assert mock_batch.call_count == 3
+        mock_ordered.assert_called_once()
+        assert mock_ordered.call_args.args == (requests[0], "/usr/bin/rg")
+        assert isinstance(mock_ordered.call_args.kwargs["deadline"], float)
+
+    def test_oversized_fixed_search_returns_canonical_prefix_across_chunks(
+        self, tmp_path
+    ):
+        first = tmp_path / "release.py"
+        second = tmp_path / "release" / "template.py"
+        request = GrepRequest(
+            pattern="numpy",
+            project_root=str(tmp_path),
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+
+        def fake_open(cmd):
+            path = cmd[-1]
+            output = _rg_json_output(
+                *((path, line, "numpy\n") for line in range(1, 201))
+            )
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stdout.write({output!r})",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._ordered_fixed_string_paths",
+                return_value=[str(first), str(second)],
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=fake_open,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                1_024,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_ORDERED_MAX_PATHS",
+                1,
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert len(results[request]) == 256
+        assert results[request][0] == f"{first}:1:numpy"
+        assert results[request][199] == f"{first}:200:numpy"
+        assert results[request][200] == f"{second}:1:numpy"
+        assert results[request][-1] == f"{second}:56:numpy"
+
     def test_unicode_adjudication_covers_every_request_in_a_bounded_batch(self):
         common = {
             "project_root": "/repo",
