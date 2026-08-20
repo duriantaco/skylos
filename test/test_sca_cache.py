@@ -214,6 +214,58 @@ def test_npm_finding_line_distinguishes_same_name_in_dependencies_and_devdepende
     assert lines == [3, 6]
 
 
+def test_npm_finding_line_anchors_correctly_when_section_is_a_single_line(tmp_path):
+    # A section object written entirely on one line closes its brace on the
+    # same line it opens, so a line-scoped "am I still inside the section"
+    # scan sees depth return to zero before it ever inspects that line's
+    # content and falls back to the first textual occurrence of the name
+    # anywhere in the file -- here, inside "keywords" one line above the
+    # real declaring entry.
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "keywords": ["lodash"],
+  "dependencies": { "lodash": "4.17.20" }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [item] = sca.parse_package_json_candidates(package_json)
+    assert item["line"] == 3
+
+
+def test_npm_finding_line_ignores_same_name_nested_under_overrides(tmp_path):
+    # This scanner only ever reads the top-level "dependencies" and
+    # "devDependencies" objects (overrides are not scanned as candidates at
+    # all), so a same-named key nested inside "overrides" must never hijack
+    # the line reported for the real top-level entry, however deeply nested
+    # or however many times the name repeats underneath it.
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "dependencies": { "foo": "1.0.0" },
+  "overrides": {
+    "bar": {
+      "dependencies": {
+        "foo": "2.0.0"
+      }
+    }
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [item] = sca.parse_package_json_candidates(package_json)
+    assert item["name"] == "foo"
+    assert item["line"] == 2
+
+
 def test_poetry_multiple_constraint_versions_are_preserved(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(
