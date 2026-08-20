@@ -1,3 +1,5 @@
+import json
+
 from skylos.rules.sca import vulnerability_scanner as sca
 
 
@@ -238,9 +240,10 @@ def test_npm_finding_line_anchors_correctly_when_section_is_a_single_line(tmp_pa
 
 
 def test_npm_finding_line_ignores_same_name_nested_under_overrides(tmp_path):
-    # This scanner only ever reads the top-level "dependencies" and
-    # "devDependencies" objects (overrides are not scanned as candidates at
-    # all), so a same-named key nested inside "overrides" must never hijack
+    # This scanner only ever reads the top-level objects named by
+    # _PACKAGE_JSON_DEPENDENCY_SECTIONS (overrides are not scanned as
+    # candidates at all), so a same-named key nested inside "overrides"
+    # must never hijack
     # the line reported for the real top-level entry, however deeply nested
     # or however many times the name repeats underneath it.
     package_json = tmp_path / "package.json"
@@ -264,6 +267,75 @@ def test_npm_finding_line_ignores_same_name_nested_under_overrides(tmp_path):
     [item] = sca.parse_package_json_candidates(package_json)
     assert item["name"] == "foo"
     assert item["line"] == 2
+
+
+def test_npm_scans_peer_and_optional_dependency_sections(tmp_path):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "dependencies": { "runtime-dep": "1.0.0" },
+  "devDependencies": { "dev-dep": "2.0.0" },
+  "peerDependencies": { "peer-dep": "3.0.0" },
+  "optionalDependencies": { "optional-dep": "4.0.0" }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Sections are walked in sorted order, so results stay in the same order
+    # from run to run even though the section names live in a frozenset.
+    assert [
+        (item["name"], item["version"], item["line"])
+        for item in sca.parse_package_json(package_json)
+    ] == [
+        ("runtime-dep", "1.0.0", 2),
+        ("dev-dep", "2.0.0", 3),
+        ("optional-dep", "4.0.0", 5),
+        ("peer-dep", "3.0.0", 4),
+    ]
+
+
+def test_npm_finding_line_anchors_peer_and_optional_entries(tmp_path):
+    # The same name declared as both a peer and an optional dependency has to
+    # anchor to its own declaring section rather than to the first textual
+    # occurrence of the name (here, one line above inside "keywords").
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "keywords": ["react"],
+  "peerDependencies": { "react": "18.0.0" },
+  "optionalDependencies": {
+    "react": "17.0.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert [
+        (item["version"], item["line"])
+        for item in sca.parse_package_json_candidates(package_json)
+    ] == [("17.0.0", 5), ("18.0.0", 3)]
+
+
+def test_npm_declaration_count_tracks_every_scanned_section(tmp_path):
+    # _package_json_declaration_count feeds unresolved_dependency_count as
+    # declared_count - len(parsed), so it has to count exactly the sections
+    # the parser walks. Building the manifest from the shared constant means
+    # adding a section without teaching both sides fails here.
+    sections = sorted(sca._PACKAGE_JSON_DEPENDENCY_SECTIONS)
+    text = json.dumps(
+        {section: {f"pkg-{index}": "1.0.0"} for index, section in enumerate(sections)}
+    )
+    package_json = tmp_path / "package.json"
+    package_json.write_text(text, encoding="utf-8")
+
+    assert sca._declared_dependency_count("package.json", text) == len(sections)
+    assert len(sca.parse_package_json(package_json)) == len(sections)
 
 
 def test_poetry_multiple_constraint_versions_are_preserved(tmp_path):
@@ -351,6 +423,39 @@ def test_scan_receipt_counts_unresolved_ranges(monkeypatch, tmp_path):
 
     assert [(item["name"], item["version"]) for item in queried] == [("exact", "1.2.3")]
     assert result.receipt["unresolved_dependency_count"] == 1
+    assert result.receipt["status"] == "complete_with_unresolved_versions"
+
+
+def test_scan_receipt_counts_unresolved_peer_and_optional_ranges(monkeypatch, tmp_path):
+    monkeypatch.setattr(sca, "_requests", object())
+    (tmp_path / "package.json").write_text(
+        '{"peerDependencies":{"peer-exact":"1.2.3","peer-range":"^2.0.0"},'
+        '"optionalDependencies":{"optional-range":"^3.0.0"}}',
+        encoding="utf-8",
+    )
+    queried = []
+
+    def fake_query(deps, cache):
+        queried.extend(deps)
+        return sca.OsvQueryResult(
+            [],
+            receipt={
+                "status": "complete",
+                "complete": True,
+                "requested_batches": 1,
+                "successful_batches": 1,
+                "failed_batches": 0,
+            },
+        )
+
+    monkeypatch.setattr(sca, "_query_osv_batch", fake_query)
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert [(item["name"], item["version"]) for item in queried] == [
+        ("peer-exact", "1.2.3")
+    ]
+    assert result.receipt["unresolved_dependency_count"] == 2
     assert result.receipt["status"] == "complete_with_unresolved_versions"
 
 
