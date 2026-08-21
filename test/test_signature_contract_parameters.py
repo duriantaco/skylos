@@ -5,7 +5,10 @@ from skylos.analyzer import analyze
 
 def _analyze_sources(tmp_path, sources):
     for filename, source in sources.items():
-        (tmp_path / filename).write_text(source, encoding="utf-8")
+        (tmp_path / filename).write_text(  # skylos: ignore[SKY-D324] pytest tmp_path with literal filenames
+            source,
+            encoding="utf-8",
+        )
 
     return json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
 
