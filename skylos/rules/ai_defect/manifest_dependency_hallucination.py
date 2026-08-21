@@ -52,7 +52,6 @@ STATUS_UNKNOWN = "unknown"
 VERSION_CACHE_SCHEMA_VERSION = 1
 VERSION_CACHE_PATH = Path(".skylos") / "cache" / "dependency_versions.json"
 MAX_VERSION_CACHE_BYTES = 5_000_000
-MAX_REGISTRY_RESPONSE_BYTES = 1_000_000
 MAX_INSTALL_SURFACE_BYTES = 1_000_000
 NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org"
 GO_PROXY_ORIGIN = "https://proxy.golang.org"
@@ -1963,25 +1962,12 @@ def _check_pypi_version(name: str, version: str) -> str:
 
     safe_version = quote(version.strip(), safe="")
     version_url = f"{PYPI_JSON_ORIGIN}/{package_path}/{safe_version}/json"
-    try:
-        _fetch_json(version_url, user_agent="skylos-pypi-dep-scanner/1.0")
-        return STATUS_PRESENT
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:
-            return STATUS_UNKNOWN
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return STATUS_UNKNOWN
-
     package_url = f"{PYPI_JSON_ORIGIN}/{package_path}/json"
-    try:
-        _fetch_json(package_url, user_agent="skylos-pypi-dep-scanner/1.0")
-        return STATUS_MISSING_VERSION
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return STATUS_MISSING_PACKAGE
-        return STATUS_UNKNOWN
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return STATUS_UNKNOWN
+    return _check_registry_version_urls(
+        version_url,
+        package_url,
+        user_agent="skylos-pypi-dep-scanner/1.0",
+    )
 
 
 def _check_npm_version(name: str, version: str) -> str:
@@ -1989,22 +1975,14 @@ def _check_npm_version(name: str, version: str) -> str:
     if package_path is None:
         return STATUS_UNKNOWN
 
-    url = f"{NPM_REGISTRY_ORIGIN}/{package_path}"
-    try:
-        data = _fetch_json(url, user_agent="skylos-npm-dep-scanner/1.0")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return STATUS_MISSING_PACKAGE
-        return STATUS_UNKNOWN
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return STATUS_UNKNOWN
-
-    versions = data.get("versions")
-    if not isinstance(versions, dict):
-        return STATUS_UNKNOWN
-    if version in versions:
-        return STATUS_PRESENT
-    return STATUS_MISSING_VERSION
+    safe_version = quote(version.strip(), safe="")
+    package_url = f"{NPM_REGISTRY_ORIGIN}/{package_path}"
+    version_url = f"{package_url}/{safe_version}"
+    return _check_registry_version_urls(
+        version_url,
+        package_url,
+        user_agent="skylos-npm-dep-scanner/1.0",
+    )
 
 
 def _check_go_version(name: str, version: str) -> str:
@@ -2015,25 +1993,30 @@ def _check_go_version(name: str, version: str) -> str:
     go_version = _go_version(version)
     safe_go_version = quote(go_version, safe="")
     info_url = f"{GO_PROXY_ORIGIN}/{module_path}/@v/{safe_go_version}.info"
-    try:
-        _fetch_text(info_url, user_agent="skylos-go-dep-scanner/1.0")
+    list_url = f"{GO_PROXY_ORIGIN}/{module_path}/@v/list"
+    return _check_registry_version_urls(
+        info_url,
+        list_url,
+        user_agent="skylos-go-dep-scanner/1.0",
+    )
+
+
+def _check_registry_version_urls(
+    version_url: str,
+    package_url: str,
+    *,
+    user_agent: str,
+) -> str:
+    version_status = _registry_http_status(version_url, user_agent=user_agent)
+    if version_status == 200:
         return STATUS_PRESENT
-    except urllib.error.HTTPError as exc:
-        if exc.code != 404:
-            return STATUS_UNKNOWN
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+    if version_status != 404:
         return STATUS_UNKNOWN
 
-    list_url = f"{GO_PROXY_ORIGIN}/{module_path}/@v/list"
-    try:
-        _fetch_text(list_url, user_agent="skylos-go-dep-scanner/1.0")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return STATUS_MISSING_PACKAGE
-        return STATUS_UNKNOWN
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return STATUS_UNKNOWN
-    return STATUS_MISSING_VERSION
+    package_status = _registry_http_status(package_url, user_agent=user_agent)
+    if package_status == 200:
+        return STATUS_MISSING_VERSION
+    return STATUS_MISSING_PACKAGE if package_status == 404 else STATUS_UNKNOWN
 
 
 def _go_version(version: str) -> str:
@@ -2132,30 +2115,22 @@ def _safe_go_path_part(value: str) -> bool:
     return True
 
 
-def _fetch_json(url: str, *, user_agent: str) -> dict[str, Any]:
-    text = _fetch_text(url, user_agent=user_agent)
-    data = json.loads(text)
-    if isinstance(data, dict):
-        return data
-    return {}
-
-
-def _fetch_text(url: str, *, user_agent: str) -> str:
-    if not _allowed_registry_url(url):
-        raise ValueError("Registry URL host is not allowed")
-
-    request = urllib.request.Request(url, method="GET")
-    request.add_header("User-Agent", user_agent)
-    with (
-        urllib.request.urlopen(  # skylos: ignore[SKY-D216] URL is validated against fixed registry hosts above.
+def _registry_http_status(url: str, *, user_agent: str) -> int | None:
+    try:
+        if not _allowed_registry_url(url):
+            raise ValueError("Registry URL host is not allowed")
+        request = urllib.request.Request(url, method="HEAD")
+        request.add_header("User-Agent", user_agent)
+        with urllib.request.urlopen(  # skylos: ignore[SKY-D216] fixed registry host
             request,
             timeout=5,
-        ) as response
-    ):
-        raw = response.read(MAX_REGISTRY_RESPONSE_BYTES + 1)
-    if len(raw) > MAX_REGISTRY_RESPONSE_BYTES:
-        raise ValueError("Registry response exceeds size limit")
-    return raw.decode("utf-8", errors="replace")
+        ):
+            pass
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    return 200
 
 
 def _allowed_registry_url(url: str) -> bool:
