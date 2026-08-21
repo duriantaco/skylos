@@ -58,6 +58,7 @@ from skylos.core.file_discovery import (
 )
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
+from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
 
 from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
@@ -4373,6 +4374,7 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
         self._mark_call_arg_method_refs()
+        mark_signature_contract_parameters(self.defs)
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: dead-code liveness"))

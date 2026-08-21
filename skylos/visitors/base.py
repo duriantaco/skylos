@@ -199,6 +199,113 @@ def _is_intentional_discard_name(name: str) -> bool:
     return False
 
 
+def _is_not_implemented_error(expr: ast.expr | None) -> bool:
+    if isinstance(expr, ast.Call):
+        expr = expr.func
+    if isinstance(expr, ast.Name):
+        return expr.id == "NotImplementedError"
+    return isinstance(expr, ast.Attribute) and expr.attr == "NotImplementedError"
+
+
+def _has_signature_stub_body(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Return whether a function only declares an interface contract."""
+    body = list(node.body)
+    has_docstring = bool(
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    )
+    if has_docstring:
+        body = body[1:]
+
+    if not body:
+        return has_docstring
+
+    if len(body) != 1:
+        return False
+
+    stmt = body[0]
+    if isinstance(stmt, ast.Pass):
+        return has_docstring
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and stmt.value.value is Ellipsis
+    ) or (
+        isinstance(stmt, ast.Raise) and _is_not_implemented_error(stmt.exc)
+    )
+
+
+def _module_binds_name(module: ast.Module, target_name: str) -> bool:
+    class BindingProbe(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.found = False
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if node.id == target_name and isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.found = True
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node.name == target_name:
+                self.found = True
+            self._visit_function_header(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node.name == target_name:
+                self.found = True
+            self._visit_function_header(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if node.name == target_name:
+                self.found = True
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+
+        def _visit_function_header(
+            self,
+            node: ast.FunctionDef | ast.AsyncFunctionDef,
+        ) -> None:
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            for default in node.args.defaults:
+                self.visit(default)
+            for default in node.args.kw_defaults:
+                if default is not None:
+                    self.visit(default)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            self.found = self.found or any(
+                (imported.asname or imported.name.split(".", 1)[0])
+                == target_name
+                for imported in node.names
+            )
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            self.found = self.found or any(
+                (imported.asname or imported.name) == target_name
+                for imported in node.names
+            )
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            for default in node.args.defaults:
+                self.visit(default)
+            for default in node.args.kw_defaults:
+                if default is not None:
+                    self.visit(default)
+
+    probe = BindingProbe()
+    for statement in module.body:
+        probe.visit(statement)
+    return probe.found
+
+
 def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
     if exc_type is None:
         return set()
@@ -248,6 +355,7 @@ class Definition:
         "suppression_code",
         "folder_role",
         "suppression_lines",
+        "module_shadows_getattr",
     )
 
     def __init__(
@@ -290,6 +398,7 @@ class Definition:
         self.suppression_code = None
         self.folder_role = None
         self.suppression_lines = {line}
+        self.module_shadows_getattr = False
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -355,6 +464,7 @@ class Visitor(ast.NodeVisitor):
         self.refs = []
         self.cls = None
         self.alias = {}
+        self._alias_binding_lines: dict[str, int] = {}
         self.dyn = set()
         self.exports = set()
         self.current_function_scope = []
@@ -414,6 +524,8 @@ class Visitor(ast.NodeVisitor):
         self._used_attr_names_with_context = set()
         self._conditional_import_targets = set()
         self.local_registration_decorators = set()
+        self._type_checking_function_ids: set[int] = set()
+        self._module_shadows_getattr = False
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -456,9 +568,13 @@ class Visitor(ast.NodeVisitor):
             self.reverse_call_graph[name].add(self._current_function_qname)
 
     def visit_Module(self, node: ast.Module) -> None:
+        from skylos.rules.quality._protocols import type_checking_function_ids
+
         self.local_registration_decorators.update(
             collect_local_registration_decorators(node)
         )
+        self._type_checking_function_ids = type_checking_function_ids(node)
+        self._module_shadows_getattr = _module_binds_name(node, "getattr")
         for stmt in node.body:
             self.visit(stmt)
 
@@ -520,6 +636,7 @@ class Visitor(ast.NodeVisitor):
 
             line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = target
+            self._alias_binding_lines[alias_name] = line
             self.add_def(
                 target,
                 "import",
@@ -576,6 +693,7 @@ class Visitor(ast.NodeVisitor):
 
             line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = full
+            self._alias_binding_lines[alias_name] = line
             self.add_def(
                 full,
                 "import",
@@ -770,6 +888,35 @@ class Visitor(ast.NodeVisitor):
         if target:
             return f"{target}.{rest}"
         return name
+
+    def _alias_binding_is_active(
+        self,
+        name: str,
+        current_definition: str | None = None,
+    ) -> bool:
+        alias_line = self._alias_binding_lines.get(name)
+        if alias_line is None:
+            return False
+
+        if self.current_function_scope and self.local_var_maps:
+            if any(name in scope_map for scope_map in self.local_var_maps):
+                return False
+
+        candidates = []
+        if self.cls:
+            candidates.append(".".join(filter(None, [self.mod, self.cls, name])))
+        candidates.append(f"{self.mod}.{name}" if self.mod else name)
+        latest_local_line = max(
+            (
+                max(getattr(definition, "suppression_lines", {definition.line}))
+                for definition in self.defs
+                if definition.name in candidates
+                and definition.name != current_definition
+                and definition.type != "import"
+            ),
+            default=-1,
+        )
+        return alias_line > latest_local_line
 
     def _is_numba_overload_decorator(
         self, name: str, current_definition: str | None = None
@@ -990,6 +1137,8 @@ class Visitor(ast.NodeVisitor):
             self._in_protocol_class
             or getattr(self, "_in_abstract_or_overload", False)
             or is_explicit_override
+            or id(node) in self._type_checking_function_ids
+            or _has_signature_stub_body(node)
         )
 
         for arg in all_args:
@@ -1208,13 +1357,23 @@ class Visitor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         cname = f"{self.mod}.{node.name}"
-        self.add_def(cname, "class", node.lineno, node=node)
+        self.add_def(
+            cname,
+            "class",
+            node.lineno,
+            node=node,
+            module_shadows_getattr=self._module_shadows_getattr,
+        )
 
         is_protocol = False
         for base in node.bases:
-            if isinstance(base, ast.Name) and base.id == "Protocol":
+            base_expr = base.value if isinstance(base, ast.Subscript) else base
+            if isinstance(base_expr, ast.Name) and base_expr.id == "Protocol":
                 is_protocol = True
-            elif isinstance(base, ast.Attribute) and base.attr == "Protocol":
+            elif (
+                isinstance(base_expr, ast.Attribute)
+                and base_expr.attr == "Protocol"
+            ):
                 is_protocol = True
 
         if is_protocol:
@@ -1223,13 +1382,22 @@ class Visitor(ast.NodeVisitor):
         base_qnames = []
 
         for base in node.bases:
+            base_expr = base.value if isinstance(base, ast.Subscript) else base
             base_name = None
-            if isinstance(base, ast.Name):
-                base_name = base.id
-                base_qnames.append(self.alias.get(base_name, self.qual(base_name)))
-            elif isinstance(base, ast.Attribute):
-                base_name = base.attr
-                base_qnames.append(self._get_attr_chain(base))
+            if isinstance(base_expr, ast.Name):
+                base_name = base_expr.id
+                if self._alias_binding_is_active(base_name, cname):
+                    base_qnames.append(self.alias[base_name])
+                elif not self.current_function_scope or not any(
+                    base_name in scope_map for scope_map in self.local_var_maps
+                ):
+                    base_qnames.append(self.qual(base_name))
+            elif isinstance(base_expr, ast.Attribute):
+                base_name = base_expr.attr
+                raw_qname = self._get_attr_chain(base_expr)
+                head, separator, tail = raw_qname.partition(".")
+                if separator and self._alias_binding_is_active(head, cname):
+                    base_qnames.append(f"{self.alias[head]}.{tail}")
 
             if not base_name:
                 continue
