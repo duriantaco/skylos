@@ -428,6 +428,7 @@ def _rescue_documented_public_methods(
 ) -> None:
     if not docs_text:
         return
+    candidates: list[tuple[Any, tuple[str, str]]] = []
     for owner, methods in class_methods.items():
         if not _owner_live(classes, owner):
             continue
@@ -436,26 +437,112 @@ def _rescue_documented_public_methods(
             if _is_support_file(method):
                 continue
             name = getattr(method, "simple_name", "")
-            if _is_public_name(name) and _docs_reference_method(
-                docs_text, class_name, name
-            ):
-                _mark(method, "documented_public_api", report)
+            if _is_public_name(name):
+                candidates.append((method, (class_name, name)))
+
+    referenced = _documented_method_keys(
+        docs_text,
+        {key for _method, key in candidates},
+    )
+    for method, key in candidates:
+        if key in referenced:
+            _mark(method, "documented_public_api", report)
 
 
-def _docs_reference_method(text: str, class_name: str, method_name: str) -> bool:
-    escaped_class = re.escape(class_name)
-    escaped_method = re.escape(method_name)
-    patterns = [
-        rf"\b{escaped_class}\.{escaped_method}\b",
-        rf":meth:`[^`]*{escaped_class}\.{escaped_method}`",
-        rf":meth:`[^`]*{escaped_method}`",
+def _documented_method_keys(
+    text: str,
+    candidates: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    if not text or not candidates:
+        return set()
+
+    qualified, by_method = _documented_method_candidates(candidates)
+    referenced = _qualified_documented_method_keys(text, candidates, qualified)
+    referenced.update(_sphinx_documented_method_keys(text, by_method))
+    referenced.update(_long_call_documented_method_keys(text, by_method))
+    return referenced
+
+
+def _documented_method_candidates(
+    candidates: set[tuple[str, str]],
+) -> tuple[dict[str, set[tuple[str, str]]], dict[str, set[tuple[str, str]]]]:
+    qualified: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    by_method: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    for key in candidates:
+        class_name, method_name = key
+        qualified[f"{class_name}.{method_name}"].add(key)
+        by_method[method_name].add(key)
+    return qualified, by_method
+
+
+def _qualified_documented_method_keys(
+    text: str,
+    candidates: set[tuple[str, str]],
+    qualified: dict[str, set[tuple[str, str]]],
+) -> set[tuple[str, str]]:
+    referenced: set[tuple[str, str]] = set()
+    word_candidates = {
+        key
+        for key in candidates
+        if _is_regex_word_identifier(key[0]) and _is_regex_word_identifier(key[1])
+    }
+    for match in re.finditer(r"(?=\b([^\W\d]\w*)\.([^\W\d]\w*)\b)", text):
+        key = match.group(1), match.group(2)
+        if key in word_candidates:
+            referenced.add(key)
+
+    unusual_qualified = {
+        name: keys - word_candidates
+        for name, keys in qualified.items()
+        if keys - word_candidates
+    }
+    for qualified_name, keys in unusual_qualified.items():
+        if re.search(rf"\b{re.escape(qualified_name)}\b", text):
+            referenced.update(keys)
+    return referenced
+
+
+def _sphinx_documented_method_keys(
+    text: str,
+    by_method: dict[str, set[tuple[str, str]]],
+) -> set[tuple[str, str]]:
+    referenced: set[tuple[str, str]] = set()
+    role_targets = [
+        match.group(1)
+        for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
     ]
-    if "_" in method_name and len(method_name) >= 10:
-        patterns.append(rf"\.[ \t]*{escaped_method}\(")
-    for pattern in patterns:
-        if re.search(pattern, text):
-            return True
-    return False
+    for method_name, keys in by_method.items():
+        if any(target.endswith(method_name) for target in role_targets):
+            referenced.update(keys)
+    return referenced
+
+
+def _long_call_documented_method_keys(
+    text: str,
+    by_method: dict[str, set[tuple[str, str]]],
+) -> set[tuple[str, str]]:
+    referenced: set[tuple[str, str]] = set()
+    long_methods = {
+        method_name: keys
+        for method_name, keys in by_method.items()
+        if "_" in method_name and len(method_name) >= 10
+    }
+    for match in re.finditer(r"\.[ \t]*([^\W\d]\w*)\(", text):
+        referenced.update(long_methods.get(match.group(1), ()))
+
+    unusual_methods = {
+        method_name: keys
+        for method_name, keys in long_methods.items()
+        if not _is_regex_word_identifier(method_name)
+    }
+    for method_name, keys in unusual_methods.items():
+        if re.search(rf"\.[ \t]*{re.escape(method_name)}\(", text):
+            referenced.update(keys)
+    return referenced
+
+
+def _is_regex_word_identifier(value: str) -> bool:
+    return re.fullmatch(r"[^\W\d]\w*", value) is not None
 
 
 def _rescue_unique_external_attr_calls(

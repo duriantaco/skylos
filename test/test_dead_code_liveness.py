@@ -2,6 +2,7 @@ import json
 import textwrap
 
 from skylos.analyzer import analyze
+from skylos.deadcode import liveness
 
 
 def _write(path, body):
@@ -221,6 +222,90 @@ def test_documented_public_method_is_live(tmp_path):
     result = json.loads(analyze(str(tmp_path), grep_verify=False))
 
     assert "app.App.open_instance_resource" not in _unused_function_names(result)
+
+
+def test_documented_method_index_preserves_legacy_match_forms():
+    candidates = {
+        ("Dataset", "sel"),
+        ("Widget", "from_role"),
+        ("Widget", "foo-bar"),
+        ("Widget", "foo-bar-baz"),
+        ("OtherWidget", "from_role"),
+        ("Widget", "open_instance_resource"),
+        ("Widget", "tiny_name"),
+        ("Widget", "absent"),
+        ("कु", "मूल"),
+        ("कु", "m1"),
+        ("कु", "m1℮y"),
+    }
+    docs = """
+    xarray.Dataset.sel(value)
+    :meth:`~package.Widget.from_role`
+    Widget.foo-bar-baz(value)
+    proxy. open_instance_resource(value)
+    proxy.tiny_name(value)
+    Widget.absentExtra(value)
+    package.कु.मूल(value)
+    package.कु.m1℮y(value)
+    """
+
+    assert liveness._documented_method_keys(docs, candidates) == {
+        ("Dataset", "sel"),
+        ("Widget", "from_role"),
+        ("Widget", "foo-bar"),
+        ("Widget", "foo-bar-baz"),
+        ("OtherWidget", "from_role"),
+        ("Widget", "open_instance_resource"),
+        ("कु", "मूल"),
+        ("कु", "m1"),
+        ("कु", "m1℮y"),
+    }
+
+
+def test_documented_method_index_preserves_overlapping_sphinx_roles():
+    candidates = {("Widget", "foo")}
+    docs = ":meth:`broken :meth:`foo`"
+
+    assert liveness._documented_method_keys(docs, candidates) == candidates
+
+
+def test_documented_method_index_preserves_role_after_unclosed_joined_doc():
+    candidates = {("Widget", "foo")}
+    # _read_public_docs joins each document with a newline.
+    docs = ":meth:`broken\n:meth:`foo`"
+
+    assert liveness._documented_method_keys(docs, candidates) == candidates
+
+
+def test_documented_kotlin_backtick_method_prefixes_are_live(tmp_path):
+    _write(
+        tmp_path / "app.kt",
+        """
+        class Widget {
+            fun `foo-bar`() = Unit
+            fun `foo-bar-baz`() = Unit
+        }
+
+        fun main() {
+            Widget()
+        }
+        """,
+    )
+    _write(
+        tmp_path / "README.md",
+        """
+        Call `Widget.foo-bar-baz()` to use the widget.
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    rescues = {
+        item["name"]
+        for item in result["analysis_summary"]["dead_code_liveness"]["rescued"]
+        if item["reason"] == "documented_public_api"
+    }
+
+    assert {"Widget.foo-bar", "Widget.foo-bar-baz"} <= rescues
 
 
 def test_framework_proxy_attr_call_is_live(tmp_path):
