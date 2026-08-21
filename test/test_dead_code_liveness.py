@@ -262,6 +262,21 @@ def test_documented_method_index_preserves_legacy_match_forms():
     }
 
 
+def test_documented_method_index_preserves_overlapping_sphinx_roles():
+    candidates = {("Widget", "foo")}
+    docs = ":meth:`broken :meth:`foo`"
+
+    assert liveness._documented_method_keys(docs, candidates) == candidates
+
+
+def test_documented_method_index_preserves_role_after_unclosed_joined_doc():
+    candidates = {("Widget", "foo")}
+    # _read_public_docs joins each document with a newline.
+    docs = ":meth:`broken\n:meth:`foo`"
+
+    assert liveness._documented_method_keys(docs, candidates) == candidates
+
+
 def test_documented_kotlin_backtick_method_prefixes_are_live(tmp_path):
     _write(
         tmp_path / "app.kt",

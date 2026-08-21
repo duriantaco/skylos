@@ -507,7 +507,10 @@ def _sphinx_documented_method_keys(
     by_method: dict[str, set[tuple[str, str]]],
 ) -> set[tuple[str, str]]:
     referenced: set[tuple[str, str]] = set()
-    role_targets = re.findall(r":meth:`([^`]*)`", text)
+    role_targets = [
+        match.group(1)
+        for match in re.finditer(r"(?=:meth:`([^`]*)`)", text)
+    ]
     for method_name, keys in by_method.items():
         if any(target.endswith(method_name) for target in role_targets):
             referenced.update(keys)
