@@ -55,6 +55,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
+          disable_search: true
           fail_ci_if_error: false
           flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
 
