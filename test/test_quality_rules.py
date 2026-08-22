@@ -51,6 +51,72 @@ def test_clone_similarity_threshold_keeps_possible_matches(monkeypatch):
     assert clones_mod._similarity(a, b, threshold=0.9) >= 0.9
 
 
+def test_clone_group_type_tie_uses_canonical_order():
+    select_type = clones_mod._select_group_clone_type
+
+    assert select_type([clones_mod.CloneType.TYPE2, clones_mod.CloneType.TYPE1]) == (
+        clones_mod.CloneType.TYPE1
+    )
+    assert select_type([clones_mod.CloneType.TYPE3, clones_mod.CloneType.TYPE2]) == (
+        clones_mod.CloneType.TYPE2
+    )
+
+
+def test_clone_group_type_prefers_most_common_type():
+    assert (
+        clones_mod._select_group_clone_type(
+            [
+                clones_mod.CloneType.TYPE3,
+                clones_mod.CloneType.TYPE1,
+                clones_mod.CloneType.TYPE3,
+            ]
+        )
+        == clones_mod.CloneType.TYPE3
+    )
+
+
+def test_clone_group_type_empty_defaults_to_type3():
+    assert clones_mod._select_group_clone_type([]) == clones_mod.CloneType.TYPE3
+
+
+def test_group_pairs_uses_canonical_type_for_tied_edges():
+    def fragment(name, line):
+        return clones_mod.Fragment(
+            file_path="sample.py",
+            start_line=line,
+            end_line=line + 10,
+            name=name,
+            kind="function",
+            node_count=10,
+            text_norm=name,
+            ast_norm_type2=name,
+            ast_norm_type3=name,
+        )
+
+    first = fragment("first", 1)
+    second = fragment("second", 20)
+    third = fragment("third", 40)
+    pairs = [
+        clones_mod.ClonePair(
+            a=first,
+            b=second,
+            similarity=0.99,
+            clone_type=clones_mod.CloneType.TYPE3,
+        ),
+        clones_mod.ClonePair(
+            a=second,
+            b=third,
+            similarity=0.99,
+            clone_type=clones_mod.CloneType.TYPE2,
+        ),
+    ]
+
+    for ordered_pairs in (pairs, list(reversed(pairs))):
+        groups = clones_mod.group_pairs(ordered_pairs, clones_mod.CloneConfig())
+        assert len(groups) == 1
+        assert groups[0].clone_type == clones_mod.CloneType.TYPE2
+
+
 # --- SKY-L004: Try Block Patterns ---
 
 

@@ -4,6 +4,7 @@ import ast
 import hashlib
 import io
 import tokenize
+from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
@@ -437,6 +438,14 @@ def _pair_key(a: Fragment, b: Fragment) -> Tuple[str, int, str, int]:
     )
 
 
+def _select_group_clone_type(types: List[CloneType]) -> CloneType:
+    if not types:
+        return CloneType.TYPE3
+
+    counts = Counter(types)
+    return min(counts, key=lambda clone_type: (-counts[clone_type], clone_type.value))
+
+
 def group_pairs(pairs: List[ClonePair], cfg: CloneConfig) -> List[CloneGroup]:
     if not pairs:
         return []
@@ -501,7 +510,7 @@ def _group_connected(
                     types.append(p.clone_type)
 
         avg_sim = sum(sims) / len(sims) if sims else cfg.grouping_threshold
-        clone_type = max(set(types), key=types.count) if types else CloneType.TYPE3
+        clone_type = _select_group_clone_type(types)
 
         groups.append(
             CloneGroup(
