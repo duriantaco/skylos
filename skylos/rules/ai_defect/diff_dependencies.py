@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
-from pathlib import PurePosixPath
+from json.decoder import scanstring
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 from skylos.rules.ai_defect.dependency_hallucination import (
     FROM_RE,
@@ -25,6 +29,10 @@ from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
+    MAX_MANIFEST_BYTES,
+    _PACKAGE_JSON_DEPENDENCY_SECTIONS,
+    _classify_npm_registry_spec,
+    _parse_package_json_text,
 )
 
 SEV_CRITICAL = "CRITICAL"
@@ -49,38 +57,10 @@ _PYPROJECT_KEY_BLOCKLIST = frozenset(
     {"version", "python", "requires-python", "target-version"}
 )
 
-_PACKAGE_JSON_DEP_RE = re.compile(r"^\s*\"(@?[a-z0-9][a-z0-9._/-]*)\"\s*:\s*\"([^\"]+)\"")
-_NPM_VERSIONISH_RE = re.compile(r"^[\^~>=<]*\s*\d[\w.+-]*(?:\s*(?:\|\||-)\s*.*)?$")
-_EXACT_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][\w.]+)?$")
-_PACKAGE_JSON_META_KEYS = frozenset(
-    {
-        "name",
-        "version",
-        "description",
-        "main",
-        "module",
-        "types",
-        "typings",
-        "type",
-        "license",
-        "author",
-        "homepage",
-        "packageManager",
-        "node",
-        "npm",
-        "yarn",
-        "pnpm",
-    }
+_PACKAGE_JSON_DEP_RE = re.compile(
+    r"^\s*\"(@?[a-z0-9][a-z0-9._/-]*)\"\s*:\s*\"([^\"]*)\""
 )
-_PACKAGE_JSON_DEPENDENCY_SECTIONS = frozenset(
-    {
-        "dependencies",
-        "devDependencies",
-        "peerDependencies",
-        "optionalDependencies",
-    }
-)
-
+_JSON_STRUCTURE_RE = re.compile(r'["{}\[\]:,]')
 _GO_MOD_REQUIRE_RE = re.compile(
     r"^(?:require\s+)?([a-z0-9][\w.-]*\.[a-z]{2,}(?:/[\w.~-]+)+)\s+(v[\w.+-]+)"
 )
@@ -130,7 +110,7 @@ def scan_diff_dependency_hallucinations(
                     added_imports.append((file_path, line_no, mod))
             continue
         manifest_specs.extend(_manifest_specs_for_file(file_path, added_lines))
-    manifest_specs.extend(_package_json_specs_from_diff(diff_text))
+    manifest_specs.extend(_package_json_specs_from_diff(diff_text, repo_root))
 
     findings: list[dict[str, Any]] = []
     registry_unreachable = False
@@ -320,6 +300,7 @@ def _parse_new_file_lines(diff_text) -> list[tuple[str, list[tuple[str, int, str
         if hunk_match:
             line_no = int(hunk_match.group(1)) - 1
             in_hunk = True
+            current_lines.append(("hunk", line_no, ""))
             continue
         if not in_hunk:
             continue
@@ -338,13 +319,116 @@ def _parse_new_file_lines(diff_text) -> list[tuple[str, list[tuple[str, int, str
     return files
 
 
-def _package_json_specs_from_diff(diff_text: str) -> list[dict[str, Any]]:
+def _package_json_specs_from_diff(
+    diff_text: str,
+    repo_root=None,
+) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = []
     for file_path, new_lines in _parse_new_file_lines(diff_text):
         if PurePosixPath(file_path).name.lower() != "package.json":
             continue
+        worktree_specs = _worktree_package_json_specs(
+            repo_root,
+            file_path,
+            new_lines,
+        )
+        if worktree_specs is not None:
+            specs.extend(worktree_specs)
+            continue
         specs.extend(_package_json_specs(file_path, new_lines))
     return specs
+
+
+def _worktree_package_json_specs(
+    repo_root,
+    file_path: str,
+    new_lines: list[tuple[str, int, str]],
+) -> list[dict[str, Any]] | None:
+    """Use the parsed postimage when it matches every added diff line exactly."""
+    postimage = _matching_package_json_postimage(repo_root, file_path, new_lines)
+    if postimage is None:
+        return None
+    text, added_line_numbers = postimage
+    candidates = _parse_package_json_text(
+        text,
+        path=Path(file_path),
+        exact_only=False,
+    )
+    return [
+        _diff_candidate(candidate, file_path)
+        for candidate in candidates
+        if candidate.get("line") in added_line_numbers
+    ]
+
+
+def _matching_package_json_postimage(
+    repo_root,
+    file_path: str,
+    new_lines: list[tuple[str, int, str]],
+) -> tuple[str, set[int]] | None:
+    if repo_root is None:
+        return None
+    relative = _safe_diff_relative_path(file_path)
+    if relative is None:
+        return None
+    try:
+        root = Path(repo_root).resolve()
+    except (OSError, TypeError):
+        return None
+
+    text = read_project_text_no_symlink(
+        root,
+        relative.as_posix(),
+        max_bytes=MAX_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors=None,
+    )
+    if text is None or not _valid_package_json_text(text):
+        return None
+
+    added_line_numbers = _matching_added_line_numbers(text, new_lines)
+    if added_line_numbers is None:
+        return None
+    return text, added_line_numbers
+
+
+def _safe_diff_relative_path(file_path: str) -> PurePosixPath | None:
+    relative = PurePosixPath(file_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    return relative
+
+
+def _valid_package_json_text(text: str) -> bool:
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict)
+
+
+def _matching_added_line_numbers(
+    text: str,
+    new_lines: list[tuple[str, int, str]],
+) -> set[int] | None:
+    postimage_lines = text.splitlines()
+    added_lines = [
+        (line_no, line) for kind, line_no, line in new_lines if kind == "add"
+    ]
+    if not added_lines:
+        return None
+    for line_no, line in added_lines:
+        if line_no < 1 or line_no > len(postimage_lines):
+            return None
+        if postimage_lines[line_no - 1] != line:
+            return None
+    return {line_no for line_no, _line in added_lines}
+
+
+def _diff_candidate(candidate: dict[str, Any], file_path: str) -> dict[str, Any]:
+    normalized = dict(candidate)
+    normalized["file"] = file_path
+    return normalized
 
 
 def _package_json_specs(
@@ -352,52 +436,170 @@ def _package_json_specs(
     new_lines: list[tuple[str, int, str]],
 ) -> list[dict[str, Any]]:
     specs = []
-    object_stack: list[str] = []
+    object_stack: list[str | None] = []
+    optional_names: set[str] = set()
+    optional_peer_names: set[str] = set()
     for kind, line_no, text in new_lines:
-        _pop_closed_json_objects(object_stack, text)
+        if kind == "hunk":
+            object_stack.clear()
+            continue
 
-        if kind == "add" and _inside_package_dependency_section(object_stack):
-            match = _PACKAGE_JSON_DEP_RE.match(text)
-            if match is not None:
-                name = match.group(1)
-                version = match.group(2).strip()
-                if name not in _PACKAGE_JSON_META_KEYS and _NPM_VERSIONISH_RE.match(
-                    version
-                ):
-                    specs.append(
-                        _spec(
-                            ECOSYSTEM_NPM,
-                            name,
-                            version,
-                            exact=_EXACT_SEMVER_RE.match(version) is not None,
-                            file_path=file_path,
-                            line_no=line_no,
-                        )
-                    )
+        dependency_section = _package_json_dependency_section(object_stack)
+        match = (
+            _PACKAGE_JSON_DEP_RE.match(text)
+            if dependency_section is not None
+            else None
+        )
+        if match is not None and dependency_section == "optionalDependencies":
+            optional_names.add(match.group(1))
+        spec = _added_package_json_spec(
+            kind,
+            line_no,
+            file_path,
+            dependency_section,
+            match,
+        )
+        if spec is not None:
+            specs.append(spec)
 
-        _push_open_json_object(object_stack, text)
-    return specs
+        optional_peer = _added_optional_peer_name(object_stack, text)
+        if optional_peer:
+            optional_peer_names.add(optional_peer)
 
+        _update_json_object_stack(object_stack, text)
 
-def _pop_closed_json_objects(stack: list[str], text: str) -> None:
-    stripped = text.lstrip()
-    while stripped.startswith(("}", "]")):
-        if stack:
-            stack.pop()
-        stripped = stripped[1:].lstrip()
-        if stripped.startswith(","):
-            stripped = stripped[1:].lstrip()
+    return _effective_package_json_specs(specs, optional_names, optional_peer_names)
 
 
-def _push_open_json_object(stack: list[str], text: str) -> None:
-    match = re.match(r'^\s*"([^"]+)"\s*:\s*[{[]', text)
-    if match is None:
-        return
-    stack.append(match.group(1))
+def _added_package_json_spec(
+    kind: str,
+    line_no: int,
+    file_path: str,
+    dependency_section: str | None,
+    match: re.Match[str] | None,
+) -> dict[str, Any] | None:
+    if kind != "add" or match is None or dependency_section is None:
+        return None
+    name = match.group(1)
+    version_spec = match.group(2).strip()
+    classified = _classify_npm_registry_spec(version_spec)
+    if classified is None:
+        return None
+    version, exact = classified
+    return _spec(
+        ECOSYSTEM_NPM,
+        name,
+        version,
+        exact=exact,
+        file_path=file_path,
+        line_no=line_no,
+        version_spec=version_spec,
+        dependency_section=dependency_section,
+        dependency_optional=_diff_dependency_optional(dependency_section),
+    )
 
 
-def _inside_package_dependency_section(stack: list[str]) -> bool:
-    return any(section in _PACKAGE_JSON_DEPENDENCY_SECTIONS for section in stack)
+def _diff_dependency_optional(section: str) -> bool | None:
+    if section == "optionalDependencies":
+        return True
+    if section == "peerDependencies":
+        return None
+    return False
+
+
+def _effective_package_json_specs(
+    specs: list[dict[str, Any]],
+    optional_names: set[str],
+    optional_peer_names: set[str],
+) -> list[dict[str, Any]]:
+    effective = []
+    for spec in specs:
+        section = spec.get("dependency_section")
+        name = spec.get("name")
+        if section == "dependencies" and name in optional_names:
+            continue
+        if section == "peerDependencies" and name in optional_peer_names:
+            spec["dependency_optional"] = True
+            spec["peer_dependency_optional"] = True
+        effective.append(spec)
+    return effective
+
+
+def _added_optional_peer_name(stack: list[str | None], text: str) -> str | None:
+    if len(stack) == 2 and stack[0] == "peerDependenciesMeta":
+        if re.match(r'^\s*"optional"\s*:\s*true\b', text):
+            return stack[1]
+    if len(stack) == 1 and stack[0] == "peerDependenciesMeta":
+        match = re.match(
+            r'^\s*"([^"]+)"\s*:\s*\{[^{}]*"optional"\s*:\s*true\b',
+            text,
+        )
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _update_json_object_stack(stack: list[str | None], text: str) -> None:
+    pending_key: str | None = None
+    expect_value = False
+    for token, value in _json_structure_tokens(text):
+        if token == '"':
+            if expect_value:
+                pending_key = None
+                expect_value = False
+            else:
+                pending_key = value
+            continue
+        if token == ":":
+            expect_value = True
+            continue
+        if token == ",":
+            pending_key = None
+            expect_value = False
+            continue
+        _update_json_container_stack(stack, token, pending_key, expect_value)
+        pending_key = None
+        expect_value = False
+
+
+def _json_structure_tokens(text: str):
+    pos = 0
+    while True:
+        match = _JSON_STRUCTURE_RE.search(text, pos)
+        if match is None:
+            return
+        token = match.group()
+        pos = match.end()
+        if token != '"':
+            yield token, None
+            continue
+        try:
+            value, pos = scanstring(text, pos)
+        except ValueError:
+            return
+        yield token, value
+
+
+def _update_json_container_stack(
+    stack: list[str | None],
+    token: str,
+    pending_key: str | None,
+    expect_value: bool,
+) -> None:
+    if token in "{[":
+        if expect_value and pending_key is not None:
+            stack.append(pending_key)
+        elif stack:
+            stack.append(None)
+    elif stack:
+        stack.pop()
+
+
+def _package_json_dependency_section(stack: list[str | None]) -> str | None:
+    if len(stack) != 1:
+        return None
+    section = stack[0]
+    return section if section in _PACKAGE_JSON_DEPENDENCY_SECTIONS else None
 
 
 def _added_pypi_dependency_names(specs: list[dict[str, Any]]) -> set[str]:
@@ -436,8 +638,20 @@ def _go_mod_specs(
     return specs
 
 
-def _spec(ecosystem, name, version, *, exact, file_path, line_no) -> dict[str, Any]:
-    return {
+def _spec(
+    ecosystem,
+    name,
+    version,
+    *,
+    exact,
+    file_path,
+    line_no,
+    version_spec=None,
+    dependency_section=None,
+    dependency_optional=None,
+    peer_dependency_optional=None,
+) -> dict[str, Any]:
+    spec = {
         "ecosystem": ecosystem,
         "name": name,
         "version": version,
@@ -445,6 +659,15 @@ def _spec(ecosystem, name, version, *, exact, file_path, line_no) -> dict[str, A
         "file": file_path,
         "line": line_no,
     }
+    if version_spec is not None:
+        spec["version_spec"] = version_spec
+    if dependency_section is not None:
+        spec["dependency_section"] = dependency_section
+    if dependency_optional is not None:
+        spec["dependency_optional"] = dependency_optional
+    if peer_dependency_optional is not None:
+        spec["peer_dependency_optional"] = peer_dependency_optional
+    return spec
 
 
 def _check_manifest_specs(
@@ -456,7 +679,12 @@ def _check_manifest_specs(
     seen: set[tuple[str, str, str]] = set()
 
     for spec in specs:
-        key = (spec["ecosystem"], spec["name"], spec["version"])
+        version_key = (
+            "<package-only>"
+            if spec["ecosystem"] == ECOSYSTEM_NPM and spec.get("exact") is False
+            else spec["version"]
+        )
+        key = (spec["ecosystem"], spec["name"], version_key)
         if key in seen:
             continue
         seen.add(key)
@@ -514,7 +742,7 @@ def _manifest_finding(
     severity: str,
     message: str,
 ) -> dict[str, Any]:
-    return {
+    finding = {
         "rule_id": rule_id,
         "kind": kind,
         "severity": severity,
@@ -528,3 +756,17 @@ def _manifest_finding(
         "vibe_category": "dependency_hallucination",
         "ai_likelihood": "high",
     }
+    metadata = {
+        key: spec[key]
+        for key in (
+            "version_spec",
+            "exact",
+            "dependency_section",
+            "dependency_optional",
+            "peer_dependency_optional",
+        )
+        if key in spec
+    }
+    if metadata:
+        finding["metadata"] = metadata
+    return finding

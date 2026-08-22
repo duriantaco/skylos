@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     RULE_ID_DEPENDENCY_HALLUCINATION,
     RULE_ID_VERSION_HALLUCINATION,
@@ -76,7 +78,7 @@ def test_scan_package_json_flags_missing_npm_package_and_version(tmp_path):
     calls = []
     statuses = {
         (ECOSYSTEM_NPM, "leftpadz", "9.9.9"): STATUS_MISSING_PACKAGE,
-        (ECOSYSTEM_NPM, "stale-version", "99.0.0"): STATUS_MISSING_VERSION,
+        (ECOSYSTEM_NPM, "stale-version", "^99.0.0"): STATUS_MISSING_VERSION,
         (ECOSYSTEM_NPM, "devghost", "2.0.0"): STATUS_MISSING_VERSION,
     }
 
@@ -88,17 +90,259 @@ def test_scan_package_json_flags_missing_npm_package_and_version(tmp_path):
     for finding in findings:
         rule_ids.append(finding["rule_id"])
 
-    assert len(findings) == 3
+    assert len(findings) == 2
     assert RULE_ID_DEPENDENCY_HALLUCINATION in rule_ids
-    assert rule_ids.count(RULE_ID_VERSION_HALLUCINATION) == 2
+    assert rule_ids.count(RULE_ID_VERSION_HALLUCINATION) == 1
     assert findings[0]["metadata"]["dependency_truth_state"] in {
         STATUS_MISSING_PACKAGE,
         STATUS_MISSING_VERSION,
     }
     assert findings[0]["metadata"]["dependency_truth_source"] == "registry"
     assert any("leftpadz" in message for message in _messages(findings))
-    assert any("stale-version@99.0.0" in message for message in _messages(findings))
+    assert not any("stale-version" in message for message in _messages(findings))
+    assert (ECOSYSTEM_NPM, "stale-version", "^99.0.0") in calls
     assert (ECOSYSTEM_NPM, "realpkg", "1.2.3") in calls
+
+
+def test_scan_peer_specs_check_names_but_only_exact_versions(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "peerDependencies": {
+                    "peer-range": "^18",
+                    "peer-wildcard": "*",
+                    "peer-tag": "latest",
+                    "peer-exact": "99.0.0",
+                },
+                "peerDependenciesMeta": {
+                    "peer-exact": {"optional": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_NPM, "peer-range", "^18"): STATUS_MISSING_VERSION,
+        (ECOSYSTEM_NPM, "peer-wildcard", "*"): STATUS_MISSING_PACKAGE,
+        (ECOSYSTEM_NPM, "peer-exact", "99.0.0"): STATUS_MISSING_VERSION,
+    }
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert {finding["metadata"]["package_name"] for finding in findings} == {
+        "peer-wildcard",
+        "peer-exact",
+    }
+    by_name = {finding["metadata"]["package_name"]: finding for finding in findings}
+    assert by_name["peer-wildcard"]["rule_id"] == RULE_ID_DEPENDENCY_HALLUCINATION
+    assert by_name["peer-wildcard"]["metadata"]["exact"] is False
+    assert by_name["peer-exact"]["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+    assert by_name["peer-exact"]["metadata"]["exact"] is True
+    assert by_name["peer-exact"]["metadata"]["dependency_optional"] is True
+    assert by_name["peer-exact"]["metadata"]["peer_dependency_optional"] is True
+    assert all(
+        finding["metadata"]["dependency_section"] == "peerDependencies"
+        for finding in findings
+    )
+    assert (ECOSYSTEM_NPM, "peer-range", "^18") in calls
+    assert (ECOSYSTEM_NPM, "peer-tag", "latest") in calls
+
+
+@pytest.mark.parametrize(
+    ("version_spec", "canonical_version"),
+    [
+        ("==99.0.0", "99.0.0"),
+        ("099.0.0", "99.0.0"),
+        ("99.0.0beta", "99.0.0-beta"),
+        ("99.0.0-01", "99.0.0-1"),
+    ],
+)
+def test_scan_npm_loose_exact_specs_can_report_missing_versions(
+    tmp_path,
+    version_spec,
+    canonical_version,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"peerDependencies": {"loose-exact": version_spec}}),
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_NPM, "loose-exact", canonical_version): STATUS_MISSING_VERSION,
+    }
+
+    [finding] = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert calls == [(ECOSYSTEM_NPM, "loose-exact", canonical_version)]
+    assert finding["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+    assert finding["metadata"]["package_version"] == canonical_version
+    assert finding["metadata"]["version_spec"] == version_spec
+    assert finding["metadata"]["exact"] is True
+
+
+def test_scan_optional_dependency_override_ignores_shadowed_declaration(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {"shared": "1.0.0"},
+                "optionalDependencies": {"shared": "2.0.0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_NPM, "shared", "1.0.0"): STATUS_MISSING_VERSION,
+        (ECOSYSTEM_NPM, "shared", "2.0.0"): STATUS_MISSING_VERSION,
+    }
+
+    [finding] = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert calls == [(ECOSYSTEM_NPM, "shared", "2.0.0")]
+    assert finding["metadata"]["package_version"] == "2.0.0"
+    assert finding["metadata"]["dependency_section"] == "optionalDependencies"
+    assert finding["metadata"]["dependency_optional"] is True
+
+
+def test_scan_package_json_skips_non_registry_dependency_specs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "peerDependencies": {
+                    "workspace-dep": "workspace:*",
+                    "local-dep": "file:../local",
+                    "git-dep": "github:org/repo",
+                    "alias-dep": "npm:react@^18",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_checker(_ecosystem, _name, _version, _cache):
+        raise AssertionError("non-registry npm specs must not reach a public registry")
+
+    assert (
+        scan_manifest_dependency_hallucinations(
+            repo,
+            status_checker=fail_checker,
+        )
+        == []
+    )
+
+
+def test_scan_deduplicates_package_only_checks_across_sections(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "devDependencies": {"react": "^18"},
+                "peerDependencies": {"react": "18.x"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker({}, calls),
+    )
+
+    assert findings == []
+    assert calls == [(ECOSYSTEM_NPM, "react", "^18")]
+
+
+def test_package_only_cache_does_not_suppress_later_exact_version_check(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    package_json = repo / "package.json"
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": "^18"}}),
+        encoding="utf-8",
+    )
+    first_calls = []
+
+    assert (
+        scan_manifest_dependency_hallucinations(
+            repo,
+            status_checker=_status_checker({}, first_calls),
+        )
+        == []
+    )
+    assert first_calls == [(ECOSYSTEM_NPM, "react", "^18")]
+
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": "99.0.0"}}),
+        encoding="utf-8",
+    )
+    second_calls = []
+    statuses = {
+        (ECOSYSTEM_NPM, "react", "99.0.0"): STATUS_MISSING_VERSION,
+    }
+
+    [finding] = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, second_calls),
+    )
+
+    assert second_calls == [(ECOSYSTEM_NPM, "react", "99.0.0")]
+    assert finding["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+
+
+def test_package_only_cache_is_reused_across_non_exact_specs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    package_json = repo / "package.json"
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": "^18"}}),
+        encoding="utf-8",
+    )
+    first_calls = []
+
+    assert (
+        scan_manifest_dependency_hallucinations(
+            repo,
+            status_checker=_status_checker({}, first_calls),
+        )
+        == []
+    )
+    assert first_calls == [(ECOSYSTEM_NPM, "react", "^18")]
+
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": "18.x"}}),
+        encoding="utf-8",
+    )
+
+    def fail_checker(_ecosystem, _name, _version, _cache):
+        raise AssertionError("package presence should be cached across npm ranges")
+
+    assert (
+        scan_manifest_dependency_hallucinations(
+            repo,
+            status_checker=fail_checker,
+        )
+        == []
+    )
 
 
 def test_scan_go_mod_flags_missing_go_module_and_version(tmp_path):
@@ -218,6 +462,58 @@ def test_scan_install_surfaces_flags_pinned_dependency_commands(tmp_path):
     assert (ECOSYSTEM_PYPI, "docs-real", "") not in calls
 
 
+def test_scan_npm_install_ranges_do_not_emit_missing_version(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Dockerfile").write_text(
+        "RUN npm install react@18 stale-version@99.0.0\n",
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_NPM, "react", "18"): STATUS_MISSING_VERSION,
+        (ECOSYSTEM_NPM, "stale-version", "99.0.0"): STATUS_MISSING_VERSION,
+    }
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert calls == [
+        (ECOSYSTEM_NPM, "react", "18"),
+        (ECOSYSTEM_NPM, "stale-version", "99.0.0"),
+    ]
+    [finding] = findings
+    assert finding["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+    assert finding["metadata"]["package_name"] == "stale-version"
+    assert finding["metadata"]["version_spec"] == "99.0.0"
+    assert finding["metadata"]["exact"] is True
+
+
+def test_scan_pip_prerelease_pin_keeps_missing_version_semantics(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Dockerfile").write_text(
+        "RUN pip install pinned-release==1.0rc1\n",
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_PYPI, "pinned-release", "1.0rc1"): STATUS_MISSING_VERSION,
+    }
+
+    [finding] = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert calls == [(ECOSYSTEM_PYPI, "pinned-release", "1.0rc1")]
+    assert finding["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+    assert finding["metadata"]["package_version"] == "1.0rc1"
+    assert "exact" not in finding["metadata"]
+
+
 def test_scan_install_surfaces_skip_private_registry_commands(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -262,7 +558,9 @@ def test_scan_manifest_private_registry_contexts_are_unverified_not_missing(tmp_
                 "dependencies": {
                     "@internal/widget": "2.0.0",
                     "left-pad": "1.3.0",
-                }
+                },
+                "peerDependencies": {"@internal/peer": "^3"},
+                "optionalDependencies": {"@internal/optional": "4.0.0"},
             }
         ),
         encoding="utf-8",
@@ -281,6 +579,8 @@ def test_scan_manifest_private_registry_contexts_are_unverified_not_missing(tmp_
     assert findings == []
     assert (ECOSYSTEM_PYPI, "internalpkg", "1.2.3") not in calls
     assert (ECOSYSTEM_NPM, "@internal/widget", "2.0.0") not in calls
+    assert (ECOSYSTEM_NPM, "@internal/peer", "^3") not in calls
+    assert (ECOSYSTEM_NPM, "@internal/optional", "4.0.0") not in calls
     assert calls == [(ECOSYSTEM_NPM, "left-pad", "1.3.0")]
 
 
