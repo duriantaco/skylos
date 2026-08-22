@@ -123,6 +123,9 @@ _POSIX_CLASS = re.compile(r"\[\[:[^]]+:\]\]")
 _UNICODE_WORD_PATTERN = re.compile(r"\\[bBwW]")
 _UNICODE_CASE_INSENSITIVE_PATTERN = re.compile(r"\(\?[a-z-]*i")
 _ENGINE_SENSITIVE_SPACE_PATTERN = re.compile(r"\\[sS]")
+# Python's re \s matches U+001C-U+001F; ripgrep's Unicode White_Space \s does
+# not. Those four characters are the complete divergence in both directions.
+_ENGINE_DIVERGENT_SPACE_CHARS = ("\x1c", "\x1d", "\x1e", "\x1f")
 _MAX_GREP_LINE_NUMBER = 999_999_999
 _MAX_GREP_LINE_CANDIDATES = 256
 _GREP_LINE_NUMBER = re.compile(r":([1-9][0-9]{0,8}):")
@@ -897,10 +900,6 @@ def _requires_direct_grep(request: GrepRequest) -> bool:
         return True
     if not request.pattern.isascii():
         return True
-    if not request.fixed_string and _ENGINE_SENSITIVE_SPACE_PATTERN.search(
-        request.pattern
-    ):
-        return True
     return not request.fixed_string and _python_regex(request.pattern) is None
 
 
@@ -945,6 +944,33 @@ def _run_ripgrep_pattern_file(
     return _parse_ripgrep_json_matches(result.stdout, deadline=deadline)
 
 
+def _grep_stdin_chunks(
+    contents: Sequence[str],
+    limit: int,
+) -> Iterator[tuple[int, list[str]]]:
+    """Yield ``(offset, lines)`` groups whose encoded stdin fits in ``limit``.
+
+    A single line wider than the cap cannot be sent at all, so it keeps the
+    fail-closed behavior rather than being silently dropped from adjudication.
+    """
+    chunk: list[str] = []
+    chunk_bytes = 0
+    offset = 0
+    for index, content in enumerate(contents):
+        line_bytes = len(content.encode("utf-8")) + 1
+        if line_bytes > limit:
+            raise _GrepInputLimitExceeded("grep adjudication line is too large")
+        if chunk and chunk_bytes + line_bytes > limit:
+            yield offset, chunk
+            chunk = []
+            chunk_bytes = 0
+            offset = index
+        chunk.append(content)
+        chunk_bytes += line_bytes
+    if chunk:
+        yield offset, chunk
+
+
 def _ripgrep_stdin_match_positions(
     pattern: str,
     contents: Sequence[str],
@@ -952,32 +978,42 @@ def _ripgrep_stdin_match_positions(
     *,
     deadline: float | None = None,
 ) -> set[int]:
-    """Return the 0-based positions of the given lines that ripgrep matches."""
-    stdin = "\n".join(contents) + "\n"
-    result = _run_bounded_subprocess(
-        [
-            rg,
-            "--no-config",
-            "-n",
-            "--no-heading",
-            "--color",
-            "never",
-            "--",
-            pattern,
-            "-",
-        ],
-        input_text=stdin,
-        timeout=_remaining_timeout(deadline, _GREP_REQUEST_TIMEOUT_SECONDS),
-        input_limit=_GREP_UNICODE_MAX_INPUT_BYTES,
-    )
-    if result.returncode not in (0, 1):
-        msg = result.stderr.strip() or f"exit status {result.returncode}"
-        raise RuntimeError(msg)
+    """Return the 0-based positions of the given lines that ripgrep matches.
+
+    The candidate lines are adjudicated in stdin-sized chunks. A repository
+    can hold more divergent lines than one bounded stdin write allows, and a
+    direct per-pattern search would have resolved all of them, so refusing the
+    whole request there would drop real evidence.
+    """
     positions: set[int] = set()
-    for line in result.stdout.split("\n"):
-        prefix = line.split(":", 1)[0]
-        if prefix.isdigit():
-            positions.add(int(prefix) - 1)
+    for offset, chunk in _grep_stdin_chunks(
+        contents, _GREP_UNICODE_MAX_INPUT_BYTES
+    ):
+        if _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded while adjudicating grep")
+        result = _run_bounded_subprocess(
+            [
+                rg,
+                "--no-config",
+                "-n",
+                "--no-heading",
+                "--color",
+                "never",
+                "--",
+                pattern,
+                "-",
+            ],
+            input_text="\n".join(chunk) + "\n",
+            timeout=_remaining_timeout(deadline, _GREP_REQUEST_TIMEOUT_SECONDS),
+            input_limit=_GREP_UNICODE_MAX_INPUT_BYTES,
+        )
+        if result.returncode not in (0, 1):
+            msg = result.stderr.strip() or f"exit status {result.returncode}"
+            raise RuntimeError(msg)
+        for line in result.stdout.split("\n"):
+            prefix = line.split(":", 1)[0]
+            if prefix.isdigit():
+                positions.add(offset + int(prefix) - 1)
     return positions
 
 
@@ -1024,18 +1060,33 @@ def _word_divergent_lines(
     return divergent
 
 
+def _space_divergent_lines(
+    grep_matches: Sequence[_GrepMatch],
+) -> list[tuple[int, str]]:
+    return [
+        (index, match.content)
+        for index, match in enumerate(grep_matches)
+        if any(char in match.content for char in _ENGINE_DIVERGENT_SPACE_CHARS)
+    ]
+
+
 def _unicode_sensitive_lines(
     request: GrepRequest,
     non_ascii_lines: Sequence[tuple[int, str]],
     word_divergent_lines: Sequence[tuple[int, str]],
+    space_divergent_lines: Sequence[tuple[int, str]] = (),
 ) -> list[tuple[int, str]]:
-    if request.fixed_string or not non_ascii_lines:
+    if request.fixed_string:
         return []
-    if _UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern):
-        return list(non_ascii_lines)
-    if not _UNICODE_WORD_PATTERN.search(request.pattern):
-        return []
-    return list(word_divergent_lines)
+    sensitive: dict[int, str] = {}
+    if _ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern):
+        sensitive.update(space_divergent_lines)
+    if non_ascii_lines:
+        if _UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern):
+            sensitive.update(non_ascii_lines)
+        elif _UNICODE_WORD_PATTERN.search(request.pattern):
+            sensitive.update(word_divergent_lines)
+    return sorted(sensitive.items())
 
 
 def _non_ascii_line_overrides(
@@ -1044,16 +1095,18 @@ def _non_ascii_line_overrides(
     word_divergent_lines: Sequence[tuple[int, str]],
     rg: str,
     *,
+    space_divergent_lines: Sequence[tuple[int, str]] = (),
     deadline: float | None = None,
 ) -> dict[int, bool] | None:
-    # After POSIX-class translation the only engine-sensitive construct left
-    # in classifier patterns is \b: ripgrep's UTS#18 word class includes
-    # combining marks, join controls, and non-decimal numerics that Python's
-    # re does not (and vice versa). Let ripgrep itself adjudicate non-ASCII
-    # lines so batched attribution matches what a per-pattern search returns.
-    # Fixed strings are byte-exact substring checks and never diverge.
+    # After POSIX-class translation two engine-sensitive constructs remain in
+    # classifier patterns. \b: ripgrep's UTS#18 word class includes combining
+    # marks, join controls, and non-decimal numerics that Python's re does not
+    # (and vice versa). \s: Python's re matches U+001C-U+001F, which ripgrep's
+    # Unicode White_Space class excludes. Let ripgrep itself adjudicate the
+    # affected lines so batched attribution matches what a per-pattern search
+    # returns. Fixed strings are byte-exact substring checks and never diverge.
     sensitive_lines = _unicode_sensitive_lines(
-        request, non_ascii_lines, word_divergent_lines
+        request, non_ascii_lines, word_divergent_lines, space_divergent_lines
     )
     if not sensitive_lines:
         return None
@@ -1152,12 +1205,13 @@ def _run_ripgrep_batch(
     word_divergent_lines = _word_divergent_lines(
         non_ascii_lines, deadline=deadline
     )
+    space_divergent_lines = _space_divergent_lines(grep_matches)
     unicode_adjudications = 0
     for request in batched:
         if _deadline_expired(deadline):
             break
         sensitive_lines = _unicode_sensitive_lines(
-            request, non_ascii_lines, word_divergent_lines
+            request, non_ascii_lines, word_divergent_lines, space_divergent_lines
         )
         overrides: dict[int, bool] | None = None
         request_incomplete = False
@@ -1171,6 +1225,7 @@ def _run_ripgrep_batch(
                         non_ascii_lines,
                         word_divergent_lines,
                         rg,
+                        space_divergent_lines=space_divergent_lines,
                         deadline=deadline,
                     )
                 except (
