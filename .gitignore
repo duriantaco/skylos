@@ -25,6 +25,7 @@ node_modules
 .pytest_cache
 .venv
 .coverage
+coverage.xml
 .skylos_trace
 .skylos
 .mcpregistry_github_token
