@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import ast
+import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from skylos.core.api_symbol_truth import (
-    SURFACE_KIND_PYTHON_MODULE,
-    cached_api_symbol_surface,
-)
-from skylos.core.python_api_surface import cache_python_api_surface, python_environment_key
+from skylos.core.python_api_surface import PythonApiSurfaceCacheSession
 from skylos.core.safe_cache_io import read_text_no_symlink
-
 
 RULE_ID_API_SIGNATURE = "SKY-D224"
 SEV_HIGH = "HIGH"
@@ -19,6 +16,7 @@ DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3", "openai")
 VIBE_CATEGORY = "api_signature_hallucination"
 AI_LIKELIHOOD = "high"
 MAX_PYTHON_API_SIGNATURE_SOURCE_BYTES = 1_000_000
+_MAX_API_SIGNATURE_PREFILTER_ROOTS = 64
 
 SurfaceLoader = Callable[[str | Path, str], dict[str, Any] | None]
 
@@ -345,25 +343,33 @@ def scan_python_api_signature_hallucinations(
     if not allowed_roots:
         return findings
 
-    loader = _surface_loader(surface_loader)
+    cache_session = None
+    loader = surface_loader
+    if loader is None:
+        cache_session = PythonApiSurfaceCacheSession(root)
+        loader = cache_session.load_surface
     local_modules = _local_module_roots(root, py_files)
     surfaces: dict[str, dict[str, Any] | None] = {}
 
-    for file_path in py_files:
-        tree = _parse_python_file(root, file_path)
-        if tree is None:
-            continue
+    try:
+        for file_path in py_files:
+            tree = _parse_python_file(root, file_path, allowed_roots)
+            if tree is None:
+                continue
 
-        checker = _ApiSignatureChecker(
-            root,
-            file_path,
-            allowed_roots,
-            local_modules,
-            surfaces,
-            loader,
-            findings,
-        )
-        checker.visit(tree)
+            checker = _ApiSignatureChecker(
+                root,
+                file_path,
+                allowed_roots,
+                local_modules,
+                surfaces,
+                loader,
+                findings,
+            )
+            checker.visit(tree)
+    finally:
+        if cache_session is not None:
+            cache_session.flush()
 
     return findings
 
@@ -375,27 +381,6 @@ def _repo_root(value: str | Path | None) -> Path | None:
         return Path(value).resolve()
     except OSError:
         return Path(value)
-
-
-def _surface_loader(surface_loader: SurfaceLoader | None) -> SurfaceLoader:
-    if surface_loader is not None:
-        return surface_loader
-    return _shared_python_surface_loader
-
-
-def _shared_python_surface_loader(
-    project_root: str | Path,
-    module_name: str,
-) -> dict[str, Any] | None:
-    shared_surface = cached_api_symbol_surface(
-        project_root,
-        SURFACE_KIND_PYTHON_MODULE,
-        module_name,
-        environment_key=python_environment_key(),
-    )
-    if shared_surface is not None:
-        return shared_surface
-    return cache_python_api_surface(project_root, module_name)
 
 
 def _allowed_roots(allowed_modules: tuple[str, ...] | None) -> set[str]:
@@ -412,7 +397,11 @@ def _allowed_roots(allowed_modules: tuple[str, ...] | None) -> set[str]:
     return roots
 
 
-def _parse_python_file(root: Path, file_path: Path) -> ast.AST | None:
+def _parse_python_file(
+    root: Path,
+    file_path: Path,
+    allowed_roots: set[str],
+) -> ast.AST | None:
     try:
         resolved = Path(file_path).resolve(strict=True)
         resolved.relative_to(root)
@@ -430,11 +419,25 @@ def _parse_python_file(root: Path, file_path: Path) -> ast.AST | None:
     )
     if source is None:
         return None
+    if (
+        len(allowed_roots) <= _MAX_API_SIGNATURE_PREFILTER_ROOTS
+        and not _source_mentions_allowed_root(source, allowed_roots)
+    ):
+        return None
 
     try:
         return ast.parse(source)
     except SyntaxError:
         return None
+
+
+def _source_mentions_allowed_root(source: str, allowed_roots: set[str]) -> bool:
+    if any(root in source for root in allowed_roots):
+        return True
+    if source.isascii():
+        return False
+    normalized_source = unicodedata.normalize("NFKC", source)
+    return any(root in normalized_source for root in allowed_roots)
 
 
 def _safe_module_name(value: Any) -> str | None:

@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
-
+from skylos.core.safe_cache_io import (
+    load_project_json_cache,
+    project_cache_lock,
+    save_project_json_cache,
+)
 
 API_SYMBOL_TRUTH_SCHEMA_VERSION = 1
 API_SYMBOL_TRUTH_CACHE_PATH = Path(".skylos") / "cache" / "api_symbol_truth.json"
+API_SURFACE_CACHE_LOCK_PATH = Path(".skylos") / "cache" / ".api_surface.lock"
 MAX_API_SYMBOL_TRUTH_BYTES = 10_000_000
 
 SURFACE_KIND_PYTHON_MODULE = "python_module"
@@ -62,6 +66,29 @@ def save_api_symbol_truth_cache(
     *,
     cache_path: str | Path = API_SYMBOL_TRUTH_CACHE_PATH,
 ) -> bool:
+    """Replace the full cache. Use cache_api_symbol_surface for merged updates."""
+
+    if not _valid_cache_payload(payload):
+        return False
+    with project_cache_lock(
+        project_root,
+        API_SURFACE_CACHE_LOCK_PATH,
+    ) as lock_acquired:
+        if not lock_acquired:
+            return False
+        return _save_api_symbol_truth_cache_unlocked(
+            project_root,
+            payload,
+            cache_path=cache_path,
+        )
+
+
+def _save_api_symbol_truth_cache_unlocked(
+    project_root: str | Path,
+    payload: dict[str, Any],
+    *,
+    cache_path: str | Path = API_SYMBOL_TRUTH_CACHE_PATH,
+) -> bool:
     if not _valid_cache_payload(payload):
         return False
     payload = {
@@ -104,13 +131,36 @@ def cache_api_symbol_surface(
     if normalized is None:
         return False
 
+    with project_cache_lock(
+        project_root,
+        API_SURFACE_CACHE_LOCK_PATH,
+    ) as lock_acquired:
+        if not lock_acquired:
+            return False
+        return _cache_normalized_api_symbol_surface_unlocked(
+            project_root,
+            normalized,
+            cache_path=cache_path,
+        )
+
+
+def _cache_normalized_api_symbol_surface_unlocked(
+    project_root: str | Path,
+    normalized: dict[str, Any],
+    *,
+    cache_path: str | Path = API_SYMBOL_TRUTH_CACHE_PATH,
+) -> bool:
     payload = load_api_symbol_truth_cache(project_root, cache_path=cache_path)
     surfaces = payload.get("surfaces")
     if not isinstance(surfaces, dict):
         surfaces = {}
     surfaces[api_symbol_surface_key(normalized["kind"], normalized["name"])] = normalized
     payload["surfaces"] = surfaces
-    return save_api_symbol_truth_cache(project_root, payload, cache_path=cache_path)
+    return _save_api_symbol_truth_cache_unlocked(
+        project_root,
+        payload,
+        cache_path=cache_path,
+    )
 
 
 def api_symbol_surface_key(kind: str, name: str) -> str | None:
