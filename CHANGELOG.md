@@ -1,5 +1,40 @@
 ## Changelog
 
+## [4.34.0](https://github.com/duriantaco/skylos/compare/v4.33.2...v4.34.0) (2026-08-22)
+
+
+### Features
+
+* **security:** add TypeScript security proofs and trusted evidence ([#717](https://github.com/duriantaco/skylos/issues/717)) ([a514a63](https://github.com/duriantaco/skylos/commit/a514a639020bd6b377368e8e101a04567d35317d))
+
+
+### Bug Fixes
+
+* **ai-defect:** avoid oversized registry responses ([#751](https://github.com/duriantaco/skylos/issues/751)) ([0ffd3ce](https://github.com/duriantaco/skylos/commit/0ffd3ce7f6315ca273f6ed66c5be395a4954c971))
+* **analyzer:** complete batched unicode verification ([#729](https://github.com/duriantaco/skylos/issues/729)) ([3f2cc94](https://github.com/duriantaco/skylos/commit/3f2cc942f476229ff6576bf8a23d2f0903b09db7))
+* **analyzer:** fail closed on incomplete grep verification ([#727](https://github.com/duriantaco/skylos/issues/727)) ([d2510c2](https://github.com/duriantaco/skylos/commit/d2510c271b4c92748c1d7cc42f6b324dfccc6792))
+* **analyzer:** scope diff verification to changed files ([#731](https://github.com/duriantaco/skylos/issues/731)) ([db51203](https://github.com/duriantaco/skylos/commit/db51203a391f2a4ec095fa967a6ca8beb552d4f5))
+* **ci:** restrict Codecov coverage uploads ([#755](https://github.com/duriantaco/skylos/issues/755)) ([2361d68](https://github.com/duriantaco/skylos/commit/2361d684b317aeade41fae55b4600d63a8a88353))
+* **danger:** fail closed on incomplete MCP analysis ([#726](https://github.com/duriantaco/skylos/issues/726)) ([448b433](https://github.com/duriantaco/skylos/commit/448b433a1f6b8760eec565d75a622c22328f9674))
+* **dead-code:** preserve signature contract parameters ([#750](https://github.com/duriantaco/skylos/issues/750)) ([57606cc](https://github.com/duriantaco/skylos/commit/57606ccd060f1f261749d075dd2c625ea3cf60c9))
+* **quality:** break SKY-C401 clone-type ties deterministically ([#756](https://github.com/duriantaco/skylos/issues/756)) ([e7044e8](https://github.com/duriantaco/skylos/commit/e7044e8fc327705ea627c19d363fab46083ce1bb))
+* **quality:** detect concrete ellipsis defaults ([#728](https://github.com/duriantaco/skylos/issues/728)) ([d4a047d](https://github.com/duriantaco/skylos/commit/d4a047d0d68257964b473d51f0e8b0c756a77708))
+* **quality:** handle positional-only boolean traps and setters ([#719](https://github.com/duriantaco/skylos/issues/719)) ([c6364bd](https://github.com/duriantaco/skylos/commit/c6364bda41291bd37f1d8eba6e478c6864d62402))
+* **quality:** handle positional-only defaults ([#709](https://github.com/duriantaco/skylos/issues/709)) ([d4a1c65](https://github.com/duriantaco/skylos/commit/d4a1c655c3aae6c3885221273e794e9cbafcea06))
+* **sca:** handle npm dependency sections safely ([#752](https://github.com/duriantaco/skylos/issues/752)) ([cc57c69](https://github.com/duriantaco/skylos/commit/cc57c69abd8f70672895f4f4a85ebbe66243d03d))
+* **sca:** scope npm dependency line anchoring to its declaring section ([#748](https://github.com/duriantaco/skylos/issues/748)) ([aa56ed3](https://github.com/duriantaco/skylos/commit/aa56ed34d18a40eeb34c3e95df271f4485fd5f32))
+* **secrets:** avoid computed checksum false positives ([#724](https://github.com/duriantaco/skylos/issues/724)) ([9b8264b](https://github.com/duriantaco/skylos/commit/9b8264bf27865efa7ae73a2945a108b34752d3c3))
+* **secrets:** avoid ordered character set false positives ([#753](https://github.com/duriantaco/skylos/issues/753)) ([d9e4077](https://github.com/duriantaco/skylos/commit/d9e4077e97e746c4717ef6964c8365967b3d5962))
+* **secrets:** skip untracked generated grep cache ([#725](https://github.com/duriantaco/skylos/issues/725)) ([0228225](https://github.com/duriantaco/skylos/commit/0228225e899028dac8fca0fbb5084634671e96d3))
+* **security:** handle positional-only MCP defaults ([#712](https://github.com/duriantaco/skylos/issues/712)) ([94f2596](https://github.com/duriantaco/skylos/commit/94f259607594da466eae61aa58d8eb7981ef0452))
+
+
+### Performance Improvements
+
+* **ai-defect:** batch API surface cache I/O ([#746](https://github.com/duriantaco/skylos/issues/746)) ([e300469](https://github.com/duriantaco/skylos/commit/e300469a438e55d1fb3a8ebf51364183ae74ecdf))
+* **analyzer:** batch grep verification searches ([#721](https://github.com/duriantaco/skylos/issues/721)) ([03aa768](https://github.com/duriantaco/skylos/commit/03aa7688467611651a4c2bfa2a76a24db99392a3))
+* **dead-code:** index documented method references ([#744](https://github.com/duriantaco/skylos/issues/744)) ([5c35c10](https://github.com/duriantaco/skylos/commit/5c35c105090235dc4476f0f5035ceb1a8c29e712))
+
 ## [4.33.2](https://github.com/duriantaco/skylos/compare/v4.33.1...v4.33.2) (2026-08-09)
 
 
