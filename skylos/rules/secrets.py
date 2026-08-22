@@ -380,6 +380,8 @@ YARN_DEPENDENCY_RE = re.compile(
 
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"
 DEFAULT_MIN_ENTROPY = 3.9
+_ORDERED_ASCII_RUN_MIN_LENGTH = 8
+_ORDERED_CHARACTER_SET_PUNCTUATION = frozenset("-._~+/=")
 
 IS_TEST_PATH = re.compile(r"(^|/)(tests?(/|$)|test_[^/]+\.py$)")
 
@@ -403,6 +405,85 @@ def _entropy(s):
         entropy -= probability * log2(probability)
 
     return entropy
+
+
+def _ordered_ascii_domain(character: str) -> str | None:
+    if "0" <= character <= "9":
+        return "digit"
+    if "A" <= character <= "Z":
+        return "upper"
+    if "a" <= character <= "z":
+        return "lower"
+    return None
+
+
+def _without_long_ordered_ascii_runs(value: str) -> tuple[str, int]:
+    """Remove maximal ascending digit/A-Z/a-z runs without reordering input."""
+    kept = []
+    removed = 0
+    start = 0
+    while start < len(value):
+        domain = _ordered_ascii_domain(value[start])
+        end = start + 1
+        while (
+            domain is not None
+            and end < len(value)
+            and _ordered_ascii_domain(value[end]) == domain
+            and ord(value[end]) == ord(value[end - 1]) + 1
+        ):
+            end += 1
+
+        if end - start >= _ORDERED_ASCII_RUN_MIN_LENGTH:
+            removed += end - start
+        else:
+            kept.append(value[start:end])
+        start = end
+
+    return "".join(kept), removed
+
+
+def _looks_like_ordered_character_set(value: str, *, min_entropy: float) -> bool:
+    """Require every alphanumeric character to be part of an ordered run."""
+    residual, removed = _without_long_ordered_ascii_runs(value)
+    if removed < _ORDERED_ASCII_RUN_MIN_LENGTH or any(
+        character not in _ORDERED_CHARACTER_SET_PUNCTUATION
+        for character in residual
+    ):
+        return False
+    return _entropy(residual) < min_entropy
+
+
+def _bare_candidate_is_complete_ordered_character_set(
+    line_content: str,
+    *,
+    start: int,
+    end: int,
+    min_entropy: float,
+) -> bool:
+    """Return whether a bare candidate spans one complete quoted character set."""
+    left = start - 1
+    while (
+        left >= 0
+        and line_content[left] in _ORDERED_CHARACTER_SET_PUNCTUATION
+    ):
+        left -= 1
+    if left < 0 or line_content[left] not in {"'", '"'}:
+        return False
+
+    quote = line_content[left]
+    right = end
+    while (
+        right < len(line_content)
+        and line_content[right] in _ORDERED_CHARACTER_SET_PUNCTUATION
+    ):
+        right += 1
+    if right >= len(line_content) or line_content[right] != quote:
+        return False
+
+    return _looks_like_ordered_character_set(
+        line_content[left + 1 : right],
+        min_entropy=min_entropy,
+    )
 
 
 def _mask(tok):
@@ -3553,20 +3634,29 @@ def scan_ctx(
                 continue
             tok_entropy = _entropy(clean_token)
 
-            if tok_entropy >= min_entropy and len(clean_token) >= 20:
-                generic_finding = {
-                    "rule_id": "SKY-S101",
-                    "severity": "CRITICAL",
-                    "provider": "generic",
-                    "message": f"High-entropy value detected (entropy={tok_entropy:.2f})",
-                    "file": rel_path,
-                    "line": line_number,
-                    "col": max(0, col_pos),
-                    "end_col": max(1, source_end),
-                    "preview": _mask(clean_token),
-                    "entropy": round(tok_entropy, 2),
-                }
-                findings.append(generic_finding)
+            if not (tok_entropy >= min_entropy and len(clean_token) >= 20):
+                continue
+            if is_bare and _bare_candidate_is_complete_ordered_character_set(
+                line_content,
+                start=col_pos,
+                end=source_end,
+                min_entropy=min_entropy,
+            ):
+                continue
+
+            generic_finding = {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "provider": "generic",
+                "message": f"High-entropy value detected (entropy={tok_entropy:.2f})",
+                "file": rel_path,
+                "line": line_number,
+                "col": max(0, col_pos),
+                "end_col": max(1, source_end),
+                "preview": _mask(clean_token),
+                "entropy": round(tok_entropy, 2),
+            }
+            findings.append(generic_finding)
 
     # A neutral source file can still be a client boundary when its directive
     # prologue exceeded the parse budget. Preserve a blocking result whenever
