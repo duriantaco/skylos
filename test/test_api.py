@@ -71,6 +71,42 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(evidence["disposition"], "reported")
         self.assertEqual(evidence["events"][0]["source"], "analyzer")
 
+    def test_compact_upload_finding_preserves_npm_dependency_context(self):
+        compact = api._compact_upload_finding(
+            {
+                "rule_id": "SKY-D225",
+                "file_path": "package.json",
+                "line_number": 8,
+                "message": "Hallucinated npm dependency version",
+                "severity": "HIGH",
+                "category": "AI_DEFECT",
+                "metadata": {
+                    "package_name": "react",
+                    "package_version": "99.0.0",
+                    "version_spec": "99.0.0",
+                    "exact": True,
+                    "dependency_section": "peerDependencies",
+                    "dependency_optional": True,
+                    "peer_dependency_optional": True,
+                    "unrelated": "discarded",
+                },
+            },
+            include_snippet=False,
+        )
+
+        self.assertEqual(
+            compact["metadata"],
+            {
+                "package_name": "react",
+                "package_version": "99.0.0",
+                "version_spec": "99.0.0",
+                "exact": True,
+                "dependency_section": "peerDependencies",
+                "dependency_optional": True,
+                "peer_dependency_optional": True,
+            },
+        )
+
     def test_cli_version_returns_package_version(self):
         self.assertEqual(api._cli_version(), str(skylos.__version__))
 

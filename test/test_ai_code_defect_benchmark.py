@@ -849,7 +849,7 @@ def test_ai_code_defect_runner_seeds_dependency_status_cache():
 
     assert summary["case_count"] == 1
     assert summary["pass_count"] == 1
-    assert cache_payloads[0]["schema_version"] == 1
+    assert cache_payloads[0]["schema_version"] == benchmark.VERSION_CACHE_SCHEMA_VERSION
     assert cache_payloads[0]["statuses"] == {
         "npm:left-pad:99.99.99": "missing_version"
     }

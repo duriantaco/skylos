@@ -14,6 +14,7 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     STATUS_PRESENT,
     STATUS_UNKNOWN,
     VERSION_CACHE_PATH,
+    VERSION_CACHE_SCHEMA_VERSION,
     check_dependency_version_status,
     scan_manifest_dependency_hallucinations,
 )
@@ -145,6 +146,153 @@ def test_registry_checks_use_head_without_reading_response_bodies(
         assert seen_requests == [(url, "HEAD", 5) for url in expected_urls]
 
     response.read.assert_not_called()
+
+
+@pytest.mark.parametrize("version_spec", ["^18", "18.x", ">=18 <20", "*", "", "latest"])
+def test_npm_non_exact_specs_only_check_package_endpoint(
+    monkeypatch,
+    version_spec,
+):
+    response = _oversized_registry_response()
+    seen_requests = []
+
+    def fake_urlopen(request, *, timeout):
+        seen_requests.append((request.full_url, request.get_method(), timeout))
+        if request.full_url != NPM_PACKAGE_URL:
+            raise AssertionError(f"unexpected version lookup: {request.full_url}")
+        return response
+
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", fake_urlopen)
+
+    status = check_dependency_version_status(
+        ECOSYSTEM_NPM,
+        "react",
+        version_spec,
+        {},
+    )
+
+    assert status == STATUS_PRESENT
+    assert seen_requests == [(NPM_PACKAGE_URL, "HEAD", 5)]
+    response.read.assert_not_called()
+
+
+def test_npm_non_exact_spec_reports_missing_package_not_missing_version(monkeypatch):
+    seen_requests = []
+
+    def fake_urlopen(request, *, timeout):
+        seen_requests.append((request.full_url, request.get_method(), timeout))
+        raise _not_found(request.full_url)
+
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", fake_urlopen)
+
+    status = check_dependency_version_status(
+        ECOSYSTEM_NPM,
+        "missing-peer",
+        "^18",
+        {},
+    )
+
+    assert status == STATUS_MISSING_PACKAGE
+    assert seen_requests == [("https://registry.npmjs.org/missing-peer", "HEAD", 5)]
+
+
+@pytest.mark.parametrize(
+    ("version_spec", "canonical_version"),
+    [
+        ("7.6.3+build.5", "7.6.3"),
+        ("==7.6.3", "7.6.3"),
+        ("01.2.3", "1.2.3"),
+        ("1.2.3beta", "1.2.3-beta"),
+        ("1.2.3-01", "1.2.3-1"),
+    ],
+)
+def test_npm_exact_versions_use_canonical_registry_lookup(
+    monkeypatch,
+    version_spec,
+    canonical_version,
+):
+    response = _oversized_registry_response()
+    seen_requests = []
+
+    def fake_urlopen(request, *, timeout):
+        seen_requests.append((request.full_url, request.get_method(), timeout))
+        return response
+
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", fake_urlopen)
+
+    status = check_dependency_version_status(
+        ECOSYSTEM_NPM,
+        "semver",
+        version_spec,
+        {},
+    )
+
+    assert status == STATUS_PRESENT
+    assert seen_requests == [
+        (f"https://registry.npmjs.org/semver/{canonical_version}", "HEAD", 5),
+    ]
+    response.read.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "version_spec",
+    ["workspace:*", "file:../react", "npm:react@^18", "github:org/react"],
+)
+def test_npm_non_registry_specs_do_not_make_requests(monkeypatch, version_spec):
+    monkeypatch.setattr(
+        manifest_rule.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("non-registry spec performed a lookup"),
+    )
+
+    assert (
+        check_dependency_version_status(
+            ECOSYSTEM_NPM,
+            "react-alias",
+            version_spec,
+            {},
+        )
+        == STATUS_UNKNOWN
+    )
+
+
+def test_old_range_cache_is_invalidated_before_package_only_lookup(
+    tmp_path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"peerDependencies": {"react": "18.x"}}),
+        encoding="utf-8",
+    )
+    cache_path = repo / VERSION_CACHE_PATH
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "schema_version": VERSION_CACHE_SCHEMA_VERSION - 1,
+                "statuses": {"npm:react:18.x": STATUS_MISSING_VERSION},
+            }
+        ),
+        encoding="utf-8",
+    )
+    response = _oversized_registry_response()
+    seen_requests = []
+
+    def fake_urlopen(request, *, timeout):
+        seen_requests.append((request.full_url, request.get_method(), timeout))
+        return response
+
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", fake_urlopen)
+
+    assert scan_manifest_dependency_hallucinations(repo) == []
+    assert seen_requests == [(NPM_PACKAGE_URL, "HEAD", 5)]
+    refreshed = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert refreshed == {
+        "schema_version": VERSION_CACHE_SCHEMA_VERSION,
+        "statuses": {"npm:react:<package-only>": STATUS_PRESENT},
+    }
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from skylos.rules.sca import vulnerability_scanner as sca
 
 
@@ -148,7 +152,23 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     )
     package_json = tmp_path / "package.json"
     package_json.write_text(
-        '{"dependencies":{"exact":"1.2.3","caret":"^2.0.0","tag":"latest"}}',
+        json.dumps(
+            {
+                "dependencies": {
+                    "exact": "1.2.3",
+                    "prerelease": "v2.0.0-rc.1+build.5",
+                    "double-equals": "==7.6.3",
+                    "leading-zero": "01.2.3",
+                    "loose-prerelease": "1.2.3beta",
+                    "numeric-prerelease": "1.2.3-01",
+                    "unicode-digits": "١.٢.٣",
+                    "caret": "^2.0.0",
+                    "loose": "18.x",
+                    "partial": "18",
+                    "tag": "latest",
+                }
+            }
+        ),
         encoding="utf-8",
     )
     pyproject = tmp_path / "pyproject.toml"
@@ -163,7 +183,24 @@ def test_manifest_parsers_query_only_exact_versions(tmp_path):
     ] == [("exact", "1.2.3")]
     assert [
         (item["name"], item["version"]) for item in sca.parse_package_json(package_json)
-    ] == [("exact", "1.2.3")]
+    ] == [
+        ("exact", "1.2.3"),
+        ("prerelease", "2.0.0-rc.1"),
+        ("double-equals", "7.6.3"),
+        ("leading-zero", "1.2.3"),
+        ("loose-prerelease", "1.2.3-beta"),
+        ("numeric-prerelease", "1.2.3-1"),
+    ]
+    assert sca.parse_package_json(package_json)[1]["version_spec"] == (
+        "v2.0.0-rc.1+build.5"
+    )
+    unicode_candidate = next(
+        item
+        for item in sca.parse_package_json_candidates(package_json)
+        if item["name"] == "unicode-digits"
+    )
+    assert unicode_candidate["version"] == "١.٢.٣"
+    assert unicode_candidate["exact"] is False
     assert [
         (item["name"], item["version"]) for item in sca.parse_pyproject_toml(pyproject)
     ] == [("exact", "1.2.3")]
@@ -266,6 +303,141 @@ def test_npm_finding_line_ignores_same_name_nested_under_overrides(tmp_path):
     assert item["line"] == 2
 
 
+def test_npm_scans_all_dependency_sections_with_context(tmp_path):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "dependencies": { "runtime-dep": "1.0.0" },
+  "devDependencies": { "dev-dep": "2.0.0" },
+  "peerDependencies": {
+    "peer-dep": "3.0.0",
+    "optional-peer": "4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "optional-peer": { "optional": true }
+  },
+  "optionalDependencies": { "optional-dep": "5.0.0" }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    parsed = {item["name"]: item for item in sca.parse_package_json(package_json)}
+
+    assert set(parsed) == {
+        "runtime-dep",
+        "dev-dep",
+        "peer-dep",
+        "optional-peer",
+        "optional-dep",
+    }
+    assert parsed["runtime-dep"]["dependency_section"] == "dependencies"
+    assert parsed["dev-dep"]["dependency_section"] == "devDependencies"
+    assert parsed["peer-dep"]["dependency_section"] == "peerDependencies"
+    assert parsed["peer-dep"]["dependency_optional"] is False
+    assert parsed["optional-peer"]["peer_dependency_optional"] is True
+    assert parsed["optional-peer"]["dependency_optional"] is True
+    assert parsed["optional-peer"]["line"] == 6
+    assert parsed["optional-dep"]["dependency_section"] == "optionalDependencies"
+    assert parsed["optional-dep"]["dependency_optional"] is True
+
+
+def test_npm_optional_dependency_overrides_dependency_before_parsing_and_counting(
+    tmp_path,
+):
+    package_json = tmp_path / "package.json"
+    manifest = {
+        "dependencies": {"shared": "1.0.0", "runtime": "2.0.0"},
+        "optionalDependencies": {"shared": "3.0.0"},
+    }
+    text = json.dumps(manifest, indent=2)
+    package_json.write_text(text, encoding="utf-8")
+
+    for parser in (sca.parse_package_json, sca.parse_package_json_candidates):
+        parsed = parser(package_json)
+        assert [(item["name"], item["version"]) for item in parsed] == [
+            ("runtime", "2.0.0"),
+            ("shared", "3.0.0"),
+        ]
+        shared = next(item for item in parsed if item["name"] == "shared")
+        assert shared["dependency_section"] == "optionalDependencies"
+        assert text.splitlines()[shared["line"] - 1].strip() == '"shared": "3.0.0"'
+
+    assert sca._declared_dependency_count("package.json", text) == 2
+
+
+@pytest.mark.parametrize(
+    ("version_spec", "expected_version", "exact"),
+    [
+        ("1.2.3", "1.2.3", True),
+        ("=v1.2.3", "1.2.3", True),
+        ("^18", "^18", False),
+        ("18.x", "18.x", False),
+        (">=18 <20", ">=18 <20", False),
+        ("^18 || ^19", "^18 || ^19", False),
+        ("*", "*", False),
+        ("", "", False),
+        ("latest", "latest", False),
+    ],
+)
+def test_npm_registry_specs_preserve_exactness(
+    tmp_path,
+    version_spec,
+    expected_version,
+    exact,
+):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": version_spec}}),
+        encoding="utf-8",
+    )
+
+    [candidate] = sca.parse_package_json_candidates(package_json)
+    assert candidate["version"] == expected_version
+    assert candidate["version_spec"] == version_spec
+    assert candidate["exact"] is exact
+    assert sca.parse_package_json(package_json) == ([] if not exact else [candidate])
+
+
+@pytest.mark.parametrize(
+    "version_spec",
+    [
+        "workspace:*",
+        "file:../react",
+        "../react",
+        "https://example.test/react.tgz",
+        "git+https://example.test/react.git",
+        "github:user/react",
+        "user/react",
+        "npm:react@^18",
+        "react.tgz",
+    ],
+)
+def test_npm_non_registry_specs_are_not_candidates(tmp_path, version_spec):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"local-react": version_spec}}),
+        encoding="utf-8",
+    )
+
+    assert sca.parse_package_json_candidates(package_json) == []
+    assert sca.parse_package_json(package_json) == []
+
+
+@pytest.mark.parametrize("version_spec", ["x" * 1025, " " * 1025 + "1.2.3"])
+def test_npm_oversized_spec_is_not_copied_into_candidates(tmp_path, version_spec):
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        json.dumps({"peerDependencies": {"react": version_spec}}),
+        encoding="utf-8",
+    )
+
+    assert sca.parse_package_json_candidates(package_json) == []
+    assert sca.parse_package_json(package_json) == []
+
+
 def test_poetry_multiple_constraint_versions_are_preserved(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(
@@ -352,6 +524,99 @@ def test_scan_receipt_counts_unresolved_ranges(monkeypatch, tmp_path):
     assert [(item["name"], item["version"]) for item in queried] == [("exact", "1.2.3")]
     assert result.receipt["unresolved_dependency_count"] == 1
     assert result.receipt["status"] == "complete_with_unresolved_versions"
+
+
+@pytest.mark.parametrize(
+    ("dependency_spec", "optional_spec", "expected_query", "unresolved"),
+    [
+        ("1.0.0", "^2.0.0", [], 1),
+        ("^1.0.0", "2.0.0", [("shared", "2.0.0")], 0),
+    ],
+)
+def test_scan_receipt_uses_effective_optional_override(
+    monkeypatch,
+    tmp_path,
+    dependency_spec,
+    optional_spec,
+    expected_query,
+    unresolved,
+):
+    monkeypatch.setattr(sca, "_requests", object())
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {"shared": dependency_spec},
+                "optionalDependencies": {"shared": optional_spec},
+            }
+        ),
+        encoding="utf-8",
+    )
+    queried = []
+
+    def fake_query(deps, _cache):
+        queried.extend(deps)
+        return sca.OsvQueryResult(
+            [],
+            receipt={
+                "status": "complete",
+                "complete": True,
+                "requested_batches": 1,
+                "successful_batches": 1,
+                "failed_batches": 0,
+            },
+        )
+
+    monkeypatch.setattr(sca, "_query_osv_batch", fake_query)
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert [(item["name"], item["version"]) for item in queried] == expected_query
+    assert result.receipt["unresolved_dependency_count"] == unresolved
+    assert result.receipt["dependency_count"] == len(expected_query)
+
+
+def test_sca_finding_keeps_peer_dependency_context(monkeypatch, tmp_path):
+    monkeypatch.setattr(sca, "_requests", object())
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "peerDependencies": {"react": "18.2.0"},
+                "peerDependenciesMeta": {"react": {"optional": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_query(deps, _cache):
+        [dependency] = deps
+        finding = sca._make_finding(
+            dependency,
+            {
+                "vuln_id": "GHSA-test",
+                "summary": "test vulnerability",
+                "aliases": [],
+            },
+        )
+        return sca.OsvQueryResult(
+            [finding],
+            receipt={
+                "status": "complete",
+                "complete": True,
+                "requested_batches": 1,
+                "successful_batches": 1,
+                "failed_batches": 0,
+            },
+        )
+
+    monkeypatch.setattr(sca, "_query_osv_batch", fake_query)
+
+    [finding] = sca.scan_dependencies(tmp_path)
+
+    assert finding["metadata"]["dependency_section"] == "peerDependencies"
+    assert finding["metadata"]["dependency_optional"] is True
+    assert finding["metadata"]["peer_dependency_optional"] is True
+    assert finding["metadata"]["version_spec"] == "18.2.0"
+    assert finding["metadata"]["exact"] is True
 
 
 def test_sca_inventory_limits_fail_closed_before_network(monkeypatch, tmp_path):

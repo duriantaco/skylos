@@ -1,3 +1,5 @@
+import pytest
+
 from skylos.rules.ai_defect import dependency_hallucination as dep_mod
 from skylos.rules.ai_defect import diff_dependencies as diff_mod
 from skylos.rules.ai_defect.dependency_hallucination import scan_diff_added_imports
@@ -18,6 +20,18 @@ def _diff(*file_blocks):
         for text in added:
             lines.append(f"+{text}")
     return "\n".join(lines)
+
+
+def _new_file_diff(filename, text):
+    added = text.splitlines()
+    return "\n".join(
+        [
+            "--- /dev/null",
+            f"+++ b/{filename}",
+            f"@@ -0,0 +1,{len(added)} @@",
+            *(f"+{line}" for line in added),
+        ]
+    )
 
 
 def _noop_import_scanner(
@@ -162,12 +176,418 @@ class TestManifestDiffChecks:
         assert pinned["findings"][0]["kind"] == "hallucinated_version"
 
         ranged = scan_diff_dependency_hallucinations(
-            _diff(("package.json", ['    "react": "^99.0.0",'])),
+            "\n".join(
+                [
+                    "--- a/package.json",
+                    "+++ b/package.json",
+                    "@@ -1,4 +1,5 @@",
+                    " {",
+                    '   "peerDependencies": {',
+                    '+    "react": "^99.0.0",',
+                    "   }",
+                    " }",
+                ]
+            ),
             ".",
             import_scanner=_noop_import_scanner,
             status_checker=checker,
         )
         assert ranged["findings"] == []
+
+    @pytest.mark.parametrize(
+        "version_spec",
+        ["^18", "18.x", ">=18 <20", "^18 || ^19", "*", "", "latest"],
+    )
+    def test_package_json_non_exact_specs_never_emit_missing_version(
+        self,
+        version_spec,
+    ):
+        seen = []
+
+        def checker(ecosystem, name, version, _cache):
+            seen.append((ecosystem, name, version))
+            return "missing_version"
+
+        result = scan_diff_dependency_hallucinations(
+            "\n".join(
+                [
+                    "--- a/package.json",
+                    "+++ b/package.json",
+                    "@@ -1,4 +1,5 @@",
+                    " {",
+                    '   "peerDependencies": {',
+                    f'+    "react": "{version_spec}",',
+                    "   }",
+                    " }",
+                ]
+            ),
+            ".",
+            import_scanner=_noop_import_scanner,
+            status_checker=checker,
+        )
+
+        assert seen == [("npm", "react", version_spec)]
+        assert result["findings"] == []
+
+    def test_package_json_wildcard_still_checks_package_name(self):
+        def checker(_ecosystem, _name, _version, _cache):
+            return "missing_package"
+
+        result = scan_diff_dependency_hallucinations(
+            "\n".join(
+                [
+                    "--- a/package.json",
+                    "+++ b/package.json",
+                    "@@ -1,4 +1,5 @@",
+                    " {",
+                    '   "optionalDependencies": {',
+                    '+    "missing-optional": "*",',
+                    "   }",
+                    " }",
+                ]
+            ),
+            ".",
+            import_scanner=_noop_import_scanner,
+            status_checker=checker,
+        )
+
+        [finding] = result["findings"]
+        assert finding["rule_id"] == "SKY-D222"
+        assert finding["metadata"] == {
+            "version_spec": "*",
+            "exact": False,
+            "dependency_section": "optionalDependencies",
+            "dependency_optional": True,
+        }
+
+    @pytest.mark.parametrize(
+        "version_spec",
+        ["workspace:*", "file:../react", "npm:react@^18", "github:org/react"],
+    )
+    def test_package_json_non_registry_specs_are_skipped(self, version_spec):
+        seen = []
+
+        result = scan_diff_dependency_hallucinations(
+            "\n".join(
+                [
+                    "--- a/package.json",
+                    "+++ b/package.json",
+                    "@@ -1,4 +1,5 @@",
+                    " {",
+                    '   "peerDependencies": {',
+                    f'+    "local-react": "{version_spec}",',
+                    "   }",
+                    " }",
+                ]
+            ),
+            ".",
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args) or "missing_package",
+        )
+
+        assert seen == []
+        assert result["findings"] == []
+
+    def test_package_json_nested_override_dependencies_are_not_direct_specs(self):
+        seen = []
+
+        result = scan_diff_dependency_hallucinations(
+            "\n".join(
+                [
+                    "--- a/package.json",
+                    "+++ b/package.json",
+                    "@@ -1,7 +1,8 @@",
+                    " {",
+                    '   "overrides": {',
+                    '     "parent": {',
+                    '       "dependencies": {',
+                    '+        "nested-only": "1.0.0",',
+                    "       }",
+                    "     }",
+                    "   }",
+                    " }",
+                ]
+            ),
+            ".",
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args) or "missing_package",
+        )
+
+        assert seen == []
+        assert result["findings"] == []
+
+    def test_package_json_inline_top_level_object_does_not_hide_dependencies(self):
+        seen = []
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,5 +1,6 @@",
+                " {",
+                '   "scripts": {"test": "pytest"},',
+                '   "dependencies": {',
+                '+    "missing-pkg": "1.0.0",',
+                "   }",
+                " }",
+            ]
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "missing_package",
+        )
+
+        assert seen == [("npm", "missing-pkg", "1.0.0")]
+        assert result["findings"][0]["rule_id"] == "SKY-D222"
+
+    def test_package_json_diff_stack_resets_between_hunks(self):
+        seen = []
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,2 +1,3 @@",
+                " {",
+                '   "dependencies": {',
+                '+    "real-dep": "1.0.0",',
+                "@@ -10,2 +11,3 @@",
+                '   "version": "2.0.0",',
+                '+  "build-id": "1.0.0",',
+                " }",
+            ]
+        )
+
+        scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "present",
+        )
+
+        assert seen == [("npm", "real-dep", "1.0.0")]
+
+    def test_package_json_worktree_handles_hunk_starting_inside_section(
+        self,
+        tmp_path,
+    ):
+        text = "\n".join(
+            [
+                "{",
+                '  "scripts": {"test": "pytest"},',
+                '  "dependencies": {',
+                '    "npm": "11.0.0"',
+                "  }",
+                "}",
+            ]
+        )
+        (tmp_path / "package.json").write_text(text, encoding="utf-8")
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -3,0 +4,1 @@",
+                '+    "npm": "11.0.0"',
+            ]
+        )
+        seen = []
+
+        scan_diff_dependency_hallucinations(
+            diff,
+            tmp_path,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "present",
+        )
+
+        assert seen == [("npm", "npm", "11.0.0")]
+
+    def test_package_json_worktree_applies_optional_override_precedence(
+        self,
+        tmp_path,
+    ):
+        text = "\n".join(
+            [
+                "{",
+                '  "dependencies": {"shared": "99.0.0"},',
+                '  "optionalDependencies": {"shared": "1.0.0"}',
+                "}",
+            ]
+        )
+        (tmp_path / "package.json").write_text(text, encoding="utf-8")
+        seen = []
+
+        result = scan_diff_dependency_hallucinations(
+            _new_file_diff("package.json", text),
+            tmp_path,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "present",
+        )
+
+        assert seen == [("npm", "shared", "1.0.0")]
+        assert result["findings"] == []
+
+    def test_package_json_diff_optional_local_spec_still_shadows_dependency(self):
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,7 +1,9 @@",
+                " {",
+                '   "dependencies": {',
+                '+    "shared": "99.0.0",',
+                "   },",
+                '   "optionalDependencies": {',
+                '+    "shared": "workspace:*",',
+                "   }",
+                " }",
+            ]
+        )
+        seen = []
+
+        result = scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "missing_version",
+        )
+
+        assert seen == []
+        assert result["findings"] == []
+
+    def test_package_json_diff_uses_optional_override_from_context(self):
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,8 +1,9 @@",
+                " {",
+                '   "dependencies": {',
+                '+    "shared": "99.0.0",',
+                "   },",
+                '   "optionalDependencies": {',
+                '     "shared": "workspace:*"',
+                "   }",
+                " }",
+            ]
+        )
+        seen = []
+
+        scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "missing_version",
+        )
+
+        assert seen == []
+
+    def test_package_json_diff_uses_optional_peer_metadata_from_context(self):
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,10 +1,11 @@",
+                " {",
+                '   "peerDependencies": {',
+                '+    "react": "99.0.0",',
+                "   },",
+                '   "peerDependenciesMeta": {',
+                '     "react": {',
+                '       "optional": true',
+                "     }",
+                "   }",
+                " }",
+            ]
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *_args: "missing_version",
+        )
+
+        [finding] = result["findings"]
+        assert finding["metadata"]["dependency_optional"] is True
+        assert finding["metadata"]["peer_dependency_optional"] is True
+
+    def test_package_json_malformed_worktree_uses_diff_fallback(self, tmp_path):
+        text = "\n".join(
+            [
+                "{",
+                '  "dependencies": {',
+                '    "ghost-package": "1.0.0",',
+                "  }",
+                "}",
+            ]
+        )
+        (tmp_path / "package.json").write_text(text, encoding="utf-8")
+        seen = []
+
+        scan_diff_dependency_hallucinations(
+            _new_file_diff("package.json", text),
+            tmp_path,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "present",
+        )
+
+        assert seen == [("npm", "ghost-package", "1.0.0")]
+
+    def test_package_json_worktree_preserves_optional_peer_context(
+        self,
+        tmp_path,
+    ):
+        text = "\n".join(
+            [
+                "{",
+                '  "peerDependencies": {"react": "99.0.0"},',
+                '  "peerDependenciesMeta": {',
+                '    "react": {"optional": true}',
+                "  }",
+                "}",
+            ]
+        )
+        (tmp_path / "package.json").write_text(text, encoding="utf-8")
+
+        result = scan_diff_dependency_hallucinations(
+            _new_file_diff("package.json", text),
+            tmp_path,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *_args: "missing_version",
+        )
+
+        [finding] = result["findings"]
+        assert finding["rule_id"] == "SKY-D225"
+        assert finding["metadata"]["dependency_optional"] is True
+        assert finding["metadata"]["peer_dependency_optional"] is True
+
+    def test_package_json_non_exact_specs_dedupe_by_package_name(self):
+        seen = []
+        diff = "\n".join(
+            [
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,7 +1,9 @@",
+                " {",
+                '   "devDependencies": {',
+                '+    "react": "^18",',
+                "   },",
+                '   "peerDependencies": {',
+                '+    "react": "18.x",',
+                "   }",
+                " }",
+            ]
+        )
+
+        scan_diff_dependency_hallucinations(
+            diff,
+            None,
+            import_scanner=_noop_import_scanner,
+            status_checker=lambda *args: seen.append(args[:3]) or "present",
+        )
+
+        assert seen == [("npm", "react", "^18")]
 
     def test_package_json_dependency_section_is_checked(self):
         seen = []
