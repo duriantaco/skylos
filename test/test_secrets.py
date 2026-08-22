@@ -239,6 +239,91 @@ def test_bare_generic_token_still_detected():
     assert generic[0]["col"] == src.index(token)
 
 
+def test_ordered_character_set_enumeration_is_not_a_secret():
+    src = (
+        "UNRESERVED_CHARACTERS = (\n"
+        '    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"\n'
+        ")\n"
+    )
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src))
+        if finding["provider"] == "generic"
+    ]
+
+    assert generic == []
+
+
+def test_unsorted_character_set_lookalike_remains_detectable():
+    token = "ModuleSymbhasOwnPr-0123456789ABCDEFGHNRVfgctiUvz_KqYTJkLxpZXIjQW"
+    src = f'candidate = "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+
+    static_findings = list(
+        scan_ctx(
+            _ctx_from_source(
+                src,
+                rel="mitmproxy/tools/web/static/vendor.js",
+            )
+        )
+    )
+    assert any(finding["rule_id"] == "SKY-S102" for finding in static_findings)
+
+
+def test_ordered_character_set_under_secret_key_remains_detectable():
+    token = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    src = f'API_TOKEN = "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        GENERIC_SECRET + "-01234567",
+        (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
+            + GENERIC_SECRET
+        ),
+        "01234567ABCDEFGHaB3dE5fG7hJ9kL2a",
+        "0123456-ABCDEFG-abcdefg-0123456-",
+        (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-."
+            "aB3dE5fG7hI9jK2lM4nO6pQ8rS0tU1vW2xY3zZ"
+        ),
+        (
+            "aB3dE5fG7hI9jK2lM4nO6pQ8rS0tU1vW2xY3zZ."
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        ),
+    ],
+)
+def test_ordered_runs_do_not_hide_bare_secret_lookalikes(token):
+    src = f'candidate = "{token}"\n'
+
+    generic = [
+        finding
+        for finding in scan_ctx(_ctx_from_source(src))
+        if finding["provider"] == "generic"
+    ]
+
+    assert len(generic) == 1
+
+
 @pytest.mark.parametrize(
     "relpath,src",
     [
