@@ -531,6 +531,8 @@ def test_tests_workflow_pins_codecov_and_limits_permissions():
     assert len(action_ref) == 40
     assert all(c in "0123456789abcdef" for c in action_ref)
     assert codecov_step["with"]["token"] == "${{ secrets.CODECOV_TOKEN }}"
+    assert codecov_step["with"]["files"] == "./coverage.xml"
+    assert codecov_step["with"]["disable_search"] is True
 
 
 def test_tests_workflow_preserves_unlocked_uv_pip_environment():
