@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-
+from uuid import uuid4
 
 DEFAULT_MAX_JSON_CACHE_BYTES = 2_000_000
+PROJECT_CACHE_LOCK_TIMEOUT_SECONDS = 1.0
+PROJECT_CACHE_LOCK_POLL_SECONDS = 0.01
+PROJECT_CACHE_LOCK_STALE_SECONDS = 3600.0
 
 
 def read_text_no_symlink(
@@ -412,9 +419,15 @@ def _ensure_cache_dir(root: Path, current: Path, *, create: bool) -> bool:
             return current.is_dir()
         if not create:
             return False
-        current.mkdir(  # skylos: ignore[SKY-D215] bounded project-local cache directory
-            mode=0o700
-        )
+        try:
+            current.mkdir(  # skylos: ignore[SKY-D215] bounded project-local cache directory
+                mode=0o700
+            )
+        except FileExistsError:
+            if current.is_symlink():
+                return False
+            current.resolve(strict=True).relative_to(root)
+            return current.is_dir()
         return True
     except (OSError, ValueError):
         return False
@@ -430,6 +443,134 @@ def _is_regular_cache_file(path: Path) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def _project_cache_lock_path(
+    project_root: str | Path,
+    lock_path: str | Path,
+) -> Path | None:
+    resolved = _resolve_project_cache_path(project_root, lock_path)
+    if resolved is None:
+        return None
+    root, path = resolved
+    if not _ensure_cache_parent(root, path, create=True):
+        return None
+    try:
+        if path.is_symlink():
+            return None
+        if path.exists() and not path.is_dir():
+            return None
+    except OSError:
+        return None
+    return path
+
+
+def _remove_stale_project_cache_lock(
+    path: Path,
+    existing: os.stat_result,
+) -> bool:
+    if time.time() - existing.st_mtime < PROJECT_CACHE_LOCK_STALE_SECONDS:
+        return False
+    try:
+        current = os.lstat(path)
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISDIR(current.st_mode)
+            or current.st_dev != existing.st_dev
+            or current.st_ino != existing.st_ino
+        ):
+            return False
+        os.rmdir(  # skylos: ignore[SKY-D215] inode-verified empty project cache lock directory
+            path
+        )
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _acquire_project_cache_lock(
+    path: Path,
+    *,
+    deadline: float,
+) -> os.stat_result | None:
+    while True:
+        try:
+            os.mkdir(  # skylos: ignore[SKY-D215] fixed project-local cache lock path with validated parents
+                path,
+                mode=0o700,
+            )
+        except FileExistsError:
+            try:
+                existing = os.lstat(path)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return None
+            if stat.S_ISLNK(existing.st_mode) or not stat.S_ISDIR(existing.st_mode):
+                return None
+            if _remove_stale_project_cache_lock(path, existing):
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(PROJECT_CACHE_LOCK_POLL_SECONDS, remaining))
+            continue
+        except OSError:
+            return None
+
+        try:
+            created = os.lstat(path)
+        except OSError:
+            return None
+        if stat.S_ISLNK(created.st_mode) or not stat.S_ISDIR(created.st_mode):
+            return None
+        return created
+
+
+def _release_project_cache_lock(path: Path, owned: os.stat_result) -> None:
+    try:
+        current = os.lstat(path)
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISDIR(current.st_mode)
+            or current.st_dev != owned.st_dev
+            or current.st_ino != owned.st_ino
+        ):
+            return
+        os.rmdir(  # skylos: ignore[SKY-D215] inode-verified empty project cache lock directory
+            path
+        )
+    except (FileNotFoundError, OSError):
+        pass
+
+
+@contextmanager
+def project_cache_lock(
+    project_root: str | Path,
+    lock_path: str | Path,
+    *,
+    timeout_seconds: float = PROJECT_CACHE_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[bool]:
+    """Bound a project-local cache transaction with an atomic directory lock."""
+
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError("Project cache lock timeout must be finite and non-negative")
+
+    path = _project_cache_lock_path(project_root, lock_path)
+    if path is None:
+        yield False
+        return
+
+    deadline = time.monotonic() + timeout_seconds
+    owned = _acquire_project_cache_lock(path, deadline=deadline)
+    if owned is None:
+        yield False
+        return
+
+    try:
+        yield True
+    finally:
+        _release_project_cache_lock(path, owned)
 
 
 def load_project_json_cache(
@@ -462,7 +603,7 @@ def save_project_json_cache(
     if path is None:
         return False
 
-    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid4().hex}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW

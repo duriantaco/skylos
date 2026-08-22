@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from skylos.core import python_api_surface
 from skylos.core.api_symbol_truth import (
     SURFACE_KIND_PYTHON_MODULE,
@@ -469,8 +471,8 @@ def test_scan_batches_api_surface_cache_io(tmp_path, monkeypatch):
     save_counts = {"python": 0, "shared": 0}
     original_python_load = python_api_surface.load_python_api_surface_cache
     original_shared_load = python_api_surface.load_api_symbol_truth_cache
-    original_python_save = python_api_surface.save_python_api_surface_cache
-    original_shared_save = python_api_surface.save_api_symbol_truth_cache
+    original_python_save = python_api_surface._save_python_api_surface_cache_unlocked
+    original_shared_save = python_api_surface._save_api_symbol_truth_cache_unlocked
 
     def load_python(*args, **kwargs):
         load_counts["python"] += 1
@@ -500,12 +502,12 @@ def test_scan_batches_api_surface_cache_io(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         python_api_surface,
-        "save_python_api_surface_cache",
+        "_save_python_api_surface_cache_unlocked",
         save_python,
     )
     monkeypatch.setattr(
         python_api_surface,
-        "save_api_symbol_truth_cache",
+        "_save_api_symbol_truth_cache_unlocked",
         save_shared,
     )
 
@@ -525,7 +527,7 @@ def test_scan_batches_api_surface_cache_io(tmp_path, monkeypatch):
         "otherapi.missing",
     ]
     assert warm_findings == cold_findings
-    assert load_counts == {"python": 1, "shared": 2}
+    assert load_counts == {"python": 2, "shared": 3}
     assert save_counts == {"python": 1, "shared": 1}
 
 
@@ -589,7 +591,17 @@ def test_scan_preserves_surfaces_cached_during_batch(tmp_path, monkeypatch):
     )
 
     assert [finding["symbol"] for finding in findings] == ["pkg_a.missing"]
+    assert cached_python_api_surface(repo, "pkg_a") is not None
     assert cached_python_api_surface(repo, "pkg_b") is not None
+    assert (
+        cached_api_symbol_surface(
+            repo,
+            SURFACE_KIND_PYTHON_MODULE,
+            "pkg_a",
+            environment_key=python_environment_key(),
+        )
+        is not None
+    )
     assert (
         cached_api_symbol_surface(
             repo,
@@ -599,6 +611,107 @@ def test_scan_preserves_surfaces_cached_during_batch(tmp_path, monkeypatch):
         )
         is not None
     )
+
+
+def test_concurrent_cache_sessions_preserve_different_modules(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def build_surface(module_name):
+        return {
+            "module": module_name,
+            "origin": f"/{module_name}.py",
+            "members": {},
+            "members_truncated": False,
+        }
+
+    monkeypatch.setattr(python_api_surface, "build_python_api_surface", build_surface)
+    first_session = python_api_surface.PythonApiSurfaceCacheSession(repo)
+    second_session = python_api_surface.PythonApiSurfaceCacheSession(repo)
+    assert first_session.load_surface(repo, "pkg_a") is not None
+    assert second_session.load_surface(repo, "pkg_b") is not None
+
+    original_save = python_api_surface._save_python_api_surface_cache_unlocked
+    first_save_entered = threading.Event()
+    second_save_entered = threading.Event()
+    save_count_lock = threading.Lock()
+    save_count = 0
+
+    def delayed_save(*args, **kwargs):
+        nonlocal save_count
+        with save_count_lock:
+            save_count += 1
+            call_number = save_count
+        if call_number == 1:
+            first_save_entered.set()
+            second_save_entered.wait(timeout=0.25)
+        else:
+            second_save_entered.set()
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(
+        python_api_surface,
+        "_save_python_api_surface_cache_unlocked",
+        delayed_save,
+    )
+    errors = []
+
+    def flush(session):
+        try:
+            session.flush()
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    first_thread = threading.Thread(target=flush, args=(first_session,))
+    second_thread = threading.Thread(target=flush, args=(second_session,))
+    first_thread.start()
+    assert first_save_entered.wait(timeout=1.0)
+    second_thread.start()
+    first_thread.join(timeout=2.0)
+    second_thread.join(timeout=2.0)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert errors == []
+    assert second_save_entered.is_set()
+    assert set(load_python_api_surface_cache(repo)["modules"]) == {"pkg_a", "pkg_b"}
+    shared_surfaces = python_api_surface.load_api_symbol_truth_cache(repo)["surfaces"]
+    assert set(shared_surfaces) == {
+        "python_module:pkg_a",
+        "python_module:pkg_b",
+    }
+
+
+def test_stale_cache_session_does_not_replace_newer_module(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    origins = iter(("older.py", "newer.py"))
+
+    def build_surface(module_name):
+        return {
+            "module": module_name,
+            "origin": next(origins),
+            "members": {},
+            "members_truncated": False,
+        }
+
+    monkeypatch.setattr(python_api_surface, "build_python_api_surface", build_surface)
+    stale_session = python_api_surface.PythonApiSurfaceCacheSession(repo)
+    newer_session = python_api_surface.PythonApiSurfaceCacheSession(repo)
+    assert stale_session.load_surface(repo, "pkg_a")["origin"] == "older.py"
+    assert newer_session.load_surface(repo, "pkg_a")["origin"] == "newer.py"
+
+    newer_session.flush()
+    stale_session.flush()
+
+    assert cached_python_api_surface(repo, "pkg_a")["origin"] == "newer.py"
+    shared = cached_api_symbol_surface(
+        repo,
+        SURFACE_KIND_PYTHON_MODULE,
+        "pkg_a",
+        environment_key=python_environment_key(),
+    )
+    assert shared["origin"] == "newer.py"
 
 
 def test_scan_skips_parsing_files_without_allowed_roots(tmp_path, monkeypatch):
@@ -630,6 +743,42 @@ def test_scan_skips_parsing_files_without_allowed_roots(tmp_path, monkeypatch):
     )
 
     assert parsed_sources == ["import sampleapi\nsampleapi.missing()\n"]
+    assert [finding["symbol"] for finding in findings] == ["sampleapi.missing"]
+
+
+def test_scan_skips_prefilter_for_large_allowlists(tmp_path, monkeypatch):
+    from skylos.rules.ai_defect import api_signature_hallucination as api_sig
+
+    unrelated_file = _write_py(tmp_path / "unrelated.py", "print('hello')\n")
+    relevant_file = _write_py(
+        tmp_path / "relevant.py",
+        "import sampleapi\nsampleapi.missing()\n",
+    )
+    parsed_sources = []
+    original_parse = api_sig.ast.parse
+
+    def parse(source, *args, **kwargs):
+        parsed_sources.append(source)
+        return original_parse(source, *args, **kwargs)
+
+    def loader(_root, module_name):
+        assert module_name == "sampleapi"
+        return {"members": {}, "members_truncated": False}
+
+    monkeypatch.setattr(api_sig.ast, "parse", parse)
+    allowed_modules = ("sampleapi", *(f"package_{index}" for index in range(64)))
+
+    findings = scan_python_api_signature_hallucinations(
+        tmp_path,
+        [unrelated_file, relevant_file],
+        allowed_modules=allowed_modules,
+        surface_loader=loader,
+    )
+
+    assert parsed_sources == [
+        "print('hello')\n",
+        "import sampleapi\nsampleapi.missing()\n",
+    ]
     assert [finding["symbol"] for finding in findings] == ["sampleapi.missing"]
 
 

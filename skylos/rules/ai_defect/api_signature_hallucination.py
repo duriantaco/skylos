@@ -16,6 +16,7 @@ DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3", "openai")
 VIBE_CATEGORY = "api_signature_hallucination"
 AI_LIKELIHOOD = "high"
 MAX_PYTHON_API_SIGNATURE_SOURCE_BYTES = 1_000_000
+_MAX_API_SIGNATURE_PREFILTER_ROOTS = 64
 
 SurfaceLoader = Callable[[str | Path, str], dict[str, Any] | None]
 
@@ -418,7 +419,10 @@ def _parse_python_file(
     )
     if source is None:
         return None
-    if not _source_mentions_allowed_root(source, allowed_roots):
+    if (
+        len(allowed_roots) <= _MAX_API_SIGNATURE_PREFILTER_ROOTS
+        and not _source_mentions_allowed_root(source, allowed_roots)
+    ):
         return None
 
     try:
