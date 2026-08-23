@@ -101,11 +101,23 @@ def _inspect_python_coverage(
         for module_name, file_path in modules.items()
         if file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
     }
-    trees, members, aliases, dynamic, load_reasons = _load_module_facts(
-        modules, local_modules
+    target_modules = {_module_name(root, path): path for path in targets}
+    (
+        trees,
+        members,
+        type_checking_members,
+        aliases,
+        type_checking_aliases,
+        dynamic,
+        type_checking_dynamic,
+        type_checking_node_ids,
+        load_reasons,
+    ) = _load_module_facts(
+        modules,
+        local_modules,
+        reference_modules=set(target_modules),
     )
     state = _PythonCoverageState(reasons=Counter())
-    target_modules = {_module_name(root, path): path for path in targets}
     module_dunder_attributes = _module_dunder_attributes(root)
 
     for module_name, target_path in target_modules.items():
@@ -122,8 +134,12 @@ def _inspect_python_coverage(
             local_modules,
             trees,
             members,
+            type_checking_members,
             aliases,
+            type_checking_aliases,
             dynamic,
+            type_checking_dynamic,
+            type_checking_node_ids.get(module_name, set()),
             package_modules,
             state,
             module_dunder_attributes,
@@ -149,8 +165,12 @@ def _inspect_target_references(
     local_modules: set[str],
     trees: dict[str, ast.AST],
     members: dict[str, set[str]],
+    type_checking_members: dict[str, set[str]],
     aliases: dict[str, dict[str, str]],
+    type_checking_aliases: dict[str, dict[str, str]],
     dynamic: set[str],
+    type_checking_dynamic: set[str],
+    type_checking_node_ids: set[int],
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
@@ -168,20 +188,34 @@ def _inspect_target_references(
         local_modules,
         trees,
         members,
+        type_checking_members,
         dynamic,
+        type_checking_dynamic,
+        type_checking_node_ids,
         package_modules,
         state,
         module_dunder_attributes,
     )
 
     for expression, owner in _reference_expressions(tree, parent_map):
+        if (
+            id(expression) in type_checking_node_ids
+            or id(owner) in type_checking_node_ids
+        ):
+            active_members = type_checking_members
+            active_aliases = type_checking_aliases
+            active_dynamic = type_checking_dynamic
+        else:
+            active_members = members
+            active_aliases = aliases
+            active_dynamic = dynamic
         resolved = _resolve_local_module_member(
             expr=expression,
             node=owner,
             tree=tree,
             parent_map=parent_map,
             scope_infos=scope_infos,
-            module_alias_exports=aliases,
+            module_alias_exports=active_aliases,
             local_modules=local_modules,
             ensure_module_loaded=ensure_module_loaded,
         )
@@ -189,14 +223,14 @@ def _inspect_target_references(
             continue
         target_module, member_name, _ = resolved
         state.references += 1
-        if target_module in dynamic:
+        if target_module in active_dynamic:
             state.skip("dynamic_module_surface")
         elif target_module not in trees:
             state.skip("target_surface_unavailable")
         elif _module_has_member(
             target_module,
             member_name,
-            members,
+            active_members,
             package_modules,
             module_dunder_attributes,
         ):
@@ -224,7 +258,10 @@ def _inspect_import_references(
     local_modules: set[str],
     trees: dict[str, ast.AST],
     members: dict[str, set[str]],
+    type_checking_members: dict[str, set[str]],
     dynamic: set[str],
+    type_checking_dynamic: set[str],
+    type_checking_node_ids: set[int],
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
@@ -238,7 +275,10 @@ def _inspect_import_references(
                 local_modules,
                 trees,
                 members,
+                type_checking_members,
                 dynamic,
+                type_checking_dynamic,
+                type_checking_node_ids,
                 package_modules,
                 state,
                 module_dunder_attributes,
@@ -254,12 +294,21 @@ def _inspect_from_import(
     local_modules: set[str],
     trees: dict[str, ast.AST],
     members: dict[str, set[str]],
+    type_checking_members: dict[str, set[str]],
     dynamic: set[str],
+    type_checking_dynamic: set[str],
+    type_checking_node_ids: set[int],
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
 ) -> None:
     base = _resolve_import_from_base(current_module, node)
+    if id(node) in type_checking_node_ids:
+        active_members = type_checking_members
+        active_dynamic = type_checking_dynamic
+    else:
+        active_members = members
+        active_dynamic = dynamic
     if base not in local_modules:
         if _local_module_exists(root, base):
             state.references += 1
@@ -273,7 +322,7 @@ def _inspect_from_import(
         if alias.name == "*":
             state.skip("wildcard_import")
             continue
-        if base in dynamic:
+        if base in active_dynamic:
             state.skip("dynamic_module_surface")
             continue
         if base not in trees:
@@ -283,7 +332,7 @@ def _inspect_from_import(
         if full_module in local_modules or _module_has_member(
             base,
             alias.name,
-            members,
+            active_members,
             package_modules,
             module_dunder_attributes,
         ):
@@ -362,39 +411,72 @@ def _enrich_python_findings(findings: list[dict[str, Any]]) -> None:
 def _load_module_facts(
     modules: dict[str, Path],
     local_modules: set[str],
+    *,
+    reference_modules: set[str],
 ) -> tuple[
     dict[str, ast.AST],
     dict[str, set[str]],
+    dict[str, set[str]],
+    dict[str, dict[str, str]],
     dict[str, dict[str, str]],
     set[str],
+    set[str],
+    dict[str, set[int]],
     dict[str, str],
 ]:
     trees: dict[str, ast.AST] = {}
     members: dict[str, set[str]] = {}
+    type_checking_members: dict[str, set[str]] = {}
     aliases: dict[str, dict[str, str]] = {}
+    type_checking_aliases: dict[str, dict[str, str]] = {}
     dynamic: set[str] = set()
+    type_checking_dynamic: set[str] = set()
+    type_checking_node_ids: dict[str, set[int]] = {}
     reasons: dict[str, str] = {}
     for module_name, file_path in modules.items():
-        tree, reason = _parse_python_file(file_path)
+        tree, reason, source_has_type_checking = _parse_python_file(file_path)
         if tree is None:
             reasons[module_name] = reason or "target_surface_unavailable"
             continue
         trees[module_name] = tree
-        module_members, has_dynamic_getattr, exported_modules = _collect_module_facts(
-            tree, module_name, local_modules
+        facts = _collect_module_facts(
+            tree,
+            module_name,
+            local_modules,
+            source_has_type_checking=source_has_type_checking,
+            include_reference_context=module_name in reference_modules,
         )
-        members[module_name] = module_members
+        members[module_name] = facts.members
+        type_checking_members[module_name] = facts.type_checking_members
         aliases[module_name] = {
             alias: target
-            for alias, target in exported_modules.items()
+            for alias, target in facts.exported_modules.items()
             if target in local_modules
         }
-        if has_dynamic_getattr:
+        type_checking_aliases[module_name] = {
+            alias: target
+            for alias, target in facts.type_checking_exported_modules.items()
+            if target in local_modules
+        }
+        type_checking_node_ids[module_name] = facts.type_checking_node_ids
+        if facts.has_dynamic_getattr:
             dynamic.add(module_name)
-    return trees, members, aliases, dynamic, reasons
+        if facts.has_type_checking_dynamic_getattr:
+            type_checking_dynamic.add(module_name)
+    return (
+        trees,
+        members,
+        type_checking_members,
+        aliases,
+        type_checking_aliases,
+        dynamic,
+        type_checking_dynamic,
+        type_checking_node_ids,
+        reasons,
+    )
 
 
-def _parse_python_file(path: Path) -> tuple[ast.AST | None, str | None]:
+def _parse_python_file(path: Path) -> tuple[ast.AST | None, str | None, bool]:
     source = read_text_no_symlink(
         path,
         max_bytes=_MAX_PYTHON_SOURCE_BYTES,
@@ -402,11 +484,11 @@ def _parse_python_file(path: Path) -> tuple[ast.AST | None, str | None]:
         errors="replace",
     )
     if source is None:
-        return None, "source_unreadable"
+        return None, "source_unreadable", False
     try:
-        return ast.parse(source), None
+        return ast.parse(source), None, "TYPE_CHECKING" in source
     except SyntaxError:
-        return None, "parse_error"
+        return None, "parse_error", "TYPE_CHECKING" in source
 
 
 def _safe_root(project_root: str | Path) -> Path | None:

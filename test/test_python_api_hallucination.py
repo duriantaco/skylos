@@ -108,6 +108,621 @@ def test_python_local_api_check_passes_existing_direct_import(tmp_path):
     assert check["verified_references"] == 1
 
 
+def test_python_local_api_check_accepts_module_control_flow_members(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "control_flow_package/__init__.py": "",
+            "control_flow_package/provider.py": (
+                "from typing import TYPE_CHECKING, TypeAlias\n\n"
+                "DIRECT_VALUE = 0\n\n"
+                "if TYPE_CHECKING:\n"
+                "    TypeOnlyValue: TypeAlias = int\n\n"
+                "if True:\n"
+                "    IF_VALUE = 1\n"
+                "else:\n"
+                "    IF_VALUE = 3\n\n"
+                "try:\n"
+                "    TRY_VALUE = 2\n"
+                "except RuntimeError:\n"
+                "    TRY_VALUE = -1\n"
+            ),
+            "reproduce.py": (
+                "from __future__ import annotations\n"
+                "from typing import TYPE_CHECKING\n\n"
+                "from control_flow_package.provider import (\n"
+                "    DIRECT_VALUE,\n"
+                "    IF_VALUE,\n"
+                "    TRY_VALUE,\n"
+                ")\n\n"
+                "if TYPE_CHECKING:\n"
+                "    from control_flow_package.provider import TypeOnlyValue\n\n"
+                "def identity(value: TypeOnlyValue) -> TypeOnlyValue:\n"
+                "    return value\n"
+            ),
+        },
+        targets=["reproduce.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["references"] == 4
+    assert check["verified_references"] == 4
+
+
+def test_python_local_api_check_accepts_mixed_control_flow_bindings(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "package/__init__.py": "",
+            "package/backend_a.py": "class SelectedBackend:\n    pass\n",
+            "package/backend_b.py": "class SelectedBackend:\n    pass\n",
+            "package/provider.py": (
+                "import sys\n\n"
+                "if sys.version_info < (3, 9):\n"
+                "    get_all_type_hints = len\n"
+                "else:\n"
+                "    def get_all_type_hints(value):\n"
+                "        return value\n\n"
+                "try:\n"
+                "    from package.backend_a import SelectedBackend\n"
+                "except ImportError:\n"
+                "    from package.backend_b import SelectedBackend\n"
+            ),
+            "app.py": (
+                "from package.provider import (\n"
+                "    SelectedBackend,\n"
+                "    get_all_type_hints,\n"
+                ")\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 2
+
+
+def test_python_local_api_check_keeps_one_sided_and_runtime_names_flagged(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if runtime_flag:\n"
+                "    ONE_SIDED = 1\n\n"
+                "try:\n"
+                "    TRY_ONLY = 2\n"
+                "except RuntimeError:\n"
+                "    pass\n\n"
+                "if TYPE_CHECKING:\n"
+                "    TYPE_ONLY = int\n\n"
+                "if False:\n"
+                "    NEVER_DEFINED = 3\n"
+            ),
+            "app.py": (
+                "from provider import (\n"
+                "    MISSING,\n"
+                "    NEVER_DEFINED,\n"
+                "    ONE_SIDED,\n"
+                "    TRY_ONLY,\n"
+                "    TYPE_ONLY,\n"
+                ")\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["simple_name"] for finding in findings} == {
+        "MISSING",
+        "NEVER_DEFINED",
+        "ONE_SIDED",
+        "TRY_ONLY",
+        "TYPE_ONLY",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 5
+
+
+def test_python_local_api_check_does_not_export_nested_scope_members(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "if True:\n"
+                "    def public_factory():\n"
+                "        function_local = 1\n"
+                "        return function_local\n\n"
+                "    class PublicNamespace:\n"
+                "        class_local = 2\n"
+            ),
+            "app.py": (
+                "from provider import (\n"
+                "    PublicNamespace,\n"
+                "    class_local,\n"
+                "    function_local,\n"
+                "    public_factory,\n"
+                ")\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["simple_name"] for finding in findings} == {
+        "class_local",
+        "function_local",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 2
+
+
+def test_python_local_api_check_ignores_type_only_dynamic_getattr_at_runtime(
+    tmp_path,
+):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    def __getattr__(name):\n"
+                "        return name\n"
+            ),
+            "app.py": "import provider\nprint(provider.missing)\n",
+        },
+        targets=["app.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["missing"]
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 1
+
+
+def test_python_local_api_check_handles_type_checking_contexts(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    TypeOnly = int\n"
+                "else:\n"
+                "    RuntimeOnly = int\n"
+            ),
+            "app.py": (
+                "from __future__ import annotations\n"
+                "from typing import TYPE_CHECKING\n"
+                "import typing as t\n\n"
+                "TYPE_CHECKING: bool\n\n"
+                "if not TYPE_CHECKING:\n"
+                "    from provider import RuntimeOnly\n"
+                "else:\n"
+                "    from provider import TypeOnly\n\n"
+                "def nested():\n"
+                "    if t.TYPE_CHECKING:\n"
+                "        from provider import TypeOnly\n\n"
+                "class Namespace:\n"
+                "    if t.TYPE_CHECKING:\n"
+                "        from provider import TypeOnly\n\n"
+                "if TYPE_CHECKING:\n"
+                "    import provider\n\n"
+                "def identity(value: provider.TypeOnly) -> provider.TypeOnly:\n"
+                "    return value\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+
+
+def test_python_local_api_check_keeps_dynamic_surfaces_conservative(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "source.py": "EXPORTED = 1\n",
+            "wildcard_provider.py": ("from source import *\n\n__getattr__ = None\n"),
+            "with_provider.py": (
+                "from contextlib import nullcontext\n\n"
+                "EXPORTED = 1\n\n"
+                "def __getattr__(name):\n"
+                "    return name\n\n"
+                "with nullcontext(), nullcontext(None) as __getattr__:\n"
+                "    del EXPORTED\n"
+            ),
+            "unpack_provider.py": (
+                "class SuppressingContext:\n"
+                "    def __enter__(self):\n"
+                "        return []\n\n"
+                "    def __exit__(self, *args):\n"
+                "        return True\n\n"
+                "with SuppressingContext() as (UNPACKED,):\n"
+                "    pass\n"
+            ),
+            "try_provider.py": (
+                "def __getattr__(name):\n"
+                "    return name\n\n"
+                "try:\n"
+                "    __getattr__ = None\n"
+                "    risky_operation()\n"
+                "    def __getattr__(name):\n"
+                "        return name\n"
+                "except RuntimeError:\n"
+                "    pass\n"
+            ),
+            "match_provider.py": (
+                "if True:\n"
+                "    def __getattr__(name):\n"
+                "        return name\n\n"
+                "    match 1:\n"
+                "        case _ if (__getattr__ := 1):\n"
+                "            pass\n"
+            ),
+            "assert_provider.py": (
+                "if True:\n"
+                "    def __getattr__(name):\n"
+                "        return name\n\n"
+                "    assert (__getattr__ := 1)\n"
+            ),
+            "header_provider.py": (
+                "if True:\n"
+                "    def __getattr__(name):\n"
+                "        return name\n\n"
+                "    def helper(value=(__getattr__ := 1)):\n"
+                "        return value\n"
+            ),
+            "handler_type_provider.py": (
+                "if True:\n"
+                "    def __getattr__(name):\n"
+                "        return name\n\n"
+                "    try:\n"
+                "        raise RuntimeError\n"
+                "    except (__getattr__ := (RuntimeError,)):\n"
+                "        pass\n"
+            ),
+            "app.py": (
+                "import assert_provider\n"
+                "import handler_type_provider\n"
+                "import header_provider\n"
+                "import match_provider\n"
+                "import try_provider\n"
+                "import wildcard_provider\n"
+                "import with_provider\n\n"
+                "from unpack_provider import UNPACKED\n"
+                "from with_provider import EXPORTED\n\n"
+                "print(assert_provider.unknown)\n"
+                "print(handler_type_provider.unknown)\n"
+                "print(header_provider.unknown)\n"
+                "print(match_provider.unknown)\n"
+                "print(try_provider.unknown)\n"
+                "print(wildcard_provider.unknown)\n"
+                "print(with_provider.unknown)\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["name"] for finding in findings} == {
+        "EXPORTED",
+        "UNPACKED",
+        "assert_provider.unknown",
+        "handler_type_provider.unknown",
+        "header_provider.unknown",
+        "match_provider.unknown",
+        "try_provider.unknown",
+        "with_provider.unknown",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 8
+
+
+def test_python_local_api_check_rejects_transient_try_mutations(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "EXPORTED = 1\n\n"
+                "def __getattr__(name):\n"
+                "    return name\n\n"
+                "try:\n"
+                "    if runtime_flag:\n"
+                "        del EXPORTED\n"
+                "        __getattr__ = None\n"
+                "        risky_operation()\n"
+                "        EXPORTED = 2\n"
+                "        def __getattr__(name):\n"
+                "            return name\n"
+                "except RuntimeError:\n"
+                "    pass\n"
+            ),
+            "app.py": (
+                "from provider import EXPORTED\n"
+                "import provider\n\n"
+                "print(provider.unknown)\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["name"] for finding in findings} == {
+        "EXPORTED",
+        "provider.unknown",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 2
+
+
+def test_python_local_api_check_handles_definite_compound_bindings(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "PRESERVED = 1\n\n"
+                "while False:\n"
+                "    del PRESERVED\n"
+                "else:\n"
+                "    WHILE_ELSE = 2\n\n"
+                "for item in []:\n"
+                "    del PRESERVED\n"
+                "else:\n"
+                "    FOR_ELSE = 3\n\n"
+                "match 1:\n"
+                "    case 1:\n"
+                "        MATCHED = 4\n"
+                "    case _:\n"
+                "        MATCHED = 5\n\n"
+                "if (WALRUS := 1):\n"
+                "    pass\n"
+            ),
+            "app.py": (
+                "from provider import (\n"
+                "    FOR_ELSE,\n"
+                "    MATCHED,\n"
+                "    PRESERVED,\n"
+                "    WALRUS,\n"
+                "    WHILE_ELSE,\n"
+                ")\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 5
+
+
+def test_python_local_api_check_rejects_mutated_type_checking_sentinel(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "import typing as t\n\n"
+                "t.TYPE_CHECKING = runtime_flag\n"
+                "if t.TYPE_CHECKING:\n"
+                "    TRUE_BRANCH = 1\n"
+                "else:\n"
+                "    FALSE_BRANCH = 2\n"
+            ),
+            "app.py": ("from provider import FALSE_BRANCH, TRUE_BRANCH\n"),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["simple_name"] for finding in findings} == {
+        "FALSE_BRANCH",
+        "TRUE_BRANCH",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 2
+
+
+def test_python_local_api_check_rejects_function_local_type_checking_annotation(
+    tmp_path,
+):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    MissingType = int\n"
+            ),
+            "app.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "def load_type():\n"
+                "    TYPE_CHECKING: bool\n"
+                "    if TYPE_CHECKING:\n"
+                "        from provider import MissingType\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert [finding["name"] for finding in findings] == ["MissingType"]
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 1
+
+
+def test_python_local_api_check_rejects_shadowed_type_checking_guards(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    ClassAttributeOnly = int\n"
+                "    ClassOnly = int\n"
+                "    ClassNonlocalOnly = int\n"
+                "    ExceptOnly = int\n"
+                "    FunctionAfterClassAttributeOnly = int\n"
+                "    GlobalOnly = int\n"
+                "    HandlerTypeOnly = int\n"
+                "    LoopOnly = int\n"
+                "    MatchOnly = int\n"
+                "    NonlocalOnly = int\n"
+                "    SetattrOnly = int\n"
+            ),
+            "app.py": (
+                "from typing import TYPE_CHECKING as CLASS_FLAG\n"
+                "import typing as typing_module\n\n"
+                "RUNTIME_FLAG = True\n\n"
+                "def before_class_attribute_mutation():\n"
+                "    if typing_module.TYPE_CHECKING:\n"
+                "        from provider import FunctionAfterClassAttributeOnly\n\n"
+                "def outer():\n"
+                "    from typing import TYPE_CHECKING as GLOBAL_FLAG\n\n"
+                "    def inner():\n"
+                "        global GLOBAL_FLAG\n"
+                "        if GLOBAL_FLAG:\n"
+                "            from provider import GlobalOnly\n\n"
+                "def loop():\n"
+                "    from typing import TYPE_CHECKING as LOOP_FLAG\n"
+                "    while keep_going():\n"
+                "        if LOOP_FLAG:\n"
+                "            from provider import LoopOnly\n"
+                "        LOOP_FLAG = RUNTIME_FLAG\n\n"
+                "def nonlocal_outer():\n"
+                "    from typing import TYPE_CHECKING as NONLOCAL_FLAG\n\n"
+                "    def inner():\n"
+                "        nonlocal NONLOCAL_FLAG\n"
+                "        if NONLOCAL_FLAG:\n"
+                "            from provider import NonlocalOnly\n"
+                "        NONLOCAL_FLAG = RUNTIME_FLAG\n\n"
+                "def class_nonlocal():\n"
+                "    from typing import TYPE_CHECKING as CLASS_NONLOCAL_FLAG\n\n"
+                "    class Mutator:\n"
+                "        nonlocal CLASS_NONLOCAL_FLAG\n"
+                "        CLASS_NONLOCAL_FLAG = RUNTIME_FLAG\n\n"
+                "    if CLASS_NONLOCAL_FLAG:\n"
+                "        from provider import ClassNonlocalOnly\n\n"
+                "class Mutator:\n"
+                "    global CLASS_FLAG\n"
+                "    CLASS_FLAG = RUNTIME_FLAG\n\n"
+                "if CLASS_FLAG:\n"
+                "    from provider import ClassOnly\n\n"
+                "class AttributeMutator:\n"
+                "    typing_module.TYPE_CHECKING = RUNTIME_FLAG\n\n"
+                "if typing_module.TYPE_CHECKING:\n"
+                "    from provider import ClassAttributeOnly\n\n"
+                "import typing as setattr_module\n\n"
+                "setattr(setattr_module, 'TYPE_CHECKING', RUNTIME_FLAG)\n"
+                "if setattr_module.TYPE_CHECKING:\n"
+                "    from provider import SetattrOnly\n\n"
+                "from typing import TYPE_CHECKING as HANDLER_FLAG\n\n"
+                "try:\n"
+                "    raise ValueError\n"
+                "except (HANDLER_FLAG := TypeError):\n"
+                "    pass\n"
+                "except ValueError:\n"
+                "    if HANDLER_FLAG:\n"
+                "        from provider import HandlerTypeOnly\n\n"
+                "from typing import TYPE_CHECKING as MATCH_FLAG\n\n"
+                "match 1:\n"
+                "    case _ if not (MATCH_FLAG := RUNTIME_FLAG):\n"
+                "        pass\n"
+                "    case _:\n"
+                "        if MATCH_FLAG:\n"
+                "            from provider import MatchOnly\n\n"
+                "try:\n"
+                "    raise RuntimeError\n"
+                "except (EXCEPT_FLAG := RuntimeError):\n"
+                "    if EXCEPT_FLAG:\n"
+                "        from provider import ExceptOnly\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    assert {finding["name"] for finding in findings} == {
+        "ClassAttributeOnly",
+        "ClassOnly",
+        "ClassNonlocalOnly",
+        "ExceptOnly",
+        "FunctionAfterClassAttributeOnly",
+        "GlobalOnly",
+        "HandlerTypeOnly",
+        "LoopOnly",
+        "MatchOnly",
+        "NonlocalOnly",
+        "SetattrOnly",
+    }
+    assert check["outcome"] == "fail"
+    assert check["finding_count"] == 11
+
+
+def test_python_local_api_check_rejects_try_star_handler_rebinding(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    LaterHandlerOnly = int\n"
+            ),
+            "app.py": (
+                "from typing import TYPE_CHECKING as HANDLER_FLAG\n\n"
+                "RUNTIME_FLAG = True\n\n"
+                "try:\n"
+                "    raise ExceptionGroup(\n"
+                "        'boom', [ValueError(), TypeError()]\n"
+                "    )\n"
+                "except* ValueError:\n"
+                "    HANDLER_FLAG = RUNTIME_FLAG\n"
+                "except* TypeError:\n"
+                "    if HANDLER_FLAG:\n"
+                "        from provider import LaterHandlerOnly\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    if hasattr(ast, "TryStar"):
+        assert [finding["name"] for finding in findings] == ["LaterHandlerOnly"]
+        assert check["outcome"] == "fail"
+        assert check["finding_count"] == 1
+    else:
+        assert findings == []
+        assert check["outcome"] == "incomplete"
+
+
+def test_python_local_api_check_rejects_type_parameter_shadowing(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "provider.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    ClassTypeOnly = int\n"
+                "    FunctionTypeOnly = int\n"
+            ),
+            "app.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "def generic[TYPE_CHECKING]():\n"
+                "    if TYPE_CHECKING:\n"
+                "        from provider import FunctionTypeOnly\n\n"
+                "class Generic[TYPE_CHECKING]:\n"
+                "    if TYPE_CHECKING:\n"
+                "        from provider import ClassTypeOnly\n"
+            ),
+        },
+        targets=["app.py"],
+    )
+
+    if hasattr(ast, "TypeVar"):
+        assert {finding["name"] for finding in findings} == {
+            "ClassTypeOnly",
+            "FunctionTypeOnly",
+        }
+        assert check["outcome"] == "fail"
+        assert check["finding_count"] == 2
+    else:
+        assert findings == []
+        assert check["outcome"] == "incomplete"
+
+
 def test_python_local_api_check_passes_explicit_dotted_submodule_import(tmp_path):
     findings, check = _scan(
         tmp_path,
