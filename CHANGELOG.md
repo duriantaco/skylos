@@ -1,6 +1,6 @@
 ## Changelog
 
-## [4.34.0](https://github.com/duriantaco/skylos/compare/v4.33.2...v4.34.0) (2026-08-22)
+## [4.34.0](https://github.com/duriantaco/skylos/compare/v4.33.2...v4.34.0) (2026-08-23)
 
 
 ### Features
@@ -17,6 +17,7 @@
 * **ci:** restrict Codecov coverage uploads ([#755](https://github.com/duriantaco/skylos/issues/755)) ([2361d68](https://github.com/duriantaco/skylos/commit/2361d684b317aeade41fae55b4600d63a8a88353))
 * **danger:** fail closed on incomplete MCP analysis ([#726](https://github.com/duriantaco/skylos/issues/726)) ([448b433](https://github.com/duriantaco/skylos/commit/448b433a1f6b8760eec565d75a622c22328f9674))
 * **dead-code:** preserve signature contract parameters ([#750](https://github.com/duriantaco/skylos/issues/750)) ([57606cc](https://github.com/duriantaco/skylos/commit/57606ccd060f1f261749d075dd2c625ea3cf60c9))
+* **grep:** stream oversized verification results ([#757](https://github.com/duriantaco/skylos/issues/757)) ([9b3f2de](https://github.com/duriantaco/skylos/commit/9b3f2deb8961164e32d3733aedf7d74dd9add410))
 * **quality:** break SKY-C401 clone-type ties deterministically ([#756](https://github.com/duriantaco/skylos/issues/756)) ([e7044e8](https://github.com/duriantaco/skylos/commit/e7044e8fc327705ea627c19d363fab46083ce1bb))
 * **quality:** detect concrete ellipsis defaults ([#728](https://github.com/duriantaco/skylos/issues/728)) ([d4a047d](https://github.com/duriantaco/skylos/commit/d4a047d0d68257964b473d51f0e8b0c756a77708))
 * **quality:** handle positional-only boolean traps and setters ([#719](https://github.com/duriantaco/skylos/issues/719)) ([c6364bd](https://github.com/duriantaco/skylos/commit/c6364bda41291bd37f1d8eba6e478c6864d62402))
