@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from skylos.core import grep_verify as grep_verify_module
+from skylos.core import grep_verify_common as grep_verify_common_module
 from skylos.core.grep_cache import GrepCache
 from skylos.core.grep_verify import (
     GrepStrategy,
@@ -30,8 +32,8 @@ from skylos.core.grep_verify import (
     source_globs_for_language,
 )
 from skylos.core.grep_verify_common import (
-    GrepRequest,
     _GREP_BATCH_SIZE,
+    GrepRequest,
     _GrepBatchResults,
     _GrepDeadlineExceeded,
     _GrepEvidence,
@@ -45,6 +47,11 @@ from skylos.core.grep_verify_common import (
     _trusted_which,
     execute_grep_batch,
     replay_grep_results,
+)
+
+requires_ripgrep = pytest.mark.skipif(
+    shutil.which("rg") is None,
+    reason="ripgrep is required for this regression test",
 )
 
 
@@ -69,6 +76,50 @@ def _rg_json_match(path: str, line_number: int, content: str) -> str:
 
 def _rg_json_output(*matches: tuple[str, int, str]) -> str:
     return "\n".join(_rg_json_match(*match) for match in matches) + "\n"
+
+
+def _stdout_process(output: str) -> subprocess.Popen[bytes]:
+    payload = output.encode("utf-8")
+    script = (
+        "import sys; sys.stdin.buffer.read(); "
+        f"sys.stdout.buffer.write({payload!r})"
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _fixed_grep_request(
+    pattern: str = "needle",
+    project_root: str = "/repo",
+    max_results: int = 5,
+) -> GrepRequest:
+    return GrepRequest(
+        pattern=pattern,
+        project_root=project_root,
+        use_regex=False,
+        include_globs=("*.py",),
+        fixed_string=True,
+        max_results=max_results,
+    )
+
+
+def _regex_grep_request(
+    pattern: str,
+    project_root: str = "/repo",
+    max_results: int = 5,
+) -> GrepRequest:
+    return GrepRequest(
+        pattern=pattern,
+        project_root=project_root,
+        use_regex=True,
+        include_globs=("*.py",),
+        fixed_string=False,
+        max_results=max_results,
+    )
 
 
 class TestIsDefinitionLine:
@@ -1195,6 +1246,486 @@ class TestBatchedGrepVerify:
 
         assert results == {request: () for request in requests}
         assert mock_batch.call_count == 3
+
+    @requires_ripgrep
+    def test_fixed_singleton_output_overflow_streams_canonical_prefix(
+        self, tmp_path
+    ):
+        earlier = tmp_path / "release.py"
+        earlier.write_text("needle earlier\n" * 10, encoding="utf-8")
+        later_dir = tmp_path / "release"
+        later_dir.mkdir()
+        later = later_dir / "template.py"
+        later.write_text("needle later\n" * 30, encoding="utf-8")
+        request = GrepRequest(
+            pattern="needle",
+            project_root=str(tmp_path),
+            use_regex=False,
+            include_globs=("*.py",),
+            fixed_string=True,
+            max_results=5,
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                4_096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+                5,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_streamed_grep_batch",
+                wraps=grep_verify_common_module._run_streamed_grep_batch,
+            ) as streamed_retry,
+        ):
+            results = execute_grep_batch([request])
+
+        assert streamed_retry.called
+        assert results[request] == tuple(
+            f"{earlier}:{line}:needle earlier" for line in range(1, 6)
+        )
+
+    @requires_ripgrep
+    def test_dead_candidate_completes_after_real_regex_overflow(
+        self, tmp_path
+    ):
+        definition = tmp_path / "lib.py"
+        definition.write_text(
+            "def _hot_symbol():\n    return 1\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "hot.py").write_text(
+            "# _hot_symbol\n" * 100,
+            encoding="utf-8",
+        )
+        finding = {
+            "name": "_hot_symbol",
+            "full_name": "lib._hot_symbol",
+            "simple_name": "_hot_symbol",
+            "type": "function",
+            "file": str(definition),
+            "line": 1,
+            "confidence": 80,
+        }
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                4_096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_streamed_grep_batch",
+                wraps=grep_verify_common_module._run_streamed_grep_batch,
+            ) as streamed_retry,
+        ):
+            result = grep_verify_findings(
+                [finding],
+                str(tmp_path),
+                time_budget=5.0,
+            )
+
+        assert streamed_retry.called
+        assert result.complete is True
+        assert result.incomplete_reason is None
+        assert result.verified_count == 1
+        assert result == {}
+
+    @requires_ripgrep
+    def test_streamed_retry_keeps_searching_for_quiet_requests(self, tmp_path):
+        early = tmp_path / "a.py"
+        early.write_text("hot value\n" * 80, encoding="utf-8")
+        late = tmp_path / "z.py"
+        late.write_text("quiet value\n", encoding="utf-8")
+        common = {
+            "project_root": str(tmp_path),
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+            "max_results": 3,
+        }
+        hot = GrepRequest(pattern="hot", **common)
+        quiet = GrepRequest(pattern="quiet", **common)
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                4_096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+                3,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_streamed_grep_batch",
+                wraps=grep_verify_common_module._run_streamed_grep_batch,
+            ) as streamed_retry,
+        ):
+            results = execute_grep_batch([hot, quiet])
+
+        assert streamed_retry.called
+        assert results[hot] == tuple(
+            f"{early}:{line}:hot value" for line in range(1, 4)
+        )
+        assert results[quiet] == (f"{late}:1:quiet value",)
+
+    @requires_ripgrep
+    @pytest.mark.parametrize(
+        ("fixed_string", "patterns"),
+        [
+            (True, ("alpha", "alpha.beta")),
+            (False, (r"\balpha\b", r"\bbeta\b")),
+        ],
+    )
+    def test_streamed_retry_matches_canonical_batch_results(
+        self,
+        tmp_path,
+        fixed_string,
+        patterns,
+    ):
+        (tmp_path / "release.py").write_text(
+            "alpha.beta()\nbeta(alpha)\n" * 20,
+            encoding="utf-8",
+        )
+        nested = tmp_path / "release"
+        nested.mkdir()
+        (nested / "template.py").write_text(
+            "alpha()\nbeta()\nalpha\u0301 beta\nalpha² beta\n" * 20,
+            encoding="utf-8",
+        )
+        requests = [
+            GrepRequest(
+                pattern=pattern,
+                project_root=str(tmp_path),
+                use_regex=not fixed_string,
+                include_globs=("*.py",),
+                fixed_string=fixed_string,
+                max_results=5,
+            )
+            for pattern in patterns
+        ]
+
+        with patch(
+            "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+            5,
+        ):
+            canonical = execute_grep_batch(requests)
+            with patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                4_096,
+            ), patch(
+                "skylos.core.grep_verify_common._run_streamed_grep_batch",
+                wraps=grep_verify_common_module._run_streamed_grep_batch,
+            ) as streamed_retry:
+                streamed = execute_grep_batch(requests)
+
+        assert streamed_retry.called
+        assert streamed == canonical
+        assert streamed.incomplete_requests == set()
+
+    @requires_ripgrep
+    def test_streamed_retry_keeps_recursive_symlink_behavior(self, tmp_path):
+        root = tmp_path / "repo"
+        root.mkdir()
+        hot_source = root / "hot.py"
+        hot_source.write_text("hot value\n" * 80, encoding="utf-8")
+        outside = tmp_path / "outside.py"
+        outside.write_text("outside_secret\n", encoding="utf-8")
+        (root / "escape.py").symlink_to(outside)
+
+        common = {
+            "project_root": str(root),
+            "use_regex": False,
+            "include_globs": ("*.py",),
+            "fixed_string": True,
+            "max_results": 3,
+        }
+        hot = GrepRequest(pattern="hot", **common)
+        escaped = GrepRequest(pattern="outside_secret", **common)
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_OUTPUT_BYTES",
+                4_096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+                3,
+            ),
+        ):
+            results = execute_grep_batch([hot, escaped])
+
+        assert len(results[hot]) == 3
+        assert results[escaped] == ()
+
+    @pytest.mark.parametrize(
+        "output",
+        (
+            "not-json\n",
+            _rg_json_match("/repo/source.py", 1, "needle\n"),
+        ),
+    )
+    def test_streamed_retry_rejects_malformed_or_unterminated_output(
+        self,
+        output,
+    ):
+        request = _fixed_grep_request()
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(output),
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+
+    def test_streamed_retry_bounds_retained_evidence(self):
+        request = _fixed_grep_request()
+        output = _rg_json_output(
+            ("/repo/source.py", 1, f"needle {'x' * 200}\n")
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(output),
+            ),
+            patch(
+                "skylos.core.grep_verify_common."
+                "_GREP_STREAM_MAX_RETAINED_BYTES",
+                32,
+            ),
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+
+    def test_stderr_overflow_does_not_trigger_streamed_stdout_retry(self):
+        request = _fixed_grep_request()
+
+        def stderr_overflow_batch(_requests, _rg, **_kwargs):
+            return _run_bounded_subprocess(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.write('x' * 10000)",
+                ],
+                input_text="",
+                timeout=2.0,
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_MAX_STDERR_BYTES",
+                64,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=stderr_overflow_batch,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_streamed_grep_batch",
+            ) as streamed_retry,
+        ):
+            results = execute_grep_batch([request])
+
+        assert request not in results
+        streamed_retry.assert_not_called()
+
+    def test_streamed_retry_resolves_ambiguous_unicode_regex(self):
+        ambiguous = _regex_grep_request(r"\bfoo\b")
+        unambiguous = _regex_grep_request("bar")
+        output = _rg_json_output(
+            ("/repo/source.py", 1, "pkg.foo\u0301 = bar()\n")
+        )
+        process_outputs = iter((output, ""))
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(next(process_outputs)),
+            ) as open_process,
+        ):
+            results = execute_grep_batch([ambiguous, unambiguous])
+
+        assert results[ambiguous] == ()
+        assert results[unambiguous] == (
+            "/repo/source.py:1:pkg.foo\u0301 = bar()",
+        )
+        assert results.incomplete_requests == set()
+        assert open_process.call_count == 2
+
+    def test_streamed_retry_marks_failed_exact_search_incomplete(self):
+        ambiguous = _regex_grep_request(r"\bfoo\b")
+        unambiguous = _regex_grep_request("bar")
+        output = _rg_json_output(
+            ("/repo/source.py", 1, "pkg.foo\u0301 = bar()\n")
+        )
+        process_outputs = iter((output, "not-json\n"))
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(next(process_outputs)),
+            ),
+        ):
+            results = execute_grep_batch([ambiguous, unambiguous])
+
+        assert results[ambiguous] == ()
+        assert ambiguous in results.incomplete_requests
+        assert unambiguous not in results.incomplete_requests
+
+    def test_streamed_retry_ignores_unrelated_unicode_union_line(self):
+        quiet = _regex_grep_request(r"\bnumpy\b")
+        import_quiet = _regex_grep_request(r"import.*\bnumpy\b")
+        hot = _regex_grep_request("bar")
+        output = _rg_json_output(
+            ("/repo/source.py", 1, "bar = value\u0301\n")
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(output),
+            ) as open_process,
+        ):
+            results = execute_grep_batch([quiet, import_quiet, hot])
+
+        assert results[quiet] == ()
+        assert results[import_quiet] == ()
+        assert results[hot] == ("/repo/source.py:1:bar = value\u0301",)
+        assert results.incomplete_requests == set()
+        open_process.assert_called_once()
+
+    def test_streamed_retry_skips_late_ambiguous_line_outside_window(self):
+        numpy = _regex_grep_request(r"\bnumpy\b", max_results=2)
+        late = _regex_grep_request("late", max_results=2)
+        output = _rg_json_output(
+            ("/repo/a.py", 1, "numpy()\n"),
+            ("/repo/a.py", 2, "numpy()\n"),
+            ("/repo/z.py", 1, "numpy\u0301 late\n"),
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(output),
+            ) as open_process,
+            patch(
+                "skylos.core.grep_verify_common._GREP_BATCH_RESULT_FLOOR",
+                2,
+            ),
+        ):
+            results = execute_grep_batch([numpy, late])
+
+        assert results[numpy] == (
+            "/repo/a.py:1:numpy()",
+            "/repo/a.py:2:numpy()",
+        )
+        assert results.incomplete_requests == set()
+        open_process.assert_called_once()
+
+    def test_streamed_retry_allows_reader_to_drain_after_process_exit(self):
+        request = _fixed_grep_request()
+        output = _rg_json_output(("/repo/source.py", 1, "needle\n"))
+        original_reader = grep_verify_common_module._read_streamed_grep_output
+        process_exited = threading.Event()
+
+        def signaling_process(_cmd):
+            process = _stdout_process(output)
+            original_wait = process.wait
+
+            def wait_and_signal(*args, **kwargs):
+                result = original_wait(*args, **kwargs)
+                process_exited.set()
+                return result
+
+            process.wait = wait_and_signal
+            return process
+
+        def delayed_reader(*args):
+            assert process_exited.wait(timeout=1.0)
+            original_reader(*args)
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=signaling_process,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._read_streamed_grep_output",
+                side_effect=delayed_reader,
+            ),
+        ):
+            results = execute_grep_batch(
+                [request],
+                deadline=time.monotonic() + 2.0,
+            )
+
+        assert results[request] == ("/repo/source.py:1:needle",)
 
     def test_unicode_adjudication_covers_every_request_in_a_bounded_batch(self):
         common = {
