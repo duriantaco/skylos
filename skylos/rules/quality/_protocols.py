@@ -1,4 +1,5 @@
 import ast
+from typing import cast
 
 _PROTOCOL_MODULES = frozenset({"typing", "typing_extensions"})
 
@@ -66,23 +67,84 @@ def protocol_method_ids(module: ast.Module) -> set[int]:
     }
 
 
-def _is_type_checking_guard(
+def _type_checking_guard_branch(
     test: ast.expr,
     type_checking_names: set[str],
     typing_modules: set[str],
-) -> bool:
+) -> bool | None:
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        branch = _type_checking_guard_branch(
+            test.operand,
+            type_checking_names,
+            typing_modules,
+        )
+        return None if branch is None else not branch
     if isinstance(test, ast.Name):
-        return test.id in type_checking_names
-    return (
+        return True if test.id in type_checking_names else None
+    if (
         isinstance(test, ast.Attribute)
         and test.attr == "TYPE_CHECKING"
         and isinstance(test.value, ast.Name)
         and test.value.id in typing_modules
-    )
+    ):
+        return True
+    return None
 
 
 def type_checking_function_ids(module: ast.Module) -> set[int]:
-    function_ids: set[int] = set()
+    _, function_ids = _collect_type_checking_context(
+        module,
+        functions_only=True,
+    )
+    return function_ids
+
+
+def type_checking_context(module: ast.Module) -> tuple[dict[int, bool], set[int]]:
+    return _collect_type_checking_context(module, functions_only=False)
+
+
+def type_checking_guard_branches(module: ast.Module) -> dict[int, bool]:
+    guard_branches, _ = _collect_type_checking_context(
+        module,
+        functions_only=None,
+    )
+    return guard_branches
+
+
+def _collect_type_checking_context(
+    module: ast.Module,
+    *,
+    functions_only: bool | None,
+) -> tuple[dict[int, bool], set[int]]:
+    has_candidate_import = any(
+        (
+            isinstance(node, ast.ImportFrom)
+            and node.module in _PROTOCOL_MODULES
+            and any(imported.name == "TYPE_CHECKING" for imported in node.names)
+        )
+        or (
+            isinstance(node, ast.Import)
+            and any(imported.name in _PROTOCOL_MODULES for imported in node.names)
+        )
+        for node in ast.walk(module)
+    )
+    if not has_candidate_import:
+        return {}, set()
+
+    guard_branches: dict[int, bool] = {}
+    context_ids: set[int] = set()
+
+    def mutated_type_checking_module(node: ast.Call) -> str | None:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "delattr"}
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "TYPE_CHECKING"
+        ):
+            return node.args[0].id
+        return None
 
     class BindingCollector(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -91,6 +153,27 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
         def visit_Name(self, node: ast.Name) -> None:
             if isinstance(node.ctx, (ast.Store, ast.Del)):
                 self.names.add(node.id)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if (
+                node.attr == "TYPE_CHECKING"
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Name)
+            ):
+                self.names.add(node.value.id)
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            mutated_module = mutated_type_checking_module(node)
+            if mutated_module is not None:
+                self.names.add(mutated_module)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            if node.value is not None:
+                self.visit(node.target)
+                self.visit(node.value)
+            self.visit(node.annotation)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
             self.names.add(node.name)
@@ -185,10 +268,22 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
     class FunctionBindingCollector(BindingCollector):
         def __init__(self) -> None:
             super().__init__()
+            self.global_names: set[str] = set()
             self.nonlocal_names: set[str] = set()
 
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            # A bare annotation makes a simple name local for the whole
+            # function, even though it does not bind a value at runtime.
+            if isinstance(node.target, ast.Name):
+                self.names.add(node.target.id)
+            elif node.value is not None:
+                self.visit(node.target)
+            self.visit(node.annotation)
+            if node.value is not None:
+                self.visit(node.value)
+
         def visit_Global(self, node: ast.Global) -> None:
-            self.nonlocal_names.update(node.names)
+            self.global_names.update(node.names)
 
         def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
             self.nonlocal_names.update(node.names)
@@ -220,14 +315,27 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 else:
                     self.names.add(local_name)
 
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            super().visit_ClassDef(node)
+            self.names.update(class_external_names(node))
+
     def bound_names(node: ast.AST) -> set[str]:
         collector = BindingCollector()
         collector.visit(node)
         return collector.names
 
-    def function_local_names(
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
+    def type_parameter_names(
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
     ) -> set[str]:
+        return {
+            type_parameter.name
+            for type_parameter in getattr(node, "type_params", [])
+            if isinstance(getattr(type_parameter, "name", None), str)
+        }
+
+    def function_scope_bindings(
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> tuple[set[str], set[str]]:
         collector = FunctionBindingCollector()
         collector.names.update(
             argument.arg
@@ -241,9 +349,54 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
             collector.names.add(function.args.vararg.arg)
         if function.args.kwarg is not None:
             collector.names.add(function.args.kwarg.arg)
+        collector.names.update(type_parameter_names(function))
         for child_statement in function.body:
             collector.visit(child_statement)
-        return collector.names - collector.nonlocal_names
+        local_names = collector.names - (
+            collector.global_names | collector.nonlocal_names
+        )
+        external_names = collector.global_names | collector.nonlocal_names
+        return local_names, external_names
+
+    def class_external_names(class_node: ast.ClassDef) -> set[str]:
+        class ExternalCollector(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.names: set[str] = set()
+
+            def visit_Global(self, node: ast.Global) -> None:
+                self.names.update(node.names)
+
+            def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+                self.names.update(node.names)
+
+            def visit_Attribute(self, node: ast.Attribute) -> None:
+                if (
+                    node.attr == "TYPE_CHECKING"
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                    and isinstance(node.value, ast.Name)
+                ):
+                    self.names.add(node.value.id)
+                self.generic_visit(node)
+
+            def visit_Call(self, node: ast.Call) -> None:
+                mutated_module = mutated_type_checking_module(node)
+                if mutated_module is not None:
+                    self.names.add(mutated_module)
+                self.generic_visit(node)
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                return
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                return
+
+            def visit_Lambda(self, node: ast.Lambda) -> None:
+                return
+
+        collector = ExternalCollector()
+        for child_statement in class_node.body:
+            collector.visit(child_statement)
+        return collector.names
 
     def closure_unsafe_names(
         statements: list[ast.stmt],
@@ -328,24 +481,35 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 continue
 
             if isinstance(statement, ast.If):
-                is_type_checking = _is_type_checking_guard(
+                type_checking_branch = _type_checking_guard_branch(
                     statement.test,
                     type_checking_names,
                     typing_modules,
                 )
-                if is_type_checking:
-                    for child_statement in statement.body:
-                        function_ids.update(
-                            id(child)
-                            for child in ast.walk(child_statement)
-                            if isinstance(
-                                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+                if type_checking_branch is not None:
+                    guard_branches[id(statement)] = type_checking_branch
+                    guarded_branch = (
+                        statement.body if type_checking_branch else statement.orelse
+                    )
+                    runtime_branch = (
+                        statement.orelse if type_checking_branch else statement.body
+                    )
+                    if functions_only is not None:
+                        for child_statement in guarded_branch:
+                            context_ids.update(
+                                id(child)
+                                for child in ast.walk(child_statement)
+                                if not functions_only
+                                or isinstance(
+                                    child,
+                                    (ast.FunctionDef, ast.AsyncFunctionDef),
+                                )
                             )
-                        )
+                    scan_branch(guarded_branch, bound_names(statement.test))
+                    scan_branch(runtime_branch, bound_names(statement.test))
                 else:
                     scan_branch(statement.body, bound_names(statement.test))
-
-                scan_branch(statement.orelse, bound_names(statement.test))
+                    scan_branch(statement.orelse, bound_names(statement.test))
                 discard_bindings(
                     bound_names(statement),
                     type_checking_names,
@@ -354,8 +518,13 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 continue
 
             if isinstance(statement, (ast.For, ast.AsyncFor)):
-                loop_bindings = bound_names(statement.target) | bound_names(
-                    statement.iter
+                body_bindings = set().union(
+                    *(bound_names(child) for child in statement.body)
+                )
+                loop_bindings = (
+                    bound_names(statement.target)
+                    | bound_names(statement.iter)
+                    | body_bindings
                 )
                 scan_branch(statement.body, loop_bindings)
                 scan_branch(statement.orelse, loop_bindings)
@@ -367,9 +536,11 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 continue
 
             if isinstance(statement, ast.While):
-                test_bindings = bound_names(statement.test)
-                scan_branch(statement.body, test_bindings)
-                scan_branch(statement.orelse, test_bindings)
+                loop_bindings = bound_names(statement.test) | set().union(
+                    *(bound_names(child) for child in statement.body)
+                )
+                scan_branch(statement.body, loop_bindings)
+                scan_branch(statement.orelse, loop_bindings)
                 discard_bindings(
                     bound_names(statement),
                     type_checking_names,
@@ -391,30 +562,48 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 )
                 continue
 
-            if isinstance(statement, ast.Try):
-                scan_branch(statement.body)
+            if isinstance(statement, ast.Try) or type(statement).__name__ == "TryStar":
+                try_statement = cast(ast.Try, statement)
+                is_try_star = type(statement).__name__ == "TryStar"
+                scan_branch(try_statement.body)
                 body_bindings = set().union(
-                    *(bound_names(child) for child in statement.body)
+                    *(bound_names(child) for child in try_statement.body)
                 )
                 handler_body_bindings: set[str] = set()
-                for handler in statement.handlers:
+                prior_handler_type_bindings: set[str] = set()
+                prior_star_handler_bindings: set[str] = set()
+                for handler in try_statement.handlers:
                     handler_bindings = (
                         {handler.name} if handler.name is not None else set()
                     )
+                    handler_type_bindings: set[str] = set()
+                    if handler.type is not None:
+                        handler_type_bindings = bound_names(handler.type)
+                        handler_bindings.update(handler_type_bindings)
                     scan_branch(
                         handler.body,
-                        body_bindings | handler_bindings,
+                        body_bindings
+                        | prior_handler_type_bindings
+                        | prior_star_handler_bindings
+                        | handler_bindings,
                     )
-                    handler_body_bindings.update(handler_bindings)
-                    handler_body_bindings.update(
+                    handler_effect_bindings = set().union(
                         *(bound_names(child) for child in handler.body)
                     )
-                scan_branch(statement.orelse, body_bindings)
+                    handler_body_bindings.update(handler_bindings)
+                    handler_body_bindings.update(handler_effect_bindings)
+                    prior_handler_type_bindings.update(handler_type_bindings)
+                    if is_try_star:
+                        prior_star_handler_bindings.update(handler_bindings)
+                        prior_star_handler_bindings.update(
+                            handler_effect_bindings
+                        )
+                scan_branch(try_statement.orelse, body_bindings)
                 else_bindings = set().union(
-                    *(bound_names(child) for child in statement.orelse)
+                    *(bound_names(child) for child in try_statement.orelse)
                 )
                 scan_branch(
-                    statement.finalbody,
+                    try_statement.finalbody,
                     body_bindings | handler_body_bindings | else_bindings,
                 )
                 discard_bindings(
@@ -426,11 +615,15 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
 
             if isinstance(statement, ast.Match):
                 subject_bindings = bound_names(statement.subject)
+                prior_case_bindings = set(subject_bindings)
                 for case in statement.cases:
-                    case_bindings = subject_bindings | bound_names(case.pattern)
+                    case_bindings = prior_case_bindings | bound_names(case.pattern)
                     if case.guard is not None:
                         case_bindings.update(bound_names(case.guard))
                     scan_branch(case.body, case_bindings)
+                    prior_case_bindings.update(bound_names(case.pattern))
+                    if case.guard is not None:
+                        prior_case_bindings.update(bound_names(case.guard))
                 discard_bindings(
                     bound_names(statement),
                     type_checking_names,
@@ -439,6 +632,9 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                 continue
 
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                function_local_names, function_external_names = (
+                    function_scope_bindings(statement)
+                )
                 if scope_kind == "class":
                     function_type_checking_names = set(
                         class_function_type_checking_names or set()
@@ -455,7 +651,9 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                         function_typing_modules,
                     )
                 discard_bindings(
-                    function_local_names(statement) | {statement.name},
+                    function_local_names
+                    | function_external_names
+                    | {statement.name},
                     function_type_checking_names,
                     function_typing_modules,
                 )
@@ -513,6 +711,17 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                         nested_class_function_type_checking_names,
                         nested_class_function_typing_modules,
                     )
+                class_type_parameter_names = type_parameter_names(statement)
+                discard_bindings(
+                    class_type_parameter_names,
+                    nested_class_type_checking_names,
+                    nested_class_typing_modules,
+                )
+                discard_bindings(
+                    class_type_parameter_names,
+                    nested_class_function_type_checking_names,
+                    nested_class_function_typing_modules,
+                )
                 scan_statements(
                     statement.body,
                     nested_class_type_checking_names,
@@ -526,8 +735,11 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
                     ),
                 )
 
+            statement_bindings = bound_names(statement)
+            if isinstance(statement, ast.ClassDef):
+                statement_bindings.update(class_external_names(statement))
             discard_bindings(
-                bound_names(statement),
+                statement_bindings,
                 type_checking_names,
                 typing_modules,
             )
@@ -539,4 +751,4 @@ def type_checking_function_ids(module: ast.Module) -> set[int]:
         scope_kind="module",
         nested_function_unsafe_names=closure_unsafe_names(module.body),
     )
-    return function_ids
+    return guard_branches, context_ids
