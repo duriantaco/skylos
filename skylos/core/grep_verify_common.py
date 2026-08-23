@@ -12,6 +12,7 @@ import threading
 import time
 import tokenize
 import unicodedata
+from bisect import bisect_right
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -87,6 +88,7 @@ _GREP_BATCH_MAX_PATTERN_BYTES = 64 * 1024
 _GREP_BATCH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _GREP_BATCH_MAX_STDERR_BYTES = 128 * 1024
 _GREP_BATCH_MAX_MATCHES = _GREP_BATCH_SIZE * 256
+_GREP_STREAM_MAX_RETAINED_BYTES = _GREP_BATCH_MAX_OUTPUT_BYTES
 _GREP_UNICODE_MAX_INPUT_BYTES = 512 * 1024
 # Every request in a bounded batch must receive the same Unicode-boundary
 # adjudication. Skipping later requests makes a successful batch partial and
@@ -123,6 +125,7 @@ _POSIX_CLASS = re.compile(r"\[\[:[^]]+:\]\]")
 _UNICODE_WORD_PATTERN = re.compile(r"\\[bBwW]")
 _UNICODE_CASE_INSENSITIVE_PATTERN = re.compile(r"\(\?[a-z-]*i")
 _ENGINE_SENSITIVE_SPACE_PATTERN = re.compile(r"\\[sS]")
+_UNESCAPED_ALTERNATION_PATTERN = re.compile(r"(?<!\\)(?:\\\\)*\|")
 _MAX_GREP_LINE_NUMBER = 999_999_999
 _MAX_GREP_LINE_CANDIDATES = 256
 _GREP_LINE_NUMBER = re.compile(r":([1-9][0-9]{0,8}):")
@@ -199,6 +202,7 @@ class _BoundedProcessResult:
 @dataclass(slots=True)
 class _BoundedProcessState:
     overflow: threading.Event = field(default_factory=threading.Event)
+    stderr_overflow: threading.Event = field(default_factory=threading.Event)
     captured: dict[str, list[bytes]] = field(
         default_factory=lambda: {"stdout": [], "stderr": []}
     )
@@ -207,6 +211,19 @@ class _BoundedProcessState:
     writer: threading.Thread | None = None
     started_threads: list[threading.Thread] = field(default_factory=list)
     timed_out: bool = False
+
+
+@dataclass(slots=True)
+class _StreamedGrepState:
+    requests: tuple[GrepRequest, ...]
+    matches: dict[GrepRequest, list[_GrepMatch]]
+    regexes: dict[GrepRequest, re.Pattern[str] | None]
+    deadline: float | None
+    trust_ripgrep_attribution: bool = False
+    requests_requiring_exact_search: set[GrepRequest] = field(default_factory=set)
+    incomplete_requests: set[GrepRequest] = field(default_factory=set)
+    retained_counts: dict[int, int] = field(default_factory=dict)
+    retained_bytes: int = 0
 
 
 class _GrepExecutionIncomplete(RuntimeError):
@@ -554,6 +571,8 @@ def _read_bounded_process_pipe(
             total += len(chunk)
             if total > limit:
                 state.overflow.set()
+                if name == "stderr":
+                    state.stderr_overflow.set()
                 _terminate_process(process)
                 return
             state.captured[name].append(chunk)
@@ -672,6 +691,10 @@ def _raise_for_bounded_process_failure(
         raise _GrepExecutionIncomplete("ripgrep pipe did not close cleanly")
     if state.timed_out:
         raise subprocess.TimeoutExpired(list(cmd), timeout)
+    if state.stderr_overflow.is_set():
+        raise _GrepExecutionIncomplete(
+            "ripgrep stderr exceeded its size limit"
+        )
     if state.overflow.is_set():
         raise _GrepOutputLimitExceeded("ripgrep output exceeded its size limit")
     if state.thread_errors:
@@ -888,6 +911,444 @@ def _parse_ripgrep_json_matches(
     return sorted(matches, key=_grep_match_sort_key)
 
 
+def _ripgrep_pattern_file_command(
+    request: GrepRequest,
+    rg: str,
+) -> list[str]:
+    cmd = _ripgrep_command(request, rg)
+    cmd.extend(
+        [
+            "--json",
+            "-f",
+            "-",
+            "--",
+            os.path.abspath(request.project_root),
+        ]
+    )
+    return cmd
+
+
+def _grep_pattern_input(requests: Sequence[GrepRequest]) -> str:
+    patterns = "\n".join(dict.fromkeys(request.pattern for request in requests))
+    return f"{patterns}\n"
+
+
+def _release_streamed_match(
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> None:
+    match_id = id(match)
+    count = state.retained_counts[match_id]
+    if count > 1:
+        state.retained_counts[match_id] = count - 1
+        return
+    del state.retained_counts[match_id]
+    state.retained_bytes -= len(match.evidence.encode("utf-8"))
+
+
+def _retain_streamed_match(
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> None:
+    match_id = id(match)
+    count = state.retained_counts.get(match_id, 0)
+    if count == 0:
+        match_bytes = len(match.evidence.encode("utf-8"))
+        if state.retained_bytes + match_bytes > _GREP_STREAM_MAX_RETAINED_BYTES:
+            raise _GrepOutputLimitExceeded(
+                "streamed ripgrep evidence exceeded its retained-data limit"
+            )
+        state.retained_bytes += match_bytes
+    state.retained_counts[match_id] = count + 1
+
+
+def _insert_streamed_match(
+    request: GrepRequest,
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> None:
+    limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+    if limit <= 0:
+        return
+
+    retained = state.matches[request]
+    match_key = _grep_match_sort_key(match)
+    if len(retained) >= limit:
+        if match_key >= _grep_match_sort_key(retained[-1]):
+            return
+        removed = retained.pop()
+        _release_streamed_match(removed, state)
+
+    _retain_streamed_match(match, state)
+    retained.insert(
+        bisect_right(retained, match_key, key=_grep_match_sort_key),
+        match,
+    )
+
+
+def _literal_regex_fragment(body: str) -> str | None:
+    literal: list[str] = []
+    index = 0
+    while index < len(body):
+        character = body[index]
+        if character == "\\":
+            index += 1
+            if index >= len(body) or body[index].isalnum():
+                return None
+            literal.append(body[index])
+        elif character.isalnum() or character == "_":
+            literal.append(character)
+        else:
+            return None
+        index += 1
+    return "".join(literal) or None
+
+
+def _required_trailing_boundary_literal(pattern: str) -> str | None:
+    if (
+        not pattern.endswith(r"\b")
+        or _UNICODE_CASE_INSENSITIVE_PATTERN.search(pattern)
+        or _UNESCAPED_ALTERNATION_PATTERN.search(pattern)
+    ):
+        return None
+    boundary_start = pattern.rfind(r"\b", 0, len(pattern) - 2)
+    if boundary_start < 0:
+        return None
+    return _literal_regex_fragment(pattern[boundary_start + 2 : -2])
+
+
+def _streamed_match_can_improve(
+    request: GrepRequest,
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> bool:
+    if request in state.requests_requiring_exact_search:
+        return False
+    retained = state.matches[request]
+    limit = max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+    return len(retained) < limit or (
+        _grep_match_sort_key(match) < _grep_match_sort_key(retained[-1])
+    )
+
+
+def _streamed_request_matches(
+    request: GrepRequest,
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> bool:
+    if state.trust_ripgrep_attribution:
+        return True
+    if request.fixed_string:
+        return request.pattern in match.content
+
+    regex = state.regexes[request]
+    assert regex is not None
+    python_matches = regex.search(match.content) is not None
+    if not match.content.isascii():
+        needs_adjudication = bool(
+            _UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern)
+        )
+        if (
+            not needs_adjudication
+            and _UNICODE_WORD_PATTERN.search(request.pattern)
+        ):
+            needs_adjudication = _rust_and_python_word_classes_can_differ(
+                match.content,
+                deadline=state.deadline,
+            )
+        if needs_adjudication:
+            required_literal = _required_trailing_boundary_literal(
+                request.pattern
+            )
+            if required_literal is None or required_literal in match.content:
+                state.requests_requiring_exact_search.add(request)
+                python_matches = False
+    return python_matches
+
+
+def _record_streamed_grep_match(
+    match: _GrepMatch,
+    state: _StreamedGrepState,
+) -> None:
+    for request in state.requests:
+        if (
+            request.max_results > 0
+            and _streamed_match_can_improve(request, match, state)
+            and _streamed_request_matches(request, match, state)
+        ):
+            _insert_streamed_match(request, match, state)
+
+
+def _read_streamed_grep_output(
+    process: subprocess.Popen[bytes],
+    process_state: _BoundedProcessState,
+    search_state: _StreamedGrepState,
+) -> None:
+    pipe = process.stdout
+    assert pipe is not None
+    try:
+        while raw_line := pipe.readline(_GREP_BATCH_MAX_OUTPUT_BYTES + 1):
+            if len(raw_line) > _GREP_BATCH_MAX_OUTPUT_BYTES:
+                raise _GrepOutputLimitExceeded(
+                    "ripgrep emitted an oversized JSON event"
+                )
+            if not raw_line.endswith(b"\n"):
+                raise _GrepExecutionIncomplete(
+                    "ripgrep emitted an unterminated JSON event"
+                )
+            event = _load_ripgrep_json_event(raw_line.decode("utf-8"))
+            match = _ripgrep_match_from_event(event)
+            if match is None or _is_ignored_grep_path(match.path):
+                continue
+            _record_streamed_grep_match(match, search_state)
+    except _GrepOutputLimitExceeded:
+        process_state.overflow.set()
+        _terminate_process(process)
+    except (
+        AssertionError,
+        _GrepExecutionIncomplete,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        process_state.thread_errors.append(exc)
+        _terminate_process(process)
+
+
+def _streamed_grep_process_threads(
+    process: subprocess.Popen[bytes],
+    encoded_input: bytes,
+    process_state: _BoundedProcessState,
+    search_state: _StreamedGrepState,
+) -> None:
+    process_state.readers = [
+        threading.Thread(
+            target=_read_streamed_grep_output,
+            args=(process, process_state, search_state),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_read_bounded_process_pipe,
+            args=(
+                process,
+                "stderr",
+                _GREP_BATCH_MAX_STDERR_BYTES,
+                process_state,
+            ),
+            daemon=True,
+        ),
+    ]
+    process_state.writer = threading.Thread(
+        target=_write_bounded_process_input,
+        args=(process, encoded_input, process_state),
+        daemon=True,
+    )
+
+
+def _run_streamed_process_workers(
+    process: subprocess.Popen[bytes],
+    state: _BoundedProcessState,
+    timeout: float,
+) -> None:
+    """Run workers while allowing the parsing reader to drain to EOF."""
+    writer = state.writer
+    assert writer is not None
+    worker_deadline = time.monotonic() + timeout
+    try:
+        for thread in state.readers:
+            thread.start()
+            state.started_threads.append(thread)
+        writer.start()
+        state.started_threads.append(writer)
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            state.timed_out = True
+
+        if not state.timed_out:
+            for thread in state.started_threads:
+                thread.join(timeout=max(0.0, worker_deadline - time.monotonic()))
+    except RuntimeError as exc:
+        raise _GrepExecutionIncomplete(
+            "grep subprocess worker could not start"
+        ) from exc
+    finally:
+        _cleanup_bounded_process(process, state.started_threads)
+
+
+def _prepare_streamed_grep(
+    requests: Sequence[GrepRequest],
+    *,
+    deadline: float | None,
+    trust_ripgrep_attribution: bool,
+) -> tuple[bytes, _StreamedGrepState]:
+    retained_slots = sum(
+        max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
+        for request in requests
+    )
+    if retained_slots > _GREP_BATCH_MAX_MATCHES:
+        raise _GrepOutputLimitExceeded(
+            "streamed grep requested too many retained matches"
+        )
+
+    encoded_input = _grep_pattern_input(requests).encode("utf-8")
+    if len(encoded_input) > _GREP_BATCH_MAX_PATTERN_BYTES:
+        raise _GrepInputLimitExceeded("grep subprocess input is too large")
+
+    regexes = {
+        request: None if request.fixed_string else _python_regex(request.pattern)
+        for request in requests
+    }
+    if any(
+        regex is None and not request.fixed_string
+        for request, regex in regexes.items()
+    ):
+        raise _GrepExecutionIncomplete(
+            "streamed grep received an unsupported regex"
+        )
+    return encoded_input, _StreamedGrepState(
+        requests=tuple(requests),
+        matches={request: [] for request in requests},
+        regexes=regexes,
+        deadline=deadline,
+        trust_ripgrep_attribution=trust_ripgrep_attribution,
+    )
+
+
+def _raise_for_streamed_grep_exit(
+    cmd: Sequence[str],
+    process: subprocess.Popen[bytes],
+    process_state: _BoundedProcessState,
+    timeout: float,
+) -> None:
+    _raise_for_bounded_process_failure(cmd, timeout, process_state)
+    if process.returncode in (0, 1):
+        return
+    stderr = b"".join(process_state.captured["stderr"]).decode("utf-8").strip()
+    raise _GrepBatchRejected(stderr or f"exit status {process.returncode}")
+
+
+def _execute_streamed_grep(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    *,
+    deadline: float | None,
+    trust_ripgrep_attribution: bool = False,
+) -> _StreamedGrepState:
+    encoded_input, search_state = _prepare_streamed_grep(
+        requests,
+        deadline=deadline,
+        trust_ripgrep_attribution=trust_ripgrep_attribution,
+    )
+    cmd = _ripgrep_pattern_file_command(requests[0], rg)
+    timeout = _remaining_timeout(deadline, _GREP_BATCH_TIMEOUT_SECONDS)
+    process = _open_grep_process(cmd)
+    process_state = _BoundedProcessState()
+    _streamed_grep_process_threads(
+        process,
+        encoded_input,
+        process_state,
+        search_state,
+    )
+    _run_streamed_process_workers(process, process_state, timeout)
+    _raise_for_streamed_grep_exit(cmd, process, process_state, timeout)
+    return search_state
+
+
+def _replace_streamed_request_matches(
+    request: GrepRequest,
+    replacements: Sequence[_GrepMatch],
+    state: _StreamedGrepState,
+) -> None:
+    for match in state.matches[request]:
+        _release_streamed_match(match, state)
+    state.matches[request] = []
+    for match in replacements:
+        _retain_streamed_match(match, state)
+        state.matches[request].append(match)
+
+
+def _resolve_streamed_exact_searches(
+    state: _StreamedGrepState,
+    rg: str,
+) -> None:
+    pending = tuple(
+        request
+        for request in state.requests
+        if request in state.requests_requiring_exact_search
+    )
+    for index, request in enumerate(pending):
+        if _deadline_expired(state.deadline):
+            state.incomplete_requests.update(pending[index:])
+            return
+        try:
+            exact_state = _execute_streamed_grep(
+                (request,),
+                rg,
+                deadline=state.deadline,
+                trust_ripgrep_attribution=True,
+            )
+            _replace_streamed_request_matches(
+                request,
+                exact_state.matches[request],
+                state,
+            )
+        except (
+            _GrepExecutionIncomplete,
+            OSError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            UnicodeError,
+            ValueError,
+        ) as exc:
+            logger.debug(
+                "Exact streamed grep was unavailable for %r: %s",
+                request.pattern,
+                exc,
+            )
+            state.incomplete_requests.add(request)
+
+
+def _merge_streamed_grep_results(
+    results: _GrepBatchResults,
+    search_state: _StreamedGrepState,
+) -> None:
+    for request, matches in search_state.matches.items():
+        results[request] = tuple(match.legacy_line() for match in matches)
+    results.incomplete_requests.update(search_state.incomplete_requests)
+
+
+def _run_streamed_grep_batch(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    *,
+    deadline: float | None,
+) -> _GrepBatchResults:
+    if not requests:
+        raise _GrepExecutionIncomplete("streamed grep retry requires requests")
+
+    batched, direct = _partition_grep_requests(requests)
+    results = _GrepBatchResults()
+    for request in batched:
+        results[request] = ()
+
+    searchable = [request for request in batched if request.max_results > 0]
+    if searchable:
+        search_state = _execute_streamed_grep(
+            searchable,
+            rg,
+            deadline=deadline,
+        )
+        _resolve_streamed_exact_searches(search_state, rg)
+        _merge_streamed_grep_results(results, search_state)
+
+    results.merge(_run_serial_grep_requests(direct, deadline=deadline))
+    return results
+
+
 def _batch_group_key(request: GrepRequest) -> tuple[str, tuple[str, ...], bool]:
     return request.project_root, request.include_globs, request.fixed_string
 
@@ -923,20 +1384,10 @@ def _run_ripgrep_pattern_file(
     deadline: float | None = None,
 ) -> list[_GrepMatch]:
     representative = requests[0]
-    cmd = _ripgrep_command(representative, rg)
-    cmd.extend(
-        [
-            "--json",
-            "-f",
-            "-",
-            "--",
-            os.path.abspath(representative.project_root),
-        ]
-    )
-    patterns = "\n".join(dict.fromkeys(request.pattern for request in requests))
+    cmd = _ripgrep_pattern_file_command(representative, rg)
     result = _run_bounded_subprocess(
         cmd,
-        input_text=f"{patterns}\n",
+        input_text=_grep_pattern_input(requests),
         timeout=_remaining_timeout(deadline, timeout),
     )
     if result.returncode not in (0, 1):
@@ -1236,6 +1687,60 @@ def _group_grep_requests(
     return groups
 
 
+def _try_streamed_grep_retry(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    *,
+    deadline: float | None,
+) -> _GrepBatchResults | None:
+    if _deadline_expired(deadline):
+        return None
+    try:
+        return _run_streamed_grep_batch(requests, rg, deadline=deadline)
+    except (
+        _GrepExecutionIncomplete,
+        _GrepBatchRejected,
+        OSError,
+        subprocess.TimeoutExpired,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        logger.debug("streamed grep was unavailable: %s", exc)
+        return None
+
+
+def _recover_from_grep_resource_limit(
+    requests: Sequence[GrepRequest],
+    rg: str,
+    exc: _GrepExecutionIncomplete,
+    *,
+    deadline: float | None,
+) -> _GrepBatchResults:
+    if isinstance(exc, _GrepOutputLimitExceeded):
+        streamed = _try_streamed_grep_retry(
+            requests,
+            rg,
+            deadline=deadline,
+        )
+        if streamed is not None:
+            return streamed
+    if len(requests) <= 1 or _deadline_expired(deadline):
+        logger.debug("grep request exceeded a resource limit: %s", exc)
+        return _GrepBatchResults()
+
+    midpoint = len(requests) // 2
+    logger.debug("splitting oversized grep batch of %d requests", len(requests))
+    results = _GrepBatchResults()
+    results.merge(
+        _execute_grep_chunk(requests[:midpoint], rg, deadline=deadline)
+    )
+    if not _deadline_expired(deadline):
+        results.merge(
+            _execute_grep_chunk(requests[midpoint:], rg, deadline=deadline)
+        )
+    return results
+
+
 def _execute_grep_chunk(
     requests: Sequence[GrepRequest],
     rg: str,
@@ -1245,24 +1750,12 @@ def _execute_grep_chunk(
     try:
         return _run_ripgrep_batch(requests, rg, deadline=deadline)
     except (_GrepOutputLimitExceeded, _GrepInputLimitExceeded) as exc:
-        if len(requests) <= 1 or _deadline_expired(deadline):
-            logger.debug("grep request exceeded a resource limit: %s", exc)
-            return _GrepBatchResults()
-        midpoint = len(requests) // 2
-        logger.debug("splitting oversized grep batch of %d requests", len(requests))
-        results = _GrepBatchResults()
-        results.merge(
-            _execute_grep_chunk(
-                requests[:midpoint], rg, deadline=deadline
-            )
+        return _recover_from_grep_resource_limit(
+            requests,
+            rg,
+            exc,
+            deadline=deadline,
         )
-        if not _deadline_expired(deadline):
-            results.merge(
-                _execute_grep_chunk(
-                    requests[midpoint:], rg, deadline=deadline
-                )
-            )
-        return results
     except (
         _GrepExecutionIncomplete,
         subprocess.TimeoutExpired,
