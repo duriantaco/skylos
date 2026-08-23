@@ -12,7 +12,10 @@ from skylos.visitors.languages.typescript.type_safety import scan_type_safety
 def _scan(tmp_path, source, *, filename="app.ts", config=None):
     path = tmp_path / filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] pytest-owned temporary fixture path
+        source,
+        encoding="utf-8",
+    )
     result = scan_typescript_file(str(path), config=config)
     return result[6]
 
