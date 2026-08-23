@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from .core import TypeScriptCore
 from .danger import scan_danger
-from .quality import scan_quality
 from .framework import TSFrameworkVisitor
+from .quality import scan_quality
 
 
 class DummyVisitor:
@@ -98,6 +98,22 @@ def scan_typescript_file(
         if enable_quality_rules
         else []
     )
+    raw_ignored_rule_ids = config.get("ignore") or []
+    ignored_rule_ids = (
+        {
+            str(rule_id).upper()
+            for rule_id in raw_ignored_rule_ids
+            if isinstance(rule_id, str)
+        }
+        if isinstance(raw_ignored_rule_ids, (list, tuple, set, frozenset))
+        else set()
+    )
+    if ignored_rule_ids:
+        q_findings = [
+            finding
+            for finding in q_findings
+            if str(finding.get("rule_id", "")).upper() not in ignored_rule_ids
+        ]
 
     return (
         core.defs,

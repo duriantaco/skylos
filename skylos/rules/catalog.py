@@ -91,6 +91,15 @@ _RULES = (
     RuleCatalogEntry("SKY-P404", "Unbounded eager ORM query", "quality", "MEDIUM"),
     RuleCatalogEntry("SKY-T101", "Missing type annotations", "quality"),
     RuleCatalogEntry("SKY-T102", "Weak framework route typing", "quality"),
+    RuleCatalogEntry(
+        "SKY-T103", "Suspicious chained type assertion", "quality", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-T104", "TypeScript compiler suppression directive", "quality", "MEDIUM"
+    ),
+    RuleCatalogEntry(
+        "SKY-T105", "Unvalidated JSON type assertion", "quality", "MEDIUM"
+    ),
     RuleCatalogEntry("SKY-F101", "Framework route missing auth", "quality"),
     RuleCatalogEntry("SKY-F102", "Framework handler practice issue", "quality"),
     RuleCatalogEntry("SKY-R101", "Python type-check policy", "quality", "MEDIUM"),

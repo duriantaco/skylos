@@ -37,9 +37,17 @@ class TestCWEMapping:
         assert "SKY-Q301" in CWE_MAP
         assert "SKY-Q302" in CWE_MAP
 
+    def test_typescript_type_safety_rules_mapped(self):
+        assert CWE_MAP["SKY-T103"][0]["id"] == "CWE-704"
+        assert CWE_MAP["SKY-T104"][0]["id"] == "CWE-710"
+        assert CWE_MAP["SKY-T105"][0]["id"] == "CWE-704"
+
     def test_standard_refs(self):
         assert "McCabe Cyclomatic Complexity" in STANDARD_REFS["SKY-Q301"]
         assert "ISO/IEC 9126" in STANDARD_REFS["SKY-Q702"]
+        assert "TypeScript Handbook: Type Assertions" in STANDARD_REFS["SKY-T103"]
+        assert "TypeScript compiler directive comments" in STANDARD_REFS["SKY-T104"]
+        assert "Runtime input validation" in STANDARD_REFS["SKY-T105"]
 
 
 class TestEnrichFinding:
