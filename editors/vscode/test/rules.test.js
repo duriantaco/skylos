@@ -47,8 +47,46 @@ const TYPESCRIPT_SECURITY_RULES = {
   },
 };
 
+const TYPESCRIPT_TYPE_SAFETY_RULES = {
+  "SKY-T103": {
+    name: "Suspicious chained type assertion",
+    severity: "MEDIUM",
+    category: "quality",
+    description:
+      "A chained assertion uses a broad bridge type to force a value into a precise type.",
+    cwe: "CWE-704",
+    fix: "Validate or narrow the value instead of casting through any, unknown, object, or {}.",
+    language: "typescript",
+  },
+  "SKY-T104": {
+    name: "TypeScript compiler suppression directive",
+    severity: "MEDIUM",
+    category: "quality",
+    description:
+      "An effective @ts-ignore hides one line; file-wide @ts-nocheck is reported as HIGH.",
+    cwe: "CWE-710",
+    fix: "Fix the type error, or use @ts-expect-error with a specific reason for a narrow exception.",
+    language: "typescript",
+  },
+  "SKY-T105": {
+    name: "Unvalidated JSON type assertion",
+    severity: "MEDIUM",
+    category: "quality",
+    description: "Unvalidated JSON data is asserted directly as a domain type.",
+    cwe: "CWE-704",
+    fix: "Validate or parse the JSON value at runtime before using the domain type.",
+    language: "typescript",
+  },
+};
+
 test("TypeScript security rule metadata stays available in the editor", () => {
   for (const [ruleId, expected] of Object.entries(TYPESCRIPT_SECURITY_RULES)) {
+    assert.deepEqual(getRuleMeta(ruleId), expected, ruleId);
+  }
+});
+
+test("TypeScript type-safety rule metadata stays available in the editor", () => {
+  for (const [ruleId, expected] of Object.entries(TYPESCRIPT_TYPE_SAFETY_RULES)) {
     assert.deepEqual(getRuleMeta(ruleId), expected, ruleId);
   }
 });

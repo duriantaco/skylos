@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from tree_sitter import Language, QueryCursor, Query
 import tree_sitter_typescript as tsts
+from tree_sitter import Language, Query, QueryCursor
+
+from .type_safety import scan_type_safety
 
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())
@@ -218,6 +220,9 @@ def scan_quality(
 
     # --- Unreachable code (SKY-UC002) ---
     _check_unreachable_code(root_node, source, file_path, findings)
+
+    # --- Type-evidence bypasses (SKY-T103 through SKY-T105) ---
+    findings.extend(scan_type_safety(root_node, source, file_path, lang))
 
     return findings
 

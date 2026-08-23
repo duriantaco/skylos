@@ -112,6 +112,9 @@ const RULES: Record<string, RuleMeta> = {
 
   "SKY-Q305": { name: "Duplicate branch", severity: "MEDIUM", category: "quality", description: "Duplicate branch condition or body.", fix: "Remove or correct the duplicate branch logic." },
   "SKY-Q402": { name: "Await in loop", severity: "MEDIUM", category: "quality", description: "await expression inside a loop causes sequential execution.", fix: "Use Promise.all() for parallel execution.", language: "typescript" },
+  "SKY-T103": { name: "Suspicious chained type assertion", severity: "MEDIUM", category: "quality", description: "A chained assertion uses a broad bridge type to force a value into a precise type.", cwe: "CWE-704", fix: "Validate or narrow the value instead of casting through any, unknown, object, or {}.", language: "typescript" },
+  "SKY-T104": { name: "TypeScript compiler suppression directive", severity: "MEDIUM", category: "quality", description: "An effective @ts-ignore hides one line; file-wide @ts-nocheck is reported as HIGH.", cwe: "CWE-710", fix: "Fix the type error, or use @ts-expect-error with a specific reason for a narrow exception.", language: "typescript" },
+  "SKY-T105": { name: "Unvalidated JSON type assertion", severity: "MEDIUM", category: "quality", description: "Unvalidated JSON data is asserted directly as a domain type.", cwe: "CWE-704", fix: "Validate or parse the JSON value at runtime before using the domain type.", language: "typescript" },
   "SKY-UC001": { name: "Unreachable code", severity: "MEDIUM", category: "quality", description: "Code after return/raise/break/continue is unreachable.", fix: "Remove unreachable code." },
   "SKY-UC002": { name: "Unreachable code (TS)", severity: "MEDIUM", category: "quality", description: "Code after return/throw/break/continue is unreachable.", fix: "Remove unreachable code.", language: "typescript" },
 };

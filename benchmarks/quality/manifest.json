@@ -250,6 +250,50 @@
       }
     },
     {
+      "id": "typescript-type-safety-unsafe",
+      "path": "fixtures/typescript_type_safety_unsafe",
+      "description": "TypeScript escape hatches and direct unvalidated JSON assertions should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "typing"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/dmmulroy/anti-slop",
+        "license": "MIT",
+        "notes": "Distilled and narrowed from TypeScript type-evidence escape-hatch patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-T103", "SKY-T104", "SKY-T105"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-type-safety-clean",
+      "path": "fixtures/typescript_type_safety_clean",
+      "description": "Runtime validation, a single branded assertion, and a reasoned expect-error should remain clean.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "typing", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/TypeScript",
+        "license": "Apache-2.0",
+        "notes": "Synthetic precision controls based on normal TypeScript narrowing and type-test patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["SKY-T103", "SKY-T104", "SKY-T105"]
+        }
+      }
+    },
+    {
       "id": "go-service-quality-hotspot",
       "path": "fixtures/go_service_quality_hotspot",
       "description": "Go service function with excessive branching and a wide call surface should be flagged.",

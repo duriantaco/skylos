@@ -519,6 +519,9 @@ use the `SKY-A` prefix.
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
+| T103 | MEDIUM | Chained assertion through `any`, `unknown`, `object`, or `{}` | TypeScript |
+| T104 | MEDIUM-HIGH | Effective `@ts-ignore` or file-wide `@ts-nocheck` | TS/JS |
+| T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
 | F102 | HIGH | Framework endpoint missing object-level authorization guard | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy |

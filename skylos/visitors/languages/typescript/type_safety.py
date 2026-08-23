@@ -1,0 +1,611 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from tree_sitter import Language
+
+from .security_flow import SecurityFlow, build_security_flow
+
+_ASSERTION_TYPES = frozenset({"as_expression", "type_assertion"})
+_TYPED_EXTENSIONS = frozenset({".ts", ".tsx", ".mts", ".cts"})
+_BRIDGE_TYPES = frozenset({"any", "unknown", "object", "{}"})
+_TRANSPARENT_VALUE_WRAPPERS = frozenset(
+    {
+        "await_expression",
+        "non_null_expression",
+        "parenthesized_expression",
+        "satisfies_expression",
+    }
+)
+_GENERATED_PATH_PARTS = frozenset(
+    {
+        "__generated__",
+        "build",
+        "dist",
+        "generated",
+        "generated-sources",
+        "vendor",
+        "vendors",
+    }
+)
+_GENERATED_HEADER_RE = re.compile(
+    r"^\s*(?://+|/\*+|\*)\s*(?:"
+    r"@generated\b|"
+    r"auto[- ]generated\b|"
+    r"automatically generated\b|"
+    r"code generated\b|"
+    r"generated file\b|"
+    r"this file (?:is )?(?:auto[- ]|automatically )?generated\b"
+    r")",
+    re.IGNORECASE,
+)
+_SINGLE_LINE_DIRECTIVE_RE = re.compile(
+    r"^///?\s*@(ts-expect-error|ts-ignore)"
+)
+_MULTI_LINE_DIRECTIVE_RE = re.compile(
+    r"^(?:/|\*)*\s*@(ts-expect-error|ts-ignore)"
+)
+_SINGLE_LINE_PRAGMA_RE = re.compile(
+    r"^///?\s*@([^\s:]+)(?:(?:[^\S\r\n]|:).*)?$"
+)
+_TYPE_PREVIEW_LIMIT = 80
+
+
+def scan_type_safety(
+    root_node,
+    source: bytes,
+    file_path: str,
+    lang: Language | None,
+) -> list[dict]:
+    """Find narrow TypeScript type-evidence bypasses.
+
+    These findings describe concrete type-safety problems. They do not attempt
+    to decide whether a human or an AI wrote the code.
+    """
+    if root_node is None or lang is None or _skip_file(file_path, source):
+        return []
+
+    comments: list = []
+    assertions: list = []
+    stack = [(root_node, False)]
+    while stack:
+        node, inside_recovery = stack.pop()
+        intersects_recovery = bool(
+            inside_recovery
+            or node.type == "ERROR"
+            or getattr(node, "is_missing", False)
+        )
+        if node.type == "comment":
+            comments.append(node)
+        elif (
+            node.type in _ASSERTION_TYPES
+            and not intersects_recovery
+            and not bool(getattr(node, "has_error", False))
+        ):
+            assertions.append(node)
+        stack.extend(
+            (child, intersects_recovery)
+            for child in reversed(node.named_children)
+        )
+
+    findings = _suppression_findings(root_node, comments, source, file_path)
+
+    if Path(str(file_path)).suffix.lower() not in _TYPED_EXTENSIONS:
+        return sorted(findings, key=_finding_sort_key)
+
+    findings.extend(
+        _chained_assertion_findings(assertions, source, file_path)
+    )
+
+    # Boundary provenance uses whole-file binding and mutation facts. Keep it
+    # fail-closed when parse recovery makes those facts incomplete, while still
+    # reporting self-contained assertion chains elsewhere in the file.
+    if not bool(getattr(root_node, "has_error", False)):
+        findings.extend(
+            _boundary_assertion_findings(
+                root_node,
+                assertions,
+                source,
+                file_path,
+                lang,
+            )
+        )
+    return sorted(findings, key=_finding_sort_key)
+
+
+def _skip_file(file_path: str, source: bytes) -> bool:
+    normalized = str(file_path).replace("\\", "/").lower()
+    if normalized.endswith((".d.ts", ".d.mts", ".d.cts")):
+        return True
+
+    path = Path(normalized)
+    if any(part in _GENERATED_PATH_PARTS for part in path.parts):
+        return True
+    if path.name.endswith(
+        (
+            ".gen.cjs",
+            ".gen.cts",
+            ".gen.js",
+            ".gen.jsx",
+            ".gen.mjs",
+            ".gen.mts",
+            ".gen.ts",
+            ".gen.tsx",
+            ".generated.cjs",
+            ".generated.cts",
+            ".generated.js",
+            ".generated.jsx",
+            ".generated.mjs",
+            ".generated.mts",
+            ".generated.ts",
+            ".generated.tsx",
+        )
+    ):
+        return True
+
+    header = source.decode("utf-8", errors="replace").splitlines()[:10]
+    return any(_GENERATED_HEADER_RE.match(line) for line in header)
+
+
+def _node_text(source: bytes, node) -> str:
+    return source[node.start_byte : node.end_byte].decode(
+        "utf-8", errors="replace"
+    )
+
+
+def _assertion_parts(node, source: bytes):
+    if node.type == "as_expression":
+        children = list(node.children)
+        as_index = next(
+            (index for index, child in enumerate(children) if child.type == "as"),
+            None,
+        )
+        if as_index is None:
+            return None
+        expression = next(
+            (child for child in children[:as_index] if child.is_named), None
+        )
+        target = next(
+            (child for child in children[as_index + 1 :] if child.type != "comment"),
+            None,
+        )
+        if expression is None or target is None:
+            return None
+        return expression, target, _display_type_node(target, source)
+
+    if node.type == "type_assertion":
+        named = list(node.named_children)
+        if len(named) < 2 or named[0].type != "type_arguments":
+            return None
+        target = next(iter(named[0].named_children), None)
+        expression = named[1]
+        if target is None:
+            return None
+        return expression, target, _display_type_node(target, source)
+
+    return None
+
+
+def _normalize_type_text(text: str) -> str:
+    return "".join(text.split())
+
+
+def _display_type_node(node, source: bytes) -> str:
+    """Return readable source text without changing spaces inside literals."""
+    return re.sub(r"[\r\n\t]+", " ", _node_text(source, node).strip())
+
+
+def _normalized_type_node(node, source: bytes) -> str:
+    current = node
+    seen: set[tuple[int, int, str]] = set()
+    while current is not None and current.type == "parenthesized_type":
+        key = (current.start_byte, current.end_byte, current.type)
+        if key in seen:
+            break
+        seen.add(key)
+        named = list(current.named_children)
+        if len(named) != 1:
+            break
+        current = named[0]
+    return _normalize_type_text(_node_text(source, current or node))
+
+
+def _unwrap_value(node):
+    current = node
+    saw_await = False
+    seen: set[tuple[int, int, str]] = set()
+    while current is not None and current.type in _TRANSPARENT_VALUE_WRAPPERS:
+        key = (current.start_byte, current.end_byte, current.type)
+        if key in seen:
+            return None, saw_await
+        seen.add(key)
+        if current.type == "await_expression":
+            saw_await = True
+        named = list(current.named_children)
+        if current.type == "satisfies_expression":
+            if not named:
+                return current, saw_await
+            current = named[0]
+            continue
+        if len(named) != 1:
+            return current, saw_await
+        current = named[0]
+    return current, saw_await
+
+
+def _chained_assertion_findings(
+    assertions: list,
+    source: bytes,
+    file_path: str,
+) -> list[dict]:
+    findings: list[dict] = []
+    for node in assertions:
+        parts = _assertion_parts(node, source)
+        if parts is None:
+            continue
+        expression, target_node, target = parts
+        if not _is_precise_type_target(target_node, source):
+            continue
+
+        inner, _ = _unwrap_value(expression)
+        if inner is None or inner.type not in _ASSERTION_TYPES:
+            continue
+        inner_parts = _assertion_parts(inner, source)
+        if inner_parts is None:
+            continue
+        bridge = _broad_type_name(inner_parts[1], source)
+        if bridge is None:
+            continue
+
+        target_preview = _type_preview(target)
+        findings.append(
+            _finding(
+                rule_id="SKY-T103",
+                severity="MEDIUM",
+                message=(
+                    f"Chained assertion uses '{bridge}' to force a value to "
+                    f"'{target_preview}'; validate or narrow the value instead."
+                ),
+                file_path=file_path,
+                node=node,
+                name=target_preview,
+            )
+        )
+    return findings
+
+
+def _suppression_findings(
+    root_node,
+    comments: list,
+    source: bytes,
+    file_path: str,
+) -> list[dict]:
+    leading_comment_ids: set[int] = set()
+    for child in root_node.named_children:
+        if child.type == "comment":
+            leading_comment_ids.add(child.id)
+            continue
+        if child.type == "hash_bang_line":
+            continue
+        break
+
+    effective_check_pragma: tuple[object, str] | None = None
+    for comment in sorted(comments, key=lambda item: item.start_byte):
+        if comment.id not in leading_comment_ids:
+            continue
+        pragma = _check_pragma(_node_text(source, comment))
+        if pragma is not None:
+            # This mirrors TypeScript: the last leading @ts-check/@ts-nocheck
+            # pragma decides whether checking is enabled for the file.
+            effective_check_pragma = (comment, pragma)
+
+    if effective_check_pragma is not None and effective_check_pragma[1] == "nocheck":
+        effective_nocheck = effective_check_pragma[0]
+        return [
+            _finding(
+                rule_id="SKY-T104",
+                severity="HIGH",
+                message="@ts-nocheck disables TypeScript checking for this file.",
+                file_path=file_path,
+                node=effective_nocheck,
+                name="@ts-nocheck",
+            )
+        ]
+
+    return [
+        _finding(
+            rule_id="SKY-T104",
+            severity="MEDIUM",
+            message=(
+                "@ts-ignore hides every TypeScript error on the next line; fix "
+                "the type or use @ts-expect-error with a reason."
+            ),
+            file_path=file_path,
+            node=comment,
+            name="@ts-ignore",
+        )
+        for comment in comments
+        if _is_ignore_directive(_node_text(source, comment))
+    ]
+
+
+def _check_pragma(comment_text: str) -> str | None:
+    if not comment_text.startswith("//"):
+        return None
+    match = _SINGLE_LINE_PRAGMA_RE.match(comment_text)
+    if match is None:
+        return None
+    name = match.group(1).lower()
+    if name == "ts-check":
+        return "check"
+    if name == "ts-nocheck":
+        return "nocheck"
+    return None
+
+
+def _is_ignore_directive(comment_text: str) -> bool:
+    if comment_text.startswith("//"):
+        match = _SINGLE_LINE_DIRECTIVE_RE.match(comment_text)
+        return match is not None and match.group(1) == "ts-ignore"
+
+    if not comment_text.startswith("/*"):
+        return False
+    last_line = comment_text.splitlines()[-1].lstrip()
+    match = _MULTI_LINE_DIRECTIVE_RE.match(last_line)
+    return match is not None and match.group(1) == "ts-ignore"
+
+
+def _boundary_assertion_findings(
+    root_node,
+    assertions: list,
+    source: bytes,
+    file_path: str,
+    lang: Language,
+) -> list[dict]:
+    candidates: list[tuple[object, object, str, str, bool]] = []
+    for assertion in assertions:
+        parts = _assertion_parts(assertion, source)
+        if parts is None:
+            continue
+        expression, target_node, target = parts
+        if not _is_precise_type_target(target_node, source):
+            continue
+
+        call, saw_await = _unwrap_value(expression)
+        if call is None or call.type != "call_expression":
+            continue
+        path = _syntactic_callee_path(call, source)
+        if path == ("JSON", "parse"):
+            candidates.append((assertion, call, target, "json_parse", saw_await))
+        elif _member_name(call, source) == "json":
+            candidates.append((assertion, call, target, "response_json", saw_await))
+
+    if not candidates:
+        return []
+
+    flow = build_security_flow(root_node, source, file_path, lang)
+    if not flow.analysis_complete:
+        return []
+
+    findings: list[dict] = []
+    for assertion, call, target, kind, saw_await in candidates:
+        if kind == "json_parse":
+            if not _is_builtin_json_parse(flow, call):
+                continue
+            source_name = "JSON.parse()"
+        else:
+            if not saw_await or not _is_fetch_response_json(flow, call):
+                continue
+            source_name = "Response.json()"
+
+        target_preview = _type_preview(target)
+        findings.append(
+            _finding(
+                rule_id="SKY-T105",
+                severity="MEDIUM",
+                message=(
+                    f"{source_name} result is asserted as '{target_preview}' "
+                    "without runtime validation."
+                ),
+                file_path=file_path,
+                node=assertion,
+                name=target_preview,
+            )
+        )
+    return findings
+
+
+def _syntactic_callee_path(call, source: bytes) -> tuple[str, ...]:
+    function = call.child_by_field_name("function")
+    if function is None:
+        return ()
+    if function.type == "identifier":
+        return (_node_text(source, function),)
+    if function.type != "member_expression":
+        return ()
+
+    parts: list[str] = []
+    current = function
+    for _ in range(8):
+        if current.type == "identifier":
+            parts.append(_node_text(source, current))
+            return tuple(reversed(parts))
+        if current.type != "member_expression":
+            return ()
+        prop = current.child_by_field_name("property")
+        obj = current.child_by_field_name("object")
+        if prop is None or obj is None or prop.type not in {
+            "identifier",
+            "property_identifier",
+        }:
+            return ()
+        parts.append(_node_text(source, prop))
+        current = obj
+    return ()
+
+
+def _member_name(call, source: bytes) -> str | None:
+    function = call.child_by_field_name("function")
+    if function is None or function.type != "member_expression":
+        return None
+    prop = function.child_by_field_name("property")
+    if prop is None or prop.type not in {"identifier", "property_identifier"}:
+        return None
+    return _node_text(source, prop)
+
+
+def _is_builtin_json_parse(flow: SecurityFlow, call) -> bool:
+    if flow.callee_path(call) != ("JSON", "parse"):
+        return False
+    arguments = flow.call_arguments(call)
+    if len(arguments) != 1 or _is_static_json_text(arguments[0]):
+        return False
+    scope_id = flow.scope_for_node(call).id
+    return flow.is_unshadowed_global_member(
+        "JSON", "parse", call.start_byte, scope_id
+    )
+
+
+def _is_fetch_response_json(flow: SecurityFlow, call) -> bool:
+    if flow.callee_path(call)[-1:] != ("json",):
+        return False
+    if flow.call_arguments(call):
+        return False
+    if any(child.type == "type_arguments" for child in call.named_children):
+        return False
+
+    function = call.child_by_field_name("function")
+    if function is None or function.type != "member_expression":
+        return False
+    receiver = function.child_by_field_name("object")
+    receiver, receiver_awaited = _unwrap_value(receiver)
+    if receiver is None:
+        return False
+    scope_id = flow.scope_for_node(call).id
+    if not flow.is_stable_global_path(
+        ("Response", "prototype", "json"),
+        call.start_byte,
+        scope_id,
+    ):
+        return False
+
+    if receiver.type == "call_expression":
+        return receiver_awaited and _is_builtin_fetch_call(flow, receiver)
+
+    if receiver.type != "identifier":
+        return False
+    binding = flow.resolve_unique_binding(
+        flow.node_text(receiver), call.start_byte, scope_id
+    )
+    if binding is None or binding.value_node is None:
+        return False
+    declaration_parent = binding.declaration_node.parent
+    if declaration_parent is None or declaration_parent.type != "lexical_declaration":
+        return False
+    if not any(child.type == "const" for child in declaration_parent.children):
+        return False
+
+    initializer, initializer_awaited = _unwrap_value(binding.value_node)
+    return bool(
+        initializer_awaited
+        and initializer is not None
+        and initializer.type == "call_expression"
+        and _is_builtin_fetch_call(flow, initializer)
+        and flow.is_binding_member_stable(
+            binding,
+            "json",
+            call.start_byte,
+            scope_id,
+        )
+    )
+
+
+def _is_builtin_fetch_call(flow: SecurityFlow, call) -> bool:
+    if flow.callee_path(call) != ("fetch",) or not flow.call_arguments(call):
+        return False
+    scope_id = flow.scope_for_node(call).id
+    return flow.is_unshadowed_global_name("fetch", call.start_byte, scope_id)
+
+
+def _is_static_json_text(node) -> bool:
+    value, _ = _unwrap_value(node)
+    if value is None:
+        return False
+    if value.type == "string":
+        return True
+    return value.type == "template_string" and not any(
+        child.type == "template_substitution" for child in value.named_children
+    )
+
+
+def _is_precise_type_target(target_node, source: bytes) -> bool:
+    normalized = _normalized_type_node(target_node, source)
+    if not normalized or normalized == "const":
+        return False
+    stack = [target_node]
+    while stack:
+        current = stack.pop()
+        if _direct_broad_type_name(current, source) is not None:
+            return False
+        stack.extend(current.named_children)
+    return True
+
+
+def _broad_type_name(node, source: bytes) -> str | None:
+    current = node
+    seen: set[tuple[int, int, str]] = set()
+    while current is not None and current.type == "parenthesized_type":
+        key = (current.start_byte, current.end_byte, current.type)
+        if key in seen:
+            return None
+        seen.add(key)
+        named = list(current.named_children)
+        if len(named) != 1:
+            return None
+        current = named[0]
+    return _direct_broad_type_name(current, source)
+
+
+def _direct_broad_type_name(node, source: bytes) -> str | None:
+    if node is None or node.type not in {"object_type", "predefined_type"}:
+        return None
+    if node.type == "object_type" and node.named_child_count:
+        return None
+    normalized = _normalize_type_text(_node_text(source, node))
+    return normalized if normalized in _BRIDGE_TYPES else None
+
+
+def _type_preview(normalized_type: str) -> str:
+    if len(normalized_type) <= _TYPE_PREVIEW_LIMIT:
+        return normalized_type
+    return normalized_type[: _TYPE_PREVIEW_LIMIT - 3] + "..."
+
+
+def _finding(
+    *,
+    rule_id: str,
+    severity: str,
+    message: str,
+    file_path: str,
+    node,
+    name: str,
+) -> dict:
+    return {
+        "rule_id": rule_id,
+        "severity": severity,
+        "message": message,
+        "file": str(file_path),
+        "line": node.start_point[0] + 1,
+        "col": node.start_point[1],
+        "name": name,
+        "simple_name": name,
+    }
+
+
+def _finding_sort_key(finding: dict) -> tuple[int, int, str]:
+    return (
+        int(finding.get("line", 0)),
+        int(finding.get("col", 0)),
+        str(finding.get("rule_id", "")),
+    )

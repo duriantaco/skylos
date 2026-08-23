@@ -20,7 +20,7 @@ advisory checks first.
 |---------------|----------------------|-----------------|--------------------|
 | Python style and lint hygiene | [PEP 8](https://peps.python.org/pep-0008/), [Ruff linter](https://docs.astral.sh/ruff/linter/) | `SKY-R102`, existing Python quality rules | Advisory `ruff check .` |
 | Python type clarity | [PEP 484](https://peps.python.org/pep-0484/), [mypy](https://mypy.readthedocs.io/) | `SKY-T101`, `SKY-T102`, `SKY-R101` | Advisory `mypy skylos` |
-| TypeScript type safety | [TypeScript strict mode](https://www.typescriptlang.org/tsconfig/strict.html) | `SKY-R105` | Advisory `npm run compile` / `npm run build` |
+| TypeScript type safety | [TypeScript strict mode](https://www.typescriptlang.org/tsconfig/strict.html) | `SKY-T103`, `SKY-T104`, `SKY-T105`, `SKY-R105` | Advisory `npm run compile` / `npm run build` |
 | Rust idioms and correctness | [Clippy](https://doc.rust-lang.org/stable/clippy/), [Rustfmt style edition](https://doc.rust-lang.org/edition-guide/rust-2024/rustfmt-style-edition.html) | Repo policy visibility through CI | Advisory `cargo fmt --check`, `cargo clippy` |
 | API authorization practice | [OWASP API Security Top 10 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), `CWE-862` | `SKY-F102`, security/danger rules | Diff-aware Skylos advisory scan |
 | API response contracts | [FastAPI response models / return types](https://fastapi.tiangolo.com/tutorial/response-model/) | `SKY-F101` | Diff-aware Skylos advisory scan |
@@ -69,6 +69,9 @@ advisory checks first.
 | **Type Checking** | | |
 | Untyped public parameters | SKY-T101 | Public functions in typed modules missing parameter annotations |
 | Missing public return type | SKY-T102 | Public functions in typed modules missing return annotations |
+| Suspicious chained assertion | SKY-T103 | A cast reaches a precise type through `any`, `unknown`, `object`, or `{}` |
+| TypeScript compiler suppression | SKY-T104 | Effective `@ts-ignore` or file-wide `@ts-nocheck` directives |
+| Unvalidated JSON assertion | SKY-T105 | A direct `JSON.parse()` or proven fetch `Response.json()` result is asserted without validation |
 | **Framework Practices** | | |
 | FastAPI response contract | SKY-F101 | Route lacks `response_model`, `response_class`, or return annotation |
 | Mutating route auth guard | SKY-F102 | POST/PUT/PATCH/DELETE route lacks obvious auth/dependency guard |

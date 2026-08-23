@@ -186,6 +186,35 @@ def test_builtin_catalog_exposes_nextjs_security_rule_contracts():
     }
 
 
+def test_builtin_catalog_exposes_typescript_type_safety_rules():
+    rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
+
+    assert {
+        rule_id: {
+            "name": rules_by_id[rule_id]["name"],
+            "category": rules_by_id[rule_id]["category"],
+            "severity": rules_by_id[rule_id]["severity"],
+        }
+        for rule_id in ("SKY-T103", "SKY-T104", "SKY-T105")
+    } == {
+        "SKY-T103": {
+            "name": "Suspicious chained type assertion",
+            "category": "quality",
+            "severity": "MEDIUM",
+        },
+        "SKY-T104": {
+            "name": "TypeScript compiler suppression directive",
+            "category": "quality",
+            "severity": "MEDIUM",
+        },
+        "SKY-T105": {
+            "name": "Unvalidated JSON type assertion",
+            "category": "quality",
+            "severity": "MEDIUM",
+        },
+    }
+
+
 def test_rules_list_packs_json_keeps_community_pack_listing(tmp_path, monkeypatch):
     rules_dir = tmp_path / ".skylos" / "rules"
     rules_dir.mkdir(parents=True)

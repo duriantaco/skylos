@@ -836,6 +836,25 @@ def test_selected_rule_analysis_flags_use_catalog_categories_not_prefixes():
     assert args.danger is False
 
 
+@pytest.mark.parametrize("rule_id", ["SKY-T103", "SKY-T104", "SKY-T105"])
+def test_selected_typescript_type_safety_rule_enables_quality_analysis(rule_id):
+    args = types.SimpleNamespace(
+        select=[rule_id],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == [rule_id]
+    assert args.quality is True
+    assert args.danger is False
+    assert args.ai_defects is False
+
+
 def test_selected_d223_enables_its_ai_defect_analyzer():
     args = types.SimpleNamespace(
         select=["SKY-D223"],

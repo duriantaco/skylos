@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-import re
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from tree_sitter import Language
 
@@ -214,6 +215,23 @@ _EXPRESSION_WRAPPERS = frozenset(
     }
 )
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_GLOBAL_OBJECT_NAMES = ("global", "globalThis", "self", "window")
+_PROPERTY_MUTATOR_CALLEES = frozenset(
+    {
+        ("Object", "defineProperty"),
+        ("Reflect", "defineProperty"),
+        ("Reflect", "deleteProperty"),
+        ("Reflect", "set"),
+    }
+)
+_BULK_MUTATOR_CALLEES = frozenset(
+    {
+        ("Object", "assign"),
+        ("Object", "defineProperties"),
+        ("Object", "setPrototypeOf"),
+        ("Reflect", "setPrototypeOf"),
+    }
+)
 _ROUTE_RECEIVERS = {
     "app": RouteKind.EXPRESS,
     "express": RouteKind.EXPRESS,
@@ -370,6 +388,9 @@ class SecurityFlow:
         self._scope_nodes_cache: dict[int, tuple[Any, ...]] = {}
         self._declarators_by_scope: dict[int, list[Any]] = defaultdict(list)
         self._assignments_by_scope: dict[int, list[Any]] = defaultdict(list)
+        self._global_path_effect_cache: dict[
+            tuple[frozenset[tuple[str, ...]], int], int | None
+        ] = {}
         self._option_state_cache: dict[
             tuple[tuple[int, int, str], tuple[str, ...], int, int],
             dict[str, Truth4],
@@ -490,6 +511,16 @@ class SecurityFlow:
         )
         if node is None or node.type != "call_expression":
             return ()
+        return self._invocation_arguments(node)
+
+    def _invocation_arguments(self, call_or_event) -> tuple:
+        node = (
+            call_or_event._node
+            if isinstance(call_or_event, FlowEvent)
+            else call_or_event
+        )
+        if node is None or node.type not in {"call_expression", "new_expression"}:
+            return ()
         args = node.child_by_field_name("arguments")
         return tuple(args.named_children) if args is not None else ()
 
@@ -566,20 +597,54 @@ class SecurityFlow:
         """Return whether a built-in member has not been replaced locally."""
         if not self._is_unshadowed_global_name(name, before_byte, scope_id):
             return False
-        visible = set(self._visible_scope_ids(scope_id))
-        for candidate_scope_id in visible:
-            cutoff = (
-                before_byte
-                if candidate_scope_id == scope_id
-                else self._scope_by_id[candidate_scope_id].body_span.end_byte
-            )
-            for assignment in self._assignments_by_scope.get(candidate_scope_id, ()):
-                if assignment.start_byte >= cutoff:
-                    continue
-                path = self._expression_path(assignment.child_by_field_name("left"))
-                if path in {(name,), (name, member)}:
-                    return False
-        return True
+        return not self._has_prior_path_mutation(
+            self._global_paths(name, member),
+            before_byte,
+            scope_id,
+        )
+
+    def is_stable_global_path(
+        self,
+        path: tuple[str, ...],
+        before_byte: int,
+        scope_id: int,
+    ) -> bool:
+        """Return whether a global object path is unshadowed and unchanged."""
+        if not path or not self._is_unshadowed_global_name(
+            path[0], before_byte, scope_id
+        ):
+            return False
+        return not self._has_prior_path_mutation(
+            self._global_paths(*path),
+            before_byte,
+            scope_id,
+        )
+
+    def is_binding_member_stable(
+        self,
+        binding: _Binding,
+        member: str,
+        before_byte: int,
+        use_scope_id: int,
+    ) -> bool:
+        """Return whether a proven object member remains unchanged and unescaped."""
+        if not self.analysis_complete or not member:
+            return False
+        states = {member: Truth4.TRUE}
+        proof_lost = self._apply_binding_effects(
+            states,
+            binding.symbol.name,
+            binding.symbol.decl_byte,
+            before_byte,
+            binding.symbol.scope_id,
+            use_scope_id,
+            (member,),
+        )
+        return bool(
+            not proof_lost
+            and self.analysis_complete
+            and states[member] == Truth4.TRUE
+        )
 
     def _visible_binding_candidates(
         self, name: str, before_byte: int, scope_id: int
@@ -970,6 +1035,22 @@ class SecurityFlow:
                             node,
                         )
                     )
+                elif name_node is not None:
+                    # Destructured declarations still introduce lexical names.
+                    # Their individual values are deliberately left unresolved,
+                    # but they must shadow globals used by security proofs.
+                    for pattern_name in self._pattern_names(name_node):
+                        self._record_binding(
+                            _Binding(
+                                SymbolId(
+                                    current_owner,
+                                    pattern_name,
+                                    node.start_byte,
+                                ),
+                                None,
+                                node,
+                            )
+                        )
             for child in reversed(node.named_children):
                 stack.append((child, current_owner))
 
@@ -1597,24 +1678,46 @@ class SecurityFlow:
         return groups
 
     def _pattern_names(self, node) -> list[str]:
-        if node is None:
-            return []
-        if node.type in {
-            "identifier",
-            "shorthand_property_identifier_pattern",
-        }:
-            name = _identifier_text(self.source, node)
-            return [name] if name else []
-        if node.type in {"pair_pattern", "object_assignment_pattern"}:
-            return self._pattern_names(node.child_by_field_name("value"))
-        if node.type in {"assignment_pattern", "rest_pattern"}:
-            child = node.child_by_field_name("left") or next(
-                iter(node.named_children), None
-            )
-            return self._pattern_names(child)
         names: list[str] = []
-        for child in node.named_children:
-            names.extend(self._pattern_names(child))
+        stack: list[tuple[Any, int]] = [(node, 0)] if node is not None else []
+        visited = 0
+        while stack:
+            current, depth = stack.pop()
+            visited += 1
+            if (
+                depth > self.limits.max_expr_depth * 4
+                or visited > self.limits.max_nodes
+            ):
+                self._mark_incomplete("binding pattern depth exceeded")
+                return []
+            if current.type in {
+                "identifier",
+                "shorthand_property_identifier_pattern",
+            }:
+                name = _identifier_text(self.source, current)
+                if name:
+                    names.append(name)
+                continue
+            if current.type == "pair_pattern":
+                child = current.child_by_field_name("value")
+                if child is not None:
+                    stack.append((child, depth + 1))
+                continue
+            if current.type in {
+                "assignment_pattern",
+                "object_assignment_pattern",
+                "rest_pattern",
+            }:
+                child = current.child_by_field_name("left") or next(
+                    iter(current.named_children), None
+                )
+                if child is not None:
+                    stack.append((child, depth + 1))
+                continue
+            stack.extend(
+                (child, depth + 1)
+                for child in reversed(current.named_children)
+            )
         return list(dict.fromkeys(names))
 
     def _route_receiver_kind(
@@ -1984,20 +2087,314 @@ class SecurityFlow:
             for binding in self._bindings.get(name, ())
         ):
             return False
-        for candidate_scope_id in visible:
+        return not self._has_prior_path_mutation(
+            self._global_paths(name),
+            before_byte,
+            scope_id,
+        )
+
+    @staticmethod
+    def _global_paths(*path: str) -> frozenset[tuple[str, ...]]:
+        suffix = tuple(path)
+        return frozenset(
+            {suffix}
+            | {
+                (global_name, *suffix)
+                for global_name in _GLOBAL_OBJECT_NAMES
+            }
+        )
+
+    @staticmethod
+    def _path_affects_any(
+        target: tuple[str, ...], protected: frozenset[tuple[str, ...]]
+    ) -> bool:
+        return bool(
+            target
+            and any(
+                len(target) <= len(path) and path[: len(target)] == target
+                for path in protected
+            )
+        )
+
+    @classmethod
+    def _target_affects_any(
+        cls,
+        target: tuple[str, ...],
+        has_dynamic_member: bool,
+        protected: frozenset[tuple[str, ...]],
+    ) -> bool:
+        if cls._path_affects_any(target, protected):
+            return True
+        # Once a computed key is unknown, later static segments cannot restore
+        # a precise path. A matching root may still reach any protected member.
+        return bool(
+            has_dynamic_member
+            and target
+            and any(path and path[0] == target[0] for path in protected)
+        )
+
+    def _has_prior_path_mutation(
+        self,
+        protected: frozenset[tuple[str, ...]],
+        before_byte: int,
+        scope_id: int,
+    ) -> bool:
+        for candidate_scope_id in self._visible_scope_ids(scope_id):
+            scope = self._scope_by_id[candidate_scope_id]
             cutoff = (
                 before_byte
                 if candidate_scope_id == scope_id
-                else self._scope_by_id[candidate_scope_id].body_span.end_byte
+                else scope.body_span.end_byte
             )
-            for assignment in self._assignments_by_scope.get(candidate_scope_id, ()):
-                if assignment.start_byte >= cutoff:
-                    continue
-                left = assignment.child_by_field_name("left")
-                if left is not None and left.type == "identifier":
-                    if self.node_text(left) == name:
-                        return False
-        return True
+            effect_byte = self._first_path_effect_byte(
+                protected, candidate_scope_id
+            )
+            if not self.analysis_complete:
+                return True
+            if effect_byte is not None and effect_byte < cutoff:
+                return True
+        return False
+
+    def _first_path_effect_byte(
+        self,
+        protected: frozenset[tuple[str, ...]],
+        scope_id: int,
+    ) -> int | None:
+        cache_key = (protected, scope_id)
+        if cache_key in self._global_path_effect_cache:
+            return self._global_path_effect_cache[cache_key]
+
+        nodes = self._scope_nodes_cache.get(scope_id, ())
+        if not self._consume_work(len(nodes)):
+            return None
+        first: int | None = None
+        for node in nodes:
+            effect_byte = self._path_effect_byte(node, protected)
+            if not self.analysis_complete:
+                return None
+            if effect_byte is not None and (
+                first is None or effect_byte < first
+            ):
+                first = effect_byte
+        self._global_path_effect_cache[cache_key] = first
+        return first
+
+    def _path_effect_byte(
+        self,
+        node,
+        protected: frozenset[tuple[str, ...]],
+    ) -> int | None:
+        if node.type in {
+            "assignment_expression",
+            "augmented_assignment_expression",
+        }:
+            targets = self._assignment_targets(node.child_by_field_name("left"))
+            if not self.analysis_complete:
+                return None
+            if any(
+                self._target_affects_any(path, dynamic, protected)
+                for path, dynamic in targets
+            ):
+                return node.start_byte
+            right = node.child_by_field_name("right")
+            if self._expression_exposes_protected_object(right, protected):
+                return node.end_byte
+            return None
+
+        if node.type == "update_expression" or (
+            node.type == "unary_expression"
+            and self.node_text(node).lstrip().startswith("delete ")
+        ):
+            target = next(iter(node.named_children), None)
+            targets = self._assignment_targets(target)
+            if not self.analysis_complete:
+                return None
+            if any(
+                self._target_affects_any(path, dynamic, protected)
+                for path, dynamic in targets
+            ):
+                return node.start_byte
+            return None
+
+        if node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            if self._expression_exposes_protected_object(value, protected):
+                return node.end_byte
+            return None
+
+        if node.type == "call_expression":
+            if self._call_mutates_paths(node, protected):
+                return node.start_byte
+            if any(
+                self._expression_exposes_protected_object(argument, protected)
+                for argument in self.call_arguments(node)
+            ):
+                return node.start_byte
+            return None
+
+        if node.type == "new_expression" and any(
+            self._expression_exposes_protected_object(argument, protected)
+            for argument in self._invocation_arguments(node)
+        ):
+            return node.start_byte
+        return None
+
+    def _assignment_targets(
+        self, node
+    ) -> tuple[tuple[tuple[str, ...], bool], ...]:
+        """Return lvalue paths and whether a computed member is unknown."""
+        if node is None:
+            return ()
+        targets: list[tuple[tuple[str, ...], bool]] = []
+        stack: list[tuple[Any, int]] = [(node, 0)]
+        while stack:
+            current, depth = stack.pop()
+            if depth > self.limits.max_expr_depth * 4 or not self._consume_work():
+                self._mark_incomplete("assignment target inspection exceeded budget")
+                return ()
+            if current.type in {
+                "identifier",
+                "shorthand_property_identifier_pattern",
+            }:
+                name = _identifier_text(self.source, current)
+                if name:
+                    targets.append(((name,), False))
+                continue
+            if current.type in {"member_expression", "subscript_expression"}:
+                path, has_dynamic_member = self._lvalue_path(current)
+                if path:
+                    targets.append((path, has_dynamic_member))
+                continue
+            if current.type == "pair_pattern":
+                value = current.child_by_field_name("value")
+                if value is not None:
+                    stack.append((value, depth + 1))
+                continue
+            if current.type in {
+                "assignment_pattern",
+                "object_assignment_pattern",
+                "rest_pattern",
+            }:
+                left = current.child_by_field_name("left") or next(
+                    iter(current.named_children), None
+                )
+                if left is not None:
+                    stack.append((left, depth + 1))
+                continue
+            stack.extend(
+                (child, depth + 1) for child in current.named_children
+            )
+        return tuple(dict.fromkeys(targets))
+
+    def _lvalue_path(self, node) -> tuple[tuple[str, ...], bool]:
+        current = self.unwrap(node)
+        suffix: list[str] = []
+        has_dynamic_member = False
+        for _ in range(self.limits.max_expr_depth * 4 + 1):
+            if not self._consume_work():
+                return (), True
+            if current is None:
+                return (), has_dynamic_member
+            if current.type in {"identifier", "property_identifier"}:
+                name = _identifier_text(self.source, current)
+                if not name:
+                    return (), has_dynamic_member
+                return (name, *reversed(suffix)), has_dynamic_member
+            if current.type == "member_expression":
+                prop = current.child_by_field_name("property")
+                prop_name = _identifier_text(self.source, prop)
+                if prop_name is None:
+                    has_dynamic_member = True
+                else:
+                    suffix.append(prop_name)
+                current = self.unwrap(current.child_by_field_name("object"))
+                continue
+            if current.type == "subscript_expression":
+                index = current.child_by_field_name("index")
+                index_value = _string_value(self.source, index)
+                if index_value is None:
+                    has_dynamic_member = True
+                else:
+                    suffix.append(index_value)
+                current = self.unwrap(current.child_by_field_name("object"))
+                continue
+            return (), has_dynamic_member
+        self._mark_incomplete("lvalue path depth exceeded")
+        return (), True
+
+    def _expression_exposes_protected_object(
+        self,
+        node,
+        protected: frozenset[tuple[str, ...]],
+    ) -> bool:
+        """Return whether an expression stores or passes a mutable path prefix."""
+        if node is None:
+            return False
+        stack: list[tuple[Any, int]] = [(node, 0)]
+        while stack:
+            current, depth = stack.pop()
+            if depth > self.limits.max_expr_depth * 4 or not self._consume_work():
+                self._mark_incomplete("protected object inspection exceeded budget")
+                return True
+            current = self.unwrap(current)
+            if current is None:
+                continue
+            path = ()
+            if current.type in {
+                "identifier",
+                "member_expression",
+                "property_identifier",
+                "subscript_expression",
+            }:
+                path, _ = self._lvalue_path(current)
+                if not self.analysis_complete:
+                    return True
+            if path and any(
+                len(path) < len(candidate)
+                and candidate[: len(path)] == path
+                for candidate in protected
+            ):
+                return True
+            if current.type in {"call_expression", "new_expression"} | _FUNCTION_TYPES:
+                # A call result is not an alias of its receiver. Its arguments
+                # are inspected separately as call events.
+                continue
+            stack.extend((child, depth + 1) for child in current.named_children)
+        return False
+
+    def _call_mutates_paths(
+        self,
+        call,
+        protected: frozenset[tuple[str, ...]],
+    ) -> bool:
+        callee = self.callee_path(call)
+        if callee not in _PROPERTY_MUTATOR_CALLEES | _BULK_MUTATOR_CALLEES:
+            return False
+        arguments = self.call_arguments(call)
+        if not arguments:
+            return False
+        target, has_dynamic_member = self._lvalue_path(arguments[0])
+        if not target:
+            return False
+        if has_dynamic_member and any(
+            path and path[0] == target[0] for path in protected
+        ):
+            return True
+        if callee in _BULK_MUTATOR_CALLEES:
+            return self._path_affects_any(target, protected)
+        if not any(
+            len(target) < len(path) and path[: len(target)] == target
+            for path in protected
+        ):
+            return False
+        property_name = (
+            _string_value(self.source, arguments[1])
+            if len(arguments) >= 2
+            else None
+        )
+        if property_name is None:
+            return True
+        return self._path_affects_any((*target, property_name), protected)
 
     def _scope_parameter_contains_name(
         self, scope: LexicalScope, expected_name: str
@@ -2059,7 +2456,7 @@ class SecurityFlow:
             calls = (
                 event
                 for event in self._scope_by_id[candidate_scope_id].events
-                if event.kind == EventKind.CALL
+                if event.kind in {EventKind.CALL, EventKind.NEW}
             )
             mutations = (
                 node
@@ -2098,7 +2495,17 @@ class SecurityFlow:
                 declared = item.child_by_field_name("name")
                 value = self.unwrap(item.child_by_field_name("value"))
                 declared_name = _identifier_text(self.source, declared)
-                if declared_name is None or value is None:
+                if value is None:
+                    continue
+                if declared_name is None:
+                    # Mapping a tracked object through a destructuring pattern
+                    # creates aliases whose exact value path is not modeled.
+                    if self._expression_contains_alias(
+                        value,
+                        aliases | containers,
+                        include_nested_functions=True,
+                    ):
+                        return True
                     continue
                 if value.type == "identifier" and self.node_text(value) in aliases:
                     aliases.add(declared_name)
@@ -2119,67 +2526,107 @@ class SecurityFlow:
             if kind == "assignment":
                 left = item.child_by_field_name("left")
                 right = self.unwrap(item.child_by_field_name("right"))
-                path = self._expression_path(left)
-                if len(path) == 1:
-                    target = path[0]
-                    if target == object_name:
-                        # Whole-binding reassignment versions the value. Until the
-                        # flow heap models versions, it cannot retain literal facts.
-                        return True
-                    if target in aliases:
-                        if right is not None and right.type == "identifier":
-                            if self.node_text(right) in aliases:
-                                continue
-                        aliases.discard(target)
-                        continue
-                    if target in containers:
-                        containers.discard(target)
-                    if right is not None and right.type == "identifier":
-                        if self.node_text(right) in aliases:
-                            aliases.add(target)
-                        elif self.node_text(right) in containers:
-                            containers.add(target)
-                    elif self._expression_contains_alias(
+                targets = self._assignment_targets(left)
+                if not self.analysis_complete:
+                    return True
+                if (
+                    left is not None
+                    and left.type in {"array_pattern", "object_pattern"}
+                    and self._expression_contains_alias(
                         right,
                         aliases | containers,
                         include_nested_functions=True,
-                    ):
-                        containers.add(target)
-                    continue
-                if len(path) >= 2 and path[0] in aliases:
-                    if path[1] in names:
-                        states[path[1]] = (
-                            Truth4.UNKNOWN
-                            if self._is_conditionally_executed(
-                                item, self.scope_for_node(item).id
-                            )
-                            else self._truth_value(right)
-                        )
-                    else:
-                        # A method/property mutation through an alias can affect
-                        # tracked properties through setters or proxies.
-                        return True
-                    continue
-                if len(path) >= 2 and path[0] in containers:
+                    )
+                ):
                     return True
-                if self._expression_contains_alias(right, aliases | containers):
+                right_name = (
+                    self.node_text(right)
+                    if right is not None and right.type == "identifier"
+                    else None
+                )
+                simple_alias_assignment = False
+                for path, has_dynamic_member in targets:
+                    if (
+                        has_dynamic_member
+                        and path
+                        and path[0] in aliases | containers
+                    ):
+                        return True
+                    if len(path) == 1:
+                        target = path[0]
+                        if target == object_name:
+                            # Whole-binding reassignment versions the value. Until the
+                            # flow heap models versions, it cannot retain literal facts.
+                            return True
+                        if target in aliases:
+                            if right_name in aliases:
+                                simple_alias_assignment = True
+                                continue
+                            aliases.discard(target)
+                            continue
+                        if target in containers:
+                            containers.discard(target)
+                        if right_name in aliases:
+                            aliases.add(target)
+                            simple_alias_assignment = True
+                        elif right_name in containers:
+                            containers.add(target)
+                            simple_alias_assignment = True
+                        elif self._expression_contains_alias(
+                            right,
+                            aliases | containers,
+                            include_nested_functions=True,
+                        ):
+                            containers.add(target)
+                        continue
+                    if len(path) >= 2 and path[0] in aliases:
+                        if path[1] in names:
+                            states[path[1]] = (
+                                Truth4.UNKNOWN
+                                if self._is_conditionally_executed(
+                                    item, self.scope_for_node(item).id
+                                )
+                                else self._truth_value(right)
+                            )
+                        else:
+                            # A method/property mutation through an alias can affect
+                            # tracked properties through setters or proxies.
+                            return True
+                        continue
+                    if len(path) >= 2 and path[0] in containers:
+                        return True
+                if (
+                    not simple_alias_assignment
+                    and self._expression_contains_alias(
+                        right, aliases | containers
+                    )
+                ):
                     return True
                 continue
 
             if kind == "mutation":
                 target = next(iter(item.named_children), None)
-                path = self._expression_path(target)
-                if len(path) >= 2 and path[0] in aliases:
-                    if path[1] in names:
-                        states[path[1]] = (
-                            Truth4.ABSENT
-                            if item.type == "unary_expression"
-                            else Truth4.UNKNOWN
-                        )
-                    else:
-                        return True
-                elif path and path[0] in containers:
+                targets = self._assignment_targets(target)
+                if not self.analysis_complete:
                     return True
+                for path, has_dynamic_member in targets:
+                    if (
+                        has_dynamic_member
+                        and path
+                        and path[0] in aliases | containers
+                    ):
+                        return True
+                    if len(path) >= 2 and path[0] in aliases:
+                        if path[1] in names:
+                            states[path[1]] = (
+                                Truth4.ABSENT
+                                if item.type == "unary_expression"
+                                else Truth4.UNKNOWN
+                            )
+                        else:
+                            return True
+                    elif path and path[0] in containers:
+                        return True
                 continue
 
             event = item
@@ -2212,7 +2659,7 @@ class SecurityFlow:
                     )
                 ):
                     return True
-            for arg in self.call_arguments(event):
+            for arg in self._invocation_arguments(event):
                 if self._expression_contains_alias(arg, aliases | containers):
                     return True
             if self._expression_contains_alias(
