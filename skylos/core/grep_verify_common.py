@@ -1034,6 +1034,10 @@ def _streamed_match_can_improve(
     )
 
 
+def _contains_engine_divergent_space(content: str) -> bool:
+    return any(char in content for char in _ENGINE_DIVERGENT_SPACE_CHARS)
+
+
 def _streamed_request_matches(
     request: GrepRequest,
     match: _GrepMatch,
@@ -1047,6 +1051,12 @@ def _streamed_request_matches(
     regex = state.regexes[request]
     assert regex is not None
     python_matches = regex.search(match.content) is not None
+    if (
+        _ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern)
+        and _contains_engine_divergent_space(match.content)
+    ):
+        state.requests_requiring_exact_search.add(request)
+        return False
     if not match.content.isascii():
         needs_adjudication = bool(
             _UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern)
@@ -1517,7 +1527,7 @@ def _space_divergent_lines(
     return [
         (index, match.content)
         for index, match in enumerate(grep_matches)
-        if any(char in match.content for char in _ENGINE_DIVERGENT_SPACE_CHARS)
+        if _contains_engine_divergent_space(match.content)
     ]
 
 
@@ -1656,7 +1666,14 @@ def _run_ripgrep_batch(
     word_divergent_lines = _word_divergent_lines(
         non_ascii_lines, deadline=deadline
     )
-    space_divergent_lines = _space_divergent_lines(grep_matches)
+    has_space_pattern = any(
+        not request.fixed_string
+        and _ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern)
+        for request in batched
+    )
+    space_divergent_lines = (
+        _space_divergent_lines(grep_matches) if has_space_pattern else []
+    )
     unicode_adjudications = 0
     for request in batched:
         if _deadline_expired(deadline):
@@ -1690,7 +1707,7 @@ def _run_ripgrep_batch(
                     if _deadline_expired(deadline):
                         break
                     logger.debug(
-                        "Treating unresolved non-ASCII matches as non-matches "
+                        "Treating unresolved engine-sensitive matches as non-matches "
                         "for %r: %s",
                         request.pattern,
                         exc,
