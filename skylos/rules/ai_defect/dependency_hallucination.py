@@ -5,8 +5,8 @@ import os
 import re
 import site
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 try:
@@ -16,6 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
+    read_project_text_no_symlink,
     read_text_no_symlink,
     save_project_json_cache,
 )
@@ -31,6 +32,8 @@ from skylos.core.safe_cache_io import (
 _IMPORT_TO_DIST_MAPPING: dict[str, str] | None = None
 _MAPPING_FILENAME = "pipreqs_import_mapping.txt"
 MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
+MAX_DEPENDENCY_SCOPE_COMPONENTS = 256
+MAX_DEPENDENCY_SCOPE_PATH_CHARS = 4096
 logger = logging.getLogger(__name__)
 
 
@@ -411,6 +414,20 @@ def _project_dependency_metadata(data):
     return deps, project_name
 
 
+def _dependency_group_names(data):
+    groups = data.get("dependency-groups")
+    if not isinstance(groups, dict):
+        return set()
+
+    deps = set()
+    for specs in groups.values():
+        # PEP 735 also permits {include-group = "..."} entries. Every group
+        # is considered declared here, so collecting the string entries from
+        # all groups already includes the referenced group's dependencies.
+        deps.update(_dependency_names(specs))
+    return deps
+
+
 def _poetry_dependency_names(poetry):
     deps = set()
     poetry_dependencies = poetry.get("dependencies")
@@ -441,28 +458,40 @@ def _poetry_dependency_metadata(data):
     return _poetry_dependency_names(poetry), project_name
 
 
-def _parse_pyproject_toml(path):
-    txt = read_text_no_symlink(
-        path,
-        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
-        encoding="utf-8",
-    )
+def _pyproject_dependency_metadata(data):
+    deps, project_name = _project_dependency_metadata(data)
+    deps.update(_dependency_group_names(data))
+    poetry_deps, poetry_name = _poetry_dependency_metadata(data)
+    deps.update(poetry_deps)
+    if project_name is None:
+        project_name = poetry_name
+    return deps, project_name
+
+
+def _parse_pyproject_toml(path, *, project_root=None):
+    if project_root is None:
+        txt = read_text_no_symlink(
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+        )
+    else:
+        txt = read_project_text_no_symlink(
+            project_root,
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+        )
     if txt is None:
         return set(), None
 
     try:
         data = tomllib.loads(txt)
-    except tomllib.TOMLDecodeError as exc:
+    except (tomllib.TOMLDecodeError, RecursionError, ValueError) as exc:
         logger.debug("Failed to parse dependency metadata from %s: %s", path, exc)
         return set(), None
 
-    deps, project_name = _project_dependency_metadata(data)
-    poetry_deps, poetry_name = _poetry_dependency_metadata(data)
-    deps.update(poetry_deps)
-    if project_name is None:
-        project_name = poetry_name
-
-    return deps, project_name
+    return _pyproject_dependency_metadata(data)
 
 
 def _parse_setup_py(path):
@@ -585,6 +614,119 @@ def _collect_declared_deps(repo_root):
         deps.add(_normalize_name(project_name))
 
     return deps
+
+
+def _nested_pyproject_metadata(repo_root, directory):
+    pyproject = directory / "pyproject.toml"
+    try:
+        if not pyproject.exists():
+            return frozenset(), False
+    except OSError:
+        return frozenset(), False
+
+    deps, project_name = _parse_pyproject_toml(
+        pyproject,
+        project_root=repo_root,
+    )
+    if project_name:
+        deps.add(_normalize_name(project_name))
+    return frozenset(deps), True
+
+
+def _dependency_scope_for_file(
+    repo_root,
+    file_path,
+    scope_cache,
+    extra_deps_by_directory=None,
+):
+    root = Path(os.path.abspath(repo_root))
+    try:
+        raw_path = os.fspath(file_path)
+    except TypeError:
+        return scope_cache[root]
+    if (
+        not isinstance(raw_path, str)
+        or len(raw_path) > MAX_DEPENDENCY_SCOPE_PATH_CHARS
+    ):
+        return scope_cache[root]
+
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = root / path
+    directory = Path(os.path.abspath(path)).parent
+
+    try:
+        relative_directory = directory.relative_to(root)
+    except ValueError:
+        return scope_cache[root]
+    if len(relative_directory.parts) > MAX_DEPENDENCY_SCOPE_COMPONENTS:
+        return scope_cache[root]
+
+    pending = []
+    current = directory
+    while current not in scope_cache:
+        pending.append(current)
+        parent = current.parent
+        if parent == current:
+            return scope_cache[root]
+        current = parent
+
+    declared_deps, manifest_context = scope_cache[current]
+    for nested_directory in reversed(pending):
+        nested_deps, has_pyproject = _nested_pyproject_metadata(
+            root, nested_directory
+        )
+        extra_deps = (
+            extra_deps_by_directory.get(nested_directory, frozenset())
+            if extra_deps_by_directory
+            else frozenset()
+        )
+        if nested_deps or extra_deps:
+            declared_deps = declared_deps.union(nested_deps, extra_deps)
+        manifest_context = manifest_context or has_pyproject or bool(extra_deps)
+        scope_cache[nested_directory] = declared_deps, manifest_context
+
+    return scope_cache[directory]
+
+
+def _normalized_dependency_names(dependencies):
+    if isinstance(dependencies, str):
+        dependencies = (dependencies,)
+
+    normalized = set()
+    for dependency in dependencies or ():
+        name = _normalize_name(dependency)
+        if name:
+            normalized.add(name)
+    return frozenset(normalized)
+
+
+def _split_extra_dependency_scopes(repo_root, extra_declared_deps):
+    """Separate root-wide diff declarations from nested manifest scopes."""
+    if not extra_declared_deps:
+        return frozenset(), {}
+
+    by_directory = getattr(extra_declared_deps, "by_directory", None)
+    if not isinstance(by_directory, dict):
+        return _normalized_dependency_names(extra_declared_deps), {}
+
+    root = Path(os.path.abspath(repo_root))
+    scopes = {}
+    for directory_label, dependencies in by_directory.items():
+        relative = Path(str(directory_label))
+        if relative.is_absolute() or ".." in relative.parts:
+            continue
+        directory = Path(os.path.abspath(root / relative))
+        try:
+            directory.relative_to(root)
+        except ValueError:
+            continue
+
+        names = _normalized_dependency_names(dependencies)
+        if names:
+            scopes[directory] = scopes.get(directory, frozenset()).union(names)
+
+    return scopes.pop(root, frozenset()), scopes
 
 
 def _find_import_line(src, mod):
@@ -848,9 +990,18 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     if repo_root is None:
         return findings
 
-    ctx = _build_dependency_context(repo_root)
+    root = Path(os.path.abspath(repo_root))
+    ctx = _build_dependency_context(root)
+    scope_cache = {
+        root: (frozenset(ctx["declared_deps"]), ctx["manifest_context"])
+    }
 
     for file_path in py_files:
+        declared_deps, manifest_context = _dependency_scope_for_file(
+            root, file_path, scope_cache
+        )
+        ctx["declared_deps"] = declared_deps
+        ctx["manifest_context"] = manifest_context
         try:
             src = file_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
@@ -890,15 +1041,23 @@ def scan_diff_added_imports(
     if repo_root is None:
         return findings, False
 
-    root = Path(repo_root)
+    root = Path(os.path.abspath(repo_root))
     ctx = _build_dependency_context(root)
     if extra_local_modules:
         ctx["local_modules"] = set(ctx["local_modules"]) | set(extra_local_modules)
-    if extra_declared_deps:
-        ctx["declared_deps"] = set(ctx["declared_deps"]) | {
-            _normalize_name(dep) for dep in extra_declared_deps if _normalize_name(dep)
-        }
+    root_extra_deps, scoped_extra_deps = _split_extra_dependency_scopes(
+        root, extra_declared_deps
+    )
+    if root_extra_deps:
+        ctx["declared_deps"] = set(ctx["declared_deps"]) | set(root_extra_deps)
         ctx["manifest_context"] = True
+
+    scope_cache = {
+        root: (
+            frozenset(ctx["declared_deps"]),
+            ctx["manifest_context"],
+        )
+    }
 
     seen = set()
     for file_label, line_no, module_name in added_imports:
@@ -906,6 +1065,15 @@ def scan_diff_added_imports(
         if (file_label, mod) in seen:
             continue
         seen.add((file_label, mod))
+
+        declared_deps, manifest_context = _dependency_scope_for_file(
+            root,
+            file_label,
+            scope_cache,
+            scoped_extra_deps,
+        )
+        ctx["declared_deps"] = declared_deps
+        ctx["manifest_context"] = manifest_context
 
         template = _classify_import(mod, ctx)
         if template is None:
