@@ -77,6 +77,86 @@ const TYPESCRIPT_TYPE_SAFETY_RULES = {
     fix: "Validate or parse the JSON value at runtime before using the domain type.",
     language: "typescript",
   },
+  "SKY-T106": {
+    name: "Unsafe exported API type",
+    severity: "MEDIUM",
+    category: "quality",
+    description:
+      "An exported API exposes exact any, Record<string, any>, or an any-valued index signature.",
+    cwe: "CWE-704",
+    fix: "Use a precise type or unknown with runtime validation.",
+    language: "typescript",
+  },
+};
+
+const GENERATED_CODE_QUALITY_RULES = {
+  "SKY-L007": {
+    name: "Empty error handler",
+    severity: "MEDIUM",
+    category: "quality",
+    description: "An empty error handler silently discards an error.",
+    cwe: "CWE-391",
+    fix: "Handle or report the error, or document why ignoring it is safe.",
+    language: "python, typescript, javascript",
+  },
+  "SKY-L026": {
+    name: "Unfinished code or placeholder default",
+    severity: "MEDIUM",
+    category: "quality",
+    description:
+      "A function body or default value is still an unfinished placeholder.",
+    cwe: "CWE-1164",
+    fix: "Finish the implementation or replace the placeholder with a real value.",
+    language: "python, typescript, javascript",
+  },
+  "SKY-L034": {
+    name: "Repeated mutable alias",
+    severity: "MEDIUM",
+    category: "quality",
+    description:
+      "Sequence multiplication reuses mutable elements by reference across repetitions.",
+    cwe: "CWE-665",
+    fix: "Use a comprehension to create one independent value per slot.",
+    language: "python",
+  },
+  "SKY-L035": {
+    name: "Blanket ESLint disable",
+    severity: "HIGH",
+    category: "quality",
+    description:
+      "A leading bare eslint-disable comment turns off every ESLint rule for the file.",
+    cwe: "CWE-710",
+    fix: "Name only the needed rule and keep the suppression narrow.",
+    language: "typescript, javascript",
+  },
+  "SKY-Q405": {
+    name: "Async Promise executor",
+    severity: "HIGH",
+    category: "quality",
+    description:
+      "The Promise constructor ignores the async result returned by its executor.",
+    cwe: "CWE-755",
+    fix: "Move async work outside the Promise constructor.",
+    language: "typescript, javascript",
+  },
+  "SKY-Q406": {
+    name: "Async Array.forEach callback",
+    severity: "HIGH",
+    category: "quality",
+    description: "Built-in Array.forEach does not await an async callback.",
+    cwe: "CWE-252",
+    fix: "Use for...of or await Promise.all(array.map(...)).",
+    language: "typescript, javascript",
+  },
+  "SKY-Q407": {
+    name: "Discarded async Array.map result",
+    severity: "HIGH",
+    category: "quality",
+    description: "The promises returned by Array.map(async ...) are discarded.",
+    cwe: "CWE-252",
+    fix: "Await Promise.all(...) or return the mapped promises.",
+    language: "typescript, javascript",
+  },
 };
 
 test("TypeScript security rule metadata stays available in the editor", () => {
@@ -87,6 +167,12 @@ test("TypeScript security rule metadata stays available in the editor", () => {
 
 test("TypeScript type-safety rule metadata stays available in the editor", () => {
   for (const [ruleId, expected] of Object.entries(TYPESCRIPT_TYPE_SAFETY_RULES)) {
+    assert.deepEqual(getRuleMeta(ruleId), expected, ruleId);
+  }
+});
+
+test("generated-code quality rule metadata stays available in the editor", () => {
+  for (const [ruleId, expected] of Object.entries(GENERATED_CODE_QUALITY_RULES)) {
     assert.deepEqual(getRuleMeta(ruleId), expected, ruleId);
   }
 });

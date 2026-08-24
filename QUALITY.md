@@ -49,7 +49,7 @@ advisory checks first.
 | Anti-pattern try block | SKY-L004 | Nested try, or try wrapping too much logic |
 | Unused exception variable | SKY-L005 | `except ValueError as e:` where `e` is never used |
 | Inconsistent return | SKY-L006 | Mixed value returns and bare/`None` returns |
-| Empty error handler | SKY-L007 | Silent `except: pass` / swallowed context-manager errors |
+| Empty error handler | SKY-L007 | Silent Python handlers or empty TS/JS `catch` blocks |
 | Missing resource cleanup | SKY-L008 | `open()` without a context manager or close path |
 | Debug leftover | SKY-L009 | `print()` / `breakpoint()` in production code |
 | Security TODO | SKY-L010 | Comments that defer auth/security fixes |
@@ -60,18 +60,21 @@ advisory checks first.
 | Error disclosure | SKY-L017 | Exception details returned from handlers |
 | Broad file permissions | SKY-L020 | World-writable or overly broad file modes |
 | Stale mock | SKY-L024 | Tests mocking symbols that no longer exist |
-| Unfinished generation | SKY-L026 | Incomplete functions or unhandled `...` defaults |
+| Unfinished code or placeholder default | SKY-L026 | Incomplete Python bodies/defaults or TS/JS functions that only throw "Not implemented" |
 | Duplicate string literal | SKY-L027 | Repeated long literals that should be named constants |
 | Too many returns | SKY-L028 | Functions with excessive exit paths |
 | Boolean trap | SKY-L029 | Public APIs with unclear boolean flags |
 | Broad exception | SKY-L030 | Broad `Exception` handlers with trivial bodies |
 | Missing network timeout | SKY-L031 | HTTP calls without explicit timeout |
+| Repeated mutable alias | SKY-L034 | Sequence multiplication can reuse mutable elements across repetitions instead of creating independent values |
+| Blanket ESLint disable | SKY-L035 | A leading bare `/* eslint-disable */` disables every rule for the file |
 | **Type Checking** | | |
 | Untyped public parameters | SKY-T101 | Public functions in typed modules missing parameter annotations |
 | Missing public return type | SKY-T102 | Public functions in typed modules missing return annotations |
 | Suspicious chained assertion | SKY-T103 | A cast reaches a precise type through `any`, `unknown`, `object`, or `{}` |
 | TypeScript compiler suppression | SKY-T104 | Effective `@ts-ignore` or file-wide `@ts-nocheck` directives |
 | Unvalidated JSON assertion | SKY-T105 | A direct `JSON.parse()` or proven fetch `Response.json()` result is asserted without validation |
+| Unsafe exported API type | SKY-T106 | Exported TS APIs expose exact `any`, `Record<string, any>`, or an any-valued index signature |
 | **Framework Practices** | | |
 | FastAPI response contract | SKY-F101 | Route lacks `response_model`, `response_class`, or return annotation |
 | Mutating route auth guard | SKY-F102 | POST/PUT/PATCH/DELETE route lacks obvious auth/dependency guard |
@@ -85,6 +88,9 @@ advisory checks first.
 | Blocking call in async code | SKY-Q401 | Synchronous I/O or blocking calls in async handlers |
 | Lock order inversion | SKY-Q403 | Nested locks acquired in inconsistent order |
 | Thread shared state mutation | SKY-Q404 | Thread target mutates module state without an obvious lock |
+| Async Promise executor | SKY-Q405 | `new Promise(async ...)` ignores the executor's async result; an async-generator executor never runs |
+| Async `forEach` callback | SKY-Q406 | Built-in `Array.forEach` does not await an async callback |
+| Discarded async `map` result | SKY-Q407 | An `Array.map(async ...)` result is thrown away without consuming its promises |
 | God class | SKY-Q501 | Classes with too many methods or attributes |
 | God file | SKY-Q502 | Files with too many code lines or too many responsibilities |
 | Coupling | SKY-Q701 | Classes coupled to too many other classes |

@@ -5,6 +5,7 @@ from skylos.rules.quality.logic_foundation import (
     EmptyErrorHandlerRule,
     MissingResourceCleanupRule,
     MutableDefaultRule,
+    RepeatedMutableAliasRule,
     ReturnConsistencyRule,
     TryBlockPatternsRule,
     UnusedExceptVarRule,
@@ -33,6 +34,7 @@ from skylos.rules.quality.logic_security import (
 
 __all__ = [
     "MutableDefaultRule",
+    "RepeatedMutableAliasRule",
     "BareExceptRule",
     "DangerousComparisonRule",
     "DuplicateBranchRule",

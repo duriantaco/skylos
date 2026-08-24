@@ -3,7 +3,8 @@ from __future__ import annotations
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Query, QueryCursor
 
-from .type_safety import scan_type_safety
+from .quality_signals import scan_quality_signals
+from .type_safety import _is_generated_file, scan_type_safety
 
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())
@@ -221,8 +222,28 @@ def scan_quality(
     # --- Unreachable code (SKY-UC002) ---
     _check_unreachable_code(root_node, source, file_path, findings)
 
-    # --- Type-evidence bypasses (SKY-T103 through SKY-T105) ---
-    findings.extend(scan_type_safety(root_node, source, file_path, lang))
+    # --- Type-evidence bypasses (SKY-T103 through SKY-T106) ---
+    generated_file = _is_generated_file(file_path, source)
+    findings.extend(
+        scan_type_safety(
+            root_node,
+            source,
+            file_path,
+            lang,
+            generated_file=generated_file,
+        )
+    )
+
+    # --- Concrete generated-code quality mistakes ---
+    findings.extend(
+        scan_quality_signals(
+            root_node,
+            source,
+            file_path,
+            lang,
+            generated_file=generated_file,
+        )
+    )
 
     return findings
 

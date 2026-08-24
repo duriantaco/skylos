@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from bisect import bisect_right
 from pathlib import Path
 
-from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_typescript as tsts
+from tree_sitter import Language, Parser, Query, QueryCursor
+
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript.safe_glob import safe_glob_paths
 
@@ -176,6 +178,9 @@ class TypeScriptCore:
         self.defs: list[Definition] = []
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
+        self._self_ref_index: (
+            dict[str, tuple[tuple[int, ...], tuple[int, ...]]] | None
+        ) = None
 
         self._suffix = Path(str(file_path)).suffix.lower()
         self._uses_jsx_parser = self._suffix in _JSX_EXTENSIONS
@@ -219,14 +224,39 @@ class TypeScriptCore:
     }
 
     def _is_self_ref(self, node, name: str) -> bool:
-        current = node.parent
-        while current:
-            if current.type in self._SELF_REF_CONTAINERS:
-                name_node = current.child_by_field_name("name")
-                if name_node and self._get_text(name_node) == name:
-                    return True
-            current = current.parent
-        return False
+        if self._self_ref_index is None:
+            spans_by_name: dict[str, list[tuple[int, int]]] = {}
+            if self.root_node is not None:
+                for candidate in self._iter_nodes(self.root_node):
+                    if candidate.type not in self._SELF_REF_CONTAINERS:
+                        continue
+                    name_node = candidate.child_by_field_name("name")
+                    if name_node is None:
+                        continue
+                    spans_by_name.setdefault(self._get_text(name_node), []).append(
+                        (candidate.start_byte, candidate.end_byte)
+                    )
+
+            self._self_ref_index = {}
+            for container_name, spans in spans_by_name.items():
+                starts: list[int] = []
+                prefix_max_ends: list[int] = []
+                max_end = -1
+                for start, end in sorted(spans):
+                    starts.append(start)
+                    max_end = max(max_end, end)
+                    prefix_max_ends.append(max_end)
+                self._self_ref_index[container_name] = (
+                    tuple(starts),
+                    tuple(prefix_max_ends),
+                )
+
+        indexed = self._self_ref_index.get(name)
+        if indexed is None:
+            return False
+        starts, prefix_max_ends = indexed
+        position = bisect_right(starts, node.start_byte) - 1
+        return position >= 0 and prefix_max_ends[position] >= node.end_byte
 
     def _add_ref(self, node) -> None:
         name = self._get_text(node)
@@ -630,7 +660,9 @@ class TypeScriptCore:
         for node in self._iter_nodes(self.root_node):
             if node.type != "import_specifier":
                 continue
-            identifiers = [child for child in node.children if child.type == "identifier"]
+            identifiers = [
+                child for child in node.children if child.type == "identifier"
+            ]
             if len(identifiers) < 2:
                 continue
             alias_node = identifiers[-1]

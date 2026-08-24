@@ -1,8 +1,8 @@
 import ast
+import operator
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
-
 
 MUTABLE_CONSTRUCTORS = {
     "list",
@@ -78,6 +78,995 @@ class MutableDefaultRule(SkylosRule):
         if findings:
             return findings
         return None
+
+
+_MUTABLE_REPEAT_ELEMENTS = (
+    ast.List,
+    ast.Dict,
+    ast.Set,
+    ast.ListComp,
+    ast.DictComp,
+    ast.SetComp,
+)
+_BUILTIN_MUTABLE_REPEAT_CONSTRUCTORS = {"dict", "list", "set"}
+
+_UNKNOWN_REPEAT_COUNT = object()
+_NON_INTEGER_REPEAT_COUNT = object()
+_MAX_STATIC_REPEAT_NODES = 16
+_MAX_STATIC_REPEAT_BITS = 128
+_MAX_PROVEN_SEQUENCE_NODES = 128
+
+_STATIC_REPEAT_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+    ast.Invert: operator.invert,
+}
+_STATIC_REPEAT_BINARY_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift,
+    ast.BitOr: operator.or_,
+    ast.BitXor: operator.xor,
+    ast.BitAnd: operator.and_,
+}
+
+
+def _static_repeat_count(node: ast.AST):
+    """Evaluate a small, bounded subset of constant integer expressions."""
+    remaining = [_MAX_STATIC_REPEAT_NODES]
+
+    def evaluate(current: ast.AST):
+        remaining[0] -= 1
+        if remaining[0] < 0:
+            return _UNKNOWN_REPEAT_COUNT
+
+        if isinstance(current, ast.Constant):
+            value = current.value
+            if type(value) is not int:
+                return int(value) if type(value) is bool else _NON_INTEGER_REPEAT_COUNT
+        elif isinstance(current, ast.UnaryOp):
+            operation = _STATIC_REPEAT_UNARY_OPS.get(type(current.op))
+            operands = (evaluate(current.operand),)
+        elif isinstance(current, ast.BinOp):
+            operation = _STATIC_REPEAT_BINARY_OPS.get(type(current.op))
+            operands = (evaluate(current.left), evaluate(current.right))
+        else:
+            return _UNKNOWN_REPEAT_COUNT
+
+        if isinstance(current, ast.Constant):
+            result = current.value
+        elif operation is None or any(
+            value is _UNKNOWN_REPEAT_COUNT for value in operands
+        ):
+            return _UNKNOWN_REPEAT_COUNT
+        elif any(value is _NON_INTEGER_REPEAT_COUNT for value in operands):
+            return _NON_INTEGER_REPEAT_COUNT
+        else:
+            if isinstance(current, ast.BinOp) and isinstance(
+                current.op, (ast.LShift, ast.RShift)
+            ):
+                left, right = operands
+                if right < 0:
+                    return _NON_INTEGER_REPEAT_COUNT
+                if isinstance(current.op, ast.LShift):
+                    if left == 0:
+                        return 0
+                    if left < 0 and (
+                        right > _MAX_STATIC_REPEAT_BITS
+                        or left.bit_length() + right > _MAX_STATIC_REPEAT_BITS
+                    ):
+                        return -1
+                    if (
+                        right > _MAX_STATIC_REPEAT_BITS
+                        or left.bit_length() + right > _MAX_STATIC_REPEAT_BITS
+                    ):
+                        return _UNKNOWN_REPEAT_COUNT
+                elif right > _MAX_STATIC_REPEAT_BITS:
+                    return 0 if left >= 0 else -1
+            try:
+                result = operation(*operands)
+            except (ArithmeticError, ValueError):
+                return _NON_INTEGER_REPEAT_COUNT
+
+        if type(result) is bool:
+            result = int(result)
+        if type(result) is not int:
+            return _NON_INTEGER_REPEAT_COUNT
+        if result.bit_length() > _MAX_STATIC_REPEAT_BITS:
+            return _UNKNOWN_REPEAT_COUNT
+        return result
+
+    return evaluate(node)
+
+
+def _repeat_count_may_be_integer(node: ast.AST) -> bool:
+    return _static_repeat_count(node) is not _NON_INTEGER_REPEAT_COUNT
+
+
+def _starred_contains_proven_mutable_element(
+    node: ast.AST,
+    cache: dict[ast.AST, tuple[type[ast.AST], bool] | None],
+    *,
+    builtin_bool_calls: set[ast.Call],
+    builtin_mutable_constructor_calls: set[ast.Call],
+    bool_count_loads: set[ast.Name],
+    budget: list[int],
+) -> bool:
+    """Return whether unpacking *node can emit a known mutable value."""
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return any(
+            _contains_proven_mutable_element(
+                element,
+                cache,
+                builtin_bool_calls=builtin_bool_calls,
+                builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+                bool_count_loads=bool_count_loads,
+                budget=budget,
+            )
+            for element in node.elts
+        )
+    if isinstance(node, ast.Dict):
+        return any(
+            _contains_proven_mutable_element(
+                key,
+                cache,
+                builtin_bool_calls=builtin_bool_calls,
+                builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+                bool_count_loads=bool_count_loads,
+                budget=budget,
+            )
+            for key in node.keys
+            if key is not None
+        )
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        return _contains_proven_mutable_element(
+            node.elt,
+            cache,
+            builtin_bool_calls=builtin_bool_calls,
+            builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+            bool_count_loads=bool_count_loads,
+            budget=budget,
+        )
+    if isinstance(node, ast.DictComp):
+        return _contains_proven_mutable_element(
+            node.key,
+            cache,
+            builtin_bool_calls=builtin_bool_calls,
+            builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+            bool_count_loads=bool_count_loads,
+            budget=budget,
+        )
+
+    fact = _proven_sequence_fact(
+        node,
+        cache,
+        builtin_bool_calls=builtin_bool_calls,
+        builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+        bool_count_loads=bool_count_loads,
+        _budget=budget,
+    )
+    return fact is not None and fact[1]
+
+
+def _contains_proven_mutable_element(
+    node: ast.AST,
+    cache: dict[ast.AST, tuple[type[ast.AST], bool] | None],
+    *,
+    builtin_bool_calls: set[ast.Call],
+    builtin_mutable_constructor_calls: set[ast.Call],
+    bool_count_loads: set[ast.Name],
+    budget: list[int],
+) -> bool:
+    stack = [(node, budget[0])]
+    while stack:
+        current, remaining = stack.pop()
+        if isinstance(current, _MUTABLE_REPEAT_ELEMENTS) or (
+            isinstance(current, ast.Call)
+            and current in builtin_mutable_constructor_calls
+        ):
+            return True
+        if isinstance(current, ast.Starred):
+            if remaining <= 0:
+                continue
+            if _starred_contains_proven_mutable_element(
+                current.value,
+                cache,
+                builtin_bool_calls=builtin_bool_calls,
+                builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+                bool_count_loads=bool_count_loads,
+                budget=[remaining - 1],
+            ):
+                return True
+            continue
+        if isinstance(current, ast.Tuple):
+            if remaining <= 0:
+                continue
+            stack.extend((element, remaining - 1) for element in current.elts)
+            continue
+        if isinstance(current, ast.BinOp) and isinstance(
+            current.op, (ast.Add, ast.Mult)
+        ):
+            if remaining <= 0:
+                continue
+            fact = _proven_sequence_fact(
+                current,
+                cache,
+                builtin_bool_calls=builtin_bool_calls,
+                builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+                bool_count_loads=bool_count_loads,
+                _budget=[remaining],
+            )
+            if fact is not None and (fact[0] is ast.List or fact[1]):
+                return True
+    return False
+
+
+def _proven_sequence_fact(
+    node: ast.AST,
+    cache: dict[ast.AST, tuple[type[ast.AST], bool] | None],
+    *,
+    builtin_bool_calls: set[ast.Call] | None = None,
+    builtin_mutable_constructor_calls: set[ast.Call] | None = None,
+    bool_count_loads: set[ast.Name] | None = None,
+    _budget: list[int] | None = None,
+) -> tuple[type[ast.AST], bool] | None:
+    builtin_bool_calls = builtin_bool_calls or set()
+    builtin_mutable_constructor_calls = builtin_mutable_constructor_calls or set()
+    bool_count_loads = bool_count_loads or set()
+    budget = _budget if _budget is not None else [_MAX_PROVEN_SEQUENCE_NODES]
+    if node in cache:
+        return cache[node]
+    stack = [(node, False)]
+    touched: list[ast.AST] = []
+    while stack:
+        current, closing = stack.pop()
+        if current in cache:
+            continue
+        if budget[0] <= 0:
+            for pending in touched:
+                cache.setdefault(pending, None)
+            return None
+        if not closing:
+            budget[0] -= 1
+            touched.append(current)
+            if isinstance(current, (ast.List, ast.Tuple)):
+                cache[current] = (
+                    type(current),
+                    any(
+                        _contains_proven_mutable_element(
+                            element,
+                            cache,
+                            builtin_bool_calls=builtin_bool_calls,
+                            builtin_mutable_constructor_calls=builtin_mutable_constructor_calls,
+                            bool_count_loads=bool_count_loads,
+                            budget=[_MAX_PROVEN_SEQUENCE_NODES],
+                        )
+                        for element in current.elts
+                    ),
+                )
+                continue
+            if not isinstance(current, ast.BinOp) or not isinstance(
+                current.op, (ast.Add, ast.Mult)
+            ):
+                cache[current] = None
+                continue
+            stack.append((current, True))
+            stack.append((current.right, False))
+            stack.append((current.left, False))
+            continue
+
+        left = cache.get(current.left)
+        right = cache.get(current.right)
+        if isinstance(current.op, ast.Add):
+            cache[current] = (
+                (left[0], left[1] or right[1])
+                if left is not None and right is not None and left[0] is right[0]
+                else None
+            )
+            continue
+        if (left is None) == (right is None):
+            cache[current] = None
+            continue
+        sequence, count = (
+            (left, current.right) if left is not None else (right, current.left)
+        )
+        count_value = _static_repeat_count(count)
+        if count_value == 1:
+            cache[current] = sequence
+        elif isinstance(count_value, int) and count_value <= 0:
+            cache[current] = sequence[0], False
+        elif count_value is _NON_INTEGER_REPEAT_COUNT:
+            cache[current] = None
+        elif (
+            not sequence[1] and _repeat_count_may_be_integer(count)
+        ) or not _repeat_count_can_alias(
+            count,
+            builtin_bool_calls=builtin_bool_calls,
+            bool_count_loads=bool_count_loads,
+        ):
+            cache[current] = sequence
+        else:
+            cache[current] = None
+    return cache.get(node)
+
+
+def _repeat_count_can_alias(
+    node: ast.AST,
+    *,
+    builtin_bool_calls: set[ast.Call],
+    bool_count_loads: set[ast.Name] | None = None,
+) -> bool:
+    if bool_count_loads is not None and node in bool_count_loads:
+        return False
+    if isinstance(node, (ast.Compare, ast.UnaryOp)) and (
+        isinstance(node, ast.Compare) or isinstance(node.op, ast.Not)
+    ):
+        return False
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+        and node in builtin_bool_calls
+    ):
+        return False
+    value = _static_repeat_count(node)
+    if value is _UNKNOWN_REPEAT_COUNT:
+        return True
+    if isinstance(value, int):
+        return value > 1
+    return False
+
+
+def _is_exact_bool_annotation(node: ast.AST | None) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "bool") or (
+        isinstance(node, ast.Constant) and node.value == "bool"
+    )
+
+
+def _has_statically_aliasing_default(node: ast.AST) -> bool:
+    value = _static_repeat_count(node)
+    return isinstance(value, int) and value > 1
+
+
+def _import_binding(alias: ast.alias, *, from_import: bool) -> str:
+    if alias.asname:
+        return alias.asname
+    return alias.name if from_import else alias.name.split(".", 1)[0]
+
+
+class _BoolScope:
+    __slots__ = (
+        "annotation_bool_shadowed",
+        "binding_positions",
+        "bool_calls",
+        "bound_names",
+        "global_names",
+        "kind",
+        "mutable_constructor_calls",
+        "name_loads",
+        "nonlocal_names",
+        "nonlocal_writes",
+        "owner",
+        "parent",
+        "type_param_names",
+        "typed_bool_names",
+        "typing_parent",
+        "walrus_owner",
+        "wildcard_import",
+        "written_names",
+    )
+
+    def __init__(
+        self,
+        kind: str,
+        parent: "_BoolScope | None",
+        owner: ast.AST | None = None,
+    ):
+        self.kind = kind
+        self.parent = parent
+        self.owner = owner
+        self.typing_parent = parent
+        self.walrus_owner = self
+        self.bound_names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+        self.nonlocal_writes: set[str] = set()
+        self.wildcard_import = False
+        self.binding_positions: dict[str, list[tuple[int, int] | None]] = {}
+        self.bool_calls: list[ast.Call] = []
+        self.mutable_constructor_calls: list[ast.Call] = []
+        self.name_loads: list[ast.Name] = []
+        self.typed_bool_names: set[str] = set()
+        self.type_param_names: set[str] = set()
+        self.written_names: set[str] = set()
+        self.annotation_bool_shadowed = False
+
+
+def _non_class_parent(scope: _BoolScope) -> _BoolScope:
+    current = scope
+    while current.kind == "class" and current.parent is not None:
+        current = current.parent
+    return current
+
+
+_UNKNOWN_NAME_OWNER = object()
+
+
+def _type_parameter_names(node: ast.AST) -> set[str]:
+    names = set()
+    for parameter in getattr(node, "type_params", ()):
+        name = getattr(parameter, "name", None)
+        if isinstance(name, str):
+            names.add(name)
+        elif isinstance(name, ast.Name):
+            names.add(name.id)
+    return names
+
+
+def _scope_declarations(statements: list[ast.stmt]) -> tuple[set[str], set[str]]:
+    """Collect declarations belonging to one statement scope."""
+    global_names: set[str] = set()
+    nonlocal_names: set[str] = set()
+    stack: list[ast.AST] = list(reversed(statements))
+    nested_scopes = (
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Global):
+            global_names.update(current.names)
+            continue
+        if isinstance(current, ast.Nonlocal):
+            nonlocal_names.update(current.names)
+            continue
+        if isinstance(current, nested_scopes):
+            continue
+        stack.extend(ast.iter_child_nodes(current))
+    return global_names, nonlocal_names
+
+
+def _node_position(node: ast.AST) -> tuple[int, int]:
+    return getattr(node, "lineno", 0), getattr(node, "col_offset", 0)
+
+
+def _scope_statement_position(
+    node: ast.AST,
+    scope: _BoolScope,
+    parents: dict[ast.AST, ast.AST],
+) -> tuple[int, int] | None:
+    """Return the direct module/class statement containing a node."""
+    if scope.owner is None:
+        return None
+    current = node
+    while current in parents:
+        parent = parents[current]
+        if parent is scope.owner:
+            return _node_position(current)
+        current = parent
+    return None
+
+
+def _record_binding(
+    name: str | None,
+    scope: _BoolScope,
+    module: _BoolScope,
+    *,
+    origin: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+    execution_scope: _BoolScope | None = None,
+) -> None:
+    if not name:
+        return
+    if scope.kind != "module" and name in scope.global_names:
+        target = module
+    elif scope.kind != "module" and name in scope.nonlocal_names:
+        scope.nonlocal_writes.add(name)
+        return
+    else:
+        target = scope
+    target.bound_names.add(name)
+    target.written_names.add(name)
+    if target.kind in {"module", "class"}:
+        current = execution_scope or scope
+        while current is not None and current.kind not in {"function", "generator"}:
+            current = current.parent
+        effective_position = (
+            None
+            if current is not None
+            else _scope_statement_position(origin, target, parents)
+        )
+        target.binding_positions.setdefault(name, []).append(effective_position)
+
+
+def _mark_wildcard_import(scope: _BoolScope) -> None:
+    scope.wildcard_import = True
+
+
+def _resolve_name(
+    scope: _BoolScope,
+    name: str,
+    module_scope: _BoolScope,
+    memo: dict[tuple[_BoolScope, str], _BoolScope | object | None],
+) -> _BoolScope | object | None:
+    """Resolve a load to its static owner, None for builtin, or unknown."""
+    trail: list[tuple[_BoolScope, str]] = []
+    current: _BoolScope | None = scope
+    seen: set[int] = set()
+    result: _BoolScope | object | None
+
+    while current is not None:
+        key = (current, name)
+        if key in memo:
+            result = memo[key]
+            break
+        if id(current) in seen:
+            result = _UNKNOWN_NAME_OWNER
+            break
+        seen.add(id(current))
+        trail.append(key)
+
+        if current.kind != "module" and name in current.global_names:
+            current = module_scope
+            continue
+        if current.kind != "module" and name in current.nonlocal_names:
+            enclosing = current.parent
+            while enclosing is not None and enclosing.kind != "module":
+                if name in enclosing.bound_names:
+                    result = enclosing
+                    break
+                if enclosing.wildcard_import:
+                    result = _UNKNOWN_NAME_OWNER
+                    break
+                enclosing = enclosing.parent
+            else:
+                result = _UNKNOWN_NAME_OWNER
+            break
+        if name in current.bound_names:
+            result = current
+            break
+        if current.wildcard_import:
+            result = _UNKNOWN_NAME_OWNER
+            break
+        current = current.parent
+    else:
+        result = None
+
+    for key in trail:
+        memo[key] = result
+    return result
+
+
+def _binding_is_visible_at(
+    scope: _BoolScope,
+    name: str,
+    node: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    effects = scope.binding_positions.get(name)
+    if not effects:
+        return True
+    position = _scope_statement_position(node, scope, parents)
+    return position is None or any(
+        effect is None or effect <= position for effect in effects
+    )
+
+
+def _name_resolves_to_builtin_at(
+    scope: _BoolScope,
+    name: str,
+    node: ast.AST,
+    module_scope: _BoolScope,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    """Resolve a call-time name while preserving module/class execution order."""
+    current: _BoolScope | None = scope
+    deferred_execution = False
+    seen: set[int] = set()
+
+    while current is not None:
+        if id(current) in seen:
+            return False
+        seen.add(id(current))
+        if current.kind in {"function", "generator"}:
+            deferred_execution = True
+
+        if current.kind != "module" and name in current.global_names:
+            current = module_scope
+            continue
+        if current.kind != "module" and name in current.nonlocal_names:
+            enclosing = current.parent
+            while enclosing is not None and enclosing.kind != "module":
+                if name in enclosing.bound_names or enclosing.wildcard_import:
+                    return False
+                enclosing = enclosing.parent
+            return False
+
+        if name in current.bound_names:
+            order_sensitive = current.kind in {"module", "class"} and not (
+                deferred_execution
+            )
+            if not order_sensitive or _binding_is_visible_at(
+                current, name, node, parents
+            ):
+                return False
+        if current.wildcard_import:
+            return False
+        current = current.parent
+
+    return True
+
+
+def _bool_resolves_to_builtin(
+    scope: _BoolScope,
+    module_scope: _BoolScope,
+    memo: dict[tuple[_BoolScope, str], _BoolScope | object | None],
+) -> bool:
+    return _resolve_name(scope, "bool", module_scope, memo) is None
+
+
+def _function_scope(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+    parent: _BoolScope,
+) -> _BoolScope:
+    scope = _BoolScope("function", _non_class_parent(parent))
+    scope.typing_parent = parent
+    parameters = (
+        *node.args.posonlyargs,
+        *node.args.args,
+        *node.args.kwonlyargs,
+    )
+    if node.args.vararg is not None:
+        parameters = (*parameters, node.args.vararg)
+    if node.args.kwarg is not None:
+        parameters = (*parameters, node.args.kwarg)
+    scope.bound_names.update(parameter.arg for parameter in parameters)
+
+    positional_parameters = (*node.args.posonlyargs, *node.args.args)
+    defaults_by_name = {
+        parameter.arg: default
+        for parameter, default in zip(
+            positional_parameters[-len(node.args.defaults) :],
+            node.args.defaults,
+        )
+    }
+    defaults_by_name.update(
+        {
+            parameter.arg: default
+            for parameter, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+            if default is not None
+        }
+    )
+    scope.typed_bool_names = {
+        parameter.arg
+        for parameter in parameters
+        if _is_exact_bool_annotation(parameter.annotation)
+        and (
+            parameter.arg not in defaults_by_name
+            or not _has_statically_aliasing_default(defaults_by_name[parameter.arg])
+        )
+    }
+    scope.type_param_names = _type_parameter_names(node)
+    scope.bound_names.update(scope.type_param_names)
+    scope.annotation_bool_shadowed = "bool" in scope.type_param_names
+    if not isinstance(node, ast.Lambda):
+        scope.global_names, scope.nonlocal_names = _scope_declarations(node.body)
+    return scope
+
+
+def _push_function_children(stack: list, node, outer, function_scope) -> None:
+    stack.extend((statement, function_scope) for statement in reversed(node.body))
+    annotation_nodes = [
+        *(parameter.annotation for parameter in node.args.posonlyargs),
+        *(parameter.annotation for parameter in node.args.args),
+        *(parameter.annotation for parameter in node.args.kwonlyargs),
+        node.args.vararg.annotation if node.args.vararg is not None else None,
+        node.args.kwarg.annotation if node.args.kwarg is not None else None,
+        getattr(node, "returns", None),
+    ]
+    stack.extend((annotation, outer) for annotation in annotation_nodes if annotation)
+    stack.extend((default, outer) for default in reversed(node.args.defaults))
+    stack.extend(
+        (default, outer)
+        for default in reversed(node.args.kw_defaults)
+        if default is not None
+    )
+    stack.extend(
+        (decorator, outer)
+        for decorator in reversed(getattr(node, "decorator_list", []))
+    )
+
+
+def _push_comprehension_children(stack: list, node, outer, scope) -> None:
+    generators = node.generators
+    if generators:
+        first, *rest = generators
+        stack.append((first.iter, outer))
+        stack.append((first.target, scope))
+        stack.extend((condition, scope) for condition in reversed(first.ifs))
+        for generator in reversed(rest):
+            stack.append((generator.iter, scope))
+            stack.append((generator.target, scope))
+            stack.extend((condition, scope) for condition in reversed(generator.ifs))
+    if isinstance(node, ast.DictComp):
+        stack.append((node.value, scope))
+        stack.append((node.key, scope))
+    else:
+        stack.append((node.elt, scope))
+
+
+def _module_repeat_facts(
+    tree: ast.Module,
+) -> tuple[set[ast.Call], set[ast.Name], set[ast.Call]]:
+    """Collect scope-aware facts used to prove safe counts and mutable values."""
+    parents: dict[ast.AST, ast.AST] = {}
+    parent_stack = [tree]
+    while parent_stack:
+        parent = parent_stack.pop()
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+            parent_stack.append(child)
+
+    module_scope = _BoolScope("module", None, tree)
+    scopes = [module_scope]
+    stack: list[tuple[ast.AST, _BoolScope]] = [(tree, module_scope)]
+
+    while stack:
+        node, scope = stack.pop()
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _record_binding(
+                node.name,
+                scope,
+                module_scope,
+                origin=node,
+                parents=parents,
+            )
+            child_scope = _function_scope(node, scope)
+            scopes.append(child_scope)
+            _push_function_children(stack, node, scope, child_scope)
+            continue
+        if isinstance(node, ast.Lambda):
+            child_scope = _function_scope(node, scope)
+            scopes.append(child_scope)
+            stack.append((node.body, child_scope))
+            stack.extend((default, scope) for default in reversed(node.args.defaults))
+            stack.extend(
+                (default, scope)
+                for default in reversed(node.args.kw_defaults)
+                if default is not None
+            )
+            continue
+        if isinstance(node, ast.ClassDef):
+            _record_binding(
+                node.name,
+                scope,
+                module_scope,
+                origin=node,
+                parents=parents,
+            )
+            child_scope = _BoolScope("class", _non_class_parent(scope), node)
+            child_scope.typing_parent = scope
+            child_scope.type_param_names = _type_parameter_names(node)
+            child_scope.bound_names.update(child_scope.type_param_names)
+            child_scope.annotation_bool_shadowed = (
+                "bool" in child_scope.type_param_names
+            )
+            child_scope.global_names, child_scope.nonlocal_names = _scope_declarations(
+                node.body
+            )
+            scopes.append(child_scope)
+            stack.extend((statement, child_scope) for statement in reversed(node.body))
+            stack.extend((base, scope) for base in reversed(node.bases))
+            stack.extend((keyword.value, scope) for keyword in reversed(node.keywords))
+            stack.extend(
+                (decorator, scope) for decorator in reversed(node.decorator_list)
+            )
+            continue
+        if isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            kind = (
+                "generator" if isinstance(node, ast.GeneratorExp) else "comprehension"
+            )
+            child_scope = _BoolScope(kind, _non_class_parent(scope))
+            child_scope.walrus_owner = scope.walrus_owner
+            scopes.append(child_scope)
+            _push_comprehension_children(stack, node, scope, child_scope)
+            continue
+
+        if isinstance(node, ast.NamedExpr):
+            if isinstance(node.target, ast.Name):
+                _record_binding(
+                    node.target.id,
+                    scope.walrus_owner,
+                    module_scope,
+                    origin=node,
+                    parents=parents,
+                    execution_scope=scope,
+                )
+            stack.append((node.value, scope))
+            continue
+
+        if isinstance(node, ast.Global):
+            scope.global_names.update(node.names)
+            continue
+        if isinstance(node, ast.Nonlocal):
+            scope.nonlocal_names.update(node.names)
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            from_import = isinstance(node, ast.ImportFrom)
+            for alias in node.names:
+                if from_import and alias.name == "*":
+                    _mark_wildcard_import(scope)
+                else:
+                    _record_binding(
+                        _import_binding(alias, from_import=from_import),
+                        scope,
+                        module_scope,
+                        origin=node,
+                        parents=parents,
+                    )
+            continue
+        if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            _record_binding(
+                node.name,
+                scope,
+                module_scope,
+                origin=node,
+                parents=parents,
+            )
+        elif isinstance(node, ast.MatchMapping):
+            _record_binding(
+                node.rest,
+                scope,
+                module_scope,
+                origin=node,
+                parents=parents,
+            )
+        elif isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load):
+                scope.name_loads.append(node)
+            elif isinstance(node.ctx, (ast.Store, ast.Del)):
+                _record_binding(
+                    node.id,
+                    scope,
+                    module_scope,
+                    origin=node,
+                    parents=parents,
+                )
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "bool":
+                scope.bool_calls.append(node)
+            elif node.func.id in _BUILTIN_MUTABLE_REPEAT_CONSTRUCTORS:
+                scope.mutable_constructor_calls.append(node)
+        stack.extend((child, scope) for child in ast.iter_child_nodes(node))
+
+    resolution_memo: dict[tuple[_BoolScope, str], _BoolScope | object | None] = {}
+    for scope in scopes:
+        for name in scope.nonlocal_writes:
+            owner = _resolve_name(scope, name, module_scope, resolution_memo)
+            if isinstance(owner, _BoolScope):
+                owner.written_names.add(name)
+
+    builtin_calls = {
+        call
+        for scope in scopes
+        for call in scope.bool_calls
+        if _name_resolves_to_builtin_at(scope, "bool", call, module_scope, parents)
+    }
+    builtin_mutable_constructor_calls = {
+        call
+        for scope in scopes
+        for call in scope.mutable_constructor_calls
+        if _name_resolves_to_builtin_at(
+            scope, call.func.id, call, module_scope, parents
+        )
+    }
+    stable_loads = set()
+    for scope in scopes:
+        for load in scope.name_loads:
+            owner = _resolve_name(scope, load.id, module_scope, resolution_memo)
+            if (
+                isinstance(owner, _BoolScope)
+                and load.id in owner.typed_bool_names
+                and load.id not in owner.written_names
+                and not owner.annotation_bool_shadowed
+                and owner.typing_parent is not None
+                and _bool_resolves_to_builtin(
+                    owner.typing_parent, module_scope, resolution_memo
+                )
+            ):
+                stable_loads.add(load)
+    return builtin_calls, stable_loads, builtin_mutable_constructor_calls
+
+
+class RepeatedMutableAliasRule(SkylosRule):
+    rule_id = "SKY-L034"
+    name = "Repeated Mutable Alias"
+
+    def __init__(self):
+        self._bool_count_loads: set[ast.Name] = set()
+        self._builtin_bool_calls: set[ast.Call] = set()
+        self._builtin_mutable_constructor_calls: set[ast.Call] = set()
+        self._sequence_fact_cache: dict[ast.AST, tuple[type[ast.AST], bool] | None] = {}
+
+    def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            (
+                self._builtin_bool_calls,
+                self._bool_count_loads,
+                self._builtin_mutable_constructor_calls,
+            ) = _module_repeat_facts(node)
+            self._sequence_fact_cache = {}
+            return None
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Mult):
+            return None
+
+        sequence_fact = None
+        count = None
+        left_fact = _proven_sequence_fact(
+            node.left,
+            self._sequence_fact_cache,
+            builtin_bool_calls=self._builtin_bool_calls,
+            builtin_mutable_constructor_calls=self._builtin_mutable_constructor_calls,
+            bool_count_loads=self._bool_count_loads,
+        )
+        right_fact = _proven_sequence_fact(
+            node.right,
+            self._sequence_fact_cache,
+            builtin_bool_calls=self._builtin_bool_calls,
+            builtin_mutable_constructor_calls=self._builtin_mutable_constructor_calls,
+            bool_count_loads=self._bool_count_loads,
+        )
+        if left_fact is not None and right_fact is None:
+            sequence_fact, count = left_fact, node.right
+        elif right_fact is not None and left_fact is None:
+            sequence_fact, count = right_fact, node.left
+        if (
+            sequence_fact is None
+            or count is None
+            or not _repeat_count_can_alias(
+                count,
+                builtin_bool_calls=self._builtin_bool_calls,
+                bool_count_loads=self._bool_count_loads,
+            )
+        ):
+            return None
+        if not sequence_fact[1]:
+            return None
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "expression",
+                "name": "sequence repetition",
+                "simple_name": "sequence repetition",
+                "value": "mutable_alias",
+                "threshold": 0,
+                "message": (
+                    "Sequence repetition reuses mutable elements across "
+                    "repetitions; use a comprehension to create independent values."
+                ),
+                "file": context.get("filename"),
+                "basename": Path(context.get("filename", "")).name,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]
 
 
 class BareExceptRule(SkylosRule):

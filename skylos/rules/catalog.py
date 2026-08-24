@@ -47,6 +47,9 @@ _RULES = (
         "SKY-Q403", "Inconsistent lock acquisition order", "quality", "HIGH"
     ),
     RuleCatalogEntry("SKY-Q404", "Thread shared state mutation", "quality", "MEDIUM"),
+    RuleCatalogEntry("SKY-Q405", "Async Promise executor", "quality", "HIGH"),
+    RuleCatalogEntry("SKY-Q406", "Async Array.forEach callback", "quality", "HIGH"),
+    RuleCatalogEntry("SKY-Q407", "Discarded async Array.map result", "quality", "HIGH"),
     RuleCatalogEntry("SKY-Q501", "God class", "quality"),
     RuleCatalogEntry("SKY-Q502", "Class too large", "quality"),
     RuleCatalogEntry("SKY-Q701", "High coupling", "quality"),
@@ -63,7 +66,7 @@ _RULES = (
     RuleCatalogEntry("SKY-L004", "Anti-pattern try block", "quality"),
     RuleCatalogEntry("SKY-L005", "Unused exception variable", "quality"),
     RuleCatalogEntry("SKY-L006", "Shadowed loop variable", "quality"),
-    RuleCatalogEntry("SKY-L007", "Confusing boolean expression", "quality"),
+    RuleCatalogEntry("SKY-L007", "Empty error handler", "quality"),
     RuleCatalogEntry("SKY-L008", "Missing resource cleanup", "quality"),
     RuleCatalogEntry("SKY-L009", "Debug leftover", "quality"),
     RuleCatalogEntry("SKY-L010", "Security TODO marker", "quality"),
@@ -85,6 +88,8 @@ _RULES = (
     RuleCatalogEntry("SKY-L031", "Missing network timeout", "quality"),
     RuleCatalogEntry("SKY-L032", "Mock or placeholder data", "quality"),
     RuleCatalogEntry("SKY-L033", "No-effect statement", "quality"),
+    RuleCatalogEntry("SKY-L034", "Repeated mutable alias", "quality", "MEDIUM"),
+    RuleCatalogEntry("SKY-L035", "Blanket ESLint disable", "quality", "HIGH"),
     RuleCatalogEntry("SKY-P401", "Inefficient loop pattern", "quality"),
     RuleCatalogEntry("SKY-P402", "Repeated expensive operation", "quality"),
     RuleCatalogEntry("SKY-P403", "Suspicious performance pattern", "quality"),
@@ -100,6 +105,7 @@ _RULES = (
     RuleCatalogEntry(
         "SKY-T105", "Unvalidated JSON type assertion", "quality", "MEDIUM"
     ),
+    RuleCatalogEntry("SKY-T106", "Unsafe exported API type", "quality", "MEDIUM"),
     RuleCatalogEntry("SKY-F101", "Framework route missing auth", "quality"),
     RuleCatalogEntry("SKY-F102", "Framework handler practice issue", "quality"),
     RuleCatalogEntry("SKY-R101", "Python type-check policy", "quality", "MEDIUM"),

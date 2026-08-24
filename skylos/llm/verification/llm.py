@@ -252,7 +252,8 @@ def _parse_batch_response(
         if not response:
             return [
                 {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"}
-            ] * expected_count
+                for _ in range(expected_count)
+            ]
 
         logger.debug(f"Raw LLM response ({len(response)} chars): {response[:300]}")
         clean = _strip_markdown_fences(response)
@@ -289,7 +290,8 @@ def _parse_batch_response(
 
     return [
         {"verdict": Verdict.UNCERTAIN, "rationale": "Batch parse failed"}
-    ] * expected_count
+        for _ in range(expected_count)
+    ]
 
 
 def _parse_batch_survivor_response(
@@ -307,7 +309,8 @@ def _parse_batch_survivor_response(
                     "rationale": "LLM call failed",
                     "heuristic_assessment": "uncertain",
                 }
-            ] * expected_count
+                for _ in range(expected_count)
+            ]
 
         clean = _strip_markdown_fences(response)
         data = json.loads(clean)
@@ -336,7 +339,8 @@ def _parse_batch_survivor_response(
             "rationale": "Batch parse failed",
             "heuristic_assessment": "uncertain",
         }
-    ] * expected_count
+        for _ in range(expected_count)
+    ]
 
 
 def _strip_markdown_fences(text: str) -> str:

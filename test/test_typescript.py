@@ -115,6 +115,21 @@ def test_typescript_scan_result_is_parallel_worker_picklable(tmp_path):
     pickle.dumps(result)
 
 
+def test_self_reference_index_keeps_only_external_references(tmp_path):
+    path = tmp_path / "recursive.ts"
+    path.write_text(  # skylos: ignore[SKY-D324] pytest-owned temporary fixture path
+        "function recur() { return recur(); }\nrecur();\n"
+        "type Node = { next?: Node };\nlet root: Node;\n",
+        encoding="utf-8",
+    )
+
+    _, refs, *_ = scan_typescript_file(str(path))
+    ref_names = [name for name, _ in refs]
+
+    assert ref_names.count("recur") == 1
+    assert ref_names.count("Node") == 1
+
+
 def test_minified_js_scan_result_keeps_tuple_shape(tmp_path):
     p = tmp_path / "app.min.js"
     p.write_text("function run(){return 1}\n", encoding="utf-8")
