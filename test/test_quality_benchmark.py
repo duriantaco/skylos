@@ -56,7 +56,9 @@ def test_quality_benchmark_scans_isolated_copy_and_cleans_it_up(tmp_path, monkey
     def fake_analyze(path, **kwargs):
         isolated_path = Path(path)
         captured["path"] = isolated_path
-        captured["source"] = (isolated_path / "app.py").read_text(encoding="utf-8")
+        captured["source"] = (  # skylos: ignore[SKY-D215,SKY-D325] isolated temp
+            isolated_path / "app.py"
+        ).read_text(encoding="utf-8")
         return json.dumps({"quality": []})
 
     monkeypatch.setattr(benchmark, "analyze", fake_analyze)
