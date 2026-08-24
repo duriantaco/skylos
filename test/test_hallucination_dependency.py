@@ -89,6 +89,204 @@ dependencies = [
     assert "google-genai" in deps
 
 
+def test_parse_pyproject_toml_pep735_dependency_groups(tmp_path):
+    py = _write_py(
+        tmp_path / "pyproject.toml",
+        """
+[dependency-groups]
+test = ["pytest>=8", "coverage[toml]; python_version >= '3.11'"]
+lint = ["ruff", {include-group = "test"}]
+""".strip(),
+    )
+
+    deps, project_name = dep._parse_pyproject_toml(py)
+
+    assert deps == {"coverage", "pytest", "ruff"}
+    assert project_name is None
+
+
+def test_pep735_malformed_objects_do_not_create_dependencies(tmp_path):
+    py = _write_py(
+        tmp_path / "pyproject.toml",
+        """
+[dependency-groups]
+valid = ["requests", {include-group = "cycle"}]
+cycle = [{include-group = "cycle"}]
+not-a-list = {include-group = "valid"}
+future = [{new-object = "fabricated-package"}]
+""".strip(),
+    )
+
+    deps, _ = dep._parse_pyproject_toml(py)
+
+    assert deps == {"requests"}
+
+
+def test_pep735_dependency_group_prevents_d223(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(
+        repo / "pyproject.toml",
+        """
+[project]
+name = "pep735-reproducer"
+version = "0.0.0"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest"]
+""".strip(),
+    )
+    source = _write_py(repo / "reproduce.py", "import pytest\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(
+        dep,
+        "_build_installed_module_mapping",
+        lambda: {"pytest": {"pytest"}},
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert _extract_single(findings, dep.RULE_ID_UNDECLARED) == []
+
+
+def test_nested_pyproject_dependencies_do_not_leak_to_siblings(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(
+        repo / "pyproject.toml",
+        '[project]\nname = "parent"\ndependencies = []\n\n'
+        '[dependency-groups]\ndev = ["pytest"]\n',
+    )
+    nested = repo / "pydantic-core"
+    nested.mkdir()
+    _write_py(
+        nested / "pyproject.toml",
+        '[project]\nname = "pydantic-core"\ndependencies = []\n\n'
+        '[dependency-groups]\nbuild = ["maturin"]\n',
+    )
+    nested_source = _write_py(
+        nested / "build.py", "import maturin\nimport pytest\n"
+    )
+    sibling_source = _write_py(repo / "tools" / "build.py", "import maturin\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(
+        dep,
+        "_build_installed_module_mapping",
+        lambda: {"maturin": {"maturin"}, "pytest": {"pytest"}},
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(
+        repo, [nested_source, sibling_source]
+    )
+
+    undeclared = _extract_single(findings, dep.RULE_ID_UNDECLARED)
+    assert [(finding["file"], finding["symbol"]) for finding in undeclared] == [
+        (str(sibling_source), "maturin")
+    ]
+
+
+def test_nested_pyproject_scope_rejects_symlinked_directory(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_py(
+        outside / "pyproject.toml",
+        '[project]\ndependencies = ["outside-dependency"]\n',
+    )
+    nested_link = repo / "child"
+    try:
+        nested_link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        return
+
+    scope_cache = {repo: (frozenset({"root-dependency"}), True)}
+    declared, manifest_context = dep._dependency_scope_for_file(
+        repo,
+        nested_link / "module.py",
+        scope_cache,
+    )
+
+    assert declared == {"root-dependency"}
+    assert manifest_context is True
+
+
+def test_dependency_scope_rejects_excessive_path_depth(monkeypatch, tmp_path):
+    root_scope = (frozenset({"root-dependency"}), True)
+    scope_cache = {tmp_path: root_scope}
+    calls = []
+    monkeypatch.setattr(
+        dep,
+        "_nested_pyproject_metadata",
+        lambda *args: calls.append(args),
+    )
+    deep_file = "/".join(
+        ["child"] * (dep.MAX_DEPENDENCY_SCOPE_COMPONENTS + 1)
+        + ["module.py"]
+    )
+
+    scope = dep._dependency_scope_for_file(tmp_path, deep_file, scope_cache)
+
+    assert scope == root_scope
+    assert scope_cache == {tmp_path: root_scope}
+    assert calls == []
+
+
+def test_hostile_nested_pyproject_does_not_abort_sibling_scan(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(repo / "requirements.txt", "click\n")
+    nested = repo / "child"
+    nested.mkdir()
+    _write_py(nested / "pyproject.toml", "hostile = true\n")
+    nested_source = _write_py(nested / "app.py", "import maturin\n")
+    sibling_source = _write_py(repo / "sibling.py", "import maturin\n")
+
+    def raise_recursion_error(_text):
+        raise RecursionError
+
+    monkeypatch.setattr(dep.tomllib, "loads", raise_recursion_error)
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(
+        dep,
+        "_build_installed_module_mapping",
+        lambda: {"maturin": {"maturin"}},
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(
+        repo, [nested_source, sibling_source]
+    )
+
+    assert [
+        (finding["file"], finding["symbol"])
+        for finding in _extract_single(findings, dep.RULE_ID_UNDECLARED)
+    ] == [(str(nested_source), "maturin"), (str(sibling_source), "maturin")]
+
+
+def test_pyproject_parser_value_error_is_ignored(monkeypatch, tmp_path):
+    pyproject = _write_py(tmp_path / "pyproject.toml", "hostile = true\n")
+
+    def raise_value_error(_text):
+        raise ValueError
+
+    monkeypatch.setattr(dep.tomllib, "loads", raise_value_error)
+
+    assert dep._parse_pyproject_toml(pyproject) == (set(), None)
+
+
 def test_pyproject_comment_apostrophe_does_not_hide_declared_dependency(
     monkeypatch, tmp_path
 ):

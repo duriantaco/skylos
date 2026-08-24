@@ -6,15 +6,21 @@ from json.decoder import scanstring
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from skylos.core.safe_cache_io import read_project_text_no_symlink
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib
 
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.rules.ai_defect.dependency_hallucination import (
     FROM_RE,
     IMPORT_RE,
+    MAX_DEPENDENCY_MANIFEST_BYTES,
     RULE_ID_HALLUCINATION,
     RULE_ID_UNDECLARED,
     _is_confident_hallucination_candidate,
     _normalize_name,
+    _pyproject_dependency_metadata,
     scan_diff_added_imports,
 )
 from skylos.rules.ai_defect.manifest_dependency_hallucination import (
@@ -26,11 +32,11 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     check_dependency_version_status,
 )
 from skylos.rules.sca.vulnerability_scanner import (
+    _PACKAGE_JSON_DEPENDENCY_SECTIONS,
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
     MAX_MANIFEST_BYTES,
-    _PACKAGE_JSON_DEPENDENCY_SECTIONS,
     _classify_npm_registry_spec,
     _parse_package_json_text,
 )
@@ -56,6 +62,9 @@ _EXACT_PY_VERSION_RE = re.compile(r"^\d[\w.!+]*$")
 _PYPROJECT_KEY_BLOCKLIST = frozenset(
     {"version", "python", "requires-python", "target-version"}
 )
+_MAX_DIFF_PATH_CHARS = 4096
+_MAX_DIFF_PATH_COMPONENTS = 256
+_NEW_FILE_HUNK_RE = re.compile(r"^@@ -0,0 \+1(?:,(\d+))? @@(?: .*)?$")
 
 _PACKAGE_JSON_DEP_RE = re.compile(
     r"^\s*\"(@?[a-z0-9][a-z0-9._/-]*)\"\s*:\s*\"([^\"]*)\""
@@ -75,6 +84,19 @@ _REGISTRY_LABELS = {
     ECOSYSTEM_NPM: "the npm registry",
     ECOSYSTEM_GO: "the Go module proxy",
 }
+
+
+class _ScopedDependencyNames(set[str]):
+    """Dependency names plus their project-relative manifest directories."""
+
+    def __init__(self, by_directory: dict[str, set[str]]) -> None:
+        self.by_directory = {
+            directory: frozenset(names)
+            for directory, names in by_directory.items()
+        }
+        super().__init__(
+            name for names in self.by_directory.values() for name in names
+        )
 
 
 def scan_diff_dependency_hallucinations(
@@ -120,7 +142,10 @@ def scan_diff_dependency_hallucinations(
             repo_root,
             added_imports,
             extra_local_modules=local_roots,
-            extra_declared_deps=_added_pypi_dependency_names(manifest_specs),
+            extra_declared_deps=_added_pypi_dependency_names(
+                manifest_specs,
+                diff_text=diff_text,
+            ),
         )
         for finding in import_findings:
             finding["kind"] = _IMPORT_KINDS.get(finding.get("rule_id"), "dependency")
@@ -145,7 +170,7 @@ def _parse_added_lines(diff_text) -> list[tuple[str, list[tuple[int, str]]]]:
         file_match = _DIFF_FILE_RE.match(raw_line)
         if file_match:
             current_added = []
-            files.append((file_match.group(1).strip(), current_added))
+            files.append((file_match.group(1), current_added))
             line_no = 0
             continue
         if current_added is None:
@@ -280,6 +305,84 @@ def _pyproject_specs(
     return specs
 
 
+def _added_pyproject_dependency_names(
+    diff_text: str,
+) -> dict[str, set[str]]:
+    names_by_directory: dict[str, set[str]] = {}
+    for file_path, text in _complete_new_file_postimages(diff_text):
+        if PurePosixPath(file_path).name != "pyproject.toml":
+            continue
+        scope = _pypi_manifest_scope(file_path)
+        if scope is None:
+            continue
+        try:
+            if len(text.encode("utf-8")) > MAX_DEPENDENCY_MANIFEST_BYTES:
+                continue
+            data = tomllib.loads(text)
+        except (UnicodeError, tomllib.TOMLDecodeError, RecursionError, ValueError):
+            continue
+        names, _project_name = _pyproject_dependency_metadata(data)
+        if names:
+            names_by_directory.setdefault(scope, set()).update(names)
+    return names_by_directory
+
+
+def _complete_new_file_postimages(diff_text: str) -> list[tuple[str, str]]:
+    lines = str(diff_text or "").splitlines()
+    postimages = []
+    index = 0
+
+    while index < len(lines):
+        if lines[index] != "--- /dev/null":
+            index += 1
+            continue
+        if index + 2 >= len(lines):
+            break
+
+        file_match = _DIFF_FILE_RE.match(lines[index + 1])
+        hunk_match = _NEW_FILE_HUNK_RE.match(lines[index + 2])
+        if file_match is None or hunk_match is None:
+            index += 1
+            continue
+
+        count_text = hunk_match.group(1) or "1"
+        if len(count_text) > 7:
+            index += 3
+            continue
+        expected_lines = int(count_text)
+        added_lines = []
+        valid = True
+        index += 3
+
+        while index < len(lines):
+            raw_line = lines[index]
+            if raw_line.startswith("diff --git "):
+                break
+            if raw_line.startswith("--- "):
+                if (
+                    index + 1 < len(lines)
+                    and lines[index + 1].startswith("+++ ")
+                ):
+                    break
+                valid = False
+                index += 1
+                continue
+            if raw_line.startswith("+"):
+                added_lines.append(raw_line[1:])
+            elif raw_line.startswith("\\ No newline at end of file"):
+                pass
+            else:
+                valid = False
+            index += 1
+
+        if valid and len(added_lines) == expected_lines:
+            postimages.append(
+                (file_match.group(1), "\n".join(added_lines))
+            )
+
+    return postimages
+
+
 def _parse_new_file_lines(diff_text) -> list[tuple[str, list[tuple[str, int, str]]]]:
     files: list[tuple[str, list[tuple[str, int, str]]]] = []
     current_lines: list[tuple[str, int, str]] | None = None
@@ -290,7 +393,7 @@ def _parse_new_file_lines(diff_text) -> list[tuple[str, list[tuple[str, int, str
         file_match = _DIFF_FILE_RE.match(raw_line)
         if file_match:
             current_lines = []
-            files.append((file_match.group(1).strip(), current_lines))
+            files.append((file_match.group(1), current_lines))
             line_no = 0
             in_hunk = False
             continue
@@ -393,8 +496,23 @@ def _matching_package_json_postimage(
 
 
 def _safe_diff_relative_path(file_path: str) -> PurePosixPath | None:
-    relative = PurePosixPath(file_path)
-    if relative.is_absolute() or ".." in relative.parts:
+    raw_path = str(file_path or "")
+    if (
+        not raw_path
+        or raw_path != raw_path.strip()
+        or len(raw_path) > _MAX_DIFF_PATH_CHARS
+        or "\\" in raw_path
+        or re.match(r"^[A-Za-z]:", raw_path)
+    ):
+        return None
+    relative = PurePosixPath(raw_path)
+    if (
+        not relative.parts
+        or relative.as_posix() != raw_path
+        or len(relative.parts) > _MAX_DIFF_PATH_COMPONENTS
+        or relative.is_absolute()
+        or ".." in relative.parts
+    ):
         return None
     return relative
 
@@ -602,15 +720,35 @@ def _package_json_dependency_section(stack: list[str | None]) -> str | None:
     return section if section in _PACKAGE_JSON_DEPENDENCY_SECTIONS else None
 
 
-def _added_pypi_dependency_names(specs: list[dict[str, Any]]) -> set[str]:
-    names = set()
+def _added_pypi_dependency_names(
+    specs: list[dict[str, Any]],
+    *,
+    diff_text: str = "",
+) -> _ScopedDependencyNames:
+    names_by_directory: dict[str, set[str]] = {}
     for spec in specs:
         if spec.get("ecosystem") != ECOSYSTEM_PYPI:
             continue
+        relative = _safe_diff_relative_path(spec.get("file"))
+        if relative is None or relative.name.lower() == "pyproject.toml":
+            continue
         normalized = _normalize_name(spec.get("name"))
-        if normalized:
-            names.add(normalized)
-    return names
+        scope = _pypi_manifest_scope(relative.as_posix())
+        if normalized and scope is not None:
+            names_by_directory.setdefault(scope, set()).add(normalized)
+    for directory, names in _added_pyproject_dependency_names(diff_text).items():
+        names_by_directory.setdefault(directory, set()).update(names)
+    return _ScopedDependencyNames(names_by_directory)
+
+
+def _pypi_manifest_scope(file_path) -> str | None:
+    relative = _safe_diff_relative_path(file_path)
+    if relative is None:
+        return None
+    parent = relative.parent
+    if parent.name.lower() == "requirements":
+        parent = parent.parent
+    return parent.as_posix()
 
 
 def _go_mod_specs(

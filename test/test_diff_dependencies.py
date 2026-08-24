@@ -34,6 +34,15 @@ def _new_file_diff(filename, text):
     )
 
 
+def _diff_with_new_file(filename, lines, *file_blocks):
+    return "\n".join(
+        [
+            _diff(*file_blocks),
+            _new_file_diff(filename, "\n".join(lines)),
+        ]
+    )
+
+
 def _noop_import_scanner(
     _repo_root,
     _added_imports,
@@ -114,6 +123,34 @@ class TestScanDiffAddedImports:
         )
         assert findings == []
 
+    def test_nested_pyproject_dependency_only_applies_to_nested_diff_imports(
+        self, tmp_path, monkeypatch
+    ):
+        repo = self._repo(tmp_path)
+        nested = repo / "child"
+        nested.mkdir()
+        (nested / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+            '[project]\nname = "child"\ndependencies = ["maturin"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"maturin": {"maturin"}},
+        )
+
+        findings, _ = scan_diff_added_imports(
+            repo,
+            [
+                ("child/build.py", 1, "maturin"),
+                ("sibling.py", 1, "maturin"),
+            ],
+        )
+
+        assert [(finding["file"], finding["symbol"]) for finding in findings] == [
+            ("sibling.py", "maturin")
+        ]
+
     def test_unreachable_registry_is_reported(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             dep_mod, "_check_pypi_status", lambda _name, _cache: "unknown"
@@ -139,6 +176,347 @@ class TestScanDiffAddedImports:
         )
 
         assert result["findings"] == []
+
+    def test_nested_dependency_added_by_diff_does_not_satisfy_sibling_import(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"maturin": {"maturin"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[dependency-groups]",
+                    "dev = [",
+                    '    "maturin",',
+                    "]",
+                ],
+                ("child/build.py", ["import maturin"]),
+                ("sibling.py", ["import maturin"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        undeclared = [
+            finding
+            for finding in result["findings"]
+            if finding["rule_id"] == "SKY-D223"
+        ]
+        assert [(finding["file"], finding["symbol"]) for finding in undeclared] == [
+            ("sibling.py", "maturin")
+        ]
+
+    def test_diff_pep735_include_group_name_is_not_a_dependency(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"sharedgroup": {"sharedgroup"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[dependency-groups]",
+                    'dev = [{include-group = "sharedgroup"}]',
+                ],
+                ("child/app.py", ["import sharedgroup"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "sharedgroup")]
+
+    def test_diff_pep735_ignores_nested_arrays_and_later_tables(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {
+                "evildep": {"evildep"},
+                "laterdep": {"laterdep"},
+                "quotedsectiondep": {"quotedsectiondep"},
+                "versioneddep": {"versioneddep"},
+            },
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[dependency-groups]",
+                    'dev = [["evildep"]]',
+                    "[[tool.entries]]",
+                    'names = ["laterdep"]',
+                    'constraints = ["versioneddep>=1"]',
+                    '["project.optional-dependencies"]',
+                    'dev = ["quotedsectiondep"]',
+                ],
+                (
+                    "child/app.py",
+                    [
+                        "import evildep",
+                        "import laterdep",
+                        "import quotedsectiondep",
+                        "import versioneddep",
+                    ],
+                ),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [
+            ("SKY-D223", "child/app.py", "evildep"),
+            ("SKY-D223", "child/app.py", "laterdep"),
+            ("SKY-D223", "child/app.py", "quotedsectiondep"),
+            ("SKY-D223", "child/app.py", "versioneddep"),
+        ]
+
+    def test_diff_dependency_groups_array_table_does_not_declare_dependencies(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"arraytabledep": {"arraytabledep"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[[dependency-groups]]",
+                    'dev = ["arraytabledep"]',
+                ],
+                ("child/app.py", ["import arraytabledep"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "arraytabledep")]
+
+    def test_diff_pyproject_dependency_string_escapes_are_decoded(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {
+                "evil": {"evil"},
+                "evil_dist": {"evil-dist"},
+            },
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[dependency-groups]",
+                    'dev = ["evil\\u002Ddist"]',
+                ],
+                ("child/app.py", ["import evil", "import evil_dist"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "evil")]
+
+    @pytest.mark.parametrize("quote", ['"""', "'''"])
+    def test_diff_pyproject_multiline_strings_do_not_supply_inner_names(
+        self, tmp_path, monkeypatch, quote
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"evil": {"evil"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                [
+                    "[tool.example]",
+                    f"config = {quote}",
+                    "[dependency-groups]",
+                    'dev = ["evil"]',
+                    quote,
+                ],
+                ("child/app.py", ["import evil"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "evil")]
+
+    @pytest.mark.parametrize(
+        "manifest_diff",
+        [
+            "--- a/child/pyproject.toml\n"
+            "+++ b/child/pyproject.toml\n"
+            "@@ -10,2 +10,3 @@\n"
+            " [dependency-groups]\n"
+            '+dev = ["evil>=1"]\n'
+            ' """',
+            _new_file_diff(
+                "child/pyproject.toml",
+                '[dependency-groups]\ndev = ["evil>=1"]\n[broken',
+            ),
+            _new_file_diff(
+                "child/pyproject.toml",
+                '[dependency-groups]\ndev = ["evil>=1"]',
+            )
+            + "\n--- stray hunk content",
+        ],
+        ids=["partial-hunk", "malformed-new-file", "invalid-trailing-line"],
+    )
+    def test_untrusted_pyproject_fragments_do_not_supply_dependencies(
+        self, tmp_path, monkeypatch, manifest_diff
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"evil": {"evil"}},
+        )
+        diff_text = "\n".join(
+            [
+                _diff(("child/app.py", ["import evil"])),
+                manifest_diff,
+            ]
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            diff_text,
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "evil")]
+
+    @pytest.mark.parametrize(
+        "manifest_path",
+        [
+            " child/pyproject.toml ",
+            "child//pyproject.toml",
+            "child/./pyproject.toml",
+            "child/PYPROJECT.TOML",
+        ],
+    )
+    def test_aliased_new_manifest_path_is_not_trusted(
+        self, tmp_path, monkeypatch, manifest_path
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"maturin": {"maturin"}},
+        )
+        diff_text = "\n".join(
+            [
+                _diff(("child/app.py", ["import maturin"])),
+                _new_file_diff(
+                    manifest_path,
+                    '[dependency-groups]\ndev = ["maturin"]',
+                ),
+            ]
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            diff_text,
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "child/app.py", "maturin")]
+
+    @pytest.mark.parametrize(
+        "manifest_lines",
+        [
+            ["[project]", 'dependencies = ["maturin>=1"]'],
+            ["[project.optional-dependencies]", 'test = ["maturin"]'],
+            ["[tool.poetry.dependencies]", 'maturin = "1.0"'],
+            ["[tool.poetry.extras]", 'build = ["maturin"]'],
+        ],
+    )
+    def test_diff_pyproject_declaration_sections_satisfy_import(
+        self, tmp_path, monkeypatch, manifest_lines
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"maturin": {"maturin"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff_with_new_file(
+                "child/pyproject.toml",
+                manifest_lines,
+                ("child/app.py", ["import maturin"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert result["findings"] == []
+
+    @pytest.mark.parametrize(
+        "unsafe_path",
+        [r"..\outside\requirements.txt", "C:foo/requirements.txt"],
+    )
+    def test_unsafe_diff_manifest_path_cannot_satisfy_import(
+        self, tmp_path, monkeypatch, unsafe_path
+    ):
+        monkeypatch.setattr(
+            dep_mod,
+            "_build_installed_module_mapping",
+            lambda: {"maturin": {"maturin"}},
+        )
+
+        result = scan_diff_dependency_hallucinations(
+            _diff(
+                ("app.py", ["import maturin"]),
+                (unsafe_path, ["maturin==1.0"]),
+            ),
+            self._repo(tmp_path),
+            status_checker=lambda *_args: "present",
+        )
+
+        assert [
+            (finding["rule_id"], finding["file"], finding["symbol"])
+            for finding in result["findings"]
+        ] == [("SKY-D223", "app.py", "maturin")]
 
 
 class TestManifestDiffChecks:
