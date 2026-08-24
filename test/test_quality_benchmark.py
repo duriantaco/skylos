@@ -10,7 +10,6 @@ from skylos.benchmarks.quality import (
     validate_manifest,
 )
 
-
 MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "benchmarks/quality" / "manifest.json"
 )
@@ -44,6 +43,69 @@ def test_checked_in_quality_benchmark_passes():
     assert summary["case_count"] >= 6
     assert summary["failure_count"] == 0, format_summary(summary)
     assert summary["scores"]["overall_score"] >= 95.0, format_summary(summary)
+
+
+def test_quality_benchmark_scans_isolated_copy_and_cleans_it_up(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    app = case_dir / "app.py"
+    app.write_text("def demo():\n    return 1\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_analyze(path, **kwargs):
+        isolated_path = Path(path)
+        captured["path"] = isolated_path
+        captured["source"] = (  # skylos: ignore[SKY-D215,SKY-D325] isolated temp
+            isolated_path / "app.py"
+        ).read_text(encoding="utf-8")
+        return json.dumps({"quality": []})
+
+    monkeypatch.setattr(benchmark, "analyze", fake_analyze)
+    case = {
+        "id": "isolated-quality-case",
+        "path": case_dir.name,
+        "taxonomy": ["precision_guard"],
+        "expect": {"present": {}, "absent": {"quality": ["SKY-L006"]}},
+    }
+
+    result = benchmark.run_case(case, tmp_path / "manifest.json")
+
+    isolated_path = captured["path"]
+    assert isolated_path.name == case_dir.name
+    assert isolated_path != case_dir.resolve()
+    assert case_dir.parent not in isolated_path.parents
+    assert captured["source"] == app.read_text(encoding="utf-8")
+    assert not isolated_path.exists()
+    assert result["path"] == str(case_dir.resolve())
+
+
+def test_quality_benchmark_preserves_symlinks_in_isolated_copy(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text("value = 1\n", encoding="utf-8")
+    linked_file = case_dir / "linked.py"
+    try:
+        linked_file.symlink_to("app.py")
+    except (OSError, NotImplementedError):
+        return
+
+    captured = {}
+
+    def fake_analyze(path, **kwargs):
+        isolated_link = Path(path) / linked_file.name
+        captured["path"] = Path(path)
+        captured["is_symlink"] = isolated_link.is_symlink()
+        captured["target"] = isolated_link.readlink()
+        return json.dumps({})
+
+    monkeypatch.setattr(benchmark, "analyze", fake_analyze)
+
+    benchmark._scan_case(case_dir)
+
+    assert captured["is_symlink"] is True
+    assert captured["target"] == Path("app.py")
+    assert not captured["path"].exists()
 
 
 def test_runner_reports_present_and_budget_failures(tmp_path, monkeypatch):

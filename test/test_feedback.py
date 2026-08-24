@@ -464,6 +464,27 @@ def test_parse_batch_response_bad_json():
     results = _parse_batch_response(agent, "sys", "usr", 2)
     assert len(results) == 2
     assert all(r["verdict"] == Verdict.UNCERTAIN for r in results)
+    assert results[0] is not results[1]
+
+
+def test_batch_fallback_results_have_independent_dictionaries():
+    agent = MagicMock(spec=DeadCodeVerifierAgent)
+    agent._call_llm.return_value = ""
+
+    verification = _parse_batch_response(agent, "sys", "usr", 2)
+    survivors = _parse_batch_survivor_response(agent, "sys", "usr", 2)
+
+    assert verification[0] is not verification[1]
+    assert survivors[0] is not survivors[1]
+
+
+def test_batch_survivor_parse_failure_results_are_independent():
+    agent = MagicMock(spec=DeadCodeVerifierAgent)
+    agent._call_llm.return_value = "not valid json"
+
+    results = _parse_batch_survivor_response(agent, "sys", "usr", 2)
+
+    assert results[0] is not results[1]
 
 
 # ---------------------------------------------------------------------------

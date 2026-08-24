@@ -41,6 +41,14 @@ class TestCWEMapping:
         assert CWE_MAP["SKY-T103"][0]["id"] == "CWE-704"
         assert CWE_MAP["SKY-T104"][0]["id"] == "CWE-710"
         assert CWE_MAP["SKY-T105"][0]["id"] == "CWE-704"
+        assert CWE_MAP["SKY-T106"][0]["id"] == "CWE-704"
+
+    def test_new_quality_signal_rules_are_mapped(self):
+        assert CWE_MAP["SKY-L034"][0]["id"] == "CWE-665"
+        assert CWE_MAP["SKY-L035"][0]["id"] == "CWE-710"
+        assert CWE_MAP["SKY-Q405"][0]["id"] == "CWE-755"
+        assert CWE_MAP["SKY-Q406"][0]["id"] == "CWE-252"
+        assert CWE_MAP["SKY-Q407"][0]["id"] == "CWE-252"
 
     def test_standard_refs(self):
         assert "McCabe Cyclomatic Complexity" in STANDARD_REFS["SKY-Q301"]
@@ -48,6 +56,9 @@ class TestCWEMapping:
         assert "TypeScript Handbook: Type Assertions" in STANDARD_REFS["SKY-T103"]
         assert "TypeScript compiler directive comments" in STANDARD_REFS["SKY-T104"]
         assert "Runtime input validation" in STANDARD_REFS["SKY-T105"]
+        assert "Public API type safety" in STANDARD_REFS["SKY-T106"]
+        assert "Python sequence repetition semantics" in STANDARD_REFS["SKY-L034"]
+        assert "ESLint no-async-promise-executor" in STANDARD_REFS["SKY-Q405"]
 
 
 class TestEnrichFinding:

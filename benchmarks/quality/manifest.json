@@ -294,6 +294,94 @@
       }
     },
     {
+      "id": "typescript-quality-signals-unsafe",
+      "path": "samples/typescript_quality_signals_unsafe",
+      "description": "Concrete async mistakes, unsafe exports, unfinished code, empty catches, and blanket lint suppression should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "control_flow", "typing", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/dmmulroy/anti-slop",
+        "license": "MIT",
+        "notes": "Synthetic fixture narrowed to behaviorally incorrect or high-risk JS/TS patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-L007", "SKY-L026", "SKY-L035", "SKY-Q405", "SKY-Q406", "SKY-Q407", "SKY-T106", "LegacyPayload", "acceptLegacy", "loadLegacy"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-quality-signals-clean",
+      "path": "samples/typescript_quality_signals_clean",
+      "description": "Narrow lint suppression, consumed async work, precise exports, implemented code, and handled errors should remain clean.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "control_flow", "typing", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/TypeScript",
+        "license": "Apache-2.0",
+        "notes": "Synthetic precision controls based on normal TypeScript async and public API patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["SKY-L007", "SKY-L026", "SKY-L035", "SKY-Q405", "SKY-Q406", "SKY-Q407", "SKY-T106"]
+        }
+      }
+    },
+    {
+      "id": "python-mutable-alias-unsafe",
+      "path": "fixtures/python_mutable_alias_unsafe",
+      "description": "Sequence multiplication that repeats one mutable object should be reported.",
+      "languages": ["python"],
+      "taxonomy": ["maintainability", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Synthetic fixture based on Python sequence repetition and mutable identity semantics."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-L034"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "python-mutable-alias-clean",
+      "path": "fixtures/python_mutable_alias_clean",
+      "description": "A comprehension that creates one dictionary per slot should remain clean.",
+      "languages": ["python"],
+      "taxonomy": ["maintainability", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Synthetic precision control using a fresh object per comprehension iteration."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["SKY-L034"]
+        }
+      }
+    },
+    {
       "id": "go-service-quality-hotspot",
       "path": "fixtures/go_service_quality_hotspot",
       "description": "Go service function with excessive branching and a wide call surface should be flagged.",

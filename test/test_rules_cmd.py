@@ -186,7 +186,7 @@ def test_builtin_catalog_exposes_nextjs_security_rule_contracts():
     }
 
 
-def test_builtin_catalog_exposes_typescript_type_safety_rules():
+def test_builtin_catalog_exposes_typescript_quality_signal_rules():
     rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
 
     assert {
@@ -195,7 +195,16 @@ def test_builtin_catalog_exposes_typescript_type_safety_rules():
             "category": rules_by_id[rule_id]["category"],
             "severity": rules_by_id[rule_id]["severity"],
         }
-        for rule_id in ("SKY-T103", "SKY-T104", "SKY-T105")
+        for rule_id in (
+            "SKY-T103",
+            "SKY-T104",
+            "SKY-T105",
+            "SKY-T106",
+            "SKY-Q405",
+            "SKY-Q406",
+            "SKY-Q407",
+            "SKY-L035",
+        )
     } == {
         "SKY-T103": {
             "name": "Suspicious chained type assertion",
@@ -212,6 +221,44 @@ def test_builtin_catalog_exposes_typescript_type_safety_rules():
             "category": "quality",
             "severity": "MEDIUM",
         },
+        "SKY-T106": {
+            "name": "Unsafe exported API type",
+            "category": "quality",
+            "severity": "MEDIUM",
+        },
+        "SKY-Q405": {
+            "name": "Async Promise executor",
+            "category": "quality",
+            "severity": "HIGH",
+        },
+        "SKY-Q406": {
+            "name": "Async Array.forEach callback",
+            "category": "quality",
+            "severity": "HIGH",
+        },
+        "SKY-Q407": {
+            "name": "Discarded async Array.map result",
+            "category": "quality",
+            "severity": "HIGH",
+        },
+        "SKY-L035": {
+            "name": "Blanket ESLint disable",
+            "category": "quality",
+            "severity": "HIGH",
+        },
+    }
+
+
+def test_builtin_catalog_exposes_python_mutable_alias_rule():
+    rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
+
+    assert rules_by_id["SKY-L034"] == {
+        "id": "SKY-L034",
+        "name": "Repeated mutable alias",
+        "category": "quality",
+        "severity": "MEDIUM",
+        "source": "builtin",
+        "aliases": [],
     }
 
 

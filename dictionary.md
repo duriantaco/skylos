@@ -468,7 +468,7 @@ use the `SKY-A` prefix.
 | L004 | MEDIUM | Anti-pattern try block / too broad scope | Python |
 | L005 | LOW | Unused exception variable | Python |
 | L006 | MEDIUM | Inconsistent return paths | Python |
-| L007 | MEDIUM-HIGH | Empty error handler | Python |
+| L007 | MEDIUM-HIGH | Empty error handler | Python, TS/JS |
 | L008 | MEDIUM | Missing resource cleanup | Python |
 | L009 | LOW-HIGH | Debug leftover | Python |
 | L010 | MEDIUM | Security TODO/FIXME marker left in code | Python |
@@ -480,7 +480,7 @@ use the `SKY-A` prefix.
 | L020 | HIGH | Overly broad file permissions | Python |
 | L021 | HIGH | Security control regression | Diff-aware review |
 | L024 | HIGH | Stale mock target | Python |
-| L026 | MEDIUM | Unfinished function or placeholder default | Python |
+| L026 | MEDIUM | Unfinished code or placeholder default | Python, TS/JS |
 | L027 | LOW-MEDIUM | Duplicate string literal | Python |
 | L028 | MEDIUM | Too many return statements | Python |
 | L029 | MEDIUM | Boolean positional parameter trap | Python |
@@ -488,6 +488,8 @@ use the `SKY-A` prefix.
 | L031 | MEDIUM | Missing network timeout | Python |
 | L032 | MEDIUM | Mock or placeholder production data | Python |
 | L033 | MEDIUM | No-effect statement | Python |
+| L034 | MEDIUM | Repeated mutable alias from sequence multiplication | Python |
+| L035 | HIGH | File-wide blanket ESLint disable | TS/JS |
 
 ## Quality, Structure, Architecture, and Performance
 
@@ -501,6 +503,9 @@ use the `SKY-A` prefix.
 | Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
 | Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed nested lock order |
 | Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
+| Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
+| Q406 | HIGH | Async callback passed to built-in `Array.forEach` | TS/JS | callback promises are not awaited |
+| Q407 | HIGH | Discarded result from built-in `Array.map(async ...)` | TS/JS | mapped promises are not consumed |
 | Q501 | MEDIUM | God class | Python | excessive methods or attributes |
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
 | Q701 | MEDIUM | High coupling | Python | CBO-style signal |
@@ -522,6 +527,7 @@ use the `SKY-A` prefix.
 | T103 | MEDIUM | Chained assertion through `any`, `unknown`, `object`, or `{}` | TypeScript |
 | T104 | MEDIUM-HIGH | Effective `@ts-ignore` or file-wide `@ts-nocheck` | TS/JS |
 | T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
+| T106 | MEDIUM | Unsafe exported API type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
 | F102 | HIGH | Framework endpoint missing object-level authorization guard | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy |

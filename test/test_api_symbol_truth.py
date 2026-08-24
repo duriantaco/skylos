@@ -309,6 +309,87 @@ def test_api_surface_lock_handles_concurrent_cache_directory_creation(
     assert outcomes == [True, True]
 
 
+def test_api_surface_lock_retries_if_lock_disappears_during_preflight(
+    tmp_path,
+    monkeypatch,
+):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    lock_path = project_root / API_SURFACE_CACHE_LOCK_PATH
+    lock_path.parent.mkdir(parents=True)
+    owner_acquired = threading.Event()
+    contender_checked = threading.Event()
+    owner_released = threading.Event()
+    original_is_dir = Path.is_dir
+    original_mkdir = os.mkdir
+    outcomes = []
+    errors = []
+
+    def synchronized_is_dir(path):
+        if (
+            path == lock_path
+            and owner_acquired.is_set()
+            and not owner_released.is_set()
+        ):
+            contender_checked.set()
+            if not owner_released.wait(timeout=2.0):
+                raise TimeoutError("lock owner did not release")
+        return original_is_dir(path)
+
+    def synchronized_mkdir(path, *args, **kwargs):
+        if (
+            Path(path) == lock_path
+            and owner_acquired.is_set()
+            and not owner_released.is_set()
+        ):
+            contender_checked.set()
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", synchronized_is_dir)
+    monkeypatch.setattr(os, "mkdir", synchronized_mkdir)
+
+    def own_lock():
+        try:
+            with project_cache_lock(
+                project_root,
+                API_SURFACE_CACHE_LOCK_PATH,
+                timeout_seconds=2.0,
+            ) as acquired:
+                outcomes.append(acquired)
+                owner_acquired.set()
+                if not contender_checked.wait(timeout=2.0):
+                    raise TimeoutError("lock contender did not start")
+        except (OSError, ValueError) as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            owner_released.set()
+
+    def contend_for_lock():
+        try:
+            if not owner_acquired.wait(timeout=2.0):
+                raise TimeoutError("lock owner did not acquire")
+            with project_cache_lock(
+                project_root,
+                API_SURFACE_CACHE_LOCK_PATH,
+                timeout_seconds=2.0,
+            ) as acquired:
+                outcomes.append(acquired)
+        except (OSError, ValueError) as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    owner = threading.Thread(target=own_lock)
+    contender = threading.Thread(target=contend_for_lock)
+    owner.start()
+    contender.start()
+    owner.join(timeout=3.0)
+    contender.join(timeout=3.0)
+
+    assert not owner.is_alive()
+    assert not contender.is_alive()
+    assert errors == []
+    assert outcomes == [True, True]
+
+
 def test_api_surface_lock_recovers_empty_stale_directory(tmp_path):
     project_root = tmp_path / "repo"
     project_root.mkdir()

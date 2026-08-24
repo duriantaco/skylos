@@ -80,11 +80,14 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-L031": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-L032": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-L033": [{"id": "CWE-1164", "name": "Irrelevant Code"}],
+    "SKY-L034": [{"id": "CWE-665", "name": "Improper Initialization"}],
+    "SKY-L035": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T102": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T103": [{"id": "CWE-704", "name": "Incorrect Type Conversion or Cast"}],
     "SKY-T104": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T105": [{"id": "CWE-704", "name": "Incorrect Type Conversion or Cast"}],
+    "SKY-T106": [{"id": "CWE-704", "name": "Incorrect Type Conversion or Cast"}],
     "SKY-F101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-F102": [{"id": "CWE-862", "name": "Missing Authorization"}],
     "SKY-R101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
@@ -139,6 +142,11 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-Q402": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-Q403": [{"id": "CWE-833", "name": "Deadlock"}],
     "SKY-Q404": [{"id": "CWE-362", "name": "Race Condition"}],
+    "SKY-Q405": [
+        {"id": "CWE-755", "name": "Improper Handling of Exceptional Conditions"}
+    ],
+    "SKY-Q406": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
+    "SKY-Q407": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-U005": [
         {"id": "CWE-1104", "name": "Use of Unmaintained Third Party Components"}
     ],
@@ -170,6 +178,7 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-T103": ["TypeScript Handbook: Type Assertions"],
     "SKY-T104": ["TypeScript compiler directive comments"],
     "SKY-T105": ["TypeScript Handbook: Type Assertions", "Runtime input validation"],
+    "SKY-T106": ["TypeScript Handbook: The any type", "Public API type safety"],
     "SKY-F101": ["FastAPI response model / return typing practice"],
     "SKY-F102": ["OWASP API1: Broken Object Level Authorization"],
     "SKY-R101": ["Repository policy: Python type checking"],
@@ -178,6 +187,11 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-R104": ["Repository policy: pre-commit"],
     "SKY-R105": ["Repository policy: TypeScript type checking"],
     "SKY-L033": ["Python no-effect expression statements"],
+    "SKY-L034": ["Python sequence repetition semantics"],
+    "SKY-L035": ["ESLint configuration comments"],
+    "SKY-Q405": ["ESLint no-async-promise-executor"],
+    "SKY-Q406": ["Array.forEach callback return semantics"],
+    "SKY-Q407": ["Promise.all and Array.map result handling"],
 }
 
 

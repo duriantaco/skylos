@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -185,6 +186,7 @@ class FlowLimits:
     max_properties: int = 64
     max_expr_depth: int = 64
     max_work_items: int = 500_000
+    analyze_routes: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +234,7 @@ _BULK_MUTATOR_CALLEES = frozenset(
         ("Reflect", "setPrototypeOf"),
     }
 )
+_BUILTIN_MUTATOR_CALLEES = _PROPERTY_MUTATOR_CALLEES | _BULK_MUTATOR_CALLEES
 _ROUTE_RECEIVERS = {
     "app": RouteKind.EXPRESS,
     "express": RouteKind.EXPRESS,
@@ -246,6 +249,12 @@ _SECURITY_ROUTE_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _MAX_OMITTED_SECURITY_ROUTES = 16
+
+
+def _builtin_mutator_callee(path: tuple[str, ...]) -> tuple[str, ...]:
+    if len(path) >= 2 and path[0] in _GLOBAL_OBJECT_NAMES:
+        return path[1:]
+    return path
 
 
 def _node_key(node) -> tuple[int, int, str]:
@@ -382,15 +391,47 @@ class SecurityFlow:
         self._require_imports: dict[SymbolId, ImportIdentity] = {}
         self._scope_by_id: dict[int, LexicalScope] = {}
         self._scope_by_node: dict[tuple[int, int, str], int] = {}
+        self._child_scope_ids: dict[int, list[int]] = defaultdict(list)
+        self._identifier_scope_ids_by_name: dict[str, set[int]] = defaultdict(set)
+        self._identifier_nodes_by_name_scope: dict[tuple[str, int], list[Any]] = (
+            defaultdict(list)
+        )
         self._bindings: dict[str, list[_Binding]] = defaultdict(list)
         self._events_by_node: dict[tuple[int, int, str], FlowEvent] = {}
+        self._expression_path_cache: dict[tuple[int, int, str], tuple[str, ...]] = {}
         self._binding_counts: dict[int, int] = defaultdict(int)
         self._scope_nodes_cache: dict[int, tuple[Any, ...]] = {}
         self._declarators_by_scope: dict[int, list[Any]] = defaultdict(list)
         self._assignments_by_scope: dict[int, list[Any]] = defaultdict(list)
+        self._binding_phase_index_cache: dict[
+            int,
+            tuple[tuple[int, ...], tuple[tuple[int, str, Any], ...]] | None,
+        ] = {}
+        self._write_effects_by_name: (
+            dict[
+                str,
+                tuple[tuple[int, int, tuple[str, ...], bool], ...],
+            ]
+            | None
+        ) = None
+        self._binding_write_effect_cache: dict[
+            SymbolId,
+            dict[int, tuple[int, ...]] | None,
+        ] = {}
+        self._binding_scope_relation_cache: dict[tuple[SymbolId, int], bool | None] = {}
         self._global_path_effect_cache: dict[
             tuple[frozenset[tuple[str, ...]], int], int | None
         ] = {}
+        self._global_path_mutation_scopes_cache: dict[
+            frozenset[tuple[str, ...]], frozenset[int] | None
+        ] = {}
+        self._binding_nested_member_effect_cache: dict[
+            tuple[SymbolId, str], frozenset[int] | None
+        ] = {}
+        self._resolved_builtin_mutator_cache: dict[
+            tuple[int, int, str], tuple[str, ...]
+        ] = {}
+        self._nested_member_call_guard: set[tuple[int, str, str]] = set()
         self._option_state_cache: dict[
             tuple[tuple[int, int, str], tuple[str, ...], int, int],
             dict[str, Truth4],
@@ -574,6 +615,43 @@ class SecurityFlow:
         candidates = self._visible_binding_candidates(name, before_byte, scope_id)
         return candidates[0] if len(candidates) == 1 else None
 
+    def resolve_unique_binding_with_hoisted_functions(
+        self, name: str, before_byte: int, scope_id: int
+    ) -> _Binding | None:
+        """Resolve a value binding while honoring function-declaration hoisting.
+
+        Future non-function declarations still block an outer binding: even before
+        initialization, their lexical name is not the outer value. Collapsed block
+        scopes or duplicate declarations remain ambiguous and fail closed.
+        """
+        for candidate_scope_id in self._visible_scope_ids(scope_id):
+            scope = self._scope_by_id.get(candidate_scope_id)
+            if scope is not None and (
+                any(parameter.name == name for parameter in scope.params)
+                or self._scope_parameter_contains_name(scope, name)
+            ):
+                return None
+            scoped = [
+                binding
+                for binding in self._bindings.get(name, ())
+                if binding.symbol.scope_id == candidate_scope_id
+            ]
+            if not scoped:
+                continue
+            if len(scoped) != 1:
+                return None
+            binding = scoped[0]
+            declaration = binding.declaration_node
+            is_hoisted_function = bool(
+                declaration is not None
+                and declaration.type
+                in {"function_declaration", "generator_function_declaration"}
+            )
+            if binding.symbol.decl_byte >= before_byte and not is_hoisted_function:
+                return None
+            return binding
+        return None
+
     def has_visible_binding(self, name: str, before_byte: int, scope_id: int) -> bool:
         visible = set(self._visible_scope_ids(scope_id))
         return any(
@@ -608,16 +686,22 @@ class SecurityFlow:
         path: tuple[str, ...],
         before_byte: int,
         scope_id: int,
+        *,
+        include_nested_writes: bool = False,
     ) -> bool:
         """Return whether a global object path is unshadowed and unchanged."""
         if not path or not self._is_unshadowed_global_name(
             path[0], before_byte, scope_id
         ):
             return False
+        protected = self._global_paths(*path)
         return not self._has_prior_path_mutation(
-            self._global_paths(*path),
+            protected,
             before_byte,
             scope_id,
+        ) and not (
+            include_nested_writes
+            and self._has_nested_global_path_mutation(protected, scope_id)
         )
 
     def is_binding_member_stable(
@@ -626,9 +710,15 @@ class SecurityFlow:
         member: str,
         before_byte: int,
         use_scope_id: int,
+        *,
+        include_nested_writes: bool = False,
     ) -> bool:
         """Return whether a proven object member remains unchanged and unescaped."""
         if not self.analysis_complete or not member:
+            return False
+        if include_nested_writes and self._has_nested_binding_member_effect(
+            binding, member, use_scope_id
+        ):
             return False
         states = {member: Truth4.TRUE}
         proof_lost = self._apply_binding_effects(
@@ -641,10 +731,367 @@ class SecurityFlow:
             (member,),
         )
         return bool(
-            not proof_lost
-            and self.analysis_complete
-            and states[member] == Truth4.TRUE
+            not proof_lost and self.analysis_complete and states[member] == Truth4.TRUE
         )
+
+    def is_binding_member_unmodified_allowing_escape(
+        self,
+        binding: _Binding,
+        member: str,
+        before_byte: int,
+        use_scope_id: int,
+        *,
+        include_nested_writes: bool = False,
+    ) -> bool:
+        """Prove a member unchanged while allowing read-only aliases and escapes."""
+        if not self.analysis_complete or not member:
+            return False
+        if include_nested_writes and self._has_nested_binding_member_effect(
+            binding, member, use_scope_id
+        ):
+            return False
+        states = {member: Truth4.TRUE}
+        proof_lost = self._apply_binding_effects(
+            states,
+            binding.symbol.name,
+            binding.symbol.decl_byte,
+            before_byte,
+            binding.symbol.scope_id,
+            use_scope_id,
+            (member,),
+            allow_escapes=True,
+        )
+        return bool(
+            not proof_lost and self.analysis_complete and states[member] == Truth4.TRUE
+        )
+
+    def is_binding_value_stable(
+        self,
+        binding: _Binding,
+        before_byte: int,
+        use_scope_id: int,
+    ) -> bool:
+        """Return whether a binding's value was not reassigned before use."""
+        if not self.analysis_complete:
+            return False
+        declaration = binding.declaration_node
+        is_hoisted_function = bool(
+            declaration is not None
+            and declaration.type
+            in {"function_declaration", "generator_function_declaration"}
+        )
+        binding_scope = self._scope_by_id.get(binding.symbol.scope_id)
+        lower = (
+            binding_scope.body_span.start_byte - 1
+            if is_hoisted_function and binding_scope is not None
+            else binding.symbol.decl_byte
+        )
+        effects = self._binding_write_effects(binding)
+        if effects is None or not self.analysis_complete:
+            return False
+        for candidate_scope_id, effect_bytes in effects.items():
+            if candidate_scope_id == use_scope_id:
+                scope_lower = (
+                    lower if candidate_scope_id == binding.symbol.scope_id else -1
+                )
+                if any(
+                    scope_lower < effect_byte < before_byte
+                    for effect_byte in effect_bytes
+                ):
+                    return False
+                continue
+            if candidate_scope_id == binding.symbol.scope_id:
+                if any(effect_byte > lower for effect_byte in effect_bytes):
+                    return False
+                continue
+            # A closure that can see the binding may run before the checked use.
+            # Inspect its whole body because source order between calls and closure
+            # bodies does not describe runtime order.
+            if effect_bytes:
+                return False
+        return self.analysis_complete
+
+    def _binding_write_effects(
+        self,
+        binding: _Binding,
+    ) -> dict[int, tuple[int, ...]] | None:
+        cached = self._binding_write_effect_cache.get(binding.symbol)
+        if cached is not None or binding.symbol in self._binding_write_effect_cache:
+            return cached
+        if not self._ensure_write_effect_index():
+            self._binding_write_effect_cache[binding.symbol] = None
+            return None
+
+        bindings_by_scope: dict[int, list[_Binding]] = defaultdict(list)
+        for candidate in self._bindings.get(binding.symbol.name, ()):
+            bindings_by_scope[candidate.symbol.scope_id].append(candidate)
+
+        effects: dict[int, list[int]] = defaultdict(list)
+        assert self._write_effects_by_name is not None
+        candidate_effects = self._write_effects_by_name.get(binding.symbol.name, ())
+        if not self._consume_work(len(candidate_effects)):
+            self._binding_write_effect_cache[binding.symbol] = None
+            return None
+        for (
+            candidate_scope_id,
+            effect_byte,
+            path,
+            dynamic,
+        ) in candidate_effects:
+            if dynamic or path != (binding.symbol.name,):
+                continue
+            relation = self._write_binding_relation(
+                binding,
+                candidate_scope_id,
+                bindings_by_scope,
+                effect_byte=effect_byte,
+            )
+            if relation is False:
+                continue
+            # Exact matches and unresolved collapsed-scope writes both invalidate
+            # the proof. The latter is deliberately fail-closed.
+            effects[candidate_scope_id].append(effect_byte)
+
+        frozen = {
+            scope_id: tuple(sorted(set(effect_bytes)))
+            for scope_id, effect_bytes in effects.items()
+        }
+        self._binding_write_effect_cache[binding.symbol] = frozen
+        return frozen
+
+    def _write_binding_relation(
+        self,
+        binding: _Binding,
+        write_scope_id: int,
+        bindings_by_scope: dict[int, list[_Binding]],
+        *,
+        effect_byte: int | None = None,
+    ) -> bool | None:
+        """Return whether a write resolves to the binding, or None if ambiguous."""
+        visible_scope_ids = self._visible_scope_ids(write_scope_id)
+        if binding.symbol.scope_id not in visible_scope_ids:
+            return False
+        for candidate_scope_id in visible_scope_ids:
+            scope = self._scope_by_id.get(candidate_scope_id)
+            if scope is not None and any(
+                parameter.name == binding.symbol.name for parameter in scope.params
+            ):
+                return False
+            scoped = list(bindings_by_scope.get(candidate_scope_id, ()))
+            if effect_byte is not None:
+                visible_bindings: list[_Binding] = []
+                uncertain = False
+                for candidate in scoped:
+                    visibility = self._binding_visible_at_byte(
+                        candidate, candidate_scope_id, effect_byte
+                    )
+                    if visibility is None:
+                        uncertain = True
+                    elif visibility:
+                        visible_bindings.append(candidate)
+                if uncertain or len(visible_bindings) > 1:
+                    return None
+                if len(visible_bindings) == 1:
+                    return visible_bindings[0].symbol == binding.symbol
+                continue
+            if any(candidate.symbol == binding.symbol for candidate in scoped):
+                return True if len(scoped) == 1 else None
+            if any(
+                self._binding_covers_entire_scope(candidate, candidate_scope_id)
+                for candidate in scoped
+            ):
+                return False
+            if scoped:
+                return None
+        return None
+
+    def _binding_visible_at_byte(
+        self,
+        binding: _Binding,
+        scope_id: int,
+        effect_byte: int,
+    ) -> bool | None:
+        declaration = binding.declaration_node
+        scope = self._scope_by_id.get(scope_id)
+        if declaration is None or scope is None:
+            return None
+        if declaration.type == "variable_declarator":
+            declaration_statement = declaration.parent
+            if (
+                declaration_statement is not None
+                and declaration_statement.type == "variable_declaration"
+            ):
+                # `var` is function-scoped even when its declaration is nested.
+                return True
+            current = declaration_statement or declaration
+        elif declaration.type == "catch_clause":
+            body = declaration.child_by_field_name("body") or declaration
+            return body.start_byte <= effect_byte <= body.end_byte
+        else:
+            current = declaration
+
+        lexical_boundaries = {
+            "catch_clause",
+            "class_body",
+            "do_statement",
+            "else_clause",
+            "for_in_statement",
+            "for_statement",
+            "if_statement",
+            "internal_module",
+            "labeled_statement",
+            "statement_block",
+            "switch_body",
+            "while_statement",
+            "with_statement",
+        }
+        for _ in range(self.limits.max_expr_depth * 4 + 1):
+            if current is None:
+                return None
+            parent = current.parent
+            if parent is None:
+                return None
+            if _node_key(parent) == _node_key(scope._body):
+                return True
+            if parent.type in lexical_boundaries:
+                return parent.start_byte <= effect_byte <= parent.end_byte
+            if parent.type in _FUNCTION_TYPES:
+                return None
+            current = parent
+        self._mark_incomplete("binding visibility depth exceeded")
+        return None
+
+    def _binding_covers_entire_scope(
+        self,
+        binding: _Binding,
+        scope_id: int,
+    ) -> bool:
+        scope = self._scope_by_id.get(scope_id)
+        if scope is None:
+            return False
+        visibility = self._binding_visible_at_byte(
+            binding,
+            scope_id,
+            scope.body_span.start_byte,
+        )
+        return visibility is True
+
+    def _scope_binding_relation(
+        self,
+        binding: _Binding,
+        scope_id: int,
+        bindings_by_scope: dict[int, list[_Binding]],
+    ) -> bool | None:
+        cache_key = (binding.symbol, scope_id)
+        if cache_key in self._binding_scope_relation_cache:
+            return self._binding_scope_relation_cache[cache_key]
+        nodes = self._identifier_nodes_by_name_scope.get(
+            (binding.symbol.name, scope_id), ()
+        )
+        if not self._consume_work(len(nodes)):
+            self._binding_scope_relation_cache[cache_key] = None
+            return None
+        uncertain = False
+        for node in nodes:
+            relation = self._write_binding_relation(
+                binding,
+                scope_id,
+                bindings_by_scope,
+                effect_byte=node.start_byte,
+            )
+            if relation is True:
+                self._binding_scope_relation_cache[cache_key] = True
+                return True
+            if relation is None:
+                uncertain = True
+        result = None if uncertain else False
+        self._binding_scope_relation_cache[cache_key] = result
+        return result
+
+    def _ensure_write_effect_index(self) -> bool:
+        if self._write_effects_by_name is not None:
+            return self.analysis_complete
+        effects: dict[
+            str,
+            list[tuple[int, int, tuple[str, ...], bool]],
+        ] = defaultdict(list)
+        for scope in self.scopes:
+            nodes = self._scope_nodes_cache.get(scope.id, ())
+            if not self._consume_work(len(nodes)):
+                self._write_effects_by_name = {}
+                return False
+            for node in nodes:
+                target = self._write_target_node(node)
+                if target is None:
+                    continue
+                effect_byte = self._write_effect_byte(node)
+                for path, dynamic in self._assignment_targets(target):
+                    if path:
+                        effects[path[0]].append((scope.id, effect_byte, path, dynamic))
+                if not self.analysis_complete:
+                    self._write_effects_by_name = {}
+                    return False
+        self._write_effects_by_name = {
+            name: tuple(items) for name, items in effects.items()
+        }
+        return self.analysis_complete
+
+    def _has_nested_binding_member_effect(
+        self,
+        binding: _Binding,
+        member: str,
+        use_scope_id: int,
+    ) -> bool:
+        cache_key = (binding.symbol, member)
+        cached = self._binding_nested_member_effect_cache.get(cache_key)
+        if cached is None and cache_key not in self._binding_nested_member_effect_cache:
+            bindings_by_scope: dict[int, list[_Binding]] = defaultdict(list)
+            for candidate in self._bindings.get(binding.symbol.name, ()):
+                bindings_by_scope[candidate.symbol.scope_id].append(candidate)
+
+            affected_scopes: set[int] = set()
+            referenced_scopes = self._identifier_scope_ids_by_name.get(
+                binding.symbol.name, set()
+            )
+            if not self._consume_work(len(referenced_scopes)):
+                self._binding_nested_member_effect_cache[cache_key] = None
+                return True
+            for candidate_scope_id in referenced_scopes:
+                if candidate_scope_id == binding.symbol.scope_id:
+                    continue
+                if binding.symbol.scope_id not in self._visible_scope_ids(
+                    candidate_scope_id
+                ):
+                    continue
+                scope = self._scope_by_id[candidate_scope_id]
+                relation = self._scope_binding_relation(
+                    binding,
+                    scope.id,
+                    bindings_by_scope,
+                )
+                if relation is False:
+                    continue
+                states = {member: Truth4.TRUE}
+                proof_lost = self._apply_binding_effects(
+                    states,
+                    binding.symbol.name,
+                    scope.body_span.start_byte - 1,
+                    scope.body_span.end_byte + 1,
+                    scope.id,
+                    scope.id,
+                    (member,),
+                    allow_escapes=True,
+                )
+                if not self.analysis_complete:
+                    self._binding_nested_member_effect_cache[cache_key] = None
+                    return True
+                if proof_lost or states[member] != Truth4.TRUE:
+                    affected_scopes.add(scope.id)
+            cached = frozenset(affected_scopes)
+            self._binding_nested_member_effect_cache[cache_key] = cached
+        if cached is None or not self.analysis_complete:
+            return True
+        return any(scope_id != use_scope_id for scope_id in cached)
 
     def _visible_binding_candidates(
         self, name: str, before_byte: int, scope_id: int
@@ -769,7 +1216,11 @@ class SecurityFlow:
             for event in scope.events
             if event.kind == EventKind.CALL
         )
-        self.routes = tuple(self._bounded_unique_routes(self._collect_routes()))
+        self.routes = (
+            tuple(self._bounded_unique_routes(self._collect_routes()))
+            if self.limits.analyze_routes
+            else ()
+        )
 
     def import_identities(self) -> tuple[ImportIdentity, ...]:
         return tuple(self.imports.values()) + tuple(self._require_imports.values())
@@ -1021,6 +1472,7 @@ class SecurityFlow:
                 scopes.append(scope)
                 self._scope_by_id[scope_id] = scope
                 self._scope_by_node[_node_key(node)] = scope_id
+                self._child_scope_ids[owner_id].append(scope_id)
                 current_owner = scope_id
 
             if node.type == "variable_declarator":
@@ -1063,6 +1515,17 @@ class SecurityFlow:
             scope_nodes: list[Any] = []
             for node in self._evaluation_nodes(scope._body, scope._node):
                 scope_nodes.append(node)
+                if node.type in {
+                    "identifier",
+                    "shorthand_property_identifier",
+                    "shorthand_property_identifier_pattern",
+                }:
+                    name = _identifier_text(self.source, node)
+                    if name:
+                        self._identifier_scope_ids_by_name[name].add(scope.id)
+                        self._identifier_nodes_by_name_scope[(name, scope.id)].append(
+                            node
+                        )
                 if node.type == "variable_declarator":
                     self._declarators_by_scope[scope.id].append(node)
                 elif node.type in {
@@ -1715,8 +2178,7 @@ class SecurityFlow:
                     stack.append((child, depth + 1))
                 continue
             stack.extend(
-                (child, depth + 1)
-                for child in reversed(current.named_children)
+                (child, depth + 1) for child in reversed(current.named_children)
             )
         return list(dict.fromkeys(names))
 
@@ -1779,28 +2241,62 @@ class SecurityFlow:
         return None
 
     def _expression_path(self, node) -> tuple[str, ...]:
-        node = self.unwrap(node)
-        if node is None:
+        current = self.unwrap(node)
+        trail: list[tuple[Any, str | None]] = []
+        for _ in range(self.limits.max_expr_depth * 4 + 1):
+            if not self._consume_work():
+                for seen_node, _ in trail:
+                    self._expression_path_cache[_node_key(seen_node)] = ()
+                return ()
+            if current is None:
+                for seen_node, _ in trail:
+                    self._expression_path_cache[_node_key(seen_node)] = ()
+                return ()
+            cached = self._expression_path_cache.get(_node_key(current))
+            if cached is not None:
+                path = cached
+                break
+            if current.type in {"identifier", "property_identifier"}:
+                name = _identifier_text(self.source, current)
+                path = (name,) if name else ()
+                self._expression_path_cache[_node_key(current)] = path
+                break
+            if current.type == "member_expression":
+                prop = current.child_by_field_name("property")
+                prop_name = _identifier_text(self.source, prop)
+                if prop_name is None and prop is not None:
+                    prop_name = self.node_text(prop)
+                trail.append((current, prop_name))
+                current = self.unwrap(current.child_by_field_name("object"))
+                continue
+            if current.type == "subscript_expression":
+                index_value = _string_value(
+                    self.source, current.child_by_field_name("index")
+                )
+                trail.append((current, index_value))
+                current = self.unwrap(current.child_by_field_name("object"))
+                continue
+            if current.type in {"call_expression", "new_expression"}:
+                target = current.child_by_field_name(
+                    "function"
+                ) or current.child_by_field_name("constructor")
+                trail.append((current, None))
+                current = self.unwrap(target)
+                continue
+            path = ()
+            self._expression_path_cache[_node_key(current)] = path
+            break
+        else:
+            self._mark_incomplete("expression path depth exceeded")
+            for seen_node, _ in trail:
+                self._expression_path_cache[_node_key(seen_node)] = ()
             return ()
-        if node.type in {"identifier", "property_identifier"}:
-            name = _identifier_text(self.source, node)
-            return (name,) if name else ()
-        if node.type == "member_expression":
-            obj = node.child_by_field_name("object")
-            prop = node.child_by_field_name("property")
-            prop_name = _identifier_text(self.source, prop) or self.node_text(prop)
-            return self._expression_path(obj) + ((prop_name,) if prop_name else ())
-        if node.type == "subscript_expression":
-            obj = node.child_by_field_name("object")
-            index = node.child_by_field_name("index")
-            index_value = _string_value(self.source, index)
-            return self._expression_path(obj) + ((index_value,) if index_value else ())
-        if node.type in {"call_expression", "new_expression"}:
-            target = node.child_by_field_name("function") or node.child_by_field_name(
-                "constructor"
-            )
-            return self._expression_path(target)
-        return ()
+
+        for seen_node, segment in reversed(trail):
+            if path and segment:
+                path = (*path, segment)
+            self._expression_path_cache[_node_key(seen_node)] = path
+        return path
 
     def _callee_identity(self, call_node, scope_id: int) -> CalleeIdentity:
         path = self.callee_path(call_node)
@@ -2018,20 +2514,17 @@ class SecurityFlow:
             ranges.append((use_scope_id, -1, before_byte))
         for candidate_scope_id, lower, upper in ranges:
             for node in self._scope_nodes_cache.get(candidate_scope_id, ()):
-                if not (lower < node.start_byte < upper):
+                target = self._write_target_node(node)
+                if target is None:
                     continue
-                if node.type in {
-                    "assignment_expression",
-                    "augmented_assignment_expression",
-                }:
-                    path = self._expression_path(node.child_by_field_name("left"))
-                    if path and path[0] == name:
-                        return False
-                elif node.type == "update_expression":
-                    target = next(iter(node.named_children), None)
-                    path = self._expression_path(target)
-                    if path and path[0] == name:
-                        return False
+                effect_byte = self._write_effect_byte(node)
+                if not (lower < effect_byte < upper):
+                    continue
+                targets = self._assignment_targets(target)
+                if not self.analysis_complete:
+                    return False
+                if any(path and path[0] == name for path, _ in targets):
+                    return False
         return True
 
     def _truth_value(self, node) -> Truth4:
@@ -2097,11 +2590,7 @@ class SecurityFlow:
     def _global_paths(*path: str) -> frozenset[tuple[str, ...]]:
         suffix = tuple(path)
         return frozenset(
-            {suffix}
-            | {
-                (global_name, *suffix)
-                for global_name in _GLOBAL_OBJECT_NAMES
-            }
+            {suffix} | {(global_name, *suffix) for global_name in _GLOBAL_OBJECT_NAMES}
         )
 
     @staticmethod
@@ -2146,14 +2635,72 @@ class SecurityFlow:
                 if candidate_scope_id == scope_id
                 else scope.body_span.end_byte
             )
-            effect_byte = self._first_path_effect_byte(
-                protected, candidate_scope_id
-            )
+            effect_byte = self._first_path_effect_byte(protected, candidate_scope_id)
             if not self.analysis_complete:
                 return True
             if effect_byte is not None and effect_byte < cutoff:
                 return True
         return False
+
+    def _has_nested_global_path_mutation(
+        self,
+        protected: frozenset[tuple[str, ...]],
+        use_scope_id: int,
+    ) -> bool:
+        affected_scopes = self._global_path_mutation_scopes_cache.get(protected)
+        if (
+            affected_scopes is None
+            and protected not in self._global_path_mutation_scopes_cache
+        ):
+            mutable_scopes: set[int] = set()
+            relevant_scope_ids: set[int] = set()
+            for root_name in {path[0] for path in protected if path}:
+                relevant_scope_ids.update(
+                    self._identifier_scope_ids_by_name.get(root_name, ())
+                )
+            for candidate_scope_id in relevant_scope_ids:
+                scope = self._scope_by_id[candidate_scope_id]
+                visible_paths = frozenset(
+                    path
+                    for path in protected
+                    if path and self._name_is_lexically_global(path[0], scope.id)
+                )
+                if not visible_paths:
+                    continue
+                effect_byte = self._first_path_effect_byte(visible_paths, scope.id)
+                if not self.analysis_complete:
+                    self._global_path_mutation_scopes_cache[protected] = None
+                    return True
+                if effect_byte is not None:
+                    mutable_scopes.add(scope.id)
+            affected_scopes = frozenset(mutable_scopes)
+            self._global_path_mutation_scopes_cache[protected] = affected_scopes
+        if affected_scopes is None or not self.analysis_complete:
+            return True
+        visible_use_scopes = set(self._visible_scope_ids(use_scope_id))
+        return any(scope_id not in visible_use_scopes for scope_id in affected_scopes)
+
+    def _name_is_lexically_global(self, name: str, scope_id: int) -> bool:
+        if name in self.imports:
+            return False
+        visible_scope_ids = self._visible_scope_ids(scope_id)
+        bindings = self._bindings.get(name, ())
+        for candidate_scope_id in visible_scope_ids:
+            scope = self._scope_by_id.get(candidate_scope_id)
+            if scope is not None and any(
+                parameter.name == name for parameter in scope.params
+            ):
+                return False
+            if any(
+                binding.symbol.scope_id == candidate_scope_id
+                and self._binding_covers_entire_scope(binding, candidate_scope_id)
+                for binding in bindings
+            ):
+                return False
+        # Block scopes are collapsed into their owning function. A same-name
+        # declaration in one nested block does not prove that a write elsewhere
+        # in the function is local, so keep the global mutation possibility.
+        return True
 
     def _first_path_effect_byte(
         self,
@@ -2169,12 +2716,10 @@ class SecurityFlow:
             return None
         first: int | None = None
         for node in nodes:
-            effect_byte = self._path_effect_byte(node, protected)
+            effect_byte = self._path_effect_byte(node, protected, scope_id)
             if not self.analysis_complete:
                 return None
-            if effect_byte is not None and (
-                first is None or effect_byte < first
-            ):
+            if effect_byte is not None and (first is None or effect_byte < first):
                 first = effect_byte
         self._global_path_effect_cache[cache_key] = first
         return first
@@ -2183,7 +2728,26 @@ class SecurityFlow:
         self,
         node,
         protected: frozenset[tuple[str, ...]],
+        scope_id: int,
     ) -> int | None:
+        if node.type not in {
+            "assignment_expression",
+            "augmented_assignment_expression",
+            "call_expression",
+            "for_in_statement",
+            "new_expression",
+            "unary_expression",
+            "update_expression",
+            "variable_declarator",
+        }:
+            return None
+        protected = frozenset(
+            path
+            for path in protected
+            if path and self._name_is_global_at_byte(path[0], scope_id, node.start_byte)
+        )
+        if not protected:
+            return None
         if node.type in {
             "assignment_expression",
             "augmented_assignment_expression",
@@ -2201,11 +2765,10 @@ class SecurityFlow:
                 return node.end_byte
             return None
 
-        if node.type == "update_expression" or (
-            node.type == "unary_expression"
-            and self.node_text(node).lstrip().startswith("delete ")
-        ):
-            target = next(iter(node.named_children), None)
+        if node.type in {"update_expression", "unary_expression", "for_in_statement"}:
+            target = self._write_target_node(node)
+            if target is None:
+                return None
             targets = self._assignment_targets(target)
             if not self.analysis_complete:
                 return None
@@ -2213,7 +2776,7 @@ class SecurityFlow:
                 self._target_affects_any(path, dynamic, protected)
                 for path, dynamic in targets
             ):
-                return node.start_byte
+                return self._write_effect_byte(node)
             return None
 
         if node.type == "variable_declarator":
@@ -2239,9 +2802,59 @@ class SecurityFlow:
             return node.start_byte
         return None
 
-    def _assignment_targets(
-        self, node
-    ) -> tuple[tuple[tuple[str, ...], bool], ...]:
+    def _name_is_global_at_byte(
+        self,
+        name: str,
+        scope_id: int,
+        effect_byte: int,
+    ) -> bool:
+        if name in self.imports:
+            return False
+        bindings = self._bindings.get(name, ())
+        for candidate_scope_id in self._visible_scope_ids(scope_id):
+            scope = self._scope_by_id.get(candidate_scope_id)
+            if scope is not None and any(
+                parameter.name == name for parameter in scope.params
+            ):
+                return False
+            if any(
+                binding.symbol.scope_id == candidate_scope_id
+                and self._binding_visible_at_byte(
+                    binding, candidate_scope_id, effect_byte
+                )
+                is True
+                for binding in bindings
+            ):
+                return False
+        return True
+
+    def _write_target_node(self, node):
+        if node.type in {
+            "assignment_expression",
+            "augmented_assignment_expression",
+            "for_in_statement",
+        }:
+            return node.child_by_field_name("left")
+        if node.type == "update_expression" or (
+            node.type == "unary_expression"
+            and self.node_text(node).lstrip().startswith("delete ")
+        ):
+            return next(iter(node.named_children), None)
+        return None
+
+    @staticmethod
+    def _write_effect_byte(node) -> int:
+        if node.type == "for_in_statement":
+            body = node.child_by_field_name("body")
+            if body is not None:
+                # The loop target is assigned after the iterable is evaluated and
+                # strictly before the body begins. A braceless body can start at
+                # the same byte as its first call, so use the preceding byte as an
+                # ordering sentinel rather than the body's own start byte.
+                return max(node.start_byte, body.start_byte - 1)
+        return node.start_byte
+
+    def _assignment_targets(self, node) -> tuple[tuple[tuple[str, ...], bool], ...]:
         """Return lvalue paths and whether a computed member is unknown."""
         if node is None:
             return ()
@@ -2281,9 +2894,7 @@ class SecurityFlow:
                 if left is not None:
                     stack.append((left, depth + 1))
                 continue
-            stack.extend(
-                (child, depth + 1) for child in current.named_children
-            )
+            stack.extend((child, depth + 1) for child in current.named_children)
         return tuple(dict.fromkeys(targets))
 
     def _lvalue_path(self, node) -> tuple[tuple[str, ...], bool]:
@@ -2350,8 +2961,7 @@ class SecurityFlow:
                 if not self.analysis_complete:
                     return True
             if path and any(
-                len(path) < len(candidate)
-                and candidate[: len(path)] == path
+                len(path) < len(candidate) and candidate[: len(path)] == path
                 for candidate in protected
             ):
                 return True
@@ -2362,13 +2972,103 @@ class SecurityFlow:
             stack.extend((child, depth + 1) for child in current.named_children)
         return False
 
+    def _resolved_builtin_mutator_callee(self, call) -> tuple[str, ...]:
+        if call is None or call.type != "call_expression":
+            return ()
+        cache_key = _node_key(call)
+        cached = self._resolved_builtin_mutator_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        direct = _builtin_mutator_callee(self.callee_path(call))
+        if direct in _BUILTIN_MUTATOR_CALLEES:
+            self._resolved_builtin_mutator_cache[cache_key] = direct
+            return direct
+
+        function = self.unwrap(call.child_by_field_name("function"))
+        result: tuple[str, ...] = ()
+        if function is not None and function.type == "identifier":
+            scope_id = self.scope_for_node(call).id
+            result = self._resolved_builtin_mutator_binding(
+                self.node_text(function),
+                call.start_byte,
+                scope_id,
+                frozenset(),
+                0,
+            )
+        self._resolved_builtin_mutator_cache[cache_key] = result
+        return result
+
+    def _resolved_builtin_mutator_binding(
+        self,
+        name: str,
+        before_byte: int,
+        scope_id: int,
+        seen: frozenset[SymbolId],
+        depth: int,
+    ) -> tuple[str, ...]:
+        if depth > self.limits.max_expr_depth or not self._consume_work():
+            return ()
+        binding = self.resolve_unique_binding(name, before_byte, scope_id)
+        if binding is None or binding.symbol in seen:
+            return ()
+        if not self._binding_is_stable_until(name, binding, before_byte, scope_id):
+            return ()
+
+        value = self.unwrap(binding.value_node)
+        if value is not None:
+            path = _builtin_mutator_callee(self._expression_path(value))
+            if path in _BUILTIN_MUTATOR_CALLEES:
+                return path
+            if value.type == "identifier":
+                return self._resolved_builtin_mutator_binding(
+                    self.node_text(value),
+                    binding.symbol.decl_byte,
+                    binding.symbol.scope_id,
+                    seen | {binding.symbol},
+                    depth + 1,
+                )
+
+        path = _builtin_mutator_callee(self._destructured_binding_value_path(binding))
+        return path if path in _BUILTIN_MUTATOR_CALLEES else ()
+
+    def _destructured_binding_value_path(
+        self,
+        binding: _Binding,
+    ) -> tuple[str, ...]:
+        declaration = binding.declaration_node
+        if declaration is None or declaration.type != "variable_declarator":
+            return ()
+        pattern = declaration.child_by_field_name("name")
+        source_value = self.unwrap(declaration.child_by_field_name("value"))
+        if pattern is None or pattern.type != "object_pattern" or source_value is None:
+            return ()
+        source_path = self._expression_path(source_value)
+        if not source_path:
+            return ()
+        for child in pattern.named_children:
+            if child.type == "shorthand_property_identifier_pattern":
+                property_name = self.node_text(child)
+                if property_name == binding.symbol.name:
+                    return (*source_path, property_name)
+                continue
+            if child.type != "pair_pattern":
+                continue
+            target = child.child_by_field_name("value")
+            if binding.symbol.name not in self._pattern_names(target):
+                continue
+            property_name = self._static_property_name(child.child_by_field_name("key"))
+            if property_name:
+                return (*source_path, property_name)
+        return ()
+
     def _call_mutates_paths(
         self,
         call,
         protected: frozenset[tuple[str, ...]],
     ) -> bool:
-        callee = self.callee_path(call)
-        if callee not in _PROPERTY_MUTATOR_CALLEES | _BULK_MUTATOR_CALLEES:
+        callee = self._resolved_builtin_mutator_callee(call)
+        if callee not in _BUILTIN_MUTATOR_CALLEES:
             return False
         arguments = self.call_arguments(call)
         if not arguments:
@@ -2388,9 +3088,7 @@ class SecurityFlow:
         ):
             return False
         property_name = (
-            _string_value(self.source, arguments[1])
-            if len(arguments) >= 2
-            else None
+            _string_value(self.source, arguments[1]) if len(arguments) >= 2 else None
         )
         if property_name is None:
             return True
@@ -2428,6 +3126,69 @@ class SecurityFlow:
             stack.extend(current.named_children)
         return False
 
+    def _local_function_has_binding_member_effect(
+        self,
+        event: FlowEvent,
+        captured_names: set[str],
+        names: tuple[str, ...],
+    ) -> bool:
+        if event.callee is None or not event.callee.member_path:
+            return False
+        callee_root = event.callee.member_path[0]
+        callee_binding = self.resolve_unique_binding(
+            callee_root, event.span.start_byte, event.scope_id
+        )
+        if callee_binding is None or callee_binding.value_node is None:
+            return False
+        value = self.unwrap(callee_binding.value_node)
+        if value is None or value.type not in _FUNCTION_TYPES:
+            return False
+        function_scope_id = self.scope_for_node(value).id
+        function_scope = self._scope_by_id[function_scope_id]
+
+        for captured_name in captured_names:
+            captured_binding = self.resolve_unique_binding(
+                captured_name, event.span.start_byte, event.scope_id
+            )
+            if captured_binding is not None:
+                bindings_by_scope: dict[int, list[_Binding]] = defaultdict(list)
+                for candidate in self._bindings.get(captured_name, ()):
+                    bindings_by_scope[candidate.symbol.scope_id].append(candidate)
+                relation = self._scope_binding_relation(
+                    captured_binding,
+                    function_scope_id,
+                    bindings_by_scope,
+                )
+                if relation is False:
+                    continue
+            elif any(
+                parameter.name == captured_name for parameter in function_scope.params
+            ):
+                continue
+
+            for name in names:
+                guard_key = (function_scope_id, captured_name, name)
+                if guard_key in self._nested_member_call_guard:
+                    return True
+                self._nested_member_call_guard.add(guard_key)
+                try:
+                    states = {name: Truth4.TRUE}
+                    proof_lost = self._apply_binding_effects(
+                        states,
+                        captured_name,
+                        function_scope.body_span.start_byte - 1,
+                        function_scope.body_span.end_byte + 1,
+                        function_scope_id,
+                        function_scope_id,
+                        (name,),
+                        allow_escapes=True,
+                    )
+                finally:
+                    self._nested_member_call_guard.discard(guard_key)
+                if proof_lost or states[name] != Truth4.TRUE:
+                    return True
+        return False
+
     def _apply_binding_effects(
         self,
         states: dict[str, Truth4],
@@ -2437,6 +3198,8 @@ class SecurityFlow:
         binding_scope_id: int,
         use_scope_id: int,
         names: tuple[str, ...],
+        *,
+        allow_escapes: bool = False,
     ) -> bool:
         """Apply ordered writes to an object binding; return True if proof is lost."""
         phases: list[tuple[int, int, str, Any]] = []
@@ -2451,38 +3214,16 @@ class SecurityFlow:
             scope_ranges.append((1, use_scope_id, 0, before_byte))
 
         for phase, candidate_scope_id, lower, upper in scope_ranges:
-            declarators = self._declarators_by_scope.get(candidate_scope_id, ())
-            assignments = self._assignments_by_scope.get(candidate_scope_id, ())
-            calls = (
-                event
-                for event in self._scope_by_id[candidate_scope_id].events
-                if event.kind in {EventKind.CALL, EventKind.NEW}
+            phase_index = self._binding_phase_index(candidate_scope_id)
+            if phase_index is None:
+                return True
+            starts, indexed_items = phase_index
+            first = bisect_right(starts, lower)
+            last = bisect_left(starts, upper)
+            phases.extend(
+                (phase, effect_byte, kind, item)
+                for effect_byte, kind, item in indexed_items[first:last]
             )
-            mutations = (
-                node
-                for node in self._scope_nodes_cache.get(candidate_scope_id, ())
-                if node.type == "update_expression"
-                or (
-                    node.type == "unary_expression"
-                    and self.node_text(node).lstrip().startswith("delete ")
-                )
-            )
-            for declarator in declarators:
-                if lower < declarator.start_byte < upper:
-                    phases.append(
-                        (phase, declarator.start_byte, "declaration", declarator)
-                    )
-            for assignment in assignments:
-                if lower < assignment.start_byte < upper:
-                    phases.append(
-                        (phase, assignment.start_byte, "assignment", assignment)
-                    )
-            for event in calls:
-                if lower < event.span.start_byte < upper:
-                    phases.append((phase, event.span.start_byte, "call", event))
-            for mutation in mutations:
-                if lower < mutation.start_byte < upper:
-                    phases.append((phase, mutation.start_byte, "mutation", mutation))
 
         if not self._consume_work(len(phases)):
             return True
@@ -2529,6 +3270,13 @@ class SecurityFlow:
                 targets = self._assignment_targets(left)
                 if not self.analysis_complete:
                     return True
+                if not targets and self._expression_contains_alias(
+                    left, aliases | containers
+                ):
+                    # A call-derived lvalue such as
+                    # `Object.getPrototypeOf(value).method` has no static root,
+                    # but can still mutate the tracked object's method surface.
+                    return True
                 if (
                     left is not None
                     and left.type in {"array_pattern", "object_pattern"}
@@ -2546,11 +3294,7 @@ class SecurityFlow:
                 )
                 simple_alias_assignment = False
                 for path, has_dynamic_member in targets:
-                    if (
-                        has_dynamic_member
-                        and path
-                        and path[0] in aliases | containers
-                    ):
+                    if has_dynamic_member and path and path[0] in aliases | containers:
                         return True
                     if len(path) == 1:
                         target = path[0]
@@ -2596,27 +3340,34 @@ class SecurityFlow:
                     if len(path) >= 2 and path[0] in containers:
                         return True
                 if (
-                    not simple_alias_assignment
-                    and self._expression_contains_alias(
-                        right, aliases | containers
-                    )
+                    not allow_escapes
+                    and not simple_alias_assignment
+                    and self._expression_contains_alias(right, aliases | containers)
                 ):
                     return True
                 continue
 
             if kind == "mutation":
-                target = next(iter(item.named_children), None)
+                target = self._write_target_node(item)
                 targets = self._assignment_targets(target)
                 if not self.analysis_complete:
                     return True
+                if not targets and self._expression_contains_alias(
+                    target, aliases | containers
+                ):
+                    return True
                 for path, has_dynamic_member in targets:
-                    if (
-                        has_dynamic_member
-                        and path
-                        and path[0] in aliases | containers
-                    ):
+                    if has_dynamic_member and path and path[0] in aliases | containers:
                         return True
-                    if len(path) >= 2 and path[0] in aliases:
+                    if len(path) == 1:
+                        target_name = path[0]
+                        if target_name == object_name:
+                            return True
+                        if target_name in aliases:
+                            aliases.discard(target_name)
+                        elif target_name in containers:
+                            containers.discard(target_name)
+                    elif len(path) >= 2 and path[0] in aliases:
                         if path[1] in names:
                             states[path[1]] = (
                                 Truth4.ABSENT
@@ -2630,17 +3381,40 @@ class SecurityFlow:
                 continue
 
             event = item
-            if event.callee is not None and event.callee.member_path == (
-                "Object",
-                "freeze",
-            ):
-                if self.is_unshadowed_global_member(
+            if (
+                event.callee is not None
+                and event.callee.member_path == ("Object", "freeze")
+                and self.is_unshadowed_global_member(
                     "Object",
                     "freeze",
                     event.span.start_byte,
                     event.scope_id,
+                )
+            ):
+                continue
+            if allow_escapes:
+                callee_path = self._resolved_builtin_mutator_callee(event._node)
+                if callee_path in _BUILTIN_MUTATOR_CALLEES:
+                    arguments = self._invocation_arguments(event)
+                    target, _ = (
+                        self._lvalue_path(arguments[0]) if arguments else ((), False)
+                    )
+                    if (
+                        target
+                        and target[0] in aliases | containers
+                        or arguments
+                        and self._expression_contains_alias(
+                            arguments[0], aliases | containers
+                        )
+                    ):
+                        return True
+                if self._local_function_has_binding_member_effect(
+                    event,
+                    aliases | containers,
+                    names,
                 ):
-                    continue
+                    return True
+                continue
             if event.callee is not None and event.callee.member_path:
                 if event.callee.member_path[0] in aliases | containers:
                     return True
@@ -2669,6 +3443,40 @@ class SecurityFlow:
             ):
                 return True
         return False
+
+    def _binding_phase_index(
+        self, scope_id: int
+    ) -> tuple[tuple[int, ...], tuple[tuple[int, str, Any], ...]] | None:
+        """Index binding-relevant effects once for byte-bounded proof queries."""
+        if scope_id in self._binding_phase_index_cache:
+            return self._binding_phase_index_cache[scope_id]
+
+        scope = self._scope_by_id.get(scope_id)
+        if scope is None or not self._consume_work(len(scope.events)):
+            self._binding_phase_index_cache[scope_id] = None
+            return None
+
+        items: list[tuple[int, str, Any]] = []
+        for event in scope.events:
+            if event.kind == EventKind.BIND:
+                items.append((event.span.start_byte, "declaration", event._node))
+            elif event.kind == EventKind.ASSIGN:
+                items.append((event.span.start_byte, "assignment", event._node))
+            elif event.kind in {EventKind.CALL, EventKind.NEW}:
+                items.append((event.span.start_byte, "call", event))
+            elif event.kind == EventKind.UPDATE or (
+                event.kind == EventKind.UNKNOWN_CONTROL
+                and event.node_type == "for_in_statement"
+            ):
+                items.append(
+                    (self._write_effect_byte(event._node), "mutation", event._node)
+                )
+
+        items.sort(key=lambda item: (item[0], item[1]))
+        indexed_items = tuple(items)
+        result = (tuple(item[0] for item in indexed_items), indexed_items)
+        self._binding_phase_index_cache[scope_id] = result
+        return result
 
     def _is_conditionally_executed(self, node, scope_id: int) -> bool:
         scope = self._scope_by_id[scope_id]
@@ -2745,6 +3553,12 @@ def build_security_flow(
     source: bytes,
     file_path: str,
     lang: Language,
-    limits: FlowLimits = FlowLimits(),
+    limits: FlowLimits | None = None,
 ) -> SecurityFlow:
-    return SecurityFlow(root_node, source, file_path, lang, limits)
+    return SecurityFlow(
+        root_node,
+        source,
+        file_path,
+        lang,
+        FlowLimits() if limits is None else limits,
+    )

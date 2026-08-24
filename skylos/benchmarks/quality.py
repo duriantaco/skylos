@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from skylos.analyzer import analyze
-
 
 QUALITY_TAXONOMY: dict[str, str] = {
     "api_design": "Parameter shape, call surface, and interface ergonomics.",
@@ -210,20 +211,29 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     if scan:
         scan_cfg.update(scan)
 
-    analyzer_logger = logging.getLogger("Skylos")
-    prev_level = analyzer_logger.level
-    analyzer_logger.setLevel(logging.WARNING)
-    try:
-        raw = analyze(
-            str(case_path),
-            conf=0,
-            enable_quality=bool(scan_cfg.get("enable_quality", False)),
-            enable_danger=bool(scan_cfg.get("enable_danger", False)),
-            enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
-            grep_verify=bool(scan_cfg.get("grep_verify", False)),
-        )
-    finally:
-        analyzer_logger.setLevel(prev_level)
+    # Keep checked-in cases from inheriting config and repository-wide policy
+    # findings from the Skylos checkout.
+    with tempfile.TemporaryDirectory(prefix="skylos-quality-benchmark-") as tmp:
+        isolated_path = Path(tmp) / case_path.name
+        if case_path.is_dir():
+            shutil.copytree(case_path, isolated_path, symlinks=True)
+        else:
+            shutil.copy2(case_path, isolated_path, follow_symlinks=False)
+
+        analyzer_logger = logging.getLogger("Skylos")
+        prev_level = analyzer_logger.level
+        analyzer_logger.setLevel(logging.WARNING)
+        try:
+            raw = analyze(
+                str(isolated_path),
+                conf=0,
+                enable_quality=bool(scan_cfg.get("enable_quality", False)),
+                enable_danger=bool(scan_cfg.get("enable_danger", False)),
+                enable_secrets=bool(scan_cfg.get("enable_secrets", False)),
+                grep_verify=bool(scan_cfg.get("grep_verify", False)),
+            )
+        finally:
+            analyzer_logger.setLevel(prev_level)
     return json.loads(raw)
 
 
