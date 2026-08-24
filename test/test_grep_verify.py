@@ -38,6 +38,7 @@ from skylos.core.grep_verify_common import (
     _GrepDeadlineExceeded,
     _GrepEvidence,
     _GrepExecutionIncomplete,
+    _GrepInputLimitExceeded,
     _GrepOutputLimitExceeded,
     _is_python_source_reference,
     _python_regex,
@@ -1000,6 +1001,290 @@ class TestBatchedGrepVerify:
         assert results[bar_request] == (line,)
         assert results[literal_request] == ("/repo/other.py:2:pkg.literalé()",)
 
+    def test_engine_sensitive_space_patterns_are_batched(self):
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        space_request = GrepRequest(pattern=r"alpha\somega", **common)
+        negated_request = GrepRequest(pattern=r"alpha\Somega", **common)
+        process_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(("/repo/a.py", 1, "alpha omega\n")),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=process_result,
+            ) as mock_run,
+            patch(
+                "skylos.core.grep_verify_common._run_grep_request",
+                side_effect=AssertionError("space patterns must stay batched"),
+            ),
+        ):
+            results = execute_grep_batch([space_request, negated_request])
+
+        assert mock_run.call_count == 1
+        assert mock_run.call_args.kwargs["input_text"] == (
+            "alpha\\somega\nalpha\\Somega\n"
+        )
+        assert results[space_request] == ("/repo/a.py:1:alpha omega",)
+        assert results[negated_request] == ()
+
+    @pytest.mark.parametrize(
+        ("pattern", "adjudication_matches"),
+        [(r"alpha\somega", False), (r"alpha\Somega", True)],
+    )
+    def test_ascii_separator_content_uses_ripgrep_space_semantics(
+        self,
+        pattern,
+        adjudication_matches,
+    ):
+        # U+001C-U+001F are the complete divergence between Python re \s and
+        # ripgrep's Unicode White_Space \s. The inverse difference applies to
+        # \S. They are ASCII, so the non-ASCII sensitivity check never sees
+        # them and unadjudicated replay would produce the wrong verdict.
+        content = "alpha\x1comega = 1"
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        space_request = GrepRequest(pattern=pattern, **common)
+        companion_request = GrepRequest(pattern=r"alpha", **common)
+
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(("/repo/code.py", 1, f"{content}\n")),
+            stderr="",
+        )
+
+        def fake_run(cmd, **kwargs):
+            if "--json" in cmd:
+                return batch_result
+            assert cmd[-2] == space_request.pattern
+            return Mock(
+                returncode=0 if adjudication_matches else 1,
+                stdout=f"1:{content}\n" if adjudication_matches else "",
+                stderr="",
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([space_request, companion_request])
+
+        adjudication_calls = [
+            call for call in mock_run.call_args_list if "--json" not in call.args[0]
+        ]
+        assert len(adjudication_calls) == 1
+        expected = (f"/repo/code.py:1:{content}",) if adjudication_matches else ()
+        assert results[space_request] == expected
+        assert results[companion_request] == (f"/repo/code.py:1:{content}",)
+
+    def test_large_space_adjudication_payload_is_chunked(self):
+        # Adjudication stdin is capped. A repository with more divergent
+        # candidate lines than that cap must still be adjudicated, because a
+        # direct per-pattern search would have completed. Alternating lines
+        # match under ripgrep semantics and do not, so a chunked adjudication
+        # that mismapped positions would surface here as wrong evidence.
+        padding = "p" * 190
+        contents = [
+            f"alpha omega\x1c{padding}"
+            if index % 2 == 0
+            else f"alpha\x1comega{padding}"
+            for index in range(40)
+        ]
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 100,
+        }
+        space_request = GrepRequest(pattern=r"alpha\somega", **common)
+
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(
+                *(
+                    (f"/repo/code{index:02d}.py", 1, f"{content}\n")
+                    for index, content in enumerate(contents)
+                )
+            ),
+            stderr="",
+        )
+
+        def fake_run(cmd, **kwargs):
+            if "--json" in cmd:
+                return batch_result
+            payload = kwargs["input_text"]
+            if len(payload.encode("utf-8")) > kwargs["input_limit"]:
+                raise _GrepInputLimitExceeded("grep subprocess input is too large")
+            # Ripgrep's \s excludes U+001C, so only the space lines match.
+            matched = [
+                f"{position}:{line}"
+                for position, line in enumerate(payload.split("\n")[:-1], start=1)
+                if "alpha omega" in line
+            ]
+            return Mock(
+                returncode=0 if matched else 1,
+                stdout="".join(f"{line}\n" for line in matched),
+                stderr="",
+            )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_INPUT_BYTES",
+                4096,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([space_request])
+
+        adjudication_calls = [
+            call for call in mock_run.call_args_list if "--json" not in call.args[0]
+        ]
+        assert len(adjudication_calls) > 1
+        for call in adjudication_calls:
+            assert (
+                len(call.kwargs["input_text"].encode("utf-8"))
+                <= call.kwargs["input_limit"]
+            )
+        # Sorted by path, so the fixture names are zero-padded to keep
+        # lexicographic and numeric order the same.
+        assert results[space_request] == tuple(
+            f"/repo/code{index:02d}.py:1:{content}"
+            for index, content in enumerate(contents)
+            if index % 2 == 0
+        )
+
+    def test_grep_stdin_chunks_use_exact_utf8_byte_limit(self):
+        assert list(grep_verify_common_module._grep_stdin_chunks(["é", "x"], 3)) == [
+            (0, ["é"]),
+            (1, ["x"]),
+        ]
+
+        with pytest.raises(_GrepInputLimitExceeded):
+            list(grep_verify_common_module._grep_stdin_chunks(["éé"], 4))
+
+    def test_single_oversized_space_adjudication_is_incomplete(self):
+        content = "alpha\x1comega"
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        sensitive = GrepRequest(pattern=r"alpha\somega", **common)
+        companion = GrepRequest(pattern="alpha", **common)
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(("/repo/code.py", 1, f"{content}\n")),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_INPUT_BYTES",
+                4,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                return_value=batch_result,
+            ) as mock_run,
+        ):
+            results = execute_grep_batch([sensitive, companion])
+
+        assert results[sensitive] == ()
+        assert sensitive in results.incomplete_requests
+        assert results[companion] == (f"/repo/code.py:1:{content}",)
+        mock_run.assert_called_once()
+
+    def test_later_space_adjudication_chunk_failure_discards_partial_matches(self):
+        content = "alpha\x1comega"
+        common = {
+            "project_root": "/repo",
+            "use_regex": True,
+            "include_globs": ("*.py",),
+            "fixed_string": False,
+            "max_results": 5,
+        }
+        sensitive = GrepRequest(pattern=r"alpha\Somega", **common)
+        companion = GrepRequest(pattern="alpha", **common)
+        batch_result = Mock(
+            returncode=0,
+            stdout=_rg_json_output(
+                ("/repo/a.py", 1, f"{content}\n"),
+                ("/repo/b.py", 1, f"{content}\n"),
+            ),
+            stderr="",
+        )
+        adjudication_calls = 0
+
+        def fake_run(cmd, **kwargs):
+            nonlocal adjudication_calls
+            if "--json" in cmd:
+                return batch_result
+            adjudication_calls += 1
+            if adjudication_calls == 1:
+                return Mock(returncode=0, stdout=f"1:{content}\n", stderr="")
+            raise _GrepDeadlineExceeded("forced later-chunk deadline")
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._GREP_UNICODE_MAX_INPUT_BYTES",
+                len(content.encode("utf-8")) + 1,
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_bounded_subprocess",
+                side_effect=fake_run,
+            ),
+        ):
+            results = execute_grep_batch([sensitive, companion])
+
+        assert adjudication_calls == 2
+        assert results[sensitive] == ()
+        assert sensitive in results.incomplete_requests
+        assert results[companion] == (
+            f"/repo/a.py:1:{content}",
+            f"/repo/b.py:1:{content}",
+        )
+
     def test_batched_and_legacy_verdicts_match_on_non_ascii_content(self, tmp_path):
         package = tmp_path / "pkg.py"
         package.write_text(
@@ -1585,6 +1870,75 @@ class TestBatchedGrepVerify:
         )
         assert results.incomplete_requests == set()
         assert open_process.call_count == 2
+
+    @pytest.mark.parametrize(
+        ("pattern", "exact_output", "expected"),
+        [
+            (r"alpha\somega", "", ()),
+            (
+                r"alpha\Somega",
+                _rg_json_output(("/repo/source.py", 1, "alpha\x1comega\n")),
+                ("/repo/source.py:1:alpha\x1comega",),
+            ),
+        ],
+    )
+    def test_streamed_retry_uses_ripgrep_space_semantics(
+        self,
+        pattern,
+        exact_output,
+        expected,
+    ):
+        sensitive = _regex_grep_request(pattern)
+        companion = _regex_grep_request("alpha")
+        union_output = _rg_json_output(("/repo/source.py", 1, "alpha\x1comega\n"))
+        process_outputs = iter((union_output, exact_output))
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(next(process_outputs)),
+            ) as open_process,
+        ):
+            results = execute_grep_batch([sensitive, companion])
+
+        assert results[sensitive] == expected
+        assert results[companion] == ("/repo/source.py:1:alpha\x1comega",)
+        assert results.incomplete_requests == set()
+        assert open_process.call_count == 2
+
+    def test_streamed_space_exact_search_failure_is_incomplete(self):
+        sensitive = _regex_grep_request(r"alpha\somega")
+        companion = _regex_grep_request("alpha")
+        union_output = _rg_json_output(("/repo/source.py", 1, "alpha\x1comega\n"))
+        process_outputs = iter((union_output, "not-json\n"))
+
+        with (
+            patch(
+                "skylos.core.grep_verify_common.shutil.which",
+                return_value="/usr/bin/rg",
+            ),
+            patch(
+                "skylos.core.grep_verify_common._run_ripgrep_batch",
+                side_effect=_GrepOutputLimitExceeded("forced output cap"),
+            ),
+            patch(
+                "skylos.core.grep_verify_common._open_grep_process",
+                side_effect=lambda _cmd: _stdout_process(next(process_outputs)),
+            ),
+        ):
+            results = execute_grep_batch([sensitive, companion])
+
+        assert results[sensitive] == ()
+        assert sensitive in results.incomplete_requests
+        assert companion not in results.incomplete_requests
 
     def test_streamed_retry_marks_failed_exact_search_incomplete(self):
         ambiguous = _regex_grep_request(r"\bfoo\b")
