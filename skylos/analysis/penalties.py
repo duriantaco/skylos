@@ -881,6 +881,37 @@ def _check_pydantic_methods(def_obj, framework):
     return None
 
 
+def _get_abstract_override_indexes(analyzer, all_defs):
+    cached = getattr(analyzer, "_abstract_override_indexes", None)
+    if cached and cached[0] is all_defs:
+        return cached
+
+    classes_by_file_and_name = {}
+    classes_by_name = {}
+    class_names = set()
+    methods_by_owner_and_name = {}
+    for dobj in all_defs.values():
+        if dobj.type == "class":
+            class_names.add(dobj.simple_name)
+            classes_by_file_and_name.setdefault((dobj.filename, dobj.simple_name), dobj)
+            classes_by_name.setdefault(dobj.simple_name, dobj)
+        elif dobj.type == "method" and "." in dobj.name:
+            owner_name = dobj.name.rsplit(".", 2)[-2]
+            methods_by_owner_and_name.setdefault(
+                (owner_name, dobj.simple_name), []
+            ).append(dobj)
+
+    indexes = (
+        all_defs,
+        classes_by_file_and_name,
+        classes_by_name,
+        class_names,
+        methods_by_owner_and_name,
+    )
+    analyzer._abstract_override_indexes = indexes
+    return indexes
+
+
 def _check_abstract_overrides(def_obj, analyzer, framework):
     if def_obj.type != "method" or "." not in def_obj.name:
         return None
@@ -908,20 +939,16 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
     all_defs = getattr(analyzer, "defs", {})
     class_name = parts[-2] if len(parts) >= 2 else None
     if class_name:
-        class_def = None
-        for dobj in all_defs.values():
-            if (
-                dobj.type == "class"
-                and dobj.simple_name == class_name
-                and dobj.filename == def_obj.filename
-            ):
-                class_def = dobj
-                break
+        (
+            _,
+            classes_by_file_and_name,
+            classes_by_name,
+            class_names,
+            methods_by_owner_and_name,
+        ) = _get_abstract_override_indexes(analyzer, all_defs)
+        class_def = classes_by_file_and_name.get((def_obj.filename, class_name))
         if class_def is None:
-            for dname, dobj in all_defs.items():
-                if dobj.type == "class" and dobj.simple_name == class_name:
-                    class_def = dobj
-                    break
+            class_def = classes_by_name.get(class_name)
         if class_def and getattr(class_def, "base_classes", None):
             has_external_base = False
             protocol_classes = set(getattr(analyzer, "_global_protocol_classes", set()))
@@ -930,24 +957,16 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
                 base_simple = base_name.split(".")[-1]
                 if base_simple in protocol_classes:
                     continue
-                for dname, dobj in all_defs.items():
-                    if (
-                        dobj.type == "method"
-                        and dobj.simple_name == method_name
-                        and dobj is not def_obj
-                        and "." in dobj.name
-                        and dobj.name.split(".")[-2] == base_simple
-                    ):
+                for dobj in methods_by_owner_and_name.get(
+                    (base_simple, method_name), ()
+                ):
+                    if dobj is not def_obj:
                         return _suppress(
                             def_obj,
                             f"overrides {base_simple}.{method_name}",
                             code="parent_override",
                         )
-                base_in_project = any(
-                    dobj.type == "class" and dobj.simple_name == base_simple
-                    for dobj in all_defs.values()
-                )
-                if not base_in_project and "." in base_name:
+                if base_simple not in class_names and "." in base_name:
                     has_external_base = True
             if has_external_base and not method_name.startswith("__"):
                 return -40

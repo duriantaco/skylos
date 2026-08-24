@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from collections import defaultdict
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
-from skylos.analysis.penalties import apply_penalties
+from skylos.analysis.penalties import _check_abstract_overrides, apply_penalties
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
 from skylos.engines.go_runner import GoEngineError
 
@@ -2204,6 +2204,79 @@ class TestClass:
 
 
 class TestApplyPenalties:
+    def test_abstract_override_lookup_indexes_definitions_once(self, mock_definition):
+        class CountingDefinitions(dict):
+            def __init__(self, definitions):
+                super().__init__(definitions)
+                self.items_calls = 0
+                self.values_calls = 0
+
+            def items(self):
+                self.items_calls += 1
+                return super().items()
+
+            def values(self):
+                self.values_calls += 1
+                return super().values()
+
+        base_class = mock_definition(
+            name="models.Base", simple_name="Base", type="class"
+        )
+        base_method = mock_definition(
+            name="models.Base.render_report_segment",
+            simple_name="render_report_segment",
+            type="method",
+        )
+        child_class = mock_definition(
+            name="models.Child", simple_name="Child", type="class"
+        )
+        child_class.base_classes = ["models.Base"]
+        child_method = mock_definition(
+            name="models.Child.render_report_segment",
+            simple_name="render_report_segment",
+            type="method",
+        )
+        external_class = mock_definition(
+            name="models.ExternalChild", simple_name="ExternalChild", type="class"
+        )
+        external_class.base_classes = ["framework.ExternalBase"]
+        external_methods = [
+            mock_definition(
+                name=f"models.ExternalChild.external_hook_{index}",
+                simple_name=f"external_hook_{index}",
+                type="method",
+            )
+            for index in range(2)
+        ]
+        definitions = CountingDefinitions(
+            {
+                definition.name: definition
+                for definition in (
+                    base_class,
+                    base_method,
+                    child_class,
+                    child_method,
+                    external_class,
+                    *external_methods,
+                )
+            }
+        )
+        analyzer = Skylos()
+        analyzer.defs = definitions
+        analyzer._global_abstract_methods = {}
+        analyzer._global_protocol_classes = set()
+        framework = Mock()
+        framework.abstract_methods = {}
+        framework.protocol_classes = set()
+
+        assert _check_abstract_overrides(child_method, analyzer, framework) is True
+        assert child_method.suppression_code == "parent_override"
+        for method in external_methods:
+            assert _check_abstract_overrides(method, analyzer, framework) == -40
+
+        assert definitions.values_calls == 1
+        assert definitions.items_calls == 0
+
     @pytest.mark.parametrize(
         ("filename", "def_type", "expected_reason"),
         [
