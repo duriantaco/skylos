@@ -455,13 +455,6 @@ def _project_cache_lock_path(
     root, path = resolved
     if not _ensure_cache_parent(root, path, create=True):
         return None
-    try:
-        if path.is_symlink():
-            return None
-        if path.exists() and not path.is_dir():
-            return None
-    except OSError:
-        return None
     return path
 
 
