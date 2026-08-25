@@ -2,6 +2,9 @@ from __future__ import annotations
 import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
+    SQLAlchemyTextProvenance,
+)
 
 
 def _qualified_name(node: ast.Call):
@@ -69,13 +72,94 @@ def _is_interpolated_string(n: ast.AST):
 
 
 class _SQLRawFlowChecker(TaintVisitor):
+    def __init__(self, tree: ast.AST, file_path, findings):
+        super().__init__(file_path, findings)
+        self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.sqlalchemy_text.record_import(node)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.sqlalchemy_text.record_import(node)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_function(node)
+        try:
+            super().visit_FunctionDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_function(node)
+        try:
+            super().visit_AsyncFunctionDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_class(node)
+        try:
+            super().visit_ClassDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.sqlalchemy_text.record_name_binding(node.id)
+        self.generic_visit(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self.sqlalchemy_text.enter_lambda(node)
+        try:
+            self.generic_visit(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def _visit_scoped_comprehension(self, node) -> None:
+        first, *remaining = node.generators
+        self.visit(first.iter)
+        self.sqlalchemy_text.enter_comprehension(node)
+        try:
+            self.visit(first.target)
+            for condition in first.ifs:
+                self.visit(condition)
+            for generator in remaining:
+                self.visit(generator.iter)
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_scoped_comprehension(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_scoped_comprehension(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_scoped_comprehension(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_scoped_comprehension(node)
+
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
         if not qn:
             self.generic_visit(node)
             return
 
-        if qn.endswith(".text") and node.args:
+        if self.sqlalchemy_text.is_text_call(node) and node.args:
             sql = node.args[0]
             if _is_interpolated_string(sql) or self.is_tainted(sql):
                 self.findings.append(
@@ -125,7 +209,7 @@ class _SQLRawFlowChecker(TaintVisitor):
 
 def scan(tree: ast.AST, file_path, findings):
     try:
-        checker = _SQLRawFlowChecker(file_path, findings)
+        checker = _SQLRawFlowChecker(tree, file_path, findings)
         checker.visit(tree)
     except Exception as e:
         print(f"Raw SQL flow analysis failed for {file_path}: {e}", file=sys.stderr)

@@ -2829,6 +2829,56 @@ class TestQualifiedReferenceSubstring:
         results = multi_strategy_search(findings[0], str(tmp_path))
         assert "qualified_references" in results
 
+        verdicts = grep_verify_findings(findings, str(tmp_path))
+        assert verdicts["foo.bar"].alive
+
+    def test_qualified_ref_in_markdown_does_not_rescue(self, tmp_path):
+        (tmp_path / "mod.py").write_text("def bar():\n    pass\n")
+        (tmp_path / "NOTES.md").write_text("foo.bar\n")
+
+        findings = [
+            {
+                "name": "bar",
+                "full_name": "foo.bar",
+                "simple_name": "bar",
+                "type": "function",
+                "file": str(tmp_path / "mod.py"),
+                "line": 1,
+                "confidence": 80,
+            }
+        ]
+
+        results = multi_strategy_search(findings[0], str(tmp_path))
+        assert "qualified_references" not in results
+
+        verdicts = grep_verify_findings(findings, str(tmp_path))
+        assert "foo.bar" not in verdicts
+
+    @pytest.mark.parametrize("reference", ['value = "foo.bar"\n', "# foo.bar\n"])
+    def test_qualified_ref_in_python_non_code_does_not_rescue(
+        self, tmp_path, reference
+    ):
+        (tmp_path / "mod.py").write_text("def bar():\n    pass\n")
+        (tmp_path / "other.py").write_text(reference)
+
+        findings = [
+            {
+                "name": "bar",
+                "full_name": "foo.bar",
+                "simple_name": "bar",
+                "type": "function",
+                "file": str(tmp_path / "mod.py"),
+                "line": 1,
+                "confidence": 80,
+            }
+        ]
+
+        results = multi_strategy_search(findings[0], str(tmp_path))
+        assert "qualified_references" not in results
+
+        verdicts = grep_verify_findings(findings, str(tmp_path))
+        assert "foo.bar" not in verdicts
+
 
 class TestAnalyzerIntegration:
     def test_exhausted_budget_withholds_candidates_and_marks_scan_incomplete(

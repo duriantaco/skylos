@@ -332,6 +332,7 @@ class Definition:
         "references",
         "is_exported",
         "in_init",
+        "binding_name",
         "node",
         "calls",
         "called_by",
@@ -375,6 +376,7 @@ class Definition:
         self.references = 0
         self.is_exported = False
         self.in_init = "__init__.py" in str(filename)
+        self.binding_name = self.simple_name
 
         self.node = node
         self.calls = set()
@@ -467,6 +469,7 @@ class Visitor(ast.NodeVisitor):
         self._alias_binding_lines: dict[str, int] = {}
         self.dyn = set()
         self.exports = set()
+        self.has_explicit_all = False
         self.current_function_scope = []
         self.current_function_params = []
         self.local_var_maps = []
@@ -577,6 +580,7 @@ class Visitor(ast.NodeVisitor):
         self._module_shadows_getattr = _module_binds_name(node, "getattr")
         for stmt in node.body:
             self.visit(stmt)
+        self._finalize_dunder_all_exports(node.body)
 
     def qual(self, name: str) -> str:
         if name in self.alias:
@@ -641,8 +645,13 @@ class Visitor(ast.NodeVisitor):
                 target,
                 "import",
                 line,
+                binding_name=alias_name,
                 is_exported=a.asname == a.name if a.asname else False,
-                suppression_lines={line, node.lineno, getattr(node, "end_lineno", line)},
+                suppression_lines={
+                    line,
+                    node.lineno,
+                    getattr(node, "end_lineno", line),
+                },
             )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -698,8 +707,13 @@ class Visitor(ast.NodeVisitor):
                 full,
                 "import",
                 line,
+                binding_name=alias_name,
                 is_exported=a.asname == a.name if a.asname else False,
-                suppression_lines={line, node.lineno, getattr(node, "end_lineno", line)},
+                suppression_lines={
+                    line,
+                    node.lineno,
+                    getattr(node, "end_lineno", line),
+                },
             )
 
     def visit_If(self, node: ast.If) -> None:
@@ -1685,7 +1699,6 @@ class Visitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Dict):
             self._track_dict_dispatch(node)
 
-        self._process_dunder_all_exports(node)
         self._try_infer_types_from_call(node)
         self._process_textual_bindings(node)
         self._extract_string_refs(node.value)
@@ -1734,6 +1747,8 @@ class Visitor(ast.NodeVisitor):
         def _define(t):
             if isinstance(t, ast.Name):
                 name_simple = t.id
+                if self._should_skip_variable_def(name_simple):
+                    return
                 var_name = self._compute_variable_name(name_simple)
 
                 in_typeddict = bool(
@@ -1769,6 +1784,15 @@ class Visitor(ast.NodeVisitor):
         _define(node.target)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if (
+            not self.current_function_scope
+            and not self.cls
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+        ):
+            self.visit(node.value)
+            return
+
         if isinstance(node.target, ast.Name):
             nm = node.target.id
             if (
@@ -1819,30 +1843,226 @@ class Visitor(ast.NodeVisitor):
             for elt in target_node.elts:
                 self._process_target_for_def(elt, _in_tuple_unpack=True)
 
-    def _process_dunder_all_exports(self, node: ast.Assign) -> None:
-        for target in node.targets:
-            if not isinstance(target, ast.Name):
-                continue
-            if target.id != "__all__":
-                continue
-            if not isinstance(node.value, (ast.List, ast.Tuple)):
+    def _finalize_dunder_all_exports(self, statements: list[ast.stmt]) -> None:
+        export_names: set[str] | None = None
+        observed_names: set[str] = set()
+        saw_runtime_update = False
+
+        for statement in statements:
+            observed_names.update(self._observed_dunder_all_names(statement))
+            matched, replacement = self._dunder_all_assignment(statement)
+            if matched:
+                saw_runtime_update = True
+                export_names = replacement
                 continue
 
-            for elt in node.value.elts:
-                value = self._extract_string_value(elt)
-                if value is None:
-                    continue
-
-                self.all_exports.add(value)
-                self.exports.add(value)
-
-                if self.mod:
-                    export_name = f"{self.mod}.{value}"
+            matched, additions = self._dunder_all_mutation(statement)
+            if matched:
+                saw_runtime_update = True
+                if export_names is None or additions is None:
+                    export_names = None
                 else:
-                    export_name = value
+                    export_names.update(additions)
+                continue
 
-                self.add_ref(export_name)
-                self.add_ref(value)
+            if self._contains_dunder_all_runtime_update(statement):
+                saw_runtime_update = True
+                export_names = None
+
+        self.exports.clear()
+        self.all_exports.clear()
+        self.has_explicit_all = saw_runtime_update and export_names is not None
+        # Exact state can narrow an __init__ surface. When evaluation became
+        # dynamic, retain observed names only as conservative export evidence.
+        final_names = export_names if self.has_explicit_all else observed_names
+        self.exports.update(final_names)
+        self.all_exports.update(final_names)
+
+    def _dunder_all_assignment(
+        self, statement: ast.stmt
+    ) -> tuple[bool, set[str] | None]:
+        if isinstance(statement, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in statement.targets
+            ):
+                return True, self._static_dunder_all_names(statement.value)
+            return False, None
+
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "__all__"
+            and statement.value is not None
+        ):
+            return True, self._static_dunder_all_names(statement.value)
+
+        return False, None
+
+    def _dunder_all_mutation(self, statement: ast.stmt) -> tuple[bool, set[str] | None]:
+        if (
+            isinstance(statement, ast.AugAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "__all__"
+        ):
+            if not isinstance(statement.op, ast.Add):
+                return True, None
+            return True, self._static_dunder_all_names(statement.value)
+
+        if not isinstance(statement, ast.Expr) or not isinstance(
+            statement.value, ast.Call
+        ):
+            return False, None
+
+        call = statement.value
+        if not (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "__all__"
+        ):
+            return False, None
+
+        if call.func.attr == "append":
+            if len(call.args) != 1 or call.keywords:
+                return True, None
+            value = self._extract_string_value(call.args[0])
+            return True, {value} if value is not None else None
+
+        if call.func.attr == "extend":
+            if len(call.args) != 1 or call.keywords:
+                return True, None
+            return True, self._static_dunder_all_names(call.args[0])
+
+        return True, None
+
+    def _static_dunder_all_names(self, value: ast.expr) -> set[str] | None:
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return None
+
+        names = set()
+        for element in value.elts:
+            name = self._extract_string_value(element)
+            if name is None:
+                return None
+            names.add(name)
+        return names
+
+    def _observed_dunder_all_names(self, node: ast.AST) -> set[str]:
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return set()
+
+        names: set[str] = set()
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        ):
+            names.update(self._partial_static_dunder_all_names(node.value))
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+            and node.value is not None
+        ):
+            names.update(self._partial_static_dunder_all_names(node.value))
+        elif (
+            isinstance(node, ast.AugAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "__all__"
+        ):
+            names.update(self._partial_static_dunder_all_names(node.value))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "__all__"
+            ):
+                if node.func.attr == "append" and len(node.args) == 1:
+                    name = self._extract_string_value(node.args[0])
+                    if name is not None:
+                        names.add(name)
+                elif node.func.attr == "extend" and len(node.args) == 1:
+                    names.update(self._partial_static_dunder_all_names(node.args[0]))
+
+        for child in ast.iter_child_nodes(node):
+            names.update(self._observed_dunder_all_names(child))
+        return names
+
+    def _partial_static_dunder_all_names(self, value: ast.expr) -> set[str]:
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return set()
+        return {
+            name
+            for element in value.elts
+            if (name := self._extract_string_value(element)) is not None
+        }
+
+    def _contains_dunder_all_runtime_update(self, node: ast.AST) -> bool:
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return False
+
+        if isinstance(node, ast.Assign):
+            targets_update = any(
+                self._target_contains_dunder_all(target) for target in node.targets
+            )
+            return targets_update or self._contains_dunder_all_runtime_update(
+                node.value
+            )
+        if isinstance(node, ast.AnnAssign):
+            target_updates = (
+                self._target_contains_dunder_all(node.target) and node.value is not None
+            )
+            return target_updates or (
+                node.value is not None
+                and self._contains_dunder_all_runtime_update(node.value)
+            )
+        if isinstance(node, ast.AugAssign):
+            return self._target_contains_dunder_all(
+                node.target
+            ) or self._contains_dunder_all_runtime_update(node.value)
+        if isinstance(node, ast.Delete):
+            return any(
+                self._target_contains_dunder_all(target) for target in node.targets
+            )
+        if isinstance(node, ast.NamedExpr):
+            return self._target_contains_dunder_all(
+                node.target
+            ) or self._contains_dunder_all_runtime_update(node.value)
+        if isinstance(node, ast.Call) and self._call_may_mutate_dunder_all(node):
+            return True
+
+        return any(
+            self._contains_dunder_all_runtime_update(child)
+            for child in ast.iter_child_nodes(node)
+        )
+
+    def _target_contains_dunder_all(self, target: ast.AST) -> bool:
+        if isinstance(target, ast.Name):
+            return target.id == "__all__"
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any(self._target_contains_dunder_all(item) for item in target.elts)
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            return self._target_contains_dunder_all(target.value)
+        if isinstance(target, ast.Starred):
+            return self._target_contains_dunder_all(target.value)
+        return False
+
+    def _call_may_mutate_dunder_all(self, call: ast.Call) -> bool:
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "__all__"
+        ):
+            return True
+        return any(
+            isinstance(node, ast.Name) and node.id == "__all__"
+            for argument in (*call.args, *(keyword.value for keyword in call.keywords))
+            for node in ast.walk(argument)
+        )
 
     def _extract_string_value(self, elt: ast.expr) -> Optional[str]:
         if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
