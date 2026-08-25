@@ -473,6 +473,58 @@ class TestSkylos:
         assert mock_import.references == 1
         assert mock_original.references == 2
 
+    def test_mark_refs_qualified_prefix_includes_descendant_definitions(
+        self, skylos, mock_definition
+    ):
+        nested = mock_definition(
+            name="package.Parent.Nested.target",
+            simple_name="target",
+            type="function",
+        )
+        other = mock_definition(
+            name="package.Other.target",
+            simple_name="target",
+            type="function",
+        )
+        skylos.defs = {
+            nested.name: nested,
+            other.name: other,
+        }
+        skylos.refs = [("package.Parent.target", Path("caller.py"))]
+        skylos._global_type_map = {}
+
+        skylos._mark_refs()
+
+        assert nested.references == 1
+        assert other.references == 0
+
+    def test_mark_refs_qualified_prefix_prefers_unique_same_file_definition(
+        self, skylos, mock_definition
+    ):
+        local = mock_definition(
+            name="package.Parent.Local.target",
+            simple_name="target",
+            type="function",
+        )
+        local.filename = Path("local.py")
+        remote = mock_definition(
+            name="package.Parent.Remote.target",
+            simple_name="target",
+            type="function",
+        )
+        remote.filename = Path("remote.py")
+        skylos.defs = {
+            local.name: local,
+            remote.name: remote,
+        }
+        skylos.refs = [("package.Parent.target", Path("local.py"))]
+        skylos._global_type_map = {}
+
+        skylos._mark_refs()
+
+        assert local.references == 1
+        assert remote.references == 0
+
 
 class TestHeuristics:
     @pytest.fixture

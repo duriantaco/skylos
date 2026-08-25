@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import ast
+from bisect import bisect_left
 import sys
 import json
 import logging
@@ -1922,8 +1923,29 @@ class Skylos:
                 self.defs[resolved].references += 1
 
         simple_name_lookup = defaultdict(list)
+        non_import_by_simple = defaultdict(list)
+        non_import_by_file_and_simple = defaultdict(list)
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
+            if definition.type != "import":
+                non_import_by_simple[definition.simple_name].append(definition)
+                non_import_by_file_and_simple[
+                    (str(definition.filename), definition.simple_name)
+                ].append(definition)
+
+        for definitions in non_import_by_simple.values():
+            definitions.sort(key=lambda definition: definition.name)
+        for definitions in non_import_by_file_and_simple.values():
+            definitions.sort(key=lambda definition: definition.name)
+
+        qualified_names_by_simple = {
+            simple_name: tuple(definition.name for definition in definitions)
+            for simple_name, definitions in non_import_by_simple.items()
+        }
+        qualified_names_by_file_and_simple = {
+            file_and_simple: tuple(definition.name for definition in definitions)
+            for file_and_simple, definitions in non_import_by_file_and_simple.items()
+        }
 
         _methods_by_file_and_name = defaultdict(list)
         for d in self.defs.values():
@@ -1949,6 +1971,13 @@ class Skylos:
                 if str(member_def.filename) == str(ref_file)
             ]
             return same_file or matches
+
+        def _qualified_range(names: tuple[str, ...], qualifier: str) -> tuple[int, int]:
+            lower = f"{qualifier}."
+            # '/' is the lexicographic successor to '.', so this upper bound
+            # includes every dotted descendant without scanning the bucket.
+            upper = f"{qualifier}/"
+            return bisect_left(names, lower), bisect_left(names, upper)
 
         total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
@@ -1988,6 +2017,7 @@ class Skylos:
             else:
                 ref_mod, simple = "", ref
             candidates = simple_name_lookup.get(simple, [])
+            same_file_candidates = []
 
             if ref_mod:
                 if ref_mod in ("cls", "self"):
@@ -2002,25 +2032,33 @@ class Skylos:
                         continue
 
                 else:
-                    filtered = []
-                    for d in candidates:
-                        if d.name.startswith(ref_mod + ".") and d.type != "import":
-                            filtered.append(d)
-                    candidates = filtered
+                    candidates = non_import_by_simple.get(simple, [])
+                    candidate_names = qualified_names_by_simple.get(simple, ())
+                    start, stop = _qualified_range(candidate_names, ref_mod)
+                    candidates = candidates[start : min(stop, start + 2)]
             else:
-                filtered = []
-                for d in candidates:
-                    if d.type != "import":
-                        filtered.append(d)
-                candidates = filtered
+                candidates = non_import_by_simple.get(simple, [])
 
             if len(candidates) > 1:
-                same_file = []
-                for d in candidates:
-                    if str(d.filename) == str(ref_file):
-                        same_file.append(d)
-                if len(same_file) == 1:
-                    candidates = same_file
+                if ref_mod in ("cls", "self"):
+                    same_file_candidates = [
+                        d for d in candidates if str(d.filename) == str(ref_file)
+                    ]
+                else:
+                    file_and_simple = (str(ref_file), simple)
+                    same_file_candidates = non_import_by_file_and_simple.get(
+                        file_and_simple, []
+                    )
+                if ref_mod and ref_mod not in ("cls", "self"):
+                    same_file_names = qualified_names_by_file_and_simple.get(
+                        file_and_simple, ()
+                    )
+                    start, stop = _qualified_range(same_file_names, ref_mod)
+                    same_file_candidates = same_file_candidates[
+                        start : min(stop, start + 2)
+                    ]
+                if len(same_file_candidates) == 1:
+                    candidates = same_file_candidates
 
             if len(candidates) == 1:
                 candidates[0].references += 1
@@ -2028,11 +2066,8 @@ class Skylos:
 
             if len(candidates) > 1:
                 if ref_mod in ("self", "cls"):
-                    same_file_cands = [
-                        d for d in candidates if str(d.filename) == str(ref_file)
-                    ]
-                    if same_file_cands:
-                        for d in same_file_cands:
+                    if same_file_candidates:
+                        for d in same_file_candidates:
                             d.references += 1
                     continue
                 if not ref_mod:
@@ -2056,10 +2091,7 @@ class Skylos:
                             member_def.references += 1
                         continue
 
-            non_import_defs_fallback = []
-            for d in simple_name_lookup.get(simple, []):
-                if d.type != "import":
-                    non_import_defs_fallback.append(d)
+            non_import_defs_fallback = non_import_by_simple.get(simple, [])
 
             if len(non_import_defs_fallback) == 1:
                 non_import_defs_fallback[0].references += 1
