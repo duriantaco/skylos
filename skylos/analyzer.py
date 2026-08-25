@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import ast
+from bisect import bisect_left
+from operator import attrgetter
 import sys
 import json
 import logging
@@ -1221,6 +1223,24 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
             _mark_evidence_ref(defn, "test_entrypoint")
 
 
+_definition_name = attrgetter("name")
+
+
+def _qualified_candidates(definitions: list, qualifier: str) -> list:
+    """Definitions whose dotted name lives under ``qualifier.``, capped at two.
+
+    ``definitions`` must be sorted by ``name``. Callers only distinguish
+    zero / one / more-than-one, so the slice stops at two matches.
+    """
+    lower = f"{qualifier}."
+    # '/' is the code point right after '.', so it bounds every dotted
+    # descendant without scanning the bucket.
+    upper = f"{qualifier}/"
+    start = bisect_left(definitions, lower, key=_definition_name)
+    stop = bisect_left(definitions, upper, start, key=_definition_name)
+    return definitions[start : min(stop, start + 2)]
+
+
 class Skylos:
     def __init__(self):
         self._has_analyzed = False
@@ -1995,8 +2015,20 @@ class Skylos:
                 self.defs[resolved].references += 1
 
         simple_name_lookup = defaultdict(list)
+        non_import_by_simple = defaultdict(list)
+        non_import_by_file_and_simple = defaultdict(list)
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
+            if definition.type != "import":
+                non_import_by_simple[definition.simple_name].append(definition)
+                non_import_by_file_and_simple[
+                    (str(definition.filename), definition.simple_name)
+                ].append(definition)
+
+        for definitions in non_import_by_simple.values():
+            definitions.sort(key=_definition_name)
+        for definitions in non_import_by_file_and_simple.values():
+            definitions.sort(key=_definition_name)
 
         _methods_by_file_and_name = defaultdict(list)
         for d in self.defs.values():
@@ -2061,6 +2093,7 @@ class Skylos:
             else:
                 ref_mod, simple = "", ref
             candidates = simple_name_lookup.get(simple, [])
+            same_file_candidates = []
 
             if ref_mod:
                 if ref_mod in ("cls", "self"):
@@ -2075,25 +2108,27 @@ class Skylos:
                         continue
 
                 else:
-                    filtered = []
-                    for d in candidates:
-                        if d.name.startswith(ref_mod + ".") and d.type != "import":
-                            filtered.append(d)
-                    candidates = filtered
+                    candidates = _qualified_candidates(
+                        non_import_by_simple.get(simple, []), ref_mod
+                    )
             else:
-                filtered = []
-                for d in candidates:
-                    if d.type != "import":
-                        filtered.append(d)
-                candidates = filtered
+                candidates = non_import_by_simple.get(simple, [])
 
             if len(candidates) > 1:
-                same_file = []
-                for d in candidates:
-                    if str(d.filename) == str(ref_file):
-                        same_file.append(d)
-                if len(same_file) == 1:
-                    candidates = same_file
+                if ref_mod in ("cls", "self"):
+                    same_file_candidates = [
+                        d for d in candidates if str(d.filename) == str(ref_file)
+                    ]
+                else:
+                    same_file_candidates = non_import_by_file_and_simple.get(
+                        (str(ref_file), simple), []
+                    )
+                    if ref_mod:
+                        same_file_candidates = _qualified_candidates(
+                            same_file_candidates, ref_mod
+                        )
+                if len(same_file_candidates) == 1:
+                    candidates = same_file_candidates
 
             if len(candidates) == 1:
                 candidates[0].references += 1
@@ -2101,11 +2136,8 @@ class Skylos:
 
             if len(candidates) > 1:
                 if ref_mod in ("self", "cls"):
-                    same_file_cands = [
-                        d for d in candidates if str(d.filename) == str(ref_file)
-                    ]
-                    if same_file_cands:
-                        for d in same_file_cands:
+                    if same_file_candidates:
+                        for d in same_file_candidates:
                             d.references += 1
                     continue
                 if not ref_mod:
@@ -2129,10 +2161,7 @@ class Skylos:
                             member_def.references += 1
                         continue
 
-            non_import_defs_fallback = []
-            for d in simple_name_lookup.get(simple, []):
-                if d.type != "import":
-                    non_import_defs_fallback.append(d)
+            non_import_defs_fallback = non_import_by_simple.get(simple, [])
 
             if len(non_import_defs_fallback) == 1:
                 non_import_defs_fallback[0].references += 1
