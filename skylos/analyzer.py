@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import ast
 from bisect import bisect_left
+from operator import attrgetter
 import sys
 import json
 import logging
@@ -1206,6 +1207,24 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
             _mark_evidence_ref(defn, "test_entrypoint")
 
 
+_definition_name = attrgetter("name")
+
+
+def _qualified_candidates(definitions: list, qualifier: str) -> list:
+    """Definitions whose dotted name lives under ``qualifier.``, capped at two.
+
+    ``definitions`` must be sorted by ``name``. Callers only distinguish
+    zero / one / more-than-one, so the slice stops at two matches.
+    """
+    lower = f"{qualifier}."
+    # '/' is the code point right after '.', so it bounds every dotted
+    # descendant without scanning the bucket.
+    upper = f"{qualifier}/"
+    start = bisect_left(definitions, lower, key=_definition_name)
+    stop = bisect_left(definitions, upper, start, key=_definition_name)
+    return definitions[start : min(stop, start + 2)]
+
+
 class Skylos:
     def __init__(self):
         self._has_analyzed = False
@@ -1934,18 +1953,9 @@ class Skylos:
                 ].append(definition)
 
         for definitions in non_import_by_simple.values():
-            definitions.sort(key=lambda definition: definition.name)
+            definitions.sort(key=_definition_name)
         for definitions in non_import_by_file_and_simple.values():
-            definitions.sort(key=lambda definition: definition.name)
-
-        qualified_names_by_simple = {
-            simple_name: tuple(definition.name for definition in definitions)
-            for simple_name, definitions in non_import_by_simple.items()
-        }
-        qualified_names_by_file_and_simple = {
-            file_and_simple: tuple(definition.name for definition in definitions)
-            for file_and_simple, definitions in non_import_by_file_and_simple.items()
-        }
+            definitions.sort(key=_definition_name)
 
         _methods_by_file_and_name = defaultdict(list)
         for d in self.defs.values():
@@ -1971,13 +1981,6 @@ class Skylos:
                 if str(member_def.filename) == str(ref_file)
             ]
             return same_file or matches
-
-        def _qualified_range(names: tuple[str, ...], qualifier: str) -> tuple[int, int]:
-            lower = f"{qualifier}."
-            # '/' is the lexicographic successor to '.', so this upper bound
-            # includes every dotted descendant without scanning the bucket.
-            upper = f"{qualifier}/"
-            return bisect_left(names, lower), bisect_left(names, upper)
 
         total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
@@ -2032,10 +2035,9 @@ class Skylos:
                         continue
 
                 else:
-                    candidates = non_import_by_simple.get(simple, [])
-                    candidate_names = qualified_names_by_simple.get(simple, ())
-                    start, stop = _qualified_range(candidate_names, ref_mod)
-                    candidates = candidates[start : min(stop, start + 2)]
+                    candidates = _qualified_candidates(
+                        non_import_by_simple.get(simple, []), ref_mod
+                    )
             else:
                 candidates = non_import_by_simple.get(simple, [])
 
@@ -2045,18 +2047,13 @@ class Skylos:
                         d for d in candidates if str(d.filename) == str(ref_file)
                     ]
                 else:
-                    file_and_simple = (str(ref_file), simple)
                     same_file_candidates = non_import_by_file_and_simple.get(
-                        file_and_simple, []
+                        (str(ref_file), simple), []
                     )
-                if ref_mod and ref_mod not in ("cls", "self"):
-                    same_file_names = qualified_names_by_file_and_simple.get(
-                        file_and_simple, ()
-                    )
-                    start, stop = _qualified_range(same_file_names, ref_mod)
-                    same_file_candidates = same_file_candidates[
-                        start : min(stop, start + 2)
-                    ]
+                    if ref_mod:
+                        same_file_candidates = _qualified_candidates(
+                            same_file_candidates, ref_mod
+                        )
                 if len(same_file_candidates) == 1:
                     candidates = same_file_candidates
 
