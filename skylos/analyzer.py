@@ -1179,6 +1179,22 @@ def _mark_evidence_ref(defn, marker: str, confidence: float = 1.0) -> None:
     refs[marker] = max(refs.get(marker, 0.0), confidence)
 
 
+def _source_file_key(value) -> str | None:
+    try:
+        path = os.fspath(value)
+    except TypeError:
+        return None
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _definition_binding_name(definition) -> str:
+    simple_name = str(getattr(definition, "simple_name", ""))
+    if getattr(definition, "type", None) != "import":
+        return simple_name
+    binding_name = getattr(definition, "binding_name", None)
+    return binding_name if isinstance(binding_name, str) else simple_name
+
+
 def _has_evidence_marker(defn, markers) -> bool:
     refs = getattr(defn, "heuristic_refs", {})
     if not isinstance(refs, dict):
@@ -1215,6 +1231,7 @@ class Skylos:
         self.refs = []
         self.dynamic = set()
         self.exports = defaultdict(set)
+        self._explicit_all_exports_by_file = {}
         self._module_alias_prefix_values = ()
         for attribute in _OPTIONAL_RUN_STATE_ATTRIBUTES:
             self.__dict__.pop(attribute, None)
@@ -1440,56 +1457,102 @@ class Skylos:
         return all_files
 
     def _mark_exports(self):
-        for name, definition in self.defs.items():
-            if definition.in_init and not definition.simple_name.startswith("_"):
+        explicit_exports_by_file = getattr(self, "_explicit_all_exports_by_file", {})
+        source_keys = {
+            id(definition): _source_file_key(getattr(definition, "filename", None))
+            for definition in self.defs.values()
+        }
+
+        for definition in self.defs.values():
+            source_key = source_keys[id(definition)]
+            has_explicit_all = source_key in explicit_exports_by_file
+            if (
+                definition.in_init
+                and not has_explicit_all
+                and not definition.simple_name.startswith("_")
+            ):
                 definition.is_exported = True
 
-        all_exported_names = set()
-        for mod, export_names in self.exports.items():
-            all_exported_names.update(export_names)
-
-        for def_name, def_obj in self.defs.items():
+        for def_obj in self.defs.values():
             if str(def_obj.filename).endswith(_TS_JS_SOURCE_EXTS):
                 continue
-            if def_obj.simple_name in all_exported_names:
+            source_key = source_keys[id(def_obj)]
+            export_names = explicit_exports_by_file.get(source_key)
+            if (
+                export_names is not None
+                and _definition_binding_name(def_obj) in export_names
+            ):
                 def_obj.is_exported = True
-                def_obj.references += 1
+                def_obj.references = max(def_obj.references, 1)
 
+        # Keep direct callers and older worker tuples compatible while matching
+        # each export to its own module instead of every same-named definition.
         for mod, export_names in self.exports.items():
             for name in export_names:
-                for def_name, def_obj in self.defs.items():
-                    if (
-                        def_name.startswith(f"{mod}.")
-                        and def_obj.simple_name == name
-                        and def_obj.type != "import"
-                    ):
-                        def_obj.is_exported = True
+                qualified_name = f"{mod}.{name}" if mod else name
+                def_obj = self.defs.get(qualified_name)
+                if def_obj is None or def_obj.type == "import":
+                    continue
+                def_obj.is_exported = True
+                def_obj.references = max(def_obj.references, 1)
 
+        non_import_by_name = defaultdict(list)
         non_import_by_simple = defaultdict(list)
-        for k, d in self.defs.items():
+        for d in self.defs.values():
             if d.type != "import":
+                non_import_by_name[d.name].append(d)
                 non_import_by_simple[d.simple_name].append(d)
 
-        for def_key, def_obj in self.defs.items():
+        def resolve_reexport_target(target_name):
+            exact = non_import_by_name.get(target_name, ())
+            if len(exact) == 1:
+                return exact[0]
+
+            for prefix in self._module_alias_prefix_values:
+                if not target_name.startswith(prefix + "."):
+                    continue
+                stripped = target_name[len(prefix) + 1 :]
+                matches = non_import_by_name.get(stripped, ())
+                if len(matches) == 1:
+                    return matches[0]
+
+            if "." not in target_name:
+                return None
+            simple_name = target_name.rsplit(".", 1)[-1]
+            qualified_matches = [
+                candidate
+                for candidate in non_import_by_simple.get(simple_name, ())
+                if "." in candidate.name
+                and (
+                    candidate.name.endswith(f".{target_name}")
+                    or target_name.endswith(f".{candidate.name}")
+                )
+            ]
+            if len(qualified_matches) == 1:
+                return qualified_matches[0]
+            return None
+
+        for def_obj in self.defs.values():
             if def_obj.type != "import":
                 continue
             if not def_obj.in_init:
                 continue
+            source_key = source_keys[id(def_obj)]
+            export_names = explicit_exports_by_file.get(source_key)
+            if (
+                export_names is not None
+                and _definition_binding_name(def_obj) not in export_names
+            ):
+                continue
             # e.g. "requests.api.get"
             target_name = def_obj.name
-            if target_name:
-                simple = target_name.split(".")[-1]
-            else:
-                simple = ""
-            if not simple:
+            if not target_name:
                 continue
-            if target_name in self.defs and self.defs[target_name].type != "import":
-                self.defs[target_name].references += 1
-                self.defs[target_name].is_exported = True
+            candidate = resolve_reexport_target(target_name)
+            if candidate is None:
                 continue
-            for candidate in non_import_by_simple.get(simple, []):
-                candidate.references += 1
-                candidate.is_exported = True
+            candidate.references += 1
+            candidate.is_exported = True
 
         # propogate exports to methods of exported classes
         exported_classes = set()
@@ -1907,7 +1970,17 @@ class Skylos:
                         return stripped_target
 
             simple = target_fqn.split(".")[-1]
-            cands = simple_to_keys.get(simple, [])
+            if "." not in target_fqn:
+                return None
+            cands = [
+                key
+                for key in simple_to_keys.get(simple, [])
+                if "." in non_import_defs[key].name
+                and (
+                    non_import_defs[key].name.endswith(f".{target_fqn}")
+                    or target_fqn.endswith(f".{non_import_defs[key].name}")
+                )
+            ]
             if len(cands) == 1:
                 return cands[0]
 
@@ -3178,6 +3251,7 @@ class Skylos:
                 file_architecture_metrics = out[23] if len(out) > 23 else None
                 file_top_level_refs = out[24] if len(out) > 24 else set()
                 file_analysis_error = out[25] if len(out) > 25 else None
+                file_has_explicit_all = bool(out[27]) if len(out) > 27 else False
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
                 (
@@ -3250,6 +3324,10 @@ class Skylos:
                 self.refs.extend(refs)
                 self.dynamic.update(dyn)
                 self.exports[mod].update(exports)
+                if file_has_explicit_all:
+                    source_key = _source_file_key(file)
+                    if source_key is not None:
+                        self._explicit_all_exports_by_file[source_key] = set(exports)
 
                 file_contexts.append(
                     (defs, test_flags, framework_flags, file, mod, cfg)

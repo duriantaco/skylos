@@ -162,9 +162,15 @@ def multi_strategy_search(
             rf"\b{re.escape(full_name)}\b",
             project_root,
             use_regex=True,
+            include_globs=["*.py", "*.pyi"],
             max_results=max_per_strategy,
         )
         if qualified_refs:
+            qualified_refs = [
+                ref
+                for ref in qualified_refs
+                if _is_python_source_reference(ref, simple_name)
+            ]
             _defs, usages = filter_grep_results(qualified_refs, finding)
             if usages:
                 results["qualified_references"] = usages[:max_per_strategy]

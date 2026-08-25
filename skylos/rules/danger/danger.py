@@ -243,6 +243,7 @@ class _PythonCommandExfilChecker(_DangerousCallsChecker):
 
 
 _SQL_TOKENS = (
+    "sqlalchemy",
     ".execute",
     ".executemany",
     ".executescript",
@@ -256,6 +257,7 @@ _SQL_TOKENS = (
     "objects.raw",
 )
 _SQL_RAW_TOKENS = (
+    "sqlalchemy",
     ".text(",
     " text(",
     "read_sql",

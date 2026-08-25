@@ -423,6 +423,7 @@ def _success_result(
         getattr(visitor, "top_level_refs", set()),
         analysis_error,
         prepared.ignore_rules_by_line,
+        bool(getattr(visitor, "has_explicit_all", False)),
     )
 
 
@@ -465,6 +466,7 @@ def _error_result(file, cfg, error, options: _WorkerOptions) -> tuple:
             kind="source_read_error" if isinstance(error, SourceReadError) else None,
         ),
         {},
+        False,
     )
 
 

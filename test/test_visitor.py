@@ -403,13 +403,8 @@ CONSTANT = 50
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = set()
-        for ref in visitor.refs:
-            ref_names.add(ref[0])
-
-        self.assertIn("function1", ref_names)
-        self.assertIn("Class1", ref_names)
-        self.assertIn("CONSTANT", ref_names)
+        self.assertEqual(visitor.exports, {"function1", "Class1", "CONSTANT"})
+        self.assertTrue(visitor.has_explicit_all)
 
     def test_all_tuple_format(self):
         """Test __all__ with tuple format."""
@@ -418,13 +413,72 @@ __all__ = ('func1', 'func2', 'Class1')
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = set()
-        for ref in visitor.refs:
-            ref_names.add(ref[0])
+        self.assertEqual(visitor.exports, {"func1", "func2", "Class1"})
+        self.assertTrue(visitor.has_explicit_all)
 
-        self.assertIn("func1", ref_names)
-        self.assertIn("func2", ref_names)
-        self.assertIn("Class1", ref_names)
+    def test_annotated_all_literal_is_authoritative(self):
+        visitor = self.parse_and_visit('__all__: list[str] = ["function1", "Class1"]\n')
+
+        self.assertTrue(visitor.has_explicit_all)
+        self.assertEqual(visitor.exports, {"function1", "Class1"})
+        self.assertNotIn(
+            "__all__", {definition.simple_name for definition in visitor.defs}
+        )
+
+    def test_all_literal_mutations_are_collected(self):
+        visitor = self.parse_and_visit(
+            '__all__ = ["initial"]\n'
+            '__all__ += ("augmented",)\n'
+            '__all__.append("appended")\n'
+            '__all__.extend(["extended_one", "extended_two"])\n'
+        )
+
+        self.assertTrue(visitor.has_explicit_all)
+        self.assertEqual(
+            visitor.exports,
+            {
+                "initial",
+                "augmented",
+                "appended",
+                "extended_one",
+                "extended_two",
+            },
+        )
+
+    def test_all_reassignment_replaces_exports_and_stale_refs(self):
+        visitor = self.parse_and_visit(
+            '__all__ = ["stale"]\n__all__ = ["replacement"]\n__all__.append("final")\n'
+        )
+        ref_names = {ref[0] for ref in visitor.refs}
+
+        self.assertTrue(visitor.has_explicit_all)
+        self.assertEqual(visitor.exports, {"replacement", "final"})
+        self.assertNotIn("stale", ref_names)
+        self.assertNotIn("test_module.stale", ref_names)
+
+    def test_dynamic_all_updates_are_not_authoritative(self):
+        cases = (
+            ('__all__ = ["known", dynamic_name]\n', {"known"}),
+            ('__all__ = ["known"]\n__all__ += dynamic_exports\n', {"known"}),
+            ('__all__ = ["known"]\n__all__.append(dynamic_name)\n', {"known"}),
+            ('__all__ = ["known"]\n__all__.extend(dynamic_exports)\n', {"known"}),
+            ('__all__ = ["known"]\nother = mutate(__all__)\n', {"known"}),
+            (
+                '__all__ = ["known"]\nif enabled:\n    __all__.append("conditional")\n',
+                {"known", "conditional"},
+            ),
+        )
+
+        for code, expected_exports in cases:
+            with self.subTest(code=code):
+                visitor = Visitor("test_module", self.temp_file.name)
+                visitor.visit(ast.parse(code))
+                ref_names = {ref[0] for ref in visitor.refs}
+
+                self.assertFalse(visitor.has_explicit_all)
+                self.assertEqual(visitor.exports, expected_exports)
+                for name in expected_exports:
+                    self.assertNotIn(f"test_module.{name}", ref_names)
 
     def test_builtin_detection(self):
         code = """

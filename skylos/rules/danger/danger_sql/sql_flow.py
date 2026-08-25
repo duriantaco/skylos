@@ -2,6 +2,9 @@ from __future__ import annotations
 import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
+    SQLAlchemyTextProvenance,
+)
 
 
 DB_MODULES = frozenset(
@@ -185,30 +188,17 @@ def is_parameterized_query(call: ast.Call, query_expr: ast.AST):
     return False
 
 
-def is_sqlalchemy_text(expr: ast.AST):
-    if not isinstance(expr, ast.Call):
-        return False
-
-    func = expr.func
-
-    if isinstance(func, ast.Attribute) and func.attr == "text":
-        return True
-
-    if isinstance(func, ast.Name) and func.id == "text":
-        return True
-    return False
-
-
 class _SQLFlowChecker(TaintVisitor):
     RULE_ID_SQLI = "SKY-D211"
     SEVERITY_CRITICAL = "CRITICAL"
     SEVERITY_HIGH = "HIGH"
     DBAPI_SQL_SINK_SUFFIXES = (".execute", ".executemany", ".executescript")
 
-    def __init__(self, file_path, findings):
+    def __init__(self, tree: ast.AST, file_path, findings):
         super().__init__(file_path, findings)
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
+        self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
         self.static_string_stack: list[dict[str, bool]] = [{}]
         self.db_receiver_alias_stack: list[set[str]] = [set()]
 
@@ -279,6 +269,7 @@ class _SQLFlowChecker(TaintVisitor):
                 self._mark_db_receiver_alias(target.attr)
 
     def visit_Import(self, node):
+        self.sqlalchemy_text.record_import(node)
         for alias in node.names:
             top_level = alias.name.split(".")[0]
             if top_level in DB_MODULES or alias.name in DB_MODULES:
@@ -286,6 +277,7 @@ class _SQLFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
+        self.sqlalchemy_text.record_import(node)
         if node.module:
             top_level = node.module.split(".")[0]
             if top_level in DB_MODULES or node.module in DB_MODULES:
@@ -319,12 +311,75 @@ class _SQLFlowChecker(TaintVisitor):
                     break
 
     def visit_FunctionDef(self, node):
-        self._record_passthrough_function(node)
-        super().visit_FunctionDef(node)
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_function(node)
+        try:
+            self._record_passthrough_function(node)
+            super().visit_FunctionDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
 
     def visit_AsyncFunctionDef(self, node):
-        self._record_passthrough_function(node)
-        super().visit_AsyncFunctionDef(node)
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_function(node)
+        try:
+            self._record_passthrough_function(node)
+            super().visit_AsyncFunctionDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_ClassDef(self, node):
+        self.sqlalchemy_text.record_name_binding(node.name)
+        self.sqlalchemy_text.enter_class(node)
+        try:
+            super().visit_ClassDef(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.sqlalchemy_text.record_name_binding(node.id)
+        self.generic_visit(node)
+
+    def visit_Lambda(self, node: ast.Lambda):
+        self.sqlalchemy_text.enter_lambda(node)
+        try:
+            self.generic_visit(node)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def _visit_scoped_comprehension(self, node):
+        first, *remaining = node.generators
+        self.visit(first.iter)
+        self.sqlalchemy_text.enter_comprehension(node)
+        try:
+            self.visit(first.target)
+            for condition in first.ifs:
+                self.visit(condition)
+            for generator in remaining:
+                self.visit(generator.iter)
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.sqlalchemy_text.leave_scope()
+
+    def visit_ListComp(self, node: ast.ListComp):
+        self._visit_scoped_comprehension(node)
+
+    def visit_SetComp(self, node: ast.SetComp):
+        self._visit_scoped_comprehension(node)
+
+    def visit_DictComp(self, node: ast.DictComp):
+        self._visit_scoped_comprehension(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp):
+        self._visit_scoped_comprehension(node)
 
     def visit_Assign(self, node):
         self._track_db_receiver_aliases(node.targets, node.value)
@@ -449,7 +504,7 @@ class _SQLFlowChecker(TaintVisitor):
             self.generic_visit(node)
             return
 
-        if is_sqlalchemy_text(node):
+        if self.sqlalchemy_text.is_text_call(node):
             for argument in node.args:
                 if _is_interpolated_string(argument) or self.is_tainted(argument):
                     self.findings.append(
@@ -470,7 +525,7 @@ class _SQLFlowChecker(TaintVisitor):
 
 def scan(tree, file_path, findings):
     try:
-        checker = _SQLFlowChecker(file_path, findings)
+        checker = _SQLFlowChecker(tree, file_path, findings)
         checker.visit(tree)
     except Exception as e:
         print(f"SQL flow analysis failed for {file_path}: {e}", file=sys.stderr)
