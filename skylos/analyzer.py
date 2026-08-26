@@ -104,6 +104,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_global_protocol_implementers",
     "_global_protocol_method_names",
     "_global_django_path_converter_classes",
+    "_abstract_override_indexes",
     "_duck_typed_implementers",
     "_dotted_variable_simple_name_counts",
     "_global_type_map",
