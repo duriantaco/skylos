@@ -36,6 +36,44 @@ def test_build_fixture_creates_mixed_language_project(tmp_path):
     assert (tmp_path / "php" / "service_0.php").is_file()
 
 
+def test_scale_probe_bounds_qualified_reference_name_reads():
+    speed_check = _load_speed_check_module()
+
+    summary = speed_check.run_scale_probe(size=32)
+    qualified = summary["qualified_references"]
+
+    assert qualified["passed"] is True
+    assert qualified["marked_references"] == 32
+    assert qualified["name_reads"] <= qualified["name_read_limit"]
+
+
+def test_scale_probe_isolates_global_implicit_references(monkeypatch):
+    speed_check = _load_speed_check_module()
+    dirty_tracker = speed_check.implicit_refs.ImplicitRefTracker()
+    dirty_tracker.known_refs.add("target")
+    monkeypatch.setattr(speed_check.implicit_refs, "pattern_tracker", dirty_tracker)
+
+    summary = speed_check.run_scale_probe(size=32)
+
+    assert summary["qualified_references"]["marked_references"] == 32
+    assert speed_check.implicit_refs.pattern_tracker is dirty_tracker
+    assert dirty_tracker.known_refs == {"target"}
+
+
+def test_scale_probe_builds_abstract_override_index_once():
+    speed_check = _load_speed_check_module()
+
+    summary = speed_check.run_scale_probe(size=32)
+    abstract = summary["abstract_overrides"]
+
+    assert abstract == {
+        "values_calls": 1,
+        "items_calls": 0,
+        "external_override_count": 32,
+        "passed": True,
+    }
+
+
 def test_run_speed_check_reports_pass_and_summary(tmp_path, monkeypatch):
     speed_check = _load_speed_check_module()
 
@@ -52,12 +90,15 @@ def test_run_speed_check_reports_pass_and_summary(tmp_path, monkeypatch):
         warmups=1,
         iterations=2,
         max_seconds=0.5,
+        scale_size=32,
     )
 
     assert summary["passed"] is True
     assert summary["file_count"] == 9
     assert summary["finding_count"] == 1
     assert summary["median_seconds"] == pytest.approx(0.25)
+    assert summary["timing_passed"] is True
+    assert summary["scale"]["passed"] is True
 
 
 def test_run_speed_check_fails_when_median_exceeds_budget(tmp_path, monkeypatch):
@@ -76,7 +117,35 @@ def test_run_speed_check_fails_when_median_exceeds_budget(tmp_path, monkeypatch)
         warmups=0,
         iterations=2,
         max_seconds=0.5,
+        scale_size=32,
     )
 
     assert summary["passed"] is False
     assert summary["median_seconds"] == 1.0
+    assert summary["timing_passed"] is False
+
+
+def test_run_speed_check_fails_when_scale_probe_exceeds_bound(tmp_path, monkeypatch):
+    speed_check = _load_speed_check_module()
+
+    monkeypatch.setattr(speed_check, "analyze", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(
+        speed_check,
+        "run_scale_probe",
+        lambda *, size: {"size": size, "passed": False},
+    )
+    ticks = iter([0.0, 0.1])
+    monkeypatch.setattr(speed_check.time, "perf_counter", lambda: next(ticks))
+
+    summary = speed_check.run_speed_check(
+        root=tmp_path,
+        per_language=1,
+        warmups=0,
+        iterations=1,
+        max_seconds=0.5,
+        scale_size=32,
+    )
+
+    assert summary["timing_passed"] is True
+    assert summary["scale"] == {"size": 32, "passed": False}
+    assert summary["passed"] is False

@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 10
     env:
       SKYLOS_ANALYZER_SPEED_MAX_SECONDS: "8.0"
+      SKYLOS_ANALYZER_SCALE_SIZE: "256"
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -32,5 +33,6 @@ jobs:
             --warmups 1 \
             --iterations 3 \
             --max-seconds "$SKYLOS_ANALYZER_SPEED_MAX_SECONDS" \
+            --scale-size "$SKYLOS_ANALYZER_SCALE_SIZE" \
             | tee /tmp/skylos-analyzer-speed-summary.txt
           cat /tmp/skylos-analyzer-speed-summary.txt >> "$GITHUB_STEP_SUMMARY"
