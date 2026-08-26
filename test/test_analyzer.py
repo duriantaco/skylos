@@ -436,6 +436,75 @@ class TestSkylos:
 
         assert mock_def.is_exported
 
+    def test_mark_exports_explicit_exports_stay_module_scoped(
+        self, skylos, mock_definition
+    ):
+        exported = mock_definition("package.published", "published", "function")
+        nested = mock_definition("package.branch.published", "published", "function")
+        skylos.defs = {
+            exported.name: exported,
+            nested.name: nested,
+        }
+        skylos.exports = {"package": {"published"}}
+
+        skylos._mark_exports()
+
+        assert exported.is_exported
+        assert exported.references == 1
+        assert not nested.is_exported
+        assert nested.references == 0
+
+    def test_mark_exports_init_import_leaves_ambiguous_targets_unresolved(
+        self, skylos, mock_definition
+    ):
+        import_definition = mock_definition(
+            "missing.published", "published", "import", in_init=True
+        )
+        candidates = [
+            mock_definition(
+                f"branch_{index}.missing.published", "published", "function"
+            )
+            for index in range(2)
+        ]
+        skylos.defs = {
+            "package/__init__.py:missing.published": import_definition,
+            **{candidate.name: candidate for candidate in candidates},
+        }
+
+        skylos._mark_exports()
+
+        assert all(not candidate.is_exported for candidate in candidates)
+        assert all(candidate.references == 0 for candidate in candidates)
+
+    def test_mark_exports_indexes_all_transitive_type_prefixes(
+        self, skylos, mock_definition
+    ):
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        children = [
+            mock_definition(f"package.Child{index}", f"Child{index}", "class")
+            for index in range(3)
+        ]
+        leaf = mock_definition("package.Leaf", "Leaf", "class")
+        sibling = mock_definition("package.Sibling", "Sibling", "class")
+        definitions = [root, *children, leaf, sibling]
+        skylos.defs = {definition.name: definition for definition in definitions}
+        skylos._global_type_map = {
+            "package.RootExtra.sibling": "Sibling",
+            "package.Root.third": "Child2",
+            "package.Child2.leaf": "Leaf",
+            "package.Root.first": "Child0",
+            "package.Root.second": "Child1",
+        }
+
+        skylos._mark_exports()
+
+        assert all(child.is_exported for child in children)
+        assert all(child.references == 1 for child in children)
+        assert leaf.is_exported
+        assert leaf.references == 1
+        assert not sibling.is_exported
+        assert sibling.references == 0
+
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
         mock_def.type = "function"
