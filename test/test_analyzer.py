@@ -170,7 +170,8 @@ class TestSkylos:
         source_root = tmp_path / "source"
         source_root.mkdir()
         (source_root / "module.py").write_text(
-            "def helper():\n    return 1\n", encoding="utf-8"
+            "class Worker:\n    def helper(self):\n        return 1\n",
+            encoding="utf-8",
         )
 
         skylos.analyze(str(source_root), thr=0, grep_verify=False, trace_file=False)
@@ -178,6 +179,7 @@ class TestSkylos:
             "_module_root_path",
             "pattern_trackers",
             "_global_type_map",
+            "_abstract_override_indexes",
             "_grep_verify_report",
             "_dead_code_liveness_report",
             "ts_consumed_exports",
@@ -596,12 +598,12 @@ class TestSkylos:
             definition.filename = Path(filename)
             definitions.append(definition)
         skylos.defs = {d.name: d for d in definitions}
-        skylos.refs = [("pkg.P.target", Path("b.py"))]
+        skylos.refs = [("pkg.P.target", Path("c.py"))]
         skylos._global_type_map = {}
 
         skylos._mark_refs()
 
-        assert [d.references for d in definitions] == [0, 1, 0]
+        assert [d.references for d in definitions] == [0, 0, 1]
 
 
 class TestHeuristics:

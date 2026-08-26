@@ -8,9 +8,38 @@ import statistics
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-from skylos.analyzer import analyze
+from skylos.analysis import implicit_refs
+from skylos.analysis.penalties import _check_abstract_overrides
+from skylos.analyzer import Skylos, analyze
+from skylos.visitors.base import Definition
+
+
+class _CountingDefinition(Definition):
+    __slots__ = ()
+    name_reads = 0
+
+    def __getattribute__(self, attribute):
+        if attribute == "name":
+            type(self).name_reads += 1
+        return super().__getattribute__(attribute)
+
+
+class _CountingDefinitions(dict):
+    def __init__(self, definitions):
+        super().__init__(definitions)
+        self.items_calls = 0
+        self.values_calls = 0
+
+    def items(self):
+        self.items_calls += 1
+        return super().items()
+
+    def values(self):
+        self.values_calls += 1
+        return super().values()
 
 
 def _write(path: Path, content: str) -> None:
@@ -202,6 +231,103 @@ def run_once(root: Path) -> tuple[float, int]:
     return elapsed, _count_result_items(data)
 
 
+def run_scale_probe(*, size: int) -> dict[str, Any]:
+    """Guard indexed analyzer lookups without relying on wall-clock timing."""
+    if size < 1:
+        raise ValueError("scale probe size must be at least 1")
+
+    qualified_definitions = [
+        _CountingDefinition(
+            f"pkg.{index:04d}.Owner.target",
+            "function",
+            Path("definitions.py"),
+            index + 1,
+        )
+        for index in range(size)
+    ]
+    qualified_analyzer = Skylos()
+    qualified_analyzer.defs = {
+        definition.name: definition for definition in qualified_definitions
+    }
+    qualified_analyzer.refs = [
+        (f"pkg.{index:04d}.target", Path("caller.py")) for index in range(size)
+    ]
+    qualified_analyzer._global_type_map = {}
+    _CountingDefinition.name_reads = 0
+
+    original_pattern_tracker = implicit_refs.pattern_tracker
+    implicit_refs.pattern_tracker = implicit_refs.ImplicitRefTracker()
+    try:
+        qualified_analyzer._mark_refs()
+    finally:
+        implicit_refs.pattern_tracker = original_pattern_tracker
+
+    qualified_name_reads = _CountingDefinition.name_reads
+    qualified_name_read_limit = size * ((2 * size.bit_length()) + 2)
+    marked_references = sum(
+        definition.references for definition in qualified_definitions
+    )
+    qualified_passed = (
+        marked_references == size
+        and all(definition.references == 1 for definition in qualified_definitions)
+        and qualified_name_reads <= qualified_name_read_limit
+    )
+
+    classes = []
+    methods = []
+    for index in range(size):
+        filename = Path(f"child_{index:04d}.py")
+        class_name = f"models.Child{index:04d}"
+        class_definition = Definition(class_name, "class", filename, 1)
+        class_definition.base_classes = ["framework.ExternalBase"]
+        classes.append(class_definition)
+        methods.append(
+            Definition(
+                f"{class_name}.external_hook_{index:04d}",
+                "method",
+                filename,
+                2,
+            )
+        )
+
+    abstract_definitions = _CountingDefinitions(
+        {definition.name: definition for definition in (*classes, *methods)}
+    )
+    abstract_analyzer = Skylos()
+    abstract_analyzer.defs = abstract_definitions
+    abstract_analyzer._global_abstract_methods = {}
+    abstract_analyzer._global_protocol_classes = set()
+    framework = SimpleNamespace(abstract_methods={}, protocol_classes=set())
+
+    abstract_outcomes = [
+        _check_abstract_overrides(method, abstract_analyzer, framework)
+        for method in methods
+    ]
+    external_override_count = sum(outcome == -40 for outcome in abstract_outcomes)
+    abstract_passed = (
+        external_override_count == size
+        and abstract_definitions.values_calls == 1
+        and abstract_definitions.items_calls == 0
+    )
+
+    return {
+        "size": size,
+        "qualified_references": {
+            "name_reads": qualified_name_reads,
+            "name_read_limit": qualified_name_read_limit,
+            "marked_references": marked_references,
+            "passed": qualified_passed,
+        },
+        "abstract_overrides": {
+            "values_calls": abstract_definitions.values_calls,
+            "items_calls": abstract_definitions.items_calls,
+            "external_override_count": external_override_count,
+            "passed": abstract_passed,
+        },
+        "passed": qualified_passed and abstract_passed,
+    }
+
+
 def run_speed_check(
     *,
     root: Path,
@@ -209,6 +335,7 @@ def run_speed_check(
     warmups: int,
     iterations: int,
     max_seconds: float,
+    scale_size: int = 256,
 ) -> dict[str, Any]:
     """
     Measure analyzer runtime on a generated fixture.
@@ -234,6 +361,8 @@ def run_speed_check(
         timings.append(elapsed)
 
     median_seconds = statistics.median(timings)
+    scale = run_scale_probe(size=scale_size)
+    timing_passed = median_seconds <= max_seconds
     return {
         "file_count": file_count,
         "finding_count": finding_count,
@@ -242,7 +371,9 @@ def run_speed_check(
         "timings": timings,
         "median_seconds": median_seconds,
         "max_seconds": max_seconds,
-        "passed": median_seconds <= max_seconds,
+        "timing_passed": timing_passed,
+        "scale": scale,
+        "passed": timing_passed and scale["passed"],
     }
 
 
@@ -254,6 +385,7 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--max-seconds", type=float, default=8.0)
+    parser.add_argument("--scale-size", type=int, default=256)
     parser.add_argument(
         "--fixture-root",
         type=Path,
@@ -270,6 +402,8 @@ def main() -> int:
         parser.error("--warmups must be non-negative")
     if args.max_seconds <= 0:
         parser.error("--max-seconds must be positive")
+    if args.scale_size < 1:
+        parser.error("--scale-size must be at least 1")
 
     if args.fixture_root is not None:
         args.fixture_root.mkdir(parents=True, exist_ok=True)
@@ -281,6 +415,7 @@ def main() -> int:
             warmups=args.warmups,
             iterations=args.iterations,
             max_seconds=args.max_seconds,
+            scale_size=args.scale_size,
         )
     else:
         with tempfile.TemporaryDirectory(prefix="skylos-speed-") as tmp:
@@ -290,15 +425,20 @@ def main() -> int:
                 warmups=args.warmups,
                 iterations=args.iterations,
                 max_seconds=args.max_seconds,
+                scale_size=args.scale_size,
             )
 
     print(json.dumps(summary, indent=2, sort_keys=True))
     if not summary["passed"]:
-        print(
-            "Analyzer speed check failed: "
-            f"median {summary['median_seconds']:.3f}s exceeds "
-            f"budget {summary['max_seconds']:.3f}s"
-        )
+        failures = []
+        if not summary["timing_passed"]:
+            failures.append(
+                f"median {summary['median_seconds']:.3f}s exceeds "
+                f"budget {summary['max_seconds']:.3f}s"
+            )
+        if not summary["scale"]["passed"]:
+            failures.append("deterministic scale probe exceeded its work bounds")
+        print("Analyzer speed check failed: " + "; ".join(failures))
         return 1
 
     print(
