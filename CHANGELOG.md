@@ -1,5 +1,27 @@
 ## Changelog
 
+## [4.35.0](https://github.com/duriantaco/skylos/compare/v4.34.0...v4.35.0) (2026-08-26)
+
+
+### Features
+
+* **quality:** detect generated-code mistakes ([#762](https://github.com/duriantaco/skylos/issues/762)) ([b59dbab](https://github.com/duriantaco/skylos/commit/b59dbabf11c40a9ace3ec4db063d9a60b9033abc))
+* **typescript:** detect type evidence bypasses ([#761](https://github.com/duriantaco/skylos/issues/761)) ([e5d7236](https://github.com/duriantaco/skylos/commit/e5d723668cdc1e81b4fa4967ccfc57799f6f44f2))
+
+
+### Bug Fixes
+
+* **ai-defect:** recognize control-flow module exports ([#759](https://github.com/duriantaco/skylos/issues/759)) ([a1055d8](https://github.com/duriantaco/skylos/commit/a1055d8d32e7d3250763626131078145d158ef70))
+* **ai-defect:** support PEP 735 dependency groups ([#764](https://github.com/duriantaco/skylos/issues/764)) ([46d21dc](https://github.com/duriantaco/skylos/commit/46d21dc856342bc0067c6152e45b5576768107cf))
+* **analyzer:** tighten dead-code and SQL matching ([#770](https://github.com/duriantaco/skylos/issues/770)) ([7d71ee2](https://github.com/duriantaco/skylos/commit/7d71ee2014ff74c33b446994f24352393ef0b351))
+
+
+### Performance Improvements
+
+* **analyzer:** batch engine-sensitive space patterns ([#763](https://github.com/duriantaco/skylos/issues/763)) ([8a03fa4](https://github.com/duriantaco/skylos/commit/8a03fa4da8d5529ef87f991f9a1a88ec805d2e71))
+* **analyzer:** index abstract override lookups ([#767](https://github.com/duriantaco/skylos/issues/767)) ([8c07ef9](https://github.com/duriantaco/skylos/commit/8c07ef916ab84cde0d4fa4d5b0dd5dcfd66d8067))
+* **analyzer:** index qualified reference lookups ([#769](https://github.com/duriantaco/skylos/issues/769)) ([b0fbfdb](https://github.com/duriantaco/skylos/commit/b0fbfdb9f91aec0f19a666f36a033ee5a6fa93de))
+
 ## [4.34.0](https://github.com/duriantaco/skylos/compare/v4.33.2...v4.34.0) (2026-08-23)
 
 
