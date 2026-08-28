@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
+from collections.abc import Iterator, Mapping
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.analysis.penalties import _check_abstract_overrides, apply_penalties
@@ -504,6 +505,46 @@ class TestSkylos:
         assert leaf.references == 1
         assert not sibling.is_exported
         assert sibling.references == 0
+
+    def test_mark_exports_indexes_global_type_map_once(self, skylos, mock_definition):
+        class ScanCountingMap(Mapping[str, str]):
+            def __init__(self, values: dict[str, str]) -> None:
+                self._values = values
+                self.key_visits = 0
+
+            def __getitem__(self, key: str) -> str:
+                return self._values[key]
+
+            def __iter__(self) -> Iterator[str]:
+                for key in self._values:
+                    self.key_visits += 1
+                    yield key
+
+            def __len__(self) -> int:
+                return len(self._values)
+
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        reachable = [
+            mock_definition(f"package.Node{index}", f"Node{index}", "class")
+            for index in range(4)
+        ]
+        skylos.defs = {definition.name: definition for definition in [root, *reachable]}
+
+        type_map = ScanCountingMap(
+            {
+                "package.Root.child": "Node0",
+                "package.Node0.child": "Node1",
+                "package.Node1.child": "Node2",
+                "package.Node2.child": "Node3",
+                **{f"package.Unrelated{index}.child": "Missing" for index in range(8)},
+            }
+        )
+        skylos._global_type_map = type_map
+
+        skylos._mark_exports()
+
+        assert all(definition.is_exported for definition in reachable)
+        assert type_map.key_visits == len(type_map)
 
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
