@@ -546,6 +546,58 @@ class TestSkylos:
         assert all(definition.is_exported for definition in reachable)
         assert type_map.key_visits == len(type_map)
 
+    def test_mark_exports_uses_logarithmic_type_prefix_lookups(
+        self, skylos, mock_definition
+    ):
+        class ProbeKeys(list[str]):
+            def __init__(self, values: list[str]) -> None:
+                super().__init__(values)
+                self.index_probes = 0
+                self.iterated_items = 0
+
+            def __getitem__(self, index):
+                if isinstance(index, int):
+                    self.index_probes += 1
+                return super().__getitem__(index)
+
+            def __iter__(self):
+                for value in super().__iter__():
+                    self.iterated_items += 1
+                    yield value
+
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        reachable = [
+            mock_definition(f"package.Node{index}", f"Node{index}", "class")
+            for index in range(4)
+        ]
+        skylos.defs = {definition.name: definition for definition in [root, *reachable]}
+
+        type_map = {
+            "package.Root.child": "Node0",
+            "package.Node0.child": "Node1",
+            "package.Node1.child": "Node2",
+            "package.Node2.child": "Node3",
+            **{
+                f"package.Unrelated{index:04d}.child": "Missing"
+                for index in range(4092)
+            },
+        }
+        skylos._global_type_map = type_map
+        probe_keys = ProbeKeys(sorted(type_map))
+
+        with patch(
+            "skylos.analyzer.sorted", return_value=probe_keys, create=True
+        ) as sorted_mock:
+            skylos._mark_exports()
+
+        sorted_mock.assert_called_once_with(type_map)
+        assert all(definition.is_exported for definition in reachable)
+        assert probe_keys.iterated_items == 0
+
+        lookup_count = 1 + len(reachable)
+        logarithmic_bound = 2 * lookup_count * len(probe_keys).bit_length()
+        assert 0 < probe_keys.index_probes <= logarithmic_bound
+
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
         mock_def.type = "function"
