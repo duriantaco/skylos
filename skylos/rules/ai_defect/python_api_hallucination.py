@@ -6,10 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.analysis.ast_cache import (
+    MODE_SAFE_REPLACE_2MB,
+    load_python_module,
+    register_dependent_clear,
+    releases_python_ast_cache,
+)
 from skylos.rules.ai_defect.phantom_refs import (
-    _build_parent_map,
-    _build_scope_infos,
+    _ast_index_for,
+    _scope_infos_for,
     _collect_module_facts,
     _module_dunder_attributes,
     _module_has_member,
@@ -22,7 +27,6 @@ from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
 PYTHON_API_CHECK_ID = "python_local_api_reference"
-_MAX_PYTHON_SOURCE_BYTES = 2 * 1024 * 1024
 PYTHON_API_SUFFIXES = (".py", ".pyi", ".pyw")
 
 
@@ -42,6 +46,7 @@ class _PythonCoverageState:
         self.reasons[reason] += 1
 
 
+@releases_python_ast_cache
 def scan_python_local_api_hallucinations(
     project_root: str | Path,
     py_files: Iterable[str | Path],
@@ -175,8 +180,8 @@ def _inspect_target_references(
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
 ) -> None:
-    parent_map = _build_parent_map(tree)
-    scope_infos = _build_scope_infos(tree, current_module, local_modules)
+    ast_index = _ast_index_for(tree)
+    scope_infos = _scope_infos_for(tree, current_module, local_modules)
 
     def ensure_module_loaded(module_name: str) -> bool:
         return module_name in trees
@@ -184,7 +189,7 @@ def _inspect_target_references(
     _inspect_import_references(
         root,
         current_module,
-        tree,
+        ast_index,
         local_modules,
         trees,
         members,
@@ -197,7 +202,7 @@ def _inspect_target_references(
         module_dunder_attributes,
     )
 
-    for expression, owner in _reference_expressions(tree, parent_map):
+    for expression, owner in _reference_expressions(ast_index):
         if (
             id(expression) in type_checking_node_ids
             or id(owner) in type_checking_node_ids
@@ -213,7 +218,7 @@ def _inspect_target_references(
             expr=expression,
             node=owner,
             tree=tree,
-            parent_map=parent_map,
+            ast_index=ast_index,
             scope_infos=scope_infos,
             module_alias_exports=active_aliases,
             local_modules=local_modules,
@@ -237,14 +242,11 @@ def _inspect_target_references(
             state.verified += 1
 
 
-def _reference_expressions(
-    tree: ast.AST,
-    parent_map: dict[ast.AST, ast.AST],
-) -> Iterable[tuple[ast.AST, ast.AST]]:
-    for node in ast.walk(tree):
+def _reference_expressions(ast_index) -> Iterable[tuple[ast.AST, ast.AST]]:
+    for node in ast_index.scan_nodes:
         if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
             continue
-        parent = parent_map.get(node)
+        parent = ast_index.parent_map.get(node)
         if isinstance(parent, ast.Attribute) and parent.value is node:
             continue
         owner = parent if isinstance(parent, ast.Call) and parent.func is node else node
@@ -254,7 +256,7 @@ def _reference_expressions(
 def _inspect_import_references(
     root: Path,
     current_module: str,
-    tree: ast.AST,
+    ast_index,
     local_modules: set[str],
     trees: dict[str, ast.AST],
     members: dict[str, set[str]],
@@ -266,7 +268,7 @@ def _inspect_import_references(
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
 ) -> None:
-    for node in ast.walk(tree):
+    for node in ast_index.import_nodes:
         if isinstance(node, ast.ImportFrom):
             _inspect_from_import(
                 root,
@@ -359,12 +361,36 @@ def _inspect_module_import(
             state.skip("local_import_outside_scan")
 
 
+_LOCAL_PREFIX_CACHE: dict[int, tuple[set[str], set[str]]] = {}
+
+
+def _local_module_prefixes(local_modules: set[str]) -> set[str]:
+    """Every proper dotted prefix of every local module, built once."""
+    entry = _LOCAL_PREFIX_CACHE.get(id(local_modules))
+    if entry is None or entry[0] is not local_modules:
+        prefixes: set[str] = set()
+        for candidate in local_modules:
+            parts = candidate.split(".")
+            for index in range(1, len(parts)):
+                prefixes.add(".".join(parts[:index]))
+        entry = (local_modules, prefixes)
+        _LOCAL_PREFIX_CACHE[id(local_modules)] = entry
+    return entry[1]
+
+
+register_dependent_clear(_LOCAL_PREFIX_CACHE.clear)
+
+
 def _has_local_module_prefix(module_name: str, local_modules: set[str]) -> bool:
-    return any(
-        module_name.startswith(f"{candidate}.")
-        or candidate.startswith(f"{module_name}.")
-        for candidate in local_modules
-    )
+    # "some local module is a package prefix of module_name" is a lookup over
+    # module_name's own dotted prefixes; "module_name is a package prefix of
+    # some local module" is a lookup in the precomputed prefix set. Both
+    # replace a scan of every local module per call.
+    parts = module_name.split(".")
+    for index in range(1, len(parts)):
+        if ".".join(parts[:index]) in local_modules:
+            return True
+    return module_name in _local_module_prefixes(local_modules)
 
 
 def _local_module_exists(root: Path, module_name: str) -> bool:
@@ -477,18 +503,12 @@ def _load_module_facts(
 
 
 def _parse_python_file(path: Path) -> tuple[ast.AST | None, str | None, bool]:
-    source = read_text_no_symlink(
-        path,
-        max_bytes=_MAX_PYTHON_SOURCE_BYTES,
-        encoding="utf-8",
-        errors="replace",
-    )
+    source, tree = load_python_module(path, MODE_SAFE_REPLACE_2MB)
     if source is None:
         return None, "source_unreadable", False
-    try:
-        return ast.parse(source), None, "TYPE_CHECKING" in source
-    except SyntaxError:
+    if tree is None:
         return None, "parse_error", "TYPE_CHECKING" in source
+    return tree, None, "TYPE_CHECKING" in source
 
 
 def _safe_root(project_root: str | Path) -> Path | None:

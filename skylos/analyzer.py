@@ -41,6 +41,11 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     find_unused_ts_exports,
 )
+from skylos.analysis.ast_cache import (
+    MODE_IGNORE,
+    load_python_module,
+    releases_python_ast_cache,
+)
 from skylos.visitors.languages.go import clear_go_cache
 
 from skylos.rules.secrets import (
@@ -2761,6 +2766,7 @@ class Skylos:
             analysis_errors=analysis_errors,
         )
 
+    @releases_python_ast_cache
     def analyze(
         self,
         path,
@@ -4086,11 +4092,12 @@ class Skylos:
                             PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)
                         )
                     for py_file in _ai_py_files:
-                        source = Path(py_file).read_text(
-                            encoding="utf-8",
-                            errors="ignore",
+                        source, tree = load_python_module(
+                            Path(py_file),
+                            MODE_IGNORE,
                         )
-                        tree = ast.parse(source)
+                        if tree is None:
+                            continue
                         linter = LinterVisitor(fallback_rules, str(py_file))
                         linter.context["source"] = source
                         linter.visit(tree)

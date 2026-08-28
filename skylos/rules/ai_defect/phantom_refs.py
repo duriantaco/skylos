@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import ast
 import builtins
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from skylos.analysis.ast_cache import (
+    MODE_REPLACE,
+    load_python_module,
+    register_dependent_clear,
+    releases_python_ast_cache,
+)
 from skylos.analysis.control_flow import _parse_requires_python
 from skylos.rules.quality._protocols import (
     type_checking_context,
@@ -89,6 +95,7 @@ class _ModuleFacts:
     type_checking_node_ids: set[int]
 
 
+@releases_python_ast_cache
 def scan_repo_phantom_security_references(
     project_root, py_files, target_files=None, vibe_dictionary=None
 ):
@@ -182,10 +189,8 @@ def scan_repo_phantom_security_references(
             parse_failures.add(module_name)
             return False
 
-        try:
-            source = file_path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source)
-        except (OSError, SyntaxError):
+        source, tree = load_python_module(file_path, MODE_REPLACE)
+        if tree is None:
             parse_failures.add(module_name)
             return False
 
@@ -206,10 +211,8 @@ def scan_repo_phantom_security_references(
     for file_path, current_module in file_to_module.items():
         if target_paths and file_path not in target_paths:
             continue
-        try:
-            source = file_path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source)
-        except (OSError, SyntaxError):
+        source, tree = load_python_module(file_path, MODE_REPLACE)
+        if tree is None:
             continue
 
         _store_module_facts(
@@ -218,8 +221,9 @@ def scan_repo_phantom_security_references(
             source_has_type_checking="TYPE_CHECKING" in source,
             include_reference_context=True,
         )
-        parent_map = _build_parent_map(tree)
-        scope_infos = _build_scope_infos(tree, current_module, local_modules)
+        ast_index = _ast_index_for(tree)
+        parent_map = ast_index.parent_map
+        scope_infos = _scope_infos_for(tree, current_module, local_modules)
         type_checking_node_ids = module_type_checking_node_ids.get(
             current_module, set()
         )
@@ -250,10 +254,11 @@ def scan_repo_phantom_security_references(
                 package_modules,
                 _ensure_module_loaded,
                 module_dunder_attributes,
+                ast_index,
             )
         )
 
-        for node in ast.walk(tree):
+        for node in ast_index.scan_nodes:
             if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
                 if _attribute_is_call_target(node, parent_map):
                     continue
@@ -268,7 +273,7 @@ def scan_repo_phantom_security_references(
                     expr=node,
                     node=node,
                     tree=tree,
-                    parent_map=parent_map,
+                    ast_index=ast_index,
                     scope_infos=scope_infos,
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
@@ -306,7 +311,7 @@ def scan_repo_phantom_security_references(
                         file_path=file_path,
                         node=node.func,
                         tree=tree,
-                        parent_map=parent_map,
+                        ast_index=ast_index,
                         scope_infos=scope_infos,
                         repo_member_names=repo_member_names,
                         builtin_names=builtin_names,
@@ -323,7 +328,7 @@ def scan_repo_phantom_security_references(
                     expr=node.func,
                     node=node,
                     tree=tree,
-                    parent_map=parent_map,
+                    ast_index=ast_index,
                     scope_infos=scope_infos,
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
@@ -371,7 +376,7 @@ def scan_repo_phantom_security_references(
                     expr=deco_target,
                     node=deco_target,
                     tree=tree,
-                    parent_map=parent_map,
+                    ast_index=ast_index,
                     scope_infos=scope_infos,
                     module_alias_exports=active_aliases,
                     local_modules=local_modules,
@@ -420,9 +425,15 @@ def _direct_local_import_findings(
     package_modules,
     ensure_module_loaded,
     module_dunder_attributes: frozenset[str] = _STANDARD_MODULE_ATTRIBUTES,
+    ast_index=None,
 ):
     findings = []
-    for node in ast.walk(tree):
+    if ast_index is None:
+        # Built, not memoized: a caller reaching this fallback may hand us a
+        # tree the run-scoped cache does not hold, and an id(tree)-keyed
+        # entry for it could outlive the tree.
+        ast_index = _build_ast_index(tree)
+    for node in ast_index.import_nodes:
         if not isinstance(node, ast.ImportFrom):
             continue
         base = _resolve_import_from_base(current_module, node)
@@ -492,7 +503,7 @@ def _bare_call_finding(
     file_path,
     node,
     tree,
-    parent_map,
+    ast_index,
     scope_infos,
     repo_member_names,
     builtin_names,
@@ -503,15 +514,15 @@ def _bare_call_finding(
         return None
     if name in phantom_security_names:
         return None
-    if _bare_name_is_bound(name, node, tree, parent_map, scope_infos):
+    if _bare_name_is_bound(name, node, tree, ast_index, scope_infos):
         return None
     if not _resembles_local_symbol(name, repo_member_names):
         return None
     return _build_bare_call_finding(file_path, node, name)
 
 
-def _bare_name_is_bound(name, node, tree, parent_map, scope_infos):
-    for scope in _enclosing_scopes(node, tree, parent_map):
+def _bare_name_is_bound(name, node, tree, ast_index, scope_infos):
+    for scope in _enclosing_scopes(node, tree, ast_index):
         info = scope_infos.get(scope)
         if not info:
             continue
@@ -520,26 +531,62 @@ def _bare_name_is_bound(name, node, tree, parent_map, scope_infos):
     return False
 
 
+_RESEMBLANCE_THRESHOLD = 0.82
+_RESEMBLANCE_INDEX_CACHE: dict[int, tuple[set, dict[str, int], dict[int, list]]] = {}
+
+
+def _resemblance_index(repo_member_names):
+    """(trailing-token counts, candidates by length) for the member names.
+
+    Both views are derived once per member-name set: the token counts answer
+    the shared-trailing-token half of the test without touching every
+    candidate, and the length buckets let the similarity half skip whole
+    buckets that cannot reach the threshold.
+    """
+    entry = _RESEMBLANCE_INDEX_CACHE.get(id(repo_member_names))
+    if entry is None or entry[0] is not repo_member_names:
+        token_counts: dict[str, int] = {}
+        by_length: dict[int, list] = {}
+        for candidate in repo_member_names:
+            if "_" in candidate:
+                tail = candidate.rsplit("_", 1)[1]
+                token_counts[tail] = token_counts.get(tail, 0) + 1
+            by_length.setdefault(len(candidate), []).append(candidate)
+        entry = (repo_member_names, token_counts, by_length)
+        _RESEMBLANCE_INDEX_CACHE[id(repo_member_names)] = entry
+    return entry[1], entry[2]
+
+
+register_dependent_clear(_RESEMBLANCE_INDEX_CACHE.clear)
+
+
 def _resembles_local_symbol(name, repo_member_names):
-    for candidate in repo_member_names:
-        if candidate == name:
+    token_counts, by_length = _resemblance_index(repo_member_names)
+
+    if "_" in name:
+        tail = name.rsplit("_", 1)[1]
+        sharing = token_counts.get(tail, 0)
+        if name in repo_member_names:
+            sharing -= 1
+        if sharing > 0:
+            return True
+
+    length = len(name)
+    for candidate_length, candidates in by_length.items():
+        # SequenceMatcher.ratio() can never exceed real_quick_ratio(), which
+        # is 2 * min(la, lb) / (la + lb), so whole length buckets are out of
+        # reach of the threshold without comparing a single character.
+        if 2 * min(length, candidate_length) < _RESEMBLANCE_THRESHOLD * (
+            length + candidate_length
+        ):
             continue
-        if _shared_suffix_token(name, candidate):
-            return True
-        similarity = SequenceMatcher(None, name, candidate).ratio()
-        if similarity >= 0.82:
-            return True
+        for candidate in candidates:
+            if candidate == name:
+                continue
+            similarity = SequenceMatcher(None, name, candidate).ratio()
+            if similarity >= _RESEMBLANCE_THRESHOLD:
+                return True
     return False
-
-
-def _shared_suffix_token(left, right):
-    left_parts = left.split("_")
-    right_parts = right.split("_")
-    if len(left_parts) < 2:
-        return False
-    if len(right_parts) < 2:
-        return False
-    return left_parts[-1] == right_parts[-1]
 
 
 def _decorator_target(decorator):
@@ -569,7 +616,56 @@ def _module_name(root: Path, file_path: Path) -> str:
     return ".".join(parts)
 
 
+_MODULE_FACTS_CACHE: dict[tuple, tuple[frozenset, "_ModuleFacts"]] = {}
+
+
 def _collect_module_facts(
+    tree,
+    current_module,
+    local_modules,
+    *,
+    source_has_type_checking=None,
+    include_reference_context=False,
+):
+    """Memoized ``_build_module_facts``, shared across rule passes.
+
+    The phantom-ref scan and the API hallucination coverage pass collect
+    identical facts for the same tree and module. Keyed by id(tree) (trees
+    are held by the run-scoped AST cache, which clears this); the returned
+    facts are only ever read by callers, never mutated.
+
+    Only the reference-context result is memoized: that is the one both
+    passes ask for. The plain result is built once per module -- the
+    phantom scan's _ensure_module_loaded guards it -- so caching it would
+    hold a second full set of module facts that nothing ever reads again.
+    """
+    if not include_reference_context:
+        return _build_module_facts(
+            tree,
+            current_module,
+            local_modules,
+            source_has_type_checking=source_has_type_checking,
+        )
+
+    key = (id(tree), current_module, source_has_type_checking)
+    cached = _MODULE_FACTS_CACHE.get(key)
+    if cached is not None and cached[0] == local_modules:
+        return cached[1]
+    facts = _build_module_facts(
+        tree,
+        current_module,
+        local_modules,
+        source_has_type_checking=source_has_type_checking,
+        include_reference_context=True,
+    )
+    _MODULE_FACTS_CACHE[key] = (frozenset(local_modules), facts)
+    return facts
+
+
+register_dependent_clear(_MODULE_FACTS_CACHE.clear)
+
+
+def _build_module_facts(
     tree,
     current_module,
     local_modules,
@@ -1173,7 +1269,22 @@ def _is_irrefutable_match_case(case):
     )
 
 
+_POSTPONED_ANNOTATION_CACHE: dict[int, set[int]] = {}
+
+
 def _postponed_annotation_node_ids(tree):
+    """Memoized per tree; both rule passes ask for the same tree's ids."""
+    node_ids = _POSTPONED_ANNOTATION_CACHE.get(id(tree))
+    if node_ids is None:
+        node_ids = _build_postponed_annotation_node_ids(tree)
+        _POSTPONED_ANNOTATION_CACHE[id(tree)] = node_ids
+    return node_ids
+
+
+register_dependent_clear(_POSTPONED_ANNOTATION_CACHE.clear)
+
+
+def _build_postponed_annotation_node_ids(tree):
     if not _uses_future_annotations(tree):
         return set()
 
@@ -1201,21 +1312,149 @@ def _uses_future_annotations(tree):
     )
 
 
-def _build_parent_map(tree):
+_SCOPE_NODE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+_FUNCTION_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+@dataclass(frozen=True, slots=True)
+class _ModuleAstIndex:
+    """Per-tree node index built in a single walk.
+
+    ``scope_chains`` stores, for each Name/Attribute/Call node, the tuple
+    of scopes enclosing it ([module, outer, ..., inner]) with the same
+    semantics as a parent-map climb: class scopes are invisible from
+    nested functions, and a function's decorator expressions see the
+    function's own enclosing scopes rather than the function scope.
+    ``parent_map`` only holds parents of Attribute/Call nodes — the only
+    nodes whose parents the scans query directly. The node lists are in
+    ``ast.walk`` (breadth-first) order so consumers that used to walk the
+    whole tree see nodes in the same order.
+    """
+
+    parent_map: dict
+    scope_chains: dict
+    scope_nodes: list
+    import_nodes: list
+    scan_nodes: list
+
+
+_AST_INDEX_CACHE: dict[int, _ModuleAstIndex] = {}
+
+
+def _ast_index_for(tree):
+    """Return the cached ``_ModuleAstIndex`` for ``tree``, building it once.
+
+    Keyed by id(tree); safe because every indexed tree is held alive by
+    the run-scoped AST cache, and this cache is cleared with it.
+    """
+    index = _AST_INDEX_CACHE.get(id(tree))
+    if index is None:
+        index = _build_ast_index(tree)
+        _AST_INDEX_CACHE[id(tree)] = index
+    return index
+
+
+register_dependent_clear(_AST_INDEX_CACHE.clear)
+
+
+def _build_ast_index(tree):
     parent_map = {}
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            parent_map[child] = parent
-    return parent_map
+    scope_chains = {}
+    scope_nodes = []
+    import_nodes = []
+    scan_nodes = []
+
+    todo = deque([(tree, (tree,))])
+    while todo:
+        node, chain = todo.popleft()
+        if isinstance(node, (ast.Attribute, ast.Call)):
+            scope_chains[node] = chain
+            scan_nodes.append(node)
+        elif isinstance(node, ast.Name):
+            scope_chains[node] = chain
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            import_nodes.append(node)
+        elif isinstance(node, _SCOPE_NODE_TYPES):
+            scope_nodes.append(node)
+            if not isinstance(node, ast.Lambda):
+                scan_nodes.append(node)
+
+        is_function_scope = isinstance(node, _FUNCTION_SCOPE_TYPES)
+        if is_function_scope:
+            child_chain = tuple(
+                scope for scope in chain if not isinstance(scope, ast.ClassDef)
+            ) + (node,)
+        elif isinstance(node, ast.ClassDef):
+            child_chain = chain + (node,)
+        else:
+            child_chain = chain
+
+        decorators = (
+            getattr(node, "decorator_list", None) if is_function_scope else None
+        )
+        # Inlined ast.iter_child_nodes: this runs once per node of every
+        # module in the repo, and the two generator frames it saves are a
+        # measurable share of the index build.
+        for field in node._fields:
+            value = getattr(node, field, None)
+            if isinstance(value, ast.AST):
+                children = (value,)
+            elif type(value) is list:
+                children = value
+            else:
+                continue
+            for child in children:
+                if not isinstance(child, ast.AST):
+                    continue
+                if isinstance(child, (ast.Attribute, ast.Call)):
+                    parent_map[child] = node
+                if decorators and child in decorators:
+                    todo.append((child, chain))
+                else:
+                    todo.append((child, child_chain))
+
+    return _ModuleAstIndex(
+        parent_map=parent_map,
+        scope_chains=scope_chains,
+        scope_nodes=scope_nodes,
+        import_nodes=import_nodes,
+        scan_nodes=scan_nodes,
+    )
+
+
+_SCOPE_INFOS_CACHE: dict[int, tuple[str, set, dict]] = {}
+
+
+def _scope_infos_for(tree, current_module, local_modules):
+    """Memoized ``_build_scope_infos``, shared across rule passes.
+
+    The phantom-ref scan and the API hallucination coverage pass build
+    identical scope infos for the same tree/module; keyed by id(tree)
+    (trees are held by the run-scoped AST cache, which clears this).
+    """
+    cached = _SCOPE_INFOS_CACHE.get(id(tree))
+    if (
+        cached is not None
+        and cached[0] == current_module
+        and cached[1] == local_modules
+    ):
+        return cached[2]
+    scope_infos = _build_scope_infos(tree, current_module, local_modules)
+    _SCOPE_INFOS_CACHE[id(tree)] = (
+        current_module,
+        frozenset(local_modules),
+        scope_infos,
+    )
+    return scope_infos
+
+
+register_dependent_clear(_SCOPE_INFOS_CACHE.clear)
 
 
 def _build_scope_infos(tree, current_module, local_modules):
     scope_infos = {tree: _collect_scope_info(tree, current_module, local_modules)}
-    for node in ast.walk(tree):
-        if isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
-        ):
-            scope_infos[node] = _collect_scope_info(node, current_module, local_modules)
+    for node in _ast_index_for(tree).scope_nodes:
+        scope_infos[node] = _collect_scope_info(node, current_module, local_modules)
     return scope_infos
 
 
@@ -1365,7 +1604,7 @@ def _resolve_local_module_member(
     expr,
     node,
     tree,
-    parent_map,
+    ast_index,
     scope_infos,
     module_alias_exports,
     local_modules,
@@ -1379,7 +1618,7 @@ def _resolve_local_module_member(
         base_name=chain[0],
         node=node,
         tree=tree,
-        parent_map=parent_map,
+        ast_index=ast_index,
         scope_infos=scope_infos,
     )
     if not base_module:
@@ -1389,7 +1628,7 @@ def _resolve_local_module_member(
         chain=chain,
         node=node,
         tree=tree,
-        parent_map=parent_map,
+        ast_index=ast_index,
         scope_infos=scope_infos,
     ):
         return None
@@ -1413,9 +1652,9 @@ def _resolve_local_module_member(
     return current_module, chain[-1], ".".join(chain)
 
 
-def _resolve_visible_alias(base_name, node, tree, parent_map, scope_infos):
+def _resolve_visible_alias(base_name, node, tree, ast_index, scope_infos):
     visible_module = None
-    for scope in _enclosing_scopes(node, tree, parent_map):
+    for scope in _enclosing_scopes(node, tree, ast_index):
         info = scope_infos.get(scope)
         if not info:
             continue
@@ -1439,13 +1678,13 @@ def _is_explicitly_imported_module_reference(
     chain,
     node,
     tree,
-    parent_map,
+    ast_index,
     scope_infos,
 ):
     expression = ".".join(chain)
     base_name = chain[0]
 
-    for scope in _enclosing_scopes(node, tree, parent_map):
+    for scope in _enclosing_scopes(node, tree, ast_index):
         info = scope_infos.get(scope)
         if not info:
             continue
@@ -1459,34 +1698,8 @@ def _is_explicitly_imported_module_reference(
     return False
 
 
-def _enclosing_scopes(node, tree, parent_map):
-    scopes = [tree]
-    cur = parent_map.get(node)
-    child = node
-    nested_scopes = []
-    function_barrier = False
-
-    while cur is not None:
-        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            if _is_decorator_expression(child, cur):
-                child = cur
-                cur = parent_map.get(cur)
-                continue
-            nested_scopes.append(cur)
-            function_barrier = True
-        elif isinstance(cur, ast.ClassDef) and not function_barrier:
-            nested_scopes.append(cur)
-
-        child = cur
-        cur = parent_map.get(cur)
-
-    scopes.extend(reversed(nested_scopes))
-    return scopes
-
-
-def _is_decorator_expression(child, parent):
-    decorator_list = getattr(parent, "decorator_list", None)
-    return bool(decorator_list) and child in decorator_list
+def _enclosing_scopes(node, tree, ast_index):
+    return ast_index.scope_chains.get(node) or (tree,)
 
 
 def _attribute_is_call_target(node, parent_map):
