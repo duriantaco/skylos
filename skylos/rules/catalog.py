@@ -106,8 +106,8 @@ _RULES = (
         "SKY-T105", "Unvalidated JSON type assertion", "quality", "MEDIUM"
     ),
     RuleCatalogEntry("SKY-T106", "Unsafe exported API type", "quality", "MEDIUM"),
-    RuleCatalogEntry("SKY-F101", "Framework route missing auth", "quality"),
-    RuleCatalogEntry("SKY-F102", "Framework handler practice issue", "quality"),
+    RuleCatalogEntry("SKY-F101", "Framework handler practice issue", "quality"),
+    RuleCatalogEntry("SKY-F102", "Framework route missing auth", "quality"),
     RuleCatalogEntry("SKY-R101", "Python type-check policy", "quality", "MEDIUM"),
     RuleCatalogEntry("SKY-R102", "Python lint policy", "quality", "LOW"),
     RuleCatalogEntry("SKY-R103", "Skylos gate policy", "quality", "LOW"),
