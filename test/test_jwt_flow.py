@@ -43,3 +43,17 @@ def test_jwt_safe_decode_rs256():
     code = "import jwt\ndecoded = jwt.decode(token, public_key, algorithms=['RS256'])\n"
     findings = _scan_code(code)
     assert "SKY-D232" not in _rule_ids(findings)
+
+
+def test_jwt_algorithm_none_import_alias():
+    """Regression: `import jwt as j` alias must still be detected."""
+    code = "import jwt as j\ndecoded = j.decode(token, 'secret', algorithms=['none'])\n"
+    findings = _scan_code(code)
+    assert "SKY-D232" in _rule_ids(findings)
+
+
+def test_jwt_verify_false_from_import():
+    """Regression: `from jwt import decode` must still be detected."""
+    code = "from jwt import decode\ndecoded = decode(token, verify=False)\n"
+    findings = _scan_code(code)
+    assert "SKY-D232" in _rule_ids(findings)
