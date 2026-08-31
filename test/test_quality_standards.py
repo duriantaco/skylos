@@ -60,6 +60,30 @@ class TestCWEMapping:
         assert "Python sequence repetition semantics" in STANDARD_REFS["SKY-L034"]
         assert "ESLint no-async-promise-executor" in STANDARD_REFS["SKY-Q405"]
 
+    def test_corrected_cwe_mappings_match_rule_behavior(self):
+        """Regression: these 10 CWE mappings were wrong and have been
+        corrected to match each rule's actual behavior."""
+        # L001: mutable default args = improper initialization, not JS prototype pollution
+        assert CWE_MAP["SKY-L001"][0]["id"] == "CWE-665"
+        # L006: inconsistent return = coding standards, not unexpected status code
+        assert CWE_MAP["SKY-L006"][0]["id"] == "CWE-710"
+        # L024: stale mock = coding standards, not compilation warnings
+        assert CWE_MAP["SKY-L024"][0]["id"] == "CWE-710"
+        # L027: duplicate string literal = redundant code, not loop condition update
+        assert CWE_MAP["SKY-L027"][0]["id"] == "CWE-1041"
+        # L028: too many returns = complexity, not finally-block transfer
+        assert CWE_MAP["SKY-L028"][0]["id"] == "CWE-1121"
+        # L029: boolean trap = coding standards, not excessive params
+        assert CWE_MAP["SKY-L029"][0]["id"] == "CWE-710"
+        # Q401: async blocking = resource consumption, not improper locking
+        assert CWE_MAP["SKY-Q401"][0]["id"] == "CWE-400"
+        # Q701: coupling = coding standards, not circular dependencies
+        assert CWE_MAP["SKY-Q701"][0]["id"] == "CWE-710"
+        # Q804: DIP = coding standards, not type conversion
+        assert CWE_MAP["SKY-Q804"][0]["id"] == "CWE-710"
+        # U005: unused dep = coding standards, not unmaintained components
+        assert CWE_MAP["SKY-U005"][0]["id"] == "CWE-710"
+
 
 class TestEnrichFinding:
     def test_enriches_known_rule(self):

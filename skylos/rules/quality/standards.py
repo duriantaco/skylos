@@ -4,8 +4,8 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     # Logic rules
     "SKY-L001": [
         {
-            "id": "CWE-1321",
-            "name": "Improperly Controlled Modification of Object Prototype Attributes",
+            "id": "CWE-665",
+            "name": "Improper Initialization",
         }
     ],
     "SKY-L002": [
@@ -16,7 +16,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     ],
     "SKY-L004": [{"id": "CWE-705", "name": "Incorrect Control Flow Scoping"}],
     "SKY-L005": [{"id": "CWE-563", "name": "Assignment to Variable without Use"}],
-    "SKY-L006": [{"id": "CWE-394", "name": "Unexpected Status Code or Return Value"}],
+    "SKY-L006": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-L007": [{"id": "CWE-391", "name": "Unchecked Error Condition"}],
     "SKY-L008": [
         {
@@ -53,22 +53,22 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     ],
     "SKY-L023": [{"id": "CWE-476", "name": "NULL Pointer Dereference"}],
     "SKY-L024": [
-        {"id": "CWE-1127", "name": "Compilation with Insufficient Warnings or Errors"}
+        {"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}
     ],
     "SKY-L026": [{"id": "CWE-1164", "name": "Irrelevant Code"}],
     "SKY-L027": [
-        {"id": "CWE-1095", "name": "Loop Condition Value Update within the Loop"}
+        {"id": "CWE-1041", "name": "Use of Redundant Code"}
     ],  # maintainability: duplicated literals
     "SKY-L028": [
         {
-            "id": "CWE-1075",
-            "name": "Unconditional Control Flow Transfer in Finally Block",
+            "id": "CWE-1121",
+            "name": "Excessive McCabe Cyclomatic Complexity",
         }
     ],  # complex control flow
     "SKY-L029": [
         {
-            "id": "CWE-1064",
-            "name": "Invokable Control Element with Signature Containing an Excessive Number of Parameters",
+            "id": "CWE-710",
+            "name": "Improper Adherence to Coding Standards",
         }
     ],
     "SKY-L030": [
@@ -107,7 +107,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
         {"id": "CWE-693", "name": "Protection Mechanism Failure"},
         {"id": "CWE-862", "name": "Missing Authorization"},
     ],
-    "SKY-Q401": [{"id": "CWE-667", "name": "Improper Locking"}],
+    "SKY-Q401": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-Q501": [{"id": "CWE-1093", "name": "Excessively Complex Data Representation"}],
     "SKY-Q502": [
         {
@@ -115,12 +115,12 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
             "name": "Source Code File with Excessive Number of Lines of Code",
         }
     ],
-    "SKY-Q701": [{"id": "CWE-1047", "name": "Modules with Circular Dependencies"}],
+    "SKY-Q701": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-Q702": [{"id": "CWE-1093", "name": "Excessively Complex Data Representation"}],
     "SKY-Q801": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-Q802": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-Q803": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
-    "SKY-Q804": [{"id": "CWE-704", "name": "Incorrect Type Conversion or Cast"}],
+    "SKY-Q804": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-Q806": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-C303": [
         {
@@ -148,7 +148,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-Q406": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-Q407": [{"id": "CWE-252", "name": "Unchecked Return Value"}],
     "SKY-U005": [
-        {"id": "CWE-1104", "name": "Use of Unmaintained Third Party Components"}
+        {"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}
     ],
     # Unreachable
     "SKY-UC001": [{"id": "CWE-561", "name": "Dead Code"}],
