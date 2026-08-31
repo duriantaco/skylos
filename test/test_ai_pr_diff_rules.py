@@ -40,6 +40,31 @@ def test_detects_github_actions_privileged_trigger_added():
     assert findings[0]["metadata"]["added_value"] == "pull_request_target"
 
 
+def test_detects_all_privileged_triggers_on_same_line():
+    # #774: both triggers on one line must BOTH be reported, deterministically.
+    diff = _make_diff([], ["on: [pull_request_target, workflow_run]"])
+
+    findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
+
+    assert len(findings) == 2
+    assert {f["metadata"]["added_value"] for f in findings} == {
+        "pull_request_target",
+        "workflow_run",
+    }
+
+
+def test_reports_all_inline_write_permissions():
+    diff = _make_diff([], ["permissions: {contents: write, issues: write}"])
+
+    findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
+
+    assert len(findings) == 2
+    assert {f["metadata"]["added_value"] for f in findings} == {
+        "contents: write",
+        "issues: write",
+    }
+
+
 def test_ci_permission_expansion_ignores_line_moves():
     diff = _make_diff(["permissions: write-all"], ["permissions: write-all"])
 

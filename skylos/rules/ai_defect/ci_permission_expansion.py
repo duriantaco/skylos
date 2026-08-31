@@ -59,23 +59,20 @@ def detect_ci_permission_expansion(diff_text: str, file_path: str) -> list[dict]
         if not normalized or normalized in removed_normalized:
             continue
 
-        signal = _signal_for_added_line(normalized)
-        if signal is None:
-            continue
-
-        key = (signal["expansion_type"], signal["value"])
-        if key in seen:
-            continue
-        seen.add(key)
-        findings.append(
-            _make_finding(
-                file_path,
-                line.line_no,
-                expansion_type=signal["expansion_type"],
-                value=signal["value"],
-                severity=signal["severity"],
+        for signal in _signals_for_added_line(normalized):
+            key = (signal["expansion_type"], signal["value"])
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(
+                _make_finding(
+                    file_path,
+                    line.line_no,
+                    expansion_type=signal["expansion_type"],
+                    value=signal["value"],
+                    severity=signal["severity"],
+                )
             )
-        )
 
     return findings
 
@@ -129,21 +126,34 @@ def _normalize_yaml_line(line: str) -> str:
     return stripped.strip("'\"")
 
 
-def _signal_for_added_line(line: str) -> dict | None:
-    for trigger in _PRIVILEGED_TRIGGERS:
+def _signals_for_added_line(line: str) -> list[dict]:
+    """Return every CI-permission signal an added line introduces.
+
+    Collects ALL matching privileged triggers (sorted, so the result is
+    deterministic regardless of PYTHONHASHSEED) instead of early-returning on
+    the first match. A line like ``on: [pull_request_target, workflow_run]``
+    therefore reports both triggers, not one random pick.
+    """
+    signals: list[dict] = []
+
+    for trigger in sorted(_PRIVILEGED_TRIGGERS):
         if _line_adds_trigger(line, trigger):
-            return {
-                "expansion_type": "privileged_trigger",
-                "value": trigger,
-                "severity": "HIGH",
-            }
+            signals.append(
+                {
+                    "expansion_type": "privileged_trigger",
+                    "value": trigger,
+                    "severity": "HIGH",
+                }
+            )
 
     if re.match(r"^permissions\s*:\s*['\"]?write-all['\"]?\s*(?:#.*)?$", line):
-        return {
-            "expansion_type": "write_all_permissions",
-            "value": "permissions: write-all",
-            "severity": "HIGH",
-        }
+        signals.append(
+            {
+                "expansion_type": "write_all_permissions",
+                "value": "permissions: write-all",
+                "severity": "HIGH",
+            }
+        )
 
     if line.startswith("permissions:") and "{" in line:
         inline_writes: list[str] = []
@@ -151,23 +161,27 @@ def _signal_for_added_line(line: str) -> dict | None:
             if permission in _WRITE_PERMISSIONS:
                 inline_writes.append(permission)
 
-        if inline_writes:
-            return {
-                "expansion_type": "write_permission",
-                "value": f"{inline_writes[0]}: write",
-                "severity": "HIGH",
-            }
+        for permission in sorted(inline_writes):
+            signals.append(
+                {
+                    "expansion_type": "write_permission",
+                    "value": f"{permission}: write",
+                    "severity": "HIGH",
+                }
+            )
 
     match = _PERMISSION_WRITE_RE.match(line)
     if match and match.group("permission") in _WRITE_PERMISSIONS:
         permission = match.group("permission")
-        return {
-            "expansion_type": "write_permission",
-            "value": f"{permission}: write",
-            "severity": "HIGH",
-        }
+        signals.append(
+            {
+                "expansion_type": "write_permission",
+                "value": f"{permission}: write",
+                "severity": "HIGH",
+            }
+        )
 
-    return None
+    return signals
 
 
 def _line_adds_trigger(line: str, trigger: str) -> bool:
