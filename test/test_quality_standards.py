@@ -60,6 +60,24 @@ class TestCWEMapping:
         assert "Python sequence repetition semantics" in STANDARD_REFS["SKY-L034"]
         assert "ESLint no-async-promise-executor" in STANDARD_REFS["SKY-Q405"]
 
+    def test_corrected_cwe_mappings_match_rule_behavior(self):
+        """Regression: lock the reviewed CWE IDs and official names."""
+        expected = {
+            "SKY-L001": ("CWE-665", "Improper Initialization"),
+            "SKY-L006": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-L024": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-L027": ("CWE-1106", "Insufficient Use of Symbolic Constants"),
+            "SKY-L028": ("CWE-1119", "Excessive Use of Unconditional Branching"),
+            "SKY-L029": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-Q401": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-Q701": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-Q804": ("CWE-710", "Improper Adherence to Coding Standards"),
+            "SKY-U005": ("CWE-710", "Improper Adherence to Coding Standards"),
+        }
+
+        for rule_id, (cwe_id, cwe_name) in expected.items():
+            assert CWE_MAP[rule_id] == [{"id": cwe_id, "name": cwe_name}]
+
 
 class TestEnrichFinding:
     def test_enriches_known_rule(self):
@@ -501,7 +519,7 @@ class TestSarifCWE:
                 "file": "x.py",
                 "line": 1,
                 "col": 0,
-                "cwe": [{"id": "CWE-1321", "name": "test"}],
+                "cwe": [{"id": "CWE-665", "name": "Improper Initialization"}],
             },
         ]
         sarif = SarifExporter(findings).generate()
