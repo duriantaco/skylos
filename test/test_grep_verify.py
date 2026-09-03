@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import shutil
@@ -49,6 +50,7 @@ from skylos.core.grep_verify_common import (
     execute_grep_batch,
     replay_grep_results,
 )
+from skylos.core.grep_verify_python_strategy import _context_filtered_grep
 
 requires_ripgrep = pytest.mark.skipif(
     shutil.which("rg") is None,
@@ -121,6 +123,34 @@ def _regex_grep_request(
         fixed_string=False,
         max_results=max_results,
     )
+
+
+class TestContextFilteredGrep:
+    @pytest.mark.parametrize(
+        ("match_count", "expect_evidence"),
+        [(256, False), (257, True)],
+    )
+    def test_fails_open_only_after_the_context_limit(
+        self, match_count, expect_evidence
+    ):
+        lines = [f"/repo/dead.py:{line}:Target()" for line in range(1, match_count + 1)]
+        finding = {"simple_name": "Target", "full_name": "app.Target"}
+
+        with patch(
+            "skylos.core.grep_verify_python_strategy._run_grep",
+            return_value=lines,
+        ) as run_grep:
+            result = _context_filtered_grep(
+                finding,
+                lambda _line, _finding: False,
+                r"\bTarget\b",
+                "/repo",
+                use_regex=True,
+                max_results=256,
+            )
+
+        assert bool(result) is expect_evidence
+        assert run_grep.call_args.kwargs["max_results"] == 257
 
 
 class TestIsDefinitionLine:
@@ -628,6 +658,37 @@ class TestGrepVerifyFindings:
         assert mock_search.call_count == 1
         assert "lib.helper" in first
         assert "lib.helper" in second
+
+    def test_context_filter_without_key_does_not_reuse_cached_results(self, tmp_path):
+        (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
+        (tmp_path / "main.py").write_text("helper()\n")
+        finding = {
+            "name": "helper",
+            "full_name": "lib.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "lib.py"),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        blocked = grep_verify_findings(
+            [finding],
+            str(tmp_path),
+            cache=cache,
+            source_evidence_filter=lambda _line, _finding: False,
+        )
+        allowed = grep_verify_findings(
+            [finding],
+            str(tmp_path),
+            cache=cache,
+            source_evidence_filter=lambda _line, _finding: True,
+        )
+
+        assert "lib.helper" not in blocked
+        assert "lib.helper" in allowed
+        assert cache.size == 0
 
     def test_explicit_empty_full_name_is_skipped(self, tmp_path):
         (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
@@ -3094,6 +3155,556 @@ result = PublicClass.used_method()
         assert "app.PublicClass.same_name_method" in unused_methods
         assert "app.PublicClass.different_name_wrapper" in unused_methods
 
+    def test_grep_verify_ignores_references_inside_dead_wrappers(self, tmp_path):
+        (tmp_path / "external_m3u8.py").write_text(
+            "def load(uri, *, http_client):\n"
+            "    return http_client.download(uri)\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "django_urls.py").write_text(
+            "def register_converter(converter, name):\n"
+            "    return converter, name\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.py").write_text(
+            "class Boto3Client:\n"
+            "    @staticmethod\n"
+            "    def download(uri):\n"
+            "        return uri\n"
+            "\n"
+            "def load_m3u8_from_s3(uri):\n"
+            "    from external_m3u8 import load\n"
+            "    return load(uri, http_client=Boto3Client())\n"
+            "\n"
+            "class PerformanceDataKeyDjango:\n"
+            "    regex = '[0-9]+'\n"
+            "\n"
+            "    @staticmethod\n"
+            "    def to_python(value):\n"
+            "        return int(value)\n"
+            "\n"
+            "def register_converter():\n"
+            "    from django_urls import register_converter as register\n"
+            "    register(PerformanceDataKeyDjango, 'perfkey')\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result_on = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        result_off = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+
+        def dead_symbols(result):
+            return {
+                finding["full_name"]
+                for category in ("unused_classes", "unused_functions")
+                for finding in result[category]
+            }
+
+        expected = {
+            "app.Boto3Client",
+            "app.load_m3u8_from_s3",
+            "app.PerformanceDataKeyDjango",
+            "app.register_converter",
+        }
+        assert expected <= dead_symbols(result_off)
+        assert expected <= dead_symbols(result_on)
+        assert result_on["analysis_summary"]["grep_verify"]["rescued_count"] == 0
+
+    def test_grep_verify_filters_all_dead_callers_before_early_exit(self, tmp_path):
+        wrappers = "\n\n".join(
+            f"def dead_wrapper_{index}():\n    return Target()"
+            for index in range(8)
+        )
+        (tmp_path / "app.py").write_text(
+            "class Target:\n"
+            "    pass\n"
+            "\n"
+            "class InstantiatedOwner:\n"
+            "    def dead_method(self):\n"
+            "        return Target()\n"
+            "\n"
+            "OWNER = InstantiatedOwner()\n"
+            "\n"
+            "def dead_outer():\n"
+            "    def dead_inner():\n"
+            "        return Target()\n"
+            "    return dead_inner\n"
+            "\n"
+            f"{wrappers}\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused_classes = {
+            finding["full_name"] for finding in result["unused_classes"]
+        }
+        unused_functions = {
+            finding["full_name"] for finding in result["unused_functions"]
+        }
+
+        assert "app.Target" in unused_classes
+        assert "app.InstantiatedOwner.dead_method" in unused_functions
+        assert "app.dead_outer" in unused_functions
+        assert "app.dead_outer.dead_inner" in unused_functions
+        assert {
+            f"app.dead_wrapper_{index}" for index in range(8)
+        } <= unused_functions
+
+    def test_grep_verify_ignores_reference_in_one_line_dead_wrapper(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "class Target:\n"
+            "    pass\n"
+            "\n"
+            "def dead_wrapper(): return Target()\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        assert "app.Target" in {
+            finding["full_name"] for finding in result["unused_classes"]
+        }
+
+    def test_grep_verify_distinguishes_dead_bindings_comments_and_eager_header_refs(
+        self, tmp_path
+    ):
+        (tmp_path / "app.py").write_text(
+            "class ParameterTarget:\n"
+            "    pass\n"
+            "class CommentTarget:\n"
+            "    pass\n"
+            "class DefaultTarget:\n"
+            "    pass\n"
+            "class AnnotationTarget:\n"
+            "    pass\n"
+            "\n"
+            "def dead_parameter(ParameterTarget):\n"
+            "    return None\n"
+            "def dead_comment():\n"
+            "    # registry['CommentTarget']()\n"
+            "    return None  # registry['CommentTarget']()\n"
+            "def dead_eager(value=DefaultTarget()) -> AnnotationTarget:\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused = {item["full_name"] for item in result["unused_classes"]}
+        assert {"app.ParameterTarget", "app.CommentTarget"} <= unused
+        assert not {"app.DefaultTarget", "app.AnnotationTarget"} & unused
+
+    def test_grep_verify_uses_effective_redefinition_body(self, tmp_path):
+        (tmp_path / "callbacks.py").write_text(
+            "class StaleTarget:\n"
+            "    pass\n"
+            "def configured_callback():\n"
+            "    return StaleTarget()\n"
+            "def configured_callback():\n"
+            "    return None\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "bootstrap.py").write_text(
+            "CALLBACK = registry['configured_callback']\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        assert "callbacks.StaleTarget" in {
+            item["full_name"] for item in result["unused_classes"]
+        }
+
+    def test_grep_verify_unions_conditional_redefinitions(self, tmp_path):
+        (tmp_path / "callbacks.py").write_text(
+            "class FirstTarget:\n"
+            "    pass\n"
+            "class SecondTarget:\n"
+            "    pass\n"
+            "if runtime_flag:\n"
+            "    def configured_callback():\n"
+            "        return FirstTarget()\n"
+            "else:\n"
+            "    def configured_callback():\n"
+            "        return SecondTarget()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "bootstrap.py").write_text(
+            "CALLBACK = registry['configured_callback']\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused = {item["full_name"] for item in result["unused_classes"]}
+        assert not {"callbacks.FirstTarget", "callbacks.SecondTarget"} & unused
+
+    def test_exhaustive_redefinitions_replace_stale_callable_body(self, tmp_path):
+        (tmp_path / "callbacks.py").write_text(
+            "class StaleTarget:\n"
+            "    pass\n"
+            "class FirstTarget:\n"
+            "    pass\n"
+            "class SecondTarget:\n"
+            "    pass\n"
+            "def configured_callback():\n"
+            "    return StaleTarget()\n"
+            "if runtime_flag:\n"
+            "    def configured_callback():\n"
+            "        return FirstTarget()\n"
+            "else:\n"
+            "    def configured_callback():\n"
+            "        return SecondTarget()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "bootstrap.py").write_text(
+            "CALLBACK = registry['configured_callback']\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused = {item["full_name"] for item in result["unused_classes"]}
+        assert "callbacks.StaleTarget" in unused
+        assert not {"callbacks.FirstTarget", "callbacks.SecondTarget"} & unused
+
+    def test_static_true_redefinition_replaces_stale_callable_body(self, tmp_path):
+        (tmp_path / "callbacks.py").write_text(
+            "class StaleTarget:\n"
+            "    pass\n"
+            "class CurrentTarget:\n"
+            "    pass\n"
+            "def configured_callback():\n"
+            "    return StaleTarget()\n"
+            "if 1 == 1:\n"
+            "    def configured_callback():\n"
+            "        return CurrentTarget()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "bootstrap.py").write_text(
+            "CALLBACK = registry['configured_callback']\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused = {item["full_name"] for item in result["unused_classes"]}
+        assert "callbacks.StaleTarget" in unused
+        assert "callbacks.CurrentTarget" not in unused
+
+    def test_grep_verify_ignores_statically_skipped_callable_body(self, tmp_path):
+        (tmp_path / "models.py").write_text(
+            "class Target:\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "dead.py").write_text(
+            "if False:\n"
+            "    def never_defined():\n"
+            "        from models import Target\n"
+            "        return Target()\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+
+        assert "models.Target" in {
+            item["full_name"] for item in result["unused_classes"]
+        }
+        assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 0
+
+    def test_dead_callable_context_key_includes_body_ast(self, tmp_path):
+        from skylos.analyzer import _DeadCallableGrepEvidenceFilter
+
+        path = tmp_path / "app.py"
+        first = ast.parse("def callback():\n    return FirstTarget()\n").body[0]
+        second = ast.parse("def callback():\n    return SecondTarget()\n").body[0]
+
+        def context_key(node):
+            definition = Mock(
+                name="app.callback",
+                type="function",
+                filename=path,
+                line=1,
+                references=0,
+                is_exported=False,
+                confidence=100,
+                node=node,
+                nodes=[node],
+            )
+            return _DeadCallableGrepEvidenceFilter(
+                {definition.name: definition}, tmp_path
+            ).context_key()
+
+        assert context_key(first) != context_key(second)
+
+    def test_grep_verify_keeps_eager_definition_references_live(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "class DefaultTarget:\n"
+            "    pass\n"
+            "\n"
+            "class AnnotationTarget:\n"
+            "    pass\n"
+            "\n"
+            "class ClassBodyTarget:\n"
+            "    pass\n"
+            "\n"
+            "def dead_wrapper(\n"
+            "    value=DefaultTarget(),\n"
+            ") -> AnnotationTarget:\n"
+            "    return value\n"
+            "\n"
+            "class Container:\n"
+            "    eager_value = ClassBodyTarget()\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused_classes = {
+            finding["full_name"] for finding in result["unused_classes"]
+        }
+
+        assert "app.DefaultTarget" not in unused_classes
+        assert "app.AnnotationTarget" not in unused_classes
+        assert "app.ClassBodyTarget" not in unused_classes
+
+    def test_grep_verify_reconsiders_body_after_config_rescues_caller(self, tmp_path):
+        (tmp_path / "models.py").write_text(
+            "class ConfiguredTarget:\n"
+            "    pass\n"
+            "class DynamicTarget:\n"
+            "    pass\n"
+            "class PlainStringTarget:\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "callbacks.py").write_text(
+            "def configured_callback(registry):\n"
+            "    from models import ConfiguredTarget\n"
+            "    label = 'PlainStringTarget'\n"
+            "    registry['DynamicTarget']()\n"
+            "    return ConfiguredTarget(), label\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: callbacks.py\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused_classes = {
+            finding["full_name"] for finding in result["unused_classes"]
+        }
+        unused_functions = {
+            finding["full_name"] for finding in result["unused_functions"]
+        }
+
+        assert "callbacks.configured_callback" not in unused_functions
+        assert "models.ConfiguredTarget" not in unused_classes
+        assert "models.DynamicTarget" not in unused_classes
+        assert "models.PlainStringTarget" in unused_classes
+
+    def test_grep_verify_propagates_through_two_deferred_callers(self, tmp_path):
+        target_path = tmp_path / "targets.py"
+        target_path.write_text(
+            "class DynamicTarget:\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "helpers.py").write_text(
+            "def helper(registry):\n"
+            "    return registry['DynamicTarget']()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "callbacks.py").write_text(
+            "def configured_callback(registry):\n"
+            "    return registry['helper']()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: callbacks.py\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                changed_files={str(target_path)},
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert result["unused_classes"] == []
+        assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 1
+
+    def test_nested_callable_default_belongs_to_enclosing_body(self, tmp_path):
+        from skylos.analyzer import _build_deferred_dependency_graph
+        from skylos.visitors.base import Visitor
+
+        models = Visitor("models", tmp_path / "models.py")
+        models.visit(
+            ast.parse(
+                "class DefaultTarget:\n"
+                "    pass\n"
+                "class BodyTarget:\n"
+                "    pass\n"
+            )
+        )
+        models.finalize()
+
+        callbacks = Visitor("callbacks", tmp_path / "callbacks.py")
+        callbacks.visit(
+            ast.parse(
+                "import models\n"
+                "def configured_callback():\n"
+                "    def inner(value=models.DefaultTarget()):\n"
+                "        return models.BodyTarget()\n"
+                "    return None\n"
+            )
+        )
+        callbacks.finalize()
+
+        definitions = {
+            definition.name: definition
+            for definition in (*models.defs, *callbacks.defs)
+        }
+        graph = _build_deferred_dependency_graph(definitions)
+
+        assert "models.DefaultTarget" in graph["callbacks.configured_callback"]
+        assert "models.BodyTarget" not in graph["callbacks.configured_callback"]
+        assert "models.BodyTarget" in graph["callbacks.configured_callback.inner"]
+
+    def test_grep_verify_propagates_immediately_invoked_lambda_body(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "class Target:\n"
+            "    pass\n"
+            "def configured_callback():\n"
+            "    return (lambda: Target())()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: app.py\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert "app.Target" not in {
+            item["full_name"] for item in result["unused_classes"]
+        }
+
+    def test_grep_verify_propagates_escaping_lambda_body(self, tmp_path):
+        (tmp_path / "models.py").write_text(
+            "class Target:\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "callbacks.py").write_text(
+            "def configured_callback(registry, external):\n"
+            "    return external.register(lambda: registry['Target']())\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "bootstrap.py").write_text(
+            "CALLBACK = registry['configured_callback']\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert "models.Target" not in {
+            item["full_name"] for item in result["unused_classes"]
+        }
+        assert "callbacks.configured_callback" not in {
+            item["full_name"] for item in result["unused_functions"]
+        }
+
+    def test_grep_verify_dependency_propagation_is_stable_on_cache_hit(
+        self, tmp_path
+    ):
+        (tmp_path / "app.py").write_text(
+            "class DynamicTarget:\n"
+            "    pass\n"
+            "def configured_callback(registry):\n"
+            "    return registry['DynamicTarget']()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: app.py\n",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+
+        cache = GrepCache()
+        original_get = cache.get
+        cache_hits = 0
+
+        def counting_get(key):
+            nonlocal cache_hits
+            cached = original_get(key)
+            if cached is not None:
+                cache_hits += 1
+            return cached
+
+        with (
+            patch("skylos.core.grep_cache.GrepCache", return_value=cache),
+            patch.object(cache, "get", side_effect=counting_get),
+        ):
+            results = [
+                json.loads(
+                    analyze(
+                        str(tmp_path),
+                        conf=0,
+                        grep_verify=True,
+                        grep_cache=True,
+                    )
+                )
+                for _ in range(2)
+            ]
+
+        assert cache_hits > 0
+        for result in results:
+            assert result["unused_classes"] == []
+            assert result["unused_functions"] == []
+            assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 2
+
 
 class TestAnalyzerGrepVerifyOrdering:
     @pytest.mark.parametrize("changed_file_style", ["absolute", "relative"])
@@ -3160,6 +3771,106 @@ class TestAnalyzerGrepVerifyOrdering:
         )
 
         assert not result["unused_functions"]
+        assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 1
+
+    def test_changed_target_verifies_unchanged_prerequisite_caller(self, tmp_path):
+        from skylos.analyzer import Skylos
+        from skylos.visitors.base import Definition, callable_node_key
+
+        target_path = tmp_path / "targets.py"
+        callback_path = tmp_path / "callbacks.py"
+        target_node = ast.parse("class Target:\n    pass\n").body[0]
+        callback_node = ast.parse(
+            "def callback():\n    return Target()\n"
+        ).body[0]
+        target = Definition("targets.Target", "class", target_path, 1, target_node)
+        callback = Definition(
+            "callbacks.callback", "function", callback_path, 1, callback_node
+        )
+        callback.calls.add(target.name)
+        callback.calls_by_node[callable_node_key(callback_node)] = {target.name}
+
+        analyzer = Skylos()
+        analyzer.defs = {target.name: target, callback.name: callback}
+        analyzer._project_root = tmp_path
+        analyzer._dead_code_scope_keys = frozenset({target.name})
+
+        def verify(candidates, _project_root, **kwargs):
+            by_name = {candidate["full_name"]: candidate for candidate in candidates}
+            assert set(by_name) == {target.name, callback.name}
+            evidence_filter = kwargs["source_evidence_filter"]
+            assert not evidence_filter(
+                f"{callback_path}:2:    return Target()", by_name[target.name]
+            )
+            return {
+                target.name: GrepVerdict(alive=False),
+                callback.name: GrepVerdict(alive=True),
+            }
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings", side_effect=verify
+        ):
+            rescued = analyzer._grep_verify(use_project_cache=False)
+
+        assert rescued == 1
+        assert target.heuristic_refs["reachable_from_root"] == 1.0
+
+    def test_deferred_dependency_keys_survive_worker_pickling(self, tmp_path):
+        import pickle
+
+        from skylos.analyzer import _build_deferred_dependency_graph
+        from skylos.visitors.base import Visitor
+
+        path = tmp_path / "app.py"
+        tree = ast.parse(
+            "class Target:\n"
+            "    pass\n"
+            "def callback():\n"
+            "    return Target()\n"
+        )
+        visitor = Visitor("app", path)
+        visitor.visit(tree)
+        visitor.finalize()
+        definitions = {
+            definition.name: definition for definition in visitor.defs
+        }
+        restored = pickle.loads(pickle.dumps(definitions))
+
+        graph = _build_deferred_dependency_graph(restored)
+
+        assert graph["app.callback"] == {"app.Target"}
+
+    def test_changed_dynamic_target_verifies_unchanged_configured_caller(
+        self, tmp_path
+    ):
+        from skylos.analyzer import analyze
+
+        target_path = tmp_path / "targets.py"
+        target_path.write_text(
+            "class DynamicTarget:\n    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "callbacks.py").write_text(
+            "def configured_callback(registry):\n"
+            "    return registry['DynamicTarget']()\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "routes.yaml").write_text(
+            "handler_module: callbacks.py\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                changed_files={str(target_path)},
+                grep_verify=True,
+                grep_cache=False,
+            )
+        )
+
+        assert result["unused_classes"] == []
         assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 1
 
     def test_empty_changed_file_scope_skips_dead_code_verification(self, tmp_path):

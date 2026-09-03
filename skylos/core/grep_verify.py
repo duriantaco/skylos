@@ -129,7 +129,7 @@ class _PendingBatchFinding:
     requests: tuple[GrepRequest, ...]
 
 
-_GREP_VERIFY_CACHE_VERSION = "v8"
+_GREP_VERIFY_CACHE_VERSION = "v9"
 _GREP_FINDING_BATCH_SIZE = 32
 _GREP_CACHE_MAX_STRATEGIES = 64
 _GREP_CACHE_MAX_LINES_PER_STRATEGY = 256
@@ -177,6 +177,7 @@ def _cache_key(cache: Any, group_name: str, finding: dict) -> str | None:
         f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
         f"{simple_name}:{finding.get('full_name', '')}:"
         f"{finding.get('type', '')}:{content_hash}:"
+        f"context:{finding.get('_grep_evidence_context_key', '')}:"
         f"repo:{repository_fingerprint}"
     )
 
@@ -268,12 +269,14 @@ def multi_strategy_search(
     *,
     max_per_strategy: int = _MAX_RESULTS_PER_STRATEGY,
     early_exit_threshold: int = 5,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> dict[str, list[str]]:
     return _multi_strategy_search_impl(
         finding,
         project_root,
         max_per_strategy=max_per_strategy,
         early_exit_threshold=early_exit_threshold,
+        source_evidence_filter=source_evidence_filter,
     )
 
 
@@ -285,7 +288,18 @@ def parallel_multi_strategy_search(
     early_exit_threshold: int = 5,
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
+    source_evidence_context_key: str | None = None,
 ) -> dict[str, list[str]]:
+    if source_evidence_filter is not None:
+        context_key = source_evidence_context_key or finding.get(
+            "_grep_evidence_context_key"
+        )
+        if context_key:
+            finding = dict(finding)
+            finding["_grep_evidence_context_key"] = context_key
+        else:
+            cache = None
     return parallel_multi_strategy_search_impl(
         finding,
         project_root,
@@ -296,6 +310,7 @@ def parallel_multi_strategy_search(
         early_exit_threshold=early_exit_threshold,
         max_workers=max_workers,
         cache=cache,
+        source_evidence_filter=source_evidence_filter,
     )
 
 
@@ -350,6 +365,7 @@ def _plan_batched_finding(
     finding: dict,
     project_root: str,
     cache: Any,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> tuple[GrepVerdict | None, _PendingBatchFinding | None]:
     deterministic_verdict = _deterministic_suppression_verdict(finding)
     if deterministic_verdict:
@@ -361,7 +377,11 @@ def _plan_batched_finding(
         return _apply_deterministic_rules(cached, finding), None
 
     with record_grep_requests() as recorded:
-        planned_results = multi_strategy_search(finding, project_root)
+        planned_results = multi_strategy_search(
+            finding,
+            project_root,
+            source_evidence_filter=source_evidence_filter,
+        )
     unique_requests = tuple(dict.fromkeys(recorded))
     if unique_requests:
         return None, _PendingBatchFinding(finding, group_name, unique_requests)
@@ -375,6 +395,7 @@ def _execute_pending_findings(
     project_root: str,
     cache: Any,
     deadline: float,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> tuple[dict[str, GrepVerdict], int, str | None]:
     requests = [request for item in pending for request in item.requests]
     try:
@@ -402,7 +423,11 @@ def _execute_pending_findings(
             return verdicts, verified_count, reason
         try:
             with replay_grep_results(batch_results, deadline=deadline):
-                search_results = multi_strategy_search(item.finding, project_root)
+                search_results = multi_strategy_search(
+                    item.finding,
+                    project_root,
+                    source_evidence_filter=source_evidence_filter,
+                )
         except _GrepExecutionIncomplete as exc:
             logger.debug("grep replay was incomplete: %s", exc)
             reason = (
@@ -436,6 +461,7 @@ def _grep_verify_findings_batched(
     time_budget: float,
     cache: Any,
     start_time: float,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> GrepVerificationResult:
     eligible_findings = [finding for finding in findings if _finding_full_name(finding)]
     verdicts: dict[str, GrepVerdict] = {}
@@ -450,7 +476,12 @@ def _grep_verify_findings_batched(
             break
         full_name = _finding_full_name(finding)
 
-        verdict, planned = _plan_batched_finding(finding, project_root, cache)
+        verdict, planned = _plan_batched_finding(
+            finding,
+            project_root,
+            cache,
+            source_evidence_filter,
+        )
         if verdict:
             verdicts[full_name] = verdict
         if planned:
@@ -462,8 +493,12 @@ def _grep_verify_findings_batched(
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
             break
-        batch_verdicts, batch_verified, incomplete_reason = (
-            _execute_pending_findings(pending, project_root, cache, deadline)
+        batch_verdicts, batch_verified, incomplete_reason = _execute_pending_findings(
+            pending,
+            project_root,
+            cache,
+            deadline,
+            source_evidence_filter,
         )
         verdicts.update(batch_verdicts)
         verified_count += batch_verified
@@ -476,7 +511,13 @@ def _grep_verify_findings_batched(
             incomplete_reason = "budget_exhausted"
         else:
             batch_verdicts, batch_verified, incomplete_reason = (
-                _execute_pending_findings(pending, project_root, cache, deadline)
+                _execute_pending_findings(
+                    pending,
+                    project_root,
+                    cache,
+                    deadline,
+                    source_evidence_filter,
+                )
             )
             verdicts.update(batch_verdicts)
             verified_count += batch_verified
@@ -640,14 +681,35 @@ def grep_verify_findings(
     parallel: bool = False,
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
+    source_evidence_context_key: str | None = None,
 ) -> GrepVerificationResult:
+    if source_evidence_filter is not None:
+        if source_evidence_context_key:
+            findings = [
+                {
+                    **finding,
+                    "_grep_evidence_context_key": source_evidence_context_key,
+                }
+                for finding in findings
+            ]
+        else:
+            # Filtered results are context-dependent. Without a stable caller-
+            # supplied key, bypass the cache rather than reusing another
+            # context's verdict evidence.
+            cache = None
     cache_binder = getattr(type(cache), "bind_repository", None)
     if callable(cache_binder):
         cache_binder(cache, project_root)
     start_time = time.monotonic()
     if not parallel:
         return _grep_verify_findings_batched(
-            findings, project_root, time_budget, cache, start_time
+            findings,
+            project_root,
+            time_budget,
+            cache,
+            start_time,
+            source_evidence_filter,
         )
 
     search_fn = _build_grep_search_fn(
@@ -655,6 +717,7 @@ def grep_verify_findings(
         parallel=False,
         max_workers=max_workers,
         cache=cache,
+        source_evidence_filter=source_evidence_filter,
     )
     return _grep_verify_findings_parallel(
         findings, search_fn, time_budget, max_workers, start_time
@@ -667,26 +730,44 @@ def _build_grep_search_fn(
     parallel: bool,
     max_workers: int,
     cache: Any,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> Callable[[dict], dict[str, list[str]]]:
     if parallel:
 
         def search_fn(finding: dict) -> dict[str, list[str]]:
             return parallel_multi_strategy_search(
-                finding, project_root, max_workers=max_workers, cache=cache
+                finding,
+                project_root,
+                max_workers=max_workers,
+                cache=cache,
+                source_evidence_filter=source_evidence_filter,
             )
 
         return search_fn
 
     def search_fn(finding: dict) -> dict[str, list[str]]:
         if cache is None:
-            return multi_strategy_search(finding, project_root)
-        return _cached_serial_search_results(finding, project_root, cache)
+            return multi_strategy_search(
+                finding,
+                project_root,
+                source_evidence_filter=source_evidence_filter,
+            )
+        return _cached_serial_search_results(
+            finding,
+            project_root,
+            cache,
+            source_evidence_filter=source_evidence_filter,
+        )
 
     return search_fn
 
 
 def _cached_serial_search_results(
-    finding: dict, project_root: str, cache: Any
+    finding: dict,
+    project_root: str,
+    cache: Any,
+    *,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> dict[str, list[str]]:
     lang = _finding_language(finding)
     group_name = "python_core" if lang == "python" else f"serial_{lang}"
@@ -694,7 +775,11 @@ def _cached_serial_search_results(
         cache,
         group_name,
         finding,
-        lambda: multi_strategy_search(finding, project_root),
+        lambda: multi_strategy_search(
+            finding,
+            project_root,
+            source_evidence_filter=source_evidence_filter,
+        ),
     )
 
 

@@ -25,6 +25,7 @@ def parallel_multi_strategy_search_impl(
     early_exit_threshold: int = 5,
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> dict[str, list[str]]:
     simple_name = finding.get("simple_name", finding.get("name", ""))
     if not simple_name or len(simple_name) <= 1:
@@ -68,6 +69,7 @@ def parallel_multi_strategy_search_impl(
         max_per_strategy=max_per_strategy,
         early_exit_threshold=early_exit_threshold,
         multi_strategy_search_fn=multi_strategy_search_fn,
+        source_evidence_filter=source_evidence_filter,
     )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:

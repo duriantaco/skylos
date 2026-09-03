@@ -321,6 +321,16 @@ def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
     return set()
 
 
+def callable_node_key(node: ast.AST) -> tuple[str, int, int, int, int]:
+    return (
+        type(node).__name__,
+        int(getattr(node, "lineno", 0) or 0),
+        int(getattr(node, "col_offset", 0) or 0),
+        int(getattr(node, "end_lineno", 0) or 0),
+        int(getattr(node, "end_col_offset", 0) or 0),
+    )
+
+
 class Definition:
     __slots__ = (
         "name",
@@ -334,7 +344,9 @@ class Definition:
         "in_init",
         "binding_name",
         "node",
+        "nodes",
         "calls",
+        "calls_by_node",
         "called_by",
         "closes_over",
         "return_type",
@@ -379,7 +391,9 @@ class Definition:
         self.binding_name = self.simple_name
 
         self.node = node
+        self.nodes = [node] if node is not None else []
         self.calls = set()
+        self.calls_by_node = {}
         self.called_by = set()
         self.closes_over = set()
         self.return_type = None
@@ -504,9 +518,11 @@ class Visitor(ast.NodeVisitor):
         self.call_arg_types = defaultdict(list)
 
         self.call_graph = defaultdict(set)
+        self.call_graph_by_node = defaultdict(set)
         self.reverse_call_graph = defaultdict(set)
 
         self._current_function_qname = None
+        self._deferred_dependency_owner = None
 
         self._nonlocal_names = set()
         self._free_vars = defaultdict(set)
@@ -539,6 +555,8 @@ class Visitor(ast.NodeVisitor):
                 found = True
                 if node is not None:
                     d.node = node
+                    if all(existing is not node for existing in d.nodes):
+                        d.nodes.append(node)
                 for k, v in extra.items():
                     if hasattr(d, k):
                         if k == "suppression_lines":
@@ -569,10 +587,15 @@ class Visitor(ast.NodeVisitor):
         if self._current_function_qname:
             self.call_graph[self._current_function_qname].add(name)
             self.reverse_call_graph[name].add(self._current_function_qname)
+        if self._deferred_dependency_owner:
+            self.call_graph_by_node[self._deferred_dependency_owner].add(name)
 
     def visit_Module(self, node: ast.Module) -> None:
         from skylos.rules.quality._protocols import type_checking_function_ids
 
+        for parent in ast.walk(node):
+            for child in ast.iter_child_nodes(parent):
+                child.parent = parent
         self.local_registration_decorators.update(
             collect_local_registration_decorators(node)
         )
@@ -1211,8 +1234,13 @@ class Visitor(ast.NodeVisitor):
                         d.return_type = return_type
                         break
 
-        for stmt in node.body:
-            self.visit(stmt)
+        previous_dependency_owner = self._deferred_dependency_owner
+        self._deferred_dependency_owner = (qualified_name, callable_node_key(node))
+        try:
+            for stmt in node.body:
+                self.visit(stmt)
+        finally:
+            self._deferred_dependency_owner = previous_dependency_owner
 
         complexity = self._complexity_stack.pop()
         for d in self.defs:
@@ -1257,7 +1285,26 @@ class Visitor(ast.NodeVisitor):
 
         self.add_def(qualified_name, "lambda", node.lineno, node=node, is_lambda=True)
         self.visit_arguments(node.args)
-        self.visit(node.body)
+        previous_dependency_owner = self._deferred_dependency_owner
+        parent = getattr(node, "parent", None)
+        immediately_invoked = isinstance(parent, ast.Call) and parent.func is node
+        if immediately_invoked:
+            self._deferred_dependency_owner = previous_dependency_owner
+        else:
+            self._deferred_dependency_owner = (
+                qualified_name,
+                callable_node_key(node),
+            )
+        try:
+            self.visit(node.body)
+        finally:
+            self._deferred_dependency_owner = previous_dependency_owner
+        if previous_dependency_owner is not None and not immediately_invoked:
+            # Creating a lambda in a reachable body can hand executable code to
+            # an unknown callee (callbacks, registries, futures, and similar).
+            # Retain the explicit lambda graph node so its body can participate
+            # in evidence-root reachability without marking it globally live.
+            self.call_graph_by_node[previous_dependency_owner].add(qualified_name)
 
     def _visit_comprehension_scope(
         self,
@@ -2874,6 +2921,13 @@ class Visitor(ast.NodeVisitor):
         for defn in self.defs:
             if defn.name in self.call_graph:
                 defn.calls = self.call_graph[defn.name]
+            defn.calls_by_node = {
+                callable_node_key(node): set(
+                    self.call_graph_by_node[(defn.name, callable_node_key(node))]
+                )
+                for node in defn.nodes
+                if (defn.name, callable_node_key(node)) in self.call_graph_by_node
+            }
             if defn.name in self.reverse_call_graph:
                 defn.called_by = self.reverse_call_graph[defn.name]
 

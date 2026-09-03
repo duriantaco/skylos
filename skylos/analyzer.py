@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import ast
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
+import hashlib
+import io
 from operator import attrgetter
 import sys
 import json
@@ -9,6 +11,7 @@ import os
 import re
 import subprocess
 import traceback
+import tokenize
 from pathlib import Path
 from collections import Counter, defaultdict
 
@@ -17,13 +20,14 @@ try:
 except ImportError:
     _fast_discover = None
 
-from skylos.visitors.base import Visitor
+from skylos.visitors.base import Visitor, callable_node_key
 
 from skylos.analysis.architecture_support import (
     architecture_iad_strict,
     expand_reexported_entrypoint_modules,
     find_package_boundary_modules,
 )
+from skylos.analysis.control_flow import evaluate_static_condition
 
 from skylos.constants import (
     AUTO_CALLED,
@@ -114,6 +118,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_call_arg_types",
     "_grep_verify_report",
     "_grep_verify_incomplete_candidates",
+    "_grep_unvisited_callable_nodes_by_file",
     "_dead_code_scope_keys",
     "_dead_code_liveness_report",
     "ts_consumed_exports",
@@ -1092,6 +1097,615 @@ def _canonical_analysis_path(value: str | Path, project_root: Path) -> str:
     return os.path.normcase(str(resolved))
 
 
+def _is_dead_callable_for_grep(definition) -> bool:
+    return (
+        getattr(definition, "type", None) in ("function", "method", "lambda")
+        and getattr(definition, "references", 0) == 0
+        and not getattr(definition, "is_exported", False)
+        and getattr(definition, "confidence", 0) > 0
+    )
+
+
+def _definition_nodes(definition):
+    nodes = getattr(definition, "nodes", None)
+    if not isinstance(nodes, (list, tuple)) or not nodes:
+        nodes = (getattr(definition, "node", None),)
+    return tuple(node for node in nodes if isinstance(node, ast.AST))
+
+
+def _callable_nodes(definition):
+    return tuple(
+        node
+        for node in _definition_nodes(definition)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+    )
+
+
+def _callable_body_span(node):
+    """Return the deferred body span, excluding eagerly evaluated signatures."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not node.body:
+            return None
+        first = node.body[0]
+        last = node.body[-1]
+        start_line = getattr(first, "lineno", None)
+        start_col = getattr(first, "col_offset", None)
+        decorators = getattr(first, "decorator_list", ())
+        if decorators:
+            decorated_line = min(
+                (getattr(decorator, "lineno", start_line) for decorator in decorators),
+                default=start_line,
+            )
+            if decorated_line < start_line:
+                start_line = decorated_line
+                start_col = min(
+                    getattr(decorator, "col_offset", start_col)
+                    for decorator in decorators
+                    if getattr(decorator, "lineno", None) == decorated_line
+                )
+        end_line = getattr(last, "end_lineno", None)
+        end_col = getattr(last, "end_col_offset", None)
+    elif isinstance(node, ast.Lambda):
+        start_line = getattr(node.body, "lineno", None)
+        start_col = getattr(node.body, "col_offset", None)
+        end_line = getattr(node.body, "end_lineno", None)
+        end_col = getattr(node.body, "end_col_offset", None)
+    else:
+        return None
+
+    if not all(
+        isinstance(value, int) for value in (start_line, start_col, end_line, end_col)
+    ):
+        return None
+    if end_line < start_line:
+        return None
+    return start_line, start_col, end_line, end_col
+
+
+def _callable_full_span(node):
+    start_line = getattr(node, "lineno", None)
+    start_col = getattr(node, "col_offset", None)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        decorators = getattr(node, "decorator_list", ())
+        if decorators:
+            start_line = min(
+                getattr(decorator, "lineno", start_line) for decorator in decorators
+            )
+            start_col = min(
+                getattr(decorator, "col_offset", start_col)
+                for decorator in decorators
+                if getattr(decorator, "lineno", None) == start_line
+            )
+    end_line = getattr(node, "end_lineno", None)
+    end_col = getattr(node, "end_col_offset", None)
+    if not all(
+        isinstance(value, int) for value in (start_line, start_col, end_line, end_col)
+    ):
+        return None
+    return start_line, start_col, end_line, end_col
+
+
+def _callable_module(node):
+    current = node
+    while current is not None and not isinstance(current, ast.Module):
+        current = getattr(current, "parent", None)
+    return current
+
+
+def _unvisited_callable_nodes_from_source(source: str, definitions):
+    if any(
+        _callable_module(node) is not None
+        for definition in definitions
+        for node in _definition_nodes(definition)
+    ):
+        return ()
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return ()
+    return tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+    )
+
+
+def _argument_binding_spans(node):
+    arguments = getattr(node, "args", None)
+    if not isinstance(arguments, ast.arguments):
+        return
+    positional = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+    positional.extend(
+        argument
+        for argument in (arguments.vararg, arguments.kwarg)
+        if argument is not None
+    )
+    for argument in positional:
+        line = getattr(argument, "lineno", None)
+        start_col = getattr(argument, "col_offset", None)
+        if isinstance(line, int) and isinstance(start_col, int):
+            end_col = start_col + len(argument.arg.encode("utf-8"))
+            yield line, start_col, line, end_col
+
+
+def _callable_node_is_conditional(node) -> bool:
+    conditional_parents = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.ExceptHandler,
+        ast.With,
+        ast.AsyncWith,
+        ast.Match,
+    )
+    if hasattr(ast, "TryStar"):
+        conditional_parents += (ast.TryStar,)
+    parent = getattr(node, "parent", None)
+    while parent is not None and not isinstance(
+        parent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    ):
+        if isinstance(parent, conditional_parents):
+            return True
+        parent = getattr(parent, "parent", None)
+    return False
+
+
+def _callable_lexical_scope(node):
+    parent = getattr(node, "parent", None)
+    while parent is not None:
+        if isinstance(
+            parent,
+            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return parent
+        parent = getattr(parent, "parent", None)
+    return None
+
+
+def _flow_callable_bindings(statements, target_node_ids, incoming, *, file_path):
+    """Conservatively model the callable binding after a statement suite."""
+    state = set(incoming)
+    for statement in statements:
+        if id(statement) in target_node_ids:
+            state = {id(statement)}
+            continue
+
+        if isinstance(statement, ast.If):
+            truth = evaluate_static_condition(statement.test, file_path=file_path)
+            if truth is True:
+                state = _flow_callable_bindings(
+                    statement.body,
+                    target_node_ids,
+                    state,
+                    file_path=file_path,
+                )
+            elif truth is False:
+                state = _flow_callable_bindings(
+                    statement.orelse,
+                    target_node_ids,
+                    state,
+                    file_path=file_path,
+                )
+            else:
+                state = _flow_callable_bindings(
+                    statement.body,
+                    target_node_ids,
+                    state,
+                    file_path=file_path,
+                ) | _flow_callable_bindings(
+                    statement.orelse,
+                    target_node_ids,
+                    state,
+                    file_path=file_path,
+                )
+            continue
+
+        child_suites = []
+        if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+            child_suites.extend((statement.body, statement.orelse))
+        elif isinstance(statement, (ast.With, ast.AsyncWith)):
+            child_suites.append(statement.body)
+        elif isinstance(statement, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+            child_suites.extend(
+                (statement.body, statement.orelse, statement.finalbody)
+            )
+            child_suites.extend(handler.body for handler in statement.handlers)
+        elif isinstance(statement, ast.Match):
+            child_suites.extend(case.body for case in statement.cases)
+
+        # These constructs may not execute, may exit early, or may select only
+        # one arm. Retain the incoming binding and union all observed outcomes.
+        for suite in child_suites:
+            state.update(
+                _flow_callable_bindings(
+                    suite,
+                    target_node_ids,
+                    state,
+                    file_path=file_path,
+                )
+            )
+    return state
+
+
+def _effective_callable_node_ids(definition) -> set[int]:
+    nodes = _callable_nodes(definition)
+    if not nodes:
+        return set()
+    if len(nodes) == 1:
+        return {id(nodes[0])}
+
+    scopes = {_callable_lexical_scope(node) for node in nodes}
+    if len(scopes) == 1:
+        scope = next(iter(scopes))
+        statements = getattr(scope, "body", None)
+        if isinstance(statements, list):
+            return _flow_callable_bindings(
+                statements,
+                {id(node) for node in nodes},
+                set(),
+                file_path=getattr(definition, "filename", None),
+            )
+
+    # Duplicate qualified names can arise from separate repeated class scopes.
+    # Preserve the prior ordered conservative behavior for that unusual case.
+    effective = []
+    for node in nodes:
+        if _callable_node_is_conditional(node):
+            effective.append(node)
+        else:
+            effective = [node]
+    return {id(node) for node in effective}
+
+
+def _ast_leaf_name(node) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _is_dynamic_dispatch_string(node: ast.Constant) -> bool:
+    parent = getattr(node, "parent", None)
+    if isinstance(parent, ast.Subscript) and parent.slice is node:
+        return _ast_leaf_name(parent.value) not in {
+            "Literal",
+            "TypeAlias",
+            "TypeVar",
+        }
+
+    if isinstance(parent, ast.Call) and node in parent.args:
+        argument_index = parent.args.index(node)
+        callee = _ast_leaf_name(parent.func)
+        if callee in {"getattr", "setattr", "hasattr", "delattr"}:
+            return argument_index == 1
+        if isinstance(parent.func, ast.Attribute):
+            return argument_index == 0
+
+    if isinstance(parent, ast.Dict):
+        for key, value in zip(parent.keys, parent.values):
+            if key is node and isinstance(value, ast.Call):
+                return True
+    return False
+
+
+class _DynamicDependencyCollector(ast.NodeVisitor):
+    """Collect supported runtime-dispatch names from one deferred body."""
+
+    def __init__(self):
+        self.names = set()
+
+    def collect(self, node) -> set[str]:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for statement in node.body:
+                self.visit(statement)
+        elif isinstance(node, ast.Lambda):
+            self.visit(node.body)
+        return self.names
+
+    def visit_FunctionDef(self, node) -> None:
+        # Nested callable headers execute in the enclosing body; their bodies
+        # remain deferred until the nested callable itself becomes reachable.
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        ):
+            if argument.annotation is not None:
+                self.visit(argument.annotation)
+        for argument in (node.args.vararg, node.args.kwarg):
+            if argument is not None and argument.annotation is not None:
+                self.visit(argument.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Lambda(self, node) -> None:
+        for default in (*node.args.defaults, *node.args.kw_defaults):
+            if default is not None:
+                self.visit(default)
+
+    def visit_Constant(self, node) -> None:
+        if isinstance(node.value, str) and _is_dynamic_dispatch_string(node):
+            self.names.add(node.value)
+
+
+def _build_deferred_dependency_graph(definitions):
+    definitions = tuple(definitions.values())
+    definitions_by_simple_name = defaultdict(list)
+    for definition in definitions:
+        definitions_by_simple_name[definition.simple_name].append(definition)
+
+    graph = defaultdict(set)
+    for definition in definitions:
+        if not _is_dead_callable_for_grep(definition):
+            continue
+        effective_node_ids = _effective_callable_node_ids(definition)
+        calls_by_node = getattr(definition, "calls_by_node", {})
+        if not isinstance(calls_by_node, dict):
+            calls_by_node = {}
+        for node in _callable_nodes(definition):
+            if id(node) not in effective_node_ids:
+                continue
+            graph[definition.name].update(
+                calls_by_node.get(callable_node_key(node), ())
+            )
+            dynamic_names = _DynamicDependencyCollector().collect(node)
+            for simple_name in dynamic_names:
+                graph[definition.name].update(
+                    target.name
+                    for target in definitions_by_simple_name.get(simple_name, ())
+                )
+    return graph
+
+
+class _DeadCallableGrepEvidenceFilter:
+    """Reject grep matches that occur only in definitely dead Python bodies."""
+
+    def __init__(
+        self,
+        definitions,
+        project_root: Path,
+        unvisited_callable_nodes_by_file=None,
+    ):
+        self._project_root = project_root
+        self._path_cache = {}
+        spans_by_file = defaultdict(list)
+        known_node_ids = set()
+        modules_by_file = {}
+        all_definitions = tuple(definitions.values())
+        for definition in all_definitions:
+            filename = _canonical_analysis_path(
+                getattr(definition, "filename", ""), project_root
+            )
+            for node in _definition_nodes(definition):
+                module = _callable_module(node)
+                if module is not None:
+                    modules_by_file[filename] = module
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                ):
+                    known_node_ids.add(id(node))
+
+        for definition in all_definitions:
+            if not _is_dead_callable_for_grep(definition):
+                continue
+            filename = _canonical_analysis_path(
+                getattr(definition, "filename", ""), project_root
+            )
+            for node in _callable_nodes(definition):
+                span = _callable_body_span(node)
+                if span is not None:
+                    spans_by_file[filename].append(
+                        (*span, definition, node, "body")
+                    )
+                for binding_span in _argument_binding_spans(node):
+                    spans_by_file[filename].append(
+                        (*binding_span, definition, node, "binding")
+                    )
+
+        # The visitor deliberately prunes statically impossible branches. Grep
+        # still sees their source text, so index any callable nodes that were
+        # never visited and reject their whole unevaluated definitions.
+        for filename, module in modules_by_file.items():
+            for node in ast.walk(module):
+                if not isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                ) or id(node) in known_node_ids:
+                    continue
+                span = _callable_full_span(node)
+                if span is not None:
+                    spans_by_file[filename].append(
+                        (*span, None, node, "skipped")
+                    )
+        for filename, nodes in (unvisited_callable_nodes_by_file or {}).items():
+            canonical_filename = _canonical_analysis_path(filename, project_root)
+            for node in nodes:
+                span = _callable_full_span(node)
+                if span is not None:
+                    spans_by_file[canonical_filename].append(
+                        (*span, None, node, "skipped")
+                    )
+
+        self._files = {}
+        for filename, spans in spans_by_file.items():
+            spans.sort(key=lambda span: (span[0], span[2], span[1], span[3]))
+            starts = tuple(span[0] for span in spans)
+            prefix_max_ends = []
+            maximum = 0
+            for span in spans:
+                maximum = max(maximum, span[2])
+                prefix_max_ends.append(maximum)
+            self._files[filename] = (
+                tuple(spans),
+                starts,
+                tuple(prefix_max_ends),
+            )
+
+    def __bool__(self) -> bool:
+        return bool(self._files)
+
+    def context_key(self) -> str:
+        dead_contexts = set()
+        node_contexts = {}
+        for filename, (spans, _starts, _ends) in self._files.items():
+            for span in spans:
+                owner = span[4]
+                if owner is not None and not _is_dead_callable_for_grep(owner):
+                    continue
+                owner_name = str(getattr(owner, "name", ""))
+                owner_line = int(getattr(owner, "line", 0) or 0)
+                node_key = callable_node_key(span[5])
+                dead_contexts.add(
+                    (
+                        filename,
+                        owner_name,
+                        owner_line,
+                        span[0],
+                        span[1],
+                        span[2],
+                        span[3],
+                        span[6],
+                        node_key,
+                    )
+                )
+                context_node_key = (filename, owner_name, node_key)
+                if context_node_key not in node_contexts:
+                    node_contexts[context_node_key] = ast.dump(
+                        span[5], include_attributes=True
+                    )
+        digest = hashlib.sha256()
+        digest.update(b"skylos-dead-callable-evidence-v2\0")
+        for context in sorted(dead_contexts):
+            for value in context:
+                digest.update(str(value).encode("utf-8", errors="surrogateescape"))
+                digest.update(b"\0")
+        for node_context, dumped_node in sorted(node_contexts.items()):
+            for value in node_context:
+                digest.update(str(value).encode("utf-8", errors="surrogateescape"))
+                digest.update(b"\0")
+            digest.update(dumped_node.encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:20]
+
+    def _canonical_evidence_path(self, path: str) -> str:
+        cached = self._path_cache.get(path)
+        if cached is None:
+            cached = _canonical_analysis_path(path, self._project_root)
+            self._path_cache[path] = cached
+        return cached
+
+    @staticmethod
+    def _span_contains(span, line: int, start_col: int, end_col: int) -> bool:
+        start_line, span_start_col, end_line, span_end_col, _owner, node, kind = span
+        if line < start_line or line > end_line:
+            return False
+        if start_line == end_line:
+            if start_col < span_start_col:
+                return False
+            return end_col <= span_end_col or (
+                kind == "body"
+                and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+        if line == start_line:
+            return start_col >= span_start_col
+        if line == end_line:
+            return end_col <= span_end_col or kind == "body"
+        return True
+
+    @staticmethod
+    def _comment_start(content: str) -> int | None:
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(content).readline)
+            for token in tokens:
+                if token.type == tokenize.COMMENT:
+                    return token.start[1]
+        except (IndentationError, SyntaxError, tokenize.TokenError):
+            return None
+        return None
+
+    def __call__(self, evidence: str, finding: dict) -> bool:
+        from skylos.core.grep_verify_common import _split_grep_evidence
+
+        path, line, content = _split_grep_evidence(evidence)
+        if (
+            not path
+            or line is None
+            or Path(path).suffix.lower()
+            not in {
+                ".py",
+                ".pyi",
+                ".pyw",
+            }
+        ):
+            return True
+
+        simple_name = str(finding.get("simple_name", finding.get("name", "")))
+        raw_matches = (
+            list(
+                re.finditer(
+                    rf"(?<!\w){re.escape(simple_name)}(?!\w)",
+                    content,
+                )
+            )
+            if simple_name
+            else []
+        )
+        comment_start = self._comment_start(content)
+        matches = [
+            match
+            for match in raw_matches
+            if comment_start is None or match.start() < comment_start
+        ]
+        if raw_matches and not matches:
+            return False
+
+        indexed = self._files.get(self._canonical_evidence_path(path))
+        if indexed is None:
+            return True
+
+        spans, starts, prefix_max_ends = indexed
+        stop = bisect_right(starts, line)
+        active = []
+        for index in range(stop - 1, -1, -1):
+            if prefix_max_ends[index] < line:
+                break
+            span = spans[index]
+            if span[2] >= line and (
+                span[4] is None or _is_dead_callable_for_grep(span[4])
+            ):
+                active.append(span)
+        if not active:
+            return True
+
+        if not simple_name:
+            return True
+        if not matches:
+            return False
+
+        contained_by = []
+        for match in matches:
+            start_col = len(content[: match.start()].encode("utf-8"))
+            end_col = len(content[: match.end()].encode("utf-8"))
+            containers = [
+                span
+                for span in active
+                if self._span_contains(span, line, start_col, end_col)
+            ]
+            if not containers:
+                return True
+            contained_by.append(containers)
+        return False
+
+
 def _changed_definition_keys(
     definitions: dict,
     project_root: str | Path,
@@ -1870,9 +2484,9 @@ class Skylos:
         ):
             report.pop(key, None)
 
+        dead_code_scope = getattr(self, "_dead_code_scope_keys", None)
         candidates, candidate_defs = _collect_grep_verify_candidates(
-            self.defs,
-            getattr(self, "_dead_code_scope_keys", None),
+            self.defs, dead_code_scope
         )
         if not candidates:
             return 0
@@ -1881,36 +2495,111 @@ class Skylos:
         if not project_root:
             return 0
 
+        dependency_graph = _build_deferred_dependency_graph(self.defs)
+        evidence_filter = _DeadCallableGrepEvidenceFilter(
+            self.defs,
+            Path(project_root),
+            getattr(self, "_grep_unvisited_callable_nodes_by_file", None),
+        )
+        source_evidence_filter = evidence_filter if evidence_filter else None
+
+        initial_candidates = tuple(candidates)
+        reportable_candidate_defs = dict(candidate_defs)
+        if dead_code_scope is not None:
+            all_candidates, all_candidate_defs = _collect_grep_verify_candidates(
+                self.defs
+            )
+            callers_by_target = defaultdict(set)
+            for caller, targets in dependency_graph.items():
+                for target in targets:
+                    callers_by_target[target].add(caller)
+
+            required_names = set(candidate_defs)
+            pending_names = list(required_names)
+            while pending_names:
+                target = pending_names.pop()
+                for caller in callers_by_target.get(target, ()):
+                    if caller in required_names or caller not in all_candidate_defs:
+                        continue
+                    required_names.add(caller)
+                    pending_names.append(caller)
+
+            candidate_by_name = {
+                candidate.get("full_name", candidate.get("name", "")): candidate
+                for candidate in all_candidates
+            }
+            candidates = [
+                candidate_by_name[name]
+                for name in required_names
+                if name in candidate_by_name
+            ]
+            candidates.sort(key=_grep_verify_rescue_priority)
+            candidate_defs = {
+                name: all_candidate_defs[name]
+                for name in required_names
+                if name in all_candidate_defs
+            }
+
+        candidate_file_count = len(
+            {
+                str(candidate.get("file"))
+                for candidate in initial_candidates
+                if candidate.get("file")
+            }
+        )
+        original_state = [
+            (
+                definition,
+                definition.references,
+                (
+                    dict(definition.heuristic_refs)
+                    if isinstance(getattr(definition, "heuristic_refs", None), dict)
+                    else None
+                ),
+                getattr(definition, "suppression_code", None),
+            )
+            for definition in self.defs.values()
+        ]
+
         grep_root = find_git_root(project_root) or Path(project_root)
         grep_cache = GrepCache()
         if use_project_cache:
             grep_cache.load(grep_root)
+        grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
         try:
-            grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
+            context_key = evidence_filter.context_key() if source_evidence_filter else ""
             verdicts = grep_verify_findings(
                 candidates,
                 project_root,
                 cache=grep_cache,
                 time_budget=grep_budget,
+                source_evidence_filter=source_evidence_filter,
+                source_evidence_context_key=context_key,
             )
         finally:
             if use_project_cache:
                 grep_cache.save(grep_root)
 
         if not getattr(verdicts, "complete", True):
-            self._grep_verify_incomplete_candidates = tuple(candidates)
-            candidate_file_count = len(
-                {
-                    str(candidate.get("file"))
-                    for candidate in candidates
-                    if candidate.get("file")
-                }
-            )
+            for (
+                definition,
+                references,
+                heuristic_refs,
+                suppression_code,
+            ) in original_state:
+                definition.references = references
+                if heuristic_refs is not None and isinstance(
+                    getattr(definition, "heuristic_refs", None), dict
+                ):
+                    definition.heuristic_refs.clear()
+                    definition.heuristic_refs.update(heuristic_refs)
+                definition.suppression_code = suppression_code
+            self._grep_verify_incomplete_candidates = initial_candidates
             report.update(
                 {
                     "complete": False,
                     "status": "incomplete",
-                    "candidate_count": len(candidates),
+                    "candidate_count": len(initial_candidates),
                     "candidate_file_count": candidate_file_count,
                     "time_budget_seconds": grep_budget,
                     "incomplete_reason": getattr(
@@ -1922,7 +2611,23 @@ class Skylos:
             )
             return 0
 
-        rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
+        grep_roots = {
+            definition.name
+            for full_name, verdict in verdicts.items()
+            if verdict.alive
+            and (definition := candidate_defs.get(full_name)) is not None
+        }
+        _apply_grep_verify_verdicts(candidate_defs, verdicts)
+        if grep_roots:
+            self._mark_evidence_reachable_defs(grep_roots, dependency_graph)
+        rescued = sum(
+            1
+            for definition in reportable_candidate_defs.values()
+            if definition.references > 0
+            or _has_evidence_marker(
+                definition, ("grep_verify", "reachable_from_root")
+            )
+        )
 
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
@@ -3177,6 +3882,7 @@ class Skylos:
         all_param_method_refs = defaultdict(list)
         all_call_arg_types = defaultdict(list)
         all_top_level_refs = set()
+        self._grep_unvisited_callable_nodes_by_file = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -3275,6 +3981,7 @@ class Skylos:
                 file_instance_attr_types = out[16] if len(out) > 16 else {}
                 file_used_attr_names = out[17] if len(out) > 17 else set()
                 file_used_attr_context = out[18] if len(out) > 18 else set()
+                file_source_lines = out[19] if len(out) > 19 else None
                 file_param_method_refs = out[20] if len(out) > 20 else {}
                 file_call_arg_types = out[21] if len(out) > 21 else {}
                 file_clone_fragments = out[22] if len(out) > 22 else []
@@ -3298,6 +4005,18 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+
+                if (
+                    str(file).endswith(PYTHON_SIGNATURE_SUFFIXES)
+                    and file_source_lines
+                ):
+                    unvisited_nodes = _unvisited_callable_nodes_from_source(
+                        "".join(file_source_lines), defs
+                    )
+                    if unvisited_nodes:
+                        self._grep_unvisited_callable_nodes_by_file[str(file)] = (
+                            unvisited_nodes
+                        )
 
                 if file_ignore_lines:
                     per_file_ignore_lines[str(file)] = file_ignore_lines
@@ -3385,11 +4104,6 @@ class Skylos:
                     ):
                         secret_scanned_files.add(str(Path(file).resolve()))
                         try:
-                            file_source_lines = (
-                                out[19]
-                                if isinstance(out, tuple) and len(out) > 19
-                                else None
-                            )
                             if file_source_lines:
                                 src_lines = file_source_lines
                             elif _is_secret_config_candidate(Path(file)):

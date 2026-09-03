@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from skylos.core.grep_verify_common import (
     _deduplicate_grep_results,
@@ -22,6 +23,38 @@ from skylos.core.grep_verify_strategies import (
 )
 
 
+_CONTEXTUAL_GREP_RESULT_LIMIT = 256
+
+
+def _context_filtered_grep(
+    finding: dict,
+    source_evidence_filter: Callable[[str, dict], bool] | None,
+    *args,
+    **kwargs,
+) -> list[str]:
+    limit = kwargs.get("max_results")
+    if source_evidence_filter is not None and isinstance(limit, int):
+        kwargs["max_results"] = limit + 1
+    lines = _run_grep(*args, **kwargs)
+    if source_evidence_filter is None:
+        return lines
+
+    kept = []
+    suppressed = []
+    for line in lines:
+        if source_evidence_filter(line, finding):
+            kept.append(line)
+        else:
+            suppressed.append(line)
+
+    # A bounded result set cannot prove that no usable reference occurs after
+    # the retained prefix. Fail open instead of turning that uncertainty into
+    # a dead-code finding.
+    if isinstance(limit, int) and len(lines) > limit and suppressed:
+        kept.append(suppressed[0])
+    return kept
+
+
 def _parameter_contract_search(
     finding: dict,
     project_root: str,
@@ -30,6 +63,7 @@ def _parameter_contract_search(
     owner_simple_name: str,
     file_path: str,
     max_per_strategy: int,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> dict[str, list[str]]:
     """Collect owner-aware evidence for a lexical parameter binding."""
     results: dict[str, list[str]] = {}
@@ -37,12 +71,24 @@ def _parameter_contract_search(
         return results
 
     callback_pattern = rf"callback\s*=\s*(?:[\w\.]+\.)*{re.escape(owner_simple_name)}\b"
-    callback_refs = _run_grep(
+
+    def _grep(*args, **kwargs) -> list[str]:
+        return _context_filtered_grep(
+            finding, source_evidence_filter, *args, **kwargs
+        )
+
+    contextual_limit = (
+        _CONTEXTUAL_GREP_RESULT_LIMIT
+        if source_evidence_filter is not None
+        else max_per_strategy
+    )
+
+    callback_refs = _grep(
         callback_pattern,
         project_root,
         use_regex=True,
         include_globs=["*.py"],
-        max_results=max_per_strategy,
+        max_results=contextual_limit,
     )
     if callback_refs:
         results["callback_registrations"] = callback_refs[:max_per_strategy]
@@ -50,12 +96,12 @@ def _parameter_contract_search(
     signature_pattern = (
         rf"def\s+{re.escape(owner_simple_name)}\s*\([^)]*\b{re.escape(simple_name)}\b"
     )
-    signature_refs = _run_grep(
+    signature_refs = _grep(
         signature_pattern,
         project_root,
         use_regex=True,
         include_globs=["*.py"],
-        max_results=max_per_strategy * 2,
+        max_results=max(contextual_limit, max_per_strategy * 2),
     )
     if signature_refs:
         override_refs = []
@@ -81,6 +127,7 @@ def multi_strategy_search(
     *,
     max_per_strategy: int = _MAX_RESULTS_PER_STRATEGY,
     early_exit_threshold: int = 5,
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> dict[str, list[str]]:
     simple_name = finding.get("simple_name", finding.get("name", ""))
     full_name = finding.get("full_name", "")
@@ -120,7 +167,19 @@ def multi_strategy_search(
             owner_simple_name=owner_simple_name,
             file_path=file_path,
             max_per_strategy=max_per_strategy,
+            source_evidence_filter=source_evidence_filter,
         )
+
+    def _grep(*args, **kwargs) -> list[str]:
+        return _context_filtered_grep(
+            finding, source_evidence_filter, *args, **kwargs
+        )
+
+    contextual_limit = (
+        _CONTEXTUAL_GREP_RESULT_LIMIT
+        if source_evidence_filter is not None
+        else max_per_strategy
+    )
 
     def _should_early_exit() -> bool:
         for strategy in _STRONG_ALIVE_STRATEGIES:
@@ -131,12 +190,12 @@ def multi_strategy_search(
 
     boundary_pattern = rf"\b{simple_name}\b"
     if kind != "import":
-        refs = _run_grep(
+        refs = _grep(
             boundary_pattern,
             project_root,
             use_regex=True,
             include_globs=["*.py", "*.pyi"],
-            max_results=max_per_strategy * 2,
+            max_results=max(contextual_limit, max_per_strategy * 2),
         )
         if refs:
             refs = [
@@ -158,12 +217,12 @@ def multi_strategy_search(
         return _deduplicate_grep_results(results)
 
     if full_name and full_name != simple_name:
-        qualified_refs = _run_grep(
+        qualified_refs = _grep(
             rf"\b{re.escape(full_name)}\b",
             project_root,
             use_regex=True,
             include_globs=["*.py", "*.pyi"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if qualified_refs:
             qualified_refs = [
@@ -177,12 +236,12 @@ def multi_strategy_search(
 
     if kind in ("method", "function"):
         call_pattern = rf"\.{re.escape(simple_name)}[[:space:]]*\("
-        call_refs = _run_grep(
+        call_refs = _grep(
             call_pattern,
             project_root,
             use_regex=True,
             include_globs=["*.py"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if call_refs:
             call_refs = _filter_other_owner_same_method_calls(call_refs, finding)
@@ -192,12 +251,12 @@ def multi_strategy_search(
 
     if kind != "import":
         import_pattern = rf"import.*\b{simple_name}\b"
-        import_refs = _run_grep(
+        import_refs = _grep(
             import_pattern,
             project_root,
             use_regex=True,
             include_globs=["*.py"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if import_refs:
             _defs, usages = filter_grep_results(import_refs, finding)
@@ -215,12 +274,12 @@ def multi_strategy_search(
         rf"[{quote_chars}]{re.escape(simple_name)}[{quote_chars}][[:space:]]*:[[:space:]]*[[:alnum:]_]+[[:space:]]*\(",
     ]
     for dp in dispatch_patterns:
-        dp_refs = _run_grep(
+        dp_refs = _grep(
             dp,
             project_root,
             use_regex=True,
             include_globs=["*.py"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if dp_refs:
             dp_refs = [
@@ -236,24 +295,24 @@ def multi_strategy_search(
     if _should_early_exit():
         return _deduplicate_grep_results(results)
 
-    all_refs = _run_grep(
+    all_refs = _grep(
         rf"__all__.*\b{simple_name}\b",
         project_root,
         use_regex=True,
         include_globs=["*.py"],
-        max_results=max_per_strategy,
+        max_results=contextual_limit,
     )
     if all_refs:
         results["exported_in_all"] = all_refs[:max_per_strategy]
 
     if kind in ("import", "variable", "class"):
         cast_pattern = rf'cast\(\s*["\x27]{simple_name}["\x27]'
-        cast_refs = _run_grep(
+        cast_refs = _grep(
             cast_pattern,
             project_root,
             use_regex=True,
             include_globs=["*.py"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if cast_refs:
             _defs, usages = filter_grep_results(cast_refs, finding)
@@ -261,12 +320,12 @@ def multi_strategy_search(
                 results["cast_usage"] = usages[:max_per_strategy]
 
         bound_pattern = rf'bound\s*=\s*["\x27]{simple_name}["\x27]'
-        bound_refs = _run_grep(
+        bound_refs = _grep(
             bound_pattern,
             project_root,
             use_regex=True,
             include_globs=["*.py"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if bound_refs:
             _defs, usages = filter_grep_results(bound_refs, finding)
@@ -279,24 +338,24 @@ def multi_strategy_search(
             parent_class = method_parts[-2]
             if len(parent_class) > 2:
                 cast_pattern = rf"cast\([^,]+,\s*[^)]*\b{parent_class}\b"
-                cast_refs = _run_grep(
+                cast_refs = _grep(
                     cast_pattern,
                     project_root,
                     use_regex=True,
                     include_globs=["*.py"],
-                    max_results=max_per_strategy,
+                    max_results=contextual_limit,
                 )
                 if cast_refs:
                     _defs, usages = filter_grep_results(cast_refs, finding)
                     if usages:
                         results["cast_protocol"] = usages[:max_per_strategy]
 
-    test_refs = _run_grep(
+    test_refs = _grep(
         rf"\b{simple_name}\b",
         project_root,
         use_regex=True,
         include_globs=["test_*.py", "*_test.py", "conftest.py"],
-        max_results=max_per_strategy,
+        max_results=contextual_limit,
     )
     if test_refs:
         test_refs = [r for r in test_refs if not is_substring_match(r, simple_name)]
@@ -308,20 +367,20 @@ def multi_strategy_search(
         return _deduplicate_grep_results(results)
 
     if rel_file and rel_file.endswith(".py"):
-        file_refs = _run_grep(
-            rel_file, project_root, fixed_string=True, max_results=max_per_strategy
+        file_refs = _grep(
+            rel_file, project_root, fixed_string=True, max_results=contextual_limit
         )
         if file_refs:
             _defs, usages = filter_grep_results(file_refs, finding)
             if usages:
                 results["file_path_references"] = usages[:max_per_strategy]
 
-        config_refs = _run_grep(
+        config_refs = _grep(
             rel_file,
             project_root,
             fixed_string=True,
             include_globs=["*.toml", "*.cfg", "*.ini", "*.yaml", "*.yml"],
-            max_results=max_per_strategy,
+            max_results=contextual_limit,
         )
         if config_refs:
             _defs, usages = filter_grep_results(config_refs, finding)
@@ -329,8 +388,8 @@ def multi_strategy_search(
                 results["config_references"] = usages[:max_per_strategy]
 
     for module_name in module_names:
-        module_refs = _run_grep(
-            module_name, project_root, fixed_string=True, max_results=max_per_strategy
+        module_refs = _grep(
+            module_name, project_root, fixed_string=True, max_results=contextual_limit
         )
         if module_refs:
             _defs, usages = filter_grep_results(module_refs, finding)
@@ -338,12 +397,12 @@ def multi_strategy_search(
                 results["module_references"] = usages[:max_per_strategy]
                 break
 
-    doc_refs = _run_grep(
+    doc_refs = _grep(
         rf"\b{simple_name}\b",
         project_root,
         use_regex=True,
         include_globs=["*.rst", "*.md"],
-        max_results=max_per_strategy * 2,
+        max_results=max(contextual_limit, max_per_strategy * 2),
     )
     if doc_refs:
         doc_refs = [r for r in doc_refs if not is_substring_match(r, simple_name)]
@@ -424,12 +483,12 @@ def multi_strategy_search(
         if len(parts) >= 2:
             class_name = parts[-2]
             if len(class_name) > 2:
-                class_refs = _run_grep(
+                class_refs = _grep(
                     rf"\b{class_name}\b",
                     project_root,
                     use_regex=True,
                     include_globs=["*.py"],
-                    max_results=max_per_strategy,
+                    max_results=contextual_limit,
                 )
                 if class_refs:
                     usage_lines = []

@@ -71,6 +71,7 @@ def build_parallel_strategy_tasks(
     max_per_strategy: int,
     early_exit_threshold: int,
     multi_strategy_search_fn: Callable[..., dict[str, list[str]]],
+    source_evidence_filter: Callable[[str, dict], bool] | None = None,
 ) -> list[tuple[Callable[[], dict[str, list[str]]], str]]:
     tasks: list[tuple[Callable[[], dict[str, list[str]]], str]] = []
 
@@ -82,6 +83,7 @@ def build_parallel_strategy_tasks(
                     project_root,
                     max_per_strategy=max_per_strategy,
                     early_exit_threshold=early_exit_threshold,
+                    source_evidence_filter=source_evidence_filter,
                 ),
                 "python_core",
             )
