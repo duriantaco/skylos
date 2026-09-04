@@ -39,6 +39,37 @@ class TestDependencyGraphBuilder:
         assert len(builder.architecture_dependencies) == 1
         assert builder.architecture_dependencies[0].to_module == "myproject.submodule"
 
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import myproject.submodule",
+            "from myproject import submodule",
+            "from myproject.submodule import value",
+        ],
+    )
+    def test_package_root_importing_known_submodule_has_no_collapsed_self_edge(
+        self, code
+    ):
+        tree = ast.parse(code)
+        known = {"myproject", "myproject.submodule"}
+
+        builder = DependencyGraphBuilder(
+            "myproject", "/project/myproject/__init__.py", known
+        )
+        builder.visit(tree)
+
+        assert builder.dependencies == []
+        assert len(builder.architecture_dependencies) == 1
+        assert builder.architecture_dependencies[0].to_module == ("myproject.submodule")
+
+    def test_direct_self_import_still_has_collapsed_self_edge(self):
+        builder = DependencyGraphBuilder("module", "/project/module.py", {"module"})
+
+        builder.visit(ast.parse("import module"))
+
+        assert len(builder.dependencies) == 1
+        assert builder.dependencies[0].to_module == "module"
+
     def test_from_import(self):
         code = "from foo import bar, baz"
         tree = ast.parse(code)
@@ -320,6 +351,120 @@ def main():
 
         architecture_graph = dict(rule._analyzer.architecture_dependencies)
         assert architecture_graph["package_b.cli"] == {"package_a"}
+
+    @pytest.mark.parametrize(
+        "package_import",
+        [
+            ("self_import_pkg.celery", 1, "import", ["self_import_pkg.celery"]),
+            ("self_import_pkg", 1, "from_import", ["celery"]),
+            ("self_import_pkg.celery", 1, "from_import", ["app"]),
+        ],
+    )
+    def test_raw_package_submodule_import_does_not_create_self_cycle(
+        self, package_import
+    ):
+        rule = CircularDependencyRule()
+        modules = {
+            "self_import_pkg": (
+                "/project/self_import_pkg/__init__.py",
+                [package_import],
+            ),
+            "self_import_pkg.celery": (
+                "/project/self_import_pkg/celery.py",
+                [],
+            ),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        findings = rule.analyze()
+
+        circular_graph = dict(rule._analyzer.dependencies)
+        architecture_graph = dict(rule._analyzer.architecture_dependencies)
+        assert findings == []
+        assert circular_graph.get("self_import_pkg", set()) == set()
+        assert architecture_graph["self_import_pkg"] == {"self_import_pkg.celery"}
+
+    def test_raw_direct_self_import_still_creates_self_cycle(self):
+        rule = CircularDependencyRule()
+        rule.add_file_imports(
+            "/project/module.py",
+            "module",
+            [("module", 1, "import", ["module"])],
+        )
+
+        findings = rule.analyze()
+
+        assert len(findings) == 1
+        assert findings[0]["cycle"] == ["module"]
+
+    def test_raw_mixed_submodule_and_unresolved_member_stays_conservative(self):
+        rule = CircularDependencyRule()
+        modules = {
+            "package": (
+                "/project/package/__init__.py",
+                [("package", 1, "from_import", ["child", "sentinel"])],
+            ),
+            "package.child": ("/project/package/child.py", []),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        findings = rule.analyze()
+
+        assert len(findings) == 1
+        assert findings[0]["cycle"] == ["package"]
+        assert rule._analyzer.architecture_dependencies["package"] == {
+            "package",
+            "package.child",
+        }
+
+    def test_package_child_importing_package_back_remains_a_cycle(self):
+        rule = CircularDependencyRule()
+        modules = {
+            "package": (
+                "/project/package/__init__.py",
+                [("package", 1, "from_import", ["child"])],
+            ),
+            "package.child": (
+                "/project/package/child.py",
+                [("package", 1, "from_import", ["value"])],
+            ),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        findings = rule.analyze()
+
+        assert len(findings) == 1
+        assert findings[0]["cycle"] == ["package"]
+        assert rule._analyzer.architecture_dependencies["package"] == {
+            "package.child"
+        }
+        assert rule._analyzer.architecture_dependencies["package.child"] == {
+            "package"
+        }
+
+    def test_ast_package_child_importing_package_back_remains_a_cycle(self):
+        rule = CircularDependencyRule()
+        rule.add_file(
+            ast.parse("from package import child"),
+            "/project/package/__init__.py",
+            "package",
+        )
+        rule.add_file(
+            ast.parse("from package import value"),
+            "/project/package/child.py",
+            "package.child",
+        )
+
+        findings = rule.analyze()
+
+        assert len(findings) == 1
+        assert findings[0]["cycle"] == ["package"]
 
     def test_raw_imports_keep_circular_cycle_detection_root_collapsed(self):
         rule = CircularDependencyRule()

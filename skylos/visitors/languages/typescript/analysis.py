@@ -319,9 +319,17 @@ _JSX_RUNTIME_PROTOCOL_EXPORTS = frozenset(
 )
 
 
-def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=None):
+def demote_unconsumed_ts_exports(
+    defs,
+    consumed_exports,
+    lifecycle_entry_points=None,
+    browser_entry_points=None,
+):
     lifecycle_entry_points = {
         os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
+    }
+    browser_entry_points = {
+        os.path.realpath(str(path)) for path in browser_entry_points or ()
     }
     demoted = []
     for _name, defn in defs.items():
@@ -348,6 +356,8 @@ def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=
             os.path.realpath(str(defn.filename)) in lifecycle_entry_points
             and defn.simple_name in _VSCODE_EXTENSION_LIFECYCLE_EXPORTS
         ):
+            continue
+        if os.path.realpath(str(defn.filename)) in browser_entry_points:
             continue
 
         consumed = consumed_exports.get(str(defn.filename), set())
@@ -1383,6 +1393,7 @@ def find_dead_ts_files(
     wildcard_edges,
     project_root: str | None = None,
     workspace_inventory=None,
+    browser_entry_points=None,
 ):
     exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = set()
@@ -1410,6 +1421,9 @@ def find_dead_ts_files(
         project_root=project_root,
         workspace_inventory=workspace_inventory,
         exclude_folders=exclude_folders,
+    )
+    entry_points.update(
+        os.path.realpath(str(path)) for path in browser_entry_points or ()
     )
 
     dead_set = set()

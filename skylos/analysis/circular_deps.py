@@ -53,6 +53,42 @@ def _resolve_from_import_targets(
     return dict(targets)
 
 
+def _is_proven_package_submodule_import(
+    from_module: str,
+    import_module: str,
+    import_type: str,
+    imported_names: List[str],
+    known_modules: Set[str],
+) -> bool:
+    """Return whether root-collapsing this import would invent a self-edge.
+
+    Package-level cycle reporting intentionally collapses imported modules to
+    their top-level package.  When a package initializer imports one of its
+    own known submodules, that collapse turns a real ``pkg -> pkg.child`` edge
+    into a misleading ``pkg -> pkg`` cycle.  Only skip the collapsed edge when
+    every resolved target is a scanned, strict descendant of the source
+    package; unresolved members remain conservative.
+    """
+    if not from_module or _module_root(import_module) != from_module:
+        return False
+
+    if import_type == "from_import":
+        targets = _resolve_from_import_targets(
+            import_module,
+            imported_names,
+            known_modules,
+        )
+        return bool(targets) and all(
+            target.startswith(f"{from_module}.") for target in targets
+        )
+
+    if import_type == "import":
+        target = _resolve_known_module(import_module, known_modules)
+        return bool(target and target.startswith(f"{from_module}."))
+
+    return False
+
+
 @dataclass
 class ModuleDependency:
     from_module: str
@@ -97,22 +133,30 @@ class DependencyGraphBuilder(ast.NodeVisitor):
         for alias in node.names:
             module = _resolve_known_module(alias.name, self.known_modules)
             if module:
-                self.dependencies.append(
-                    ModuleDependency(
-                        from_module=self.module_name,
-                        to_module=_module_root(alias.name),
-                        import_line=node.lineno,
-                        import_type="import",
-                        imported_names=[alias.asname or alias.name],
+                imported_names = [alias.asname or alias.name]
+                if not _is_proven_package_submodule_import(
+                    self.module_name,
+                    alias.name,
+                    "import",
+                    imported_names,
+                    self.known_modules,
+                ):
+                    self.dependencies.append(
+                        ModuleDependency(
+                            from_module=self.module_name,
+                            to_module=_module_root(alias.name),
+                            import_line=node.lineno,
+                            import_type="import",
+                            imported_names=imported_names,
+                        )
                     )
-                )
                 self.architecture_dependencies.append(
                     ModuleDependency(
                         from_module=self.module_name,
                         to_module=module,
                         import_line=node.lineno,
                         import_type="import",
-                        imported_names=[alias.asname or alias.name],
+                        imported_names=imported_names,
                     )
                 )
 
@@ -123,15 +167,22 @@ class DependencyGraphBuilder(ast.NodeVisitor):
                 node.module, names, self.known_modules
             )
             if targets:
-                self.dependencies.append(
-                    ModuleDependency(
-                        from_module=self.module_name,
-                        to_module=_module_root(node.module),
-                        import_line=node.lineno,
-                        import_type="from_import",
-                        imported_names=names,
+                if not _is_proven_package_submodule_import(
+                    self.module_name,
+                    node.module,
+                    "from_import",
+                    names,
+                    self.known_modules,
+                ):
+                    self.dependencies.append(
+                        ModuleDependency(
+                            from_module=self.module_name,
+                            to_module=_module_root(node.module),
+                            import_line=node.lineno,
+                            import_type="from_import",
+                            imported_names=names,
+                        )
                     )
-                )
                 for target, target_names in targets.items():
                     self.architecture_dependencies.append(
                         ModuleDependency(
@@ -166,10 +217,18 @@ class CircularDependencyAnalyzer:
             self.known_modules.update(_known_module_names(module_name))
 
         for module_name, raw_imports in raw_imports_by_module.items():
-            file_path = self.modules.get(module_name, "")
             for import_module, line, import_type, names in raw_imports:
                 root = _module_root(import_module)
-                if root in self.known_modules:
+                if (
+                    root in self.known_modules
+                    and not _is_proven_package_submodule_import(
+                        module_name,
+                        import_module,
+                        import_type,
+                        names,
+                        self.known_modules,
+                    )
+                ):
                     dep = ModuleDependency(
                         from_module=module_name,
                         to_module=root,
@@ -195,6 +254,8 @@ class CircularDependencyAnalyzer:
                 for target in architecture_targets:
                     self.architecture_dependencies[module_name].add(target)
 
+        self._restore_cyclic_package_self_edges()
+
     def build_graph(self, trees: Dict[str, ast.AST]):
         for module_name in self.modules:
             self.known_modules.update(_known_module_names(module_name))
@@ -211,6 +272,39 @@ class CircularDependencyAnalyzer:
                     self.all_deps.append(dep)
                 for dep in builder.architecture_dependencies:
                     self.architecture_dependencies[dep.from_module].add(dep.to_module)
+
+        self._restore_cyclic_package_self_edges()
+
+    def _restore_cyclic_package_self_edges(self) -> None:
+        """Keep a suppressed package edge when its child imports back.
+
+        A package importing a known child is not a cycle by itself. If that
+        child can reach the package again in the precise module graph, however,
+        suppressing the root-collapsed edge would hide a real import cycle.
+        """
+
+        for package, targets in list(self.architecture_dependencies.items()):
+            if not package or _module_root(package) != package:
+                continue
+            if any(
+                target.startswith(f"{package}.")
+                and self._architecture_path_exists(target, package)
+                for target in targets
+            ):
+                self.dependencies[package].add(package)
+
+    def _architecture_path_exists(self, start: str, target: str) -> bool:
+        pending = [start]
+        visited: Set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current == target:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            pending.extend(self.architecture_dependencies.get(current, ()))
+        return False
 
     def find_simple_cycles(self) -> List[List[str]]:
         if _fast_find_cycles is not None:

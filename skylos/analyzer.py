@@ -120,6 +120,8 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_wildcard_edges",
     "_ts_importers_of",
     "_ts_demoted_exports",
+    "_browser_script_entry_files",
+    "_browser_export_entry_files",
 )
 
 
@@ -1118,6 +1120,66 @@ def _changed_definition_keys(
     )
 
 
+def _suppress_django_admin_stubs(
+    empty_files,
+    file_contexts,
+    project_root: str | Path,
+) -> None:
+    if _scan_has_top_level_python_module(project_root, file_contexts, "django"):
+        return
+    project_uses_django = any(
+        any(
+            getattr(definition, "type", None) == "import"
+            and (
+                str(getattr(definition, "name", "")) == "django"
+                or str(getattr(definition, "name", "")).startswith("django.")
+            )
+            for definition in definitions
+        )
+        for definitions, _tests, _frameworks, _file, _mod, _cfg in file_contexts
+    )
+    if not project_uses_django:
+        return
+
+    empty_files[:] = [
+        finding
+        for finding in empty_files
+        if not (
+            finding.get("rule_id") == "SKY-E002"
+            and Path(str(finding.get("file", ""))).name == "admin.py"
+            and (
+                Path(str(finding.get("file", ""))).parent / "__init__.py"
+            ).is_file()
+        )
+    ]
+
+
+def _scan_has_top_level_python_module(
+    project_root: str | Path,
+    file_contexts,
+    module_name: str,
+) -> bool:
+    root = Path(project_root).resolve()
+    for _defs, _tests, _frameworks, raw_file, _mod, _cfg in file_contexts:
+        try:
+            relative_parts = Path(raw_file).resolve().relative_to(root).parts
+        except (OSError, ValueError):
+            continue
+        if not relative_parts:
+            continue
+        if root.name == module_name and relative_parts[0] == "__init__.py":
+            return True
+        if relative_parts[0] in {module_name, f"{module_name}.py"}:
+            return True
+        if (
+            relative_parts[0] in _PYTHON_SOURCE_ROOT_NAMES
+            and len(relative_parts) > 1
+            and relative_parts[1] in {module_name, f"{module_name}.py"}
+        ):
+            return True
+    return False
+
+
 def _collect_grep_verify_candidates(
     definitions: dict,
     candidate_keys: frozenset | None = None,
@@ -1669,6 +1731,7 @@ class Skylos:
             self.defs,
             self.ts_consumed_exports,
             lifecycle_entry_points=lifecycle_entry_points,
+            browser_entry_points=getattr(self, "_browser_export_entry_files", ()),
         )
 
     def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):
@@ -1681,6 +1744,7 @@ class Skylos:
             getattr(self, "_ts_wildcard_edges", {}),
             project_root=str(self._project_root),
             workspace_inventory=workspace_inventory,
+            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
         )
 
     def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
@@ -3630,6 +3694,8 @@ class Skylos:
 
         self.pattern_trackers = pattern_trackers
 
+        _suppress_django_admin_stubs(empty_files, file_contexts, root)
+
         self._global_abc_classes = set()
         self._global_protocol_classes = set()
         self._global_abstract_methods = {}
@@ -4465,10 +4531,32 @@ class Skylos:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error("Java FXML liveness scan failed", exc_info=True)
 
+        self._browser_script_entry_files = set()
+        self._browser_export_entry_files = set()
         try:
             from skylos.deadcode.browser_refs import (
-                collect_browser_event_handler_refs,
+                collect_browser_script_entry_files,
+                collect_django_static_script_export_files,
             )
+
+            self._browser_script_entry_files = collect_browser_script_entry_files(
+                Path(root),
+                files,
+                exclude_folders=exclude_folders,
+            )
+            self._browser_export_entry_files = (
+                collect_django_static_script_export_files(
+                    Path(root),
+                    files,
+                    exclude_folders=exclude_folders,
+                )
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Browser script entry scan failed", exc_info=True)
+
+        try:
+            from skylos.deadcode.browser_refs import collect_browser_event_handler_refs
 
             browser_handler_refs = collect_browser_event_handler_refs(
                 Path(root),
