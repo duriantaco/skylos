@@ -46,22 +46,22 @@ def detect_ci_permission_expansion(diff_text: str, file_path: str) -> list[dict]
         return []
 
     removed, added = _parse_changed_lines(diff_text)
-    removed_normalized: set[str] = set()
+    removed_signals: set[tuple[str, str]] = set()
     for line in removed:
         normalized_removed = _normalize_yaml_line(line.text)
-        if normalized_removed:
-            removed_normalized.add(normalized_removed)
+        for signal in _signals_for_added_line(normalized_removed):
+            removed_signals.add((signal["expansion_type"], signal["value"]))
 
     findings: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for line in added:
         normalized = _normalize_yaml_line(line.text)
-        if not normalized or normalized in removed_normalized:
+        if not normalized:
             continue
 
         for signal in _signals_for_added_line(normalized):
             key = (signal["expansion_type"], signal["value"])
-            if key in seen:
+            if key in removed_signals or key in seen:
                 continue
             seen.add(key)
             findings.append(

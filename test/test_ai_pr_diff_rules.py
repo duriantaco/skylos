@@ -46,11 +46,10 @@ def test_detects_all_privileged_triggers_on_same_line():
 
     findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
 
-    assert len(findings) == 2
-    assert {f["metadata"]["added_value"] for f in findings} == {
+    assert [f["metadata"]["added_value"] for f in findings] == [
         "pull_request_target",
         "workflow_run",
-    }
+    ]
 
 
 def test_reports_all_inline_write_permissions():
@@ -58,11 +57,32 @@ def test_reports_all_inline_write_permissions():
 
     findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
 
-    assert len(findings) == 2
-    assert {f["metadata"]["added_value"] for f in findings} == {
+    assert [f["metadata"]["added_value"] for f in findings] == [
         "contents: write",
         "issues: write",
-    }
+    ]
+
+
+def test_reports_only_new_privileged_trigger_on_changed_line():
+    diff = _make_diff(
+        ["on: [pull_request_target]"],
+        ["on: [pull_request_target, workflow_run]"],
+    )
+
+    findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
+
+    assert [f["metadata"]["added_value"] for f in findings] == ["workflow_run"]
+
+
+def test_reports_only_new_inline_write_permission_on_changed_line():
+    diff = _make_diff(
+        ["permissions: {contents: write}"],
+        ["permissions: {contents: write, issues: write}"],
+    )
+
+    findings = detect_ci_permission_expansion(diff, ".github/workflows/ci.yml")
+
+    assert [f["metadata"]["added_value"] for f in findings] == ["issues: write"]
 
 
 def test_ci_permission_expansion_ignores_line_moves():
