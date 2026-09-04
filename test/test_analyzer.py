@@ -217,6 +217,35 @@ class TestSkylos:
         result = skylos._module(root, file_path)
         assert result == "main"
 
+    def test_module_name_generation_strips_rightmost_source_root(self, skylos, tmp_path):
+        # Path contains BOTH "python" and "src" source-root names. The old
+        # implementation iterated a set and stripped whichever name came first,
+        # producing module names that depended on PYTHONHASHSEED. The result
+        # must be deterministic and resolve to the rightmost source root.
+        root = tmp_path
+        for rel in (
+            "mcp-servers/python/data_analysis_server/src/data_analysis_server/visualization/plots.py",
+        ):
+            file_path = root / rel
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text("def plot(): ...\n", encoding="utf-8")
+
+        result = skylos._module(root, file_path)
+        assert result == "data_analysis_server.visualization.plots"
+
+    def test_module_name_generation_repeated_src_strips_last(self, skylos, tmp_path):
+        # Same source-root name appearing twice (reporter's hypothetical from
+        # #773) must strip the LAST occurrence deterministically.
+        root = tmp_path
+        file_path = (
+            root / "mcp-servers/src/data_analysis_server/src/data_analysis_server/visualization/plots.py"
+        )
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("x = 1\n", encoding="utf-8")
+
+        result = skylos._module(root, file_path)
+        assert result == "data_analysis_server.visualization.plots"
+
     def test_should_exclude_file(self, skylos):
         """
         should exclude pycache, build, egg-info and whatever is in exclude_folders

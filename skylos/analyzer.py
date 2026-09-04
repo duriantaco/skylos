@@ -1260,14 +1260,23 @@ class Skylos:
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
 
-        for source_root_name in _PYTHON_SOURCE_ROOT_NAMES:
-            if source_root_name not in p:
+        # Strip the rightmost source-root directory (src/lib/python) so the
+        # resulting module name is deterministic regardless of PYTHONHASHSEED.
+        # Scanning right-to-left guarantees a path like
+        # mcp-servers/python/data_analysis_server/src/.../plots.py always
+        # resolves to data_analysis_server... instead of randomly keeping the
+        # first "python" or "src" segment depending on set iteration order.
+        source_root_idx = None
+        for idx in range(len(p) - 1, -1, -1):
+            if p[idx] not in _PYTHON_SOURCE_ROOT_NAMES:
                 continue
-            source_root_idx = p.index(source_root_name)
-            source_root_path = root / "/".join(p[: source_root_idx + 1])
+            source_root_path = root / "/".join(p[: idx + 1])
             if not (source_root_path / "__init__.py").exists():
-                p = p[source_root_idx + 1 :]
+                source_root_idx = idx
                 break
+
+        if source_root_idx is not None:
+            p = p[source_root_idx + 1 :]
 
         for suffix in PYTHON_SIGNATURE_SUFFIXES:
             if p[-1].endswith(suffix):
