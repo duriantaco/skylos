@@ -101,6 +101,26 @@ def test_valid_files_report_each_fallback_finding_once(tmp_path):
     assert result.get("analysis_errors", []) == []
 
 
+def test_syntax_error_after_primary_analysis_keeps_later_fallback_findings(tmp_path):
+    first = _write(tmp_path / "first.py", _PHANTOM)
+    changed = _write(tmp_path / "changed.py", "label = 'initial'\n")
+    second = _write(tmp_path / "second.py", _PHANTOM)
+    changed_phases = []
+
+    def change_source_at_ai_phase(completed, total, path):
+        if str(path) == "PHASE: AI defect scan":
+            changed_phases.append(str(path))
+            _write(changed, _INVALID)
+
+    result = _analyze(
+        [first, changed, second], progress_callback=change_source_at_ai_phase
+    )
+
+    assert changed_phases == ["PHASE: AI defect scan"]
+    assert _phantom_keys(result) == _expected([first, second])
+    _assert_incomplete(result, changed, error_type="SyntaxError", kind="syntax_error")
+
+
 def test_defined_label_helpers_are_clean_after_invalid_file(tmp_path):
     invalid = _write(tmp_path / "broken.py", _INVALID)
     clean = _write(

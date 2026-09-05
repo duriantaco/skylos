@@ -41,6 +41,11 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     find_unused_ts_exports,
 )
+from skylos.analysis.ast_cache import (
+    MODE_IGNORE,
+    load_python_module,
+    releases_python_ast_cache,
+)
 from skylos.visitors.languages.go import clear_go_cache
 
 from skylos.rules.secrets import (
@@ -2789,6 +2794,7 @@ class Skylos:
             analysis_errors=analysis_errors,
         )
 
+    @releases_python_ast_cache
     def analyze(
         self,
         path,
@@ -4130,11 +4136,19 @@ class Skylos:
                     fallback_files = _ai_py_files if fallback_rules else ()
                     for py_file in fallback_files:
                         try:
-                            source = Path(py_file).read_text(
-                                encoding="utf-8",
-                                errors="ignore",
+                            source, tree = load_python_module(
+                                Path(py_file), MODE_IGNORE
                             )
-                            tree = ast.parse(source, filename=str(py_file))
+                            if tree is None:
+                                if str(py_file) in reported_error_files:
+                                    continue
+                                # Cached failures omit exception details. Recover
+                                # the diagnostic only if no worker reported it.
+                                if source is None:
+                                    source = Path(py_file).read_text(
+                                        encoding="utf-8", errors="ignore"
+                                    )
+                                tree = ast.parse(source, filename=str(py_file))
                             linter = LinterVisitor(fallback_rules, str(py_file))
                             linter.context["source"] = source
                             linter.visit(tree)
