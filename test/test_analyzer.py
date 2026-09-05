@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
+from collections.abc import Iterator, Mapping
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.analysis.penalties import _check_abstract_overrides, apply_penalties
@@ -466,6 +467,167 @@ class TestSkylos:
         skylos._mark_exports()
 
         assert mock_def.is_exported
+
+    def test_mark_exports_explicit_exports_stay_module_scoped(
+        self, skylos, mock_definition
+    ):
+        exported = mock_definition("package.published", "published", "function")
+        nested = mock_definition("package.branch.published", "published", "function")
+        skylos.defs = {
+            exported.name: exported,
+            nested.name: nested,
+        }
+        skylos.exports = {"package": {"published"}}
+
+        skylos._mark_exports()
+
+        assert exported.is_exported
+        assert exported.references == 1
+        assert not nested.is_exported
+        assert nested.references == 0
+
+    def test_mark_exports_init_import_leaves_ambiguous_targets_unresolved(
+        self, skylos, mock_definition
+    ):
+        import_definition = mock_definition(
+            "missing.published", "published", "import", in_init=True
+        )
+        candidates = [
+            mock_definition(
+                f"branch_{index}.missing.published", "published", "function"
+            )
+            for index in range(2)
+        ]
+        skylos.defs = {
+            "package/__init__.py:missing.published": import_definition,
+            **{candidate.name: candidate for candidate in candidates},
+        }
+
+        skylos._mark_exports()
+
+        assert all(not candidate.is_exported for candidate in candidates)
+        assert all(candidate.references == 0 for candidate in candidates)
+
+    def test_mark_exports_indexes_all_transitive_type_prefixes(
+        self, skylos, mock_definition
+    ):
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        children = [
+            mock_definition(f"package.Child{index}", f"Child{index}", "class")
+            for index in range(3)
+        ]
+        leaf = mock_definition("package.Leaf", "Leaf", "class")
+        sibling = mock_definition("package.Sibling", "Sibling", "class")
+        definitions = [root, *children, leaf, sibling]
+        skylos.defs = {definition.name: definition for definition in definitions}
+        skylos._global_type_map = {
+            "package.RootExtra.sibling": "Sibling",
+            "package.Root.third": "Child2",
+            "package.Child2.leaf": "Leaf",
+            "package.Root.first": "Child0",
+            "package.Root.second": "Child1",
+        }
+
+        skylos._mark_exports()
+
+        assert all(child.is_exported for child in children)
+        assert all(child.references == 1 for child in children)
+        assert leaf.is_exported
+        assert leaf.references == 1
+        assert not sibling.is_exported
+        assert sibling.references == 0
+
+    def test_mark_exports_indexes_global_type_map_once(self, skylos, mock_definition):
+        class ScanCountingMap(Mapping[str, str]):
+            def __init__(self, values: dict[str, str]) -> None:
+                self._values = values
+                self.key_visits = 0
+
+            def __getitem__(self, key: str) -> str:
+                return self._values[key]
+
+            def __iter__(self) -> Iterator[str]:
+                for key in self._values:
+                    self.key_visits += 1
+                    yield key
+
+            def __len__(self) -> int:
+                return len(self._values)
+
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        reachable = [
+            mock_definition(f"package.Node{index}", f"Node{index}", "class")
+            for index in range(4)
+        ]
+        skylos.defs = {definition.name: definition for definition in [root, *reachable]}
+
+        type_map = ScanCountingMap(
+            {
+                "package.Root.child": "Node0",
+                "package.Node0.child": "Node1",
+                "package.Node1.child": "Node2",
+                "package.Node2.child": "Node3",
+                **{f"package.Unrelated{index}.child": "Missing" for index in range(8)},
+            }
+        )
+        skylos._global_type_map = type_map
+
+        skylos._mark_exports()
+
+        assert all(definition.is_exported for definition in reachable)
+        assert type_map.key_visits == len(type_map)
+
+    def test_mark_exports_uses_logarithmic_type_prefix_lookups(
+        self, skylos, mock_definition
+    ):
+        class ProbeKeys(list[str]):
+            def __init__(self, values: list[str]) -> None:
+                super().__init__(values)
+                self.index_probes = 0
+                self.iterated_items = 0
+
+            def __getitem__(self, index):
+                if isinstance(index, int):
+                    self.index_probes += 1
+                return super().__getitem__(index)
+
+            def __iter__(self):
+                for value in super().__iter__():
+                    self.iterated_items += 1
+                    yield value
+
+        root = mock_definition("package.Root", "Root", "class", is_exported=True)
+        reachable = [
+            mock_definition(f"package.Node{index}", f"Node{index}", "class")
+            for index in range(4)
+        ]
+        skylos.defs = {definition.name: definition for definition in [root, *reachable]}
+
+        type_map = {
+            "package.Root.child": "Node0",
+            "package.Node0.child": "Node1",
+            "package.Node1.child": "Node2",
+            "package.Node2.child": "Node3",
+            **{
+                f"package.Unrelated{index:04d}.child": "Missing"
+                for index in range(4092)
+            },
+        }
+        skylos._global_type_map = type_map
+        probe_keys = ProbeKeys(sorted(type_map))
+
+        with patch(
+            "skylos.analyzer.sorted", return_value=probe_keys, create=True
+        ) as sorted_mock:
+            skylos._mark_exports()
+
+        sorted_mock.assert_called_once_with(type_map)
+        assert all(definition.is_exported for definition in reachable)
+        assert probe_keys.iterated_items == 0
+
+        lookup_count = 1 + len(reachable)
+        logarithmic_bound = 2 * lookup_count * len(probe_keys).bit_length()
+        assert 0 < probe_keys.index_probes <= logarithmic_bound
 
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
