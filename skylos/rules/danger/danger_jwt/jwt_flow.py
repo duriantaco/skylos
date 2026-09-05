@@ -2,59 +2,14 @@ from __future__ import annotations
 import ast
 import sys
 
-
-def _qualified_name(node):
-    func = node.func
-    parts = []
-    while isinstance(func, ast.Attribute):
-        parts.append(func.attr)
-        func = func.value
-    if isinstance(func, ast.Name):
-        parts.append(func.id)
-        parts.reverse()
-        return ".".join(parts)
-    return None
+from .jwt_provenance import JWTImportVisitor
 
 
-class _JWTChecker(ast.NodeVisitor):
+class _JWTChecker(JWTImportVisitor):
     def __init__(self, file_path, findings):
+        super().__init__()
         self.file_path = file_path
         self.findings = findings
-        self._jwt_aliases = set()    # names that alias to jwt module
-        self._jwt_funcs = set()      # functions imported directly from jwt
-
-    def visit_Import(self, node):
-        for alias in node.names:
-            if alias.name == "jwt":
-                self._jwt_aliases.add(alias.asname or "jwt")
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node):
-        if node.module == "jwt":
-            for alias in node.names:
-                self._jwt_funcs.add(alias.asname or alias.name)
-        self.generic_visit(node)
-
-    def _is_jwt_decode(self, qn: str) -> bool:
-        """Check if qn refers to jwt.decode, accounting for aliases."""
-        if qn == "jwt.decode" or qn.startswith("jwt.") and qn.endswith(".decode"):
-            return True
-        if qn.endswith("jwt.decode"):
-            return True
-        if qn in self._jwt_funcs:
-            return True
-        if any(qn == f"{alias}.decode" for alias in self._jwt_aliases):
-            return True
-        return False
-
-    def generic_visit(self, node):
-        for field, value in ast.iter_fields(node):
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        self.visit(item)
-            elif isinstance(value, ast.AST):
-                self.visit(value)
 
     def _report(self, node, message, severity="HIGH"):
         self.findings.append(
@@ -69,15 +24,7 @@ class _JWTChecker(ast.NodeVisitor):
         )
 
     def visit_Call(self, node):
-        qn = _qualified_name(node)
-        if not qn:
-            self.generic_visit(node)
-            return
-        if not qn.endswith((".decode", ".encode")) and qn not in self._jwt_funcs:
-            self.generic_visit(node)
-            return
-
-        if not self._is_jwt_decode(qn):
+        if not self.is_jwt_decode(node):
             self.generic_visit(node)
             return
 
