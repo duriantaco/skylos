@@ -1,5 +1,22 @@
 ## Changelog
 
+## [4.35.1](https://github.com/duriantaco/skylos/compare/v4.35.0...v4.35.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **ai-defect:** continue checks after failed Python files ([#796](https://github.com/duriantaco/skylos/issues/796)) ([b1d0ad7](https://github.com/duriantaco/skylos/commit/b1d0ad7cd4eff2ef8c7335a1fd71cdda6670a002))
+* **ai-defect:** make SKY-A103 findings complete and deterministic ([#793](https://github.com/duriantaco/skylos/issues/793)) ([7536054](https://github.com/duriantaco/skylos/commit/7536054680f1ca4415b026913f9679a2e9cab186))
+* **ai-defect:** report CI permission signals reliably ([#792](https://github.com/duriantaco/skylos/issues/792)) ([1172878](https://github.com/duriantaco/skylos/commit/1172878a73f14ec495bfacfa51e838df0c42e0a9))
+* **analyzer:** deterministic module name for multi source-root paths ([#780](https://github.com/duriantaco/skylos/issues/780)) ([0e96fdb](https://github.com/duriantaco/skylos/commit/0e96fdbfd1638a0a78db0ba71df2d20a75343d8e))
+* **analyzer:** preserve scan context in Git hooks ([#795](https://github.com/duriantaco/skylos/issues/795)) ([38124e7](https://github.com/duriantaco/skylos/commit/38124e7a773bf403aa9681bf84c69c2f9d600fb3))
+* **cwe:** correct 10 misaligned CWE mappings ([#784](https://github.com/duriantaco/skylos/issues/784)) ([9f1fbc1](https://github.com/duriantaco/skylos/commit/9f1fbc1b0acb4eee14d235ab189db6837de49e60))
+
+
+### Performance Improvements
+
+* **analysis:** share parsed ASTs across rule passes ([#779](https://github.com/duriantaco/skylos/issues/779)) ([f99402e](https://github.com/duriantaco/skylos/commit/f99402e5122c28ab6b3571f4a5e6b4281d27472c))
+
 ## [4.35.0](https://github.com/duriantaco/skylos/compare/v4.34.0...v4.35.0) (2026-08-26)
 
 
