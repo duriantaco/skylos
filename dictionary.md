@@ -101,7 +101,6 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D210 | HIGH | TLS verification disabled | Python, Go | A02 |
 | D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
 | D212 | CRITICAL | Command injection | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
-| D214 | HIGH | Broken access control | Python | A01 |
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |

@@ -23,18 +23,6 @@ COMPLIANCE_MAPPINGS = {
         {"framework": "OWASP_TOP10", "requirement": "A10:2021", "title": "SSRF"},
         {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Security Flaws"},
     ],
-    "SKY-D214": [
-        {
-            "framework": "OWASP_TOP10",
-            "requirement": "A01:2021",
-            "title": "Broken Access Control",
-        },
-        {
-            "framework": "PCI_DSS_4",
-            "requirement": "6.5.8",
-            "title": "Improper Access Control",
-        },
-    ],
     "SKY-S101": [
         {
             "framework": "PCI_DSS_4",

@@ -133,7 +133,6 @@ _RULES = (
         "SKY-D211", "SQL injection", "security", "CRITICAL", aliases=("sqli",)
     ),
     RuleCatalogEntry("SKY-D212", "Command injection", "security", "CRITICAL"),
-    RuleCatalogEntry("SKY-D214", "Broken access control", "security", "HIGH"),
     RuleCatalogEntry(
         "SKY-D215",
         "Path traversal",
