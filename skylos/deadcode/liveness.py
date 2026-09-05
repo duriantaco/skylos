@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.analysis.ast_cache import releases_python_ast_cache
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 
 
@@ -97,6 +98,7 @@ class _AttrCall:
     line: int
 
 
+@releases_python_ast_cache
 def apply_dead_code_liveness(
     definitions: dict[str, Any],
     refs: Iterable[tuple[str, Any]],

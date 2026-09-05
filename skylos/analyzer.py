@@ -41,6 +41,11 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     find_unused_ts_exports,
 )
+from skylos.analysis.ast_cache import (
+    MODE_IGNORE,
+    load_python_module,
+    releases_python_ast_cache,
+)
 from skylos.visitors.languages.go import clear_go_cache
 
 from skylos.rules.secrets import (
@@ -58,6 +63,7 @@ from skylos.core.file_discovery import (
     find_git_root,
     should_exclude_path,
 )
+from skylos.core.git_context import GitContext
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
 from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
@@ -283,6 +289,25 @@ def _relative_changed_file(root, changed_file):
         return str(changed_path.resolve().relative_to(root))
     except ValueError:
         return str(changed_path)
+
+
+def _scoped_changed_paths(root, scan_paths, changed_files):
+    """Keep changed paths inside the requested files/directories, even if deleted."""
+    targets = scan_paths if isinstance(scan_paths, (list, tuple)) else [scan_paths]
+    targets = [Path(target).resolve() for target in targets]
+    selected = set()
+    for changed_file in changed_files or ():
+        candidate = Path(changed_file)
+        candidate = (
+            candidate if candidate.is_absolute() else Path(root) / candidate
+        ).resolve()
+        for target in targets:
+            if candidate == target or (
+                target.is_dir() and candidate.is_relative_to(target)
+            ):
+                selected.add(candidate)
+                break
+    return selected
 
 
 def _diff_result_has_text(diff_result):
@@ -1108,8 +1133,7 @@ def _changed_definition_keys(
 
     root = Path(project_root)
     changed_paths = {
-        _canonical_analysis_path(changed_file, root)
-        for changed_file in changed_files
+        _canonical_analysis_path(changed_file, root) for changed_file in changed_files
     }
     return frozenset(
         key
@@ -1260,14 +1284,23 @@ class Skylos:
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
 
-        for source_root_name in _PYTHON_SOURCE_ROOT_NAMES:
-            if source_root_name not in p:
+        # Strip the rightmost source-root directory (src/lib/python) so the
+        # resulting module name is deterministic regardless of PYTHONHASHSEED.
+        # Scanning right-to-left guarantees a path like
+        # mcp-servers/python/data_analysis_server/src/.../plots.py always
+        # resolves to data_analysis_server... instead of randomly keeping the
+        # first "python" or "src" segment depending on set iteration order.
+        source_root_idx = None
+        for idx in range(len(p) - 1, -1, -1):
+            if p[idx] not in _PYTHON_SOURCE_ROOT_NAMES:
                 continue
-            source_root_idx = p.index(source_root_name)
-            source_root_path = root / "/".join(p[: source_root_idx + 1])
+            source_root_path = root / "/".join(p[: idx + 1])
             if not (source_root_path / "__init__.py").exists():
-                p = p[source_root_idx + 1 :]
+                source_root_idx = idx
                 break
+
+        if source_root_idx is not None:
+            p = p[source_root_idx + 1 :]
 
         for suffix in PYTHON_SIGNATURE_SUFFIXES:
             if p[-1].endswith(suffix):
@@ -2761,6 +2794,7 @@ class Skylos:
             analysis_errors=analysis_errors,
         )
 
+    @releases_python_ast_cache
     def analyze(
         self,
         path,
@@ -3524,95 +3558,106 @@ class Skylos:
                     }
                 )
 
+        git_context = GitContext.from_path(root)
         if changed_files is None and (
             enable_quality or enable_danger or enable_ai_defects
         ):
             try:
-                import subprocess
-
-                diff_result = subprocess.run(
-                    ["git", "diff", "--name-only", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    cwd=str(root),
-                )
-                if diff_result.returncode == 0 and diff_result.stdout.strip():
-                    changed_files = set()
-                    for line in diff_result.stdout.strip().splitlines():
-                        full_path = str((root / line).resolve())
-                        changed_files.add(full_path)
-                staged_result = subprocess.run(
-                    ["git", "diff", "--name-only", "--cached"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    cwd=str(root),
-                )
-                if staged_result.returncode == 0 and staged_result.stdout.strip():
-                    if changed_files is None:
-                        changed_files = set()
-                    for line in staged_result.stdout.strip().splitlines():
-                        full_path = str((root / line).resolve())
-                        changed_files.add(full_path)
+                detected_changes = set()
+                for revision in ("HEAD", "--cached"):
+                    diff_result = git_context.run(
+                        "diff", "--name-only", "--no-relative", "-z", revision
+                    )
+                    if diff_result.returncode == 0:
+                        detected_changes.update(
+                            str((git_context.root / name).resolve())
+                            for name in diff_result.stdout.split("\0")
+                            if name
+                        )
+                if detected_changes:
+                    changed_files = {
+                        str(candidate)
+                        for candidate in _scoped_changed_paths(
+                            root, path, detected_changes
+                        )
+                    }
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Auto-detect git changes failed", exc_info=True)
 
-        if changed_files and enable_quality and "SKY-L021" not in project_ignore:
+        # CLI callers already resolved config/default excludes and --include.
+        # Direct API callers without an effective list still need config excludes.
+        regression_excludes = (
+            exclude_folders
+            if exclude_folders is not None
+            else (project_cfg.get("exclude") or [])
+        )
+        scoped_changes = {
+            candidate
+            for candidate in _scoped_changed_paths(root, path, changed_files)
+            if not should_exclude_path(candidate, project_root, regression_excludes)
+        }
+        # Generic control-removal heuristics only apply to surviving source
+        # files. Explicit contracts can also describe deleted source files.
+        source_regression_files = (
+            scoped_changes.intersection(Path(file).resolve() for file in files)
+            if enable_quality and scoped_changes
+            else set()
+        )
+        if (
+            source_regression_files
+            and enable_quality
+            and "SKY-L021" not in project_ignore
+        ):
             from skylos.rules.quality.regression import detect_security_regressions
             from skylos.security.contracts import resolve_diff_base_ref
 
             try:
-                import subprocess
-
                 diff_base = resolve_diff_base_ref(root)
 
-                for cf in changed_files:
-                    rel_cf = (
-                        str(Path(cf).resolve().relative_to(root))
-                        if Path(cf).is_absolute()
-                        else str(cf)
-                    )
+                for cf in sorted(source_regression_files):
+                    rel_cf = git_context.relative_path(cf)
+                    if rel_cf is None:
+                        continue
                     diff_cmd = (
-                        ["git", "diff", f"{diff_base}...HEAD", "--", rel_cf]
+                        ["diff", f"{diff_base}...HEAD"]
                         if diff_base
-                        else ["git", "diff", "HEAD", "--", rel_cf]
+                        else ["diff", "HEAD"]
                     )
-                    diff_result = subprocess.run(
-                        diff_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        cwd=str(root),
-                    )
+                    diff_options = [
+                        "--no-relative",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--",
+                        f":(literal){rel_cf}",
+                    ]
+                    diff_result = git_context.run(*diff_cmd, *diff_options)
                     if diff_result.returncode != 0 and diff_base:
-                        diff_result = subprocess.run(
-                            ["git", "diff", "HEAD", "--", rel_cf],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            cwd=str(root),
-                        )
+                        diff_result = git_context.run("diff", "HEAD", *diff_options)
                     if diff_result.returncode == 0 and diff_result.stdout.strip():
                         reg_findings = detect_security_regressions(
                             diff_result.stdout,
-                            cf,
+                            str(cf),
                         )
                         all_quality.extend(reg_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 
-        if changed_files and enable_danger and "SKY-SC001" not in project_ignore:
+        contract_regression_files = {str(candidate) for candidate in scoped_changes}
+        if (
+            contract_regression_files
+            and enable_danger
+            and "SKY-SC001" not in project_ignore
+        ):
             from skylos.security.contracts import detect_security_contract_regressions
 
             try:
                 all_dangers.extend(
                     detect_security_contract_regressions(
-                        root,
+                        project_root,
                         project_cfg,
-                        changed_files=changed_files,
+                        changed_files=contract_regression_files,
                     )
                 )
             except Exception:
@@ -4085,23 +4130,48 @@ class Skylos:
                         fallback_rules.append(
                             PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)
                         )
-                    for py_file in _ai_py_files:
-                        source = Path(py_file).read_text(
-                            encoding="utf-8",
-                            errors="ignore",
-                        )
-                        tree = ast.parse(source)
-                        linter = LinterVisitor(fallback_rules, str(py_file))
-                        linter.context["source"] = source
-                        linter.visit(tree)
-                        _extend_unsuppressed_ai_defect_findings(
-                            linter.findings,
-                            project_ignore=project_ignore,
-                            per_file_ignore_lines=per_file_ignore_lines,
-                            per_file_ignore_rules=per_file_ignore_rules,
-                            all_ai_defects=all_ai_defects,
-                            all_suppressed=all_suppressed,
-                        )
+                    reported_error_files = {
+                        error.get("file") for error in analysis_errors
+                    }
+                    fallback_files = _ai_py_files if fallback_rules else ()
+                    for py_file in fallback_files:
+                        try:
+                            source, tree = load_python_module(
+                                Path(py_file), MODE_IGNORE
+                            )
+                            if tree is None:
+                                if str(py_file) in reported_error_files:
+                                    continue
+                                # Cached failures omit exception details. Recover
+                                # the diagnostic only if no worker reported it.
+                                if source is None:
+                                    source = Path(py_file).read_text(
+                                        encoding="utf-8", errors="ignore"
+                                    )
+                                tree = ast.parse(source, filename=str(py_file))
+                            linter = LinterVisitor(fallback_rules, str(py_file))
+                            linter.context["source"] = source
+                            linter.visit(tree)
+                            _extend_unsuppressed_ai_defect_findings(
+                                linter.findings,
+                                project_ignore=project_ignore,
+                                per_file_ignore_lines=per_file_ignore_lines,
+                                per_file_ignore_rules=per_file_ignore_rules,
+                                all_ai_defects=all_ai_defects,
+                                all_suppressed=all_suppressed,
+                            )
+                        except Exception as exc:
+                            # The primary worker may already have reported this file.
+                            if str(py_file) not in reported_error_files:
+                                analysis_errors.append(
+                                    _analysis_error_payload(py_file, exc)
+                                )
+                                reported_error_files.add(str(py_file))
+                            logger.debug(
+                                "Phantom reference scan failed for %s",
+                                py_file,
+                                exc_info=True,
+                            )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
