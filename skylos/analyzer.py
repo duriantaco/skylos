@@ -4124,23 +4124,40 @@ class Skylos:
                         fallback_rules.append(
                             PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)
                         )
-                    for py_file in _ai_py_files:
-                        source = Path(py_file).read_text(
-                            encoding="utf-8",
-                            errors="ignore",
-                        )
-                        tree = ast.parse(source)
-                        linter = LinterVisitor(fallback_rules, str(py_file))
-                        linter.context["source"] = source
-                        linter.visit(tree)
-                        _extend_unsuppressed_ai_defect_findings(
-                            linter.findings,
-                            project_ignore=project_ignore,
-                            per_file_ignore_lines=per_file_ignore_lines,
-                            per_file_ignore_rules=per_file_ignore_rules,
-                            all_ai_defects=all_ai_defects,
-                            all_suppressed=all_suppressed,
-                        )
+                    reported_error_files = {
+                        error.get("file") for error in analysis_errors
+                    }
+                    fallback_files = _ai_py_files if fallback_rules else ()
+                    for py_file in fallback_files:
+                        try:
+                            source = Path(py_file).read_text(
+                                encoding="utf-8",
+                                errors="ignore",
+                            )
+                            tree = ast.parse(source, filename=str(py_file))
+                            linter = LinterVisitor(fallback_rules, str(py_file))
+                            linter.context["source"] = source
+                            linter.visit(tree)
+                            _extend_unsuppressed_ai_defect_findings(
+                                linter.findings,
+                                project_ignore=project_ignore,
+                                per_file_ignore_lines=per_file_ignore_lines,
+                                per_file_ignore_rules=per_file_ignore_rules,
+                                all_ai_defects=all_ai_defects,
+                                all_suppressed=all_suppressed,
+                            )
+                        except Exception as exc:
+                            # The primary worker may already have reported this file.
+                            if str(py_file) not in reported_error_files:
+                                analysis_errors.append(
+                                    _analysis_error_payload(py_file, exc)
+                                )
+                                reported_error_files.add(str(py_file))
+                            logger.debug(
+                                "Phantom reference scan failed for %s",
+                                py_file,
+                                exc_info=True,
+                            )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
