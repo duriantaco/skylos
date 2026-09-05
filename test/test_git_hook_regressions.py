@@ -9,6 +9,7 @@ import pytest
 
 from skylos.analyzer import analyze
 from skylos.constants import parse_exclude_folders
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 _ORIGINAL = (
@@ -72,7 +73,7 @@ def _git(repo, *args):
 
 def _write(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    assert write_text_no_symlink(path, content)
 
 
 def _commit(repo, *paths):

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from skylos.core.git_context import GitContext
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 _CONTEXT_ENV = (
@@ -18,10 +19,12 @@ _CONTEXT_ENV = (
 )
 
 
-def _git(root, *args):
+def _git(root, *args, index_file=None):
     env = dict(os.environ)
     for key in _CONTEXT_ENV:
         env.pop(key, None)
+    if index_file is not None:
+        env["GIT_INDEX_FILE"] = str(index_file)
     return subprocess.run(
         ["git", "-c", "core.hooksPath=/dev/null", *args],
         cwd=root,
@@ -41,7 +44,7 @@ def repo(tmp_path, monkeypatch):
     _git(root, "init", "-q")
     package = root / "package"
     package.mkdir()
-    (package / "tracked.py").write_text("value = 1\n", encoding="utf-8")
+    assert write_text_no_symlink(package / "tracked.py", "value = 1\n")
     _git(root, "add", "package/tracked.py")
     _git(
         root,
@@ -81,7 +84,7 @@ def test_hook_context_keeps_worktree_root(
 def test_real_modification_survives_hook_context(repo, monkeypatch):
     monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
     source = repo / "package" / "tracked.py"
-    source.write_text("value = 2\n", encoding="utf-8")
+    assert write_text_no_symlink(source, "value = 2\n")
 
     result = GitContext.from_path(source).run("diff", "--name-only", "-z", "HEAD")
 
@@ -91,7 +94,7 @@ def test_real_modification_survives_hook_context(repo, monkeypatch):
 
 def test_relative_alternate_index_follows_original_git_context(repo, monkeypatch):
     alternate = repo / ".git" / "alternate index"
-    alternate.write_bytes((repo / ".git" / "index").read_bytes())
+    _git(repo, "read-tree", "HEAD", index_file=alternate)
     monkeypatch.chdir(repo / "package")
     monkeypatch.setenv("GIT_INDEX_FILE", ".git/alternate index")
 
@@ -103,7 +106,7 @@ def test_relative_alternate_index_follows_original_git_context(repo, monkeypatch
 
 def test_relative_alternate_index_with_explicit_git_dir(repo, monkeypatch):
     alternate = repo / ".git" / "alternate index"
-    alternate.write_bytes((repo / ".git" / "index").read_bytes())
+    _git(repo, "read-tree", "HEAD", index_file=alternate)
     monkeypatch.chdir(repo / "package")
     monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
     monkeypatch.setenv("GIT_INDEX_FILE", "../.git/alternate index")
