@@ -120,6 +120,18 @@ verdicts, records the affected dead-code candidates as abstentions, emits
 `analysis_summary.grep_verify.status` and `incomplete_reason`; increase the
 budget and rerun before treating the dead-code result as complete.
 
+Circular dependencies (`SKY-CIRC`) are shown in rich, pretty, and concise
+output, and remain available in JSON under `circular_dependencies`. When
+source evidence is available, the finding points to an actual import in the
+cycle. Ordinary package re-exports do not by themselves form a cycle.
+
+`--strict` counts circular dependencies and exits with status `1` when they
+remain in the selected report. Without an explicit `--gate`, concise output
+also exits `1` for cycles, as it does for other findings. Ordinary non-strict
+gates keep their existing thresholds: cycles do not contribute to
+`max_quality` or grades. The existing `--force` override can bypass finding
+failures, but incomplete analysis still exits `2`.
+
 The legacy flags still work:
 
 ```bash

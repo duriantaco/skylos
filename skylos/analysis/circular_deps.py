@@ -340,7 +340,29 @@ class CircularDependencyAnalyzer:
         return findings
 
     def get_findings(self) -> List[Dict[str, Any]]:
-        return [cd.to_dict() for cd in self.analyze()]
+        # Use recorded import edges, not filenames guessed from module names.
+        # A graph assembled without source evidence should remain locationless.
+        edge_locations = {}
+        for dep in self.all_deps:
+            source = self.modules.get(dep.from_module)
+            if source and dep.import_line > 0:
+                edge = (dep.from_module, dep.to_module)
+                location = (str(source), dep.import_line)
+                edge_locations[edge] = min(edge_locations.get(edge, location), location)
+
+        findings = []
+        for cd in self.analyze():
+            finding = cd.to_dict()
+            edges = zip(cd.cycle, cd.cycle[1:] + cd.cycle[:1])
+            locations = [
+                edge_locations[edge] for edge in edges if edge in edge_locations
+            ]
+            if locations:
+                # Stable across file discovery order and repeated imports. Only
+                # edges in this cycle qualify, not chords forming another cycle.
+                finding["file"], finding["line"] = min(locations)
+            findings.append(finding)
+        return findings
 
     def get_core_infrastructure(self) -> Set[str]:
         cycles = self.find_simple_cycles()

@@ -153,6 +153,88 @@ def test_direct_module_self_import_is_not_suppressed(mode):
     assert findings[0]["cycle"] == ["module"]
 
 
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_absolute_and_relative_package_reexports_match_reported_example(mode):
+    rule = _rule_for_sources(
+        {
+            "demo_pkg": (
+                "/project/demo_pkg/__init__.py",
+                "from demo_pkg.core import value\n__all__ = ['value']\n",
+            ),
+            "demo_pkg.core": ("/project/demo_pkg/core.py", "value = 1\n"),
+            "relative_pkg": (
+                "/project/relative_pkg/__init__.py",
+                "from .core import value\n__all__ = ['value']\n",
+            ),
+            "relative_pkg.core": ("/project/relative_pkg/core.py", "value = 2\n"),
+            "consumer": (
+                "/project/consumer.py",
+                "import demo_pkg\nimport relative_pkg\n",
+            ),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    assert dict(rule._analyzer.dependencies) == {
+        "demo_pkg": {"demo_pkg.core"},
+        "relative_pkg": {"relative_pkg.core"},
+        "consumer": {"demo_pkg", "relative_pkg"},
+    }
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize("reverse_files", [False, True])
+def test_circular_finding_has_stable_location_on_a_real_cycle_edge(mode, reverse_files):
+    sources = {
+        "alpha": (
+            "/project/alpha.py",
+            "import helper\n\nfrom beta import value\nfrom beta import other\n",
+        ),
+        "beta": ("/project/beta.py", "from alpha import value\n"),
+        "helper": ("/project/helper.py", ""),
+    }
+    if reverse_files:
+        sources = dict(reversed(list(sources.items())))
+    rule = _rule_for_sources(sources, mode)
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert set(findings[0]["cycle"]) == {"alpha", "beta"}
+    assert findings[0]["file"] == "/project/alpha.py"
+    assert findings[0]["line"] == 3
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_cycle_location_does_not_use_an_edge_from_another_cycle(mode):
+    rule = _rule_for_sources(
+        {
+            "alpha": ("/project/alpha.py", "import gamma\n\nimport beta\n"),
+            "beta": ("/project/beta.py", "import gamma\n"),
+            "gamma": ("/project/gamma.py", "import alpha\n"),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+    long_cycle = next(finding for finding in findings if finding["cycle_length"] == 3)
+
+    assert long_cycle["file"] == "/project/alpha.py"
+    assert long_cycle["line"] == 3
+
+
+def test_manual_cycle_graph_does_not_invent_an_import_location():
+    analyzer = CircularDependencyAnalyzer()
+    analyzer.modules = {"a": "a.py", "b": "b.py"}
+    analyzer.dependencies = {"a": {"b"}, "b": {"a"}}
+
+    finding = analyzer.get_findings()[0]
+
+    assert "file" not in finding
+    assert "line" not in finding
+
+
 @pytest.mark.parametrize("child_source", ["value = 'label'", "import package"])
 def test_same_package_graph_has_python_native_cycle_parity(child_source):
     if circular_deps._fast_find_cycles is None:
