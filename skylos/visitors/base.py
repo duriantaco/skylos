@@ -239,6 +239,78 @@ def _has_signature_stub_body(
     )
 
 
+def _is_stub_value(node: ast.AST | None) -> bool:
+    """Recognize declaration values, not expressions that run an implementation."""
+    if node is None or isinstance(node, ast.Constant):
+        return True
+    return (
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, (ast.UAdd, ast.USub))
+        and isinstance(node.operand, ast.Constant)
+        and isinstance(node.operand.value, (int, float, complex))
+    )
+
+
+def _is_stub_declaration(node: ast.AST) -> bool:
+    """Recognize non-concrete declarations in a Python type stub."""
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name) and _is_stub_value(node.value)
+    if isinstance(node, ast.Assign):
+        return (
+            all(isinstance(target, ast.Name) for target in node.targets)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is Ellipsis
+        )
+    if isinstance(node, ast.If):
+        # Stubs may select declarations by version/platform or TYPE_CHECKING.
+        # Calls, comprehensions and assignment expressions are not such guards.
+        condition_nodes = (
+            ast.Name,
+            ast.Attribute,
+            ast.Subscript,
+            ast.Slice,
+            ast.Tuple,
+            ast.List,
+            ast.Constant,
+            ast.Compare,
+            ast.BoolOp,
+            ast.UnaryOp,
+            ast.Load,
+            ast.cmpop,
+            ast.And,
+            ast.Or,
+            ast.Not,
+            ast.UAdd,
+            ast.USub,
+        )
+        return all(
+            isinstance(part, condition_nodes) for part in ast.walk(node.test)
+        ) and all(
+            _is_stub_declaration(statement) for statement in [*node.body, *node.orelse]
+        )
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        if isinstance(node, ast.ClassDef):
+            return all(_is_stub_declaration(statement) for statement in body)
+        return (
+            len(body) == 1
+            and isinstance(body[0], ast.Expr)
+            and _is_stub_declaration(body[0])
+        )
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is Ellipsis
+    )
+
+
 def _module_binds_name(module: ast.Module, target_name: str) -> bool:
     class BindingProbe(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -462,6 +534,8 @@ class Visitor(ast.NodeVisitor):
     def __init__(self, mod: str, file: Union[Path, str]) -> None:
         self.mod = mod
         self.file = file
+        self._is_type_stub = Path(file).suffix.lower() == ".pyi"
+        self._stub_binding_lines: dict[str, int] = {}
         self.defs = []
         self.refs = []
         self.cls = None
@@ -533,6 +607,17 @@ class Visitor(ast.NodeVisitor):
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
     ) -> None:
+        # Omit declaration candidates rather than adding synthetic references:
+        # .py and .pyi siblings share qualified names in the merged symbol map.
+        if (
+            self._is_type_stub
+            and not self.current_function_scope
+            and t in {"class", "function", "method"}
+            and node is not None
+            and _is_stub_declaration(node)
+        ):
+            self._stub_binding_lines[name] = line
+            return
         found = False
         for d in self.defs:
             if d.name == name:
@@ -584,13 +669,11 @@ class Visitor(ast.NodeVisitor):
 
     def qual(self, name: str) -> str:
         if name in self.alias:
-            if self.mod:
-                local_name = f"{self.mod}.{name}"
-                if any(d.name == local_name for d in self.defs):
-                    return local_name
-            else:
-                if any(d.name == name for d in self.defs):
-                    return name
+            local_name = f"{self.mod}.{name}" if self.mod else name
+            if local_name in self._stub_binding_lines or any(
+                d.name == local_name for d in self.defs
+            ):
+                return local_name
             return self.alias[name]
 
         if name in PYTHON_BUILTINS:
@@ -880,6 +963,11 @@ class Visitor(ast.NodeVisitor):
             candidates.append(".".join(filter(None, [self.mod, self.cls, name])))
         candidates.append(f"{self.mod}.{name}" if self.mod else name)
 
+        if any(
+            candidate in self._stub_binding_lines and candidate != current_definition
+            for candidate in candidates
+        ):
+            return True
         return any(
             d.name in candidates
             and d.name != current_definition
@@ -929,6 +1017,17 @@ class Visitor(ast.NodeVisitor):
                 and definition.type != "import"
             ),
             default=-1,
+        )
+        latest_local_line = max(
+            latest_local_line,
+            max(
+                (
+                    self._stub_binding_lines.get(candidate, -1)
+                    for candidate in candidates
+                    if candidate != current_definition
+                ),
+                default=-1,
+            ),
         )
         return alias_line > latest_local_line
 
@@ -1693,8 +1792,13 @@ class Visitor(ast.NodeVisitor):
                     if isinstance(t, ast.Name):
                         self.pattern_tracker.f_string_patterns[t.id] = pattern
 
+        declaration_only = (
+            self._is_type_stub
+            and not self.current_function_scope
+            and _is_stub_declaration(node)
+        )
         for target in node.targets:
-            self._process_target_for_def(target)
+            self._process_target_for_def(target, declaration_only=declaration_only)
 
         if isinstance(node.value, ast.Dict):
             self._track_dict_dispatch(node)
@@ -1760,7 +1864,14 @@ class Visitor(ast.NodeVisitor):
                 if in_typeddict and is_class_body and is_annotation_only:
                     return
 
-                self.add_def(var_name, "variable", t.lineno)
+                if (
+                    self._is_type_stub
+                    and not self.current_function_scope
+                    and _is_stub_declaration(node)
+                ):
+                    self._stub_binding_lines[var_name] = t.lineno
+                else:
+                    self.add_def(var_name, "variable", t.lineno)
 
                 if (
                     self._dataclass_stack
@@ -1815,7 +1926,11 @@ class Visitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def _process_target_for_def(
-        self, target_node: ast.expr, _in_tuple_unpack: bool = False
+        self,
+        target_node: ast.expr,
+        _in_tuple_unpack: bool = False,
+        *,
+        declaration_only: bool = False,
     ) -> None:
         if isinstance(target_node, ast.Name):
             name_simple = target_node.id
@@ -1827,7 +1942,10 @@ class Visitor(ast.NodeVisitor):
                 return
 
             var_name = self._compute_variable_name(name_simple)
-            self.add_def(var_name, "variable", target_node.lineno)
+            if declaration_only:
+                self._stub_binding_lines[var_name] = target_node.lineno
+            else:
+                self.add_def(var_name, "variable", target_node.lineno)
 
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][name_simple] = var_name
@@ -1841,7 +1959,9 @@ class Visitor(ast.NodeVisitor):
 
         elif isinstance(target_node, (ast.Tuple, ast.List)):
             for elt in target_node.elts:
-                self._process_target_for_def(elt, _in_tuple_unpack=True)
+                self._process_target_for_def(
+                    elt, _in_tuple_unpack=True, declaration_only=declaration_only
+                )
 
     def _finalize_dunder_all_exports(self, statements: list[ast.stmt]) -> None:
         export_names: set[str] | None = None
