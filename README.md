@@ -490,6 +490,20 @@ Frozen `golden-v0.2` highlights:
 For methodology, commands, competitor rows, and caveats, see
 [BENCHMARK.md](./BENCHMARK.md).
 
+### Real-project regression testing
+
+[liveness_primer](https://github.com/mcdigman/liveness_primer), created and
+maintained by [Matthew Digman](https://github.com/mcdigman), is Skylos's official
+real-project regression testing tool. On every PR, it compares the base and
+proposed merge result against the same pinned Python projects and reports
+which findings were added, removed, or changed.
+
+Read the **Analyzer Blast Radius** check for the comparison and downloadable
+reports. These results complement the labeled benchmarks above; a change in
+finding counts alone does not establish accuracy. See the
+[liveness_primer guide](./docs/liveness-primer.md) for scope, review steps, and
+reproduction commands.
+
 ## Project Evidence
 
 Skylos-assisted dead-code cleanup PRs have been merged in

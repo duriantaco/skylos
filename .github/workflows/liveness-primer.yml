@@ -3,11 +3,6 @@ name: Analyzer Blast Radius
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "skylos/**"
-      - "pyproject.toml"
-      - "MANIFEST.in"
-      - ".github/workflows/liveness-primer.yml"
 
 permissions:
   contents: read
@@ -19,7 +14,6 @@ concurrency:
 jobs:
   blast-radius:
     name: Python dead-code blast radius
-    if: github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -43,8 +37,6 @@ jobs:
         env:
           SKYLOS_REPOSITORY: https://github.com/duriantaco/skylos
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # The base repository owns this synthetic merge commit, including
-          # for fork PRs, so the comparison tests what would actually land.
           MERGE_SHA: ${{ github.sha }}
           REPORT_JSON: liveness-primer-report.json
           REPORT_MARKDOWN: liveness-primer-report.md
