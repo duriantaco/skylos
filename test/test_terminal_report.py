@@ -1,3 +1,5 @@
+import pytest
+
 from rich.console import Console
 
 from skylos.ui.terminal_report import collect_pretty_findings, render_pretty_results
@@ -167,6 +169,49 @@ def test_pretty_renderer_shows_incomplete_analysis_as_an_error(tmp_path):
     assert "analysis errors: 1" in output
     assert "SKY-ANALYSIS-INCOMPLETE" in output
     assert "invalid syntax" in output
+    assert "No findings to display" not in output
+
+
+@pytest.mark.parametrize(
+    "with_location", [True, False], ids=["located", "locationless"]
+)
+def test_pretty_renderer_shows_circular_dependencies(with_location):
+    cycle = {
+        "rule_id": "SKY-CIRC",
+        "severity": "MEDIUM",
+        "message": "Circular dependency: pkg.left → pkg.right → pkg.left",
+        "cycle": ["pkg.left", "pkg.right"],
+        "cycle_length": 2,
+        "suggested_break": "pkg.left → pkg.right",
+    }
+    if with_location:
+        cycle.update(file="pkg/left.py", line=4)
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "circular_dependencies": [cycle],
+    }
+
+    findings = collect_pretty_findings(result)
+    assert len(findings) == 1
+    finding = findings[0]
+    assert (finding.rule, finding.category_label, finding.severity) == (
+        "SKY-CIRC",
+        "Architecture",
+        "MEDIUM",
+    )
+    assert (finding.file, finding.line) == (
+        ("pkg/left.py", 4) if with_location else ("?", 1)
+    )
+    assert finding.title == cycle["message"]
+
+    console = _recording_console()
+    render_pretty_results(console, result)
+    output = console.export_text()
+
+    assert "circular dependencies: 1" in output
+    assert output.count("SKY-CIRC") == 1
+    assert ("pkg/left.py:4" if with_location else "?:1") in output
+    assert cycle["message"] in output
     assert "No findings to display" not in output
 
 

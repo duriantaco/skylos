@@ -2291,6 +2291,7 @@ CONCISE_FINDING_CATEGORIES = (
     ("reliability", "reliability issue"),
     ("ai_defects", "AI defect"),
     ("quality", "quality issue"),
+    ("circular_dependencies", "circular dependency"),
     ("secrets", "secret"),
     ("custom_rules", "custom rule"),
     ("dependency_vulnerabilities", "dependency vulnerability"),

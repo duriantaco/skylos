@@ -424,6 +424,7 @@ def _check_strict_gate(
     reliability,
     ai_defects,
     quality,
+    circular_dependencies,
     secrets,
     dependencies,
 ):
@@ -434,6 +435,7 @@ def _check_strict_gate(
         + len(reliability)
         + len(ai_defects)
         + len(gate_quality)
+        + len(circular_dependencies)
         + len(secrets)
         + len(dependencies)
     )
@@ -629,6 +631,7 @@ def check_gate(results, config, strict=False, provenance=None):
             reliability=reliability,
             ai_defects=ai_defects,
             quality=gate_quality,
+            circular_dependencies=results.get("circular_dependencies", []) or [],
             secrets=secrets,
             dependencies=dependencies,
         )
