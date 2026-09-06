@@ -13,8 +13,10 @@ from skylos.core.js_api_surface_members import (
     _exported_direct_member_pairs,
     _exported_function_signature_names,
     _exported_namespace_names,
+    _locally_exported_names,
     _member_chain,
     _module_scope_exportable_bindings,
+    _module_scope_import_bindings,
     _named_export_clause_pairs,
     _namespace_export_name,
     _node_line,
@@ -25,6 +27,7 @@ from skylos.core.js_api_surface_members import (
 from skylos.core.js_api_surface_utils import (
     MAX_JS_API_REEXPORT_DEPTH,
     MAX_JS_API_SURFACE_SOURCE_BYTES,
+    nearest_package_type as _nearest_package_type,
     resolve_entrypoint_target as _resolve_entrypoint_target,
     safe_name as _safe_name,
 )
@@ -46,6 +49,7 @@ def collect_js_exports_from_file(
         _add_diagnostic(diagnostics, "reexport_depth_limit")
         return
     if file_path in visited:
+        _add_diagnostic(diagnostics, "cyclic_reexport")
         return
     visited.add(file_path)
 
@@ -69,6 +73,13 @@ def collect_js_exports_from_file(
         _add_diagnostic(diagnostics, "parse_error")
         return
     local_bindings = _module_scope_exportable_bindings(source, core.root_node)
+    imported_bindings = _imported_export_bindings(
+        root, file_path, source, core.root_node, visited, depth, diagnostics
+    )
+    for name, kind in imported_bindings.items():
+        # TypeScript permits a type import and a local value to share a name.
+        if kind != "type" or name not in local_bindings:
+            local_bindings[name] = kind
     if _has_conditional_commonjs_export(core, source):
         _add_diagnostic(diagnostics, "conditional_commonjs_export")
 
@@ -102,6 +113,75 @@ def collect_js_exports_from_file(
             )
         elif _expression_may_mutate_commonjs_exports(source, node):
             _add_diagnostic(diagnostics, "dynamic_commonjs_export")
+
+
+def _imported_export_bindings(
+    root: Path,
+    file_path: Path,
+    source: bytes,
+    root_node: Any,
+    visited: set[Path],
+    depth: int,
+    diagnostics: set[str] | None,
+) -> dict[str, str]:
+    # Imports are private unless a local export clause actually names them.
+    exported_locals = _locally_exported_names(source, root_node)
+    if not exported_locals:
+        return {}
+    bindings: dict[str, str] = {}
+    source_members: dict[str, dict[str, dict[str, Any]]] = {}
+    for local_name, (source_literal, imported_name, type_only) in (
+        _module_scope_import_bindings(source, root_node).items()
+    ):
+        if local_name not in exported_locals:
+            continue
+        if source_literal not in source_members:
+            resolved = _resolved_reexport_source(root, file_path, source_literal)
+            if resolved is None:
+                _add_diagnostic(
+                    diagnostics,
+                    "unresolved_local_reexport"
+                    if source_literal.startswith(".")
+                    else "external_reexport",
+                )
+                continue
+            # Resolve a source once, even when a barrel exports many of its bindings.
+            source_members[source_literal] = _reexport_members(
+                root, resolved, visited, depth, diagnostics
+            )
+            _add_commonjs_default_facade(root, resolved, source_members[source_literal])
+        if imported_name == "*":
+            bindings[local_name] = "type" if type_only else "namespace"
+            continue
+        member = source_members[source_literal].get(imported_name)
+        if member is not None:
+            bindings[local_name] = "type" if type_only else member["kind"]
+    return bindings
+
+
+def _add_commonjs_default_facade(
+    root: Path,
+    entrypoint: Path,
+    members: dict[str, dict[str, Any]],
+) -> None:
+    suffix = entrypoint.suffix.lower()
+    commonjs_by_extension = suffix in {".cjs", ".cts"}
+    commonjs_by_package = suffix == ".js" and _nearest_package_type(
+        root, entrypoint
+    ) == "commonjs"
+    if not commonjs_by_extension and not commonjs_by_package:
+        return
+    _add_export_member(
+        root,
+        members,
+        "default",
+        "commonjs",
+        entrypoint,
+        1,
+        source="commonjs_default_facade",
+    )
+
+
 def _collect_export_statement(
     root: Path,
     file_path: Path,
