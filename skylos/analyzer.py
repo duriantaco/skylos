@@ -128,6 +128,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_wildcard_edges",
     "_ts_importers_of",
     "_ts_demoted_exports",
+    "_browser_script_entry_files",
 )
 
 
@@ -1144,6 +1145,56 @@ def _changed_definition_keys(
     )
 
 
+def _suppress_django_admin_stubs(empty_files, file_contexts, project_root) -> None:
+    """Keep conventional empty app admin modules in Django projects."""
+    if _scan_has_top_level_python_module(project_root, file_contexts, "django"):
+        return
+    uses_django = any(
+        definition.type == "import"
+        and (definition.name == "django" or definition.name.startswith("django."))
+        for definitions, _tests, _frameworks, _file, _mod, _cfg in file_contexts
+        for definition in definitions
+    )
+    if not uses_django:
+        return
+    scanned_files = {
+        Path(file).resolve()
+        for _defs, _tests, _frameworks, file, _mod, _cfg in file_contexts
+    }
+    empty_files[:] = [
+        finding
+        for finding in empty_files
+        if not (
+            finding.get("rule_id") == "SKY-E002"
+            and Path(str(finding.get("file", ""))).name == "admin.py"
+            and Path(str(finding.get("file", ""))).resolve().parent / "__init__.py"
+            in scanned_files
+        )
+    ]
+
+
+def _scan_has_top_level_python_module(project_root, file_contexts, module_name) -> bool:
+    root = Path(project_root).resolve()
+    for _defs, _tests, _frameworks, file, _mod, _cfg in file_contexts:
+        try:
+            parts = Path(file).resolve().relative_to(root).parts
+        except (OSError, ValueError):
+            continue
+        if not parts:
+            continue
+        if root.name == module_name and parts[0] == "__init__.py":
+            return True
+        if parts[0] in {module_name, f"{module_name}.py"}:
+            return True
+        if (
+            parts[0] in _PYTHON_SOURCE_ROOT_NAMES
+            and len(parts) > 1
+            and parts[1] in {module_name, f"{module_name}.py"}
+        ):
+            return True
+    return False
+
+
 def _collect_grep_verify_candidates(
     definitions: dict,
     candidate_keys: frozenset | None = None,
@@ -1719,6 +1770,7 @@ class Skylos:
             getattr(self, "_ts_wildcard_edges", {}),
             project_root=str(self._project_root),
             workspace_inventory=workspace_inventory,
+            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
         )
 
     def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
@@ -3680,6 +3732,8 @@ class Skylos:
 
         self.pattern_trackers = pattern_trackers
 
+        _suppress_django_admin_stubs(empty_files, file_contexts, root)
+
         self._global_abc_classes = set()
         self._global_protocol_classes = set()
         self._global_abstract_methods = {}
@@ -4539,6 +4593,17 @@ class Skylos:
         except Exception:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error("Java FXML liveness scan failed", exc_info=True)
+
+        self._browser_script_entry_files = set()
+        try:
+            from skylos.deadcode.browser_refs import collect_browser_script_entry_files
+
+            self._browser_script_entry_files = collect_browser_script_entry_files(
+                Path(root), files, exclude_folders=exclude_folders
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Browser script entry scan failed", exc_info=True)
 
         try:
             from skylos.deadcode.browser_refs import (

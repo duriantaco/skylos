@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from skylos.core.file_discovery import discover_source_files
 from skylos.core.safe_cache_io import read_text_no_symlink
@@ -63,14 +63,40 @@ _MARKDOWN_CODE_BLOCK_RE = re.compile(
 )
 _MARKDOWN_INLINE_CODE_RE = re.compile(r"""`[^`\n]*`""")
 _SCRIPT_TAG_RE = re.compile(r"""<script\b(?P<attrs>[^>]*)>""", re.IGNORECASE)
-_SRC_ATTR_RE = re.compile(
-    r"""\bsrc\s*=\s*(?P<quote>["'])(?P<value>.*?)(?P=quote)""",
-    re.IGNORECASE | re.DOTALL,
+_SCRIPT_ATTR_RE = re.compile(
+    r"""(?P<name>[^\s=/>]+)(?:\s*=\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<bare>[^\s>]+)))?""",
+    re.DOTALL,
 )
-_TYPE_ATTR_RE = re.compile(
-    r"""\btype\s*=\s*(?P<quote>["'])(?P<value>.*?)(?P=quote)""",
-    re.IGNORECASE | re.DOTALL,
+_DJANGO_STATIC_TAG_RE = re.compile(
+    r"""^\s*{%\s*static\s+(?P<quote>["'])(?P<path>[^"']+)(?P=quote)\s*%}\s*$""",
+    re.DOTALL,
 )
+_HTML_COMMENT_RE = re.compile(r"""<!--[\s\S]*?-->""")
+_DJANGO_SHORT_COMMENT_RE = re.compile(r"""{#[\s\S]*?#}""")
+_DJANGO_COMMENT_BLOCK_RE = re.compile(
+    r"""{%\s*comment(?:\s+[^%]*?)?\s*%}[\s\S]*?{%\s*endcomment\s*%}""",
+    re.IGNORECASE,
+)
+_CLASSIC_SCRIPT_TYPES = {
+    "",
+    # https://mimesniff.spec.whatwg.org/#javascript-mime-type
+    "application/ecmascript",
+    "application/javascript",
+    "application/x-ecmascript",
+    "application/x-javascript",
+    "text/ecmascript",
+    "text/javascript",
+    "text/javascript1.0",
+    "text/javascript1.1",
+    "text/javascript1.2",
+    "text/javascript1.3",
+    "text/javascript1.4",
+    "text/javascript1.5",
+    "text/jscript",
+    "text/livescript",
+    "text/x-ecmascript",
+    "text/x-javascript",
+}
 _JS_CONTROL_WORDS = {
     "catch",
     "do",
@@ -191,7 +217,11 @@ def collect_browser_event_handler_refs(
     seen_names: set[str] = set()
     source_cache: dict[Path, str] = {}
     template_files: list[Path] = []
+    template_names: dict[Path, set[str]] = {}
     monorepo_resolver = _build_ts_monorepo_resolver(root)
+    source_files = list(source_files)
+    scanned_scripts = _scanned_js_files(root, source_files)
+    static_asset_index = _build_static_asset_index(root, scanned_scripts)
 
     reference_files = list(
         _iter_browser_reference_files(root, source_files, exclude_folders)
@@ -203,6 +233,7 @@ def collect_browser_event_handler_refs(
 
         if file_path.suffix.lower() in _HTML_TEMPLATE_SUFFIXES:
             template_files.append(file_path)
+            source = _strip_template_comments(source)
 
         if file_path.suffix.lower() in _MDX_SUFFIXES:
             for name, target_file in extract_mdx_component_refs(
@@ -213,20 +244,67 @@ def collect_browser_event_handler_refs(
             ):
                 _append_ref(refs, seen_refs, name, target_file)
 
-        for name in extract_browser_event_handler_names(source):
-            seen_names.add(name)
+        handler_names = extract_browser_event_handler_names(source)
+        if file_path.suffix.lower() in _HTML_TEMPLATE_SUFFIXES:
+            template_names[file_path] = handler_names
+        else:
+            seen_names.update(handler_names)
+        for name in handler_names:
             _append_ref(refs, seen_refs, name, file_path)
 
-    global_scripts = _collect_non_module_script_files(root, template_files, source_cache)
-    for script_file in global_scripts:
+    script_names: dict[Path, set[str]] = {}
+    for template_file in template_files:
+        global_scripts = _collect_template_script_files(
+            root,
+            [template_file],
+            source_cache,
+            include_modules=False,
+            static_asset_index=static_asset_index,
+            allowed_files=scanned_scripts,
+        )
+        for script_file in global_scripts:
+            script_names.setdefault(script_file, set()).update(
+                template_names.get(template_file, set())
+            )
+    for script_file, names in script_names.items():
         source = _read_text(root, script_file, source_cache)
         if source is None:
             continue
-        for name in seen_names:
+        for name in names | seen_names:
             if _source_defines_top_level_browser_name(source, name):
                 _append_ref(refs, seen_refs, name, script_file)
 
     return refs
+
+
+def collect_browser_script_entry_files(
+    project_root: Path,
+    source_files,
+    *,
+    exclude_folders=None,
+) -> set[Path]:
+    """Find loaded script files, without treating their exports as consumed.
+
+    Literal Django static paths must map to one scanned asset. Finder ordering
+    and custom STATICFILES_DIRS require configuration not inferred here.
+    """
+    root = Path(project_root).resolve()
+    scanned_scripts = _scanned_js_files(root, source_files)
+    if not scanned_scripts:
+        return set()
+    template_files = discover_source_files(
+        root,
+        _HTML_TEMPLATE_SUFFIXES,
+        exclude_folders=exclude_folders,
+    )
+    return _collect_template_script_files(
+        root,
+        list(template_files),
+        {},
+        include_modules=True,
+        static_asset_index=_build_static_asset_index(root, scanned_scripts),
+        allowed_files=scanned_scripts,
+    )
 
 
 def _strip_markdown_code(source: str) -> str:
@@ -448,10 +526,14 @@ def _resolve_readable_project_file(root: Path, file_path: Path) -> Path | None:
     return resolved
 
 
-def _collect_non_module_script_files(
+def _collect_template_script_files(
     root: Path,
     template_files: list[Path],
     source_cache: dict[Path, str],
+    *,
+    include_modules: bool,
+    static_asset_index: dict[str, set[Path]],
+    allowed_files: set[Path],
 ) -> set[Path]:
     script_files: set[Path] = set()
 
@@ -460,35 +542,55 @@ def _collect_non_module_script_files(
         if source is None:
             continue
 
-        for match in _SCRIPT_TAG_RE.finditer(source):
+        for match in _SCRIPT_TAG_RE.finditer(_strip_template_comments(source)):
             attrs = match.group("attrs")
-            if _script_attrs_are_module(attrs):
+            script_type = (_script_attribute(attrs, "type") or "").strip().lower()
+            if script_type not in _CLASSIC_SCRIPT_TYPES and not (
+                include_modules and script_type == "module"
+            ):
                 continue
-            src = _script_src(attrs)
+            src = _script_attribute(attrs, "src")
             if not src:
                 continue
-            script_file = _resolve_script_src(root, template_file.parent, src)
-            if script_file is not None:
+            script_file = _resolve_script_src(
+                root, template_file.parent, src, static_asset_index=static_asset_index
+            )
+            if script_file in allowed_files:
                 script_files.add(script_file)
 
     return script_files
 
 
-def _script_attrs_are_module(attrs: str) -> bool:
-    match = _TYPE_ATTR_RE.search(attrs)
-    if not match:
-        return False
-    return match.group("value").strip().lower() == "module"
+def _strip_template_comments(source: str) -> str:
+    without_blocks = _DJANGO_COMMENT_BLOCK_RE.sub("", source)
+    without_short_comments = _DJANGO_SHORT_COMMENT_RE.sub("", without_blocks)
+    return _HTML_COMMENT_RE.sub("", without_short_comments)
 
 
-def _script_src(attrs: str) -> str | None:
-    match = _SRC_ATTR_RE.search(attrs)
-    if not match:
-        return None
-    return match.group("value").strip()
+def _script_attribute(attrs: str, name: str) -> str | None:
+    for match in _SCRIPT_ATTR_RE.finditer(attrs):
+        if match.group("name").lower() == name:
+            return (
+                match.group("double")
+                or match.group("single")
+                or match.group("bare")
+                or ""
+            )
+    return None
 
 
-def _resolve_script_src(root: Path, template_dir: Path, src: str) -> Path | None:
+def _resolve_script_src(
+    root: Path,
+    template_dir: Path,
+    src: str,
+    *,
+    static_asset_index: dict[str, set[Path]],
+) -> Path | None:
+    static_asset_path = _django_static_asset_path(src)
+    if static_asset_path is not None:
+        matches = static_asset_index.get(static_asset_path, set())
+        return next(iter(matches)) if len(matches) == 1 else None
+
     clean_src = src.split("#", 1)[0].split("?", 1)[0].strip()
     if not clean_src:
         return None
@@ -505,22 +607,63 @@ def _resolve_script_src(root: Path, template_dir: Path, src: str) -> Path | None
     if candidate.suffix.lower() not in _JS_SOURCE_SUFFIXES:
         return None
 
-    try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(root)
-    except (OSError, ValueError):
-        return None
+    return _resolve_readable_project_file(root, candidate)
 
-    if not resolved.is_file():
+
+def _django_static_asset_path(src: str) -> str | None:
+    match = _DJANGO_STATIC_TAG_RE.fullmatch(src)
+    if match is None:
         return None
-    return resolved
+    raw_path = match.group("path").strip()
+    if not raw_path or raw_path.startswith("/"):
+        return None
+    if any(
+        character in raw_path for character in ("\\", "\x00", ":", "{", "}", "?", "#")
+    ):
+        return None
+    parts = raw_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    normalized = PurePosixPath(*parts)
+    return (
+        normalized.as_posix()
+        if normalized.suffix.lower() in _JS_SOURCE_SUFFIXES
+        else None
+    )
+
+
+def _scanned_js_files(root: Path, source_files) -> set[Path]:
+    scripts: set[Path] = set()
+    for raw_file in source_files:
+        file_path = Path(raw_file)
+        if file_path.suffix.lower() not in _JS_SOURCE_SUFFIXES:
+            continue
+        resolved = _resolve_readable_project_file(root, file_path)
+        if resolved is not None:
+            scripts.add(resolved)
+    return scripts
+
+
+def _build_static_asset_index(
+    root: Path, script_files: set[Path]
+) -> dict[str, set[Path]]:
+    index: dict[str, set[Path]] = {}
+    for script_file in script_files:
+        parts = script_file.relative_to(root).parts
+        if root.name == "static":
+            index.setdefault(PurePosixPath(*parts).as_posix(), set()).add(script_file)
+        for position, part in enumerate(parts[:-1]):
+            if part == "static":
+                key = PurePosixPath(*parts[position + 1 :]).as_posix()
+                index.setdefault(key, set()).add(script_file)
+    return index
 
 
 def _source_defines_top_level_browser_name(source: str, name: str) -> bool:
     escaped = re.escape(name)
     patterns = (
-        rf"^(?:export\s+)?(?:async\s+)?function\s+{escaped}\b",
-        rf"^(?:export\s+)?(?:const|let|var)\s+{escaped}\s*=",
+        rf"^(?:async\s+)?function\s+{escaped}\b",
+        rf"^(?:const|let|var)\s+{escaped}\s*=",
     )
     for pattern in patterns:
         if re.search(pattern, source, re.MULTILINE):

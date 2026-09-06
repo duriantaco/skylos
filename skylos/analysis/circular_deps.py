@@ -1,6 +1,7 @@
 from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Set, Tuple, Any
 from collections import defaultdict
 
@@ -53,6 +54,54 @@ def _resolve_from_import_targets(
     return dict(targets)
 
 
+def _import_targets(
+    import_module: str, import_type: str, names: List[str], known_modules: Set[str]
+) -> Dict[str, List[str]]:
+    if import_type == "from_import":
+        return _resolve_from_import_targets(import_module, names, known_modules)
+    target = _resolve_known_module(import_module, known_modules)
+    return {target: names} if target else {}
+
+
+def _circular_import_targets(
+    from_module: str,
+    import_module: str,
+    names: List[str],
+    targets: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    """Preserve same-package identities without changing cross-package reports.
+
+    Collapsing ``pkg -> pkg.child`` to ``pkg -> pkg`` invents a self-cycle,
+    while discarding that edge would hide a real child-to-package cycle.
+    Keep the exact resolved graph within a package; unresolved symbols still
+    fall back to their known containing module.
+    """
+    if not targets:
+        return {}
+    root = _module_root(import_module)
+    if _module_root(from_module) == root:
+        return targets
+    return {root: names}
+
+
+def _absolute_from_module(
+    node: ast.ImportFrom, module_name: str, file_path: str
+) -> str | None:
+    if node.level == 0:
+        return node.module
+    # Match the package context used by collect_python_raw_imports so the AST
+    # and worker-tuple paths resolve ordinary relative imports identically.
+    package = module_name
+    if Path(file_path).name != "__init__.py" and "." in module_name:
+        package = module_name.rsplit(".", 1)[0]
+    parts = package.split(".") if package else []
+    up = node.level - 1
+    if up > len(parts):
+        return None
+    base = ".".join(parts[: len(parts) - up])
+    return f"{base}.{node.module}" if node.module and base else node.module or base
+
+
 @dataclass
 class ModuleDependency:
     from_module: str
@@ -95,55 +144,35 @@ class DependencyGraphBuilder(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
-            module = _resolve_known_module(alias.name, self.known_modules)
-            if module:
-                self.dependencies.append(
-                    ModuleDependency(
-                        from_module=self.module_name,
-                        to_module=_module_root(alias.name),
-                        import_line=node.lineno,
-                        import_type="import",
-                        imported_names=[alias.asname or alias.name],
-                    )
-                )
-                self.architecture_dependencies.append(
-                    ModuleDependency(
-                        from_module=self.module_name,
-                        to_module=module,
-                        import_line=node.lineno,
-                        import_type="import",
-                        imported_names=[alias.asname or alias.name],
-                    )
-                )
+            self._record_import(
+                alias.name, node.lineno, "import", [alias.asname or alias.name]
+            )
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
-        if node.module and node.level == 0:
+        module = _absolute_from_module(node, self.module_name, self.file_path)
+        if module:
             names = [a.name for a in node.names if a.name != "*"]
-            targets = _resolve_from_import_targets(
-                node.module, names, self.known_modules
-            )
-            if targets:
-                self.dependencies.append(
+            self._record_import(module, node.lineno, "from_import", names)
+
+    def _record_import(self, module, line, import_type, names):
+        targets = _import_targets(module, import_type, names, self.known_modules)
+        circular_targets = _circular_import_targets(
+            self.module_name, module, names, targets
+        )
+        for graph, graph_targets in (
+            (self.dependencies, circular_targets),
+            (self.architecture_dependencies, targets),
+        ):
+            for target, target_names in graph_targets.items():
+                graph.append(
                     ModuleDependency(
                         from_module=self.module_name,
-                        to_module=_module_root(node.module),
-                        import_line=node.lineno,
-                        import_type="from_import",
-                        imported_names=names,
+                        to_module=target,
+                        import_line=line,
+                        import_type=import_type,
+                        imported_names=target_names,
                     )
                 )
-                for target, target_names in targets.items():
-                    self.architecture_dependencies.append(
-                        ModuleDependency(
-                            from_module=self.module_name,
-                            to_module=target,
-                            import_line=node.lineno,
-                            import_type="from_import",
-                            imported_names=target_names,
-                        )
-                    )
-        elif node.level > 0:
-            pass
 
     def _is_internal_module(self, module: str) -> bool:
         return _resolve_known_module(module, self.known_modules) is not None
@@ -166,32 +195,23 @@ class CircularDependencyAnalyzer:
             self.known_modules.update(_known_module_names(module_name))
 
         for module_name, raw_imports in raw_imports_by_module.items():
-            file_path = self.modules.get(module_name, "")
             for import_module, line, import_type, names in raw_imports:
-                root = _module_root(import_module)
-                if root in self.known_modules:
+                architecture_targets = _import_targets(
+                    import_module, import_type, names, self.known_modules
+                )
+                circular_targets = _circular_import_targets(
+                    module_name, import_module, names, architecture_targets
+                )
+                for target, target_names in circular_targets.items():
                     dep = ModuleDependency(
                         from_module=module_name,
-                        to_module=root,
+                        to_module=target,
                         import_line=line,
                         import_type=import_type,
-                        imported_names=names,
+                        imported_names=target_names,
                     )
                     self.dependencies[dep.from_module].add(dep.to_module)
                     self.all_deps.append(dep)
-
-                if import_type == "from_import":
-                    architecture_targets = _resolve_from_import_targets(
-                        import_module, names, self.known_modules
-                    )
-                else:
-                    architecture_target = _resolve_known_module(
-                        import_module, self.known_modules
-                    )
-                    architecture_targets = (
-                        {architecture_target: names} if architecture_target else {}
-                    )
-
                 for target in architecture_targets:
                     self.architecture_dependencies[module_name].add(target)
 
