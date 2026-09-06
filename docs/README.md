@@ -4,6 +4,7 @@ This repository keeps lightweight local docs for features that need examples clo
 
 | Topic | Page |
 |:---|:---|
+| Official real-project regression testing and PR comparison reports | [liveness_primer](./liveness-primer.md) |
 | Generated codebase navigator for contributors | [Skylos Repo Map](./repo-map/index.html) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./cli-output.md) |
 | Optional Ruff Python linting through the Skylos CLI | [Python Linting](./python-linting.md) |
