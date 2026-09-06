@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from tree_sitter import Language, Query, QueryCursor
+from tree_sitter import Language, Node, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
 from skylos.constants import (
@@ -31,12 +31,7 @@ try:
 except Exception:
     TS_LANG = None
 
-_SAFE_EXEC_OBJECTS: set[str] = {
-    "regex",
-    "re",
-    "regexp",
-    "pattern",
-    "reg",
+_SAFE_DATABASE_EXEC_OBJECTS: set[str] = {
     "db",
     "stmt",
     "query",
@@ -153,6 +148,31 @@ _CHILD_PROCESS_ALIAS_PATTERN = """
     function: (identifier) @require_fn (#eq? @require_fn "require")
     arguments: (arguments (string) @require_module)))
 """
+
+_REGEXP_LITERAL_BINDING_PATTERN = """
+(lexical_declaration
+  "const"
+  (variable_declarator
+    name: (identifier) @regexp_name
+    value: (_)))
+"""
+
+_REGEXP_BINDING_SCOPE_TYPES = {
+    "for_in_statement",
+    "for_statement",
+    "program",
+    "statement_block",
+    "switch_body",
+}
+
+_REGEXP_IDENTIFIER_TYPES = {
+    "identifier",
+    "shorthand_property_identifier",
+    "shorthand_property_identifier_pattern",
+}
+
+_REGEXP_PROOF_METHODS = {"exec", "test"}
+_REGEXP_PROOF_PROPERTIES = {"flags", "lastIndex", "source"}
 
 _INTERNAL_URL_PREFIXES = (
     "http://localhost",
@@ -565,6 +585,208 @@ def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> se
             aliases.add(_get_text(source_bytes, alias_node).lower())
 
     return aliases
+
+
+def _field_matches_node(
+    node: Node | None, field_name: str, expected_node: Node
+) -> bool:
+    if node is None:
+        return False
+    field_node = node.child_by_field_name(field_name)
+    return field_node is not None and field_node.id == expected_node.id
+
+
+def _static_member_path(node: Node | None, source_bytes: bytes) -> tuple[str, ...] | None:
+    if node is None:
+        return None
+    node = _unwrap_ts_expression(node)
+    if node.type == "identifier":
+        return (_get_text(source_bytes, node),)
+    object_node = node.child_by_field_name("object")
+    if node.type == "member_expression":
+        property_node = node.child_by_field_name("property")
+        property_name = (
+            _get_text(source_bytes, property_node)
+            if property_node is not None
+            else None
+        )
+    elif node.type == "subscript_expression":
+        property_name = _static_string_value(
+            node.child_by_field_name("index"), source_bytes
+        )
+    else:
+        return None
+    object_path = _static_member_path(object_node, source_bytes)
+    if object_path is None or property_name is None:
+        return None
+    return (*object_path, property_name)
+
+
+def _is_delete_expression(node: Node) -> bool:
+    if not node.children:
+        return False
+    return (node.type, node.children[0].type) == ("unary_expression", "delete")
+
+
+def _invalidates_regexp_exec_proof(node: Node, source_bytes: bytes) -> bool:
+    path = _static_member_path(node, source_bytes)
+    prototype_path = ("RegExp", "prototype")
+    if path == prototype_path:
+        parent_path = _static_member_path(node.parent, source_bytes)
+        return parent_path is None or parent_path[:2] != prototype_path
+    if path != (*prototype_path, "exec"):
+        return False
+    parent = node.parent
+    if parent is None:
+        return False
+    left_node = parent.child_by_field_name("left")
+    is_assignment = (
+        parent.type in {"assignment_expression", "augmented_assignment_expression"}
+        and left_node is not None
+        and left_node.id == node.id
+    )
+    return (
+        is_assignment
+        or _is_delete_expression(parent)
+        or parent.type == "update_expression"
+    )
+
+
+def _regexp_use_kind(node: Node, source_bytes: bytes) -> str | None:
+    member_node = node.parent
+    if member_node is None or member_node.type != "member_expression":
+        return None
+    if not _field_matches_node(member_node, "object", node):
+        return None
+
+    property_node = member_node.child_by_field_name("property")
+    if property_node is None:
+        return None
+    property_name = _get_text(source_bytes, property_node)
+
+    call_node = member_node.parent
+    if (
+        property_name in _REGEXP_PROOF_METHODS
+        and getattr(call_node, "type", None) == "call_expression"
+        and _field_matches_node(call_node, "function", member_node)
+    ):
+        return property_name
+
+    parent_type = getattr(call_node, "type", None)
+    is_write = parent_type == "update_expression" or (
+        parent_type in {"assignment_expression", "augmented_assignment_expression"}
+        and _field_matches_node(call_node, "left", member_node)
+    )
+    if property_name in _REGEXP_PROOF_PROPERTIES and (
+        not is_write or property_name == "lastIndex"
+    ):
+        return "property_read"
+    return None
+
+
+def _regexp_binding_scope(node: Node) -> Node | None:
+    current = node.parent
+    while current is not None:
+        if current.type in _REGEXP_BINDING_SCOPE_TYPES:
+            return current
+        current = current.parent
+    return None
+
+
+def _is_regexp_name_node(node: Node) -> bool:
+    if node.type in _REGEXP_IDENTIFIER_TYPES:
+        return True
+    parent = node.parent
+    name_node = parent.child_by_field_name("name") if parent is not None else None
+    return (
+        node.type == "type_identifier"
+        and parent is not None
+        and parent.type in {"class", "class_declaration"}
+        and name_node is not None
+        and name_node.id == node.id
+    )
+
+
+def _is_directly_exported_binding(node: Node) -> bool:
+    declarator = node.parent
+    declaration = declarator.parent if declarator is not None else None
+    export = declaration.parent if declaration is not None else None
+    return export is not None and export.type == "export_statement"
+
+
+def _unique_regexp_bindings(
+    nodes: list[Node], source_bytes: bytes
+) -> dict[tuple[int, str], Node]:
+    declarations: dict[tuple[int, str], list[Node]] = {}
+    for node in nodes:
+        value_node = node.parent.child_by_field_name("value")
+        if value_node is None:
+            continue
+        while value_node.type in _TS_EXPRESSION_WRAPPERS:
+            unwrapped = _unwrap_ts_expression(value_node)
+            if unwrapped is value_node:
+                break
+            value_node = unwrapped
+        if value_node.type != "regex":
+            continue
+        scope = _regexp_binding_scope(node)
+        if scope is not None:
+            key = (scope.id, _get_text(source_bytes, node))
+            declarations.setdefault(key, []).append(node)
+    return {
+        key: bindings[0] for key, bindings in declarations.items() if len(bindings) == 1
+    }
+
+
+def _nearest_regexp_binding_key(
+    node: Node, name: str, candidates: dict[tuple[int, str], Node]
+) -> tuple[int, str] | None:
+    current = node.parent
+    while current is not None:
+        key = (current.id, name)
+        if current.type in _REGEXP_BINDING_SCOPE_TYPES and key in candidates:
+            return key
+        current = current.parent
+    return None
+
+
+def _proven_regexp_exec_receivers(
+    root_node: Node, lang: Language, source_bytes: bytes
+) -> set[int]:
+    captures = _run_batch(
+        root_node,
+        lang,
+        "danger_regexp_literal_bindings",
+        _REGEXP_LITERAL_BINDING_PATTERN,
+    )
+    candidates = _unique_regexp_bindings(captures.get("regexp_name", []), source_bytes)
+    declaration_ids = {node.id for node in candidates.values()}
+    invalid = {
+        key for key, node in candidates.items() if _is_directly_exported_binding(node)
+    }
+    exec_receivers: dict[tuple[int, str], set[int]] = {}
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if _invalidates_regexp_exec_proof(node, source_bytes):
+            return set()
+        if _is_regexp_name_node(node) and node.id not in declaration_ids:
+            name = _get_text(source_bytes, node)
+            binding_key = _nearest_regexp_binding_key(node, name, candidates)
+            if binding_key is not None:
+                use_kind = _regexp_use_kind(node, source_bytes)
+                if use_kind == "exec":
+                    exec_receivers.setdefault(binding_key, set()).add(node.id)
+                elif use_kind is None:
+                    invalid.add(binding_key)
+        stack.extend(reversed(node.children))
+
+    return {
+        receiver_id
+        for key, receiver_ids in exec_receivers.items()
+        if key not in invalid
+        for receiver_id in receiver_ids
+    }
 
 
 def _template_prefix(node, source_bytes: bytes) -> str:
@@ -1084,6 +1306,12 @@ def scan_danger(
     jsx_captures = _run_batch(root_node, lang, "danger_jsx", _JSX_PATTERN)
     complex_captures = _run_batch(root_node, lang, "danger_complex", _COMPLEX_PATTERN)
     child_process_aliases = _child_process_aliases(root_node, lang, source_bytes)
+    exec_prop_nodes = complex_captures.get("exec_prop", [])
+    regexp_exec_receivers = (
+        _proven_regexp_exec_receivers(root_node, lang, source_bytes)
+        if exec_prop_nodes
+        else set()
+    )
     static_string_bindings = _collect_static_string_bindings(root_node, source_bytes)
 
     for k, v in jsx_captures.items():
@@ -1114,15 +1342,21 @@ def scan_danger(
                 }
             )
 
-    for prop_node in complex_captures.get("exec_prop", []):
+    for prop_node in exec_prop_nodes:
         member_node = prop_node.parent
         if member_node is None:
             continue
         obj_node = member_node.child_by_field_name("object")
         if obj_node is None:
             continue
-        obj_name = _get_text(source_bytes, obj_node).lower()
-        if obj_name in _SAFE_EXEC_OBJECTS and obj_name not in child_process_aliases:
+        raw_obj_name = _get_text(source_bytes, obj_node)
+        obj_name = raw_obj_name.lower()
+        if obj_node.id in regexp_exec_receivers:
+            continue
+        if (
+            obj_name in _SAFE_DATABASE_EXEC_OBJECTS
+            and obj_name not in child_process_aliases
+        ):
             continue
         call_expr = member_node.parent
         command = _first_static_call_arg(call_expr, source_bytes)
