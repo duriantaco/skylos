@@ -1,12 +1,177 @@
 import ast
 import pytest
+from skylos.analysis import circular_deps
 from skylos.analysis.architecture import get_architecture_findings
+from skylos.analysis.file_processing import collect_python_raw_imports
 from skylos.analysis.circular_deps import (
     CircularDependencyAnalyzer,
     CircularDependencyRule,
     DependencyGraphBuilder,
     analyze_circular_dependencies,
 )
+
+
+def _rule_for_sources(sources, mode):
+    rule = CircularDependencyRule()
+    for module, (filename, source) in sources.items():
+        tree = ast.parse(source, filename=filename)
+        if mode == "raw":
+            rule.add_file_imports(
+                filename, module, collect_python_raw_imports(tree, filename, module)
+            )
+        else:
+            rule.add_file(tree, filename, module)
+    return rule
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import package.child",
+        "from package import child",
+        "from package.child import value",
+        "from . import child",
+        "from .child import value",
+    ],
+)
+def test_package_child_import_keeps_exact_identity_without_self_cycle(mode, source):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", source),
+            "package.child": ("/project/package/child.py", "value = 'label'"),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    assert dict(rule._analyzer.dependencies) == {"package": {"package.child"}}
+    assert dict(rule._analyzer.architecture_dependencies) == {
+        "package": {"package.child"}
+    }
+    assert [
+        (dep.from_module, dep.to_module, dep.import_line)
+        for dep in rule._analyzer.all_deps
+    ] == [("package", "package.child", 1)]
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
+    ("sources", "cycle", "edges"),
+    [
+        pytest.param(
+            {
+                "package": (
+                    "/project/package/__init__.py",
+                    "from . import child",
+                ),
+                "package.child": (
+                    "/project/package/child.py",
+                    "from package import value",
+                ),
+            },
+            {"package", "package.child"},
+            {"package": {"package.child"}, "package.child": {"package"}},
+            id="child-imports-package-back",
+        ),
+        pytest.param(
+            {
+                "package.a": ("/project/package/a.py", "from .b import value"),
+                "package.b": ("/project/package/b.py", "from .a import value"),
+            },
+            {"package.a", "package.b"},
+            {"package.a": {"package.b"}, "package.b": {"package.a"}},
+            id="relative-sibling-cycle",
+        ),
+        pytest.param(
+            {
+                "package.nested": (
+                    "/project/package/nested/__init__.py",
+                    "from .. import child",
+                ),
+                "package.child": (
+                    "/project/package/child.py",
+                    "import package.nested",
+                ),
+            },
+            {"package.nested", "package.child"},
+            {
+                "package.nested": {"package.child"},
+                "package.child": {"package.nested"},
+            },
+            id="nested-package-parent-relative-cycle",
+        ),
+    ],
+)
+def test_real_same_package_cycles_remain_visible(mode, sources, cycle, edges):
+    rule = _rule_for_sources(sources, mode)
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "SKY-CIRC"
+    assert set(findings[0]["cycle"]) == cycle
+    assert dict(rule._analyzer.dependencies) == edges
+    assert dict(rule._analyzer.architecture_dependencies) == edges
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
+    ("source", "targets"),
+    [
+        ("import package.missing", {"package"}),
+        ("from package import missing", {"package"}),
+        ("from package import child, missing", {"package", "package.child"}),
+    ],
+)
+def test_unresolved_package_children_and_symbols_remain_conservative(
+    mode, source, targets
+):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", source),
+            "package.child": ("/project/package/child.py", "value = 'label'"),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert findings[0]["cycle"] == ["package"]
+    assert rule._analyzer.dependencies["package"] == targets
+    assert rule._analyzer.architecture_dependencies["package"] == targets
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_direct_module_self_import_is_not_suppressed(mode):
+    rule = _rule_for_sources({"module": ("/project/module.py", "import module")}, mode)
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert findings[0]["cycle"] == ["module"]
+
+
+@pytest.mark.parametrize("child_source", ["value = 'label'", "import package"])
+def test_same_package_graph_has_python_native_cycle_parity(child_source):
+    if circular_deps._fast_find_cycles is None:
+        pytest.skip("optional native cycle detector is unavailable")
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", "from package import child"),
+            "package.child": ("/project/package/child.py", child_source),
+        },
+        "raw",
+    )
+    rule.analyze()
+
+    def normalize(cycles):
+        return {tuple(sorted(cycle)) for cycle in cycles}
+
+    assert normalize(rule._analyzer._find_cycles_py()) == normalize(
+        rule._analyzer._find_cycles_fast()
+    )
 
 
 class TestDependencyGraphBuilder:

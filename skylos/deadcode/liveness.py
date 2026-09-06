@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.analysis.ast_cache import releases_python_ast_cache
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 
@@ -129,6 +130,10 @@ def apply_dead_code_liveness(
     _rescue_optional_import_fallbacks(definitions, refs, report)
     _rescue_protocol_overrides(classes, class_methods, report)
     _rescue_registration_methods(classes, class_methods, report)
+    for target, reason in find_framework_entrypoint_targets(
+        definitions, parsed_files, root
+    ):
+        _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
         _mark(target, "literal_plugin_registry", report)
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
