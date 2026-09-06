@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
 
+from skylos.core.safe_cache_io import read_text_no_symlink
 
 MAX_JS_API_PACKAGE_JSON_BYTES = 1_000_000
 MAX_JS_API_SURFACE_SOURCE_BYTES = 1_000_000
@@ -39,6 +41,37 @@ EXCLUDED_JS_API_DIRS = {
     "vendor",
     "__pycache__",
 }
+
+
+def read_package_json(path: Path) -> dict[str, Any]:
+    text = read_text_no_symlink(
+        path,
+        max_bytes=MAX_JS_API_PACKAGE_JSON_BYTES,
+        encoding="utf-8",
+    )
+    if text is None:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def nearest_package_type(root: Path, entrypoint: Path) -> str | None:
+    current = entrypoint.parent
+    while True:
+        package_json = current / "package.json"
+        if package_json.is_file() and not package_json.is_symlink():
+            package_type = read_package_json(package_json).get("type")
+            return package_type if isinstance(package_type, str) else None
+        if current == root or current.parent == current:
+            return None
+        try:
+            current.relative_to(root)
+        except ValueError:
+            return None
+        current = current.parent
 
 
 def resolve_entrypoint_target(root: Path, package_dir: Path, target: str) -> Path | None:
