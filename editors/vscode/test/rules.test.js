@@ -3,6 +3,14 @@ const test = require("node:test");
 
 const { getRuleMeta } = require("../out/rules");
 
+test("dependency bump advisory has the same name and severity as the CLI", () => {
+  const rule = getRuleMeta("SKY-A106");
+  assert.equal(rule.name, "Suspicious dependency version bump");
+  assert.equal(rule.severity, "LOW");
+  assert.equal(rule.category, "ai");
+  assert.match(rule.description, /exactly matches/);
+});
+
 const TYPESCRIPT_SECURITY_RULES = {
   "SKY-D280": {
     name: "Next.js mutating API route missing authentication",

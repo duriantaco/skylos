@@ -399,6 +399,32 @@ def _scan_ai_defect_diff_signals(
             )
 
 
+def _dependency_bump_findings(
+    root, scan_paths, changed_files, excludes, project_ignore, diff_base=None
+):
+    if "SKY-A106" in project_ignore:
+        return []
+    try:
+        from skylos.rules.ai_defect.dependency_bump_scan import (
+            scan_mirrored_dependency_bumps,
+        )
+        from skylos.security.contracts import resolve_diff_base_ref
+
+        return scan_mirrored_dependency_bumps(
+            root,
+            scan_paths=scan_paths,
+            changed_files=changed_files,
+            exclude_folders=excludes,
+            diff_base=diff_base
+            if diff_base is not None
+            else resolve_diff_base_ref(root),
+        )
+    except Exception:
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error("Dependency bump advisory scan failed", exc_info=True)
+        return []
+
+
 MAX_SECRET_CONFIG_BYTES = 8_000_000
 _GENERATED_GREP_CACHE_RELATIVE = Path(".skylos/cache/grep_results.json")
 _GIT_TRACKING_TIMEOUT_SECONDS = 5
@@ -2882,6 +2908,7 @@ class Skylos:
         project_config_overrides=None,
         required_config_rules=None,
         grep_cache=True,
+        dependency_bump_diff_base=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -3114,6 +3141,19 @@ class Skylos:
                         result["analysis_summary"]["reliability_count"] = len(
                             reliability_findings
                         )
+                if enable_ai_defects and not first_is_symlink:
+                    ai_defect_findings.extend(
+                        _dependency_bump_findings(
+                            project_root,
+                            path,
+                            changed_files,
+                            exclude_folders
+                            if exclude_folders is not None
+                            else project_cfg.get("exclude", []),
+                            project_ignore,
+                            diff_base=dependency_bump_diff_base,
+                        )
+                    )
                 if ai_defect_findings:
                     result["ai_defects"] = ai_defect_findings
                     result["analysis_summary"]["ai_defects_count"] = len(
@@ -4416,6 +4456,20 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Test impact scan failed", exc_info=True)
 
+            if not first_is_symlink:
+                # This cross-file advisory uses project ignores. Worktree
+                # line ignores must not suppress a committed PR snapshot.
+                all_ai_defects.extend(
+                    _dependency_bump_findings(
+                        root,
+                        path,
+                        requested_changed_files,
+                        regression_excludes,
+                        project_ignore,
+                        diff_base=dependency_bump_diff_base,
+                    )
+                )
+
             if changed_files and (
                 "SKY-A103" not in project_ignore or "SKY-A104" not in project_ignore
             ):
@@ -4797,6 +4851,7 @@ def analyze(
     project_config_overrides=None,
     required_config_rules=None,
     grep_cache=True,
+    dependency_bump_diff_base=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -4818,6 +4873,7 @@ def analyze(
         config_file=config_file,
         project_config_overrides=project_config_overrides,
         required_config_rules=required_config_rules,
+        dependency_bump_diff_base=dependency_bump_diff_base,
     )
 
 

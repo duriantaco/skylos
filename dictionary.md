@@ -462,11 +462,31 @@ use the `SKY-A` prefix.
 | A103 | HIGH | CI permission expansion | GitHub Actions |
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | A105 | HIGH | Contract route guard missing | Python contract verify |
+| A106 | LOW | Suspicious dependency version bump | Python manifests and lock files in Git changes |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
+
+SKY-A106 warns when a dependency version change exactly matches the project's
+own old and new versions in the same change. For example, a release from
+`3.4.1` to `3.4.2` that also changes `inquirer==3.4.1` to `inquirer==3.4.2`
+deserves a check. This is an advisory, not proof that the dependency version is
+invalid. It does not query package registries or change dependencies.
+
+Run `skylos . --ai-defects --diff-base origin/main --format json` for committed
+PR changes, or omit `--diff-base` to compare local files with HEAD. PR checks
+compare the merge base with HEAD and do not include uncommitted edits. Existing
+gate thresholds still apply; the finding recommends review rather than blocking.
+
+The initial rule supports literal project versions in `pyproject.toml` and
+`setup.py`, dependency declarations in those files and requirements files, and
+package versions in `uv.lock` and `poetry.lock`. It includes version exclusions
+such as `!=3.4.1`, skips project self references, and keeps nested projects
+separate. Dynamic project versions and other manifest formats are not inferred.
+To disable this advisory, add `SKY-A106` to `[tool.skylos].ignore`. This rule
+uses project ignores, not inline comments, consistently across supported files.
 
 ## Logic and AI-Code Mistakes (SKY-L)
 

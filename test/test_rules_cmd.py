@@ -19,6 +19,19 @@ def test_catalog_f101_f102_not_swapped():
     assert get_rule_name("SKY-F102") == "Framework route missing auth"
 
 
+def test_dependency_bump_advisory_catalog_matches_documentation():
+    rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
+    rule = rules_by_id["SKY-A106"]
+    assert rule["name"] == "Suspicious dependency version bump"
+    assert rule["severity"] == "LOW"
+    assert rule["category"] == "ai_defect"
+    dictionary = Path(__file__).resolve().parents[1] / "dictionary.md"
+    assert (
+        "| A106 | LOW | Suspicious dependency version bump |"
+        in dictionary.read_text(encoding="utf-8")
+    )
+
+
 def test_run_rules_command_returns_validate_failure():
     console = Mock()
 
