@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
+from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
 
@@ -257,21 +259,34 @@ def _discover_action_files(
     return sorted(candidates)
 
 
-def _load_yaml(path: Path) -> dict[str, Any] | None:
+class _WorkflowLines(list[str]):
+    """Raw lines paired with the source map from the same safe YAML parse."""
+
+    def __init__(self, text: str, source: YamlSource):
+        super().__init__(text.splitlines())
+        self.source = source
+
+
+def _load_yaml(path: Path) -> tuple[dict[str, Any], _WorkflowLines] | None:
     if yaml is None:
         return None
     try:
         text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
         if text is None:
             return None
-        raw = yaml.safe_load(text)
+        loaded = load_yaml_with_locations(
+            text, max_depth=MAX_YAML_GRAPH_DEPTH, max_nodes=MAX_YAML_GRAPH_NODES
+        )
+        if loaded is None:
+            return None
+        raw, source = loaded
     except Exception:
         return None
     if not isinstance(raw, dict):
         return None
     if not _yaml_graph_is_safe(raw):
         return None
-    return raw
+    return raw, _WorkflowLines(text, source)
 
 
 def _yaml_graph_is_safe(value: Any) -> bool:
@@ -358,10 +373,67 @@ def _line_for_template(lines: list[str], run_body: str) -> int:
     return _line_for_key(lines, "run")
 
 
-def _is_inline_ignored(lines: list[str], line: int, rule_id: str) -> bool:
+def _source_for_lines(lines: list[str]) -> YamlSource | None:
+    if isinstance(lines, _WorkflowLines):
+        return lines.source
+    loaded = load_yaml_with_locations(
+        "\n".join(lines),
+        max_depth=MAX_YAML_GRAPH_DEPTH,
+        max_nodes=MAX_YAML_GRAPH_NODES,
+    )
+    return loaded[1] if loaded is not None else None
+
+
+def _line_for_trigger(data: dict[str, Any], lines: list[str], name: str) -> int:
+    source = _source_for_lines(lines)
+    if source is None:
+        return 1
+    on_key = "on" if "on" in data else True
+    trigger = _on_value(data)
+    if isinstance(trigger, dict):
+        path = (on_key, name)
+    elif isinstance(trigger, list):
+        path = (on_key, trigger.index(name))
+    else:
+        return source.line_for_path((on_key,), key=False) or 1
+    return source.line_for_path(path) or source.line_for_path((on_key,)) or 1
+
+
+def _line_for_job_field(lines: list[str], job_id: Any, field: str) -> int:
+    source = _source_for_lines(lines)
+    if source is None:
+        return 1
+    return (
+        source.line_for_path(("jobs", job_id, field))
+        or source.line_for_path(("jobs", job_id))
+        or 1
+    )
+
+
+def _is_inline_ignored(
+    lines: list[str], line: int, rule_id: str, *, yaml_only: bool = True
+) -> bool:
+    if not 1 <= line <= len(lines):
+        return False
     needle = f"skylos: ignore[{rule_id}]"
+    if not any(needle in lines[idx] for idx in (line - 2, line - 1) if idx >= 0):
+        return False
+    if not yaml_only:
+        # Existing script findings can be anchored inside run block scalars.
+        # Preserve their script-comment behavior; they need a separate parser.
+        return True
+    source = _source_for_lines(lines)
+    if source is None:
+        return False
     for idx in (line - 2, line - 1):
-        if 0 <= idx < len(lines) and needle in lines[idx]:
+        if idx < 0:
+            continue
+        # A trailing ignore belongs only to its own line. Only a standalone
+        # comment may apply to the next line, never quoted or block-scalar text.
+        if idx == line - 2 and not lines[idx].lstrip().startswith("#"):
+            continue
+        comment = source.comment_on_line(idx + 1)
+        if comment is not None and needle in comment:
             return True
     return False
 
@@ -381,8 +453,15 @@ def _add_finding(
     findings: list[dict[str, Any]],
     lines: list[str],
     finding: dict[str, Any],
+    *,
+    yaml_only: bool = False,
 ):
-    if _is_inline_ignored(lines, int(finding.get("line", 1)), str(finding["rule_id"])):
+    if _is_inline_ignored(
+        lines,
+        int(finding.get("line", 1)),
+        str(finding["rule_id"]),
+        yaml_only=yaml_only,
+    ):
         return
     identity = _finding_identity(finding)
     if any(_finding_identity(existing) == identity for existing in findings):
@@ -407,13 +486,15 @@ def _on_value(data: dict[str, Any]) -> Any:
     return data.get(True)
 
 
-def _jobs(data: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+def _jobs(data: dict[str, Any]) -> Iterator[tuple[Any, dict[str, Any]]]:
     jobs = data.get("jobs")
     if not isinstance(jobs, dict):
         return
     for job_id, job in jobs.items():
         if isinstance(job, dict):
-            yield str(job_id), job
+            # Keep the parsed key for source lookup (YAML 1.1 resolves names
+            # such as on/yes to booleans). Message formatting still uses str.
+            yield job_id, job
 
 
 def _is_reusable_job(job: dict[str, Any]) -> bool:
@@ -651,10 +732,11 @@ def _scan_triggers(
                     "content with a privileged token."
                 ),
                 file=path,
-                line=_line_for_contains(lines, "pull_request_target"),
+                line=_line_for_trigger(data, lines, "pull_request_target"),
                 severity="HIGH",
                 value="pull_request_target",
             ),
+            yaml_only=True,
         )
     if _trigger_contains(trigger, "workflow_run"):
         _add_finding(
@@ -668,10 +750,11 @@ def _scan_triggers(
                     "execution from potentially attacker-influenced workflows."
                 ),
                 file=path,
-                line=_line_for_contains(lines, "workflow_run"),
+                line=_line_for_trigger(data, lines, "workflow_run"),
                 severity="HIGH",
                 value="workflow_run",
             ),
+            yaml_only=True,
         )
 
 
@@ -998,38 +1081,34 @@ def _scan_self_hosted_runners(
         if _is_reusable_job(job):
             continue
         runs_on = job.get("runs-on")
-        risky = False
-        value = "self-hosted"
+        if not runner_may_be_self_hosted(job):
+            continue
         if isinstance(runs_on, str):
-            risky = runs_on == "self-hosted" or "${{" in runs_on
             value = runs_on
         elif isinstance(runs_on, list):
-            labels = [str(item) for item in runs_on]
-            risky = bool(labels) and (
-                labels[0] == "self-hosted" or any("${{" in label for label in labels)
-            )
-            value = ",".join(labels)
+            value = ",".join(str(label) for label in runs_on)
         elif isinstance(runs_on, dict):
-            risky = "group" in runs_on
-            value = "runner-group"
+            value = "runner-group" if "group" in runs_on else str(runs_on)
+        else:
+            value = str(runs_on)
 
-        if risky:
-            _add_finding(
-                findings,
-                lines,
-                _finding(
-                    rule_id=rule_id,
-                    name="github-actions-self-hosted-runner",
-                    message=(
-                        f"Job {job_id} uses or may expand to a self-hosted runner. "
-                        "Use ephemeral isolated runners for untrusted workflows."
-                    ),
-                    file=path,
-                    line=_line_for_contains(lines, "runs-on"),
-                    severity="MEDIUM",
-                    value=value,
+        _add_finding(
+            findings,
+            lines,
+            _finding(
+                rule_id=rule_id,
+                name="github-actions-self-hosted-runner",
+                message=(
+                    f"Job {job_id} uses or may expand to a self-hosted runner. "
+                    "Use ephemeral isolated runners for untrusted workflows."
                 ),
-            )
+                file=path,
+                line=_line_for_job_field(lines, job_id, "runs-on"),
+                severity="HIGH",
+                value=value,
+            ),
+            yaml_only=True,
+        )
 
 
 def _image_is_pinned(image: str) -> bool:
@@ -1927,12 +2006,10 @@ def scan_github_actions_file(
     file_path = _resolve_github_actions_scan_path(path, root=root_path)
     if file_path is None:
         return []
-    data = _load_yaml(file_path)
-    if data is None:
+    loaded = _load_yaml(file_path)
+    if loaded is None:
         return []
-
-    text = read_text_no_symlink(file_path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
-    lines = text.splitlines() if text is not None else []
+    data, lines = loaded
 
     ignore = ignore or set()
     findings: list[dict[str, Any]] = []

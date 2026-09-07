@@ -255,6 +255,16 @@ Finding types:
 | D335 | MEDIUM | Edge service missing sandboxing | systemd |
 | D336 | HIGH | Broad edge service privilege | systemd |
 
+For GitHub Actions, D290 and D295 point to the relevant trigger or job's
+`runs-on` declaration. Their inline ignores apply to that line or an immediately
+preceding standalone YAML comment, not to other declarations or text inside
+quoted values and script blocks.
+
+D295 reports at HIGH severity. Runner-label order does not affect the check.
+Simple literal matrices are exempt only when every possible runner value can be
+proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
+matrix combinations that cannot be resolved conservatively still produce a warning.
+
 ## Kubernetes Deployment Exposure (SKY-DEP)
 
 Skylos correlates resources in one rendered multi-document Kubernetes file.
