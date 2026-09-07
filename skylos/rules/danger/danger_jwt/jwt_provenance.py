@@ -580,19 +580,35 @@ class JWTImportVisitor(ast.NodeVisitor):
     def visit_Match(self, node):
         before = self._scope.bindings.copy()
         self.visit(node.subject)
-        initial = self._scope.bindings.copy()
+        fallthrough = self._scope.bindings.copy()
         result = _Flow()
-        exhaustive = False
         for case in node.cases:
+            if fallthrough is None:
+                break
+            initial = fallthrough
             statements = [case.pattern]
             if case.guard is not None:
                 statements.append(case.guard)
-            result.extend(self._suite([*statements, *case.body], initial))
-            if case.guard is None and self._irrefutable(case.pattern):
-                exhaustive = True
-                break
-        if not exhaustive:
-            result.add("normal", initial)
+            header = self._suite(statements, initial)
+            result.extend(header, exclude=("normal",))
+            matched = header.states.get("normal")
+            guard = (
+                True
+                if case.guard is None
+                else bool(case.guard.value)
+                if isinstance(case.guard, ast.Constant)
+                else None
+            )
+            if matched is not None and guard is not False:
+                result.extend(self._suite(case.body, matched))
+
+            # A failed guard keeps its captures/side effects, but never executes
+            # the body. Only unmatched/guard-failed paths reach the next case.
+            remaining = [] if self._irrefutable(case.pattern) else [initial]
+            if matched is not None and guard is not True:
+                remaining.append(matched)
+            fallthrough = _merge_bindings(remaining)
+        result.add("normal", fallthrough)
         result.add("raise", before)
         return self._finish(result)
 
@@ -628,7 +644,22 @@ class JWTImportVisitor(ast.NodeVisitor):
         if node.name:
             self._scope.bindings[node.name] = None
         result = self._suite(node.body, self._scope.bindings)
+        if node.name:
+            class_local = (
+                self._scope.kind == "class"
+                and node.name not in self._scope.global_names
+                and node.name not in self._scope.nonlocal_names
+            )
+            # Python implicitly deletes the target on every handler exit. Class
+            # locals then fall back outward; cleared function locals must not.
+            for bindings in result.states.values():
+                if class_local:
+                    bindings.pop(node.name, None)
+                else:
+                    bindings[node.name] = None
         if node.type is not None:
+            # A failure evaluating the handler type never entered the handler,
+            # so it must retain the pre-entry binding rather than be cleared.
             result.add("raise", before)
         return self._finish(result)
 
