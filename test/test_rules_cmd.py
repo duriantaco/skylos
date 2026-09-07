@@ -8,7 +8,15 @@ from rich.console import Console
 
 from skylos import cli
 from skylos.commands import rules_cmd
-from skylos.rules.catalog import get_rule_catalog
+from skylos.rules.catalog import get_rule_catalog, get_rule_name
+
+
+def test_catalog_f101_f102_not_swapped():
+    """Regression: SKY-F101 is about handler practice (response model), not auth.
+    SKY-F102 is about route missing auth, not handler practice.
+    See practices.py: F101=missing_response_contract, F102=missing_auth_guard."""
+    assert get_rule_name("SKY-F101") == "Framework handler practice issue"
+    assert get_rule_name("SKY-F102") == "Framework route missing auth"
 
 
 def test_run_rules_command_returns_validate_failure():
