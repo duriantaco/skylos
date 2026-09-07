@@ -1,5 +1,36 @@
 ## Changelog
 
+## [4.36.0](https://github.com/duriantaco/skylos/compare/v4.35.0...v4.36.0) (2026-09-07)
+
+
+### Features
+
+* **ai-defect:** flag mirrored dependency version bumps ([#808](https://github.com/duriantaco/skylos/issues/808)) ([aefc020](https://github.com/duriantaco/skylos/commit/aefc020d1acd9f3429e49b0e516c9d555074133b))
+
+
+### Bug Fixes
+
+* **ai-defect:** continue checks after failed Python files ([#796](https://github.com/duriantaco/skylos/issues/796)) ([b1d0ad7](https://github.com/duriantaco/skylos/commit/b1d0ad7cd4eff2ef8c7335a1fd71cdda6670a002))
+* **ai-defect:** make SKY-A103 findings complete and deterministic ([#793](https://github.com/duriantaco/skylos/issues/793)) ([7536054](https://github.com/duriantaco/skylos/commit/7536054680f1ca4415b026913f9679a2e9cab186))
+* **ai-defect:** report CI permission signals reliably ([#792](https://github.com/duriantaco/skylos/issues/792)) ([1172878](https://github.com/duriantaco/skylos/commit/1172878a73f14ec495bfacfa51e838df0c42e0a9))
+* **ai-defect:** resolve imported JS barrel exports ([#799](https://github.com/duriantaco/skylos/issues/799)) ([2983f8f](https://github.com/duriantaco/skylos/commit/2983f8f885a379cf5457f6c61e2d172b4b0b925f))
+* **analyzer:** deterministic module name for multi source-root paths ([#780](https://github.com/duriantaco/skylos/issues/780)) ([0e96fdb](https://github.com/duriantaco/skylos/commit/0e96fdbfd1638a0a78db0ba71df2d20a75343d8e))
+* **analyzer:** preserve scan context in Git hooks ([#795](https://github.com/duriantaco/skylos/issues/795)) ([38124e7](https://github.com/duriantaco/skylos/commit/38124e7a773bf403aa9681bf84c69c2f9d600fb3))
+* **analyzer:** recognize declaration-only Python stubs ([#801](https://github.com/duriantaco/skylos/issues/801)) ([06b7fc3](https://github.com/duriantaco/skylos/commit/06b7fc3a17b55556a3daca0192f0709fdf2ec723))
+* **analyzer:** reduce Django and Celery false positives ([#800](https://github.com/duriantaco/skylos/issues/800)) ([bc9ee49](https://github.com/duriantaco/skylos/commit/bc9ee49cf1c4118e12d87206aa1a03ef041c2cd5))
+* **catalog:** swap SKY-F101/F102 rule descriptions ([#782](https://github.com/duriantaco/skylos/issues/782)) ([009931b](https://github.com/duriantaco/skylos/commit/009931b476ff17e62d8a0026bb73eac2a0f95a54))
+* **cicd:** correct workflow rule locations and runner checks ([#807](https://github.com/duriantaco/skylos/issues/807)) ([43c9025](https://github.com/duriantaco/skylos/commit/43c90253c5adeaedfca0aa07bf239a7b84826d68))
+* **cli:** report circular dependencies consistently ([#804](https://github.com/duriantaco/skylos/issues/804)) ([825717e](https://github.com/duriantaco/skylos/commit/825717e173439bc4082829053567be2779672075))
+* **cwe:** correct 10 misaligned CWE mappings ([#784](https://github.com/duriantaco/skylos/issues/784)) ([9f1fbc1](https://github.com/duriantaco/skylos/commit/9f1fbc1b0acb4eee14d235ab189db6837de49e60))
+* **jwt:** detect decode calls through import aliases and direct imports ([#783](https://github.com/duriantaco/skylos/issues/783)) ([f1184b1](https://github.com/duriantaco/skylos/commit/f1184b1c96d5f5816899e3e6b9bfa0ce304dd79e))
+* **security:** prevent false SKY-D212 warnings on RegExp.exec() ([#806](https://github.com/duriantaco/skylos/issues/806)) ([975a3ad](https://github.com/duriantaco/skylos/commit/975a3ad2dde635ff9a2e1003c4dee5b30650ecfe))
+
+
+### Performance Improvements
+
+* **analysis:** share parsed ASTs across rule passes ([#779](https://github.com/duriantaco/skylos/issues/779)) ([f99402e](https://github.com/duriantaco/skylos/commit/f99402e5122c28ab6b3571f4a5e6b4281d27472c))
+* **analyzer:** index export lookups ([#771](https://github.com/duriantaco/skylos/issues/771)) ([65bd38c](https://github.com/duriantaco/skylos/commit/65bd38c761b2dd76b014bbb295efbc5364c89b15))
+
 ## [4.35.0](https://github.com/duriantaco/skylos/compare/v4.34.0...v4.35.0) (2026-08-26)
 
 
