@@ -9,6 +9,8 @@ from skylos.core.evidence_contract import finding_evidence_contract
 
 
 SCHEMA_VERSION = 2
+# SKY-A106 only reads manifests capped at two million bytes.
+_MAX_DEPENDENCY_SOURCE_LINE = 2_000_000
 
 AI_VIBE_CATEGORIES = {
     "hallucinated_reference",
@@ -26,6 +28,7 @@ AI_VIBE_CATEGORIES = {
     "test_impact_gap",
     "missing_contract_guardrail",
     "public_api_surface_drift",
+    "mirrored_dependency_bump",
 }
 
 AI_RULE_DEFAULTS = {
@@ -34,6 +37,7 @@ AI_RULE_DEFAULTS = {
     "SKY-A103": ("ci_permission_expansion", "high"),
     "SKY-A104": ("public_api_surface_drift", "medium"),
     "SKY-A105": ("missing_contract_guardrail", "high"),
+    "SKY-A106": ("mirrored_dependency_bump", "low"),
     "SKY-F102": ("missing_auth_guard", "medium"),
     "SKY-L030": ("swallowed_error", "medium"),
     "SKY-L012": ("hallucinated_reference", "high"),
@@ -89,6 +93,10 @@ SUGGESTED_FIX_BY_VIBE = {
     ),
     "missing_contract_guardrail": (
         "Add one of the guard decorators required by the Skylos contract."
+    ),
+    "mirrored_dependency_bump": (
+        "Review whether the dependency change was intentional; restore its previous "
+        "version only if the change was accidental."
     ),
 }
 
@@ -257,6 +265,11 @@ def _finding_range(finding: dict[str, Any], root: Path) -> dict[str, Any]:
     end_line = _positive_int(end_line_value, default=line)
     end_col_value = _finding_value(finding, ("end_col", "endCol"), None)
     file_value = _finding_value(finding, ("file", "file_path"), None)
+    declaration_span = _dependency_bump_declaration_span(finding)
+    if declaration_span is not None:
+        line, end_line = declaration_span
+        col = 0
+        end_col_value = 0
 
     return {
         "file": _relative_file(file_value, root),
@@ -265,6 +278,34 @@ def _finding_range(finding: dict[str, Any], root: Path) -> dict[str, Any]:
         "end_line": max(line, end_line),
         "end_col": _non_negative_int(end_col_value, default=col),
     }
+
+
+def _dependency_bump_declaration_span(
+    finding: dict[str, Any],
+) -> tuple[int, int] | None:
+    """Use only A106's single bounded span for its own dependency literal."""
+    if _finding_value(finding, ("rule_id", "rule"), "") != "SKY-A106":
+        return None
+    locations = finding.get("related_locations")
+    if not isinstance(locations, list) or len(locations) != 1:
+        return None
+    location = locations[0]
+    if not isinstance(location, dict):
+        return None
+    file = _finding_value(finding, ("file", "file_path"), None)
+    if not file or str(location.get("file") or "") != str(file):
+        return None
+    start, end = location.get("start_line"), location.get("end_line")
+    if type(start) is not int or type(end) is not int:
+        return None
+    if not 1 <= start <= end <= _MAX_DEPENDENCY_SOURCE_LINE:
+        return None
+    line = _positive_int(
+        _finding_value(finding, ("line", "line_number"), None), default=1
+    )
+    if not start <= line <= end:
+        return None
+    return start, end
 
 
 def _matches_target(
@@ -296,6 +337,9 @@ def _matches_line_range(
     line = _positive_int(line_value, default=1)
     end_line_value = _finding_value(finding, ("end_line", "endLine"), None)
     finding_end = _positive_int(end_line_value, default=line)
+    declaration_span = _dependency_bump_declaration_span(finding)
+    if declaration_span is not None:
+        line, finding_end = declaration_span
     return not (finding_end < start or line > end)
 
 

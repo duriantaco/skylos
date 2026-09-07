@@ -125,6 +125,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 progress_callback=progress_callback,
                 custom_rules_data=custom_rules_data,
                 changed_files=changed_files,
+                dependency_bump_diff_base=getattr(
+                    pre_analysis, "dependency_bump_diff_base", None
+                ),
                 grep_verify=not getattr(args, "no_grep_verify", False),
                 enable_sca=bool(args.sca),
                 trace_file=trace_file,

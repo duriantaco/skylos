@@ -33,6 +33,9 @@ _RULES = (
     RuleCatalogEntry("SKY-A103", "CI permission expansion", "ai_defect", "HIGH"),
     RuleCatalogEntry("SKY-A104", "Public CLI surface drift", "ai_defect", "MEDIUM"),
     RuleCatalogEntry("SKY-A105", "Contract route guard missing", "ai_defect", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-A106", "Suspicious dependency version bump", "ai_defect", "LOW"
+    ),
     RuleCatalogEntry("SKY-C401", "Duplicated code clone", "quality"),
     RuleCatalogEntry("SKY-CIRC", "Circular dependency", "quality"),
     RuleCatalogEntry("SKY-Q301", "Cyclomatic complexity", "quality"),
