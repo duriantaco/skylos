@@ -10,7 +10,9 @@ from typing import Any, Iterable
 
 from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
+from skylos.deadcode.external_protocols import find_external_protocol_callbacks
 from skylos.analysis.ast_cache import releases_python_ast_cache
+from skylos.constants import AUTO_CALLED
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 
 
@@ -139,6 +141,157 @@ def apply_dead_code_liveness(
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
     _rescue_unique_external_attr_calls(classes, class_methods, attr_calls, report)
     return report
+
+
+@releases_python_ast_cache
+def apply_external_protocol_liveness(definitions, project_root, files, report) -> None:
+    """Activate external callbacks only after ordinary deadness has settled."""
+    if os.getenv("SKYLOS_DEAD_CODE_LIVENESS", "1").lower() in _DISABLE_VALUES:
+        return
+    root = Path(project_root).resolve()
+    parsed = parse_python_files(_python_files(root, files))
+    callbacks = find_external_protocol_callbacks(definitions, parsed, root)
+    if not callbacks:
+        return
+    nodes = {
+        id(defn): defn
+        for defn in definitions.values()
+        if getattr(defn, "type", None) in {"function", "method", "class", "type"}
+    }
+    dead_classes = {
+        (defn.name, str(defn.filename))
+        for defn in nodes.values()
+        if defn.type in {"class", "type"}
+        and defn.references <= 0
+        and not defn.is_exported
+    }
+    survivors = {
+        key
+        for key, defn in nodes.items()
+        if (defn.references > 0 or defn.is_exported)
+        and not (
+            defn.type == "method"
+            and (defn.name.rpartition(".")[0], str(defn.filename)) in dead_classes
+        )
+    }
+    strong_markers = {
+        "framework_root",
+        "package_entrypoint",
+        "test_entrypoint",
+        "top_level_execution",
+        "coverage_hit",
+        "trace_hit",
+        "reachable_from_root",
+    }
+    strong = {
+        key
+        for key, defn in nodes.items()
+        if strong_markers.intersection(getattr(defn, "heuristic_refs", {}))
+    }
+    seeds = {
+        id(target)
+        for target, caller in callbacks
+        if caller is None or id(caller) in survivors
+    }
+    if not seeds:
+        return
+    proven = {
+        id(target)
+        for target, caller in callbacks
+        if caller is None or id(caller) in survivors & strong
+    }
+    by_name = defaultdict(list)
+    for key, defn in nodes.items():
+        by_name[defn.name].append(key)
+
+    def resolve(name, context):
+        candidates = by_name.get(name, ())
+        if len(candidates) == 1:
+            return candidates[0]
+        local = [key for key in candidates if nodes[key].filename == context.filename]
+        return local[0] if len(local) == 1 else None
+
+    graph = defaultdict(set)
+    for key, defn in nodes.items():
+        for name in getattr(defn, "calls", ()):
+            if (target := resolve(name, defn)) is not None:
+                graph[key].add(target)
+        # Local parameter-method inference currently records reverse links only.
+        for name in getattr(defn, "called_by", ()):
+            if (caller := resolve(name, defn)) is not None:
+                graph[caller].add(key)
+        # The ordinary analyzer already retains implicit protocol methods for
+        # referenced classes. Their bodies must become reachable too when a
+        # callback revives the owning class; do not promote arbitrary methods.
+        if (
+            defn.type == "method"
+            and defn.simple_name in AUTO_CALLED
+            and defn.references > 0
+        ):
+            owner = resolve(defn.name.rpartition(".")[0], defn)
+            if owner is not None and nodes[owner].type in {"class", "type"}:
+                graph[owner].add(key)
+    for target, caller in callbacks:
+        if caller is not None:
+            graph[id(caller)].add(id(target))
+
+    known_plugins = {
+        id(target)
+        for target in find_literal_plugin_registry_targets(definitions, parsed)
+    }
+    reached = set()
+    marked_strong = set()
+    while seeds:
+        stack = [(key, key in proven) for key in seeds]
+        while stack:
+            key, is_strong = stack.pop()
+            if key in reached and (not is_strong or key in marked_strong):
+                continue
+            reached.add(key)
+            target = nodes[key]
+            target.references = max(target.references, 1)
+            if is_strong:
+                marked_strong.add(key)
+                target.heuristic_refs["reachable_from_root"] = 1.0
+            for child in graph[key]:
+                target.calls.add(nodes[child].name)
+                nodes[child].called_by.add(target.name)
+                stack.append((child, is_strong))
+        for target, caller in callbacks:
+            if caller is None:
+                target.heuristic_refs["top_level_execution"] = 1.0
+            elif id(caller) in survivors | reached:
+                caller.calls.add(target.name)
+                target.called_by.add(caller.name)
+        # Preserve the plugin finder's own root policy. Only newly proven
+        # registry targets seed another pass; unrelated ordinary roots do not.
+        new_plugins = [
+            target
+            for target in find_literal_plugin_registry_targets(definitions, parsed)
+            if id(target) not in known_plugins and id(target) in nodes
+        ]
+        seeds = {id(target) for target in new_plugins}
+        known_plugins.update(seeds)
+        proven.update(seeds)
+        for target in new_plugins:
+            _mark(target, "literal_plugin_registry", report)
+    for target, caller in callbacks:
+        if id(target) in reached and (
+            caller is None or id(caller) in survivors | reached
+        ):
+            target.heuristic_refs["dead_code_liveness:external_protocol"] = 1.0
+            if not any(
+                item.name == target.name and item.reason == "external_protocol"
+                for item in report.rescued
+            ):
+                report.rescued.append(
+                    LivenessRescue(
+                        target.name,
+                        "external_protocol",
+                        str(target.filename),
+                        target.line,
+                    )
+                )
 
 
 def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
