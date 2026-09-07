@@ -2,33 +2,14 @@ from __future__ import annotations
 import ast
 import sys
 
-
-def _qualified_name(node):
-    func = node.func
-    parts = []
-    while isinstance(func, ast.Attribute):
-        parts.append(func.attr)
-        func = func.value
-    if isinstance(func, ast.Name):
-        parts.append(func.id)
-        parts.reverse()
-        return ".".join(parts)
-    return None
+from .jwt_provenance import JWTImportVisitor
 
 
-class _JWTChecker(ast.NodeVisitor):
+class _JWTChecker(JWTImportVisitor):
     def __init__(self, file_path, findings):
+        super().__init__()
         self.file_path = file_path
         self.findings = findings
-
-    def generic_visit(self, node):
-        for field, value in ast.iter_fields(node):
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        self.visit(item)
-            elif isinstance(value, ast.AST):
-                self.visit(value)
 
     def _report(self, node, message, severity="HIGH"):
         self.findings.append(
@@ -43,12 +24,7 @@ class _JWTChecker(ast.NodeVisitor):
         )
 
     def visit_Call(self, node):
-        qn = _qualified_name(node)
-        if not qn or not qn.endswith((".decode", ".encode")):
-            self.generic_visit(node)
-            return
-
-        if not qn.startswith("jwt.") and not qn.endswith("jwt.decode"):
+        if not self.is_jwt_decode(node):
             self.generic_visit(node)
             return
 
