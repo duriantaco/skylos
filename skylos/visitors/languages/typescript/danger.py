@@ -596,7 +596,9 @@ def _field_matches_node(
     return field_node is not None and field_node.id == expected_node.id
 
 
-def _static_member_path(node: Node | None, source_bytes: bytes) -> tuple[str, ...] | None:
+def _static_member_path(
+    node: Node | None, source_bytes: bytes
+) -> tuple[str, ...] | None:
     if node is None:
         return None
     node = _unwrap_ts_expression(node)
@@ -684,13 +686,147 @@ def _regexp_use_kind(node: Node, source_bytes: bytes) -> str | None:
     return None
 
 
-def _regexp_binding_scope(node: Node) -> Node | None:
+def _regexp_binding_scope(node: Node, *, function_scoped: bool = False) -> Node | None:
     current = node.parent
     while current is not None:
-        if current.type in _REGEXP_BINDING_SCOPE_TYPES:
+        if function_scoped:
+            if current.type in _TS_FUNCTION_NODE_TYPES or current.type in {
+                "class_static_block",
+                "internal_module",
+            }:
+                # Body bindings are not visible in parameter default expressions.
+                return current.child_by_field_name("body")
+            if current.type == "program":
+                return current
+        elif current.type in _REGEXP_BINDING_SCOPE_TYPES:
             return current
         current = current.parent
     return None
+
+
+def _regexp_binding_identifiers(pattern: Node | None) -> list[Node]:
+    """Extract declaration targets, never type names or default-value reads."""
+    identifiers = []
+    stack = [pattern] if pattern is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type in {
+            "identifier",
+            "type_identifier",  # Class declaration/expression name.
+            "shorthand_property_identifier_pattern",
+        }:
+            identifiers.append(node)
+        elif node.type in {"required_parameter", "optional_parameter"}:
+            child = node.child_by_field_name("pattern")
+            if child is not None:
+                stack.append(child)
+        elif node.type in {"assignment_pattern", "object_assignment_pattern"}:
+            child = node.child_by_field_name("left")
+            if child is not None:
+                stack.append(child)
+        elif node.type == "pair_pattern":
+            child = node.child_by_field_name("value")
+            if child is not None:
+                stack.append(child)
+        elif node.type in {
+            "formal_parameters",
+            "object_pattern",
+            "array_pattern",
+            "rest_pattern",
+        }:
+            stack.extend(reversed(node.named_children))
+    return identifiers
+
+
+def _regexp_shadow_bindings(
+    root_node: Node,
+    source_bytes: bytes,
+    candidates: dict[tuple[int, str], Node],
+) -> tuple[set[tuple[int, str]], set[int]]:
+    """Index other bindings before resolving uses, including hoisted shadows."""
+    candidate_ids = {node.id for node in candidates.values()}
+    names = {name for _, name in candidates}
+    shadows: set[tuple[int, str]] = set()
+    declaration_ids: set[int] = set()
+    for node in _iter_nodes(root_node):
+        declarations: list[tuple[Node | None, Node | None]] = []
+        if (
+            "arguments" in names
+            and node.type in _TS_FUNCTION_NODE_TYPES
+            and node.type != "arrow_function"
+        ):
+            shadows.add((node.id, "arguments"))
+        parameters = node.child_by_field_name("parameters")
+        if parameters is not None and parameters.type == "formal_parameters":
+            declarations.append((parameters, node))
+        if node.type == "arrow_function":
+            declarations.append((node.child_by_field_name("parameter"), node))
+        elif node.type == "catch_clause":
+            declarations.append((node.child_by_field_name("parameter"), node))
+        elif node.type == "variable_declarator":
+            scope = _regexp_binding_scope(
+                node, function_scoped=node.parent.type == "variable_declaration"
+            )
+            declarations.append((node.child_by_field_name("name"), scope))
+        elif node.type == "for_in_statement":
+            kind = node.child_by_field_name("kind")
+            if kind is not None:
+                scope = (
+                    _regexp_binding_scope(node, function_scoped=True)
+                    if kind.type == "var"
+                    else node
+                )
+                declarations.append((node.child_by_field_name("left"), scope))
+        elif node.type in {
+            "function_declaration",
+            "generator_function_declaration",
+            "function_signature",
+            "class_declaration",
+            "enum_declaration",
+            "internal_module",
+        }:
+            declarations.append(
+                (node.child_by_field_name("name"), _regexp_binding_scope(node))
+            )
+        elif node.type in {"function_expression", "generator_function", "class"}:
+            declarations.append((node.child_by_field_name("name"), node))
+        elif node.type == "import_alias":
+            declarations.append((node.named_children[0], _regexp_binding_scope(node)))
+        elif node.type == "import_statement" and not any(
+            child.type == "type" for child in node.children
+        ):
+            scope = _regexp_binding_scope(node)
+            for imported in _iter_nodes(node):
+                if imported.type == "import_specifier" and not any(
+                    child.type == "type" for child in imported.children
+                ):
+                    declarations.append(
+                        (
+                            imported.child_by_field_name("alias")
+                            or imported.child_by_field_name("name"),
+                            scope,
+                        )
+                    )
+                elif imported.type in {
+                    "import_clause",
+                    "namespace_import",
+                    "import_require_clause",
+                }:
+                    declarations.extend(
+                        (child, scope)
+                        for child in imported.named_children
+                        if child.type == "identifier"
+                    )
+
+        for pattern, scope in declarations:
+            for identifier in _regexp_binding_identifiers(pattern):
+                name = _get_text(source_bytes, identifier)
+                if name not in names or identifier.id in candidate_ids:
+                    continue
+                declaration_ids.add(identifier.id)
+                if scope is not None:
+                    shadows.add((scope.id, name))
+    return shadows, declaration_ids
 
 
 def _is_regexp_name_node(node: Node) -> bool:
@@ -739,13 +875,26 @@ def _unique_regexp_bindings(
 
 
 def _nearest_regexp_binding_key(
-    node: Node, name: str, candidates: dict[tuple[int, str], Node]
+    node: Node,
+    name: str,
+    candidates: dict[tuple[int, str], Node],
+    shadows: set[tuple[int, str]],
 ) -> tuple[int, str] | None:
+    child = node
     current = node.parent
     while current is not None:
         key = (current.id, name)
+        if key in shadows:
+            # Computed method names/decorators run in the enclosing scope,
+            # outside the method's parameter and implicit arguments bindings.
+            if current.type != "method_definition" or any(
+                _field_matches_node(current, field, child)
+                for field in ("body", "parameters")
+            ):
+                return None
         if current.type in _REGEXP_BINDING_SCOPE_TYPES and key in candidates:
             return key
+        child = current
         current = current.parent
     return None
 
@@ -760,7 +909,13 @@ def _proven_regexp_exec_receivers(
         _REGEXP_LITERAL_BINDING_PATTERN,
     )
     candidates = _unique_regexp_bindings(captures.get("regexp_name", []), source_bytes)
-    declaration_ids = {node.id for node in candidates.values()}
+    if not candidates:
+        return set()
+    shadows, declaration_ids = _regexp_shadow_bindings(
+        root_node, source_bytes, candidates
+    )
+    declaration_ids.update(node.id for node in candidates.values())
+    names = {name for _, name in candidates}
     invalid = {
         key for key, node in candidates.items() if _is_directly_exported_binding(node)
     }
@@ -768,11 +923,19 @@ def _proven_regexp_exec_receivers(
     stack = [root_node]
     while stack:
         node = stack.pop()
+        if node.type == "import_statement":
+            # Static import linkage names are not value reads. Runtime bindings
+            # were indexed above; import-equals expressions remain traversed.
+            continue
         if _invalidates_regexp_exec_proof(node, source_bytes):
             return set()
         if _is_regexp_name_node(node) and node.id not in declaration_ids:
             name = _get_text(source_bytes, node)
-            binding_key = _nearest_regexp_binding_key(node, name, candidates)
+            binding_key = (
+                _nearest_regexp_binding_key(node, name, candidates, shadows)
+                if name in names
+                else None
+            )
             if binding_key is not None:
                 use_kind = _regexp_use_kind(node, source_bytes)
                 if use_kind == "exec":
