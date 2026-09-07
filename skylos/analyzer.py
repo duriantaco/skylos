@@ -2074,6 +2074,20 @@ class Skylos:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error(traceback.format_exc())
 
+    def _apply_external_protocol_liveness(self, files):
+        report = getattr(self, "_dead_code_liveness_report", None)
+        if report is None:
+            return
+        try:
+            from skylos.deadcode.liveness import apply_external_protocol_liveness
+
+            apply_external_protocol_liveness(
+                self.defs, self._project_root, files, report
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error(traceback.format_exc())
+
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
         if progress_callback:
@@ -4728,6 +4742,9 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
+        # Resolve library callbacks from surviving callers, so speculative
+        # callback cycles cannot become roots or consume ordinary references.
+        self._apply_external_protocol_liveness(files)
         self._suppress_standalone_orm_models()
 
         grep_verify_report = {
