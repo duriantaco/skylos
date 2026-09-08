@@ -415,6 +415,12 @@ _CONFIG_FILES = frozenset(
     }
 )
 
+_VITEPRESS_CONFIG_SUFFIXES = tuple(
+    f"/.vitepress/{name}.{extension}"
+    for name in ("config", "config/index")
+    for extension in ("js", "ts", "mjs", "mts")
+)
+
 _TS_ENTRY_FILES = frozenset(
     {
         "index.ts",
@@ -446,6 +452,9 @@ _TS_ENTRY_FILES = frozenset(
 
 
 def _is_ts_entry_or_infra(sf: str) -> bool:
+    sf = sf.replace(os.sep, "/")
+    if f"/{sf}".endswith(_VITEPRESS_CONFIG_SUFFIXES):
+        return True
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True
     if "/test/" in sf or "/tests/" in sf or "/testdata/" in sf:
@@ -475,6 +484,9 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
 
 
 def _is_ts_dev_or_test_root(sf: str) -> bool:
+    sf = sf.replace(os.sep, "/")
+    if f"/{sf}".endswith(_VITEPRESS_CONFIG_SUFFIXES):
+        return True
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True
     if "/test/" in sf or "/tests/" in sf or "/testdata/" in sf:
