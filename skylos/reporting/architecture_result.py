@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import os
 import traceback
 from pathlib import Path
@@ -10,6 +9,7 @@ from skylos.analysis.architecture_support import (
     expand_reexported_entrypoint_modules,
     find_package_boundary_modules,
 )
+from skylos.analysis.ast_cache import MODE_IGNORE, load_python_module
 from skylos.analysis.circular_deps import CircularDependencyRule
 
 _MAX_ARCHITECTURE_SOURCE_BYTES = 2_000_000
@@ -222,14 +222,12 @@ def _add_module_tree(mod_trees, mod, file, source_root):
         return
     if stat.st_size > _MAX_ARCHITECTURE_SOURCE_BYTES:
         return
-    try:
-        src = source_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    # Inside an analyzer run the other Python passes have usually parsed
+    # this file already, so this is typically a cache hit.
+    _, tree = load_python_module(source_path, MODE_IGNORE)
+    if tree is None:
         return
-    try:
-        mod_trees[mod] = ast.parse(src)
-    except SyntaxError:
-        return
+    mod_trees[mod] = tree
 
 
 def _attach_architecture_findings(result, project_cfg, all_quality, arch_findings):

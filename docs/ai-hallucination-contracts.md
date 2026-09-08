@@ -101,6 +101,13 @@ Example clause values:
 | `SKY-A102` | `tests.high_risk_changes_require_tests` |
 | `SKY-A105` | `security.routes.require_any_decorator` |
 
+`SKY-D224` checks calls against package APIs available in the Python environment
+running Skylos, or a matching API cache. If usable package API metadata is
+unavailable, the rule skips it: that is not evidence that a function is missing.
+Missing members and invalid keywords are still reported when the
+available API metadata supports the finding. A skipped check does not confirm
+that the call is valid.
+
 ## Local Demo
 
 This repo includes a deterministic demo fixture:

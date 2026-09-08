@@ -247,6 +247,44 @@ def test_check_gate_strict_counts_reliability_findings():
     assert reasons == ["Strict mode: 1 issue(s) found"]
 
 
+def test_check_gate_strict_counts_circular_dependencies_but_not_advisory_quality():
+    results = {
+        "circular_dependencies": [
+            {"rule_id": "SKY-CIRC", "cycle": ["pkg.left", "pkg.right"]},
+            {"rule_id": "SKY-CIRC", "cycle": ["pkg.other", "pkg.last"]},
+        ],
+        "quality": [{"rule_id": "SKY-Q802", "advisory": True}],
+    }
+
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 2 issue(s) found"]
+
+
+def test_circular_dependencies_do_not_change_ordinary_gate_thresholds():
+    results = {
+        "circular_dependencies": [
+            {"rule_id": "SKY-CIRC", "severity": "HIGH", "cycle": ["left", "right"]}
+        ],
+    }
+
+    passed, reasons = gk.check_gate(
+        results,
+        {
+            "gate": {
+                "max_quality": 0,
+                "max_high": 0,
+                "max_security": 0,
+                "max_dead_code": 0,
+            }
+        },
+    )
+
+    assert passed is True
+    assert reasons == []
+
+
 def test_reliability_does_not_affect_security_thresholds():
     results = {
         "danger": [],

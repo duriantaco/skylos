@@ -33,6 +33,9 @@ _RULES = (
     RuleCatalogEntry("SKY-A103", "CI permission expansion", "ai_defect", "HIGH"),
     RuleCatalogEntry("SKY-A104", "Public CLI surface drift", "ai_defect", "MEDIUM"),
     RuleCatalogEntry("SKY-A105", "Contract route guard missing", "ai_defect", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-A106", "Suspicious dependency version bump", "ai_defect", "LOW"
+    ),
     RuleCatalogEntry("SKY-C401", "Duplicated code clone", "quality"),
     RuleCatalogEntry("SKY-CIRC", "Circular dependency", "quality"),
     RuleCatalogEntry("SKY-Q301", "Cyclomatic complexity", "quality"),
@@ -106,8 +109,8 @@ _RULES = (
         "SKY-T105", "Unvalidated JSON type assertion", "quality", "MEDIUM"
     ),
     RuleCatalogEntry("SKY-T106", "Unsafe exported API type", "quality", "MEDIUM"),
-    RuleCatalogEntry("SKY-F101", "Framework route missing auth", "quality"),
-    RuleCatalogEntry("SKY-F102", "Framework handler practice issue", "quality"),
+    RuleCatalogEntry("SKY-F101", "Framework handler practice issue", "quality"),
+    RuleCatalogEntry("SKY-F102", "Framework route missing auth", "quality"),
     RuleCatalogEntry("SKY-R101", "Python type-check policy", "quality", "MEDIUM"),
     RuleCatalogEntry("SKY-R102", "Python lint policy", "quality", "LOW"),
     RuleCatalogEntry("SKY-R103", "Skylos gate policy", "quality", "LOW"),

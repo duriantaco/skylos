@@ -442,6 +442,25 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+TypeScript and JavaScript dead code analysis recognizes `package.json` entry
+fields, including `bin`. For targets under `dist/` or `out/`, it checks the
+matching `src/` location first, then the package root, before the declared
+output. This also covers `dist/bin/palee.js` mapping to `bin/palee.ts` and
+`dist/src/index.js` mapping to `src/index.ts`. If both source locations exist,
+the `src/` mapping keeps priority; unrelated files are not treated as entries.
+
+VitePress configs at `.vitepress/config.*` and `.vitepress/config/index.*`
+are recognised as development entrypoints for `.js`, `.ts`, `.mjs` and `.mts`.
+Other files in `.vitepress` still need a reference or another entrypoint rule.
+Existing directory conventions such as `scripts/` work with native Windows
+separators too; this does not add general discovery of commands in CI workflows.
+
+Vue single file components (`.vue`) are skipped by source analysis, including
+when passed explicitly. Skylos does not yet parse their `<script>` or
+`<script setup>` blocks; separate JavaScript, TypeScript and backend source
+files are still analyzed. Existing browser script and event references in
+templates are unaffected.
+
 Go dead-code and security checks require the native `skylos-go` engine. If
 Skylos discovers Go files but cannot run that engine, the report is marked
 incomplete, no grade or clean result is produced, and the CLI exits with status
@@ -489,6 +508,20 @@ Frozen `golden-v0.2` highlights:
 
 For methodology, commands, competitor rows, and caveats, see
 [BENCHMARK.md](./BENCHMARK.md).
+
+### Real-project regression testing
+
+[liveness_primer](https://github.com/mcdigman/liveness_primer), created and
+maintained by [Matthew Digman](https://github.com/mcdigman), is Skylos's official
+real-project regression testing tool. On every PR, it compares the base and
+proposed merge result against the same pinned Python projects and reports
+which findings were added, removed, or changed.
+
+Read the **Analyzer Blast Radius** check for the comparison and downloadable
+reports. These results complement the labeled benchmarks above; a change in
+finding counts alone does not establish accuracy. See the
+[liveness_primer guide](./docs/liveness-primer.md) for scope, review steps, and
+reproduction commands.
 
 ## Project Evidence
 

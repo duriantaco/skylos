@@ -245,6 +245,84 @@ def _module_scope_exportable_bindings(source: bytes, root_node: Any | None) -> d
     for child in root_node.named_children:
         _collect_module_scope_bindings(source, child, bindings)
     return bindings
+
+
+def _module_scope_import_bindings(
+    source: bytes, root_node: Any
+) -> dict[str, tuple[str, str, bool]]:
+    """Map local import names to their source, imported name and type-only flag."""
+    bindings: dict[str, tuple[str, str, bool]] = {}
+    for node in root_node.named_children:
+        if node.type != "import_statement":
+            continue
+        source_node = node.child_by_field_name("source")
+        source_literal = (
+            _string_literal_value(source, source_node) if source_node else None
+        )
+        clause = next(
+            (child for child in node.named_children if child.type == "import_clause"),
+            None,
+        )
+        if source_literal is None or clause is None:
+            continue
+        type_only = any(child.type == "type" for child in node.children)
+        for local_name, imported_name, specifier_type_only in _import_clause_bindings(
+            source, clause
+        ):
+            bindings[local_name] = (
+                source_literal,
+                imported_name,
+                type_only or specifier_type_only,
+            )
+    return bindings
+
+
+def _locally_exported_names(source: bytes, root_node: Any) -> set[str]:
+    return {
+        original_name
+        for node in root_node.named_children
+        if node.type == "export_statement"
+        and _export_source_literal(source, node) is None
+        for original_name, _, _ in _named_export_clause_pairs(source, node)
+    }
+
+
+def _import_clause_bindings(source: bytes, clause: Any):
+    for child in clause.named_children:
+        if child.type == "named_imports":
+            yield from _named_import_bindings(source, child)
+            continue
+        if child.type == "identifier":
+            name_node = child
+        elif child.type == "namespace_import":
+            name_node = next(
+                (node for node in child.named_children if node.type == "identifier"),
+                None,
+            )
+        else:
+            continue
+        name = _safe_name(_node_text(source, name_node))
+        if name is not None:
+            yield name, "default" if child.type == "identifier" else "*", False
+
+
+def _named_import_bindings(source: bytes, clause: Any):
+    for specifier in clause.named_children:
+        if specifier.type != "import_specifier":
+            continue
+        name_node = specifier.child_by_field_name("name")
+        alias_node = specifier.child_by_field_name("alias")
+        imported_name = _safe_name(
+            _string_literal_value(source, name_node)
+            if name_node is not None and name_node.type == "string"
+            else _node_text(source, name_node)
+        )
+        local_name = _safe_name(_node_text(source, alias_node or name_node))
+        if imported_name is not None and local_name is not None:
+            type_only = any(child.type == "type" for child in specifier.children)
+            yield local_name, imported_name, type_only
+
+
 def _collect_module_scope_bindings(
     source: bytes,
     node: Any,

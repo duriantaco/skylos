@@ -2518,6 +2518,151 @@ def test_main_json_strict_failure_exits_nonzero(monkeypatch):
     mock_print.assert_called_once_with(json.dumps(result))
 
 
+@pytest.mark.parametrize(
+    ("output_format", "extra_args", "incomplete", "expected_exit", "show_cycle"),
+    [
+        pytest.param("concise", [], False, 1, True, id="concise"),
+        pytest.param("concise", ["--limit", "0"], False, 1, False, id="concise-limit"),
+        pytest.param("json", ["--strict"], False, 1, True, id="json-strict"),
+        pytest.param(
+            "json", ["--strict", "--gate"], False, 1, True, id="json-strict-gate"
+        ),
+        pytest.param("pretty", ["--strict"], False, 1, True, id="pretty-strict"),
+        pytest.param("rich", ["--strict"], False, 1, True, id="rich-strict"),
+        pytest.param(
+            "concise",
+            ["--strict", "--select=SKY-L012"],
+            False,
+            0,
+            False,
+            id="concise-unselected",
+        ),
+        pytest.param(
+            "json",
+            ["--strict", "--gate", "--select=SKY-L012"],
+            False,
+            0,
+            False,
+            id="json-strict-gate-unselected",
+        ),
+        pytest.param("json", ["--gate"], False, 0, True, id="json-ordinary-gate"),
+        pytest.param("concise", ["--gate"], False, 0, True, id="concise-ordinary-gate"),
+        pytest.param("json", ["--strict", "--force"], False, 0, True, id="json-forced"),
+        pytest.param(
+            "json", ["--strict", "--gate"], True, 2, True, id="json-incomplete"
+        ),
+        pytest.param(
+            "concise", ["--force"], True, 2, True, id="concise-incomplete-forced"
+        ),
+    ],
+)
+def test_main_circular_dependency_reporting_and_exit_codes(
+    monkeypatch,
+    capsys,
+    output_format,
+    extra_args,
+    incomplete,
+    expected_exit,
+    show_cycle,
+):
+    cycle = {
+        "rule_id": "SKY-CIRC",
+        "kind": "circular_dependency",
+        "category": "ARCHITECTURE",
+        "severity": "MEDIUM",
+        "file": "pkg/left.py",
+        "line": 4,
+        "message": "Circular dependency: pkg.left → pkg.right → pkg.left",
+        "cycle": ["pkg.left", "pkg.right"],
+        "cycle_length": 2,
+        "suggested_break": "pkg.left → pkg.right",
+    }
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "circular_dependencies": [cycle],
+    }
+    if incomplete:
+        result["analysis_errors"] = [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "kind": "syntax_error",
+                "severity": "HIGH",
+                "file": "broken.py",
+                "line": 1,
+                "message": "invalid syntax",
+            }
+        ]
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--format",
+            output_format,
+            "--no-provenance",
+            "--no-upload",
+            *extra_args,
+        ],
+    )
+    terminal_output = StringIO()
+    fake_logger = Mock()
+    fake_logger.console = Console(
+        file=terminal_output,
+        width=160,
+        force_terminal=False,
+        theme=cli._skylos_console_theme(),
+    )
+    exit_code = 0
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={"gate": {"max_quality": 0}}),
+        patch("skylos.cli.print_badge"),
+    ):
+        try:
+            cli.main()
+        except SystemExit as exc:
+            exit_code = exc.code
+
+    output = capsys.readouterr().out + terminal_output.getvalue()
+    assert exit_code == expected_exit
+    if output_format == "json":
+        rendered = json.loads(output)
+        assert rendered.get("circular_dependencies", []) == (
+            [cycle] if show_cycle else []
+        )
+    elif show_cycle:
+        if output_format == "rich":
+            assert "Circular Dependencies" in output
+            assert "pkg.left → pkg.right → pkg.left" in output
+        else:
+            assert output.count("SKY-CIRC") == 1
+            assert "pkg/left.py:4" in output
+            assert cycle["message"] in output
+    else:
+        assert "SKY-CIRC" not in output
+        assert cycle["message"] not in output
+    if incomplete:
+        assert "SKY-ANALYSIS-INCOMPLETE" in output
+
+
+def test_concise_circular_dependency_without_location_remains_visible():
+    result = {
+        "circular_dependencies": [
+            {
+                "rule_id": "SKY-CIRC",
+                "message": "Circular dependency: left → right → left",
+            }
+        ]
+    }
+
+    assert cli._format_concise_results(result) == (
+        "?:1  SKY-CIRC  Circular dependency: left → right → left\n"
+    )
+
+
 def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
     result = {
         "analysis_summary": {

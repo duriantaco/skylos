@@ -254,6 +254,16 @@ Finding types:
 | D335 | MEDIUM | Edge service missing sandboxing | systemd |
 | D336 | HIGH | Broad edge service privilege | systemd |
 
+For GitHub Actions, D290 and D295 point to the relevant trigger or job's
+`runs-on` declaration. Their inline ignores apply to that line or an immediately
+preceding standalone YAML comment, not to other declarations or text inside
+quoted values and script blocks.
+
+D295 reports at HIGH severity. Runner-label order does not affect the check.
+Simple literal matrices are exempt only when every possible runner value can be
+proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
+matrix combinations that cannot be resolved conservatively still produce a warning.
+
 ## Kubernetes Deployment Exposure (SKY-DEP)
 
 Skylos correlates resources in one rendered multi-document Kubernetes file.
@@ -451,11 +461,36 @@ use the `SKY-A` prefix.
 | A103 | HIGH | CI permission expansion | GitHub Actions |
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | A105 | HIGH | Contract route guard missing | Python contract verify |
+| A106 | LOW | Suspicious dependency version bump | Python manifests and lock files in Git changes |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
+
+SKY-D224 rejects explicit keyword arguments when the installed API has a known
+signature that takes no parameters. Keyword checks are skipped when the
+signature is unavailable. APIs accepting `**kwargs` remain supported, and
+dynamic `**payload` contents are not inferred.
+
+SKY-A106 warns when a dependency version change exactly matches the project's
+own old and new versions in the same change. For example, a release from
+`3.4.1` to `3.4.2` that also changes `inquirer==3.4.1` to `inquirer==3.4.2`
+deserves a check. This is an advisory, not proof that the dependency version is
+invalid. It does not query package registries or change dependencies.
+
+Run `skylos . --ai-defects --diff-base origin/main --format json` for committed
+PR changes, or omit `--diff-base` to compare local files with HEAD. PR checks
+compare the merge base with HEAD and do not include uncommitted edits. Existing
+gate thresholds still apply; the finding recommends review rather than blocking.
+
+The initial rule supports literal project versions in `pyproject.toml` and
+`setup.py`, dependency declarations in those files and requirements files, and
+package versions in `uv.lock` and `poetry.lock`. It includes version exclusions
+such as `!=3.4.1`, skips project self references, and keeps nested projects
+separate. Dynamic project versions and other manifest formats are not inferred.
+To disable this advisory, add `SKY-A106` to `[tool.skylos].ignore`. This rule
+uses project ignores, not inline comments, consistently across supported files.
 
 ## Logic and AI-Code Mistakes (SKY-L)
 
@@ -500,7 +535,7 @@ use the `SKY-A` prefix.
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
 | Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
-| Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed nested lock order |
+| Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed lock order in nested or compound `with` / `async with` statements; includes non-adjacent pairs |
 | Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
 | Q406 | HIGH | Async callback passed to built-in `Array.forEach` | TS/JS | callback promises are not awaited |

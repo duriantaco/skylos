@@ -590,6 +590,45 @@ def _is_precommit_contract_evidence(path: Path) -> bool:
     )
 
 
+def _is_precommit_dependency_metadata(path: Path) -> bool:
+    from skylos.rules.ai_defect.dependency_version_bump import is_supported_path
+
+    return is_supported_path(path.as_posix())
+
+
+def _replace_precommit_dependency_bumps(
+    result, project_root, changed_files, exclude_folders, project_config
+):
+    # The ordinary pass may use a worktree or a non-Git staged snapshot.
+    # Replace this cross-file signal with one consistent HEAD-to-index pass.
+    findings = [
+        finding
+        for finding in result.get("ai_defects", [])
+        if finding.get("rule_id") != "SKY-A106"
+    ]
+    if changed_files and "SKY-A106" not in project_config.get("ignore", []):
+        try:
+            from skylos.rules.ai_defect.dependency_bump_scan import (
+                scan_mirrored_dependency_bumps,
+            )
+
+            findings.extend(
+                scan_mirrored_dependency_bumps(
+                    project_root,
+                    scan_paths=project_root,
+                    changed_files=changed_files,
+                    exclude_folders=exclude_folders,
+                    staged=True,
+                )
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logging.getLogger("Skylos").error(
+                    "Staged dependency bump scan failed", exc_info=True
+                )
+    result["ai_defects"] = findings
+
+
 def _precommit_finding_targets_report_file(
     finding: dict, project_root: Path, report_targets: set[str]
 ) -> bool:
@@ -2291,6 +2330,7 @@ CONCISE_FINDING_CATEGORIES = (
     ("reliability", "reliability issue"),
     ("ai_defects", "AI defect"),
     ("quality", "quality issue"),
+    ("circular_dependencies", "circular dependency"),
     ("secrets", "secret"),
     ("custom_rules", "custom rule"),
     ("dependency_vulnerabilities", "dependency vulnerability"),
@@ -2802,7 +2842,18 @@ def _run_pre_analysis_steps(args, project_root, console):
         custom_rules_data=custom_rules_data,
         changed_files=changed_files,
         trace_file=trace_file_for_analysis,
+        dependency_bump_diff_base=_dependency_bump_cli_diff_base(args),
     )
+
+
+def _dependency_bump_cli_diff_base(args):
+    # Do not change other detectors' existing --diff/--diff-base semantics.
+    base = getattr(args, "diff_base", None) or getattr(args, "diff", None)
+    if base == "auto":
+        base = os.environ.get("GITHUB_BASE_REF", "origin/main")
+        if base and not base.startswith("origin/"):
+            base = f"origin/{base}"
+    return base
 
 
 def _add_agent_model_arg(parser, *, default=DEFAULT_AGENT_MODEL):
@@ -3668,6 +3719,7 @@ def main() -> None:
                 staged_source_files = []
                 staged_config_files = []
                 staged_contract_files = []
+                staged_dependency_files = []
                 staged_secret_only_files = {
                     "test": [],
                     "benchmark": [],
@@ -3677,6 +3729,9 @@ def main() -> None:
                 skipped_staged_files = 0
                 for relpath in staged_candidates:
                     relpath_obj = Path(relpath)
+                    if _is_precommit_dependency_metadata(relpath_obj):
+                        staged_dependency_files.append(relpath)
+                        report_targets.add(str((project_root / relpath).resolve()))
                     if relpath_obj.suffix.lower() in source_exts:
                         kind = get_non_library_dir_kind(relpath_obj, project_root)
                         if kind in staged_secret_only_files:
@@ -3700,6 +3755,8 @@ def main() -> None:
                         abs_path = str((project_root / relpath).resolve())
                         report_targets.add(abs_path)
                         continue
+                    if relpath in staged_dependency_files:
+                        continue
                     skipped_staged_files += 1
 
                 if not report_targets:
@@ -3719,14 +3776,17 @@ def main() -> None:
                         )
                     sys.exit(0)
 
-                staged_changed_files = (
-                    staged_source_files
-                    + staged_config_files
-                    + [
-                        relpath
-                        for paths in staged_secret_only_files.values()
-                        for relpath in paths
-                    ]
+                staged_changed_files = list(
+                    dict.fromkeys(
+                        staged_source_files
+                        + staged_config_files
+                        + staged_dependency_files
+                        + [
+                            relpath
+                            for paths in staged_secret_only_files.values()
+                            for relpath in paths
+                        ]
+                    )
                 )
                 changed_ranges = _get_cached_changed_line_ranges(
                     project_root,
@@ -3750,12 +3810,13 @@ def main() -> None:
                         path.suffix.lower() in source_exts
                         or _is_config_candidate(path)
                         or _is_precommit_contract_evidence(path)
+                        or _is_precommit_dependency_metadata(path)
                     )
 
                 has_static_analysis_targets = bool(
                     staged_source_files or staged_contract_files
                 )
-                if has_static_analysis_targets:
+                if has_static_analysis_targets or staged_dependency_files:
                     unstaged_relevant = _list_dirty_relevant_paths(
                         project_root, _is_relevant_analysis_path
                     )
@@ -3784,9 +3845,10 @@ def main() -> None:
                 else:
                     analysis_scan_target = analysis_source_paths
 
+                project_config = load_config(analysis_root)
                 exclude_folders = parse_exclude_folders(
                     use_defaults=True,
-                    config_exclude_folders=load_config(analysis_root).get("exclude"),
+                    config_exclude_folders=project_config.get("exclude"),
                 )
                 baseline = load_baseline(project_root)
                 analyzer_logger = logging.getLogger("Skylos")
@@ -3799,6 +3861,13 @@ def main() -> None:
                             scope_parts.append(f"{len(staged_source_files)} source")
                         if staged_config_files:
                             scope_parts.append(f"{len(staged_config_files)} config")
+                        metadata_only_files = set(staged_dependency_files) - set(
+                            staged_source_files + staged_config_files
+                        )
+                        if metadata_only_files:
+                            scope_parts.append(
+                                f"{len(metadata_only_files)} dependency metadata"
+                            )
                         for kind in ("test", "benchmark", "example"):
                             paths = staged_secret_only_files[kind]
                             if paths:
@@ -3826,11 +3895,14 @@ def main() -> None:
                         mode_note = (
                             " Running secrets check only."
                             if not has_static_analysis_targets
+                            and not staged_dependency_files
                             else ""
                         )
                         scope_note = (
                             "Checks security, secrets, and high-signal quality regressions on production source/config."
                             if has_static_analysis_targets
+                            else "Checks secrets and dependency-version advisories."
+                            if staged_dependency_files
                             else "Checks secrets only."
                         )
                         console.print(
@@ -3919,6 +3991,13 @@ def main() -> None:
                         result = _remap_precommit_result_files(
                             result, analysis_root, project_root
                         )
+                    _replace_precommit_dependency_bumps(
+                        result,
+                        project_root,
+                        staged_dependency_files,
+                        list(exclude_folders),
+                        project_config,
+                    )
                 finally:
                     analyzer_logger.setLevel(analyzer_logger_level)
                     if snapshot_dir is not None:

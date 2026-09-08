@@ -11,6 +11,8 @@ import subprocess
 import traceback
 from pathlib import Path
 from collections import Counter, defaultdict
+from collections.abc import Callable
+from typing import TypeVar
 
 try:
     from skylos_fast import discover_files as _fast_discover
@@ -41,6 +43,11 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     find_unused_ts_exports,
 )
+from skylos.analysis.ast_cache import (
+    MODE_IGNORE,
+    load_python_module,
+    releases_python_ast_cache,
+)
 from skylos.visitors.languages.go import clear_go_cache
 
 from skylos.rules.secrets import (
@@ -58,6 +65,7 @@ from skylos.core.file_discovery import (
     find_git_root,
     should_exclude_path,
 )
+from skylos.core.git_context import GitContext
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
 from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
@@ -120,6 +128,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_wildcard_edges",
     "_ts_importers_of",
     "_ts_demoted_exports",
+    "_browser_script_entry_files",
 )
 
 
@@ -285,6 +294,25 @@ def _relative_changed_file(root, changed_file):
         return str(changed_path)
 
 
+def _scoped_changed_paths(root, scan_paths, changed_files):
+    """Keep changed paths inside the requested files/directories, even if deleted."""
+    targets = scan_paths if isinstance(scan_paths, (list, tuple)) else [scan_paths]
+    targets = [Path(target).resolve() for target in targets]
+    selected = set()
+    for changed_file in changed_files or ():
+        candidate = Path(changed_file)
+        candidate = (
+            candidate if candidate.is_absolute() else Path(root) / candidate
+        ).resolve()
+        for target in targets:
+            if candidate == target or (
+                target.is_dir() and candidate.is_relative_to(target)
+            ):
+                selected.add(candidate)
+                break
+    return selected
+
+
 def _diff_result_has_text(diff_result):
     if diff_result.returncode != 0:
         return False
@@ -369,6 +397,32 @@ def _scan_ai_defect_diff_signals(
                 all_ai_defects=all_ai_defects,
                 all_suppressed=all_suppressed,
             )
+
+
+def _dependency_bump_findings(
+    root, scan_paths, changed_files, excludes, project_ignore, diff_base=None
+):
+    if "SKY-A106" in project_ignore:
+        return []
+    try:
+        from skylos.rules.ai_defect.dependency_bump_scan import (
+            scan_mirrored_dependency_bumps,
+        )
+        from skylos.security.contracts import resolve_diff_base_ref
+
+        return scan_mirrored_dependency_bumps(
+            root,
+            scan_paths=scan_paths,
+            changed_files=changed_files,
+            exclude_folders=excludes,
+            diff_base=diff_base
+            if diff_base is not None
+            else resolve_diff_base_ref(root),
+        )
+    except Exception:
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error("Dependency bump advisory scan failed", exc_info=True)
+        return []
 
 
 MAX_SECRET_CONFIG_BYTES = 8_000_000
@@ -1108,14 +1162,63 @@ def _changed_definition_keys(
 
     root = Path(project_root)
     changed_paths = {
-        _canonical_analysis_path(changed_file, root)
-        for changed_file in changed_files
+        _canonical_analysis_path(changed_file, root) for changed_file in changed_files
     }
     return frozenset(
         key
         for key, definition in definitions.items()
         if _canonical_analysis_path(definition.filename, root) in changed_paths
     )
+
+
+def _suppress_django_admin_stubs(empty_files, file_contexts, project_root) -> None:
+    """Keep conventional empty app admin modules in Django projects."""
+    if _scan_has_top_level_python_module(project_root, file_contexts, "django"):
+        return
+    uses_django = any(
+        definition.type == "import"
+        and (definition.name == "django" or definition.name.startswith("django."))
+        for definitions, _tests, _frameworks, _file, _mod, _cfg in file_contexts
+        for definition in definitions
+    )
+    if not uses_django:
+        return
+    scanned_files = {
+        Path(file).resolve()
+        for _defs, _tests, _frameworks, file, _mod, _cfg in file_contexts
+    }
+    empty_files[:] = [
+        finding
+        for finding in empty_files
+        if not (
+            finding.get("rule_id") == "SKY-E002"
+            and Path(str(finding.get("file", ""))).name == "admin.py"
+            and Path(str(finding.get("file", ""))).resolve().parent / "__init__.py"
+            in scanned_files
+        )
+    ]
+
+
+def _scan_has_top_level_python_module(project_root, file_contexts, module_name) -> bool:
+    root = Path(project_root).resolve()
+    for _defs, _tests, _frameworks, file, _mod, _cfg in file_contexts:
+        try:
+            parts = Path(file).resolve().relative_to(root).parts
+        except (OSError, ValueError):
+            continue
+        if not parts:
+            continue
+        if root.name == module_name and parts[0] == "__init__.py":
+            return True
+        if parts[0] in {module_name, f"{module_name}.py"}:
+            return True
+        if (
+            parts[0] in _PYTHON_SOURCE_ROOT_NAMES
+            and len(parts) > 1
+            and parts[1] in {module_name, f"{module_name}.py"}
+        ):
+            return True
+    return False
 
 
 def _collect_grep_verify_candidates(
@@ -1225,21 +1328,34 @@ def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> N
 
 
 _definition_name = attrgetter("name")
+_QualifiedCandidate = TypeVar("_QualifiedCandidate")
 
 
-def _qualified_candidates(definitions: list, qualifier: str) -> list:
-    """Definitions whose dotted name lives under ``qualifier.``, capped at two.
+def _qualified_candidates(
+    definitions: list[_QualifiedCandidate],
+    qualifier: str,
+    *,
+    key: Callable[[_QualifiedCandidate], str] = _definition_name,
+    limit: int | None = 2,
+) -> list[_QualifiedCandidate]:
+    """Return the values whose dotted ``key`` lives under ``qualifier``.
 
-    ``definitions`` must be sorted by ``name``. Callers only distinguish
-    zero / one / more-than-one, so the slice stops at two matches.
+    ``definitions`` must already be sorted by ``key``; the lookup is a
+    bisect, so an unsorted input silently returns the wrong slice.
+
+    ``limit`` caps the number of matches returned. The default of two
+    serves _mark_refs, which only distinguishes zero / one / more-than-one;
+    pass ``None`` when every match matters.
     """
     lower = f"{qualifier}."
     # '/' is the code point right after '.', so it bounds every dotted
     # descendant without scanning the bucket.
     upper = f"{qualifier}/"
-    start = bisect_left(definitions, lower, key=_definition_name)
-    stop = bisect_left(definitions, upper, start, key=_definition_name)
-    return definitions[start : min(stop, start + 2)]
+    start = bisect_left(definitions, lower, key=key)
+    stop = bisect_left(definitions, upper, start, key=key)
+    if limit is not None:
+        stop = min(stop, start + limit)
+    return definitions[start:stop]
 
 
 class Skylos:
@@ -1260,14 +1376,23 @@ class Skylos:
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
 
-        for source_root_name in _PYTHON_SOURCE_ROOT_NAMES:
-            if source_root_name not in p:
+        # Strip the rightmost source-root directory (src/lib/python) so the
+        # resulting module name is deterministic regardless of PYTHONHASHSEED.
+        # Scanning right-to-left guarantees a path like
+        # mcp-servers/python/data_analysis_server/src/.../plots.py always
+        # resolves to data_analysis_server... instead of randomly keeping the
+        # first "python" or "src" segment depending on set iteration order.
+        source_root_idx = None
+        for idx in range(len(p) - 1, -1, -1):
+            if p[idx] not in _PYTHON_SOURCE_ROOT_NAMES:
                 continue
-            source_root_idx = p.index(source_root_name)
-            source_root_path = root / "/".join(p[: source_root_idx + 1])
+            source_root_path = root / "/".join(p[: idx + 1])
             if not (source_root_path / "__init__.py").exists():
-                p = p[source_root_idx + 1 :]
+                source_root_idx = idx
                 break
+
+        if source_root_idx is not None:
+            p = p[source_root_idx + 1 :]
 
         for suffix in PYTHON_SIGNATURE_SUFFIXES:
             if p[-1].endswith(suffix):
@@ -1365,10 +1490,6 @@ class Skylos:
             return [], Path(os.path.abspath(raw_path)).parent.resolve()
         p = raw_path.resolve()
 
-        if p.is_file():
-            return [p], p.parent
-
-        root = p
         exts = {
             *PYTHON_SIGNATURE_SUFFIXES,
             ".go",
@@ -1381,6 +1502,13 @@ class Skylos:
             *(_KOTLIN_SOURCE_EXTS),
             *(_SHELL_SOURCE_EXTS),
         }
+        if p.is_file():
+            # Explicit paths need the same source filter as directory scans.
+            # Config files also have a worker adapter for the later repo checks.
+            supported = p.name.lower().endswith((*exts, *_SECRET_CONFIG_SUFFIXES))
+            return ([p] if supported else []), p.parent
+
+        root = p
         ext_list = [
             "py",
             "pyi",
@@ -1437,7 +1565,8 @@ class Skylos:
                 all_files = [
                     Path(f)
                     for f in rust_files
-                    if not should_exclude_path(Path(f), root, exclude_folders)
+                    if Path(f).suffix.lower() in exts
+                    and not should_exclude_path(Path(f), root, exclude_folders)
                 ]
             except Exception:
                 all_files = discover_source_files(
@@ -1479,13 +1608,13 @@ class Skylos:
 
     def _mark_exports(self):
         explicit_exports_by_file = getattr(self, "_explicit_all_exports_by_file", {})
-        source_keys = {
-            id(definition): _source_file_key(getattr(definition, "filename", None))
-            for definition in self.defs.values()
-        }
+        source_keys = {}
+        non_import_by_name = defaultdict(list)
+        non_import_by_simple = defaultdict(list)
 
         for definition in self.defs.values():
-            source_key = source_keys[id(definition)]
+            source_key = _source_file_key(getattr(definition, "filename", None))
+            source_keys[id(definition)] = source_key
             has_explicit_all = source_key in explicit_exports_by_file
             if (
                 definition.in_init
@@ -1493,18 +1622,17 @@ class Skylos:
                 and not definition.simple_name.startswith("_")
             ):
                 definition.is_exported = True
-
-        for def_obj in self.defs.values():
-            if str(def_obj.filename).endswith(_TS_JS_SOURCE_EXTS):
-                continue
-            source_key = source_keys[id(def_obj)]
-            export_names = explicit_exports_by_file.get(source_key)
-            if (
-                export_names is not None
-                and _definition_binding_name(def_obj) in export_names
-            ):
-                def_obj.is_exported = True
-                def_obj.references = max(def_obj.references, 1)
+            if not str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
+                export_names = explicit_exports_by_file.get(source_key)
+                if (
+                    export_names is not None
+                    and _definition_binding_name(definition) in export_names
+                ):
+                    definition.is_exported = True
+                    definition.references = max(definition.references, 1)
+            if definition.type != "import":
+                non_import_by_name[definition.name].append(definition)
+                non_import_by_simple[definition.simple_name].append(definition)
 
         # Keep direct callers and older worker tuples compatible while matching
         # each export to its own module instead of every same-named definition.
@@ -1516,13 +1644,6 @@ class Skylos:
                     continue
                 def_obj.is_exported = True
                 def_obj.references = max(def_obj.references, 1)
-
-        non_import_by_name = defaultdict(list)
-        non_import_by_simple = defaultdict(list)
-        for d in self.defs.values():
-            if d.type != "import":
-                non_import_by_name[d.name].append(d)
-                non_import_by_simple[d.simple_name].append(d)
 
         def resolve_reexport_target(target_name):
             exact = non_import_by_name.get(target_name, ())
@@ -1577,66 +1698,73 @@ class Skylos:
 
         # propogate exports to methods of exported classes
         exported_classes = set()
-        for def_name, def_obj in self.defs.items():
+        for def_obj in self.defs.values():
             if def_obj.type == "class" and def_obj.is_exported:
                 exported_classes.add(def_obj.name)
 
-        if exported_classes:
-            for def_name, def_obj in self.defs.items():
-                if def_obj.type not in ("function", "method"):
+        if not exported_classes:
+            return
+
+        for def_obj in self.defs.values():
+            if def_obj.type not in ("function", "method"):
+                continue
+            if str(def_obj.filename).endswith(
+                (".java",) + _CSHARP_SOURCE_EXTS + _KOTLIN_SOURCE_EXTS
+            ):
+                continue
+            if "." not in def_obj.name:
+                continue
+            parent = def_obj.name.rsplit(".", 1)[0]
+            if parent in exported_classes and not def_obj.simple_name.startswith("_"):
+                def_obj.is_exported = True
+                def_obj.references = max(def_obj.references, 1)
+
+        if not hasattr(self, "_global_type_map"):
+            return
+
+        # reverse lookup: simple class name -> set of qualified def names
+        class_by_simple: dict[str, set[str]] = defaultdict(set)
+        for def_obj in self.defs.values():
+            if def_obj.type == "class":
+                class_by_simple[def_obj.simple_name].add(def_obj.name)
+
+        queue = list(exported_classes)
+        visited = set(exported_classes)
+        transitive_classes: set[str] = set()
+        global_type_keys = sorted(self._global_type_map)
+
+        while queue:
+            cls_name = queue.pop()
+            for attr_key in _qualified_candidates(
+                global_type_keys,
+                cls_name,
+                key=str,
+                limit=None,
+            ):
+                type_name = self._global_type_map[attr_key]
+                for candidate in class_by_simple.get(type_name, set()):
+                    if candidate not in visited:
+                        visited.add(candidate)
+                        transitive_classes.add(candidate)
+                        queue.append(candidate)
+
+        if not transitive_classes:
+            return
+
+        for def_obj in self.defs.values():
+            target_name = def_obj.name
+            if def_obj.type == "class" and target_name in transitive_classes:
+                def_obj.is_exported = True
+                def_obj.references = max(def_obj.references, 1)
+            elif def_obj.type in ("function", "method") and "." in target_name:
+                if str(def_obj.filename).endswith(".java"):
                     continue
-                if str(def_obj.filename).endswith(
-                    (".java",) + _CSHARP_SOURCE_EXTS + _KOTLIN_SOURCE_EXTS
-                ):
-                    continue
-                if "." not in def_obj.name:
-                    continue
-                parent = def_obj.name.rsplit(".", 1)[0]
-                if parent in exported_classes and not def_obj.simple_name.startswith(
+                parent = target_name.rsplit(".", 1)[0]
+                if parent in transitive_classes and not def_obj.simple_name.startswith(
                     "_"
                 ):
                     def_obj.is_exported = True
                     def_obj.references = max(def_obj.references, 1)
-
-        if exported_classes and hasattr(self, "_global_type_map"):
-            # reverse lookup: simple class name -> set of qualified def names
-            class_by_simple: dict[str, set[str]] = defaultdict(set)
-            for def_name, def_obj in self.defs.items():
-                if def_obj.type == "class":
-                    class_by_simple[def_obj.simple_name].add(def_obj.name)
-
-            queue = list(exported_classes)
-            visited = set(exported_classes)
-            transitive_classes: set[str] = set()
-
-            while queue:
-                cls_name = queue.pop()
-                prefix = cls_name + "."
-                for attr_key, type_name in self._global_type_map.items():
-                    if not attr_key.startswith(prefix):
-                        continue
-                    candidates = class_by_simple.get(type_name, set())
-                    for candidate in candidates:
-                        if candidate not in visited:
-                            visited.add(candidate)
-                            transitive_classes.add(candidate)
-                            queue.append(candidate)
-
-            if transitive_classes:
-                for def_name, def_obj in self.defs.items():
-                    if def_obj.type == "class" and def_obj.name in transitive_classes:
-                        def_obj.is_exported = True
-                        def_obj.references = max(def_obj.references, 1)
-                    elif def_obj.type in ("function", "method") and "." in def_obj.name:
-                        if str(def_obj.filename).endswith(".java"):
-                            continue
-                        parent = def_obj.name.rsplit(".", 1)[0]
-                        if (
-                            parent in transitive_classes
-                            and not def_obj.simple_name.startswith("_")
-                        ):
-                            def_obj.is_exported = True
-                            def_obj.references = max(def_obj.references, 1)
 
     def _build_ts_import_graph(self, ts_raw_imports: dict, monorepo_resolver=None):
         (
@@ -1672,6 +1800,7 @@ class Skylos:
             getattr(self, "_ts_wildcard_edges", {}),
             project_root=str(self._project_root),
             workspace_inventory=workspace_inventory,
+            browser_entry_points=getattr(self, "_browser_script_entry_files", ()),
         )
 
     def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
@@ -1946,6 +2075,20 @@ class Skylos:
                 )
         except Exception:
             self._dead_code_liveness_report = None
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error(traceback.format_exc())
+
+    def _apply_external_protocol_liveness(self, files):
+        report = getattr(self, "_dead_code_liveness_report", None)
+        if report is None:
+            return
+        try:
+            from skylos.deadcode.liveness import apply_external_protocol_liveness
+
+            apply_external_protocol_liveness(
+                self.defs, self._project_root, files, report
+            )
+        except Exception:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error(traceback.format_exc())
 
@@ -2761,6 +2904,7 @@ class Skylos:
             analysis_errors=analysis_errors,
         )
 
+    @releases_python_ast_cache
     def analyze(
         self,
         path,
@@ -2782,6 +2926,7 @@ class Skylos:
         project_config_overrides=None,
         required_config_rules=None,
         grep_cache=True,
+        dependency_bump_diff_base=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -2888,7 +3033,7 @@ class Skylos:
         project_ignore = set(project_cfg.get("ignore", []))
 
         if not files:
-            logger.warning(f"No Python files found in {path}")
+            logger.warning(f"No supported source files found in {path}")
             no_source_scan_target, no_source_manifest_root = _no_source_danger_targets(
                 _first,
                 Path(root),
@@ -3014,6 +3159,19 @@ class Skylos:
                         result["analysis_summary"]["reliability_count"] = len(
                             reliability_findings
                         )
+                if enable_ai_defects and not first_is_symlink:
+                    ai_defect_findings.extend(
+                        _dependency_bump_findings(
+                            project_root,
+                            path,
+                            changed_files,
+                            exclude_folders
+                            if exclude_folders is not None
+                            else project_cfg.get("exclude", []),
+                            project_ignore,
+                            diff_base=dependency_bump_diff_base,
+                        )
+                    )
                 if ai_defect_findings:
                     result["ai_defects"] = ai_defect_findings
                     result["analysis_summary"]["ai_defects_count"] = len(
@@ -3524,95 +3682,106 @@ class Skylos:
                     }
                 )
 
+        git_context = GitContext.from_path(root)
         if changed_files is None and (
             enable_quality or enable_danger or enable_ai_defects
         ):
             try:
-                import subprocess
-
-                diff_result = subprocess.run(
-                    ["git", "diff", "--name-only", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    cwd=str(root),
-                )
-                if diff_result.returncode == 0 and diff_result.stdout.strip():
-                    changed_files = set()
-                    for line in diff_result.stdout.strip().splitlines():
-                        full_path = str((root / line).resolve())
-                        changed_files.add(full_path)
-                staged_result = subprocess.run(
-                    ["git", "diff", "--name-only", "--cached"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    cwd=str(root),
-                )
-                if staged_result.returncode == 0 and staged_result.stdout.strip():
-                    if changed_files is None:
-                        changed_files = set()
-                    for line in staged_result.stdout.strip().splitlines():
-                        full_path = str((root / line).resolve())
-                        changed_files.add(full_path)
+                detected_changes = set()
+                for revision in ("HEAD", "--cached"):
+                    diff_result = git_context.run(
+                        "diff", "--name-only", "--no-relative", "-z", revision
+                    )
+                    if diff_result.returncode == 0:
+                        detected_changes.update(
+                            str((git_context.root / name).resolve())
+                            for name in diff_result.stdout.split("\0")
+                            if name
+                        )
+                if detected_changes:
+                    changed_files = {
+                        str(candidate)
+                        for candidate in _scoped_changed_paths(
+                            root, path, detected_changes
+                        )
+                    }
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Auto-detect git changes failed", exc_info=True)
 
-        if changed_files and enable_quality and "SKY-L021" not in project_ignore:
+        # CLI callers already resolved config/default excludes and --include.
+        # Direct API callers without an effective list still need config excludes.
+        regression_excludes = (
+            exclude_folders
+            if exclude_folders is not None
+            else (project_cfg.get("exclude") or [])
+        )
+        scoped_changes = {
+            candidate
+            for candidate in _scoped_changed_paths(root, path, changed_files)
+            if not should_exclude_path(candidate, project_root, regression_excludes)
+        }
+        # Generic control-removal heuristics only apply to surviving source
+        # files. Explicit contracts can also describe deleted source files.
+        source_regression_files = (
+            scoped_changes.intersection(Path(file).resolve() for file in files)
+            if enable_quality and scoped_changes
+            else set()
+        )
+        if (
+            source_regression_files
+            and enable_quality
+            and "SKY-L021" not in project_ignore
+        ):
             from skylos.rules.quality.regression import detect_security_regressions
             from skylos.security.contracts import resolve_diff_base_ref
 
             try:
-                import subprocess
-
                 diff_base = resolve_diff_base_ref(root)
 
-                for cf in changed_files:
-                    rel_cf = (
-                        str(Path(cf).resolve().relative_to(root))
-                        if Path(cf).is_absolute()
-                        else str(cf)
-                    )
+                for cf in sorted(source_regression_files):
+                    rel_cf = git_context.relative_path(cf)
+                    if rel_cf is None:
+                        continue
                     diff_cmd = (
-                        ["git", "diff", f"{diff_base}...HEAD", "--", rel_cf]
+                        ["diff", f"{diff_base}...HEAD"]
                         if diff_base
-                        else ["git", "diff", "HEAD", "--", rel_cf]
+                        else ["diff", "HEAD"]
                     )
-                    diff_result = subprocess.run(
-                        diff_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        cwd=str(root),
-                    )
+                    diff_options = [
+                        "--no-relative",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--",
+                        f":(literal){rel_cf}",
+                    ]
+                    diff_result = git_context.run(*diff_cmd, *diff_options)
                     if diff_result.returncode != 0 and diff_base:
-                        diff_result = subprocess.run(
-                            ["git", "diff", "HEAD", "--", rel_cf],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            cwd=str(root),
-                        )
+                        diff_result = git_context.run("diff", "HEAD", *diff_options)
                     if diff_result.returncode == 0 and diff_result.stdout.strip():
                         reg_findings = detect_security_regressions(
                             diff_result.stdout,
-                            cf,
+                            str(cf),
                         )
                         all_quality.extend(reg_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 
-        if changed_files and enable_danger and "SKY-SC001" not in project_ignore:
+        contract_regression_files = {str(candidate) for candidate in scoped_changes}
+        if (
+            contract_regression_files
+            and enable_danger
+            and "SKY-SC001" not in project_ignore
+        ):
             from skylos.security.contracts import detect_security_contract_regressions
 
             try:
                 all_dangers.extend(
                     detect_security_contract_regressions(
-                        root,
+                        project_root,
                         project_cfg,
-                        changed_files=changed_files,
+                        changed_files=contract_regression_files,
                     )
                 )
             except Exception:
@@ -3620,6 +3789,8 @@ class Skylos:
                     logger.error("Security contract scan failed", exc_info=True)
 
         self.pattern_trackers = pattern_trackers
+
+        _suppress_django_admin_stubs(empty_files, file_contexts, root)
 
         self._global_abc_classes = set()
         self._global_protocol_classes = set()
@@ -4085,23 +4256,48 @@ class Skylos:
                         fallback_rules.append(
                             PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)
                         )
-                    for py_file in _ai_py_files:
-                        source = Path(py_file).read_text(
-                            encoding="utf-8",
-                            errors="ignore",
-                        )
-                        tree = ast.parse(source)
-                        linter = LinterVisitor(fallback_rules, str(py_file))
-                        linter.context["source"] = source
-                        linter.visit(tree)
-                        _extend_unsuppressed_ai_defect_findings(
-                            linter.findings,
-                            project_ignore=project_ignore,
-                            per_file_ignore_lines=per_file_ignore_lines,
-                            per_file_ignore_rules=per_file_ignore_rules,
-                            all_ai_defects=all_ai_defects,
-                            all_suppressed=all_suppressed,
-                        )
+                    reported_error_files = {
+                        error.get("file") for error in analysis_errors
+                    }
+                    fallback_files = _ai_py_files if fallback_rules else ()
+                    for py_file in fallback_files:
+                        try:
+                            source, tree = load_python_module(
+                                Path(py_file), MODE_IGNORE
+                            )
+                            if tree is None:
+                                if str(py_file) in reported_error_files:
+                                    continue
+                                # Cached failures omit exception details. Recover
+                                # the diagnostic only if no worker reported it.
+                                if source is None:
+                                    source = Path(py_file).read_text(
+                                        encoding="utf-8", errors="ignore"
+                                    )
+                                tree = ast.parse(source, filename=str(py_file))
+                            linter = LinterVisitor(fallback_rules, str(py_file))
+                            linter.context["source"] = source
+                            linter.visit(tree)
+                            _extend_unsuppressed_ai_defect_findings(
+                                linter.findings,
+                                project_ignore=project_ignore,
+                                per_file_ignore_lines=per_file_ignore_lines,
+                                per_file_ignore_rules=per_file_ignore_rules,
+                                all_ai_defects=all_ai_defects,
+                                all_suppressed=all_suppressed,
+                            )
+                        except Exception as exc:
+                            # The primary worker may already have reported this file.
+                            if str(py_file) not in reported_error_files:
+                                analysis_errors.append(
+                                    _analysis_error_payload(py_file, exc)
+                                )
+                                reported_error_files.add(str(py_file))
+                            logger.debug(
+                                "Phantom reference scan failed for %s",
+                                py_file,
+                                exc_info=True,
+                            )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
@@ -4277,6 +4473,20 @@ class Skylos:
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Test impact scan failed", exc_info=True)
+
+            if not first_is_symlink:
+                # This cross-file advisory uses project ignores. Worktree
+                # line ignores must not suppress a committed PR snapshot.
+                all_ai_defects.extend(
+                    _dependency_bump_findings(
+                        root,
+                        path,
+                        requested_changed_files,
+                        regression_excludes,
+                        project_ignore,
+                        diff_base=dependency_bump_diff_base,
+                    )
+                )
 
             if changed_files and (
                 "SKY-A103" not in project_ignore or "SKY-A104" not in project_ignore
@@ -4456,6 +4666,17 @@ class Skylos:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error("Java FXML liveness scan failed", exc_info=True)
 
+        self._browser_script_entry_files = set()
+        try:
+            from skylos.deadcode.browser_refs import collect_browser_script_entry_files
+
+            self._browser_script_entry_files = collect_browser_script_entry_files(
+                Path(root), files, exclude_folders=exclude_folders
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Browser script entry scan failed", exc_info=True)
+
         try:
             from skylos.deadcode.browser_refs import (
                 collect_browser_event_handler_refs,
@@ -4525,6 +4746,9 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
+        # Resolve library callbacks from surviving callers, so speculative
+        # callback cycles cannot become roots or consume ordinary references.
+        self._apply_external_protocol_liveness(files)
         self._suppress_standalone_orm_models()
 
         grep_verify_report = {
@@ -4648,6 +4872,7 @@ def analyze(
     project_config_overrides=None,
     required_config_rules=None,
     grep_cache=True,
+    dependency_bump_diff_base=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -4669,6 +4894,7 @@ def analyze(
         config_file=config_file,
         project_config_overrides=project_config_overrides,
         required_config_rules=required_config_rules,
+        dependency_bump_diff_base=dependency_bump_diff_base,
     )
 
 

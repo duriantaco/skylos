@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -9,21 +8,22 @@ from skylos.core.api_symbol_truth import (
     SURFACE_KIND_JS_MODULE,
     cache_api_symbol_surface,
 )
-from skylos.core.js_api_surface_exports import collect_js_exports_from_file
-from skylos.core.js_api_surface_members import _add_export_member
+from skylos.core.js_api_surface_exports import (
+    _add_commonjs_default_facade,
+    collect_js_exports_from_file,
+)
 from skylos.core.js_api_surface_utils import (
     EXCLUDED_JS_API_DIRS,
     MAX_JS_API_ENTRYPOINTS_PER_PACKAGE,
-    MAX_JS_API_PACKAGE_JSON_BYTES,
     MAX_JS_API_PACKAGES,
     path_has_excluded_part as _path_has_excluded_part,
+    read_package_json as _read_package_json,
     relative_posix as _relative_posix,
     resolve_entrypoint_target as _resolve_entrypoint_target,
     _safe_source_file,
     safe_name as _safe_name,
     utc_timestamp as _utc_timestamp,
 )
-from skylos.core.safe_cache_io import read_text_no_symlink
 
 
 def build_js_api_surfaces(project_root: str | Path) -> list[dict[str, Any]]:
@@ -183,45 +183,6 @@ def inspect_js_package_api_surface(
         return None, "unresolved_package_condition", True
 
     return None, None, False
-
-
-def _add_commonjs_default_facade(
-    root: Path,
-    entrypoint: Path,
-    members: dict[str, dict[str, Any]],
-) -> None:
-    suffix = entrypoint.suffix.lower()
-    commonjs_by_extension = suffix in {".cjs", ".cts"}
-    commonjs_by_package = suffix == ".js" and _nearest_package_type(
-        root, entrypoint
-    ) == "commonjs"
-    if not commonjs_by_extension and not commonjs_by_package:
-        return
-    _add_export_member(
-        root,
-        members,
-        "default",
-        "commonjs",
-        entrypoint,
-        1,
-        source="commonjs_default_facade",
-    )
-
-
-def _nearest_package_type(root: Path, entrypoint: Path) -> str | None:
-    current = entrypoint.parent
-    while True:
-        package_json = current / "package.json"
-        if package_json.is_file() and not package_json.is_symlink():
-            package_type = _read_package_json(package_json).get("type")
-            return package_type if isinstance(package_type, str) else None
-        if current == root or current.parent == current:
-            return None
-        try:
-            current.relative_to(root)
-        except ValueError:
-            return None
-        current = current.parent
 
 
 def _package_source_subpath(package_name: str, module_source: str) -> str | None:
@@ -389,19 +350,6 @@ def _discover_package_json_files(root: Path) -> list[Path]:
         if len(package_files) >= MAX_JS_API_PACKAGES:
             break
     return package_files
-def _read_package_json(path: Path) -> dict[str, Any]:
-    text = read_text_no_symlink(
-        path,
-        max_bytes=MAX_JS_API_PACKAGE_JSON_BYTES,
-        encoding="utf-8",
-    )
-    if text is None:
-        return {}
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
 def _package_entrypoints(
     root: Path,
     package_dir: Path,

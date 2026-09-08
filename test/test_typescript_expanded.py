@@ -104,12 +104,268 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D202" not in ids
 
-    def test_regex_exec_not_flagged(self, tmp_path):
-        """regex.exec() is safe — should NOT trigger SKY-D212."""
-        code = 'const regex = /hello/g;\nconst m = regex.exec("hello world");'
+    def test_regexp_literal_exec_not_flagged(self, tmp_path):
+        """An unescaped RegExp literal should not trigger SKY-D212."""
+        code = (
+            "const GITHUB_PATTERN = /github\\.com/;\n"
+            'const match = GITHUB_PATTERN.exec("https://github.com/org/repo");'
+        )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D212" not in ids
+
+    def test_same_regexp_name_in_sibling_scopes_not_flagged(self, tmp_path):
+        code = (
+            "{\n"
+            "  const pattern = /github\\.com/;\n"
+            "  pattern.exec(firstUrl);\n"
+            "}\n"
+            "{\n"
+            "  const pattern = /gitlab\\.com/;\n"
+            "  pattern.exec(secondUrl);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" not in ids
+
+    def test_nested_regexp_bindings_not_flagged(self, tmp_path):
+        code = (
+            "const pattern = /github\\.com/;\n"
+            "pattern.exec(firstUrl);\n"
+            "function matchGitLab(secondUrl) {\n"
+            "  const pattern = /gitlab\\.com/;\n"
+            "  pattern.exec(secondUrl);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" not in ids
+
+    def test_regexp_safe_uses_preserve_proof(self, tmp_path):
+        code = (
+            "const pattern = /github\\.com/g;\n"
+            "pattern.test(url);\n"
+            "console.log(pattern.source, pattern.flags, pattern.lastIndex);\n"
+            "pattern.lastIndex = 0;\n"
+            "while ((match = pattern.exec(url)) !== null) {}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" not in ids
+
+    @pytest.mark.parametrize(
+        "initializer",
+        [
+            "(/github\\.com/)",
+            "/github\\.com/ as RegExp",
+            "/github\\.com/ satisfies RegExp",
+            "((/github\\.com/) as RegExp) satisfies RegExp",
+        ],
+    )
+    def test_wrapped_regexp_literal_exec_not_flagged(self, tmp_path, initializer):
+        code = f"const pattern = {initializer};\npattern.exec(url);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" not in ids
+
+    def test_read_only_regexp_prototype_use_preserves_proof(self, tmp_path):
+        code = (
+            "Other.prototype.exec = replacement;\n"
+            "const nativeExec = RegExp.prototype.exec;\n"
+            "const pattern = /github\\.com/;\n"
+            "pattern.exec(url);\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" not in ids
+
+    @pytest.mark.parametrize(
+        ("code", "expected_line"),
+        [
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec = cp.exec;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                4,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "RegExp.prototype.exec = cp.exec;\n"
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                4,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    'Object.defineProperty(RegExp.prototype, "exec", '
+                    "{ value: cp.exec });\n"
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                4,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    'RegExp["prototype"]["exec"] = cp.exec;\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                4,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const prototype = RegExp.prototype;\n"
+                    "prototype.exec = cp.exec;\n"
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                5,
+            ),
+            (
+                (
+                    "delete RegExp.prototype.exec;\n"
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                3,
+            ),
+            (
+                (
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "function run(GITHUB_PATTERN) {\n"
+                    "  GITHUB_PATTERN.exec(cmd);\n"
+                    "}\n"
+                ),
+                3,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const pattern = cp;\n"
+                    "pattern.exec(cmd);\n"
+                ),
+                3,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "function run(cmd) {\n"
+                    "  const { GITHUB_PATTERN } = { GITHUB_PATTERN: cp };\n"
+                    "  GITHUB_PATTERN.exec(cmd);\n"
+                    "}\n"
+                ),
+                5,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "function run(cmd) {\n"
+                    "  const [GITHUB_PATTERN] = [cp];\n"
+                    "  GITHUB_PATTERN.exec(cmd);\n"
+                    "}\n"
+                ),
+                5,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "function run(cmd) {\n"
+                    "  class GITHUB_PATTERN { static exec = cp.exec; }\n"
+                    "  GITHUB_PATTERN.exec(cmd);\n"
+                    "}\n"
+                ),
+                5,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "const holder = { GITHUB_PATTERN };\n"
+                    "holder.GITHUB_PATTERN.exec = cp.exec;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                5,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "const carrier = {\n"
+                    "  match(pattern) { pattern.exec = cp.exec; },\n"
+                    "};\n"
+                    "carrier.match(GITHUB_PATTERN);\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                7,
+            ),
+            (
+                (
+                    "export const GITHUB_PATTERN = /github\\.com/;\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                2,
+            ),
+            (
+                (
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "export { GITHUB_PATTERN };\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
+                ),
+                3,
+            ),
+            (
+                (
+                    'const pattern = new RegExp("github.com");\n'
+                    "pattern.exec(url);\n"
+                ),
+                2,
+            ),
+            (
+                (
+                    "let pattern = /github\\.com/;\n"
+                    "pattern.exec(url);\n"
+                ),
+                2,
+            ),
+        ],
+        ids=[
+            "property-replaced",
+            "regexp-prototype-assignment",
+            "regexp-prototype-define-property",
+            "regexp-prototype-computed-assignment",
+            "regexp-prototype-alias",
+            "regexp-prototype-delete",
+            "binding-shadowed",
+            "safe-looking-alias",
+            "object-destructuring-shadow",
+            "array-destructuring-shadow",
+            "class-shadow",
+            "shorthand-escape",
+            "custom-match-escape",
+            "direct-export",
+            "re-export",
+            "regexp-constructor",
+            "mutable-regexp-binding",
+        ],
+    )
+    def test_regex_lookalikes_remain_flagged(self, tmp_path, code, expected_line):
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d212_findings = [f for f in danger if f["rule_id"] == "SKY-D212"]
+        assert len(d212_findings) == 1
+        assert d212_findings[0]["file"] == str(tmp_path / "test.ts")
+        assert d212_findings[0]["line"] == expected_line
 
     def test_db_exec_not_flagged(self, tmp_path):
         """db.exec() / stmt.exec() should NOT trigger SKY-D212."""

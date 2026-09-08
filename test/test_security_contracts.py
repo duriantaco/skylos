@@ -1,5 +1,4 @@
 import ast
-from pathlib import Path
 
 from skylos.config import load_config
 from skylos.rules.quality.logic import HardcodedCredentialRule
@@ -136,7 +135,7 @@ exclude = ["app/**"]
         encoding="utf-8",
     )
 
-    def fake_run(cmd, capture_output, text, cwd):
+    def fake_run(cmd, capture_output, text, cwd, **kwargs):
         class Result:
             returncode = 0
             stdout = before_source
@@ -240,7 +239,7 @@ def list_users():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd):
+    def fake_run(cmd, capture_output, text, cwd, **kwargs):
         class Result:
             returncode = 0
             stdout = before_source
@@ -310,7 +309,7 @@ def get_audit_log():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd):
+    def fake_run(cmd, capture_output, text, cwd, **kwargs):
         class Result:
             returncode = 0
             stdout = before_source
@@ -359,7 +358,7 @@ def list_users():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd):
+    def fake_run(cmd, capture_output, text, cwd, **kwargs):
         class Result:
             returncode = 0
             stdout = before_source

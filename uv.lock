@@ -2390,7 +2390,7 @@ wheels = [
 
 [[package]]
 name = "skylos"
-version = "4.35.0"
+version = "4.36.0"
 source = { editable = "." }
 dependencies = [
     { name = "ca9" },
@@ -2439,8 +2439,8 @@ test = [
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.0" },
     { name = "aiohttp", marker = "extra == 'llm'", specifier = ">=3.14.0" },
-    { name = "ca9", specifier = ">=0.1.0" },
-    { name = "inquirer", specifier = ">=3.0.3" },
+    { name = "ca9", specifier = ">=0.1.1" },
+    { name = "inquirer", specifier = ">=3.1.0" },
     { name = "keyring", specifier = "!=3.4.2,>=25.6.0" },
     { name = "libcst", specifier = ">=1.8.2" },
     { name = "litellm", marker = "extra == 'all'", specifier = ">=1.84.0,<1.85.0" },

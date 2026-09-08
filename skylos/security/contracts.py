@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from skylos.core.git_context import GitContext
+
 RULE_ID = "SKY-SC001"
 _VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 _FASTAPI_ROUTE_DECORATORS = {
@@ -130,7 +132,7 @@ def detect_security_contract_regressions(
     findings: list[dict] = []
 
     for contract in contracts:
-        if changed_relpaths and contract.file_path not in changed_relpaths:
+        if changed_files is not None and contract.file_path not in changed_relpaths:
             continue
 
         before_source = _read_file_at_ref(root, diff_base or "HEAD", contract.file_path)
@@ -214,11 +216,17 @@ def _read_file_at_ref(
 ) -> str | None:
     if not ref:
         return None
+    context = GitContext.from_path(project_root)
+    repo_path = context.relative_path(Path(project_root).resolve() / relpath)
+    if repo_path is None:
+        return None
     result = subprocess.run(
-        ["git", "show", f"{ref}:{relpath}"],
+        ["git", "show", f"{ref}:{repo_path}"],
         capture_output=True,
         text=True,
-        cwd=str(project_root),
+        cwd=str(context.root),
+        env=context.env,
+        timeout=10,
     )
     if result.returncode == 0:
         return result.stdout
@@ -226,11 +234,14 @@ def _read_file_at_ref(
 
 
 def _git_ref_exists(project_root: str | os.PathLike[str], ref: str) -> bool:
+    context = GitContext.from_path(project_root)
     result = subprocess.run(
         ["git", "rev-parse", "--verify", ref],
         capture_output=True,
         text=True,
-        cwd=str(project_root),
+        cwd=str(context.root),
+        env=context.env,
+        timeout=10,
     )
     return result.returncode == 0
 

@@ -14,11 +14,11 @@ Acceptance rules:
 - Avoid whole-project assertions and avoid gating on total finding counts.
 - Prefer cases that protect common frameworks, must-not-miss hooks, and critical static-analysis edge cases.
 
-Why this is better than scanning whole upstream repositories on every PR:
+How this complements [liveness_primer](../docs/liveness-primer.md):
 
-- Whole-repo scans are noisy because mature libraries may contain legitimate findings unrelated to the regression you are trying to catch.
-- Whole-repo scans are slow and brittle because upstream code changes over time.
-- Distilled fixtures let us assert exact expectations like "this symbol must not be reported as dead code" without hiding unrelated issues.
+- The primer compares two Skylos revisions on the same pinned upstream projects. It shows real-project changes without requiring every existing finding to be labeled.
+- Corpus Guard checks small, explicit expectations like "this symbol must not be reported as dead code." Those expectations let CI distinguish a regression from an intended change.
+- When primer review uncovers a bug, reduce it to a regression test or corpus fixture here. Keep both checks: broad change detection and precise correctness checks.
 
 How to add a case:
 
