@@ -449,6 +449,12 @@ output. This also covers `dist/bin/palee.js` mapping to `bin/palee.ts` and
 `dist/src/index.js` mapping to `src/index.ts`. If both source locations exist,
 the `src/` mapping keeps priority; unrelated files are not treated as entries.
 
+VitePress configs at `.vitepress/config.*` and `.vitepress/config/index.*`
+are recognised as development entrypoints for `.js`, `.ts`, `.mjs` and `.mts`.
+Other files in `.vitepress` still need a reference or another entrypoint rule.
+Existing directory conventions such as `scripts/` work with native Windows
+separators too; this does not add general discovery of commands in CI workflows.
+
 Vue single file components (`.vue`) are skipped by source analysis, including
 when passed explicitly. Skylos does not yet parse their `<script>` or
 `<script setup>` blocks; separate JavaScript, TypeScript and backend source
