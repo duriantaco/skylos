@@ -107,10 +107,12 @@ def _iter_with_lock_pairs(stmt: ast.With | ast.AsyncWith, held: tuple[str, ...])
         guard_locks = frozenset(held[:held_index])
         if held_name != lock_name:
             yield held_name, lock_name, stmt, guard_locks
-    for lock_index, (first, second) in enumerate(zip(locks, locks[1:])):
+    # Each later acquisition happens while all preceding locks are held.
+    for lock_index, first in enumerate(locks):
         guard_locks = frozenset((*held, *locks[:lock_index]))
-        if first != second:
-            yield first, second, stmt, guard_locks
+        for second in locks[lock_index + 1 :]:
+            if first != second:
+                yield first, second, stmt, guard_locks
     yield from _iter_lock_pairs(stmt.body, held + locks)
 
 
