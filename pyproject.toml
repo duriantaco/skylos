@@ -71,7 +71,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "inquirer>=3.0.3",
+    "inquirer>=3.1.0",
     "libcst>=1.8.2",
     "rich>=14.0.0",
     "textual>=1.0.0",
@@ -88,7 +88,7 @@ dependencies = [
     "pyyaml",
     "networkx",
     "pyperclip",
-    "ca9>=0.1.0",
+    "ca9>=0.1.1",
     "mcp>=1.0.0,<2"
 ]
 
