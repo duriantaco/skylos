@@ -469,6 +469,11 @@ use the `SKY-A` prefix.
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
+SKY-D224 rejects explicit keyword arguments when the installed API has a known
+signature that takes no parameters. Keyword checks are skipped when the
+signature is unavailable. APIs accepting `**kwargs` remain supported, and
+dynamic `**payload` contents are not inferred.
+
 SKY-A106 warns when a dependency version change exactly matches the project's
 own old and new versions in the same change. For example, a release from
 `3.4.1` to `3.4.2` that also changes `inquirer==3.4.1` to `inquirer==3.4.2`
