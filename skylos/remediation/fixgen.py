@@ -222,22 +222,23 @@ def _build_dependency_dag(
 
 
 def _topological_sort(dag: dict[str, list[str]]) -> list[str]:
+    """Order callers before callees, appending cycle-blocked nodes in input order."""
     in_degree: dict[str, int] = {node: 0 for node in dag}
     for node, deps in dag.items():
         for dep in deps:
             if dep in in_degree:
-                in_degree[dep] = in_degree.get(dep, 0) + 1
+                in_degree[dep] += 1
 
     queue = [node for node, deg in in_degree.items() if deg == 0]
     result = []
     while queue:
         node = queue.pop(0)
         result.append(node)
-        for dep_node, deps in dag.items():
-            if node in deps:
-                in_degree[dep_node] -= 1
-                if in_degree[dep_node] == 0:
-                    queue.append(dep_node)
+        for dep in dag.get(node, []):
+            if dep in in_degree:
+                in_degree[dep] -= 1
+                if in_degree[dep] == 0:
+                    queue.append(dep)
 
     for node in dag:
         if node not in result:
@@ -457,6 +458,7 @@ def generate_removal_plan(
         if patch is not None:
             patches.append(patch)
 
+    # Edit each file from the bottom up to preserve the original line offsets.
     patches.sort(key=lambda p: (p.file_path, -p.line_range[0]))
 
     return patches
