@@ -646,7 +646,8 @@ def _keyword_accepted(entry: dict[str, Any], keyword: str) -> bool:
     if not isinstance(parameters, list):
         return True
     if not parameters:
-        return True
+        # Failed inspection is cached as both an empty signature and parameter list.
+        return entry.get("signature") == ""
 
     for parameter in parameters:
         if not isinstance(parameter, dict):
