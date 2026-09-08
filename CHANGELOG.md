@@ -1,5 +1,21 @@
 ## Changelog
 
+## [4.36.1](https://github.com/duriantaco/skylos/compare/v4.36.0...v4.36.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **ai-defect:** avoid API warnings when package metadata is unavailable ([#819](https://github.com/duriantaco/skylos/issues/819)) ([f80c5a3](https://github.com/duriantaco/skylos/commit/f80c5a3f5d4b16d57300d23272b7fce4bd1ff5ff))
+* **ai-defect:** reject keywords for APIs with no parameters ([#823](https://github.com/duriantaco/skylos/issues/823)) ([5eb60f0](https://github.com/duriantaco/skylos/commit/5eb60f083856b4616dc348d0b6e92620ad4eb6ba))
+* **analyzer:** skip unsupported files before worker dispatch ([#815](https://github.com/duriantaco/skylos/issues/815)) ([f28a34a](https://github.com/duriantaco/skylos/commit/f28a34a28b299597b88438b10cd90e49eae70ba7))
+* **analyzer:** track m3u8 client callbacks from live callers ([#813](https://github.com/duriantaco/skylos/issues/813)) ([0aa9ce0](https://github.com/duriantaco/skylos/commit/0aa9ce04edfe3b38f269f05733965df9256d193a))
+* **deps:** use published dependency minimums ([#825](https://github.com/duriantaco/skylos/issues/825)) ([900459a](https://github.com/duriantaco/skylos/commit/900459a51a04547c9cb530a2961879ba808ae80d))
+* **quality:** check all lock pairs in compound with statements ([#824](https://github.com/duriantaco/skylos/issues/824)) ([dd17dae](https://github.com/duriantaco/skylos/commit/dd17dae551ddb980046f4df5f7c9a9333bf8303b))
+* **remediation:** correct dependency graph sorting ([#821](https://github.com/duriantaco/skylos/issues/821)) ([1dbf929](https://github.com/duriantaco/skylos/commit/1dbf92936e2dfbe5ddcb2d5c134725b419ad918b))
+* **rules:** drop phantom SKY-D214 rule ([#785](https://github.com/duriantaco/skylos/issues/785)) ([a8ca42e](https://github.com/duriantaco/skylos/commit/a8ca42ed14ab9a510f5b8d472c893d0fefe7301d))
+* **typescript:** recognize VitePress and Windows script entries ([#822](https://github.com/duriantaco/skylos/issues/822)) ([fc2a954](https://github.com/duriantaco/skylos/commit/fc2a954baff07d6cbe4a2cd15e997100cf2e2446))
+* **typescript:** resolve package entries outside src ([#820](https://github.com/duriantaco/skylos/issues/820)) ([25f64cf](https://github.com/duriantaco/skylos/commit/25f64cfe53701885da06fa24b333c96ee3cca8e9))
+
 ## [4.36.0](https://github.com/duriantaco/skylos/compare/v4.35.0...v4.36.0) (2026-09-07)
 
 
