@@ -442,6 +442,12 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+Vue single file components (`.vue`) are skipped by source analysis, including
+when passed explicitly. Skylos does not yet parse their `<script>` or
+`<script setup>` blocks; separate JavaScript, TypeScript and backend source
+files are still analyzed. Existing browser script and event references in
+templates are unaffected.
+
 Go dead-code and security checks require the native `skylos-go` engine. If
 Skylos discovers Go files but cannot run that engine, the report is marked
 incomplete, no grade or clean result is produced, and the CLI exits with status
