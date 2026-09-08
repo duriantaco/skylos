@@ -536,7 +536,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
 | Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
-| Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed nested lock order |
+| Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed lock order in nested or compound `with` / `async with` statements; includes non-adjacent pairs |
 | Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
 | Q406 | HIGH | Async callback passed to built-in `Array.forEach` | TS/JS | callback promises are not awaited |
