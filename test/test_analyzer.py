@@ -336,6 +336,7 @@ class TestSkylos:
     def test_get_python_files_single_file(self, mock_path, skylos):
         mock_file = Mock()
         mock_file.is_file.return_value = True
+        mock_file.name = "test.py"
         mock_file.parent = Path("/project")
         mock_path.return_value.resolve.return_value = mock_file
 

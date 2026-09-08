@@ -1490,10 +1490,6 @@ class Skylos:
             return [], Path(os.path.abspath(raw_path)).parent.resolve()
         p = raw_path.resolve()
 
-        if p.is_file():
-            return [p], p.parent
-
-        root = p
         exts = {
             *PYTHON_SIGNATURE_SUFFIXES,
             ".go",
@@ -1506,6 +1502,13 @@ class Skylos:
             *(_KOTLIN_SOURCE_EXTS),
             *(_SHELL_SOURCE_EXTS),
         }
+        if p.is_file():
+            # Explicit paths need the same source filter as directory scans.
+            # Config files also have a worker adapter for the later repo checks.
+            supported = p.name.lower().endswith((*exts, *_SECRET_CONFIG_SUFFIXES))
+            return ([p] if supported else []), p.parent
+
+        root = p
         ext_list = [
             "py",
             "pyi",
@@ -1562,7 +1565,8 @@ class Skylos:
                 all_files = [
                     Path(f)
                     for f in rust_files
-                    if not should_exclude_path(Path(f), root, exclude_folders)
+                    if Path(f).suffix.lower() in exts
+                    and not should_exclude_path(Path(f), root, exclude_folders)
                 ]
             except Exception:
                 all_files = discover_source_files(
@@ -3029,7 +3033,7 @@ class Skylos:
         project_ignore = set(project_cfg.get("ignore", []))
 
         if not files:
-            logger.warning(f"No Python files found in {path}")
+            logger.warning(f"No supported source files found in {path}")
             no_source_scan_target, no_source_manifest_root = _no_source_danger_targets(
                 _first,
                 Path(root),
