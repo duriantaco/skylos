@@ -271,10 +271,16 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         if module_name is None:
             return None
 
+        surface = self._surface(module_name)
+        # Failed package inspection provides no evidence about missing APIs.
+        # A successfully inspected empty member map, however, is still evidence.
+        if surface is None or not isinstance(surface.get("members"), dict):
+            return None
+
         entry = self._module_member(module_name, member_name)
         label = f"{module_name}.{member_name}"
         if entry is None:
-            if _members_truncated(self._surface(module_name)):
+            if _members_truncated(surface):
                 return None
             return _CallTarget(module_name, label, None, "module_member")
         return _CallTarget(module_name, label, entry, "")
