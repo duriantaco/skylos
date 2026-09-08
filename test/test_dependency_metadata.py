@@ -36,3 +36,37 @@ def test_runtime_dependency_compatibility_bands(package, supported, next_breakin
 
     assert Version(supported) in requirement.specifier
     assert Version(next_breaking) not in requirement.specifier
+
+
+@pytest.mark.parametrize(
+    ("package", "published_minimum", "missing_version"),
+    [
+        ("inquirer", "3.1.0", "3.0.3"),
+        ("ca9", "0.1.1", "0.1.0"),
+    ],
+)
+def test_runtime_dependency_minimums_use_published_releases(
+    package, published_minimum, missing_version
+):
+    # First published releases satisfying the old ranges, verified on PyPI:
+    # https://pypi.org/project/inquirer/#history
+    # https://pypi.org/project/ca9/#history
+    requirement = _runtime_requirements()[package]
+
+    assert str(requirement.specifier) == f">={published_minimum}"
+    assert Version(published_minimum) in requirement.specifier
+    assert Version(missing_version) not in requirement.specifier
+
+
+@pytest.mark.parametrize("package", ["inquirer", "ca9"])
+def test_corrected_dependency_minimums_match_lock_metadata(package):
+    requirement = _runtime_requirements()[package]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    project = next(item for item in lock["package"] if item["name"] == "skylos")
+    locked_requirement = next(
+        item for item in project["metadata"]["requires-dist"] if item["name"] == package
+    )
+    locked_package = next(item for item in lock["package"] if item["name"] == package)
+
+    assert locked_requirement["specifier"] == str(requirement.specifier)
+    assert Version(locked_package["version"]) in requirement.specifier
