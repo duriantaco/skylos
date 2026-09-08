@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 from functools import lru_cache
 from pathlib import Path
 
@@ -263,11 +264,31 @@ def _find_nearest_package_dir(start_path: str, stop_dir: str) -> str | None:
 
 
 def _candidate_package_targets(target: str) -> list[str]:
-    base_target = (
-        target.replace("dist/", "src/")
-        .replace("out/", "src/")
-        .replace("/prod/", "/")
+    relative_target = posixpath.normpath(target.replace("/prod/", "/"))
+    prefix = "./" if target.startswith("./") else ""
+    base_target = prefix + relative_target
+    base_targets: list[str] = []
+
+    # Preserve the existing src layout first, then try sources at the package
+    # root. Only a leading output directory is special: checkout and src/out
+    # are literal source directories, not names to rewrite.
+    if relative_target in {"dist", "out"}:
+        base_targets.append(prefix + "src")
+    elif relative_target.startswith(("dist/", "out/")):
+        source_target = relative_target.split("/", 1)[1]
+        base_targets.extend([prefix + "src/" + source_target, prefix + source_target])
+    base_targets.extend([base_target, target])
+
+    return list(
+        dict.fromkeys(
+            candidate
+            for base in base_targets
+            for candidate in _package_target_variants(base)
+        )
     )
+
+
+def _package_target_variants(base_target: str) -> list[str]:
     candidates = [base_target]
 
     if base_target.endswith(".d.ts"):
@@ -305,14 +326,7 @@ def _candidate_package_targets(target: str) -> list[str]:
             ]
         )
 
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        ordered.append(candidate)
-    return ordered
+    return candidates
 
 
 def _resolve_path_target(base_dir: str, target: str) -> str | None:

@@ -442,6 +442,13 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+TypeScript and JavaScript dead code analysis recognizes `package.json` entry
+fields, including `bin`. For targets under `dist/` or `out/`, it checks the
+matching `src/` location first, then the package root, before the declared
+output. This also covers `dist/bin/palee.js` mapping to `bin/palee.ts` and
+`dist/src/index.js` mapping to `src/index.ts`. If both source locations exist,
+the `src/` mapping keeps priority; unrelated files are not treated as entries.
+
 Vue single file components (`.vue`) are skipped by source analysis, including
 when passed explicitly. Skylos does not yet parse their `<script>` or
 `<script setup>` blocks; separate JavaScript, TypeScript and backend source
