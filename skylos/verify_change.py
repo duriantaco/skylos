@@ -42,6 +42,7 @@ def verify_change_path(
 ) -> dict[str, Any]:
     target = Path(path).expanduser()
     target_file = _optional_path(file)
+    _validate_verify_target(target, target_file)
     scan_target = _scan_target(target, target_file, project_context=project_context)
     root = _root_for_verify_target(target)
     contract_file = _contract_path_for_verify_target(
@@ -317,6 +318,22 @@ def _write_new_file_no_follow(path: Path, code: str) -> None:
                 os.close(fd)
             except OSError:
                 pass
+
+
+def _validate_verify_target(path: Path, target_file: Path | None) -> None:
+    # Validate the selected file even when analysis will scan its whole project.
+    selected = _scan_target(path, target_file, project_context=False)
+    for candidate in (path, selected):
+        if not candidate.exists():
+            raise ValueError(
+                f"Verification target does not exist: {candidate.absolute()}"
+            )
+        if not (candidate.is_file() or candidate.is_dir()):
+            raise ValueError(
+                f"Verification target must be a file or directory: {candidate.absolute()}"
+            )
+    if target_file is not None and not selected.is_file():
+        raise ValueError(f"--file must select a file: {selected.absolute()}")
 
 
 def _scan_target(

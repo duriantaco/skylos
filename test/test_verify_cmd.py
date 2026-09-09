@@ -3,8 +3,88 @@ from __future__ import annotations
 import io
 import json
 import sys
+from functools import partial
+
+import pytest
 
 from skylos.commands.verify_cmd import run_verify_command
+from skylos.verify_change import verify_change_path
+
+
+def _unexpected_analysis(*_args, **_kwargs):
+    pytest.fail("Invalid verification targets must be rejected before analysis")
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("no_fail", [False, True])
+def test_missing_target_is_an_input_error(
+    monkeypatch, capsys, tmp_path, terminal, no_fail
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: terminal)
+    args = ["app.py"]
+    if no_fail:
+        args.append("--no-fail")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "does not exist" in output.err
+    assert str(tmp_path / "app.py") in output.err
+
+
+@pytest.mark.parametrize("project_context", [False, True])
+def test_missing_selected_file_is_an_input_error(capsys, tmp_path, project_context):
+    (tmp_path / "existing.py").write_text("def existing():\n    return None\n")
+    args = [str(tmp_path), "--file", "missing.py"]
+    if project_context:
+        args.append("--project-context")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "does not exist" in output.err
+    assert str(tmp_path / "missing.py") in output.err
+
+
+@pytest.mark.parametrize("project_context", [False, True])
+def test_selected_directory_is_an_input_error(capsys, tmp_path, project_context):
+    selected_directory = tmp_path / "sources"
+    selected_directory.mkdir()
+    (selected_directory / "app.py").write_text("def run():\n    return None\n")
+    args = [str(tmp_path), "--file", "sources"]
+    if project_context:
+        args.append("--project-context")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "--file must select a file" in output.err
+    assert str(selected_directory) in output.err
 
 
 def test_run_verify_command_prints_json_and_preserves_args(capsys):
