@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any, Sequence
 
 from skylos.constants import parse_exclude_folders
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.verify_change import verify_change_path, verify_change_stdin_payload
 
 
@@ -29,10 +29,10 @@ def run_verify_command(
             verify_change_path_func,
             verify_change_stdin_payload_func,
         )
+        _write_payload(payload, args.output, machine_output=args.stdin)
     except ValueError as exc:
         parser.error(str(exc))
 
-    _write_payload(payload, args.output, machine_output=args.stdin)
     return _exit_code(payload, no_fail=args.no_fail)
 
 
@@ -221,12 +221,12 @@ def _write_payload(
 ) -> None:
     output = json.dumps(payload, indent=2)
     if output_path:
-        Path(
-            output_path
-        ).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-            output + "\n",
-            encoding="utf-8",
-        )
+        if not write_text_no_symlink(output_path, output + "\n", encoding="utf-8"):
+            raise ValueError(
+                f"Cannot safely write output to {output_path!r}: "
+                "use a writable regular file with no symlinks or hard links "
+                "and an existing parent directory."
+            )
         return
 
     if not machine_output and sys.stdout.isatty():

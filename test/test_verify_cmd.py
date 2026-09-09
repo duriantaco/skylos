@@ -133,17 +133,58 @@ def test_stdin_keeps_json_even_in_a_terminal(monkeypatch, capsys):
     )
 
 
-def test_output_file_keeps_json_even_in_a_terminal(monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("relative_path", [False, True])
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_output_file_keeps_json_even_in_a_terminal(
+    monkeypatch, capsys, tmp_path, relative_path, existing_output
+):
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.chdir(tmp_path)
     output_path = tmp_path / "report.json"
+    if existing_output:
+        output_path.write_text("old report contents\n" * 1000, encoding="utf-8")
+    destination = output_path.name if relative_path else str(output_path)
     code = run_verify_command(
-        ["app.py", "--output", str(output_path)],
+        ["app.py", "--output", destination],
         verify_change_path_func=lambda *args, **kwargs: _behavior_payload(),
     )
     payload = json.loads(output_path.read_text())
     assert code == 2
     assert payload["behavior"]["status"] == "different"
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("no_fail", [False, True])
+@pytest.mark.parametrize("destination_kind", ["directory", "missing_parent"])
+def test_output_write_failure_is_a_cli_error(
+    monkeypatch, capsys, tmp_path, no_fail, destination_kind
+):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    output_path = (
+        tmp_path
+        if destination_kind == "directory"
+        else tmp_path / "missing" / "report.json"
+    )
+    args = ["app.py", "--output", str(output_path)]
+    if no_fail:
+        args.append("--no-fail")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=lambda *args, **kwargs: {
+                "status": "pass",
+                "findings": [],
+            },
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "Cannot safely write output" in output.err
+    assert str(output_path) in output.err
+    assert "Traceback" not in output.err
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_run_verify_command_prints_json_and_preserves_args(capsys):

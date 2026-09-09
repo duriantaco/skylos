@@ -38,6 +38,11 @@ The same explanation is included in each difference's `explanation` object.
 No extra formatting flag is needed. This comparison runs through `skylos verify`;
 the ordinary `skylos <path>` scan retains its existing analysis/reporting.
 
+`--output` creates or replaces a regular file in an existing directory. It
+rejects symlinks in the destination or its parent directories and files with
+multiple hard links. An unsafe or unwritable destination is an error (exit code
+2), including with `--no-fail`.
+
 A modeled difference needs review. It may be an intentional feature change or
 a regression; the command cannot infer that intent. Differences are reported as
 incomplete verification rather than being labeled proven product bugs.
