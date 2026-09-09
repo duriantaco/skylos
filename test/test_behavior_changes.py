@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.verification.changes import compare_working_changes
 
 
@@ -35,7 +36,7 @@ def _git(repo: Path, *args: str) -> str:
 def _write(repo: Path, name: str, source: str) -> None:
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    assert write_text_no_symlink(path, source, encoding="utf-8")
 
 
 def _commit(repo: Path, message: str) -> None:

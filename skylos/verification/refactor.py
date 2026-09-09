@@ -70,7 +70,12 @@ def _git(
 
 def _safe_relative(name: str) -> bool:
     path = PurePosixPath(name)
-    return bool(name) and not path.is_absolute() and ".." not in path.parts
+    return (
+        bool(path.parts)
+        and not path.is_absolute()
+        and ".." not in path.parts
+        and "\0" not in name
+    )
 
 
 def _selected_file(path: str | Path, file: str | Path | None) -> tuple[Path, str]:
@@ -187,6 +192,61 @@ def _base_sources(
     return sources, hashes
 
 
+def _source_directory_flags() -> int:
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _read_working_source(root_fd: int, name: str) -> bytes | None:
+    """Read a bounded regular file through directories pinned beneath root_fd."""
+    if not _safe_relative(name):
+        raise ValueError("Unsafe path in working source snapshot")
+    parts = PurePosixPath(name).parts
+    directory_fd = None
+    file_fd = None
+    try:
+        directory_fd = os.dup(root_fd)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, _source_directory_flags(), dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = next_fd
+            file_fd = os.open(  # skylos: ignore[SKY-D215] validated basename below no-follow repository directory descriptors
+                parts[-1],
+                os.O_RDONLY
+                | os.O_NOFOLLOW
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return None  # Deleted files are absent from the current snapshot.
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"Working source is not a regular file: {name}")
+        if before.st_size > _MAX_FILE_BYTES:
+            raise ValueError(
+                f"Working source exceeds the verification size limit: {name}"
+            )
+        with os.fdopen(file_fd, "rb") as handle:
+            file_fd = None
+            raw = handle.read(_MAX_FILE_BYTES + 1)
+            after = os.fstat(handle.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise ValueError(f"Working source changed while being read: {name}")
+        return raw
+    except OSError as exc:
+        raise ValueError(f"Cannot read working source: {name}") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 def _current_sources(
     root: Path, selected: str | None = None, *, allow_submodules: bool = False
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -210,52 +270,35 @@ def _current_sources(
         names.add(selected)
     if len(names) > _MAX_FILES:
         raise ValueError("Working source snapshot exceeds the verification file limit")
+    if (
+        os.open not in os.supports_dir_fd
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+    ):
+        raise ValueError("Platform does not support safe working source snapshot reads")
+    try:
+        root_fd = os.open(  # skylos: ignore[SKY-D215] caller-selected Git root opened as a no-follow directory anchor
+            root, _source_directory_flags()
+        )
+    except OSError as exc:
+        raise ValueError("Cannot open working source snapshot root") from exc
     sources, hashes = {}, {}
     total = 0
-    for name in sorted(names):
-        if not _safe_relative(name):
-            raise ValueError("Unsafe path in working source snapshot")
-        source = root / name
-        for parent in (source, *source.parents):
-            if parent == root:
-                break
-            if parent.is_symlink():
-                raise ValueError(f"Symlink source is unsupported: {name}")
-        try:
-            descriptor = os.open(
-                source,
-                os.O_RDONLY
-                | getattr(os, "O_NONBLOCK", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-            )
-        except FileNotFoundError:
-            continue  # Deleted files must be absent from the current snapshot.
-        except OSError as exc:
-            raise ValueError(f"Cannot read working source: {name}") from exc
-        with os.fdopen(descriptor, "rb") as handle:
-            before = os.fstat(handle.fileno())
-            if not stat.S_ISREG(before.st_mode):
-                raise ValueError(f"Working source is not a regular file: {name}")
-            if before.st_size > _MAX_FILE_BYTES:
+    try:
+        for name in sorted(names):
+            raw = _read_working_source(root_fd, name)
+            if raw is None:
+                continue
+            total += len(raw)
+            if len(raw) > _MAX_FILE_BYTES or total > _MAX_SOURCE_BYTES:
                 raise ValueError(
-                    f"Working source exceeds the verification size limit: {name}"
+                    "Working source snapshot exceeds the verification size limit"
                 )
-            raw = handle.read(_MAX_FILE_BYTES + 1)
-            after = os.fstat(handle.fileno())
-        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ):
-            raise ValueError(f"Working source changed while being read: {name}")
-        total += len(raw)
-        if len(raw) > _MAX_FILE_BYTES or total > _MAX_SOURCE_BYTES:
-            raise ValueError(
-                "Working source snapshot exceeds the verification size limit"
-            )
-        if name.endswith(".py"):
-            sources[name] = _decode_source(raw, name)
-        hashes[name] = hashlib.sha256(raw).hexdigest()
+            if name.endswith(".py"):
+                sources[name] = _decode_source(raw, name)
+            hashes[name] = hashlib.sha256(raw).hexdigest()
+    finally:
+        os.close(root_fd)
     return sources, hashes
 
 
