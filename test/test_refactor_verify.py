@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from skylos.commands.verify_cmd import run_verify_command
 from skylos.verification.refactor import verify_refactor
+from skylos.verify_change import verify_change_path
 
 
 _GIT_ENV = (
@@ -266,3 +270,100 @@ def test_unmodeled_or_invalid_source_is_incomplete(make_repo, source):
 
     assert result["status"] == "incomplete"
     assert result["comparison"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("has_ai_finding", [False, True])
+@pytest.mark.parametrize("target_mode", ["file", "directory"])
+def test_verify_change_adds_behavior_comparison_to_analyzer_result(
+    make_repo, has_ai_finding, target_mode
+):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    _write(repo, "app.py", "def run(value):\n    return 'different'\n")
+    target = repo / "app.py" if target_mode == "file" else repo
+    calls = []
+
+    def analyzer(path, **kwargs):
+        calls.append(path)
+        if not has_ai_finding:
+            return {}
+        return {
+            "ai_defects": [
+                {
+                    "rule_id": "SKY-L012",
+                    "file": str(repo / "app.py"),
+                    "line": 2,
+                    "message": "Missing call target.",
+                    "severity": "HIGH",
+                }
+            ]
+        }
+
+    result = verify_change_path(
+        target,
+        analyze_func=analyzer,
+    )
+
+    assert calls == [str(target)]
+    assert result["schema_version"] == 2
+    assert result["tool"] == "verify_change"
+    assert result["status"] == ("fail" if has_ai_finding else "incomplete")
+    assert result["behavior"]["status"] == "different"
+    assert result["behavior"]["comparisons"]
+    assert bool(result["findings"]) is has_ai_finding
+
+
+@pytest.mark.parametrize(
+    "source,behavior_status,no_fail,expected_exit",
+    [
+        ("def run(value):\n    return 'different'\n", "different", False, 2),
+        ("def run(value):\n    return 'different'\n", "different", True, 0),
+        ("def run(value):\n    while value:\n        pass\n", "unknown", False, 2),
+        ("def run(value):\n    while value:\n        pass\n", "unknown", True, 0),
+    ],
+)
+def test_normal_verify_cli_compares_behavior_and_applies_exit_policy(
+    make_repo, capsys, source, behavior_status, no_fail, expected_exit
+):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    _write(repo, "app.py", source)
+
+    exit_code = run_verify_command(
+        [
+            str(repo / "app.py"),
+            *(["--no-fail"] if no_fail else []),
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == expected_exit
+    assert result["tool"] == "verify_change"
+    assert result["status"] == "incomplete"
+    assert result["behavior"]["status"] == behavior_status
+    assert result["behavior"]["comparisons"]
+
+
+def test_cli_entry_point_infers_behavior_comparison_without_flags(make_repo):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    _write(repo, "app.py", "def run(value):\n    return 'different'\n")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from skylos.cli import main; main()",
+            "verify",
+            str(repo / "app.py"),
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["tool"] == "verify_change"
+    assert result["status"] == "incomplete"
+    assert result["behavior"]["status"] == "different"
+    assert result["behavior"]["comparisons"]

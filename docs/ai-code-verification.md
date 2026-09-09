@@ -7,12 +7,29 @@ network service for local/workspace API verification.
 
 This command has a narrower purpose than `skylos defend`:
 
-- `skylos verify`: did the edited code contain a proven AI-code defect, and did
-  every applicable deterministic verification check complete?
+- `skylos verify`: did the edited code contain a proven AI-code defect, did its
+  Python behavior change from Git HEAD, and did applicable checks complete?
 - `skylos defend`: does an agent implementation contain expected static
   guardrails before deployment?
 
 Neither command currently proves the runtime behavior of a running agent.
+
+For path targets, Python behavior comparison runs automatically alongside the
+existing checks:
+
+```bash
+skylos verify app.py
+skylos verify .
+```
+
+Skylos uses Git HEAD as the baseline and discovers affected functions. The
+terminal report explains what changed and its possible impact. Pipes, `--stdin`,
+and saved output retain JSON with the same explanations. The
+JSON `behavior` result also records modeled differences and comparisons that could
+not be completed. A difference needs review: Skylos cannot infer whether the
+change was intentional. See [Python behavior comparison](behavior-preservation.md)
+for the supported model and its limits. Stdin verification retains its existing
+checks; it does not compare the provided source with Git.
 
 ## Status and exit codes
 
@@ -20,12 +37,17 @@ Schema-version-2 responses use three statuses:
 
 | Status | Exit | Meaning |
 |:---|:---:|:---|
-| `pass` | `0` | No verified findings and every applicable expected check completed |
+| `pass` | `0` | No verified findings, every applicable expected check completed, and no behavior comparison requires review |
 | `fail` | `1` | At least one verified AI-code finding exists |
-| `incomplete` | `2` | No finding exists, but one or more required proofs were unsupported, skipped, uncertain, or missing |
+| `incomplete` | `2` | No finding exists, but a check was unsupported, skipped, uncertain, or missing, or a modeled behavior change needs review |
 
 Findings take precedence over incomplete coverage. `--no-fail` changes the
 process exit code to `0`, but does not change the JSON status.
+
+Behavior comparison reports `unavailable` when no Git HEAD can be read, and
+`unchanged` when no relevant Python change needs comparison. These do not alter
+the result of the existing checks. Neither status claims behavior was proved
+equivalent.
 
 ## Local API verification support
 

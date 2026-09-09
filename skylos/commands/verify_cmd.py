@@ -32,14 +32,14 @@ def run_verify_command(
     except ValueError as exc:
         parser.error(str(exc))
 
-    _write_payload(payload, args.output)
+    _write_payload(payload, args.output, machine_output=args.stdin)
     return _exit_code(payload, no_fail=args.no_fail)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos verify",
-        description="Verify changed code for AI-code defects.",
+        description="Verify code for AI-code defects and compare Python working changes with Git HEAD.",
     )
     _add_target_args(parser)
     _add_scope_args(parser)
@@ -66,7 +66,7 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--stdin",
         action="store_true",
-        help="Read a JSON manifest from stdin: {\"file\", \"code\", \"range\"?}.",
+        help='Read a JSON manifest from stdin: {"file", "code", "range"?}.',
     )
     parser.add_argument(
         "--range",
@@ -132,7 +132,7 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-fail",
         action="store_true",
-        help="Exit 0 even when AI-code findings are returned.",
+        help="Exit 0 even when verification fails or is incomplete; preserve the JSON status.",
     )
     parser.add_argument(
         "--output",
@@ -216,15 +216,24 @@ def _exclude_folders(args: argparse.Namespace, parse_exclude_folders_func) -> li
     return exclude_folders
 
 
-def _write_payload(payload: dict[str, Any], output_path: str | None) -> None:
+def _write_payload(
+    payload: dict[str, Any], output_path: str | None, *, machine_output: bool = False
+) -> None:
     output = json.dumps(payload, indent=2)
     if output_path:
-        Path(output_path).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
+        Path(
+            output_path
+        ).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
             output + "\n",
             encoding="utf-8",
         )
         return
 
+    if not machine_output and sys.stdout.isatty():
+        from skylos.verification.render import render_verify_report
+
+        print(render_verify_report(payload))
+        return
     print(output)
 
 

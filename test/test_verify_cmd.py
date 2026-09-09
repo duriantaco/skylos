@@ -87,6 +87,65 @@ def test_selected_directory_is_an_input_error(capsys, tmp_path, project_context)
     assert str(selected_directory) in output.err
 
 
+def _behavior_payload():
+    from skylos.verification.behavior import compare_python_behavior
+
+    comparison = compare_python_behavior(
+        {"app.py": "def run(callback, value):\n    return callback(value)\n"},
+        {"app.py": "def run(callback, value):\n    callback(value)\n    return None\n"},
+        file="app.py",
+        symbol="run",
+    )
+    return {
+        "tool": "verify_change",
+        "status": "incomplete",
+        "findings": [],
+        "behavior": {"status": "different", "comparisons": [comparison]},
+    }
+
+
+def test_terminal_explains_behavior_change_without_flags(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    code = run_verify_command(
+        ["app.py"], verify_change_path_func=lambda *args, **kwargs: _behavior_payload()
+    )
+    output = capsys.readouterr().out
+    assert code == 2
+    assert output.startswith("Verification needs review")
+    assert "app.py:1" in output and "run" in output
+    assert "Callback result discarded" in output
+    assert "callback(value)" in output and "None" in output
+    assert '"schema_version"' not in output
+
+
+def test_stdin_keeps_json_even_in_a_terminal(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"file":"app.py","code":"pass"}'))
+    code = run_verify_command(
+        ["--stdin"],
+        verify_change_stdin_payload_func=lambda *args, **kwargs: _behavior_payload(),
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert (
+        payload["behavior"]["comparisons"][0]["differences"][0]["explanation"]["title"]
+        == "Callback result discarded"
+    )
+
+
+def test_output_file_keeps_json_even_in_a_terminal(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    output_path = tmp_path / "report.json"
+    code = run_verify_command(
+        ["app.py", "--output", str(output_path)],
+        verify_change_path_func=lambda *args, **kwargs: _behavior_payload(),
+    )
+    payload = json.loads(output_path.read_text())
+    assert code == 2
+    assert payload["behavior"]["status"] == "different"
+    assert capsys.readouterr().out == ""
+
+
 def test_run_verify_command_prints_json_and_preserves_args(capsys):
     seen = {}
 

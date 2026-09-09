@@ -88,7 +88,7 @@ def verify_change_path(
         changed_files=changed_files,
     )
 
-    return build_verify_change_response(
+    response = build_verify_change_response(
         analysis_result,
         project_root=root,
         target_file=target_file,
@@ -98,6 +98,21 @@ def verify_change_path(
         include_security_findings=include_security_findings,
         analyzer_owned=analyzer_owned,
     )
+    from skylos.verification.changes import compare_working_changes
+
+    behavior = compare_working_changes(
+        path, file=file, line_range=line_range, exclude_folders=exclude_folders
+    )
+    response["behavior"] = behavior
+    if behavior["status"] in {"different", "unknown"}:
+        if response["status"] == "pass":
+            response["status"] = "incomplete"
+        response["summary"] += (
+            "; behavior comparison needs review: modeled changes detected"
+            if behavior["status"] == "different"
+            else "; behavior comparison incomplete"
+        )
+    return response
 
 
 def verify_change_stdin_payload(
