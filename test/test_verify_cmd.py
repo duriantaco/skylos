@@ -3,8 +3,188 @@ from __future__ import annotations
 import io
 import json
 import sys
+from functools import partial
+
+import pytest
 
 from skylos.commands.verify_cmd import run_verify_command
+from skylos.verify_change import verify_change_path
+
+
+def _unexpected_analysis(*_args, **_kwargs):
+    pytest.fail("Invalid verification targets must be rejected before analysis")
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("no_fail", [False, True])
+def test_missing_target_is_an_input_error(
+    monkeypatch, capsys, tmp_path, terminal, no_fail
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: terminal)
+    args = ["app.py"]
+    if no_fail:
+        args.append("--no-fail")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "does not exist" in output.err
+    assert str(tmp_path / "app.py") in output.err
+
+
+@pytest.mark.parametrize("project_context", [False, True])
+def test_missing_selected_file_is_an_input_error(capsys, tmp_path, project_context):
+    (tmp_path / "existing.py").write_text("def existing():\n    return None\n")
+    args = [str(tmp_path), "--file", "missing.py"]
+    if project_context:
+        args.append("--project-context")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "does not exist" in output.err
+    assert str(tmp_path / "missing.py") in output.err
+
+
+@pytest.mark.parametrize("project_context", [False, True])
+def test_selected_directory_is_an_input_error(capsys, tmp_path, project_context):
+    selected_directory = tmp_path / "sources"
+    selected_directory.mkdir()
+    (selected_directory / "app.py").write_text("def run():\n    return None\n")
+    args = [str(tmp_path), "--file", "sources"]
+    if project_context:
+        args.append("--project-context")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=partial(
+                verify_change_path, analyze_func=_unexpected_analysis
+            ),
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "--file must select a file" in output.err
+    assert str(selected_directory) in output.err
+
+
+def _behavior_payload():
+    from skylos.verification.behavior import compare_python_behavior
+
+    comparison = compare_python_behavior(
+        {"app.py": "def run(callback, value):\n    return callback(value)\n"},
+        {"app.py": "def run(callback, value):\n    callback(value)\n    return None\n"},
+        file="app.py",
+        symbol="run",
+    )
+    return {
+        "tool": "verify_change",
+        "status": "incomplete",
+        "findings": [],
+        "behavior": {"status": "different", "comparisons": [comparison]},
+    }
+
+
+def test_terminal_explains_behavior_change_without_flags(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    code = run_verify_command(
+        ["app.py"], verify_change_path_func=lambda *args, **kwargs: _behavior_payload()
+    )
+    output = capsys.readouterr().out
+    assert code == 2
+    assert output.startswith("Verification needs review")
+    assert "app.py:1" in output and "run" in output
+    assert "Callback result discarded" in output
+    assert "callback(value)" in output and "None" in output
+    assert '"schema_version"' not in output
+
+
+def test_stdin_keeps_json_even_in_a_terminal(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"file":"app.py","code":"pass"}'))
+    code = run_verify_command(
+        ["--stdin"],
+        verify_change_stdin_payload_func=lambda *args, **kwargs: _behavior_payload(),
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert (
+        payload["behavior"]["comparisons"][0]["differences"][0]["explanation"]["title"]
+        == "Callback result discarded"
+    )
+
+
+@pytest.mark.parametrize("relative_path", [False, True])
+@pytest.mark.parametrize("existing_output", [False, True])
+def test_output_file_keeps_json_even_in_a_terminal(
+    monkeypatch, capsys, tmp_path, relative_path, existing_output
+):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "report.json"
+    if existing_output:
+        output_path.write_text("old report contents\n" * 1000, encoding="utf-8")
+    destination = output_path.name if relative_path else str(output_path)
+    code = run_verify_command(
+        ["app.py", "--output", destination],
+        verify_change_path_func=lambda *args, **kwargs: _behavior_payload(),
+    )
+    payload = json.loads(output_path.read_text())
+    assert code == 2
+    assert payload["behavior"]["status"] == "different"
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("no_fail", [False, True])
+@pytest.mark.parametrize("destination_kind", ["directory", "missing_parent"])
+def test_output_write_failure_is_a_cli_error(
+    monkeypatch, capsys, tmp_path, no_fail, destination_kind
+):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    output_path = (
+        tmp_path
+        if destination_kind == "directory"
+        else tmp_path / "missing" / "report.json"
+    )
+    args = ["app.py", "--output", str(output_path)]
+    if no_fail:
+        args.append("--no-fail")
+
+    with pytest.raises(SystemExit) as exc:
+        run_verify_command(
+            args,
+            verify_change_path_func=lambda *args, **kwargs: {
+                "status": "pass",
+                "findings": [],
+            },
+        )
+
+    output = capsys.readouterr()
+    assert exc.value.code == 2
+    assert output.out == ""
+    assert "Cannot safely write output" in output.err
+    assert str(output_path) in output.err
+    assert "Traceback" not in output.err
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_run_verify_command_prints_json_and_preserves_args(capsys):

@@ -24,7 +24,11 @@ COMMANDS = [
     },
     {
         "name": "skylos verify <path>",
-        "desc": "Verify changed code for AI-code defects",
+        "desc": "Verify AI-code defects and Python working changes",
+        "details": [
+            "Automatically compares affected Python functions with Git HEAD",
+            "Explains changes and their impact in the terminal; pipes and saved output use JSON",
+        ],
         "group": "AI Agent",
     },
     {
