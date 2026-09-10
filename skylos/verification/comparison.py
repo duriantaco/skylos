@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import hashlib
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from skylos.verification.behavior import compare_python_behavior
 
@@ -235,16 +235,28 @@ def compare_source_changes(
     after: SourceSnapshot,
     *,
     scope: ComparisonScope | None = None,
+    scopes: Sequence[ComparisonScope] | None = None,
 ) -> dict:
     """Return modeled changes and unsupported coverage for prepared sources.
 
     Callers own snapshot acquisition, revision metadata, display and exit
     policy. No filesystem access, Git invocation or static analyzer runs here.
+    Multiple scopes are a union, with line ranges and exclusions applied per
+    scope. Selected functions share one impact graph and comparison budget.
     """
-    scope = scope or ComparisonScope()
-    selected, directory = scope.selected, scope.directory
-    bounds = scope.line_range
-    in_scope = scope.contains
+    if scope is not None and scopes is not None:
+        raise ValueError("Specify either scope or scopes, not both")
+    selections = (
+        tuple(dict.fromkeys(scopes))
+        if scopes is not None
+        else (scope or ComparisonScope(),)
+    )
+    if not selections:
+        raise ValueError("At least one comparison scope is required")
+
+    def in_scope(name: str) -> bool:
+        return any(selection.contains(name) for selection in selections)
+
     result = _new_result()
     before_hashes, after_hashes = before.hashes, after.hashes
     before, after = before.sources, after.sources
@@ -261,7 +273,14 @@ def compare_source_changes(
         return result
     # A known unsupported edit in a file target needs no repository-wide graph.
     # This also keeps selected-file comparison cheap for code outside the model.
-    if not directory and selected in raw_changed and in_scope(selected):
+    single_scope = selections[0] if len(selections) == 1 else None
+    if (
+        single_scope is not None
+        and not single_scope.directory
+        and single_scope.selected in raw_changed
+        and in_scope(single_scope.selected)
+    ):
+        selected, bounds = single_scope.selected, single_scope.line_range
         left = _index(selected, before.get(selected, ""))
         right = _index(selected, after.get(selected, ""))
         if (left.error or right.error) and left.digest != right.digest:
@@ -380,11 +399,19 @@ def compare_source_changes(
 
     # New helpers are checked by inlining them into surviving affected callers.
     def selected_function(key):
-        if not in_scope(key[0]):
-            return False
         nodes = [index.get(key[0], empty).functions.get(key[1]) for index in (old, new)]
-        return not bounds or any(
-            node and node.start <= bounds[1] and node.end >= bounds[0] for node in nodes
+        return any(
+            selection.contains(key[0])
+            and (
+                selection.line_range is None
+                or any(
+                    node
+                    and node.start <= selection.line_range[1]
+                    and node.end >= selection.line_range[0]
+                    for node in nodes
+                )
+            )
+            for selection in selections
         )
 
     existing = {
@@ -402,18 +429,10 @@ def compare_source_changes(
         reached = expanded
     candidates = []
     for name, symbol in sorted(affected):
-        if not in_scope(name):
+        if not selected_function((name, symbol)):
             continue
-        a, b = (
-            old.get(name, empty).functions.get(symbol),
-            new.get(name, empty).functions.get(symbol),
-        )
+        a = old.get(name, empty).functions.get(symbol)
         if a is None and (name, symbol) in reached:
-            continue
-        if bounds and not any(
-            node and node.start <= bounds[1] and node.end >= bounds[0]
-            for node in (a, b)
-        ):
             continue
         candidates.append((name, symbol))
     reasons = []

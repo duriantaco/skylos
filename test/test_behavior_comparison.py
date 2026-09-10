@@ -5,9 +5,11 @@ import hashlib
 import io
 from pathlib import Path
 import subprocess
+from unittest.mock import Mock
 
 import pytest
 
+from skylos.verification import comparison
 from skylos.verification.comparison import (
     ComparisonScope,
     SourceSnapshot,
@@ -196,6 +198,213 @@ def test_line_scope_selects_only_intersecting_changed_function():
     assert set(_comparisons(result)) == {("app.py", "second")}
 
 
+def test_overlapping_scopes_compare_each_function_once(monkeypatch):
+    names = ("pkg/app.py", "pkg/other.py")
+    compare = Mock(wraps=comparison.compare_python_behavior)
+    monkeypatch.setattr(comparison, "compare_python_behavior", compare)
+    monkeypatch.setattr(comparison, "_MAX_COMPARISONS", 2)
+    file_scope = ComparisonScope(selected="pkg/app.py", directory=False)
+
+    result = compare_source_changes(
+        _snapshot({name: _IDENTITY for name in names}),
+        _snapshot({name: _CHANGED for name in names}),
+        scopes=[ComparisonScope(selected="pkg"), file_scope, file_scope],
+    )
+
+    assert result["status"] == "different"
+    assert result["reasons"] == []
+    assert set(_comparisons(result)) == {(name, "run") for name in names}
+    assert len(result["comparisons"]) == compare.call_count == 2
+
+
+def test_disjoint_scopes_share_source_indexing(monkeypatch):
+    names = ("first/app.py", "second/app.py", "unselected.py")
+    index = Mock(wraps=comparison._index)
+    monkeypatch.setattr(comparison, "_index", index)
+
+    result = compare_source_changes(
+        _snapshot({name: _IDENTITY for name in names}),
+        _snapshot({name: _CHANGED for name in names}),
+        scopes=[ComparisonScope(selected="first"), ComparisonScope(selected="second")],
+    )
+
+    assert result["status"] == "different"
+    assert set(_comparisons(result)) == {
+        ("first/app.py", "run"),
+        ("second/app.py", "run"),
+    }
+    calls = [call.args for call in index.call_args_list]
+    for name in names:
+        assert calls.count((name, _IDENTITY)) == 1
+        assert calls.count((name, _CHANGED)) == 1
+
+
+def test_each_scope_keeps_its_own_line_range_and_exclusions():
+    before_source = (
+        "def first(value):\n    return value\n\n"
+        "def second(value):\n    return value\n\n"
+        "def third(value):\n    return value\n"
+    )
+    after_source = before_source.replace("return value", "return None")
+    names = ("pkg/app.py", "pkg/generated/app.py", "pkg/private/app.py")
+
+    result = compare_source_changes(
+        _snapshot({name: before_source for name in names}),
+        _snapshot({name: after_source for name in names}),
+        scopes=[
+            ComparisonScope(
+                selected="pkg",
+                line_range=(1, 2),
+                exclude_folders=frozenset({"generated"}),
+            ),
+            ComparisonScope(
+                selected="pkg/generated/app.py",
+                directory=False,
+                line_range=(4, 5),
+            ),
+            ComparisonScope(
+                selected="pkg",
+                line_range=(7, 8),
+                exclude_folders=frozenset({"generated", "private"}),
+            ),
+        ],
+    )
+
+    assert result["status"] == "different"
+    assert set(_comparisons(result)) == {
+        ("pkg/app.py", "first"),
+        ("pkg/app.py", "third"),
+        ("pkg/generated/app.py", "second"),
+        ("pkg/private/app.py", "first"),
+    }
+
+
+def test_multiple_scopes_include_unchanged_callers_of_changed_unselected_helper():
+    caller = (
+        "from helpers import identity\n\ndef run(value):\n    return identity(value)\n"
+    )
+    callers = {"first.py": caller, "second.py": caller, "unselected.py": caller}
+
+    result = compare_source_changes(
+        _snapshot(
+            {**callers, "helpers.py": "def identity(value):\n    return value\n"}
+        ),
+        _snapshot({**callers, "helpers.py": "def identity(value):\n    return None\n"}),
+        scopes=[
+            ComparisonScope(selected="first.py", directory=False),
+            ComparisonScope(selected="second.py", directory=False),
+        ],
+    )
+
+    assert result["status"] == "different"
+    assert result["changed_files"] == ["helpers.py"]
+    assert set(_comparisons(result)) == {("first.py", "run"), ("second.py", "run")}
+    assert all(item["status"] == "different" for item in result["comparisons"])
+
+
+def test_helper_selected_by_another_scope_is_covered_by_existing_caller():
+    result = compare_source_changes(
+        _snapshot({"app.py": _IDENTITY}),
+        _snapshot(
+            {
+                "app.py": (
+                    "from helpers import identity\n\n"
+                    "def run(value):\n    return identity(value)\n"
+                ),
+                "helpers.py": "def identity(value):\n    return value\n",
+            }
+        ),
+        scopes=[
+            ComparisonScope(selected="app.py", directory=False),
+            ComparisonScope(selected="helpers.py", directory=False),
+        ],
+    )
+
+    assert result["status"] == "equivalent"
+    assert set(_comparisons(result)) == {("app.py", "run")}
+
+
+def test_multiple_scopes_share_one_function_budget(monkeypatch):
+    before_source = "\n".join(
+        f"def function_{index}(value):\n    return value\n" for index in range(3)
+    )
+    after_source = before_source.replace("return value", "return None")
+    names = ("first.py", "second.py")
+    monkeypatch.setattr(comparison, "_MAX_COMPARISONS", 4)
+
+    result = compare_source_changes(
+        _snapshot({name: before_source for name in names}),
+        _snapshot({name: after_source for name in names}),
+        scopes=[ComparisonScope(selected=name, directory=False) for name in names],
+    )
+
+    assert result["status"] == "unknown"
+    assert len(result["comparisons"]) == len(_comparisons(result)) == 4
+    assert result["limits"]["functions"] == 4
+    assert result["reasons"] == ["Affected function budget exhausted (limit 4)"]
+
+
+def test_environment_change_qualifies_every_selected_scope_once():
+    sources = {name: _IDENTITY for name in ("first.py", "second.py", "unselected.py")}
+
+    result = compare_source_changes(
+        _snapshot(sources, hashes={"pyproject.toml": "before"}),
+        _snapshot(sources, hashes={"pyproject.toml": "after"}),
+        scopes=[
+            ComparisonScope(selected="first.py", directory=False),
+            ComparisonScope(selected="second.py", directory=False),
+        ],
+    )
+
+    assert result["status"] == "unknown"
+    assert set(_comparisons(result)) == {("first.py", "run"), ("second.py", "run")}
+    assert result["reasons"] == [
+        "Dependency or Python environment files changed: pyproject.toml"
+    ]
+
+
+@pytest.mark.parametrize("use_scopes", [False, True])
+def test_single_scope_preserves_unsupported_file_fastpath(monkeypatch, use_scopes):
+    index = Mock(wraps=comparison._index)
+    monkeypatch.setattr(comparison, "_index", index)
+    selected = ComparisonScope(selected="app.py", directory=False)
+
+    result = compare_source_changes(
+        _snapshot(
+            {
+                "app.py": "def run(value: str):\n    return value\n",
+                "other.py": _IDENTITY,
+            }
+        ),
+        _snapshot(
+            {"app.py": "def run(value: str):\n    return None\n", "other.py": _CHANGED}
+        ),
+        **({"scopes": [selected]} if use_scopes else {"scope": selected}),
+    )
+
+    assert result["status"] == "unknown"
+    assert set(_comparisons(result)) == {("app.py", "run")}
+    assert [call.args[0] for call in index.call_args_list] == ["app.py", "app.py"]
+
+
+def test_scope_and_scopes_cannot_be_supplied_together():
+    snapshot = _snapshot({"app.py": _IDENTITY})
+
+    with pytest.raises(ValueError, match="either scope or scopes"):
+        compare_source_changes(
+            snapshot, snapshot, scope=ComparisonScope(), scopes=[ComparisonScope()]
+        )
+
+
+def test_empty_scopes_do_not_default_to_whole_repository():
+    with pytest.raises(ValueError, match="At least one comparison scope"):
+        compare_source_changes(
+            _snapshot({"app.py": _IDENTITY}),
+            _snapshot({"app.py": _CHANGED}),
+            scopes=[],
+        )
+
+
 def test_environment_hash_change_qualifies_unchanged_python():
     sources = {"app.py": _IDENTITY}
     before = _snapshot(sources, hashes={"pyproject.toml": "old-environment-bytes"})
@@ -240,12 +449,23 @@ def test_function_budget_reports_unassessed_work_instead_of_completeness():
     assert any("budget exhausted" in reason.lower() for reason in result["reasons"])
 
 
-def test_comparison_uses_no_filesystem_process_or_analyzer_io(monkeypatch):
+@pytest.mark.parametrize("multiple_scopes", [False, True])
+def test_comparison_uses_no_filesystem_process_or_analyzer_io(
+    monkeypatch, multiple_scopes
+):
     import skylos
     import skylos.analyzer
 
-    before = _snapshot({"app.py": _IDENTITY})
-    after = _snapshot({"app.py": _CHANGED})
+    before = _snapshot({"app.py": _IDENTITY, "pkg/app.py": _IDENTITY})
+    after = _snapshot({"app.py": _CHANGED, "pkg/app.py": _CHANGED})
+    scopes = (
+        [
+            ComparisonScope(selected="app.py", directory=False),
+            ComparisonScope(selected="pkg"),
+        ]
+        if multiple_scopes
+        else None
+    )
 
     def unexpected_io(*args, **kwargs):
         raise AssertionError("Shared comparison must only inspect supplied source data")
@@ -258,6 +478,7 @@ def test_comparison_uses_no_filesystem_process_or_analyzer_io(monkeypatch):
         blocked.setattr(subprocess, "Popen", unexpected_io)
         blocked.setattr(skylos, "analyze", unexpected_io)
         blocked.setattr(skylos.analyzer, "analyze", unexpected_io)
-        result = compare_source_changes(before, after)
+        result = compare_source_changes(before, after, scopes=scopes)
 
     assert result["status"] == "different"
+    assert set(_comparisons(result)) == {("app.py", "run"), ("pkg/app.py", "run")}

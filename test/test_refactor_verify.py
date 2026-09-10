@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -252,6 +253,59 @@ def test_working_snapshot_preserves_encoded_bytes_and_line_endings(make_repo):
 
     assert sources["app.py"] == source
     assert hashes["app.py"] == hashlib.sha256(source.encode("latin-1")).hexdigest()
+
+
+@pytest.mark.parametrize("multiple_files", [False, True])
+def test_explicit_ignored_files_share_one_working_snapshot(
+    make_repo, monkeypatch, multiple_files
+):
+    repo, _ = make_repo({"app.py": _IDENTITY, ".gitignore": "generated/\n"})
+    ignored = {
+        "generated/first.py": _IDENTITY,
+        "generated/second.py": "def run(value):\n    return None\n",
+        "generated/unselected.py": _IDENTITY,
+    }
+    for name, source in ignored.items():
+        _write(repo, name, source)
+    assert set(_git(repo, "check-ignore", "--", *ignored).splitlines()) == set(ignored)
+    selected = (
+        ("generated/first.py", "generated/second.py", "generated/first.py")
+        if multiple_files
+        else "generated/first.py"
+    )
+    reader = Mock(wraps=refactor._read_working_source)
+    monkeypatch.setattr(refactor, "_read_working_source", reader)
+
+    sources, hashes = refactor._current_sources(repo, selected)
+
+    expected = {"app.py": _IDENTITY, "generated/first.py": _IDENTITY}
+    if multiple_files:
+        expected["generated/second.py"] = ignored["generated/second.py"]
+    assert sources == expected
+    assert hashes == {
+        name: hashlib.sha256(source.encode()).hexdigest()
+        for name, source in expected.items()
+    }
+    assert sorted(call.args[1] for call in reader.call_args_list) == sorted(expected)
+
+
+@pytest.mark.parametrize("name", ["../app.py", "/app.py", ".", "\0"])
+def test_explicit_file_tuple_rejects_unsafe_member(make_repo, name):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+
+    with pytest.raises(ValueError, match="Unsafe path"):
+        refactor._current_sources(repo, ("app.py", name))
+
+
+def test_explicit_ignored_files_count_toward_snapshot_limit(make_repo, monkeypatch):
+    repo, _ = make_repo({"app.py": _IDENTITY, ".gitignore": "generated/\n"})
+    selected = ("generated/first.py", "generated/second.py")
+    for name in selected:
+        _write(repo, name, _IDENTITY)
+    monkeypatch.setattr(refactor, "_MAX_FILES", 2)
+
+    with pytest.raises(ValueError, match="verification file limit"):
+        refactor._current_sources(repo, selected)
 
 
 def test_deleted_working_source_is_absent_from_snapshot(make_repo):
