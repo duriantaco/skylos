@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.verification.changes import compare_working_changes
+from skylos.verification.changes import compare_target_changes, compare_working_changes
 
 
 _IDENTITY = "def run(value):\n    return value\n"
@@ -98,6 +98,7 @@ def test_git_adapter_reuses_shared_service_once_and_preserves_byte_evidence(
     change_repo, monkeypatch
 ):
     import skylos.verification.changes as changes
+    import skylos.verification.context as context
 
     original = "# coding: latin-1\ndef run(value):\n    return value\n"
     repo, commit = change_repo({"app.py": original})
@@ -105,8 +106,8 @@ def test_git_adapter_reuses_shared_service_once_and_preserves_byte_evidence(
         "# coding: latin-1\ndef run(value):\n    return 'caf\u00e9'\n".encode("latin-1")
     )
     (repo / "app.py").write_bytes(changed_bytes)
-    base_loader = Mock(wraps=changes._base_sources)
-    current_loader = Mock(wraps=changes._current_sources)
+    base_loader = Mock(wraps=context._base_sources)
+    current_loader = Mock(wraps=context._current_sources)
     compare = changes.compare_source_changes
     recorded = []
 
@@ -116,8 +117,8 @@ def test_git_adapter_reuses_shared_service_once_and_preserves_byte_evidence(
         return result
 
     service = Mock(side_effect=record_comparison)
-    monkeypatch.setattr(changes, "_base_sources", base_loader)
-    monkeypatch.setattr(changes, "_current_sources", current_loader)
+    monkeypatch.setattr(context, "_base_sources", base_loader)
+    monkeypatch.setattr(context, "_current_sources", current_loader)
     monkeypatch.setattr(changes, "compare_source_changes", service)
 
     result = compare_working_changes(repo / "app.py")
@@ -449,3 +450,173 @@ def test_changed_registered_submodule_requires_qualification(
 
     assert result["status"] == "unknown"
     assert any("submodule" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize("branch", [False, True], ids=["local", "branch"])
+def test_grouped_targets_load_each_snapshot_and_compare_only_once(
+    change_repo, monkeypatch, branch
+):
+    import skylos.verification.changes as changes
+    import skylos.verification.context as context
+
+    repo, base = change_repo({"pkg/app.py": _IDENTITY, "pkg/other.py": _IDENTITY})
+    _write(repo, "pkg/app.py", "def run(value):\n    return None\n")
+    if branch:
+        _git(repo, "add", "--", "pkg/app.py")
+        _commit(repo, "committed change")
+    head = _git(repo, "rev-parse", "HEAD")
+    base_loader = Mock(wraps=context._base_sources)
+    current_loader = Mock(wraps=context._current_sources)
+    service = Mock(wraps=changes.compare_source_changes)
+    git_reads = Mock(wraps=context._git)
+    monkeypatch.setattr(context, "_base_sources", base_loader)
+    monkeypatch.setattr(context, "_current_sources", current_loader)
+    monkeypatch.setattr(changes, "compare_source_changes", service)
+    monkeypatch.setattr(context, "_git", git_reads)
+
+    reports = compare_target_changes(
+        [repo / "pkg", repo / "pkg/app.py", repo / "pkg"],
+        base_ref=base if branch else None,
+    )
+
+    assert len(reports) == 1
+    assert reports[0]["status"] == "different"
+    service.assert_called_once()
+    assert [call.args[1] for call in base_loader.call_args_list] == (
+        [base, head] if branch else [head]
+    )
+    assert current_loader.call_count == (0 if branch else 1)
+    head_resolutions = [
+        call
+        for call in git_reads.call_args_list
+        if call.args[1] == "rev-parse" and "HEAD^{commit}" in call.args
+    ]
+    assert len(head_resolutions) == 1
+    if branch:
+        merge_reads = [
+            call for call in git_reads.call_args_list if call.args[1] == "merge-base"
+        ]
+        assert len(merge_reads) == 1
+        assert base in merge_reads[0].args and head in merge_reads[0].args
+
+
+def test_grouped_explicit_ignored_files_share_one_working_snapshot(
+    change_repo, monkeypatch
+):
+    import skylos.verification.context as context
+
+    repo, _ = change_repo({"app.py": _IDENTITY, ".gitignore": "*.local.py\n"})
+    _write(repo, "first.local.py", _IDENTITY)
+    _write(repo, "second.local.py", _IDENTITY)
+    _write(repo, "unselected.local.py", _IDENTITY)
+    loader = Mock(wraps=context._current_sources)
+    monkeypatch.setattr(context, "_current_sources", loader)
+
+    reports = compare_target_changes(
+        [repo / "first.local.py", repo / "second.local.py"]
+    )
+
+    assert len(reports) == 1
+    loader.assert_called_once()
+    assert set(reports[0]["current"]["source_hashes"]) == {
+        "app.py",
+        "first.local.py",
+        "second.local.py",
+    }
+    assert set(_comparisons(reports[0])) == {
+        ("first.local.py", "run"),
+        ("second.local.py", "run"),
+    }
+
+
+def test_branch_submodule_evidence_ignores_dirty_working_dependency(change_repo):
+    repo, _ = change_repo({"app.py": _IDENTITY})
+    dependency = _register_local_submodule(repo)
+    base = _git(repo, "rev-parse", "HEAD")
+    _write(repo, "app.py", "def run(value):\n    return None\n")
+    _git(repo, "add", "--", "app.py")
+    _commit(repo, "application change")
+    _write(dependency, "module.py", "def run(value):\n    return 'dirty'\n")
+
+    report = compare_target_changes([repo], base_ref=base)[0]
+
+    assert report["status"] == "different"
+    assert compare_working_changes(repo)["status"] == "unknown"
+    assert "dependency/module.py" not in report["current"]["source_hashes"]
+
+
+@pytest.mark.parametrize("base_ref", ["", " ", "--all", "HEAD\0", "a" * 1025])
+def test_invalid_branch_reference_is_an_input_error_before_git(
+    tmp_path, monkeypatch, base_ref
+):
+    import skylos.verification.context as context
+
+    def unexpected_git(*args, **kwargs):
+        pytest.fail("Invalid refs must be rejected before Git access")
+
+    monkeypatch.setattr(context, "_git", unexpected_git)
+    with pytest.raises(ValueError, match="reference|ref|base"):
+        compare_target_changes([tmp_path], base_ref=base_ref)
+
+
+@pytest.mark.parametrize("selected", ["app.ts", "README"])
+@pytest.mark.parametrize("file_option", [False, True])
+def test_non_python_local_target_does_not_load_unrelated_python_sources(
+    change_repo, monkeypatch, selected, file_option
+):
+    import skylos.verification.context as context
+
+    repo, _ = change_repo({"app.py": _IDENTITY, selected: "Non-Python fixture\n"})
+
+    def unexpected_snapshot(*args, **kwargs):
+        pytest.fail("Non-Python local selections must not load Python snapshots")
+
+    monkeypatch.setattr(context, "_base_sources", unexpected_snapshot)
+    monkeypatch.setattr(context, "_current_sources", unexpected_snapshot)
+
+    report = (
+        compare_working_changes(repo, file=selected)
+        if file_option
+        else compare_working_changes(repo / selected)
+    )
+
+    assert report["status"] == "unavailable"
+    assert report["comparisons"] == []
+
+
+@pytest.mark.parametrize("selected", ["missing.py", "missing_directory"])
+def test_missing_branch_scope_is_unavailable_instead_of_unchanged(
+    change_repo, selected
+):
+    repo, base = change_repo({"app.py": _IDENTITY})
+
+    report = compare_target_changes([repo / selected], base_ref=base)[0]
+
+    assert report["status"] == "unavailable"
+    assert report["comparisons"] == []
+    assert report["reasons"]
+
+
+def test_committed_extensionless_file_is_not_classified_as_directory(change_repo):
+    repo, base = change_repo({"app.py": _IDENTITY, "README": "Project overview\n"})
+
+    report = compare_target_changes([repo / "README"], base_ref=base)[0]
+
+    assert report["status"] == "unavailable"
+    assert report["context"]["scopes"][0]["directory"] is False
+
+
+def test_committed_file_to_directory_change_does_not_hide_removed_function(change_repo):
+    repo, base = change_repo({"app.py": _IDENTITY})
+    (repo / "app.py").unlink()
+    _write(repo, "app.py/helper.py", _IDENTITY)
+    _git(repo, "add", "--", "app.py")
+    _commit(repo, "source path became a directory")
+
+    report = compare_target_changes([repo / "app.py"], base_ref=base)[0]
+
+    assert report["status"] == "unknown"
+    assert ("app.py", "run") in _comparisons(report) or any(
+        "type" in reason.lower() or "kind" in reason.lower()
+        for reason in report["reasons"]
+    )

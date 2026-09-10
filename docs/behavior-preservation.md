@@ -19,8 +19,36 @@ tree, alongside the existing AI-code checks. The path selects a file or project;
 Skylos selects the functions and baseline. Changed local helpers can affect a
 function even when that function's own source is unchanged.
 
-The selected path must exist. A missing file or project directory is an input
-error (exit code 2), including when using `--file` with `--project-context`.
+The shared Git adapter also supports committed branch comparisons through
+`compare_target_changes` in `skylos.verification.changes`:
+
+```python
+from skylos.verification.changes import ComparisonTarget, compare_target_changes
+
+local_reports = compare_target_changes(["src", "tests"])
+branch_reports = compare_target_changes(
+    [ComparisonTarget(".", file="app.py")], base_ref="origin/main"
+)
+```
+
+Each result describes one repository. Local mode compares HEAD with working
+sources. Branch mode resolves the requested reference and HEAD to immutable
+commits, then compares their merge base with committed HEAD. Staged edits,
+working files and untracked files do not change branch evidence. Selected files
+and directories are identified from the committed trees, including deleted
+paths. Missing references, unavailable history or ambiguous merge bases produce
+an explicit unavailable comparison.
+
+Multiple targets in one repository share source snapshots and comparison work.
+Overlapping scopes compare each affected function once, with one function budget
+per repository. `ComparisonTarget` also accepts a line range, and the adapter
+accepts folder exclusions. This service is preparation for the existing diff
+workflow; regular scans and `suite` have not activated behavior comparison yet.
+Finding fingerprints from `--baseline` are unrelated to these source revisions.
+
+Targets passed to the `skylos verify` CLI must exist. A missing file or project
+directory is an input error (exit code 2), including when using `--file` with
+`--project-context`.
 
 In a terminal, the command explains each difference with its location, before
 and after behavior, possible impact on callers, and a review prompt. For example:
@@ -109,6 +137,10 @@ The behavior evidence records:
 - Individual function comparisons, including the model version, symbol ranges,
   differences, reasons for incompleteness, and assumptions.
 - The selected function/helper scope and comparison budgets.
+- A `context` object recording the repository, local/branch mode, resolved
+  reference commit, actual base commit, HEAD identity and selected scopes.
+- The current source `kind` (`working_tree` or `commit`). A working tree has no
+  current commit ID; a branch result records the exact current commit.
 
 These hashes identify the inputs to the comparison. They do not establish
 semantic correctness independently of the model. Working-tree reads are not an

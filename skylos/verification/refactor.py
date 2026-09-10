@@ -248,7 +248,10 @@ def _read_working_source(root_fd: int, name: str) -> bytes | None:
 
 
 def _current_sources(
-    root: Path, selected: str | None = None, *, allow_submodules: bool = False
+    root: Path,
+    selected: str | tuple[str, ...] | None = None,
+    *,
+    allow_submodules: bool = False,
 ) -> tuple[dict[str, str], dict[str, str]]:
     index = _git(root, "ls-files", "--stage", "-z")
     if not allow_submodules and any(
@@ -265,9 +268,9 @@ def _current_sources(
         for name in listing
         if name and _snapshot_input(os.fsdecode(name))
     }
-    # An explicitly selected ignored file is still part of the obligation.
+    # Explicitly selected ignored files are still part of the obligation.
     if selected is not None:
-        names.add(selected)
+        names.update((selected,) if isinstance(selected, str) else selected)
     if len(names) > _MAX_FILES:
         raise ValueError("Working source snapshot exceeds the verification file limit")
     if (

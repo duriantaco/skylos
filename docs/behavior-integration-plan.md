@@ -1,8 +1,8 @@
 # Behavior comparison integration plan
 
-Updated: 2026-09-09.
+Updated: 2026-09-10.
 
-Progress: step 1 complete; step 2 is next. Steps 2–5 have not been executed.
+Progress: steps 1 and 2 complete; step 3 is next. Steps 3–5 have not been executed.
 
 ## Objective
 
@@ -99,7 +99,7 @@ Completion evidence (2026-09-09):
 
 ## 2. Make the comparison baseline explicit
 
-Status: pending; depends on step 1.
+Status: complete.
 
 Implementation:
 
@@ -125,6 +125,37 @@ Acceptance checks:
 - Cover diverged branches, dirty files, file/directory/multiple-path scopes,
   targets outside the current directory, no Git, and missing base history.
 - Base/current commit identities agree with the source bytes in the report.
+
+Completion evidence (2026-09-10):
+
+- Added `ComparisonTarget`, immutable `ComparisonContext`, and the repository
+  resolver in `skylos/verification/context.py`. Local contexts pin HEAD and load
+  working sources; branch contexts pin both refs and load merge-base/HEAD blobs.
+- Added `compare_target_changes(...)` for repository-grouped comparisons. The
+  existing `compare_working_changes(...)` remains its local single-target
+  adapter. Reports retain prior fields and add current source kind, commit
+  identity and explicit context metadata.
+- The source service unions scopes without repeating graph construction or
+  function comparisons. Multiple explicitly selected ignored files share one
+  working snapshot; existing read limits and no-follow checks remain enforced.
+- Added 27 independent baseline acceptance cases, plus scope-union, snapshot
+  grouping, ignored-file, submodule and compatibility regressions. Coverage
+  includes refs moving during loading, dirty/index restoration, diverged and
+  shallow history, multiple repositories, deleted paths, file/directory changes,
+  non-Python selections and original encoded-byte hashes.
+- Independent review caught and fixed the non-Python fast-path regression and
+  dirty symlink scope redirection. Missing committed scopes report unavailable;
+  committed file/directory transitions retain both affected selections.
+- Full relevant behavior/verify/CLI and safe-output suite: **532 passed**.
+  Ruff, formatting, diff and generated repo-map checks pass. Published Skylos
+  **4.36.1** reports no security/secrets findings or analysis errors across all
+  eight changed Python files.
+- Real temporary-repository demo: uncommitted return loss is `different`; after
+  commit local comparison is `unchanged`, while branch comparison is
+  `different`. Restoring the return only locally leaves branch status and
+  committed byte evidence unchanged.
+- Regular scans, `suite`, finding baselines, grades and exit policies retain
+  their existing behavior. No CLI flags were added. Step 3 remains pending.
 
 ## 3. Separate behavior review from defect policy
 
@@ -207,11 +238,11 @@ and reuse parsed sources before considering automatic execution on every scan.
 
 ## Resume notes
 
-- Current authorized execution: step 1 only.
+- Current authorized execution: step 2.
 - Step 1 is complete. Regular scans and `suite` still retain their existing
   activation behavior; their comparison integration is step 4.
-- Next work after step 1: explicit comparison context and baseline tests in
-  step 2; do not enable regular-scan comparison before the integration checks.
-- The user authorized splitting this tested checkpoint into focused commits.
-  Preserve the completed behavior-comparison work; step 2 remains pending.
-  No push or PR is requested.
+- Step 1 and its I/O fixes are merged into main. Step 2 starts from updated main
+  on `feat/behavior-comparison-baselines`.
+- Step 2 is complete. Next is the behavior report/policy contract in step 3;
+  steps 3–5 remain separate work and have not been executed.
+- Preserve the user's preference for focused commits. Do not open a PR.
