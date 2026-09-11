@@ -74,13 +74,18 @@ def _circular_import_targets(
     Collapsing ``pkg -> pkg.child`` to ``pkg -> pkg`` invents a self-cycle,
     while discarding that edge would hide a real child-to-package cycle.
     Keep the exact resolved graph within a package; unresolved symbols still
-    fall back to their known containing module.
+    fall back to their known containing module. Do not turn a more-specific
+    unresolved child that falls back to its importer into a self-cycle.
     """
     if not targets:
         return {}
     root = _module_root(import_module)
     if _module_root(from_module) == root:
-        return targets
+        return {
+            target: target_names
+            for target, target_names in targets.items()
+            if target != from_module or not import_module.startswith(f"{target}.")
+        }
     return {root: names}
 
 
