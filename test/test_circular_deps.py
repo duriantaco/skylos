@@ -117,16 +117,36 @@ def test_real_same_package_cycles_remain_visible(mode, sources, cycle, edges):
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
 @pytest.mark.parametrize(
+    "source",
+    [
+        "import package.missing",
+        "from package.missing import value",
+        "from .missing import value",
+    ],
+)
+def test_unresolved_package_children_do_not_invent_self_cycles(mode, source):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", source),
+            "package.child": ("/project/package/child.py", "value = 'label'"),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    assert dict(rule._analyzer.dependencies) == {}
+    assert dict(rule._analyzer.architecture_dependencies) == {"package": {"package"}}
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
     ("source", "targets"),
     [
-        ("import package.missing", {"package"}),
         ("from package import missing", {"package"}),
         ("from package import child, missing", {"package", "package.child"}),
     ],
 )
-def test_unresolved_package_children_and_symbols_remain_conservative(
-    mode, source, targets
-):
+def test_unresolved_package_symbols_remain_conservative(mode, source, targets):
     rule = _rule_for_sources(
         {
             "package": ("/project/package/__init__.py", source),
