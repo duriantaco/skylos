@@ -13,6 +13,7 @@ CLASSIFICATION_LABELS = {
 
 REASON_TAG_LABELS = {
     "no_refs": "no refs",
+    "no_reachable_callers": "no reachable callers",
     "not_exported": "not exported",
     "no_entrypoint": "no entrypoint",
     "static_reference": "has refs",

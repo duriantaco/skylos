@@ -25,6 +25,7 @@ class EvidenceKind(str, Enum):
     VALIDATION_FAIL = "validation_fail"
     UNCERTAINTY = "uncertainty"
     NO_STATIC_REFERENCES = "no_static_references"
+    NO_REACHABLE_CALLERS = "no_reachable_callers"
     NOT_EXPORTED = "not_exported"
     NO_ENTRYPOINT = "no_entrypoint"
     CONFIDENCE_GATE = "confidence_gate"
@@ -61,6 +62,7 @@ ENTRYPOINT_EVIDENCE_KINDS = {
 
 DEAD_EVIDENCE_KINDS = {
     EvidenceKind.NO_STATIC_REFERENCES,
+    EvidenceKind.NO_REACHABLE_CALLERS,
     EvidenceKind.NOT_EXPORTED,
     EvidenceKind.NO_ENTRYPOINT,
     EvidenceKind.CONFIDENCE_GATE,
@@ -80,6 +82,7 @@ DECISION_REASON_LABELS = {
     "trace_hit": "Trace hit",
     "grep_rescue": "Grep verification found usage",
     "no_refs": "No static references",
+    "no_reachable_callers": "No reachable caller in the analyzed project",
     "not_exported": "Not exported",
     "no_entrypoint": "No entrypoint evidence",
     "confidence_ge_threshold": "Confidence meets threshold",
@@ -131,10 +134,7 @@ class SymbolKey:
     def repo_relative_file(self, root: str | Path) -> str:
         try:
             return (
-                Path(self.file)
-                .resolve()
-                .relative_to(Path(root).resolve())
-                .as_posix()
+                Path(self.file).resolve().relative_to(Path(root).resolve()).as_posix()
             )
         except Exception:
             return Path(self.file).as_posix()
@@ -461,7 +461,18 @@ def _add_deadness_evidence(
     if references > 0:
         return
 
-    if references <= 0:
+    unreachable_group = "unreachable_group" in dict(_iter_heuristic_refs(definition))
+    if unreachable_group:
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.NO_REACHABLE_CALLERS,
+                reason="references are confined to unreachable functions in the analyzed project",
+                source="python_reachability",
+                details={"callers": sorted(getattr(definition, "called_by", ()))},
+            ),
+        )
+    elif references <= 0:
         ledger.add(
             symbol,
             EvidenceEvent(
@@ -737,7 +748,9 @@ def _dead_reason_tags(
     definition: Any | None,
 ) -> list[str]:
     tags: list[str] = []
-    if _has_no_static_refs(events, definition):
+    if _has_event_kind(events, EvidenceKind.NO_REACHABLE_CALLERS):
+        tags.append("no_reachable_callers")
+    elif _has_no_static_refs(events, definition):
         tags.append("no_refs")
     if _is_not_exported(events, definition):
         tags.append("not_exported")
@@ -794,8 +807,7 @@ def _primary_reason(
     classification: CandidateClassification,
 ) -> str:
     labels = [
-        DECISION_REASON_LABELS.get(tag, tag.replace("_", " "))
-        for tag in reason_tags
+        DECISION_REASON_LABELS.get(tag, tag.replace("_", " ")) for tag in reason_tags
     ]
     if labels:
         return "; ".join(labels[:3])

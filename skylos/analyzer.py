@@ -122,6 +122,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_call_arg_types",
     "_grep_verify_report",
     "_grep_verify_incomplete_candidates",
+    "_python_reachability_report",
     "_dead_code_scope_keys",
     "_dead_code_liveness_report",
     "ts_consumed_exports",
@@ -1226,7 +1227,7 @@ def _collect_grep_verify_candidates(
     candidate_keys: frozenset | None = None,
 ) -> tuple[list[dict], dict]:
     candidates: list[dict] = []
-    candidate_defs: dict = {}
+    entries: dict = {}
     for key, defn in definitions.items():
         if candidate_keys is not None and key not in candidate_keys:
             continue
@@ -1234,10 +1235,27 @@ def _collect_grep_verify_candidates(
             continue
         payload = defn.to_dict()
         candidates.append(payload)
-        full_name = payload.get("full_name", payload.get("name", ""))
-        candidate_defs[full_name] = defn
+        entries[key] = (defn, payload)
     candidates.sort(key=_grep_verify_rescue_priority)
-    return candidates, candidate_defs
+    return candidates, _index_grep_verify_candidates(entries)
+
+
+def _index_grep_verify_candidates(entries: dict) -> dict:
+    names = Counter(
+        payload.get("full_name", payload.get("name", ""))
+        for _definition, payload in entries.values()
+    )
+    indexed = {}
+    for definition_key, (definition, payload) in entries.items():
+        full_name = payload.get("full_name", payload.get("name", ""))
+        verdict_key = full_name
+        if names[full_name] > 1:
+            # An import and its target can share a qualified name. Keep the
+            # search name intact while routing each verdict to its own symbol.
+            verdict_key = json.dumps([full_name, str(definition_key)])
+            payload["_verification_key"] = verdict_key
+        indexed[verdict_key] = definition
+    return indexed
 
 
 def _apply_grep_verify_verdicts(candidate_defs: dict, verdicts: dict) -> int:
@@ -1975,6 +1993,86 @@ class Skylos:
                     defn.confidence = 0
                     defn.skip_reason = "standalone ORM model module"
 
+    def _has_complete_python_reachability_scope(self):
+        # Negative reachability needs the whole selected project. File-only,
+        # subdirectory, changed-file and failed scans retain their prior policy.
+        scope = getattr(self, "_analysis_scope", {})
+        if (
+            scope.get("kind")
+            not in {"repository_root", "repository_root_with_exclusions"}
+            or scope.get("changed_files_only")
+            or not set(scope.get("excluded_folders", ())).issubset(
+                DEFAULT_EXCLUDE_FOLDERS
+            )
+        ):
+            return False
+        return Path(scope["scan_path"]).resolve() == Path(self._project_root).resolve()
+
+    def _prepare_python_reachability(
+        self, files, analysis_errors, *, module_names=None
+    ):
+        self.__dict__.pop("_python_reachability_report", None)
+        if analysis_errors:
+            return
+        try:
+            if not self._has_complete_python_reachability_scope():
+                return
+            from skylos.deadcode.reachability import analyze_python_reachability
+
+            report = analyze_python_reachability(
+                self.defs, files, self._project_root, module_names=module_names
+            )
+            if not report.complete:
+                return
+        except Exception:
+            logger.debug("Python reachability unavailable", exc_info=True)
+            return
+        self._python_reachability_report = report
+        self._apply_python_reachability(report)
+
+    def _apply_python_reachability(self, report):
+        for key in report.proven_reachable_keys:
+            defn = self.defs.get(key)
+            if defn is not None and defn.references <= 0:
+                defn.references = 1
+                defn.heuristic_refs["reachable_from_root"] = 1.0
+        for key in report.unreachable_keys:
+            defn = self.defs.get(key)
+            if defn is None:
+                continue
+            attribute_hints = max(0, getattr(defn, "_attr_name_ref_count", 0))
+            has_references = defn.references > attribute_hints or bool(defn.called_by)
+            defn.references = 0
+            if not has_references:
+                continue
+            defn.heuristic_refs["unreachable_group"] = 1.0
+            reason = report.reasons[key]
+            if reason not in defn.why_unused:
+                defn.why_unused.append(reason)
+
+    def _refresh_python_reachability(self):
+        report = getattr(self, "_python_reachability_report", None)
+        if report is None:
+            return
+        previously_unreachable = set(report.unreachable_keys)
+        previous_reasons = dict(report.reasons)
+        revived_roots = {
+            key for key in previously_unreachable if self.defs[key].references > 0
+        }
+        report.refresh(self.defs, additional_roots=revived_roots)
+        # An external callback or a later grep rescue may establish a real
+        # caller. Its callees must be restored in this same scan.
+        for key in previously_unreachable - report.unreachable_keys:
+            defn = self.defs.get(key)
+            if defn is None:
+                continue
+            defn.references = max(1, defn.references)
+            defn.heuristic_refs.pop("unreachable_group", None)
+            defn.heuristic_refs["reachable_from_root"] = 1.0
+            reason = previous_reasons.get(key)
+            if reason in defn.why_unused:
+                defn.why_unused.remove(reason)
+
     def _grep_verify(self, *, use_project_cache: bool = True):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.core.grep_cache import GrepCache
@@ -2016,11 +2114,18 @@ class Skylos:
             grep_cache.load(grep_root)
         try:
             grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
+            report_filter = getattr(self, "_python_reachability_report", None)
+            filter_kwargs = (
+                {"evidence_filter": report_filter.filter_grep_results}
+                if report_filter is not None
+                else {}
+            )
             verdicts = grep_verify_findings(
                 candidates,
                 project_root,
                 cache=grep_cache,
                 time_budget=grep_budget,
+                **filter_kwargs,
             )
         finally:
             if use_project_cache:
@@ -2052,6 +2157,7 @@ class Skylos:
             return 0
 
         rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
+        self._refresh_python_reachability()
 
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
@@ -4746,9 +4852,11 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
+        self._prepare_python_reachability(files, analysis_errors, module_names=modmap)
         # Resolve library callbacks from surviving callers, so speculative
         # callback cycles cannot become roots or consume ordinary references.
         self._apply_external_protocol_liveness(files)
+        self._refresh_python_reachability()
         self._suppress_standalone_orm_models()
 
         grep_verify_report = {
