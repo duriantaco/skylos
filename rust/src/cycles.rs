@@ -8,7 +8,9 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Args:
 ///     edges: List of (from_module, to_module) import edges.
-///     modules: List of module names (iteration order matters for determinism).
+///     modules: List of module names. Edge and module order do not affect the
+///         result: both are sorted internally so the output is a function of the
+///         graph alone.
 ///
 /// Returns:
 ///     List of cycles, where each cycle is a normalized list of module names.

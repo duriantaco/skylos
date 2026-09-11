@@ -251,6 +251,11 @@ class CircularDependencyAnalyzer:
         """Pure Python DFS cycle detection."""
         cycles = []
         visited = set()
+        # Sorted once up front: the traversal is then a pure function of the
+        # graph rather than of set iteration order (PYTHONHASHSEED).
+        adjacency = {
+            node: sorted(neighbors) for node, neighbors in self.dependencies.items()
+        }
 
         def dfs(node, path, path_set):
             if node in path_set:
@@ -267,7 +272,7 @@ class CircularDependencyAnalyzer:
             path.append(node)
             path_set.add(node)
 
-            for neighbor in sorted(self.dependencies.get(node, ())):
+            for neighbor in adjacency.get(node, ()):
                 found_cycles.extend(dfs(neighbor, path, path_set))
 
             path.pop()
@@ -276,6 +281,7 @@ class CircularDependencyAnalyzer:
 
             return found_cycles
 
+        # Roots sorted too, so file discovery order cannot change the result.
         for node in sorted(self.modules):
             visited.clear()
             found = dfs(node, [], set())
