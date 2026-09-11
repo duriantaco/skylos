@@ -19,6 +19,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.grep_search_state import grep_probe_limit, retain_grep_probe
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,9 +163,7 @@ class _GrepEvidence(str):
 
     __slots__ = ("path", "line_number", "content")
 
-    def __new__(
-        cls, path: str, line_number: int, content: str
-    ) -> _GrepEvidence:
+    def __new__(cls, path: str, line_number: int, content: str) -> _GrepEvidence:
         value = super().__new__(cls, f"{path}:{line_number}:{content}")
         value.path = path
         value.line_number = line_number
@@ -258,9 +258,7 @@ class _GrepBatchResults(dict[GrepRequest, tuple[str, ...]]):
 
     def merge(self, other: Mapping[GrepRequest, tuple[str, ...]]) -> None:
         self.update(other)
-        self.incomplete_requests.update(
-            getattr(other, "incomplete_requests", ())
-        )
+        self.incomplete_requests.update(getattr(other, "incomplete_requests", ()))
 
 
 _GREP_REQUEST_RECORDER: ContextVar[list[GrepRequest] | None] = ContextVar(
@@ -485,9 +483,7 @@ def _split_grep_evidence(line: str) -> tuple[str, int | None, str]:
 
 def _is_ignored_grep_path(path: str) -> bool:
     components = [
-        component
-        for component in path.replace("\\", "/").split("/")
-        if component
+        component for component in path.replace("\\", "/").split("/") if component
     ]
     ignored_names = {
         ".git",
@@ -695,9 +691,7 @@ def _raise_for_bounded_process_failure(
     if state.timed_out:
         raise subprocess.TimeoutExpired(list(cmd), timeout)
     if state.stderr_overflow.is_set():
-        raise _GrepExecutionIncomplete(
-            "ripgrep stderr exceeded its size limit"
-        )
+        raise _GrepExecutionIncomplete("ripgrep stderr exceeded its size limit")
     if state.overflow.is_set():
         raise _GrepOutputLimitExceeded("ripgrep output exceeded its size limit")
     if state.thread_errors:
@@ -884,9 +878,7 @@ def _ripgrep_match_from_event(event: Mapping[str, object]) -> _GrepMatch | None:
     if not isinstance(data, dict):
         raise ValueError("ripgrep match has no data object")
     path = _ripgrep_json_text(data.get("path"), "path")
-    content = _remove_one_line_ending(
-        _ripgrep_json_text(data.get("lines"), "lines")
-    )
+    content = _remove_one_line_ending(_ripgrep_json_text(data.get("lines"), "lines"))
     return _GrepMatch(
         path=path,
         line_number=_ripgrep_line_number(data),
@@ -1051,28 +1043,22 @@ def _streamed_request_matches(
     regex = state.regexes[request]
     assert regex is not None
     python_matches = regex.search(match.content) is not None
-    if (
-        _ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern)
-        and _contains_engine_divergent_space(match.content)
-    ):
+    if _ENGINE_SENSITIVE_SPACE_PATTERN.search(
+        request.pattern
+    ) and _contains_engine_divergent_space(match.content):
         state.requests_requiring_exact_search.add(request)
         return False
     if not match.content.isascii():
         needs_adjudication = bool(
             _UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern)
         )
-        if (
-            not needs_adjudication
-            and _UNICODE_WORD_PATTERN.search(request.pattern)
-        ):
+        if not needs_adjudication and _UNICODE_WORD_PATTERN.search(request.pattern):
             needs_adjudication = _rust_and_python_word_classes_can_differ(
                 match.content,
                 deadline=state.deadline,
             )
         if needs_adjudication:
-            required_literal = _required_trailing_boundary_literal(
-                request.pattern
-            )
+            required_literal = _required_trailing_boundary_literal(request.pattern)
             if required_literal is None or required_literal in match.content:
                 state.requests_requiring_exact_search.add(request)
                 python_matches = False
@@ -1199,8 +1185,7 @@ def _prepare_streamed_grep(
     trust_ripgrep_attribution: bool,
 ) -> tuple[bytes, _StreamedGrepState]:
     retained_slots = sum(
-        max(request.max_results, _GREP_BATCH_RESULT_FLOOR)
-        for request in requests
+        max(request.max_results, _GREP_BATCH_RESULT_FLOOR) for request in requests
     )
     if retained_slots > _GREP_BATCH_MAX_MATCHES:
         raise _GrepOutputLimitExceeded(
@@ -1216,12 +1201,9 @@ def _prepare_streamed_grep(
         for request in requests
     }
     if any(
-        regex is None and not request.fixed_string
-        for request, regex in regexes.items()
+        regex is None and not request.fixed_string for request, regex in regexes.items()
     ):
-        raise _GrepExecutionIncomplete(
-            "streamed grep received an unsupported regex"
-        )
+        raise _GrepExecutionIncomplete("streamed grep received an unsupported regex")
     return encoded_input, _StreamedGrepState(
         requests=tuple(requests),
         matches={request: [] for request in requests},
@@ -1447,9 +1429,7 @@ def _ripgrep_stdin_match_positions(
     whole request there would drop real evidence.
     """
     positions: set[int] = set()
-    for offset, chunk in _grep_stdin_chunks(
-        contents, _GREP_UNICODE_MAX_INPUT_BYTES
-    ):
+    for offset, chunk in _grep_stdin_chunks(contents, _GREP_UNICODE_MAX_INPUT_BYTES):
         if _deadline_expired(deadline):
             raise _GrepDeadlineExceeded("deadline exceeded while adjudicating grep")
         result = _run_bounded_subprocess(
@@ -1514,9 +1494,7 @@ def _word_divergent_lines(
             raise _GrepDeadlineExceeded(
                 "deadline exceeded while checking non-ASCII lines"
             )
-        if _rust_and_python_word_classes_can_differ(
-            line[1], deadline=deadline
-        ):
+        if _rust_and_python_word_classes_can_differ(line[1], deadline=deadline):
             divergent.append(line)
     return divergent
 
@@ -1655,17 +1633,13 @@ def _run_ripgrep_batch(
     if not batched:
         return _run_serial_grep_requests(direct, deadline=deadline)
 
-    grep_matches = _run_ripgrep_pattern_file(
-        batched, rg, timeout, deadline=deadline
-    )
+    grep_matches = _run_ripgrep_pattern_file(batched, rg, timeout, deadline=deadline)
     non_ascii_lines = [
         (index, match.content)
         for index, match in enumerate(grep_matches)
         if not match.content.isascii()
     ]
-    word_divergent_lines = _word_divergent_lines(
-        non_ascii_lines, deadline=deadline
-    )
+    word_divergent_lines = _word_divergent_lines(non_ascii_lines, deadline=deadline)
     has_space_pattern = any(
         not request.fixed_string
         and _ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern)
@@ -1744,9 +1718,7 @@ def _run_ripgrep_batch(
                 request.pattern,
                 exc,
             )
-    batch_results.merge(
-        _run_serial_grep_requests(direct, deadline=deadline)
-    )
+    batch_results.merge(_run_serial_grep_requests(direct, deadline=deadline))
     return batch_results
 
 
@@ -1803,13 +1775,9 @@ def _recover_from_grep_resource_limit(
     midpoint = len(requests) // 2
     logger.debug("splitting oversized grep batch of %d requests", len(requests))
     results = _GrepBatchResults()
-    results.merge(
-        _execute_grep_chunk(requests[:midpoint], rg, deadline=deadline)
-    )
+    results.merge(_execute_grep_chunk(requests[:midpoint], rg, deadline=deadline))
     if not _deadline_expired(deadline):
-        results.merge(
-            _execute_grep_chunk(requests[midpoint:], rg, deadline=deadline)
-        )
+        results.merge(_execute_grep_chunk(requests[midpoint:], rg, deadline=deadline))
     return results
 
 
@@ -1908,7 +1876,7 @@ def _run_grep(
         use_regex=use_regex,
         include_globs=include_globs,
         fixed_string=fixed_string,
-        max_results=max_results,
+        max_results=grep_probe_limit(max_results),
     )
     recorder = _GREP_REQUEST_RECORDER.get()
     if recorder is not None:
@@ -1919,21 +1887,23 @@ def _run_grep(
     if replay is not None:
         replayed = replay.get(request)
         if replayed is not None:
-            return list(replayed)
+            return retain_grep_probe(list(replayed), max_results)
         logger.warning("grep replay miss for pattern %r; executing directly", pattern)
         deadline = _GREP_REPLAY_DEADLINE.get()
-        return (
+        lines = (
             _run_grep_request(request)
             if deadline is None
             else _run_grep_request(request, deadline=deadline)
         )
+        return retain_grep_probe(lines, max_results)
 
     deadline = _GREP_EXECUTION_DEADLINE.get()
-    return (
+    lines = (
         _run_grep_request(request)
         if deadline is None
         else _run_grep_request(request, deadline=deadline)
     )
+    return retain_grep_probe(lines, max_results)
 
 
 def repo_relative_path(file_path: str, project_root: str | Path) -> str:
@@ -2066,9 +2036,7 @@ def _grep_paths_equal(first: str, second: str) -> bool:
     normalized_first = first.replace("\\", "/")
     normalized_second = second.replace("\\", "/")
     if _HOST_PATH_CASE_INSENSITIVE:
-        return ntpath.normcase(normalized_first) == ntpath.normcase(
-            normalized_second
-        )
+        return ntpath.normcase(normalized_first) == ntpath.normcase(normalized_second)
     return normalized_first == normalized_second
 
 
@@ -2267,11 +2235,7 @@ def _deduplicate_grep_results(
         unique = []
         for line in lines:
             path, line_number, _ = _split_grep_evidence(line)
-            key = (
-                f"{path}\0{line_number}"
-                if line_number is not None
-                else str(line)
-            )
+            key = f"{path}\0{line_number}" if line_number is not None else str(line)
             if key not in seen_in_strategy:
                 seen_in_strategy.add(key)
                 unique.append(line)

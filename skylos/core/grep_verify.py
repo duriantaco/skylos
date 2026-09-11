@@ -8,6 +8,11 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from skylos.core.grep_search_state import (
+    GrepSearchResults,
+    UNCLASSIFIED_STRATEGY,
+    track_grep_evidence_limits,
+)
 from skylos.core.grep_verify_common import (
     GrepRequest,
     _GrepDeadlineExceeded,
@@ -45,6 +50,8 @@ from skylos.core.grep_verify_strategies import (
 )
 
 logger = logging.getLogger(__name__)
+
+GrepEvidenceFilter = Callable[[dict, dict[str, list[str]]], dict[str, list[str]]]
 
 __all__ = [
     "_STRONG_ALIVE_STRATEGIES",
@@ -129,7 +136,7 @@ class _PendingBatchFinding:
     requests: tuple[GrepRequest, ...]
 
 
-_GREP_VERIFY_CACHE_VERSION = "v8"
+_GREP_VERIFY_CACHE_VERSION = "v11"
 _GREP_FINDING_BATCH_SIZE = 32
 _GREP_CACHE_MAX_STRATEGIES = 64
 _GREP_CACHE_MAX_LINES_PER_STRATEGY = 256
@@ -196,7 +203,19 @@ def _load_cached_group_results(
         logger.debug("Ignoring invalid grep verification cache entry: %s", exc)
         return None
 
-    return _normalize_cached_group_results(decoded)
+    if not isinstance(decoded, dict):
+        return None
+    truncated = decoded.get("truncated_strategies")
+    if (
+        not isinstance(truncated, list)
+        or len(truncated) > _GREP_CACHE_MAX_STRATEGIES
+        or not all(isinstance(name, str) for name in truncated)
+    ):
+        return None
+    evidence = _normalize_cached_group_results(decoded.get("evidence"))
+    if evidence is None:
+        return None
+    return GrepSearchResults(evidence, truncated_strategies=frozenset(truncated))
 
 
 def _normalize_cached_group_results(
@@ -245,7 +264,13 @@ def _store_cached_group_results(
     if cache_key is None:
         return
     try:
-        cache.put(cache_key, [_json.dumps(normalized)])
+        payload = {
+            "evidence": normalized,
+            "truncated_strategies": sorted(
+                getattr(results, "truncated_strategies", ())
+            ),
+        }
+        cache.put(cache_key, [_json.dumps(payload)])
     except (AttributeError, OSError, TypeError, ValueError) as exc:
         logger.debug("Failed to write grep verification cache entry: %s", exc)
 
@@ -254,8 +279,11 @@ def _finding_simple_name(finding: dict) -> str:
     return finding.get("simple_name", finding.get("name", ""))
 
 
-def _finding_full_name(finding: dict) -> str:
-    return finding.get("full_name", finding.get("name", ""))
+def _finding_verdict_key(finding: dict) -> str:
+    # Search strategies retain full_name; this key only routes the verdict.
+    return finding.get("_verification_key") or finding.get(
+        "full_name", finding.get("name", "")
+    )
 
 
 def _finding_language(finding: dict) -> str:
@@ -268,12 +296,14 @@ def multi_strategy_search(
     *,
     max_per_strategy: int = _MAX_RESULTS_PER_STRATEGY,
     early_exit_threshold: int = 5,
+    stop_after_strong_evidence: bool = True,
 ) -> dict[str, list[str]]:
     return _multi_strategy_search_impl(
         finding,
         project_root,
         max_per_strategy=max_per_strategy,
         early_exit_threshold=early_exit_threshold,
+        stop_after_strong_evidence=stop_after_strong_evidence,
     )
 
 
@@ -302,7 +332,9 @@ def parallel_multi_strategy_search(
 def _apply_deterministic_rules(
     search_results: dict[str, list[str]],
     finding: dict,
+    evidence_filter: GrepEvidenceFilter | None = None,
 ) -> GrepVerdict | None:
+    search_results = _filter_evidence(finding, search_results, evidence_filter)
     refs = search_results.get("references", [])
     if refs:
         simple_name = finding.get("simple_name", "")
@@ -338,7 +370,46 @@ def _apply_deterministic_rules(
                 evidence=search_results[strategy_key][:3],
             )
 
+    decision_strategies = {"references", UNCLASSIFIED_STRATEGY} | {
+        key for key, _code, _rationale in _DETERMINISTIC_RULES
+    }
+    if decision_strategies.intersection(
+        getattr(search_results, "truncated_strategies", ())
+    ):
+        raise _GrepExecutionIncomplete(
+            "Grep evidence was truncated before verification"
+        )
     return None
+
+
+def _filter_evidence(finding, results, evidence_filter):
+    if evidence_filter is None:
+        return results
+    try:
+        filtered = evidence_filter(finding, results)
+        return GrepSearchResults(
+            filtered,
+            truncated_strategies=getattr(results, "truncated_strategies", frozenset()),
+        )
+    except Exception as exc:
+        # A failed ownership check cannot justify a negative verdict.
+        raise _GrepExecutionIncomplete("Source ownership verification failed") from exc
+
+
+def _search_verification_evidence(
+    finding, project_root, *, search_all_strategies=False
+):
+    if search_all_strategies and _finding_language(finding) == "python":
+        # Search every strategy; retained evidence is still bounded. A lost
+        # match must not silently become a negative ownership conclusion.
+        with track_grep_evidence_limits() as limits:
+            results = multi_strategy_search(
+                finding, project_root, stop_after_strong_evidence=False
+            )
+        return GrepSearchResults(
+            results, truncated_strategies=limits.truncated_strategies
+        )
+    return multi_strategy_search(finding, project_root)
 
 
 def _serial_group_name(finding: dict) -> str:
@@ -350,24 +421,29 @@ def _plan_batched_finding(
     finding: dict,
     project_root: str,
     cache: Any,
+    evidence_filter: GrepEvidenceFilter | None = None,
 ) -> tuple[GrepVerdict | None, _PendingBatchFinding | None]:
     deterministic_verdict = _deterministic_suppression_verdict(finding)
     if deterministic_verdict:
         return deterministic_verdict, None
 
     group_name = _serial_group_name(finding)
+    if evidence_filter is not None:
+        group_name += ":all_strategies"
     cached = _load_cached_group_results(cache, group_name, finding)
     if cached is not None:
-        return _apply_deterministic_rules(cached, finding), None
+        return _apply_deterministic_rules(cached, finding, evidence_filter), None
 
     with record_grep_requests() as recorded:
-        planned_results = multi_strategy_search(finding, project_root)
+        planned_results = _search_verification_evidence(
+            finding, project_root, search_all_strategies=evidence_filter is not None
+        )
     unique_requests = tuple(dict.fromkeys(recorded))
     if unique_requests:
         return None, _PendingBatchFinding(finding, group_name, unique_requests)
 
     _store_cached_group_results(cache, group_name, finding, planned_results)
-    return _apply_deterministic_rules(planned_results, finding), None
+    return _apply_deterministic_rules(planned_results, finding, evidence_filter), None
 
 
 def _execute_pending_findings(
@@ -375,6 +451,7 @@ def _execute_pending_findings(
     project_root: str,
     cache: Any,
     deadline: float,
+    evidence_filter: GrepEvidenceFilter | None = None,
 ) -> tuple[dict[str, GrepVerdict], int, str | None]:
     requests = [request for item in pending for request in item.requests]
     try:
@@ -382,8 +459,7 @@ def _execute_pending_findings(
     except _GrepExecutionIncomplete as exc:
         reason = (
             "budget_exhausted"
-            if isinstance(exc, _GrepDeadlineExceeded)
-            or time.monotonic() >= deadline
+            if isinstance(exc, _GrepDeadlineExceeded) or time.monotonic() >= deadline
             else "verification_incomplete"
         )
         return {}, 0, reason
@@ -402,7 +478,11 @@ def _execute_pending_findings(
             return verdicts, verified_count, reason
         try:
             with replay_grep_results(batch_results, deadline=deadline):
-                search_results = multi_strategy_search(item.finding, project_root)
+                search_results = _search_verification_evidence(
+                    item.finding,
+                    project_root,
+                    search_all_strategies=evidence_filter is not None,
+                )
         except _GrepExecutionIncomplete as exc:
             logger.debug("grep replay was incomplete: %s", exc)
             reason = (
@@ -419,11 +499,13 @@ def _execute_pending_findings(
             _store_cached_group_results(
                 cache, item.group_name, item.finding, search_results
             )
-        verdict = _apply_deterministic_rules(search_results, item.finding)
+        verdict = _apply_deterministic_rules(
+            search_results, item.finding, evidence_filter
+        )
         if request_incomplete and not (verdict and verdict.alive):
             return verdicts, verified_count, "verification_incomplete"
         if verdict:
-            verdicts[_finding_full_name(item.finding)] = verdict
+            verdicts[_finding_verdict_key(item.finding)] = verdict
         verified_count += 1
         if time.monotonic() >= deadline and index + 1 < len(pending):
             return verdicts, verified_count, "budget_exhausted"
@@ -436,8 +518,11 @@ def _grep_verify_findings_batched(
     time_budget: float,
     cache: Any,
     start_time: float,
+    evidence_filter: GrepEvidenceFilter | None = None,
 ) -> GrepVerificationResult:
-    eligible_findings = [finding for finding in findings if _finding_full_name(finding)]
+    eligible_findings = [
+        finding for finding in findings if _finding_verdict_key(finding)
+    ]
     verdicts: dict[str, GrepVerdict] = {}
     pending: list[_PendingBatchFinding] = []
     deadline = start_time + time_budget
@@ -448,9 +533,14 @@ def _grep_verify_findings_batched(
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
             break
-        full_name = _finding_full_name(finding)
+        full_name = _finding_verdict_key(finding)
 
-        verdict, planned = _plan_batched_finding(finding, project_root, cache)
+        if evidence_filter is None:
+            verdict, planned = _plan_batched_finding(finding, project_root, cache)
+        else:
+            verdict, planned = _plan_batched_finding(
+                finding, project_root, cache, evidence_filter
+            )
         if verdict:
             verdicts[full_name] = verdict
         if planned:
@@ -462,8 +552,8 @@ def _grep_verify_findings_batched(
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
             break
-        batch_verdicts, batch_verified, incomplete_reason = (
-            _execute_pending_findings(pending, project_root, cache, deadline)
+        batch_verdicts, batch_verified, incomplete_reason = _execute_pending_findings(
+            pending, project_root, cache, deadline, evidence_filter
         )
         verdicts.update(batch_verdicts)
         verified_count += batch_verified
@@ -476,7 +566,9 @@ def _grep_verify_findings_batched(
             incomplete_reason = "budget_exhausted"
         else:
             batch_verdicts, batch_verified, incomplete_reason = (
-                _execute_pending_findings(pending, project_root, cache, deadline)
+                _execute_pending_findings(
+                    pending, project_root, cache, deadline, evidence_filter
+                )
             )
             verdicts.update(batch_verdicts)
             verified_count += batch_verified
@@ -499,7 +591,7 @@ def _process_finding(
     search_fn: Callable[[dict], dict[str, list[str]]],
     deadline: float | None = None,
 ) -> tuple[str, GrepVerdict | None]:
-    full_name = _finding_full_name(finding)
+    full_name = _finding_verdict_key(finding)
     if not full_name:
         return "", None
 
@@ -525,11 +617,9 @@ def _submit_next_finding(
     if time.monotonic() >= deadline:
         return False
     for finding in findings:
-        if not _finding_full_name(finding):
+        if not _finding_verdict_key(finding):
             continue
-        pending.add(
-            executor.submit(_process_finding, finding, search_fn, deadline)
-        )
+        pending.add(executor.submit(_process_finding, finding, search_fn, deadline))
         return True
     return False
 
@@ -575,7 +665,9 @@ def _grep_verify_findings_parallel(
     max_workers: int,
     start_time: float,
 ) -> GrepVerificationResult:
-    eligible_findings = [finding for finding in findings if _finding_full_name(finding)]
+    eligible_findings = [
+        finding for finding in findings if _finding_verdict_key(finding)
+    ]
     verdicts: dict[str, GrepVerdict] = {}
     worker_count = max(1, int(max_workers or _DEFAULT_GREP_WORKERS))
     deadline = start_time + time_budget
@@ -640,22 +732,39 @@ def grep_verify_findings(
     parallel: bool = False,
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
+    evidence_filter: GrepEvidenceFilter | None = None,
 ) -> GrepVerificationResult:
     cache_binder = getattr(type(cache), "bind_repository", None)
     if callable(cache_binder):
         cache_binder(cache, project_root)
     start_time = time.monotonic()
     if not parallel:
-        return _grep_verify_findings_batched(
-            findings, project_root, time_budget, cache, start_time
-        )
+        try:
+            return _grep_verify_findings_batched(
+                findings, project_root, time_budget, cache, start_time, evidence_filter
+            )
+        except _GrepExecutionIncomplete:
+            return GrepVerificationResult(
+                {},
+                candidate_count=sum(bool(_finding_verdict_key(f)) for f in findings),
+                verified_count=0,
+                time_budget=time_budget,
+                incomplete_reason="verification_incomplete",
+            )
 
     search_fn = _build_grep_search_fn(
         project_root,
         parallel=False,
         max_workers=max_workers,
         cache=cache,
+        search_all_strategies=evidence_filter is not None,
     )
+    if evidence_filter is not None:
+        raw_search_fn = search_fn
+
+        def search_fn(finding):
+            return _filter_evidence(finding, raw_search_fn(finding), evidence_filter)
+
     return _grep_verify_findings_parallel(
         findings, search_fn, time_budget, max_workers, start_time
     )
@@ -667,8 +776,9 @@ def _build_grep_search_fn(
     parallel: bool,
     max_workers: int,
     cache: Any,
+    search_all_strategies: bool = False,
 ) -> Callable[[dict], dict[str, list[str]]]:
-    if parallel:
+    if parallel and not search_all_strategies:
 
         def search_fn(finding: dict) -> dict[str, list[str]]:
             return parallel_multi_strategy_search(
@@ -679,22 +789,30 @@ def _build_grep_search_fn(
 
     def search_fn(finding: dict) -> dict[str, list[str]]:
         if cache is None:
-            return multi_strategy_search(finding, project_root)
-        return _cached_serial_search_results(finding, project_root, cache)
+            return _search_verification_evidence(
+                finding, project_root, search_all_strategies=search_all_strategies
+            )
+        return _cached_serial_search_results(
+            finding, project_root, cache, search_all_strategies=search_all_strategies
+        )
 
     return search_fn
 
 
 def _cached_serial_search_results(
-    finding: dict, project_root: str, cache: Any
+    finding: dict, project_root: str, cache: Any, *, search_all_strategies: bool = False
 ) -> dict[str, list[str]]:
     lang = _finding_language(finding)
     group_name = "python_core" if lang == "python" else f"serial_{lang}"
+    if search_all_strategies:
+        group_name += ":all_strategies"
     return _cached_group_results(
         cache,
         group_name,
         finding,
-        lambda: multi_strategy_search(finding, project_root),
+        lambda: _search_verification_evidence(
+            finding, project_root, search_all_strategies=search_all_strategies
+        ),
     )
 
 
