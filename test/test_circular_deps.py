@@ -1,4 +1,5 @@
 import ast
+import itertools
 import pytest
 from skylos.analysis import circular_deps
 from skylos.analysis.architecture import get_architecture_findings
@@ -755,3 +756,41 @@ except ImportError:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_cycle_findings_do_not_depend_on_edge_or_module_insertion_order():
+    """Regression: cycle selection used to follow set/dict iteration order.
+
+    alpha -> beta, gamma; beta -> alpha, gamma; gamma -> alpha, delta;
+    delta -> alpha has five elementary cycles, and the pruned DFS reported
+    four or five of them depending on PYTHONHASHSEED.
+    """
+    edges = [
+        ("alpha", "beta"),
+        ("alpha", "gamma"),
+        ("beta", "alpha"),
+        ("beta", "gamma"),
+        ("gamma", "alpha"),
+        ("gamma", "delta"),
+        ("delta", "alpha"),
+    ]
+    modules = ["alpha", "beta", "gamma", "delta"]
+
+    def findings_for(edge_order, module_order):
+        analyzer = CircularDependencyAnalyzer()
+        for module in module_order:
+            analyzer.modules[module] = f"/project/{module}.py"
+        for frm, to in edge_order:
+            analyzer.dependencies[frm].add(to)
+        return [cd.to_dict() for cd in analyzer.analyze()]
+
+    baseline = findings_for(edges, modules)
+    assert [f["cycle"] for f in baseline] == [
+        ["alpha", "beta"],
+        ["alpha", "gamma"],
+        ["alpha", "beta", "gamma"],
+        ["alpha", "gamma", "delta"],
+        ["alpha", "beta", "gamma", "delta"],
+    ]
+    for module_order in itertools.permutations(modules):
+        assert findings_for(reversed(edges), module_order) == baseline

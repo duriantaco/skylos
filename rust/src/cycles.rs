@@ -22,6 +22,14 @@ pub fn find_cycles(
     for (from, to) in &edges {
         deps.entry(from.clone()).or_default().push(to.clone());
     }
+    // Sorted traversal: the result is a function of the graph, not of the
+    // order in which the caller happened to enumerate edges and modules.
+    for neighbors in deps.values_mut() {
+        neighbors.sort();
+        neighbors.dedup();
+    }
+    let mut modules = modules;
+    modules.sort();
 
     let mut all_cycles: Vec<Vec<String>> = Vec::new();
 
