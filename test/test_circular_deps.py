@@ -1,4 +1,11 @@
 import ast
+import itertools
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from skylos.analysis import circular_deps
 from skylos.analysis.architecture import get_architecture_findings
@@ -751,6 +758,169 @@ except ImportError:
         builder.visit(ast.parse(code))
 
         assert len(builder.dependencies) == 2
+
+
+_ORDER_SENSITIVE_EDGES = (
+    ("alpha", "beta"),
+    ("alpha", "gamma"),
+    ("beta", "alpha"),
+    ("beta", "gamma"),
+    ("gamma", "alpha"),
+    ("gamma", "delta"),
+    ("delta", "alpha"),
+)
+_ORDER_SENSITIVE_MODULES = ("alpha", "beta", "gamma", "delta")
+# All five elementary cycles of that graph, in (length, cycle) order. The
+# pruned DFS used to report four or five of them depending on which neighbor
+# it happened to explore first.
+_ORDER_SENSITIVE_CYCLES = [
+    ["alpha", "beta"],
+    ["alpha", "gamma"],
+    ["alpha", "beta", "gamma"],
+    ["alpha", "gamma", "delta"],
+    ["alpha", "beta", "gamma", "delta"],
+]
+# A fully bidirectional triangle has two 3-cycles over the same node set
+# (a->b->c->a and a->c->b->a). Dedup keeps whichever is found first, so this
+# graph is sensitive to root order even once neighbors are sorted.
+_TRIANGLE_EDGES = (
+    ("a", "b"),
+    ("b", "a"),
+    ("b", "c"),
+    ("c", "b"),
+    ("a", "c"),
+    ("c", "a"),
+)
+_TRIANGLE_MODULES = ("a", "b", "c")
+_TRIANGLE_CYCLE_SETS = {("a", "b"), ("a", "c"), ("b", "c"), ("a", "b", "c")}
+
+
+def _adjacency_orderings(edges):
+    """Every combination of neighbor list orders, as plain lists.
+
+    Lists rather than sets so the iteration order is exactly what the test
+    chose, independent of the hash seed the test process happens to run under.
+    """
+    by_source = {}
+    for frm, to in edges:
+        by_source.setdefault(frm, []).append(to)
+    sources = sorted(by_source)
+    for orders in itertools.product(
+        *(itertools.permutations(by_source[source]) for source in sources)
+    ):
+        yield {source: list(order) for source, order in zip(sources, orders)}
+
+
+def _python_cycles(adjacency, module_order):
+    analyzer = CircularDependencyAnalyzer()
+    for module in module_order:
+        analyzer.modules[module] = f"/project/{module}.py"
+    analyzer.dependencies = dict(adjacency)
+    return analyzer._find_cycles_py()
+
+
+@pytest.mark.parametrize(
+    ("edges", "modules", "expected_cycle_sets"),
+    [
+        pytest.param(
+            _ORDER_SENSITIVE_EDGES,
+            _ORDER_SENSITIVE_MODULES,
+            {tuple(sorted(cycle)) for cycle in _ORDER_SENSITIVE_CYCLES},
+            id="pruning-sensitive",
+        ),
+        pytest.param(
+            _TRIANGLE_EDGES,
+            _TRIANGLE_MODULES,
+            _TRIANGLE_CYCLE_SETS,
+            id="bidirectional-triangle",
+        ),
+    ],
+)
+def test_python_cycle_search_is_independent_of_adjacency_and_root_order(
+    edges, modules, expected_cycle_sets
+):
+    """Forced-Python: neither neighbor order nor root order may change the
+    cycles found, their orientation, or the order they are returned in."""
+    reference = _python_cycles(
+        {
+            source: sorted(order)
+            for source, order in next(_adjacency_orderings(edges)).items()
+        },
+        sorted(modules),
+    )
+    assert {tuple(sorted(cycle)) for cycle in reference} == expected_cycle_sets
+    assert len(reference) == len(expected_cycle_sets)
+    for adjacency in _adjacency_orderings(edges):
+        for module_order in itertools.permutations(modules):
+            found = _python_cycles(adjacency, module_order)
+            assert found == reference, (adjacency, module_order, found)
+
+
+def test_findings_are_ordered_by_length_then_cycle():
+    """Display order is canonical, not DFS discovery order within a length."""
+    analyzer = CircularDependencyAnalyzer()
+    for module in _TRIANGLE_MODULES:
+        analyzer.modules[module] = f"/project/{module}.py"
+    for frm, to in _TRIANGLE_EDGES:
+        analyzer.dependencies[frm].add(to)
+    assert [cd.cycle for cd in analyzer.analyze()] == [
+        ["a", "b"],
+        ["a", "c"],
+        ["b", "c"],
+        ["a", "b", "c"],
+    ]
+
+
+_HASH_SEED_PROBE = """
+import json
+from skylos.analysis.circular_deps import CircularDependencyAnalyzer
+edges = {edges!r}
+modules = {modules!r}
+analyzer = CircularDependencyAnalyzer()
+for module in modules:
+    analyzer.modules[module] = f"/project/{{module}}.py"
+for frm, to in edges:
+    analyzer.dependencies[frm].add(to)
+print(json.dumps([cd.to_dict() for cd in analyzer.analyze()]))
+"""
+
+
+@pytest.mark.parametrize("hash_seed", ["0", "1", "2", "6"])
+def test_set_backed_findings_are_identical_across_hash_seeds(hash_seed):
+    """End to end through the real set-backed graph under contrasting seeds.
+
+    Seeds 0 and 6 used to yield five cycles while 1 and 2 yielded four.
+    """
+    env = dict(os.environ, PYTHONHASHSEED=hash_seed)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH"))
+        if part
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _HASH_SEED_PROBE.format(
+                edges=list(_ORDER_SENSITIVE_EDGES),
+                modules=list(reversed(_ORDER_SENSITIVE_MODULES)),
+            ),
+        ],
+        capture_output=True,
+        check=True,
+        env=env,
+        text=True,
+        timeout=60,
+    )
+    findings = json.loads(completed.stdout)
+    assert [finding["cycle"] for finding in findings] == _ORDER_SENSITIVE_CYCLES
+    assert [finding["severity"] for finding in findings] == [
+        "LOW",
+        "LOW",
+        "MEDIUM",
+        "MEDIUM",
+        "HIGH",
+    ]
 
 
 if __name__ == "__main__":

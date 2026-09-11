@@ -4,11 +4,17 @@
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-/// Find all circular dependency cycles using DFS (matches Python's find_simple_cycles exactly).
+/// Find circular dependency cycles using DFS (matches Python's find_simple_cycles exactly).
+///
+/// Like the Python finder this reports one cycle per back edge of a pruned
+/// traversal, not every elementary cycle; the sorted traversal only makes
+/// that selection a deterministic function of the graph.
 ///
 /// Args:
 ///     edges: List of (from_module, to_module) import edges.
-///     modules: List of module names (iteration order matters for determinism).
+///     modules: List of module names. Edge and module order do not affect the
+///         result: both are sorted internally so the output is a function of the
+///         graph alone.
 ///
 /// Returns:
 ///     List of cycles, where each cycle is a normalized list of module names.
@@ -22,6 +28,14 @@ pub fn find_cycles(
     for (from, to) in &edges {
         deps.entry(from.clone()).or_default().push(to.clone());
     }
+    // Sorted traversal: the result is a function of the graph, not of the
+    // order in which the caller happened to enumerate edges and modules.
+    for neighbors in deps.values_mut() {
+        neighbors.sort();
+        neighbors.dedup();
+    }
+    let mut modules = modules;
+    modules.sort();
 
     let mut all_cycles: Vec<Vec<String>> = Vec::new();
 

@@ -239,17 +239,23 @@ class CircularDependencyAnalyzer:
 
     def _find_cycles_fast(self) -> List[List[str]]:
         """Rust-accelerated cycle detection."""
-        edges = []
-        for frm, tos in self.dependencies.items():
-            for to in tos:
-                edges.append((frm, to))
-        modules = list(self.modules.keys())
+        # Sorted so the traversal is a pure function of the graph rather than
+        # of set iteration order (PYTHONHASHSEED) or file discovery order.
+        edges = sorted(
+            (frm, to) for frm, tos in self.dependencies.items() for to in tos
+        )
+        modules = sorted(self.modules)
         return _fast_find_cycles(edges, modules)
 
     def _find_cycles_py(self) -> List[List[str]]:
         """Pure Python DFS cycle detection."""
         cycles = []
         visited = set()
+        # Sorted once up front: the traversal is then a pure function of the
+        # graph rather than of set iteration order (PYTHONHASHSEED).
+        adjacency = {
+            node: sorted(neighbors) for node, neighbors in self.dependencies.items()
+        }
 
         def dfs(node, path, path_set):
             if node in path_set:
@@ -266,7 +272,7 @@ class CircularDependencyAnalyzer:
             path.append(node)
             path_set.add(node)
 
-            for neighbor in self.dependencies.get(node, []):
+            for neighbor in adjacency.get(node, ()):
                 found_cycles.extend(dfs(neighbor, path, path_set))
 
             path.pop()
@@ -275,7 +281,8 @@ class CircularDependencyAnalyzer:
 
             return found_cycles
 
-        for node in self.modules:
+        # Roots sorted too, so file discovery order cannot change the result.
+        for node in sorted(self.modules):
             visited.clear()
             found = dfs(node, [], set())
             for cycle in found:
@@ -335,7 +342,7 @@ class CircularDependencyAnalyzer:
                 )
             )
 
-        findings.sort(key=lambda f: len(f.cycle))
+        findings.sort(key=lambda f: (len(f.cycle), f.cycle))
 
         return findings
 

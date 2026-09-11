@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import itertools
 import os
 import json
+import random
 import subprocess
 import sys
 import textwrap
@@ -351,6 +353,70 @@ class TestCycleDetectionParity:
                 assert cycle[0] == min(cycle), (
                     f"Python cycle not normalized: {cycle} (min={min(cycle)})"
                 )
+
+    @pytest.mark.parametrize("name,edges,modules", CASES, ids=[c[0] for c in CASES])
+    def test_native_result_is_independent_of_input_order(self, name, edges, modules):
+        """Exact equality: the native finder sorts internally, so shuffling the
+        edge and module lists must not change the cycles or their order."""
+        reference = find_cycles(sorted(edges), sorted(modules))
+        rng = random.Random(0)
+        for _ in range(20):
+            shuffled_edges = list(edges)
+            shuffled_modules = list(modules)
+            rng.shuffle(shuffled_edges)
+            rng.shuffle(shuffled_modules)
+            assert find_cycles(shuffled_edges, shuffled_modules) == reference, (
+                f"Order-dependent native result in '{name}': "
+                f"edges={shuffled_edges} modules={shuffled_modules}"
+            )
+        assert _py_find_cycles(edges, modules) == reference, (
+            f"Python/native drift in '{name}'"
+        )
+
+    ORDER_CASES = (
+        (
+            # The graph from the hash-seed reproduction: the pruned DFS reports
+            # four or five of its five cycles depending on neighbor order.
+            "pruning-sensitive",
+            [
+                ("alpha", "beta"),
+                ("alpha", "gamma"),
+                ("beta", "alpha"),
+                ("beta", "gamma"),
+                ("gamma", "alpha"),
+                ("gamma", "delta"),
+                ("delta", "alpha"),
+            ],
+            ["alpha", "beta", "gamma", "delta"],
+            5,
+        ),
+        (
+            # Two 3-cycles over one node set; which orientation survives dedup
+            # depends on root order unless roots are sorted.
+            "bidirectional-triangle",
+            [("a", "b"), ("b", "a"), ("b", "c"), ("c", "b"), ("a", "c"), ("c", "a")],
+            ["a", "b", "c"],
+            4,
+        ),
+    )
+
+    @pytest.mark.parametrize(
+        "name,edges,modules,expected_count",
+        ORDER_CASES,
+        ids=[c[0] for c in ORDER_CASES],
+    )
+    def test_native_order_independence_on_order_sensitive_graphs(
+        self, name, edges, modules, expected_count
+    ):
+        reference = find_cycles(edges, modules)
+        assert len(reference) == expected_count, f"{name}: {reference}"
+        for module_order in itertools.permutations(modules):
+            assert (
+                find_cycles(list(reversed(edges)), list(module_order)) == reference
+            ), f"Root-order-dependent native result in '{name}': {module_order}"
+        assert _py_find_cycles(edges, modules) == reference, (
+            f"Python/native drift in '{name}'"
+        )
 
 
 class TestCouplingParity:
