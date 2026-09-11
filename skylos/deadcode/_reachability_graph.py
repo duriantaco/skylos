@@ -16,6 +16,12 @@ from skylos.deadcode._reachability_bindings import (
     Bindings,
     ModuleInfo,
 )
+from skylos.deadcode._reachability_receivers import (
+    CLASS_BINDING,
+    INSTANCE_BINDING,
+    RECEIVER_BINDINGS,
+    ClassInfo,
+)
 
 if TYPE_CHECKING:
     from skylos.visitors.base import Definition
@@ -42,6 +48,9 @@ class SourceIndex:
     )
     initial_references: dict[str, int] = field(default_factory=dict)
     binding_targets: dict[Binding | None, frozenset[str]] = field(default_factory=dict)
+    classes: dict[str, ClassInfo] = field(default_factory=dict)
+    class_locations: dict[tuple[Path, int], str] = field(default_factory=dict)
+    method_classes: dict[str, str] = field(default_factory=dict)
 
     def qualified(self, name: str, seen: tuple[str, ...] = ()) -> Binding | None:
         if name in seen or len(seen) >= 24:
@@ -63,12 +72,19 @@ class SourceIndex:
     ) -> Binding | None:
         if end == len(parts):
             return (MODULE_BINDING, name)
-        if end != len(parts) - 1:
-            return None
-        binding = module.bindings.get(parts[-1])
+        binding = module.bindings.get(parts[end])
         if binding and binding[0] == QUALIFIED_BINDING:
             binding = self.qualified(binding[1], (*seen, name))
+        for member in parts[end + 1 :]:
+            binding = self.receiver_member(binding, member)
         return binding
+
+    def receiver_member(self, binding: Binding | None, name: str) -> Binding | None:
+        if binding and binding[0] in RECEIVER_BINDINGS:
+            key = self.classes[binding[1]].methods.get(name)
+            if key is not None:
+                return ("symbol", key)
+        return None
 
     def resolve(
         self, node: ast.AST, module: ModuleInfo, local: Bindings
@@ -84,6 +100,14 @@ class SourceIndex:
             base = self.resolve(node.value, module, local)
             if base and base[0] == MODULE_BINDING:
                 binding = self.qualified(f"{base[1]}.{node.attr}")
+            else:
+                binding = self.receiver_member(base, node.attr)
+                if base and base[0] == INSTANCE_BINDING and node.attr == "__class__":
+                    binding = (CLASS_BINDING, base[1])
+        elif isinstance(node, ast.Call):
+            constructor = self.resolve(node.func, module, local)
+            if constructor and constructor[0] == CLASS_BINDING:
+                binding = (INSTANCE_BINDING, constructor[1])
         return binding
 
     def escaped_symbols(self, binding: Binding | None) -> frozenset[str]:
@@ -108,6 +132,8 @@ class SourceIndex:
         kind, name = binding
         if kind == "symbol":
             possible.add(name)
+        elif kind in RECEIVER_BINDINGS:
+            possible.update(self.classes[name].methods.values())
         elif kind == QUALIFIED_BINDING:
             todo.append(self.qualified(name))
         elif kind == MODULE_BINDING:
@@ -125,6 +151,10 @@ class ReferenceGraph:
     opaque_owners: set[str] = field(default_factory=set)
     roots: set[str] = field(default_factory=set)
     uncertain_roots: set[str] = field(default_factory=set)
+    receiver_roots: set[str] = field(default_factory=set)
+    receiver_edges: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
     observed: Counter[str] = field(default_factory=Counter)
     references: dict[tuple[Path, int], list[SourceReference]] = field(
         default_factory=lambda: defaultdict(list)

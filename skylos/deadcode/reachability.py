@@ -26,6 +26,7 @@ from skylos.deadcode._reachability_graph import (
     SourceReference,
 )
 from skylos.deadcode._reachability_visitor import SourceVisitor
+from skylos.deadcode._reachability_receivers import bind_classes, stable_receivers
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 
 if TYPE_CHECKING:
@@ -80,6 +81,7 @@ class PythonReachabilityReport:
         self.unreachable_keys: set[str] = set()
         self.reachable_keys: set[str] = set()
         self.proven_reachable_keys: set[str] = set()
+        self.protected_keys: set[str] = set()
         self.reasons: dict[str, str] = {}
         self._definitions = definitions
         self.index = SourceIndex()
@@ -103,6 +105,15 @@ class PythonReachabilityReport:
             candidates,
             uncertainty=False,
         ).intersection(candidates)
+        exposed_receivers = set(self.graph.receiver_roots)
+        for owner in reached:
+            exposed_receivers.update(self.graph.receiver_edges.get(owner, ()))
+        self.protected_keys = (
+            self.graph.traverse(
+                exposed_receivers, candidates, uncertainty=True
+            ).intersection(candidates)
+            - self.proven_reachable_keys
+        )
         self.unreachable_keys = set(candidates) - reached if self.complete else set()
         self.reasons = {key: _UNREACHABLE_REASON for key in self.unreachable_keys}
         return self
@@ -126,6 +137,15 @@ class PythonReachabilityReport:
         markers: Mapping[str, float],
     ) -> bool:
         external = any(getattr(definition, attr, False) for attr in _EXTERNAL_EVIDENCE)
+        class_key = self.index.method_classes.get(key)
+        if class_key is not None:
+            owning_class = self.index.classes[class_key].definition
+            external |= any(
+                getattr(owning_class, attr, False) for attr in _EXTERNAL_EVIDENCE
+            )
+            external |= definition.simple_name.startswith(
+                "__"
+            ) and definition.simple_name.endswith("__")
         callback = any(name.startswith("dead_code_liveness:") for name in markers)
         return external or callback or self._unaccounted_reference(key, definition)
 
@@ -376,6 +396,11 @@ def analyze_python_reachability(
         return report
     for module in report.index.modules.values():
         _bind_module(report, module, locations)
+    bind_classes(report.index, definitions)
+    for module in report.index.modules.values():
+        module.bindings = stable_receivers(
+            report.index, module, module.tree.body, module.bindings
+        )
     for module in report.index.modules.values():
         SourceVisitor(report.index, report.graph, module).visit(module.tree)
     return report.refresh()
