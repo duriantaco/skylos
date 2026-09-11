@@ -84,7 +84,7 @@ def _circular_import_targets(
         return {
             target: target_names
             for target, target_names in targets.items()
-            if target != from_module or import_module == target
+            if target != from_module or not import_module.startswith(f"{target}.")
         }
     return {root: names}
 

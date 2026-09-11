@@ -164,6 +164,33 @@ def test_unresolved_package_symbols_remain_conservative(mode, source, targets):
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from package import child",
+        "from . import child",
+    ],
+)
+def test_resolved_package_member_self_import_is_not_suppressed(mode, source):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", "value = 'label'"),
+            "package.child": ("/project/package/child.py", source),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert findings[0]["cycle"] == ["package.child"]
+    assert dict(rule._analyzer.dependencies) == {"package.child": {"package.child"}}
+    assert dict(rule._analyzer.architecture_dependencies) == {
+        "package.child": {"package.child"}
+    }
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
 def test_direct_module_self_import_is_not_suppressed(mode):
     rule = _rule_for_sources({"module": ("/project/module.py", "import module")}, mode)
 
