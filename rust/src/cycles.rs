@@ -4,7 +4,11 @@
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-/// Find all circular dependency cycles using DFS (matches Python's find_simple_cycles exactly).
+/// Find circular dependency cycles using DFS (matches Python's find_simple_cycles exactly).
+///
+/// Like the Python finder this reports one cycle per back edge of a pruned
+/// traversal, not every elementary cycle; the sorted traversal only makes
+/// that selection a deterministic function of the graph.
 ///
 /// Args:
 ///     edges: List of (from_module, to_module) import edges.

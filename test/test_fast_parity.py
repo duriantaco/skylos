@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import itertools
 import os
 import json
+import random
 import subprocess
 import sys
 import textwrap
@@ -356,8 +358,6 @@ class TestCycleDetectionParity:
     def test_native_result_is_independent_of_input_order(self, name, edges, modules):
         """Exact equality: the native finder sorts internally, so shuffling the
         edge and module lists must not change the cycles or their order."""
-        import random
-
         reference = find_cycles(sorted(edges), sorted(modules))
         rng = random.Random(0)
         for _ in range(20):
@@ -366,10 +366,12 @@ class TestCycleDetectionParity:
             rng.shuffle(shuffled_edges)
             rng.shuffle(shuffled_modules)
             assert find_cycles(shuffled_edges, shuffled_modules) == reference, (
-                shuffled_edges,
-                shuffled_modules,
+                f"Order-dependent native result in '{name}': "
+                f"edges={shuffled_edges} modules={shuffled_modules}"
             )
-        assert _py_find_cycles(edges, modules) == reference
+        assert _py_find_cycles(edges, modules) == reference, (
+            f"Python/native drift in '{name}'"
+        )
 
     ORDER_CASES = (
         (
@@ -406,13 +408,15 @@ class TestCycleDetectionParity:
     def test_native_order_independence_on_order_sensitive_graphs(
         self, name, edges, modules, expected_count
     ):
-        import itertools
-
         reference = find_cycles(edges, modules)
-        assert len(reference) == expected_count
+        assert len(reference) == expected_count, f"{name}: {reference}"
         for module_order in itertools.permutations(modules):
-            assert find_cycles(list(reversed(edges)), list(module_order)) == reference
-        assert _py_find_cycles(edges, modules) == reference
+            assert (
+                find_cycles(list(reversed(edges)), list(module_order)) == reference
+            ), f"Root-order-dependent native result in '{name}': {module_order}"
+        assert _py_find_cycles(edges, modules) == reference, (
+            f"Python/native drift in '{name}'"
+        )
 
 
 class TestCouplingParity:
