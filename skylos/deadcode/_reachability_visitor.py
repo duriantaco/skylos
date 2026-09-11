@@ -9,10 +9,12 @@ from skylos.deadcode._reachability_bindings import (
     Bindings,
     FunctionNode,
     ModuleInfo,
+    ScopeBindings,
     argument_nodes,
     bound_names,
     default_expressions,
     import_bindings,
+    namespace_name,
 )
 from skylos.deadcode._reachability_receivers import (
     CLASS_BINDING,
@@ -148,9 +150,12 @@ class SourceVisitor(ast.NodeVisitor):
         # module object to unknown code. A standalone module value does.
         base = self.index.resolve(node.value, self.module, self.local)
         if base and base[0] in RECEIVER_BINDINGS:
+            member_name = namespace_name(
+                getattr(self.local, "class_name", ""), node.attr
+            )
             if not isinstance(node.ctx, ast.Load) and (
                 base[0] == CLASS_BINDING
-                or node.attr in self.index.classes[base[1]].methods
+                or member_name in self.index.classes[base[1]].methods
                 or node.attr in {"__class__", "__dict__"}
             ):
                 self._protect_binding(base, retain_class=True)
@@ -338,12 +343,13 @@ class SourceVisitor(ast.NodeVisitor):
         previous = self.owner, self.local, self.proven_context
         self.owner = self.module.functions.get(node.lineno)
         self.proven_context = self.owner is not None
-        bindings, scope_writes = function_receivers(self.index, self.module, node)
-        # Methods use module globals, not their class's execution namespace.
-        self.local = (
-            bindings
-            if self.owner in self.index.method_classes
-            else {**self.local, **bindings}
+        if self.owner in self.index.nested_parents and node.decorator_list:
+            parent = self.index.nested_parents[self.owner]
+            self.graph.protect([self.owner], parent)
+        # Captures are resolved before local receiver aliases; actual methods
+        # discard the class execution namespace inside function_receivers.
+        self.local, scope_writes = function_receivers(
+            self.index, self.module, node, self.local
         )
         if scope_writes:
             self._opaque()
@@ -387,9 +393,9 @@ class SourceVisitor(ast.NodeVisitor):
         previous = self.owner, self.local, self.proven_context
         self.owner = None
         self.proven_context = False
-        self.local = {
-            **self.local,
-            **dict.fromkeys(arg.arg for arg in argument_nodes(node.args)),
-        }
+        self.local = ScopeBindings(
+            self.local, class_name=getattr(self.local, "class_name", "")
+        )
+        self.local.update(dict.fromkeys(arg.arg for arg in argument_nodes(node.args)))
         self.visit(node.body)
         self.owner, self.local, self.proven_context = previous

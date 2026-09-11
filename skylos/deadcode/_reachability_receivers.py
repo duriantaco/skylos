@@ -16,9 +16,11 @@ from skylos.deadcode._reachability_bindings import (
     FUNCTION_NODES,
     Bindings,
     ModuleInfo,
+    ScopeBindings,
     argument_nodes,
     bound_names,
     function_bindings,
+    namespace_name as _namespace_name,
 )
 
 if TYPE_CHECKING:
@@ -36,13 +38,6 @@ class ClassInfo:
     node: ast.ClassDef
     module: ModuleInfo
     methods: dict[str, str]
-
-
-def _namespace_name(class_name: str, member_name: str) -> str:
-    prefix = class_name.lstrip("_")
-    if prefix and member_name.startswith("__") and not member_name.endswith("__"):
-        return f"_{prefix}{member_name}"
-    return member_name
 
 
 def _plain_class(node: ast.ClassDef) -> bool:
@@ -140,9 +135,10 @@ def stable_receivers(
     A branch, loop, unpacking or reassignment cannot establish a receiver.
     Unknown RHS values are not filled in using annotations or naming rules.
     """
-    counts = bound_names(statements).counts
+    class_name = getattr(local, "class_name", "")
+    counts = bound_names(statements, class_name=class_name).counts
     protected = parameters or set()
-    result = dict(local)
+    result = local.copy()
     for statement in statements:
         if isinstance(statement, ast.Assign):
             targets, value = statement.targets, statement.value
@@ -156,24 +152,36 @@ def stable_receivers(
         for target in targets:
             if (
                 isinstance(target, ast.Name)
-                and counts[target.id] == 1
-                and target.id not in protected
+                and counts[_namespace_name(class_name, target.id)] == 1
+                and _namespace_name(class_name, target.id) not in protected
             ):
                 result[target.id] = binding
     return result
 
 
 def function_receivers(
-    index: SourceIndex, module: ModuleInfo, node: Any
+    index: SourceIndex, module: ModuleInfo, node: Any, enclosing: Bindings | None = None
 ) -> tuple[Bindings, bool]:
-    local, writes = function_bindings(node, module)
-    parameters = {arg.arg for arg in argument_nodes(node.args)}
     key = module.functions.get(node.lineno)
     class_key = index.method_classes.get(key)
+    class_name = index.scope_classes.get(key, getattr(enclosing, "class_name", ""))
+    bindings, writes = function_bindings(node, module, class_name=class_name)
+    local = ScopeBindings(
+        enclosing if enclosing is not None and class_key is None else {},
+        class_name=class_name,
+    )
+    local.update(bindings)
+    local.update(index.local_functions.get(key, {}))
+    parameters = {
+        _namespace_name(class_name, arg.arg) for arg in argument_nodes(node.args)
+    }
     positional = [*node.args.posonlyargs, *node.args.args]
     if class_key and positional:
         receiver = positional[0].arg
-        if receiver not in bound_names(node.body).counts:
+        if (
+            _namespace_name(class_name, receiver)
+            not in bound_names(node.body, class_name=class_name).counts
+        ):
             local[receiver] = (INSTANCE_BINDING, class_key)
     if not writes:
         local = stable_receivers(index, module, node.body, local, parameters=parameters)

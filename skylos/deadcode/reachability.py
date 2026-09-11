@@ -27,6 +27,7 @@ from skylos.deadcode._reachability_graph import (
 )
 from skylos.deadcode._reachability_visitor import SourceVisitor
 from skylos.deadcode._reachability_receivers import bind_classes, stable_receivers
+from skylos.deadcode._reachability_scopes import bind_nested_functions
 from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
 
 if TYPE_CHECKING:
@@ -82,6 +83,7 @@ class PythonReachabilityReport:
         self.reachable_keys: set[str] = set()
         self.proven_reachable_keys: set[str] = set()
         self.protected_keys: set[str] = set()
+        self.protected_callback_keys: set[str] = set()
         self.reasons: dict[str, str] = {}
         self._definitions = definitions
         self.index = SourceIndex()
@@ -114,6 +116,16 @@ class PythonReachabilityReport:
             ).intersection(candidates)
             - self.proven_reachable_keys
         )
+        # A nested callback can be used by a decorator or an unsupported
+        # deferred owner (for example a lambda) without a proven invocation.
+        callbacks = self.reachable_keys.intersection(self.index.nested_parents)
+        callbacks -= self.proven_reachable_keys
+        self.protected_callback_keys = (
+            self.graph.traverse(callbacks, candidates, uncertainty=True).intersection(
+                candidates
+            )
+            - self.proven_reachable_keys
+        )
         self.unreachable_keys = set(candidates) - reached if self.complete else set()
         self.reasons = {key: _UNREACHABLE_REASON for key in self.unreachable_keys}
         return self
@@ -136,7 +148,12 @@ class PythonReachabilityReport:
         definition: Definition,
         markers: Mapping[str, float],
     ) -> bool:
-        external = any(getattr(definition, attr, False) for attr in _EXTERNAL_EVIDENCE)
+        external = any(
+            getattr(definition, attr, False)
+            for attr in _EXTERNAL_EVIDENCE
+            if key not in self.index.nested_parents
+            or attr not in {"is_closure", "decorators"}
+        )
         class_key = self.index.method_classes.get(key)
         if class_key is not None:
             owning_class = self.index.classes[class_key].definition
@@ -147,7 +164,12 @@ class PythonReachabilityReport:
                 "__"
             ) and definition.simple_name.endswith("__")
         callback = any(name.startswith("dead_code_liveness:") for name in markers)
-        return external or callback or self._unaccounted_reference(key, definition)
+        return (
+            external
+            or callback
+            or key in self.index.uncertain_nested_keys
+            or self._unaccounted_reference(key, definition)
+        )
 
     def _unaccounted_reference(self, key: str, definition: Definition) -> bool:
         references = max(
@@ -302,7 +324,7 @@ def _definition_locations(
 ) -> DefinitionLocations:
     indexed: DefinitionLocations = defaultdict(list)
     for key, definition in definitions.items():
-        if getattr(definition, "type", "") != "function":
+        if getattr(definition, "type", "") not in {"function", "method"}:
             continue
         try:
             file = _path(definition.filename, root)
@@ -324,12 +346,7 @@ def _bind_function(
         return
     key, definition = matches[0]
     index = report.index
-    index.candidates[key] = definition
-    index.by_location[module.path, node.lineno] = key
-    index.by_name[definition.name].append(key)
-    index.by_simple_name[definition.simple_name].add(key)
-    index.initial_references[key] = _source_reference_count(definition)
-    module.functions[node.lineno] = key
+    index.add_function(module, node, key, definition)
     module.bindings[node.name] = ("symbol", key)
     if node.decorator_list or node.name in {"__getattr__", "__dir__"}:
         report.graph.uncertain_roots.add(key)
@@ -397,6 +414,7 @@ def analyze_python_reachability(
     for module in report.index.modules.values():
         _bind_module(report, module, locations)
     bind_classes(report.index, definitions)
+    bind_nested_functions(report.index, locations)
     for module in report.index.modules.values():
         module.bindings = stable_receivers(
             report.index, module, module.tree.body, module.bindings

@@ -2030,7 +2030,7 @@ class Skylos:
         self._python_reachability_report = report
         self._apply_python_reachability(report)
 
-    def _retain_receiver_uncertainty(self, report):
+    def _retain_reachability_uncertainty(self, report):
         for key in report.protected_keys:
             defn = self.defs.get(key)
             if defn is not None and defn.references <= 0:
@@ -2038,9 +2038,14 @@ class Skylos:
                 # that this callable has an actual reachable invocation.
                 defn.references = 1
                 defn.heuristic_refs["unresolved_receiver"] = 1.0
+        for key in report.protected_callback_keys:
+            defn = self.defs.get(key)
+            if defn is not None and defn.references <= 0:
+                defn.references = 1
+                defn.heuristic_refs["unresolved_callback"] = 1.0
 
     def _apply_python_reachability(self, report):
-        self._retain_receiver_uncertainty(report)
+        self._retain_reachability_uncertainty(report)
         for key in report.proven_reachable_keys:
             defn = self.defs.get(key)
             if defn is not None and defn.references <= 0:
@@ -2070,7 +2075,7 @@ class Skylos:
             key for key in previously_unreachable if self.defs[key].references > 0
         }
         report.refresh(self.defs, additional_roots=revived_roots)
-        self._retain_receiver_uncertainty(report)
+        self._retain_reachability_uncertainty(report)
         # An external callback or a later grep rescue may establish a real
         # caller. Its callees must be restored in this same scan.
         for key in previously_unreachable - report.unreachable_keys:
