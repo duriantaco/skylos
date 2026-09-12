@@ -1,6 +1,8 @@
 from __future__ import annotations
 import ast
 import fnmatch
+import hashlib
+import json
 from pathlib import Path
 from skylos.rules.base import SkylosRule
 
@@ -15,6 +17,13 @@ class YAMLRule(SkylosRule):
         self.message = config.get("yaml_config", {}).get(
             "message", "Custom rule violation"
         )
+        rule_bytes = json.dumps(
+            config,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.rule_revision = "custom:" + hashlib.sha256(rule_bytes).hexdigest()
         # Taint tracking state: maps variable names to taint status within function scope
         self._taint_state: dict[str, bool] = {}
 
@@ -320,6 +329,7 @@ class YAMLRule(SkylosRule):
             "category": self.category,
             "severity": self.severity,
             "message": self.message,
+            "rule_revision": self.rule_revision,
             "name": name or "<custom>",
             "simple_name": name or "<custom>",
             "value": "-",

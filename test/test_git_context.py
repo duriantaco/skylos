@@ -170,3 +170,39 @@ def test_relative_paths_preserve_names_and_reject_outside_files(repo):
     )
     assert context.relative_path(repo.parent / "outside.py") is None
     assert context.relative_path(Path("package") / "tracked.py") == "package/tracked.py"
+
+
+def test_diff_does_not_execute_repository_or_environment_helpers(
+    repo, tmp_path, monkeypatch
+):
+    sentinel = tmp_path / "git-helper-ran"
+    helper = tmp_path / "git-helper"
+    helper.write_text(
+        f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o755)
+    info_attributes = repo / ".git" / "info" / "attributes"
+    info_attributes.write_text(
+        "*.py filter=untrusted diff=untrusted\n",
+        encoding="utf-8",
+    )
+    _git(repo, "config", "core.fsmonitor", str(helper))
+    _git(repo, "config", "diff.external", str(helper))
+    _git(repo, "config", "diff.untrusted.command", str(helper))
+    _git(repo, "config", "diff.untrusted.textconv", str(helper))
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(repo, "config", "--worktree", "filter.untrusted.clean", str(helper))
+    monkeypatch.setenv("GIT_EXTERNAL_DIFF", str(helper))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "diff.external")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(helper))
+    source = repo / "package" / "tracked.py"
+    assert write_text_no_symlink(source, "value = 2\n")
+    sentinel.unlink(missing_ok=True)
+
+    result = GitContext.from_path(source).run("diff", "--name-only", "HEAD")
+
+    assert result.returncode == 0
+    assert result.stdout == "package/tracked.py\n"
+    assert not sentinel.exists()

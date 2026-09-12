@@ -6,6 +6,7 @@ from pathlib import Path
 
 from skylos.config import load_config
 from skylos.core.evidence_contract import attach_evidence_contract
+from skylos.core.review_context import review_config_hash_for_category
 from skylos.reporting.architecture_result import attach_circular_and_architecture
 from skylos.reporting.dead_code_result import (
     dead_code_candidate_decisions,
@@ -76,12 +77,19 @@ def build_analysis_result(
     pyproject_entrypoint_modules=None,
     config_file=None,
     analysis_errors=None,
+    include_review_proofs=False,
+    review_config=None,
 ):
     """Assemble the final result dict from analysis outputs."""
     architecture_main_guard_modules = _normal_set(architecture_main_guard_modules)
     pyproject_entrypoint_qnames = _normal_set(pyproject_entrypoint_qnames)
     pyproject_entrypoint_modules = _normal_set(pyproject_entrypoint_modules)
 
+    project_cfg = (
+        dict(review_config)
+        if isinstance(review_config, dict)
+        else load_config(_primary_path(path), config_file=config_file)
+    )
     ledger, evidence = dead_code_evidence(
         analyzer,
         path,
@@ -92,6 +100,8 @@ def build_analysis_result(
         analyzer,
         thr,
         evidence,
+        review_config=project_cfg,
+        include_review_proofs=include_review_proofs,
     )
     context_map = definition_context(analyzer, thr, evidence)
     whitelisted = whitelisted_definitions(analyzer, all_suppressed)
@@ -129,7 +139,6 @@ def build_analysis_result(
     _bucket_unused_definitions(result, unused)
     _attach_unused_ts_exports(result, unused_ts_exports)
 
-    project_cfg = load_config(_primary_path(path), config_file=config_file)
     attach_circular_and_architecture(
         result,
         project_cfg,
@@ -144,6 +153,8 @@ def build_analysis_result(
         pyproject_entrypoint_qnames,
         pyproject_entrypoint_modules,
     )
+    if isinstance(getattr(analyzer, "_review_context", None), dict):
+        _attach_effective_review_config_hashes(result, project_cfg)
     _attach_grade(
         result,
         files,
@@ -155,6 +166,42 @@ def build_analysis_result(
     )
     attach_directory_rollups(result, getattr(analyzer, "_project_root", None))
     return result
+
+
+def _attach_effective_review_config_hashes(result, root_config):
+    """Bind worker findings to the config their worker actually consumed."""
+    from skylos.core.review_decisions import FINDING_SECTIONS
+
+    root_hashes: dict[str, str | None] = {}
+    effective_hashes: dict[tuple[int, str], str | None] = {}
+    for section, category, _default_rule_id in FINDING_SECTIONS:
+        findings = result.get(section)
+        if not isinstance(findings, list):
+            continue
+        root_hash = root_hashes.setdefault(
+            category,
+            review_config_hash_for_category(root_config, category),
+        )
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            if "_analysis_worker_config" not in finding:
+                continue
+            effective_config = finding.pop("_analysis_worker_config")
+            if root_hash is None or not isinstance(effective_config, dict):
+                finding["_analysis_config_hash"] = "invalid"
+                continue
+            cache_key = (id(effective_config), category)
+            if cache_key not in effective_hashes:
+                effective_hashes[cache_key] = review_config_hash_for_category(
+                    effective_config,
+                    category,
+                )
+            effective_hash = effective_hashes[cache_key]
+            if effective_hash is None:
+                finding["_analysis_config_hash"] = "invalid"
+            elif effective_hash != root_hash:
+                finding["_analysis_config_hash"] = effective_hash
 
 
 def _base_result(
@@ -205,6 +252,10 @@ def _base_result(
 
 
 def _attach_analysis_reports(analyzer, result):
+    review_context = getattr(analyzer, "_review_context", None)
+    if isinstance(review_context, dict):
+        result["analysis_summary"]["review_context"] = dict(review_context)
+
     analysis_scope = getattr(analyzer, "_analysis_scope", None)
     if isinstance(analysis_scope, dict):
         result["analysis_summary"]["comparison_scope"] = dict(analysis_scope)

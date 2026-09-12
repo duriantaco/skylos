@@ -6,7 +6,6 @@ import os
 import platform
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -222,7 +221,9 @@ def clear_run_cache(project_root: str | Path) -> bool:
         return False
     if not path.exists():
         return False
-    shutil.rmtree(path)  # skylos: ignore[SKY-D215] guarded project-local cache directory
+    shutil.rmtree(
+        path
+    )  # skylos: ignore[SKY-D215] guarded project-local cache directory
     return True
 
 
@@ -432,27 +433,9 @@ def _fingerprinted_files(project_root: Path) -> list[dict[str, Any]]:
 
 
 def _git_visible_files(project_root: Path) -> list[Path] | None:
-    try:
-        result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (OSError, ValueError):
-        return None
+    from skylos.core.file_discovery import list_git_visible_files
 
-    if result.returncode != 0:
-        return None
-
-    files = []
-    for line in result.stdout.splitlines():
-        rel = line.strip()
-        if not rel:
-            continue
-        files.append(project_root / rel)
-    return files
+    return list_git_visible_files(project_root)
 
 
 def _walk_visible_files(project_root: Path) -> list[Path]:

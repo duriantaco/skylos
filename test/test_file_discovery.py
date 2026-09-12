@@ -67,3 +67,27 @@ def test_discover_source_files_skips_git_visible_symlinked_target_outside_root(
     files = discover_source_files(repo, [".py"])
 
     assert files == []
+
+
+def test_git_inventory_disables_repository_fsmonitor_hook(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "app.py"
+    source.write_text("print('safe')\n", encoding="utf-8")
+    sentinel = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "fsmonitor-hook"
+    hook.write_text(
+        f"#!/bin/sh\ntouch '{sentinel}'\nprintf '0\\n'\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "core.fsmonitor", str(hook)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    assert list_git_visible_files(repo) == [source]
+    assert not sentinel.exists()

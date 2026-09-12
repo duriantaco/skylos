@@ -396,11 +396,13 @@ class TestRunStaticOnFiles:
         run_static_on_files(
             ["/proj/a.py", "/proj/b.py"],
             project_root=pathlib.Path("/proj"),
+            include_review_proofs=True,
         )
 
         kwargs = mock_analyze.call_args.kwargs
         assert sorted(kwargs["changed_files"]) == ["/proj/a.py", "/proj/b.py"]
         assert kwargs["enable_ai_defects"] is True
+        assert kwargs["include_review_proofs"] is True
 
 
 class TestPipelinePhase1:
@@ -1878,6 +1880,32 @@ class TestPipelineIntegration:
             mock_static.assert_called_once()
             assert mock_static.call_args[0][0] == changed
 
+    def test_review_mode_requests_dead_code_proofs_for_upload(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        with (
+            patch(P_STATIC_FN, return_value=_empty_result()) as mock_static,
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(
+                "skylos.core.review_decisions.review_scan_requirements",
+                return_value=(False, False),
+            ),
+        ):
+            mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(upload=True),
+                console=_console(),
+                changed_files=[str(proj / "a.py")],
+            )
+
+        assert mock_static.call_args.kwargs["include_review_proofs"] is True
+
     def test_analyze_mode_calls_run_analyze_directly(self, tmp_path):
         proj = tmp_path / "proj"
         proj.mkdir()
@@ -1902,3 +1930,58 @@ class TestPipelineIntegration:
 
             mock_analyze.assert_called_once()
             assert mock_analyze.call_args[0][0] == str(proj)
+
+    def test_analyze_mode_returns_review_context_in_pipeline_stats(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+        static_result = _empty_result()
+        static_result["analysis_summary"] = {
+            "review_context": {"schema": "test-review-context"}
+        }
+        stats = {}
+
+        with (
+            patch(P_ANALYZE, return_value=json.dumps(static_result)),
+            patch(P_EXCLUDE, return_value=set()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+        ):
+            mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(static_only=True, skip_verification=True),
+                console=_console(),
+                stats_out=stats,
+            )
+
+        assert stats["review_context"] == {"schema": "test-review-context"}
+
+    def test_analyze_mode_requests_proofs_when_review_state_needs_them(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        with (
+            patch(P_ANALYZE) as mock_analyze,
+            patch(P_EXCLUDE, return_value=set()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(
+                "skylos.core.review_decisions.review_scan_requirements",
+                return_value=(True, True),
+            ),
+        ):
+            mock_analyze.return_value = json.dumps(_empty_result())
+            mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(static_only=True, skip_verification=True),
+                console=_console(),
+            )
+
+        assert mock_analyze.call_args.kwargs["include_review_proofs"] is True

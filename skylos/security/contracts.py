@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -220,14 +219,7 @@ def _read_file_at_ref(
     repo_path = context.relative_path(Path(project_root).resolve() / relpath)
     if repo_path is None:
         return None
-    result = subprocess.run(
-        ["git", "show", f"{ref}:{repo_path}"],
-        capture_output=True,
-        text=True,
-        cwd=str(context.root),
-        env=context.env,
-        timeout=10,
-    )
+    result = context.run("show", f"{ref}:{repo_path}")
     if result.returncode == 0:
         return result.stdout
     return None
@@ -235,14 +227,7 @@ def _read_file_at_ref(
 
 def _git_ref_exists(project_root: str | os.PathLike[str], ref: str) -> bool:
     context = GitContext.from_path(project_root)
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", ref],
-        capture_output=True,
-        text=True,
-        cwd=str(context.root),
-        env=context.env,
-        timeout=10,
-    )
+    result = context.run("rev-parse", "--verify", ref)
     return result.returncode == 0
 
 

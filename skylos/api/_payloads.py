@@ -182,6 +182,13 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "affected_range",
         "fixed_version",
         "cvss_score",
+        "fingerprint_version",
+        "stable_fingerprint",
+        "context_hash",
+        "rule_revision",
+        "language",
+        "symbol",
+        "review_decision",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
     aliases = metadata.get("aliases")

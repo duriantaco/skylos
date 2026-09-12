@@ -66,8 +66,13 @@ from skylos.core.file_discovery import (
     should_exclude_path,
 )
 from skylos.core.git_context import GitContext
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
 from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.core.linter import LinterVisitor
+from skylos.core.review_context import build_analysis_review_context
 from skylos.deadcode.signature_contracts import mark_signature_contract_parameters
 
 from skylos.rules.quality.policy import analyze_repo_policy
@@ -99,6 +104,8 @@ _find_package_boundary_modules = find_package_boundary_modules
 _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_sca_coverage",
     "_analysis_scope",
+    "_review_context",
+    "_review_file_configs",
     "_ai_verification_expectations",
     "_ai_verification_checks",
     "_language_engine_reports",
@@ -323,33 +330,21 @@ def _diff_result_has_text(diff_result):
 
 
 def _git_diff_for_changed_file(root, rel_file, diff_base):
-    import subprocess
-
+    context = GitContext.from_path(root)
+    pathspec = f":(literal){rel_file}"
     if diff_base:
-        diff_cmd = ["git", "diff", f"{diff_base}...HEAD", "--", rel_file]
+        diff_cmd = ["diff", f"{diff_base}...HEAD", "--", pathspec]
     else:
-        diff_cmd = ["git", "diff", "HEAD", "--", rel_file]
+        diff_cmd = ["diff", "HEAD", "--", pathspec]
 
-    diff_result = subprocess.run(
-        diff_cmd,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        cwd=str(root),
-    )
+    diff_result = context.run(*diff_cmd)
     if _diff_result_has_text(diff_result):
         return diff_result.stdout
 
     if not diff_base:
         return ""
 
-    fallback_result = subprocess.run(
-        ["git", "diff", "HEAD", "--", rel_file],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        cwd=str(root),
-    )
+    fallback_result = context.run("diff", "HEAD", "--", pathspec)
     if _diff_result_has_text(fallback_result):
         return fallback_result.stdout
 
@@ -615,10 +610,14 @@ def _git_tracking_status(candidate: Path) -> bool | None:
     try:
         relative = candidate.relative_to(git_root).as_posix()
         result = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", relative],
+            read_only_git_command(
+                ["ls-files", "--error-unmatch", "--", relative],
+                literal_pathspecs=True,
+            ),
             cwd=git_root,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=read_only_git_environment(),
             timeout=_GIT_TRACKING_TIMEOUT_SECONDS,
             check=False,
         )
@@ -2992,6 +2991,8 @@ class Skylos:
         pyproject_entrypoint_modules=None,
         config_file=None,
         analysis_errors=None,
+        include_review_proofs=False,
+        review_config=None,
     ):
         from skylos.reporting.result_builder import build_analysis_result
 
@@ -3024,6 +3025,8 @@ class Skylos:
             pyproject_entrypoint_modules=pyproject_entrypoint_modules,
             config_file=config_file,
             analysis_errors=analysis_errors,
+            include_review_proofs=include_review_proofs,
+            review_config=review_config,
         )
 
     @releases_python_ast_cache
@@ -3049,6 +3052,8 @@ class Skylos:
         required_config_rules=None,
         grep_cache=True,
         dependency_bump_diff_base=None,
+        include_review_proofs=False,
+        include_review_context=False,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -3056,6 +3061,10 @@ class Skylos:
             )
         if not (0 <= thr <= 100):
             raise ValueError(f"thr must be 0-100, got {thr}")
+
+        if extra_visitors is not None and not isinstance(extra_visitors, tuple):
+            extra_visitors = tuple(extra_visitors)
+        include_review_context = bool(include_review_context or include_review_proofs)
 
         if self._has_analyzed:
             self._reset_run_state()
@@ -3153,6 +3162,36 @@ class Skylos:
                 project_cfg, project_config_overrides
             )
         project_ignore = set(project_cfg.get("ignore", []))
+        requested_changed_files = changed_files
+
+        def refresh_review_context(effective_changed_files):
+            if not include_review_context:
+                self._review_context = None
+                return
+            self._review_context = build_analysis_review_context(
+                project_root,
+                path,
+                config=project_cfg,
+                threshold=thr,
+                exclude_folders=exclude_folders,
+                requested_changed_files=requested_changed_files,
+                effective_changed_files=effective_changed_files,
+                enable_secrets=enable_secrets,
+                enable_danger=enable_danger,
+                enable_quality=enable_quality,
+                enable_ai_defects=enable_ai_defects,
+                enable_sca=enable_sca,
+                enable_dependency_hallucinations=enable_dependency_hallucinations,
+                grep_verify=grep_verify,
+                trace_file=trace_file,
+                required_config_rules=required_config_rules,
+                dependency_bump_diff_base=dependency_bump_diff_base,
+                custom_rules_data=custom_rules_data,
+                extra_visitors=extra_visitors,
+                analysis_scope=self._analysis_scope,
+            )
+
+        refresh_review_context(changed_files)
 
         if not files:
             logger.warning(f"No supported source files found in {path}")
@@ -3188,6 +3227,10 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
+            if isinstance(self._review_context, dict):
+                result["analysis_summary"]["review_context"] = dict(
+                    self._review_context
+                )
             if first_is_symlink and required_config_rules:
                 result["analysis_errors"].append(
                     _analysis_error_payload(
@@ -3396,7 +3439,6 @@ class Skylos:
         global_pattern_tracker.traced_by_file.clear()
         global_pattern_tracker._traced_by_basename.clear()
 
-        requested_changed_files = changed_files
         pyproject_entrypoint_qnames = set()
         pyproject_entrypoint_modules = set()
 
@@ -3457,6 +3499,7 @@ class Skylos:
         all_param_method_refs = defaultdict(list)
         all_call_arg_types = defaultdict(list)
         all_top_level_refs = set()
+        effective_file_configs = {} if include_review_context else None
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -3578,6 +3621,14 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+                if effective_file_configs is not None:
+                    effective_file_configs[str(Path(file).resolve())] = cfg
+                    for worker_findings in (q_finds, d_finds, pro_finds):
+                        for worker_finding in worker_findings or ():
+                            if isinstance(worker_finding, dict):
+                                worker_finding["_analysis_worker_config"] = cfg
+                    if isinstance(empty_file_finding, dict):
+                        empty_file_finding["_analysis_worker_config"] = cfg
 
                 if file_ignore_lines:
                     per_file_ignore_lines[str(file)] = file_ignore_lines
@@ -4510,8 +4561,6 @@ class Skylos:
 
             if changed_files and "SKY-A101" not in project_ignore:
                 try:
-                    import subprocess
-
                     from skylos.rules.ai_defect.assertion_weakening import (
                         detect_assertion_weakening,
                     )
@@ -4524,32 +4573,14 @@ class Skylos:
                             if Path(cf).is_absolute()
                             else str(cf)
                         )
-                        diff_cmd = (
-                            ["git", "diff", f"{diff_base}...HEAD", "--", rel_cf]
-                            if diff_base
-                            else ["git", "diff", "HEAD", "--", rel_cf]
+                        diff_text = _git_diff_for_changed_file(
+                            root,
+                            rel_cf,
+                            diff_base,
                         )
-                        diff_result = subprocess.run(
-                            diff_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            cwd=str(root),
-                        )
-                        if (
-                            diff_result.returncode != 0
-                            or not diff_result.stdout.strip()
-                        ) and diff_base:
-                            diff_result = subprocess.run(
-                                ["git", "diff", "HEAD", "--", rel_cf],
-                                capture_output=True,
-                                text=True,
-                                timeout=10,
-                                cwd=str(root),
-                            )
-                        if diff_result.returncode == 0 and diff_result.stdout.strip():
+                        if diff_text:
                             assertion_findings = detect_assertion_weakening(
-                                diff_result.stdout,
+                                diff_text,
                                 cf,
                             )
                             _extend_unsuppressed_ai_defect_findings(
@@ -4912,6 +4943,8 @@ class Skylos:
             workspace_inventory=workspace_inventory,
         )
 
+        self._review_file_configs = effective_file_configs
+        refresh_review_context(changed_files)
         result = self._build_result(
             files,
             thr,
@@ -4940,6 +4973,8 @@ class Skylos:
             pyproject_entrypoint_modules=pyproject_entrypoint_modules,
             config_file=config_file,
             analysis_errors=analysis_errors,
+            include_review_proofs=include_review_proofs,
+            review_config=project_cfg,
         )
 
         return json.dumps(result, indent=2)
@@ -4997,6 +5032,8 @@ def analyze(
     required_config_rules=None,
     grep_cache=True,
     dependency_bump_diff_base=None,
+    include_review_proofs=False,
+    include_review_context=False,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -5019,6 +5056,8 @@ def analyze(
         project_config_overrides=project_config_overrides,
         required_config_rules=required_config_rules,
         dependency_bump_diff_base=dependency_bump_diff_base,
+        include_review_proofs=include_review_proofs,
+        include_review_context=include_review_context,
     )
 
 

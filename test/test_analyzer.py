@@ -218,7 +218,9 @@ class TestSkylos:
         result = skylos._module(root, file_path)
         assert result == "main"
 
-    def test_module_name_generation_strips_rightmost_source_root(self, skylos, tmp_path):
+    def test_module_name_generation_strips_rightmost_source_root(
+        self, skylos, tmp_path
+    ):
         # Path contains BOTH "python" and "src" source-root names. The old
         # implementation iterated a set and stripped whichever name came first,
         # producing module names that depended on PYTHONHASHSEED. The result
@@ -239,7 +241,8 @@ class TestSkylos:
         # #773) must strip the LAST occurrence deterministically.
         root = tmp_path
         file_path = (
-            root / "mcp-servers/src/data_analysis_server/src/data_analysis_server/visualization/plots.py"
+            root
+            / "mcp-servers/src/data_analysis_server/src/data_analysis_server/visualization/plots.py"
         )
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text("x = 1\n", encoding="utf-8")
@@ -4149,10 +4152,7 @@ def fake_call():
         monkeypatch.setenv("SKYLOS_JOBS", "1")
         src = tmp_path / "app.py"
         src.write_text(
-            "def read(length: int = ...) -> int:\n"
-            "    return length + 5\n"
-            "\n"
-            "read()\n",
+            "def read(length: int = ...) -> int:\n    return length + 5\n\nread()\n",
             encoding="utf-8",
         )
 
@@ -4194,12 +4194,8 @@ class SupportsRead(Protocol):
             analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
         )
         assert result.get("analysis_errors", []) == []
-        l032 = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
-        ]
-        l026 = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L026"
-        ]
+        l032 = [f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"]
+        l026 = [f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L026"]
         assert l032 == []
         assert l026 == []
 
@@ -4530,7 +4526,9 @@ def _issue_706_cache_findings(result):
 
 def _issue_706_init_ignored_cache_repo(root):
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    (root / ".gitignore").write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
+    (
+        root / ".gitignore"
+    ).write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
         ".skylos/\n", encoding="utf-8"
     )
 
@@ -4540,9 +4538,7 @@ def test_recursive_secret_scan_skips_untracked_generated_grep_cache(tmp_path):
     _issue_706_init_ignored_cache_repo(tmp_path)
     _issue_706_cache_file(tmp_path)
 
-    result = json.loads(
-        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
 
     assert _issue_706_cache_findings(result) == []
 
@@ -4551,9 +4547,7 @@ def test_non_git_project_skips_its_generated_grep_cache(tmp_path):
     (tmp_path / "app.py").write_text("print('clean')\n", encoding="utf-8")
     _issue_706_cache_file(tmp_path)
 
-    result = json.loads(
-        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
 
     assert _issue_706_cache_findings(result) == []
 
@@ -4583,8 +4577,7 @@ def test_grep_evidence_with_secret_is_not_persisted_in_project(tmp_path):
 
     assert list(cache_file.parent.glob(cache_file.name)) == []
     assert any(
-        finding.get("file") == "evidence.yaml"
-        and finding.get("provider") == "github"
+        finding.get("file") == "evidence.yaml" and finding.get("provider") == "github"
         for finding in first.get("secrets", [])
     )
     assert not any(
@@ -4621,9 +4614,7 @@ def test_recursive_secret_scan_keeps_tracked_grep_cache_visible(tmp_path):
         check=True,
     )
 
-    result = json.loads(
-        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
 
     cache_findings = _issue_706_cache_findings(result)
     assert cache_findings
@@ -4644,9 +4635,7 @@ def test_nested_git_repo_uses_its_own_tracked_cache_state(tmp_path):
         check=True,
     )
 
-    result = json.loads(
-        analyze(str(nested), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(nested), enable_secrets=True, grep_verify=False))
 
     assert _issue_706_cache_findings(result)
 
@@ -4658,9 +4647,7 @@ def test_generated_grep_cache_git_probe_failure_scans_fail_closed(
     _issue_706_cache_file(tmp_path)
     monkeypatch.setattr("skylos.analyzer._git_tracking_status", lambda _path: None)
 
-    result = json.loads(
-        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
 
     assert _issue_706_cache_findings(result)
 
@@ -4681,8 +4668,7 @@ def test_explicit_generated_grep_cache_scan_is_not_suppressed(tmp_path, target_k
     )
 
     assert any(
-        finding.get("provider") == "github"
-        for finding in result.get("secrets", [])
+        finding.get("provider") == "github" for finding in result.get("secrets", [])
     )
 
 
@@ -4719,13 +4705,10 @@ def test_grep_cache_lookalike_paths_remain_scannable(tmp_path, relative_path):
         json.dumps({"token": github_token}), encoding="utf-8"
     )
 
-    result = json.loads(
-        analyze(str(tmp_path), enable_secrets=True, grep_verify=False)
-    )
+    result = json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
 
     assert any(
-        finding.get("file") == relative_path
-        and finding.get("provider") == "github"
+        finding.get("file") == relative_path and finding.get("provider") == "github"
         for finding in result.get("secrets", [])
     )
 
@@ -4748,13 +4731,15 @@ def test_generated_grep_cache_tracking_status_is_fail_closed(
         actual = _git_tracking_status(candidate)
 
     assert actual is expected
-    assert git_run.call_args.args[0] == [
-        "git",
+    command = git_run.call_args.args[0]
+    assert command[-4:] == [
         "ls-files",
         "--error-unmatch",
         "--",
         ".skylos/cache/grep_results.json",
     ]
+    assert "core.fsmonitor=false" in command
+    assert git_run.call_args.kwargs["env"]["GIT_CONFIG_NOSYSTEM"] == "1"
 
 
 def test_generated_grep_cache_tracking_timeout_is_unknown(tmp_path):
@@ -4767,6 +4752,30 @@ def test_generated_grep_cache_tracking_timeout_is_unknown(tmp_path):
         side_effect=subprocess.TimeoutExpired("git", 5),
     ):
         assert _git_tracking_status(candidate) is None
+
+
+def test_generated_grep_cache_tracking_probe_disables_fsmonitor(tmp_path):
+    from skylos.analyzer import _git_tracking_status
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    candidate = tmp_path / ".skylos" / "cache" / "grep_results.json"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("{}", encoding="utf-8")
+    sentinel = tmp_path / "fsmonitor-ran"
+    helper = tmp_path / "fsmonitor-hook"
+    helper.write_text(
+        f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o755)
+    subprocess.run(
+        ["git", "config", "core.fsmonitor", str(helper)],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    assert _git_tracking_status(candidate) is False
+    assert not sentinel.exists()
 
 
 _ISSUE_693_UV_LOCK = """\
