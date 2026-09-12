@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
 
@@ -36,6 +37,120 @@ def _unused_full_names(result, bucket):
     return {
         item.get("full_name") or item.get("name")
         for item in result.get(bucket, [])
+    }
+
+
+def test_evidence_serialization_resolves_each_filename_once(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "app.py"
+    source.write_text("pass\n", encoding="utf-8")
+    ledger = EvidenceLedger()
+    for name in ("app.first", "app.second"):
+        ledger.events_by_symbol[SymbolKey(str(source), name, "function", 1)] = []
+
+    original_resolve = Path.resolve
+    resolved = []
+
+    def record_resolve(path, *args, **kwargs):
+        resolved.append(path)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", record_resolve)
+
+    payload = ledger.to_dict(project)
+
+    assert [entry["file"] for entry in payload["symbols"]] == ["app.py", "app.py"]
+    assert resolved.count(project) == 1
+    assert resolved.count(source) == 1
+
+
+def test_evidence_serialization_cache_does_not_outlive_call(monkeypatch, tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    ledger = EvidenceLedger()
+    ledger.events_by_symbol[SymbolKey("app.py", "app.work", "function", 1)] = []
+
+    monkeypatch.chdir(first)
+    assert ledger.to_dict(tmp_path)["symbols"][0]["file"] == "first/app.py"
+    monkeypatch.chdir(second)
+    assert ledger.to_dict(tmp_path)["symbols"][0]["file"] == "second/app.py"
+
+
+def test_evidence_serialization_does_not_cache_resolution_failure(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "app.py"
+    source.write_text("pass\n", encoding="utf-8")
+    ledger = EvidenceLedger()
+    for name in ("app.first", "app.second"):
+        ledger.events_by_symbol[SymbolKey(str(source), name, "function", 1)] = []
+    original_resolve = Path.resolve
+    source_attempts = 0
+
+    def fail_first_source_resolution(path, *args, **kwargs):
+        nonlocal source_attempts
+        if path == source:
+            source_attempts += 1
+            if source_attempts == 1:
+                raise OSError("temporarily unavailable")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_first_source_resolution)
+
+    payload = ledger.to_dict(tmp_path)
+
+    assert [entry["file"] for entry in payload["symbols"]] == [
+        source.as_posix(),
+        "app.py",
+    ]
+    assert source_attempts == 2
+
+
+def test_evidence_serialization_without_root_keeps_raw_path(monkeypatch):
+    ledger = EvidenceLedger()
+    raw_path = "pkg/./module.py"
+    ledger.events_by_symbol[SymbolKey(raw_path, "pkg.work", "function", 1)] = []
+
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("root=None must not resolve symbol paths")
+
+    monkeypatch.setattr(Path, "resolve", unexpected_resolve)
+
+    assert ledger.to_dict()["symbols"][0]["file"] == raw_path
+
+
+def test_evidence_serialization_preserves_path_fallbacks(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.py"
+    broken = project / "broken.py"
+    ledger = EvidenceLedger()
+    ledger.events_by_symbol[SymbolKey(str(outside), "outside.work", "function", 1)] = []
+    ledger.events_by_symbol[SymbolKey(str(broken), "broken.work", "function", 1)] = []
+    original_resolve = Path.resolve
+
+    def fail_one_path(path, *args, **kwargs):
+        if path == broken:
+            raise OSError("unavailable")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_one_path)
+
+    payload = ledger.to_dict(project)
+    files = {entry["qualified_name"]: entry["file"] for entry in payload["symbols"]}
+
+    assert files == {
+        "broken.work": broken.as_posix(),
+        "outside.work": outside.as_posix(),
+    }
+    assert {
+        entry["qualified_name"]: entry["file"] for entry in ledger.to_dict()["symbols"]
+    } == {
+        "broken.work": str(broken),
+        "outside.work": str(outside),
     }
 
 

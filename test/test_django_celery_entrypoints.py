@@ -1,11 +1,16 @@
 """Framework fixtures are parsed by Skylos, never imported or executed."""
 
+import ast
 import json
+from pathlib import Path
 import textwrap
 
 import pytest
 
 from skylos.analyzer import analyze
+from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
+from skylos.deadcode.python_ast import ParsedPythonFile
+from skylos.visitors.base import Definition
 
 
 def _scan(tmp_path, sources):
@@ -19,6 +24,42 @@ def _scan(tmp_path, sources):
 
 def _names(result, bucket):
     return {item["full_name"] for item in result.get(bucket, [])}
+
+
+def test_framework_index_resolves_each_path_once_per_lookup(monkeypatch, tmp_path):
+    source = tmp_path / "migration.py"
+    tree = ast.parse(
+        "from django.db import migrations\n"
+        "def forwards(apps, editor): pass\n"
+        "operation = migrations.RunPython(forwards)\n"
+    )
+    function_node = tree.body[1]
+    definitions = {}
+    for definition in (
+        Definition("migration.forwards", "function", source, 2, function_node),
+        Definition("migration.forwards.apps", "parameter", source, 2),
+        Definition("migration.forwards.editor", "parameter", source, 2),
+    ):
+        definitions[definition.name] = definition
+    parsed = [ParsedPythonFile(source, tree)]
+    original_resolve = Path.resolve
+    resolved = []
+
+    def record_resolve(path, *args, **kwargs):
+        resolved.append(path)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", record_resolve)
+
+    for _ in range(2):
+        targets = find_framework_entrypoint_targets(definitions, parsed, tmp_path)
+        assert {(target.name, reason) for target, reason in targets} == {
+            ("migration.forwards.apps", "django_migration_callback"),
+            ("migration.forwards.editor", "django_migration_callback"),
+        }
+
+    assert resolved.count(source) == 4
+    assert resolved.count(tmp_path) == 2
 
 
 @pytest.mark.parametrize(

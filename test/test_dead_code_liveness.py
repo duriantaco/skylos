@@ -1,8 +1,13 @@
+import ast
 import json
+from pathlib import Path
 import textwrap
 
 from skylos.analyzer import analyze
 from skylos.deadcode import liveness
+from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.python_ast import ParsedPythonFile
+from skylos.visitors.base import Definition
 
 
 def _write(path, body):
@@ -12,6 +17,92 @@ def _write(path, body):
 
 def _unused_function_names(result):
     return {item["full_name"] for item in result.get("unused_functions", [])}
+
+
+def _plugin_registry_lookup_fixture(tmp_path):
+    sources = {
+        "registry.py": 'HANDLERS = {"pay": "plugins:charge"}\n',
+        "dispatcher.py": """
+            from registry import HANDLERS
+            import importlib
+            def dispatch(event):
+                path = HANDLERS[event]
+                module_name, func_name = path.split(":")
+                handler = getattr(importlib.import_module(module_name), func_name)
+                return handler(event)
+        """,
+        "app.py": """
+            from dispatcher import dispatch
+            def main():
+                return dispatch("pay")
+        """,
+        "plugins.py": """
+            def charge(event):
+                return event
+            def stale(event):
+                return event
+        """,
+    }
+    parsed = []
+    definitions = {}
+    for filename, source in sources.items():
+        path = tmp_path / filename
+        tree = ast.parse(textwrap.dedent(source).lstrip())
+        parsed.append(ParsedPythonFile(path, tree))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            qualified_name = f"{path.stem}.{node.name}"
+            definitions[qualified_name] = Definition(
+                qualified_name, "function", path, node.lineno, node
+            )
+    registry = Definition("registry.HANDLERS", "variable", tmp_path / "registry.py", 1)
+    definitions = {registry.name: registry, **definitions}
+    definitions["app.main"].calls.add("dispatcher.dispatch")
+    return definitions, parsed
+
+
+def test_plugin_registry_resolves_each_path_once_per_lookup(monkeypatch, tmp_path):
+    definitions, parsed = _plugin_registry_lookup_fixture(tmp_path)
+    original_resolve = Path.resolve
+    resolved = []
+
+    def record_resolve(path, *args, **kwargs):
+        resolved.append(path)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", record_resolve)
+
+    for _ in range(2):
+        targets = find_literal_plugin_registry_targets(definitions, parsed)
+        assert [target.name for target in targets] == ["plugins.charge"]
+
+    for path in {parsed_file.path for parsed_file in parsed}:
+        assert resolved.count(path) == 2
+
+
+def test_plugin_registry_retries_failed_path_resolution(monkeypatch, tmp_path):
+    definitions, parsed = _plugin_registry_lookup_fixture(tmp_path)
+    registry_path = tmp_path / "registry.py"
+    dummy = Definition("registry.IGNORED", "variable", registry_path, 1)
+    definitions = {dummy.name: dummy, **definitions}
+    original_resolve = Path.resolve
+    attempts = 0
+
+    def fail_first_registry_resolution(path, *args, **kwargs):
+        nonlocal attempts
+        if path == registry_path:
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporarily unavailable")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_first_registry_resolution)
+
+    targets = find_literal_plugin_registry_targets(definitions, parsed)
+
+    assert [target.name for target in targets] == ["plugins.charge"]
+    assert attempts == 2
 
 
 def test_numba_overload_implementation_is_live(tmp_path):

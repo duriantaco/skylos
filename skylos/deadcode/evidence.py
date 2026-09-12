@@ -140,6 +140,32 @@ class SymbolKey:
             return Path(self.file).as_posix()
 
 
+def _repo_relative_file_formatter(root: str | Path):
+    """Format repeated symbol paths using a cache owned by one output pass."""
+    missing = object()
+    resolved_root: Path | object = missing
+    resolved_files: dict[str, str] = {}
+
+    def format_file(filename: str) -> str:
+        nonlocal resolved_root
+        cached = resolved_files.get(filename)
+        if cached is not None:
+            return cached
+        try:
+            resolved_file = Path(filename).resolve()
+            if resolved_root is missing:
+                resolved_root = Path(root).resolve()
+            relative = resolved_file.relative_to(resolved_root).as_posix()
+        except Exception:
+            # Preserve SymbolKey.repo_relative_file's lexical fallback. Failed
+            # resolutions are deliberately retried instead of being cached.
+            return Path(filename).as_posix()
+        resolved_files[filename] = relative
+        return relative
+
+    return format_file
+
+
 @dataclass(frozen=True)
 class EvidenceEvent:
     kind: EvidenceKind
@@ -282,8 +308,9 @@ class EvidenceLedger:
     ) -> dict[str, Any]:
         symbols = []
         definitions_by_name = _definitions_by_qualified_name(definitions)
+        format_file = None if root is None else _repo_relative_file_formatter(root)
         for symbol in sorted(self.events_by_symbol):
-            file_name = symbol.file if root is None else symbol.repo_relative_file(root)
+            file_name = symbol.file if format_file is None else format_file(symbol.file)
             decision = self.decision(
                 symbol,
                 definition=definitions_by_name.get(symbol.qualified_name),
