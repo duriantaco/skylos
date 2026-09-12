@@ -10,6 +10,7 @@ import skylos.core.review_decisions as review_decisions
 from skylos.api._findings import _normalize_findings
 from skylos.api._payloads import _compact_upload_finding
 from skylos.cli import _apply_display_filters
+from skylos.core.safe_cache_io import read_text_no_symlink, write_text_no_symlink
 
 
 NOW = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
@@ -78,9 +79,11 @@ def _record_then_corrupt_with_deep_extra(repo, source, cache):
         now=NOW,
     )
     path = next(cache.glob("*.json"))
-    payload = json.loads(path.read_text())
+    serialized = read_text_no_symlink(path, max_bytes=1_000_000)
+    assert serialized is not None
+    payload = json.loads(serialized)
     payload["decisions"][0]["unexpected"] = _nested_list(500)
-    path.write_text(json.dumps(payload))
+    assert write_text_no_symlink(path, json.dumps(payload))
 
 
 def test_deep_local_record_is_inactive_instead_of_suppressing(tmp_path):
@@ -127,7 +130,9 @@ def test_deep_untrusted_finding_metadata_cannot_crash_projection(tmp_path):
     source = tmp_path / "app.py"
     source.write_text("open(path).write('unsafe')\n")
     result = _result(source)
-    identity = review_decisions.annotate_result_identities(result, tmp_path)["danger"][0]
+    identity = review_decisions.annotate_result_identities(result, tmp_path)["danger"][
+        0
+    ]
     result["danger"][0]["metadata"] = {"unexpected": _nested_list(500)}
 
     projected = review_decisions.apply_review_decisions(
@@ -137,9 +142,10 @@ def test_deep_untrusted_finding_metadata_cannot_crash_projection(tmp_path):
         now=NOW,
     )
 
-    assert len(projected.get("danger", [])) + len(
-        projected.get("reviewed_findings", [])
-    ) == 1
+    assert (
+        len(projected.get("danger", [])) + len(projected.get("reviewed_findings", []))
+        == 1
+    )
 
 
 def test_deep_cloud_json_fails_open_without_crashing(tmp_path):
@@ -180,13 +186,16 @@ def test_ci_rejects_cloud_cache_even_when_attempt_and_job_match(tmp_path):
         "GITHUB_RUN_ATTEMPT": "2",
         "GITHUB_JOB": "security-scan",
     }
-    assert review_decisions.write_trusted_bundle(
-        repo,
-        bundle,
-        cache_root=cache,
-        fetched_at=NOW,
-        environ=env,
-    ) is not None
+    assert (
+        review_decisions.write_trusted_bundle(
+            repo,
+            bundle,
+            cache_root=cache,
+            fetched_at=NOW,
+            environ=env,
+        )
+        is not None
+    )
 
     for candidate_env in (
         env,
@@ -404,10 +413,10 @@ def _assert_python_dependency_change_resurfaces(
     assert before["fingerprint_version"] == review_decisions.FINGERPRINT_VERSION
     decision = _decision(before, line_number=line)
 
-    dependency.write_text(replacement)
-    after = review_decisions.annotate_result_identities(result, project_root)[
-        "danger"
-    ][0]
+    assert write_text_no_symlink(dependency, replacement)
+    after = review_decisions.annotate_result_identities(result, project_root)["danger"][
+        0
+    ]
 
     assert before["stable_fingerprint"] == after["stable_fingerprint"]
     assert before["context_hash"] != after["context_hash"]

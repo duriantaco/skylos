@@ -13,6 +13,7 @@ from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.analysis.penalties import _check_abstract_overrides, apply_penalties
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
 from skylos.engines.go_runner import GoEngineError
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 from skylos.analyzer import (
     Skylos,
@@ -4498,7 +4499,8 @@ def _issue_706_cache_file(root):
     github_token = "ghp_" + "1234567890abcdef" * 2 + "1234"
     cache_file = root / ".skylos" / "cache" / "grep_results.json"
     cache_file.parent.mkdir(parents=True)
-    cache_file.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
+    assert write_text_no_symlink(
+        cache_file,
         json.dumps(
             {
                 "version": 1,
@@ -4511,7 +4513,6 @@ def _issue_706_cache_file(root):
                 },
             }
         ),
-        encoding="utf-8",
     )
     return cache_file
 
@@ -4526,11 +4527,7 @@ def _issue_706_cache_findings(result):
 
 def _issue_706_init_ignored_cache_repo(root):
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    (
-        root / ".gitignore"
-    ).write_text(  # skylos: ignore[SKY-D324] all callers pass pytest-owned temp roots
-        ".skylos/\n", encoding="utf-8"
-    )
+    assert write_text_no_symlink(root / ".gitignore", ".skylos/\n")
 
 
 def test_recursive_secret_scan_skips_untracked_generated_grep_cache(tmp_path):

@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import stat
 import sys
 import tempfile
@@ -14,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 import skylos
-from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
+from skylos.core.safe_cache_io import (
+    load_project_json_cache,
+    remove_project_tree_no_symlink,
+    save_project_json_cache,
+)
 
 SCHEMA_VERSION = 1
 CACHE_KIND_TRACE = "trace"
@@ -212,19 +215,7 @@ def save_trace_cache(
 
 def clear_run_cache(project_root: str | Path) -> bool:
     root = _normalize_root(project_root)
-    path = root / RUN_CACHE_DIR
-    try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=True))
-    except (OSError, ValueError):
-        return False
-    if path.is_symlink():
-        return False
-    if not path.exists():
-        return False
-    shutil.rmtree(
-        path
-    )  # skylos: ignore[SKY-D215] guarded project-local cache directory
-    return True
+    return remove_project_tree_no_symlink(root, RUN_CACHE_DIR)
 
 
 def run_cache_stats(project_root: str | Path) -> dict[str, Any]:

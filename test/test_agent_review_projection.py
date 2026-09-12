@@ -10,6 +10,7 @@ import pytest
 import skylos.cli as cli
 from skylos.core import review_decisions
 from skylos.core.review_context import build_analysis_review_context
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.llm.schemas import (
     AnalysisResult,
     CodeLocation,
@@ -57,7 +58,7 @@ def _reviewed_agent_finding(tmp_path, monkeypatch):
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     source = repo / "app.py"
-    source.write_text("open(path).write('unsafe')\n")
+    assert write_text_no_symlink(source, "open(path).write('unsafe')\n")
     finding = {
         "rule_id": "SKY-D215",
         "file": str(source),

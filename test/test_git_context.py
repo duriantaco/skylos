@@ -183,9 +183,9 @@ def test_diff_does_not_execute_repository_or_environment_helpers(
     )
     helper.chmod(0o755)
     info_attributes = repo / ".git" / "info" / "attributes"
-    info_attributes.write_text(
+    assert write_text_no_symlink(
+        info_attributes,
         "*.py filter=untrusted diff=untrusted\n",
-        encoding="utf-8",
     )
     _git(repo, "config", "core.fsmonitor", str(helper))
     _git(repo, "config", "diff.external", str(helper))

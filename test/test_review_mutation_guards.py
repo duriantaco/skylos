@@ -11,6 +11,7 @@ import pytest
 
 import skylos.cli as cli
 from skylos.commands import clean_cmd, review_cmd
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -22,13 +23,37 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def test_agent_verify_json_output_rejects_symlink(tmp_path):
+    from skylos.commands import agent_verify_cmd
+
+    victim = tmp_path / "victim.json"
+    assert write_text_no_symlink(victim, "original\n")
+    output = tmp_path / "verify.json"
+    try:
+        output.symlink_to(victim)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    console = Mock()
+    args = SimpleNamespace(format="json", output=str(output))
+
+    assert not agent_verify_cmd._write_or_print_verify_result(
+        args,
+        console,
+        {"verified_findings": []},
+    )
+    assert victim.read_text(encoding="utf-8") == "original\n"
+    assert output.is_symlink()
+    assert "Cannot safely write output" in str(console.print.call_args)
+
+
 def _reviewed_dead_code_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path, str]:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
     source = repo / "app.py"
     original = "def reviewed_orphan():\n    return 1\n"
-    source.write_text(original, encoding="utf-8")
+    assert write_text_no_symlink(source, original)
     _git(repo, "add", "app.py")
     _git(
         repo,

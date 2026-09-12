@@ -20,6 +20,7 @@ from skylos.core.review_decisions import (
     annotate_result_identities,
     apply_review_decisions,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.llm.schemas import (
     CodeLocation,
     Confidence,
@@ -65,7 +66,10 @@ def _quality_finding(source: Path) -> Finding:
 
 def _run_llm_only(repo: Path):
     source = repo / "app.py"
-    source.write_text("async def handler():\n    blocking_call()\n", encoding="utf-8")
+    assert write_text_no_symlink(
+        source,
+        "async def handler():\n    blocking_call()\n",
+    )
     llm = MagicMock()
     llm.return_value.analyze_files.return_value = MagicMock(
         findings=[_quality_finding(source)]

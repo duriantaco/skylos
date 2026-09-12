@@ -9,15 +9,16 @@ from skylos.core.review_context import (
     review_context_hash_for_category,
     review_context_is_valid,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.llm.prompts import analysis_prompt_revision
 
 
 def _build_context(root, **overrides):
     source = root / "src" / "app.py"
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text(
+    assert write_text_no_symlink(
+        source,
         overrides.pop("source_text", "def handler():\n    return 1\n"),
-        encoding="utf-8",
     )
     prompt_revision = analysis_prompt_revision("review")
     values = {

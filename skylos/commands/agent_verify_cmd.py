@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from skylos.analysis.errors import analysis_result_incomplete
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 UploadAgentRun = Callable[..., None]
@@ -182,7 +183,8 @@ def run_agent_verify_command(
     verified = result["verified_findings"]
     new_dead = result["new_dead_code"]
 
-    _write_or_print_verify_result(args, console, result)
+    if not _write_or_print_verify_result(args, console, result):
+        return 2
     _print_verify_summary(args, console, result, stats, verified, new_dead)
     _print_net_result(console, stats)
 
@@ -349,21 +351,22 @@ def _run_verification_harness(
 
 def _write_or_print_verify_result(
     args, console: Console, result: dict[str, Any]
-) -> None:
+) -> bool:
     if args.format != "json":
-        return
+        return True
 
     output = json.dumps(result, indent=2, default=str)
     if args.output:
-        pathlib.Path(
-            args.output
-        ).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-            output,
-            encoding="utf-8",
-        )
+        if not write_text_no_symlink(args.output, output, encoding="utf-8"):
+            console.print(
+                "[bad]Cannot safely write output: use a writable regular file "
+                "with no symlinks or hard links and an existing parent directory.[/bad]"
+            )
+            return False
         console.print(f"[dim]Written to {args.output}[/dim]")
     else:
         print(output)
+    return True
 
 
 def _print_verify_summary(

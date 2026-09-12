@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from rich.console import Console
 
 import skylos.cli as cli
@@ -11,9 +12,11 @@ from skylos.core.result_cache import (
     RUN_CACHE_DIR,
     TRACE_CACHE_DIR,
     build_trace_cache_key,
+    clear_run_cache,
     read_trace_payload,
     save_trace_cache,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.commands.cache_cmd import run_cache_command
 
 
@@ -332,6 +335,24 @@ def test_cache_clear_command_removes_run_cache(tmp_path):
 
     assert code == 0
     assert not (tmp_path / ".skylos" / "cache" / "runs").exists()
+
+
+def test_cache_clear_rejects_symlinked_run_cache(tmp_path):
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    marker = outside / "keep.json"
+    assert write_text_no_symlink(marker, "keep\n")
+    cache_parent = tmp_path / ".skylos" / "cache"
+    cache_parent.mkdir(parents=True)
+    run_cache = cache_parent / "runs"
+    try:
+        run_cache.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert clear_run_cache(tmp_path) is False
+    assert marker.read_text(encoding="utf-8") == "keep\n"
+    assert run_cache.is_symlink()
 
 
 def test_cache_stats_json_skips_symlink_targets(tmp_path):
