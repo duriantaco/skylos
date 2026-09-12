@@ -14,7 +14,9 @@ from skylos.deadcode._reachability_bindings import (
     QUALIFIED_BINDING,
     Binding,
     Bindings,
+    FunctionNode,
     ModuleInfo,
+    namespace_name,
 )
 from skylos.deadcode._reachability_receivers import (
     CLASS_BINDING,
@@ -51,6 +53,24 @@ class SourceIndex:
     classes: dict[str, ClassInfo] = field(default_factory=dict)
     class_locations: dict[tuple[Path, int], str] = field(default_factory=dict)
     method_classes: dict[str, str] = field(default_factory=dict)
+    nested_parents: dict[str, str] = field(default_factory=dict)
+    uncertain_nested_keys: set[str] = field(default_factory=set)
+    scope_classes: dict[str, str] = field(default_factory=dict)
+    local_functions: dict[str, Bindings] = field(
+        default_factory=lambda: defaultdict(dict)
+    )
+
+    def add_function(
+        self, module: ModuleInfo, node: FunctionNode, key: str, definition: Definition
+    ) -> None:
+        self.candidates[key] = definition
+        self.by_location[module.path, node.lineno] = key
+        self.by_name[definition.name].append(key)
+        self.by_simple_name[definition.simple_name].add(key)
+        self.initial_references[key] = max(
+            0, definition.references - getattr(definition, "_attr_name_ref_count", 0)
+        )
+        module.functions[node.lineno] = key
 
     def qualified(self, name: str, seen: tuple[str, ...] = ()) -> Binding | None:
         if name in seen or len(seen) >= 24:
@@ -90,18 +110,22 @@ class SourceIndex:
         self, node: ast.AST, module: ModuleInfo, local: Bindings
     ) -> Binding | None:
         binding = None
+        class_name = getattr(local, "class_name", "")
         if isinstance(node, ast.Name):
             binding = (
-                local.get(node.id) if node.id in local else module.bindings.get(node.id)
+                local.get(node.id)
+                if node.id in local
+                else module.bindings.get(namespace_name(class_name, node.id))
             )
             if binding and binding[0] == QUALIFIED_BINDING:
                 binding = self.qualified(binding[1])
         elif isinstance(node, ast.Attribute):
             base = self.resolve(node.value, module, local)
+            name = namespace_name(class_name, node.attr)
             if base and base[0] == MODULE_BINDING:
-                binding = self.qualified(f"{base[1]}.{node.attr}")
+                binding = self.qualified(f"{base[1]}.{name}")
             else:
-                binding = self.receiver_member(base, node.attr)
+                binding = self.receiver_member(base, name)
                 if base and base[0] == INSTANCE_BINDING and node.attr == "__class__":
                     binding = (CLASS_BINDING, base[1])
         elif isinstance(node, ast.Call):
