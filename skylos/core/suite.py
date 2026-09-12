@@ -197,6 +197,7 @@ def run_suite(
     no_provenance: bool = False,
     diff_base: str | None = None,
     get_git_root_func=None,
+    include_review_identities: bool = False,
 ) -> dict[str, Any]:
     """
     Build the combined static, debt, defense, and provenance suite report.
@@ -210,6 +211,15 @@ def run_suite(
     """
     target_path = Path(target).resolve()
     exclude = set(exclude_folders or [])
+
+    from skylos.core.review_decisions import (
+        apply_trusted_review_decisions,
+        review_scan_requirements,
+    )
+
+    review_context_needed, review_proofs_needed = review_scan_requirements(target_path)
+    include_review_context = include_review_identities or review_context_needed
+    include_review_proofs = include_review_identities or review_proofs_needed
 
     from skylos.debt import build_debt_snapshot
     from skylos.defend.engine import run_defense_checks
@@ -236,7 +246,10 @@ def run_suite(
                 enable_danger=True,
                 enable_quality=True,
                 enable_ai_defects=True,
+                enable_sca=True,
                 exclude_folders=sorted(exclude),
+                include_review_proofs=include_review_proofs,
+                include_review_context=include_review_context,
             )
     finally:
         analyzer_logger.setLevel(original_level)
@@ -245,23 +258,11 @@ def run_suite(
         json.loads(static_raw) if isinstance(static_raw, str) else static_raw
     )
 
-    try:
-        from skylos.rules.sca.vulnerability_scanner import scan_dependencies
-
-        sca_findings = scan_dependencies(target_path)
-        if sca_findings:
-            try:
-                from skylos.rules.sca.reachability import enrich_with_reachability
-
-                sca_findings = enrich_with_reachability(sca_findings, target_path)
-            except Exception:
-                pass
-            static_result["dependency_vulnerabilities"] = sca_findings
-            static_result.setdefault("analysis_summary", {})["sca_count"] = len(
-                sca_findings
-            )
-    except Exception:
-        pass
+    static_result = apply_trusted_review_decisions(
+        static_result,
+        target_path,
+        include_identities=include_review_identities,
+    )
 
     debt_snapshot = build_debt_snapshot(static_result, project_root=target_path)
     try:

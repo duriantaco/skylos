@@ -89,11 +89,7 @@ def _evidence_for_definition(evidence_by_name, definition):
             return None
         if entry.get("kind") and str(entry["kind"]) != definition_kind:
             return None
-        if (
-            entry.get("line")
-            and definition_line
-            and entry["line"] != definition_line
-        ):
+        if entry.get("line") and definition_line and entry["line"] != definition_line:
             return None
         return entry
 
@@ -198,8 +194,20 @@ def unused_definitions(analyzer, thr, dead_code_evidence_payload):
     return reported
 
 
-def dead_code_candidate_decisions(analyzer, thr, dead_code_evidence_payload):
+def dead_code_candidate_decisions(
+    analyzer,
+    thr,
+    dead_code_evidence_payload,
+    *,
+    review_config=None,
+    include_review_proofs=False,
+):
+    from skylos.deadcode.review_proof import prepare_dead_code_review_proofs
+
     evidence_by_name = _evidence_by_name(dead_code_evidence_payload)
+    review_proof_context = (
+        prepare_dead_code_review_proofs(analyzer) if include_review_proofs else None
+    )
     scoped_keys = getattr(analyzer, "_dead_code_scope_keys", None)
     dispositions = {}
     for key, definition in analyzer.defs.items():
@@ -218,8 +226,7 @@ def dead_code_candidate_decisions(analyzer, thr, dead_code_evidence_payload):
     reported_classes = {
         key
         for key, definition in analyzer.defs.items()
-        if definition.type in ("class", "type")
-        and dispositions.get(key) == "reported"
+        if definition.type in ("class", "type") and dispositions.get(key) == "reported"
     }
     class_keys = _class_key_by_name_file(analyzer)
     for key, definition in analyzer.defs.items():
@@ -230,9 +237,34 @@ def dead_code_candidate_decisions(analyzer, thr, dead_code_evidence_payload):
         if disposition == "reported" and owner_key in reported_classes:
             continue
         item = definition.to_dict()
+        if disposition == "reported":
+            review_file_configs = getattr(analyzer, "_review_file_configs", None)
+            if isinstance(review_file_configs, dict):
+                try:
+                    definition_path = str(Path(definition.filename).resolve())
+                except (OSError, RuntimeError, ValueError):
+                    item["_analysis_worker_config"] = "invalid"
+                else:
+                    item["_analysis_worker_config"] = review_file_configs.get(
+                        definition_path,
+                        "invalid",
+                    )
         _attach_evidence(item, definition, evidence_by_name)
         item["dead_code_disposition"] = disposition
-        if disposition == "reported":
+        if disposition == "reported" and include_review_proofs:
+            from skylos.deadcode.review_proof import build_dead_code_review_proof
+
+            item["dead_code_review_proof"] = build_dead_code_review_proof(
+                analyzer,
+                key,
+                definition,
+                _evidence_for_definition(evidence_by_name, definition),
+                threshold=thr,
+                context=review_proof_context,
+                review_config=review_config,
+            )
+            reported.append(item)
+        elif disposition == "reported":
             reported.append(item)
         elif disposition == "rescued":
             rescued.append(item)

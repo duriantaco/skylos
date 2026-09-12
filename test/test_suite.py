@@ -100,6 +100,7 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
     assert payload["summary"]["static"]["quality"] == 1
     assert payload["summary"]["static"]["secrets"] == 1
     assert run_analyze.call_args.kwargs["enable_ai_defects"] is True
+    assert run_analyze.call_args.kwargs["enable_sca"] is True
     assert payload["debt"]["score"]["hotspot_count"] == len(payload["debt"]["hotspots"])
     assert payload["defense"]["summary"]["integrations_found"] == 0
     assert payload["provenance"]["enabled"] is False
@@ -107,6 +108,63 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
         payload["defense"]["note"]
         == "AI defense currently scans Python and TypeScript direct SDK integrations."
     )
+
+
+def test_suite_applies_review_memory_before_summary_and_debt(tmp_path, capsys):
+    static_result = _static_result(str(tmp_path))
+    reviewed = dict(static_result["danger"][0])
+    reviewed.update(
+        {
+            "category": "SECURITY",
+            "review_decision": {"decision_id": "review-1"},
+            "_skylos_trusted_review": True,
+        }
+    )
+    projected = {
+        **static_result,
+        "danger": [],
+        "reviewed_findings": [reviewed],
+        "reviewed_findings_summary": {"suppressed_count": 1},
+    }
+    run_analyze = Mock(return_value=json.dumps(static_result))
+
+    with (
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(True, True),
+        ),
+        patch(
+            "skylos.core.review_decisions.apply_trusted_review_decisions",
+            return_value=projected,
+        ) as apply_reviews,
+        patch(
+            "skylos.rules.sca.vulnerability_scanner.scan_dependencies",
+            return_value=[],
+        ),
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--json", "--no-provenance"],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=run_analyze,
+            get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["static"]["security"] == 0
+    assert payload["static"]["reviewed_findings"][0]["rule_id"] == "SKY-D201"
+    assert run_analyze.call_args.kwargs["include_review_proofs"] is True
+    apply_reviews.assert_called_once()
+    applied_result, applied_root = apply_reviews.call_args.args
+    assert applied_result["danger"][0]["rule_id"] == "SKY-D201"
+    assert applied_root == tmp_path.resolve()
+    assert apply_reviews.call_args.kwargs == {"include_identities": False}
 
 
 def test_suite_rejects_file_paths(tmp_path):
@@ -183,6 +241,7 @@ def test_suite_table_output_preserves_run_and_formatter_args(tmp_path):
         no_provenance=True,
         diff_base="origin/main",
         get_git_root_func=get_git_root,
+        include_review_identities=False,
     )
     formatter.assert_called_once_with(report)
     console.print.assert_called_once_with("suite table")
@@ -239,6 +298,17 @@ def test_suite_output_rejects_symlink_without_clobbering_target(tmp_path):
 
 def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     static_result = _static_result(str(tmp_path))
+    static_result["reviewed_findings"] = [
+        {
+            "rule_id": "SKY-D215",
+            "category": "SECURITY",
+            "file_path": "app.py",
+            "line_number": 8,
+            "review_decision": {"decision_id": "review-1"},
+            "_skylos_trusted_review": True,
+        }
+    ]
+    static_result["reviewed_findings_summary"] = {"suppressed_count": 1}
     report = {
         "static": {
             **static_result,
@@ -301,6 +371,7 @@ def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     assert uploaded["static_kwargs"] == {
         "quiet": False,
         "scan_bundle_id": "bundle-123",
+        "analyzer_owned": True,
     }
     assert uploaded["defense_kwargs"] == {
         "quiet": False,
@@ -313,6 +384,13 @@ def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     assert uploaded["defense_payload"] == json.dumps(report["defense"])
     assert uploaded["debt_payload"] == report["debt"]
     assert "danger" in uploaded["static_payload"]
+    assert (
+        uploaded["static_payload"]["reviewed_findings"]
+        == static_result["reviewed_findings"]
+    )
+    assert uploaded["static_payload"]["reviewed_findings_summary"] == {
+        "suppressed_count": 1
+    }
     build_code.assert_called_once_with(
         [
             "danger",
@@ -363,6 +441,11 @@ def test_main_suite_subcommand_calls_run_suite_and_exits(monkeypatch):
 
 def test_suite_json_upload_passes_quiet_and_selected_categories(tmp_path, capsys):
     static_result = _static_result(str(tmp_path))
+    static_result["reviewed_findings"] = [
+        {"category": "QUALITY", "rule_id": "SKY-Q301"},
+        {"category": "SECURITY", "rule_id": "SKY-D201"},
+    ]
+    static_result["reviewed_findings_summary"] = {"suppressed_count": 2}
     static_upload = patch(
         "skylos.commands.suite_cmd.run_suite",
         return_value={
@@ -443,6 +526,13 @@ def test_suite_json_upload_passes_quiet_and_selected_categories(tmp_path, capsys
     assert "danger" not in uploaded["static_payload"]
     assert "quality" in uploaded["static_payload"]
     assert "unused_functions" in uploaded["static_payload"]
+    assert [
+        finding["rule_id"]
+        for finding in uploaded["static_payload"]["reviewed_findings"]
+    ] == ["SKY-Q301"]
+    assert (
+        uploaded["static_payload"]["reviewed_findings_summary"]["suppressed_count"] == 1
+    )
 
 
 def test_suite_upload_exits_nonzero_when_static_quality_gate_fails(tmp_path):

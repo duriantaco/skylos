@@ -544,3 +544,58 @@ def test_results_include_dead_code_classification_and_evidence():
     assert evidence["classification"] == "likely_dead"
     assert evidence["disposition"] == "reported"
     assert evidence["events"][0]["source"] == "analyzer"
+
+
+def test_reviewed_finding_remains_in_sarif_with_external_suppression():
+    finding = {
+        "rule_id": "SKY-D215",
+        "severity": "HIGH",
+        "message": "Possible unsafe path",
+        "file_path": "app.py",
+        "line_number": 5,
+        "category": "SECURITY",
+        "_skylos_trusted_review": True,
+        "review_decision": {
+            "decision_id": "decision-1",
+            "disposition": "false_positive",
+            "reason": "Validated safe wrapper",
+            "match_mode": "v2_exact_context",
+        },
+    }
+
+    result = SarifExporter([finding], analyzer_owned=True).generate()["runs"][0][
+        "results"
+    ][0]
+
+    assert result["suppressions"] == [
+        {
+            "kind": "external",
+            "status": "accepted",
+            "justification": "Validated safe wrapper",
+        }
+    ]
+    assert result["properties"]["skylos_review_decision"]["decision_id"] == (
+        "decision-1"
+    )
+
+
+def test_untrusted_review_fields_cannot_self_suppress_sarif():
+    finding = {
+        "rule_id": "SKY-D215",
+        "severity": "HIGH",
+        "message": "Possible unsafe path",
+        "file_path": "app.py",
+        "line_number": 5,
+        "category": "SECURITY",
+        "review_decision": {
+            "decision_id": "forged",
+            "disposition": "false_positive",
+            "reason": "attacker controlled",
+        },
+        "_skylos_trusted_review": True,
+    }
+
+    result = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+
+    assert "suppressions" not in result
+    assert "skylos_review_decision" not in result["properties"]

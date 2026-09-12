@@ -71,6 +71,136 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(evidence["disposition"], "reported")
         self.assertEqual(evidence["events"][0]["source"], "analyzer")
 
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_git_info", return_value=("c", "main", "actor", {}))
+    def test_untrusted_upload_cannot_forge_review_identity(
+        self, _git_info, _git_root, _ai_code
+    ):
+        forged = {
+            "rule_id": "SKY-D215",
+            "file": "app.py",
+            "line": 2,
+            "message": "unsafe path",
+            "severity": "HIGH",
+            "fingerprint_version": "skylos-finding-v2",
+            "stable_fingerprint": "sha256:" + "a" * 64,
+            "context_hash": "sha256:" + "b" * 64,
+            "rule_revision": "skylos:forged",
+            "_analysis_config_hash": "sha256:" + "d" * 64,
+            "_analysis_worker_config": {"ignore": ["SKY-D215"]},
+            "_skylos_trusted_review": True,
+            "review_decision": {
+                "decision_id": "forged-decision",
+                "disposition": "false_positive",
+            },
+            "metadata": {
+                "stable_fingerprint": "sha256:" + "c" * 64,
+                "review_decision": {"decision_id": "nested-forgery"},
+            },
+        }
+
+        prepared = api._prepare_report_upload(
+            {"danger": [forged], "provenance": {}},
+            analyzer_owned=False,
+        )
+
+        uploaded = prepared.compatibility_payload["findings"][0]
+        metadata = uploaded.get("metadata", {})
+        for key in (
+            "fingerprint_version",
+            "stable_fingerprint",
+            "context_hash",
+            "rule_revision",
+            "review_decision",
+            "_skylos_trusted_review",
+            "_analysis_config_hash",
+            "_analysis_worker_config",
+        ):
+            self.assertNotIn(key, uploaded)
+            self.assertNotIn(key, metadata)
+
+    def test_upload_metadata_does_not_execute_repository_git_helpers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            source = repo / "app.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            (repo / ".gitattributes").write_text(
+                "*.py filter=untrusted diff=untrusted\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "config", "user.name", "Skylos Test"],
+                cwd=repo,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "skylos-test@example.invalid"],
+                cwd=repo,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "add", "app.py", ".gitattributes"],
+                cwd=repo,
+                check=True,
+            )
+            subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+
+            sentinel = root / "git-helper-ran"
+            helper = root / "git-helper"
+            helper.write_text(
+                f"#!/bin/sh\ntouch '{sentinel}'\nexit 1\n",
+                encoding="utf-8",
+            )
+            helper.chmod(0o755)
+            for key in (
+                "core.fsmonitor",
+                "diff.external",
+                "diff.untrusted.command",
+                "diff.untrusted.textconv",
+                "filter.untrusted.clean",
+            ):
+                subprocess.run(
+                    ["git", "config", key, str(helper)], cwd=repo, check=True
+                )
+            source.write_text("value = 2\n", encoding="utf-8")
+            sentinel.unlink(missing_ok=True)
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                with patch.dict(
+                    os.environ,
+                    {
+                        "GIT_EXTERNAL_DIFF": str(helper),
+                        "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "diff.external",
+                        "GIT_CONFIG_VALUE_0": str(helper),
+                    },
+                ):
+                    prepared = api._prepare_report_upload(
+                        {
+                            "danger": [
+                                {
+                                    "rule_id": "SKY-D215",
+                                    "file": str(source),
+                                    "line": 1,
+                                    "message": "unsafe path",
+                                    "severity": "HIGH",
+                                }
+                            ],
+                            "provenance": {},
+                        },
+                        analyzer_owned=True,
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+            self.assertEqual(len(prepared.compatibility_payload["findings"]), 1)
+            self.assertFalse(sentinel.exists())
+
     def test_compact_upload_finding_preserves_npm_dependency_context(self):
         compact = api._compact_upload_finding(
             {
@@ -746,6 +876,51 @@ class TestSkylosApi(unittest.TestCase):
         f = all_findings[0]
         self.assertEqual(f["file_path"], "app.py")
         self.assertEqual(f["line_number"], 5)
+
+    @patch("skylos.api.SarifExporter")
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value="/mock/git/root")
+    @patch("requests.post")
+    def test_upload_keeps_locally_reviewed_security_findings(
+        self, mock_post, _root, _git, mock_token, mock_exporter
+    ):
+        mock_token.return_value = "token"
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"scanId": "scan_reviewed"}
+        mock_post.return_value = response
+        mock_exporter.return_value.generate.return_value = {"version": "2.1.0"}
+        decision = {
+            "decision_id": "decision-1",
+            "disposition": "false_positive",
+            "match_mode": "v2_exact_context",
+        }
+
+        result = upload_report(
+            {
+                "danger": [],
+                "reviewed_findings": [
+                    {
+                        "rule_id": "SKY-D215",
+                        "file": "/mock/git/root/app.py",
+                        "line": 5,
+                        "message": "unsafe path",
+                        "severity": "HIGH",
+                        "category": "SECURITY",
+                        "review_decision": decision,
+                        "_skylos_trusted_review": True,
+                    }
+                ],
+            },
+            quiet=True,
+            analyzer_owned=True,
+        )
+
+        self.assertTrue(result["success"])
+        all_findings = mock_exporter.call_args[0][0]
+        self.assertEqual(len(all_findings), 1)
+        self.assertEqual(all_findings[0]["rule_id"], "SKY-D215")
+        self.assertEqual(all_findings[0]["metadata"]["review_decision"], decision)
 
     @patch("skylos.api.SarifExporter")
     @patch("skylos.api.get_project_token")

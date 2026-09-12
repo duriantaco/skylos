@@ -135,14 +135,14 @@ exclude = ["app/**"]
         encoding="utf-8",
     )
 
-    def fake_run(cmd, capture_output, text, cwd, **kwargs):
+    def fake_run(_context, *_args):
         class Result:
             returncode = 0
             stdout = before_source
 
         return Result()
 
-    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.GitContext.run", fake_run)
 
     config = load_config(tmp_path)
     findings = detect_security_contract_regressions(
@@ -239,15 +239,15 @@ def list_users():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd, **kwargs):
+    def fake_run(_context, *args):
         class Result:
             returncode = 0
             stdout = before_source
 
-        assert cmd[:2] == ["git", "show"]
+        assert args[0] == "show"
         return Result()
 
-    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.GitContext.run", fake_run)
     monkeypatch.setenv("SKYLOS_DIFF_BASE", "origin/main")
 
     findings = detect_security_contract_regressions(
@@ -309,14 +309,14 @@ def get_audit_log():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd, **kwargs):
+    def fake_run(_context, *_args):
         class Result:
             returncode = 0
             stdout = before_source
 
         return Result()
 
-    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.GitContext.run", fake_run)
 
     findings = detect_security_contract_regressions(
         tmp_path,
@@ -358,14 +358,14 @@ def list_users():
         ]
     }
 
-    def fake_run(cmd, capture_output, text, cwd, **kwargs):
+    def fake_run(_context, *_args):
         class Result:
             returncode = 0
             stdout = before_source
 
         return Result()
 
-    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.GitContext.run", fake_run)
 
     findings = detect_security_contract_regressions(
         tmp_path,

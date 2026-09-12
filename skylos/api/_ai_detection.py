@@ -6,6 +6,10 @@ import subprocess
 from collections.abc import Callable
 
 from skylos.constants import NETWORK_TIMEOUT_SHORT, SUBPROCESS_TIMEOUT
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +62,15 @@ def detect_ai_code(
 
     try:
         log_output = subprocess.check_output(
-            [
-                "git",
-                "log",
-                "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
-                "-50",
-            ],
+            read_only_git_command(
+                [
+                    "log",
+                    "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
+                    "-50",
+                ]
+            ),
             cwd=git_root,
+            env=read_only_git_environment(),
             stderr=subprocess.DEVNULL,
             timeout=SUBPROCESS_TIMEOUT,
         ).decode("utf-8", errors="ignore")
@@ -149,18 +155,24 @@ def _append_ai_indicator(
     return False
 
 
-def _collect_ai_commit_files(git_root: str, commit_sha: str, ai_files: set[str]) -> None:
+def _collect_ai_commit_files(
+    git_root: str, commit_sha: str, ai_files: set[str]
+) -> None:
     try:
         diff_output = subprocess.check_output(
-            [
-                "git",
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                commit_sha,
-            ],
+            read_only_git_command(
+                [
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-r",
+                    commit_sha,
+                ]
+            ),
             cwd=git_root,
+            env=read_only_git_environment(),
             stderr=subprocess.DEVNULL,
             timeout=NETWORK_TIMEOUT_SHORT,
         ).decode("utf-8", errors="ignore")

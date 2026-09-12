@@ -1,10 +1,131 @@
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 import skylos.cli as cli
+
+
+def test_agent_pre_commit_does_not_block_an_exact_reviewed_finding(
+    tmp_path, monkeypatch
+):
+    from skylos.analyzer import analyze
+    from skylos.constants import parse_exclude_folders
+    from skylos.core import review_decisions
+
+    cloud_cache = tmp_path / "cloud-review-cache"
+    local_cache = tmp_path / "local-review-cache"
+    monkeypatch.setattr(
+        review_decisions,
+        "_cache_root",
+        lambda value=None: Path(value) if value is not None else cloud_cache,
+    )
+    monkeypatch.setattr(
+        review_decisions,
+        "_local_cache_root",
+        lambda value=None: Path(value) if value is not None else local_cache,
+    )
+    for key in (
+        "CI",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_JOB",
+        "CI_PIPELINE_ID",
+        "BUILD_BUILDID",
+        "CIRCLE_WORKFLOW_ID",
+        "BUILD_TAG",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    source = repo / "app.py"
+    source.write_text(
+        "def save_report():\n"
+        "    path = input('path: ')\n"
+        "    open(path, 'w').write('data')\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True)
+
+    excludes = list(parse_exclude_folders(use_defaults=True))
+    raw = analyze(
+        [str(source.resolve())],
+        conf=80,
+        enable_secrets=True,
+        enable_danger=True,
+        enable_quality=True,
+        enable_ai_defects=True,
+        exclude_folders=excludes,
+        changed_files={str(source.resolve())},
+        grep_verify=False,
+        include_review_context=True,
+    )
+    result = json.loads(raw) if isinstance(raw, str) else raw
+    findings = review_decisions.annotate_result_identities(result, repo)["danger"]
+    assert {finding["rule_id"] for finding in findings} == {"SKY-D215", "SKY-D324"}
+    for index, finding in enumerate(findings, 1):
+        review_decisions.record_local_decision(
+            repo,
+            {
+                "decision_id": f"precommit-reviewed-{index}",
+                "fingerprint_version": finding["fingerprint_version"],
+                "stable_fingerprint": finding["stable_fingerprint"],
+                "context_hash": finding["context_hash"],
+                "rule_revision": finding["rule_revision"],
+                "rule_id": finding["rule_id"],
+                "file_path": finding["file_path"],
+                "line_number": finding["line"],
+                "disposition": "false_positive",
+                "reason": "validated path handling is intentional",
+                "created_at": "2026-09-12T00:00:00Z",
+                "language": finding["language"],
+                "symbol": finding["symbol"],
+                "section": finding["section"],
+                "category": "SECURITY",
+            },
+        )
+
+    # Leave the reviewed unsafe bytes in the index, then diverge the worktree.
+    # The command must build identities from its checkout-index snapshot rather
+    # than the safe worktree file.
+    source.write_text(
+        "def save_report():\n"
+        "    path = 'report.txt'\n"
+        "    open(path, 'w').write('data')\n",
+        encoding="utf-8",
+    )
+
+    real_run_analyze = cli.run_analyze
+    analyze_calls = []
+
+    def capture_analyze(*args, **kwargs):
+        analyze_calls.append(dict(kwargs))
+        return real_run_analyze(*args, **kwargs)
+
+    console = Mock()
+    monkeypatch.setattr(cli, "run_analyze", capture_analyze)
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    assert len(analyze_calls) == 1
+    assert "include_review_proofs" not in analyze_calls[0]
+    rendered = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "SKY-D215" not in rendered
+    assert "SKY-D324" not in rendered
+    assert "No staged security" in rendered
+    assert "Using staged git snapshot for exact commit results" in rendered
 
 
 def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
@@ -173,6 +294,8 @@ def test_agent_pre_commit_reports_ai_defects(tmp_path):
 
 
 def test_agent_pre_commit_includes_staged_config_files(tmp_path):
+    from skylos.core.review_context import review_context_is_valid
+
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".env").write_text("SAFE_VALUE=1\n", encoding="utf-8")
@@ -185,6 +308,7 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     )
     staged_blob = Mock(stdout="API_KEY=test\n", returncode=0)
     seen_ctx = {}
+    seen_review_context = {}
 
     def fake_scan_ctx(ctx, **kwargs):
         seen_ctx["lines"] = list(ctx["lines"])
@@ -195,9 +319,15 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
             return staged
         if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
             return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return Mock(stdout="", returncode=0)
         if cmd == ["git", "show", ":.env"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
+
+    def capture_review_decisions(result, *args, **kwargs):
+        seen_review_context.update(result["analysis_summary"]["review_context"])
+        return result
 
     with (
         patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
@@ -210,6 +340,14 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
         patch("skylos.cli.run_analyze") as mock_analyze,
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
         patch("skylos.core.baseline.load_baseline", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(True, False),
+        ),
+        patch(
+            "skylos.core.review_decisions.apply_trusted_review_decisions",
+            side_effect=capture_review_decisions,
+        ),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -217,6 +355,9 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     assert exc_info.value.code == 0
     mock_analyze.assert_not_called()
     assert "".join(seen_ctx["lines"]) == "API_KEY=test\n"
+    assert review_context_is_valid(seen_review_context)
+    assert seen_review_context["scope"]["kind"] == "precommit_staged_manual"
+    assert seen_review_context["options"]["enabled_categories"] == ["secrets"]
 
     printed = " ".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
@@ -228,6 +369,169 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
         "No staged security, reliability, secrets, quality, or AI-defect issues"
         in printed
     )
+
+
+@pytest.mark.parametrize(
+    ("status_stdout", "status_returncode"),
+    [(" M .env\n", 0), ("", 1)],
+)
+def test_agent_pre_commit_manual_review_context_fails_open_without_staged_snapshot(
+    tmp_path, status_stdout, status_returncode
+):
+    from skylos.core.review_context import review_context_is_valid
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text("WORKTREE_VALUE=1\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout=".env\n", returncode=0)
+    cached_diff = Mock(
+        stdout="diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n",
+        returncode=0,
+    )
+    dirty_status = Mock(stdout=status_stdout, returncode=status_returncode)
+    staged_blob = Mock(stdout="API_KEY=staged\n", returncode=0)
+    failed_checkout = Mock(stdout="", stderr="checkout failed", returncode=1)
+    seen_review_context = {}
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return dirty_status
+        if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
+            return failed_checkout
+        if cmd == ["git", "show", ":.env"]:
+            return staged_blob
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    def capture_review_decisions(result, *args, **kwargs):
+        seen_review_context.update(result["analysis_summary"]["review_context"])
+        return result
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.rules.secrets.scan_ctx", return_value=[]),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(True, False),
+        ),
+        patch(
+            "skylos.core.review_decisions.apply_trusted_review_decisions",
+            side_effect=capture_review_decisions,
+        ),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    assert not review_context_is_valid(seen_review_context)
+    assert seen_review_context["complete"] is False
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Exact staged snapshot unavailable" in printed
+
+
+def test_agent_pre_commit_static_review_context_fails_open_without_staged_snapshot(
+    tmp_path,
+):
+    from skylos.core.review_context import (
+        REVIEW_CONTEXT_SCHEMA,
+        review_context_is_valid,
+    )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "app.py"
+    source.write_text("print('worktree')\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="app.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
+    dirty_status = Mock(stdout=" M app.py\n", returncode=0)
+    failed_checkout = Mock(stdout="", stderr="checkout failed", returncode=1)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+        "unused_files": [],
+        "danger": [],
+        "quality": [],
+        "ai_defects": [],
+        "secrets": [],
+        "custom_rules": [],
+        "analysis_summary": {
+            "review_context": {
+                "schema": "skylos.analysis-review-context.v1",
+                "complete": True,
+                "context_hash": "worktree-context-that-must-not-be-trusted",
+            }
+        },
+    }
+    seen_review_context = {}
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return dirty_status
+        if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
+            return failed_checkout
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    def capture_review_decisions(scan_result, *args, **kwargs):
+        seen_review_context.update(scan_result["analysis_summary"]["review_context"])
+        return scan_result
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as scan,
+        patch("skylos.core.baseline.load_baseline", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(True, False),
+        ),
+        patch(
+            "skylos.core.review_decisions.apply_trusted_review_decisions",
+            side_effect=capture_review_decisions,
+        ),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    scan.assert_called_once()
+    assert not review_context_is_valid(seen_review_context)
+    assert seen_review_context == {
+        "schema": REVIEW_CONTEXT_SCHEMA,
+        "complete": False,
+    }
 
 
 def test_agent_pre_commit_scans_staged_cross_layer_manifest(tmp_path):
@@ -515,6 +819,8 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
             return staged
         if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
             return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return Mock(stdout="", returncode=0)
         if cmd == ["git", "show", ":test/test_rules.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
@@ -581,6 +887,8 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
             return staged
         if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
             return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return Mock(stdout="", returncode=0)
         if cmd == ["git", "show", ":benchmarks/agent_review/fixtures/demo/app.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")

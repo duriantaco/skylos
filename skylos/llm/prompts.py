@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 
 from .context import FewShotExamples
@@ -355,7 +357,9 @@ def user_analyze(context, issue_types, include_examples=True):
             "`security_details` must be an object with `attack_path`, `impact`, `fix`, `evidence_lines`, and `unsafe_if`. Use `evidence_lines` for exact lines that prove source, sink, or missing guard. `unsafe_if` should state what condition keeps the finding exploitable or what proof would be needed to refute it."
         )
     else:
-        prompt_parts.append("For non-security findings, set `security_details` to null.")
+        prompt_parts.append(
+            "For non-security findings, set `security_details` to null."
+        )
     prompt_parts.append('OUTPUT: JSON object only: {"findings": [...]}')
     prompt_parts.append('If no issues: {"findings": []}')
 
@@ -413,6 +417,53 @@ def build_review_prompt(
         ["security", "quality", "bug", "performance"],
         include_examples,
     )
+
+
+def analysis_prompt_revision(
+    kind="review",
+    *,
+    templates=None,
+    template_root=None,
+):
+    """Hash every prompt variant that can shape an analyzer finding."""
+    builders = {
+        "security": build_security_prompt,
+        "quality": build_quality_prompt,
+        "security_audit": build_security_audit_prompt,
+        "review": build_review_prompt,
+    }
+    builder = builders.get(kind)
+    if builder is None:
+        return None
+    try:
+        variants = []
+        for include_examples in (False, True):
+            system, user = builder(
+                "__SKYLOS_UNTRUSTED_CODE_CONTEXT__",
+                include_examples=include_examples,
+                templates=templates,
+                template_root=template_root,
+            )
+            variants.append(
+                {
+                    "include_examples": include_examples,
+                    "system": system,
+                    "user": user,
+                }
+            )
+        encoded = json.dumps(
+            {
+                "schema": "skylos-llm-analysis-prompt-v1",
+                "kind": kind,
+                "variants": variants,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    except (MemoryError, OSError, TypeError, ValueError):
+        return None
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def build_pr_description(plan_summary: dict) -> str:

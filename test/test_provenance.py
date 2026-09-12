@@ -260,7 +260,7 @@ def _mock_check_output(cmd, **kwargs):
     cmd_str = " ".join(cmd)
     if "merge-base" in cmd_str:
         return MERGE_BASE.encode()
-    if "git log" in cmd_str:
+    if " log " in cmd_str:
         return GIT_LOG_OUTPUT.encode()
     if "diff-tree" in cmd_str:
         return DIFF_TREE_OUTPUT.encode()
@@ -290,7 +290,7 @@ def test_analyze_provenance_no_ai_commits():
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             return log_no_ai.encode()
         if "diff" in cmd_str and "--name-only" in cmd_str:
             return diff_names.encode()
@@ -319,7 +319,7 @@ diff --git a/fix.py b/fix.py
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             return log.encode()
         if "diff-tree" in cmd_str:
             return diff_tree.encode()
@@ -349,7 +349,7 @@ diff --git a/gen.py b/gen.py
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             return log.encode()
         if "diff-tree" in cmd_str:
             return diff_tree.encode()
@@ -373,7 +373,7 @@ def test_analyze_provenance_merge_base_fallback():
         call_log.append(cmd_str)
         if "merge-base" in cmd_str:
             raise subprocess.CalledProcessError(1, cmd)
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             assert "HEAD~10..HEAD" in cmd_str
             return b""
         if "diff" in cmd_str and "--name-only" in cmd_str:
@@ -391,7 +391,7 @@ def test_analyze_provenance_git_log_failure():
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             raise subprocess.CalledProcessError(1, cmd)
         return b""
 
@@ -427,7 +427,7 @@ diff --git a/b.py b/b.py
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             return log.encode()
         if "diff-tree" in cmd_str:
             if "abc1234full" in cmd_str:
@@ -470,7 +470,7 @@ diff --git a/f{i}.py b/f{i}.py
         cmd_str = " ".join(cmd)
         if "merge-base" in cmd_str:
             return MERGE_BASE.encode()
-        if "git log" in cmd_str:
+        if " log " in cmd_str:
             return log.encode()
         if "diff-tree" in cmd_str:
             for i in range(10):

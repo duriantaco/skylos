@@ -4,9 +4,7 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -15,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 import skylos
-from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
+from skylos.core.safe_cache_io import (
+    load_project_json_cache,
+    remove_project_tree_no_symlink,
+    save_project_json_cache,
+)
 
 SCHEMA_VERSION = 1
 CACHE_KIND_TRACE = "trace"
@@ -213,17 +215,7 @@ def save_trace_cache(
 
 def clear_run_cache(project_root: str | Path) -> bool:
     root = _normalize_root(project_root)
-    path = root / RUN_CACHE_DIR
-    try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=True))
-    except (OSError, ValueError):
-        return False
-    if path.is_symlink():
-        return False
-    if not path.exists():
-        return False
-    shutil.rmtree(path)  # skylos: ignore[SKY-D215] guarded project-local cache directory
-    return True
+    return remove_project_tree_no_symlink(root, RUN_CACHE_DIR)
 
 
 def run_cache_stats(project_root: str | Path) -> dict[str, Any]:
@@ -432,27 +424,9 @@ def _fingerprinted_files(project_root: Path) -> list[dict[str, Any]]:
 
 
 def _git_visible_files(project_root: Path) -> list[Path] | None:
-    try:
-        result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (OSError, ValueError):
-        return None
+    from skylos.core.file_discovery import list_git_visible_files
 
-    if result.returncode != 0:
-        return None
-
-    files = []
-    for line in result.stdout.splitlines():
-        rel = line.strip()
-        if not rel:
-            continue
-        files.append(project_root / rel)
-    return files
+    return list_git_visible_files(project_root)
 
 
 def _walk_visible_files(project_root: Path) -> list[Path]:

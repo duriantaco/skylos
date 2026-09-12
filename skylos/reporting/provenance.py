@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from skylos.constants import NETWORK_TIMEOUT_SHORT, SUBPROCESS_TIMEOUT
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +140,9 @@ def _git_merge_base(git_root, base_ref):
     try:
         return (
             subprocess.check_output(
-                ["git", "merge-base", base_ref, "HEAD"],
+                read_only_git_command(["merge-base", base_ref, "HEAD"]),
                 cwd=git_root,
+                env=read_only_git_environment(),
                 stderr=subprocess.DEVNULL,
                 timeout=NETWORK_TIMEOUT_SHORT,
             )
@@ -169,13 +174,15 @@ def analyze_provenance(git_root, base_ref=None):
 
     try:
         log_output = subprocess.check_output(
-            [
-                "git",
-                "log",
-                "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
-                range_spec,
-            ],
+            read_only_git_command(
+                [
+                    "log",
+                    "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
+                    range_spec,
+                ]
+            ),
             cwd=git_root,
+            env=read_only_git_environment(),
             stderr=subprocess.DEVNULL,
             timeout=SUBPROCESS_TIMEOUT,
         ).decode("utf-8", errors="ignore")
@@ -255,8 +262,19 @@ def analyze_provenance(git_root, base_ref=None):
     for commit_sha in ai_commits:
         try:
             diff_output = subprocess.check_output(
-                ["git", "diff-tree", "-p", "-r", "--no-commit-id", commit_sha],
+                read_only_git_command(
+                    [
+                        "diff-tree",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "-p",
+                        "-r",
+                        "--no-commit-id",
+                        commit_sha,
+                    ]
+                ),
                 cwd=git_root,
+                env=read_only_git_environment(),
                 stderr=subprocess.DEVNULL,
                 timeout=SUBPROCESS_TIMEOUT,
             ).decode("utf-8", errors="ignore")
@@ -290,8 +308,17 @@ def analyze_provenance(git_root, base_ref=None):
 
     try:
         all_files_output = subprocess.check_output(
-            ["git", "diff", "--name-only", range_spec],
+            read_only_git_command(
+                [
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--name-only",
+                    range_spec,
+                ]
+            ),
             cwd=git_root,
+            env=read_only_git_environment(),
             stderr=subprocess.DEVNULL,
             timeout=SUBPROCESS_TIMEOUT,
         ).decode("utf-8", errors="ignore")

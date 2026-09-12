@@ -59,11 +59,15 @@ from skylos.api._urls import (
 
 from skylos.constants import (
     NETWORK_TIMEOUT_SHORT,
-    NETWORK_TIMEOUT_DEFAULT,
     NETWORK_TIMEOUT_LONG,
     SNIPPET_CONTEXT_LINES as SNIPPET_CONTEXT_LINES,
     SUBPROCESS_TIMEOUT,
     UPLOAD_TIMEOUT,
+)
+from skylos.core.git_context import GitContext
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
 )
 from skylos.core.safe_cache_io import read_text_no_symlink
 
@@ -279,15 +283,9 @@ def _read_json(path: Path):
 
 
 def _get_repo_root_for_link():
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
-        )
-        p = out.decode().strip()
-        if p:
-            return Path(p)
-    except (subprocess.SubprocessError, OSError):
-        pass
+    root = get_git_root()
+    if root:
+        return Path(root)
     return Path.cwd()
 
 
@@ -425,13 +423,18 @@ def get_git_root() -> str | None:
     try:
         return (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+                read_only_git_command(["rev-parse", "--show-toplevel"]),
+                env=read_only_git_environment(),
+                stderr=subprocess.DEVNULL,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             .decode()
             .strip()
+            or None
         )
     except (subprocess.SubprocessError, OSError):
-        return None
+        pass
+    return None
 
 
 def _resolve_repo_link_path(git_root) -> Path | None:
@@ -529,15 +532,20 @@ def _read_git_head() -> tuple[str | None, str | None]:
     try:
         git_commit = (
             subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+                read_only_git_command(["rev-parse", "HEAD"]),
+                env=read_only_git_environment(),
+                stderr=subprocess.DEVNULL,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             .decode()
             .strip()
         )
         git_branch = (
             subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                read_only_git_command(["rev-parse", "--abbrev-ref", "HEAD"]),
+                env=read_only_git_environment(),
                 stderr=subprocess.DEVNULL,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             .decode()
             .strip()
@@ -620,17 +628,20 @@ def _collect_finding_lines(findings: list) -> dict:
 
 
 def _get_file_blame_map(git_root: str, file_path: str, lines: set[int]) -> dict:
-    abs_path = os.path.join(git_root, file_path)
-    if not os.path.isfile(abs_path):
+    root = Path(git_root).resolve()
+    candidate = root / file_path
+    if candidate.is_symlink() or not candidate.is_file():
         return {}
 
     try:
-        out = subprocess.check_output(
-            _build_blame_command(file_path, lines),
-            cwd=git_root,
-            stderr=subprocess.DEVNULL,
-            timeout=NETWORK_TIMEOUT_DEFAULT,
-        ).decode("utf-8", errors="ignore")
+        context = GitContext.from_path(root)
+        repo_path = context.relative_path(candidate)
+        if repo_path is None:
+            return {}
+        result = context.run(*_build_blame_command(repo_path, lines)[1:])
+        if result.returncode != 0:
+            return {}
+        out = result.stdout
     except (subprocess.SubprocessError, OSError):
         return {}
     return _parse_blame_output(file_path, out)
@@ -686,7 +697,25 @@ def _prepare_report_upload(
         UPLOAD_FINDING_SPECS,
         git_root,
         extract_metadata=True,
+        analyzer_owned=analyzer_owned,
     )
+    reviewed_findings = (
+        result_json.get("reviewed_findings", []) if analyzer_owned else []
+    )
+    if isinstance(reviewed_findings, list):
+        for reviewed in reviewed_findings:
+            if not isinstance(reviewed, dict):
+                continue
+            category = str(reviewed.get("category") or "QUALITY").upper()
+            all_findings.extend(
+                _normalize_findings(
+                    [reviewed],
+                    category,
+                    git_root,
+                    extract_metadata=True,
+                    analyzer_owned=True,
+                )
+            )
     _annotate_findings_with_blame(all_findings, git_root)
 
     exporter = SarifExporter(

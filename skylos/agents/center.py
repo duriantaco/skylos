@@ -410,6 +410,7 @@ def compose_agent_state(
     changed_files: list[str],
     baseline_present: bool,
     triage: dict[str, dict[str, Any]] | None = None,
+    review_state_revision: str | None = None,
 ) -> dict[str, Any]:
     normalized_triage = normalize_triage_map(triage)
     triage_counts = apply_triage_to_findings(findings, normalized_triage)
@@ -425,10 +426,11 @@ def compose_agent_state(
     return {
         "project_root": str(Path(project_root).resolve()),
         "generated_at": utc_now(),
-        "state_version": 3,
+        "state_version": 4,
         "file_signatures": signatures,
         "changed_files": changed_files,
         "baseline_present": baseline_present,
+        "review_state_revision": review_state_revision,
         "triage": normalized_triage,
         "summary": summary,
         "findings": findings,
@@ -488,6 +490,7 @@ def rebuild_agent_state_from_existing(
         changed_files=list(state.get("changed_files") or []),
         baseline_present=bool(state.get("baseline_present")),
         triage=triage if triage is not None else state.get("triage"),
+        review_state_revision=state.get("review_state_revision"),
     )
 
 
@@ -560,6 +563,7 @@ def _load_refresh_context(
     bool,
     dict[str, dict[str, int]],
     list[str],
+    str | None,
 ]:
     project_root = resolve_project_root(path)
     previous_state = load_agent_state(project_root, state_file=state_file) or {}
@@ -573,6 +577,7 @@ def _load_refresh_context(
     changed_files = detect_changed_files(
         previous_state.get("file_signatures"), signatures
     )
+    review_revision = _current_review_state_revision(project_root)
     return (
         project_root,
         previous_state,
@@ -580,7 +585,19 @@ def _load_refresh_context(
         triage_changed,
         signatures,
         changed_files,
+        review_revision,
     )
+
+
+def _current_review_state_revision(project_root: Path) -> str | None:
+    try:
+        from skylos.core.review_decisions import review_state_revision
+    except ImportError:
+        # Kept for mixed-version embedders while the review-memory module and
+        # command center are upgraded together.
+        return None
+    revision = review_state_revision(project_root)
+    return revision if isinstance(revision, str) and revision else None
 
 
 def _maybe_reuse_previous_state(
@@ -589,11 +606,12 @@ def _maybe_reuse_previous_state(
     previous_state: dict[str, Any],
     changed_files: list[str],
     triage_changed: bool,
+    review_state_changed: bool,
     project_root: Path,
     triage: dict[str, dict[str, Any]],
     state_file: str | Path | None = None,
 ) -> tuple[dict[str, Any], bool] | None:
-    if force or not previous_state or changed_files:
+    if force or not previous_state or changed_files or review_state_changed:
         return None
     if not triage_changed:
         return previous_state, False
@@ -631,19 +649,32 @@ def _run_refresh_analysis(
     changed_files: list[str],
     exclude_folders: list[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    raw = run_analyze(
-        str(project_root),
-        conf=conf,
-        enable_secrets=enable_secrets,
-        enable_danger=enable_danger,
-        enable_quality=enable_quality,
-        enable_ai_defects=enable_ai_defects,
-        exclude_folders=_resolve_analysis_excludes(
+    from skylos.core.review_decisions import (
+        apply_trusted_review_decisions,
+        review_scan_requirements,
+    )
+
+    options = {
+        "conf": conf,
+        "enable_secrets": enable_secrets,
+        "enable_danger": enable_danger,
+        "enable_quality": enable_quality,
+        "enable_ai_defects": enable_ai_defects,
+        "exclude_folders": _resolve_analysis_excludes(
             project_root,
             exclude_folders=exclude_folders,
         ),
+    }
+    include_review_context, include_review_proofs = review_scan_requirements(
+        project_root
     )
+    if include_review_context:
+        options["include_review_context"] = True
+    if include_review_proofs:
+        options["include_review_proofs"] = True
+    raw = run_analyze(str(project_root), **options)
     result = json.loads(raw) if isinstance(raw, str) else raw
+    result = apply_trusted_review_decisions(result, project_root)
     return normalize_findings(
         result,
         project_root,
@@ -723,6 +754,7 @@ def refresh_agent_state(
         triage_changed,
         signatures,
         changed_files,
+        review_revision,
     ) = _load_refresh_context(
         path,
         state_file=state_file,
@@ -734,6 +766,9 @@ def refresh_agent_state(
         previous_state=previous_state,
         changed_files=changed_files,
         triage_changed=triage_changed,
+        review_state_changed=(
+            previous_state.get("review_state_revision") != review_revision
+        ),
         project_root=project_root,
         triage=triage,
         state_file=state_file,
@@ -775,6 +810,7 @@ def refresh_agent_state(
         changed_files=changed_files,
         baseline_present=bool(baseline or debt_baseline),
         triage=triage,
+        review_state_revision=review_revision,
     )
     save_agent_state(project_root, state, state_file=state_file)
     return state, True

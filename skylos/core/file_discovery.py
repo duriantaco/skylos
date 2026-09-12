@@ -6,6 +6,11 @@ from fnmatch import fnmatchcase
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
+
 
 def _normalize_path_text(value: str) -> str:
     return value.replace("\\", "/").rstrip("/")
@@ -40,7 +45,9 @@ def _absolute_exclude_candidate(exclude_folder: str, root_path: Path) -> str | N
     return _normalize_path_text(str(rel))
 
 
-def _root_prefixed_exclude_candidate(exclude_normalized: str, root_path: Path) -> str | None:
+def _root_prefixed_exclude_candidate(
+    exclude_normalized: str, root_path: Path
+) -> str | None:
     if "/" not in exclude_normalized:
         return None
 
@@ -180,15 +187,19 @@ def list_git_visible_files(path: str | Path) -> list[Path] | None:
     if target.is_file():
         target = target.parent
 
-    cmd = [
-        "git",
-        "-C",
-        str(root),
-        "ls-files",
-        "-co",
-        "--exclude-standard",
-        "--full-name",
-    ]
+    cmd = read_only_git_command(
+        [
+            "-C",
+            str(root),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+        ],
+        literal_pathspecs=True,
+    )
 
     if target != root:
         try:
@@ -201,20 +212,21 @@ def list_git_visible_files(path: str | Path) -> list[Path] | None:
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
             check=False,
+            env=read_only_git_environment(),
+            timeout=10,
         )
-    except (OSError, ValueError):
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
     if result.returncode != 0:
         return None
 
     files = []
-    for line in result.stdout.splitlines():
-        rel_path = line.strip()
-        if not rel_path:
+    for raw_path in result.stdout.split(b"\0"):
+        if not raw_path:
             continue
+        rel_path = os.fsdecode(raw_path)
         files.append(root / rel_path)
 
     files.sort()

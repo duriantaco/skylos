@@ -276,17 +276,23 @@ def _join_phrase(parts: list[str]) -> str:
     return f"{', '.join(parts[:-1])}, {' '.join(('and', parts[-1]))}"
 
 
-def _list_dirty_relevant_paths(project_root: Path, is_relevant_path) -> list[str]:
+def _list_dirty_relevant_paths(
+    project_root: Path, is_relevant_path
+) -> list[str] | None:
     result = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
         capture_output=True,
         text=True,
         cwd=project_root,
     )
-    if result.returncode != 0 or not result.stdout.strip():
+    if result.returncode != 0:
+        return None
+    if not result.stdout:
         return []
     relevant = []
-    for line in result.stdout.strip().splitlines():
+    # Porcelain's leading column distinguishes an unstaged worktree change
+    # (`` M``) from a staged one (``M ``); do not strip it before parsing.
+    for line in result.stdout.splitlines():
         if not line:
             continue
         status = line[:2]
@@ -494,8 +500,11 @@ def _remap_precommit_result_files(
         "danger",
         "reliability",
         "quality",
+        "ai_defects",
         "secrets",
         "custom_rules",
+        "dependency_vulnerabilities",
+        "reviewed_findings",
     ]:
         items = result.get(category, [])
         if not items:
@@ -627,6 +636,59 @@ def _replace_precommit_dependency_bumps(
                     "Staged dependency bump scan failed", exc_info=True
                 )
     result["ai_defects"] = findings
+
+
+def _attach_precommit_manual_review_context(
+    result,
+    *,
+    analysis_root,
+    analysis_targets,
+    project_config,
+    threshold,
+    exclude_folders,
+    staged_dependency_files,
+    snapshot_exact,
+):
+    """Bind manually assembled pre-commit findings to their staged inputs."""
+    from skylos.core.review_context import (
+        REVIEW_CONTEXT_SCHEMA,
+        build_analysis_review_context,
+    )
+
+    summary = result.setdefault("analysis_summary", {})
+    if not snapshot_exact:
+        summary["review_context"] = {
+            "schema": REVIEW_CONTEXT_SCHEMA,
+            "complete": False,
+        }
+        return
+
+    targets = sorted(analysis_targets)
+    summary["review_context"] = build_analysis_review_context(
+        analysis_root,
+        targets,
+        config=project_config,
+        threshold=threshold,
+        exclude_folders=exclude_folders,
+        requested_changed_files=targets,
+        effective_changed_files=targets,
+        enable_secrets=True,
+        enable_danger=False,
+        enable_quality=False,
+        enable_ai_defects=bool(staged_dependency_files),
+        enable_sca=False,
+        enable_dependency_hallucinations=False,
+        grep_verify=False,
+        trace_file=None,
+        required_config_rules=None,
+        dependency_bump_diff_base="staged-index" if staged_dependency_files else None,
+        custom_rules_data=None,
+        extra_visitors=None,
+        analysis_scope={
+            "kind": "precommit_staged_manual",
+            "complete_repository": False,
+        },
+    )
 
 
 def _precommit_finding_targets_report_file(
@@ -1070,7 +1132,7 @@ def _normalize_agent_findings(payload, project_root: Path):
     return out
 
 
-def _agent_findings_to_result_json(findings):
+def _agent_findings_to_result_json(findings, *, review_context=None):
     result = {
         "danger": [],
         "reliability": [],
@@ -1081,7 +1143,10 @@ def _agent_findings_to_result_json(findings):
         "unused_imports": [],
         "unused_variables": [],
         "unused_classes": [],
+        "unused_parameters": [],
     }
+    if isinstance(review_context, dict):
+        result["analysis_summary"] = {"review_context": dict(review_context)}
 
     category_map = {
         "security": "danger",
@@ -1098,6 +1163,7 @@ def _agent_findings_to_result_json(findings):
         "SKY-U002": "unused_imports",
         "SKY-U003": "unused_variables",
         "SKY-U004": "unused_classes",
+        "SKY-U006": "unused_parameters",
     }
 
     for f in findings or []:
@@ -1117,6 +1183,50 @@ def _agent_findings_to_result_json(findings):
             result["quality"].append(item)
 
     return result
+
+
+_AGENT_REVIEW_INDEX = "_skylos_agent_review_index"
+
+
+def _apply_agent_review_memory(
+    findings,
+    project_root: Path,
+    *,
+    include_identities=False,
+    review_context=None,
+):
+    """Project trusted review decisions while retaining an auditable upload set."""
+    tagged = []
+    for index, finding in enumerate(findings or []):
+        if not isinstance(finding, dict):
+            continue
+        item = dict(finding)
+        item[_AGENT_REVIEW_INDEX] = index
+        tagged.append(item)
+
+    from skylos.core.review_decisions import (
+        FINDING_SECTIONS,
+        apply_trusted_review_decisions,
+    )
+
+    projected = apply_trusted_review_decisions(
+        _agent_findings_to_result_json(tagged, review_context=review_context),
+        project_root,
+        include_identities=include_identities,
+    )
+    active = []
+    for section, _category, _default_rule_id in FINDING_SECTIONS:
+        for item in projected.get(section, []) or []:
+            if isinstance(item, dict):
+                active.append(item)
+    active.sort(key=lambda item: int(item.get(_AGENT_REVIEW_INDEX, 0)))
+
+    for item in active:
+        item.pop(_AGENT_REVIEW_INDEX, None)
+    for item in projected.get("reviewed_findings", []) or []:
+        if isinstance(item, dict):
+            item.pop(_AGENT_REVIEW_INDEX, None)
+    return active, projected
 
 
 def _is_tty():
@@ -1618,6 +1728,27 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
 
         filtered[key] = _display_filter_items(items, file_filter, min_rank)
 
+    reviewed_items = result.get("reviewed_findings")
+    if isinstance(reviewed_items, list):
+        reviewed_kept = []
+        for item in reviewed_items:
+            if not isinstance(item, dict):
+                continue
+            reviewed_category = _DISPLAY_FILTER_CATEGORY_MAP.get(
+                str(item.get("section") or "")
+            )
+            if reviewed_category is None:
+                reviewed_category = str(item.get("category") or "").lower()
+            if allowed_cats and reviewed_category not in allowed_cats:
+                continue
+            if not _display_filter_items([item], file_filter, min_rank):
+                continue
+            reviewed_kept.append(item)
+        filtered["reviewed_findings"] = reviewed_kept
+        reviewed_summary = copy.copy(result.get("reviewed_findings_summary") or {})
+        reviewed_summary["suppressed_count"] = len(reviewed_kept)
+        filtered["reviewed_findings_summary"] = reviewed_summary
+
     summary = copy.copy(result.get("analysis_summary") or {})
     incomplete_grep_verify = _incomplete_grep_verify_report(summary)
     summary.pop("by_directory", None)
@@ -1628,6 +1759,8 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
     for key, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if key in result or count_key in summary:
             summary[count_key] = len(filtered.get(key) or [])
+    if "reviewed_findings_summary" in filtered:
+        summary["reviewed_findings"] = copy.copy(filtered["reviewed_findings_summary"])
     filtered["analysis_summary"] = summary
 
     # These aggregates describe the unfiltered result and must not be emitted
@@ -2103,6 +2236,12 @@ def _run_verify_command(argv):
     from skylos.commands.verify_cmd import run_verify_command
 
     return run_verify_command(argv)
+
+
+def _run_review_command(argv):
+    from skylos.commands.review_cmd import run_review_command
+
+    return run_review_command(argv, console_factory=Console)
 
 
 def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> None:
@@ -3794,6 +3933,7 @@ def main() -> None:
                 )
                 snapshot_dir = None
                 analysis_root = project_root
+                review_snapshot_exact = True
                 analysis_targets = {
                     str((analysis_root / relpath).resolve())
                     for relpath in staged_changed_files
@@ -3816,11 +3956,11 @@ def main() -> None:
                 has_static_analysis_targets = bool(
                     staged_source_files or staged_contract_files
                 )
-                if has_static_analysis_targets or staged_dependency_files:
+                if staged_changed_files:
                     unstaged_relevant = _list_dirty_relevant_paths(
                         project_root, _is_relevant_analysis_path
                     )
-                    if unstaged_relevant:
+                    if unstaged_relevant is None or unstaged_relevant:
                         snapshot_dir, snapshot_root = _create_precommit_snapshot(
                             project_root
                         )
@@ -3838,6 +3978,7 @@ def main() -> None:
                                 " Using staged git snapshot for exact commit results."
                             )
                         else:
+                            review_snapshot_exact = False
                             snapshot_note = " Exact staged snapshot unavailable; using working tree context."
 
                 if staged_contract_files:
@@ -3853,6 +3994,15 @@ def main() -> None:
                 baseline = load_baseline(project_root)
                 analyzer_logger = logging.getLogger("Skylos")
                 analyzer_logger_level = analyzer_logger.level
+                from skylos.core.review_decisions import (
+                    apply_trusted_review_decisions,
+                    review_scan_requirements,
+                )
+
+                (
+                    include_review_context,
+                    include_review_proofs,
+                ) = review_scan_requirements(project_root)
 
                 try:
                     if agent_args.format != "json":
@@ -3968,17 +4118,24 @@ def main() -> None:
                             )
 
                         analyzer_logger.setLevel(logging.WARNING)
+                        analysis_options = {
+                            "conf": agent_args.conf,
+                            "enable_secrets": True,
+                            "enable_danger": True,
+                            "enable_quality": True,
+                            "enable_ai_defects": True,
+                            "exclude_folders": list(exclude_folders),
+                            "changed_files": analysis_targets,
+                            "grep_verify": False,
+                            "progress_callback": _update_precommit_progress,
+                        }
+                        if include_review_proofs:
+                            analysis_options["include_review_proofs"] = True
+                        if include_review_context:
+                            analysis_options["include_review_context"] = True
                         raw_result = run_analyze(
                             analysis_scan_target,
-                            conf=agent_args.conf,
-                            enable_secrets=True,
-                            enable_danger=True,
-                            enable_quality=True,
-                            enable_ai_defects=True,
-                            exclude_folders=list(exclude_folders),
-                            changed_files=analysis_targets,
-                            grep_verify=False,
-                            progress_callback=_update_precommit_progress,
+                            **analysis_options,
                         )
                         result = (
                             json.loads(raw_result)
@@ -3988,15 +4145,44 @@ def main() -> None:
                         if staged_secret_only_secrets:
                             result["secrets"] = list(result.get("secrets") or [])
                             result["secrets"].extend(staged_secret_only_secrets)
-                        result = _remap_precommit_result_files(
-                            result, analysis_root, project_root
-                        )
                     _replace_precommit_dependency_bumps(
                         result,
                         project_root,
                         staged_dependency_files,
                         list(exclude_folders),
                         project_config,
+                    )
+                    if include_review_context and (
+                        not has_static_analysis_targets or not review_snapshot_exact
+                    ):
+                        _attach_precommit_manual_review_context(
+                            result,
+                            analysis_root=analysis_root,
+                            analysis_targets=analysis_targets,
+                            project_config=project_config,
+                            threshold=agent_args.conf,
+                            exclude_folders=list(exclude_folders),
+                            staged_dependency_files=staged_dependency_files,
+                            snapshot_exact=review_snapshot_exact,
+                        )
+                    # Static analysis already points at ``analysis_root``. The
+                    # staged-only secret and dependency passes point at the
+                    # worktree, so normalize those paths to the same source
+                    # snapshot before creating review identities.
+                    result = _remap_precommit_result_files(
+                        result,
+                        project_root,
+                        analysis_root,
+                    )
+                    result = apply_trusted_review_decisions(
+                        result,
+                        project_root,
+                        analysis_root=analysis_root,
+                    )
+                    result = _remap_precommit_result_files(
+                        result,
+                        analysis_root,
+                        project_root,
                     )
                 finally:
                     analyzer_logger.setLevel(analyzer_logger_level)
@@ -4722,6 +4908,13 @@ def main() -> None:
                 )
                 sys.exit(1 if has_blockers else 0)
 
+            (
+                prompt_templates,
+                prompt_template_root,
+            ) = _explicit_prompt_templates_from_args(agent_args, console)
+            agent_args.prompt_templates = prompt_templates
+            agent_args.prompt_template_root = prompt_template_root
+
             changed_files = None
             if getattr(agent_args, "changed", False):
                 path = pathlib.Path(agent_args.path)
@@ -4761,9 +4954,21 @@ def main() -> None:
                 changed_files=changed_files,
                 exclude_folders=agent_exclude_folders,
                 stats_out=pipeline_stats,
+                provider=provider,
+                base_url=base_url,
+                project_root=project_root,
+                project_config=agent_project_cfg,
             )
 
             merged_findings = _normalize_agent_findings(merged_findings, project_root)
+            raw_finding_count = len(merged_findings)
+            merged_findings, reviewed_result = _apply_agent_review_memory(
+                merged_findings,
+                project_root,
+                include_identities=bool(getattr(agent_args, "upload", False)),
+                review_context=pipeline_stats.get("review_context"),
+            )
+            reviewed_count = len(reviewed_result.get("reviewed_findings", []) or [])
 
             static_only = 0
             llm_only = 0
@@ -4785,6 +4990,10 @@ def main() -> None:
             console.print(
                 f"  [yellow]MEDIUM (LLM only, needs review):[/yellow] {llm_only}"
             )
+            if reviewed_count:
+                console.print(
+                    f"  [dim]Previously reviewed and excluded: {reviewed_count}[/dim]"
+                )
             if pipeline_stats:
                 console.print("[dim]Timings:[/dim]")
                 console.print(
@@ -4835,19 +5044,42 @@ def main() -> None:
                 else:
                     console.print("[good]No issues found![/good]")
 
-            if getattr(agent_args, "upload", False) and merged_findings:
-                result_for_upload = _agent_findings_to_result_json(merged_findings)
-                upload_report(
-                    result_for_upload,
+            cloud_gate_failed = False
+            upload_failed = False
+            if getattr(agent_args, "upload", False) and raw_finding_count:
+                _attach_upload_project_context(reviewed_result, project_root)
+                upload_response = upload_report(
+                    reviewed_result,
                     is_forced=getattr(agent_args, "force", False),
                     strict=getattr(agent_args, "strict", False),
                     analysis_mode="hybrid",
+                    analyzer_owned=True,
                 )
+                if not isinstance(upload_response, dict) or not upload_response.get(
+                    "success"
+                ):
+                    upload_failed = True
+                    if isinstance(upload_response, dict):
+                        _render_upload_failure(console, upload_response)
+                    else:
+                        console.print(
+                            "[bad]Upload failed: invalid Cloud response[/bad]"
+                        )
+                else:
+                    cloud_gate_passed = upload_response.get("quality_gate_passed")
+                    if cloud_gate_passed is None:
+                        cloud_gate_passed = (
+                            upload_response.get("quality_gate") or {}
+                        ).get("passed", True)
+                    cloud_gate_failed = cloud_gate_passed is False and not getattr(
+                        agent_args, "force", False
+                    )
 
             _upload_agent_run_best_effort(
                 "scan",
                 {
                     "total": len(merged_findings),
+                    "reviewed": reviewed_count,
                     "static_only": static_only,
                     "llm_only": llm_only,
                     "both": both,
@@ -4857,6 +5089,8 @@ def main() -> None:
                 duration_seconds=round(_time.time() - _scan_start, 1),
             )
 
+            if upload_failed or cloud_gate_failed:
+                sys.exit(1)
             if merged_findings and getattr(agent_args, "strict", False):
                 sys.exit(1)
             sys.exit(0)

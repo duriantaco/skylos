@@ -147,7 +147,25 @@ def _analyze(path, confidence, exclude_folders):
     kwargs = {"exclude_folders": sorted(exclude_folders)}
     if confidence is not None:
         kwargs["conf"] = confidence
-    return json.loads(run_analyze(path, **kwargs))
+    scan_root = Path(path).resolve()
+    if scan_root.is_file():
+        scan_root = scan_root.parent
+    from skylos.core.file_discovery import find_git_root
+    from skylos.core.review_decisions import (
+        apply_trusted_review_decisions,
+        review_scan_requirements,
+    )
+
+    project_root = find_git_root(scan_root) or scan_root
+    include_review_context, include_review_proofs = review_scan_requirements(
+        project_root
+    )
+    if include_review_context:
+        kwargs["include_review_context"] = True
+    if include_review_proofs:
+        kwargs["include_review_proofs"] = True
+    result = json.loads(run_analyze(path, **kwargs))
+    return apply_trusted_review_decisions(result, project_root)
 
 
 def _collect_all_findings(result):

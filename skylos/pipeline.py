@@ -315,6 +315,8 @@ def run_static_on_files(
     enable_quality=True,
     enable_ai_defects=True,
     exclude_folders=None,
+    include_review_context=False,
+    include_review_proofs=False,
 ):
     import os
 
@@ -368,6 +370,8 @@ def run_static_on_files(
                 )
             ),
             changed_files=sorted(target_files),
+            include_review_proofs=include_review_proofs,
+            include_review_context=include_review_context,
         )
         full_result = json.loads(result_json)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
@@ -413,6 +417,10 @@ def run_pipeline(
     changed_files=None,
     exclude_folders=None,
     stats_out=None,
+    provider=None,
+    base_url=None,
+    project_root=None,
+    project_config=None,
 ):
     """
     Run agent scan pipeline across static and LLM phases.
@@ -439,6 +447,30 @@ def run_pipeline(
         console.print(f"[warn]Skipping symlinked pipeline path: {path}[/warn]")
         return []
     root = path.resolve() if path.is_dir() else path.parent.resolve()
+    try:
+        review_project_root = (
+            pathlib.Path(project_root).expanduser().resolve(strict=True)
+            if project_root is not None
+            else root
+        )
+        if review_project_root.is_file():
+            review_project_root = review_project_root.parent
+        root.relative_to(review_project_root)
+    except (OSError, RuntimeError, ValueError):
+        review_project_root = root
+    resolved_provider = provider or getattr(agent_args, "provider", None)
+    resolved_base_url = base_url or getattr(agent_args, "base_url", None)
+    from skylos.core.review_decisions import review_scan_requirements
+
+    review_context_needed, review_proofs_needed = review_scan_requirements(
+        review_project_root
+    )
+    include_review_context = (
+        bool(getattr(agent_args, "upload", False)) or review_context_needed
+    )
+    include_review_proofs = (
+        bool(getattr(agent_args, "upload", False)) or review_proofs_needed
+    )
     safe_changed_files = (
         _resolve_pipeline_files(changed_files, root) if changed_files else None
     )
@@ -461,6 +493,9 @@ def run_pipeline(
         "phase_2b_seconds": 0.0,
         "phase_3_seconds": 0.0,
     }
+    analysis_review_context = None
+    llm_review_context = None
+    hybrid_llm_context_hashes: dict[str, str] = {}
     pipeline_start = time.time()
 
     if not getattr(agent_args, "llm_only", False):
@@ -486,6 +521,8 @@ def run_pipeline(
                         enable_quality=True,
                         enable_ai_defects=True,
                         exclude_folders=exclude_folders,
+                        include_review_context=include_review_context,
+                        include_review_proofs=include_review_proofs,
                     )
                 else:
                     from skylos.constants import parse_exclude_folders
@@ -497,6 +534,8 @@ def run_pipeline(
                         enable_danger=True,
                         enable_quality=True,
                         enable_ai_defects=True,
+                        include_review_context=include_review_context,
+                        include_review_proofs=include_review_proofs,
                         exclude_folders=list(
                             exclude_folders
                             or parse_exclude_folders(
@@ -508,6 +547,11 @@ def run_pipeline(
                         ),
                     )
                     static_result = json.loads(result_json)
+            static_summary = static_result.get("analysis_summary")
+            if isinstance(static_summary, dict) and isinstance(
+                static_summary.get("review_context"), dict
+            ):
+                analysis_review_context = dict(static_summary["review_context"])
             phase_stats["phase_1_seconds"] = round(time.time() - phase_1_start, 1)
 
             defs_map = static_result.get("definitions", {}) or {}
@@ -570,12 +614,14 @@ def run_pipeline(
         safe_path = _resolve_pipeline_file(path, root)
         files = [safe_path] if safe_path and safe_path.suffix.lower() == ".py" else []
         source_cache_files = [safe_path] if safe_path else []
+        llm_exclude_folders = list(exclude_folders or [])
     else:
         _exc = (
             set(exclude_folders)
             if exclude_folders
             else {"__pycache__", ".git", "venv", ".venv"}
         )
+        llm_exclude_folders = sorted(_exc)
         files = _resolve_pipeline_files(
             discover_source_files(path, [".py"], exclude_folders=_exc),
             root,
@@ -614,6 +660,111 @@ def run_pipeline(
         if safe_changed_files is not None
         else review_index.force_full_file_paths_for(phase_2b_files)
     )
+    llm_prompt_templates = getattr(agent_args, "prompt_templates", None)
+    llm_prompt_template_root = getattr(agent_args, "prompt_template_root", None)
+    llm_min_confidence = getattr(agent_args, "min_confidence", "low")
+    llm_smart_filter = not path.is_file()
+    llm_full_file_review = path.is_file()
+    llm_agent_route = "full"
+    llm_temperature = 0.0
+    llm_max_tokens = 4_096
+    llm_strict_validation = False
+    llm_stream = True
+    llm_max_chunk_tokens = 1_000
+    llm_batch_functions = True
+    llm_batch_size = 10
+    llm_complexity_threshold = 5
+    llm_parallel = True
+    llm_is_rate_limited = any(
+        (model or "").strip().lower().startswith(prefix)
+        for prefix in ("groq/", "gemini/", "ollama/", "mistral/")
+    )
+    llm_max_workers = 2 if llm_is_rate_limited else 4
+
+    from skylos.llm.prompts import analysis_prompt_revision
+
+    llm_prompt_revision = analysis_prompt_revision(
+        "review",
+        templates=llm_prompt_templates,
+        template_root=llm_prompt_template_root,
+    )
+    llm_only_mode = bool(getattr(agent_args, "llm_only", False))
+    if include_review_context and not getattr(agent_args, "static_only", False):
+        from skylos.core.review_context import (
+            LLM_REVIEW_CONTEXT_SCHEMA,
+            build_llm_review_context,
+            review_context_hash_for_category,
+        )
+
+        try:
+            effective_config = (
+                project_config
+                if isinstance(project_config, dict)
+                else load_config(path)
+            )
+        except (MemoryError, OSError, RuntimeError, TypeError, ValueError):
+            effective_config = None
+        try:
+            resolved_path = path.resolve(strict=True)
+            complete_target = (
+                path.is_dir()
+                and safe_changed_files is None
+                and resolved_path == review_project_root
+            )
+        except (OSError, RuntimeError):
+            complete_target = False
+        if effective_config is None:
+            llm_review_context = {
+                "schema": LLM_REVIEW_CONTEXT_SCHEMA,
+                "complete": False,
+            }
+        else:
+            llm_review_context = build_llm_review_context(
+                review_project_root,
+                path,
+                mode="agent_llm_only" if llm_only_mode else "agent_hybrid_llm",
+                config=effective_config,
+                exclude_folders=llm_exclude_folders,
+                requested_changed_files=(
+                    changed_files if changed_files is not None else None
+                ),
+                effective_files=phase_2b_files,
+                repo_context_map=phase_2b_repo_context,
+                force_full_file_paths=force_full_file_paths,
+                definitions=defs_map,
+                scan_kind="file" if path.is_file() else "directory",
+                complete_target=complete_target,
+                model=model,
+                provider=resolved_provider,
+                base_url=resolved_base_url,
+                min_confidence=llm_min_confidence,
+                prompt_revision=llm_prompt_revision,
+                enable_security=True,
+                enable_quality=True,
+                temperature=llm_temperature,
+                max_tokens=llm_max_tokens,
+                strict_validation=llm_strict_validation,
+                stream=llm_stream,
+                smart_filter=llm_smart_filter,
+                full_file_review=llm_full_file_review,
+                parallel=llm_parallel,
+                max_workers=llm_max_workers,
+                max_chunk_tokens=llm_max_chunk_tokens,
+                batch_functions=llm_batch_functions,
+                batch_size=llm_batch_size,
+                complexity_threshold=llm_complexity_threshold,
+                agent_route=llm_agent_route,
+            )
+        if llm_only_mode:
+            analysis_review_context = llm_review_context
+        else:
+            for category in ("AI_DEFECT", "QUALITY", "RELIABILITY", "SECURITY"):
+                context_hash = review_context_hash_for_category(
+                    llm_review_context,
+                    category,
+                )
+                if context_hash is not None:
+                    hybrid_llm_context_hashes[category] = context_hash
 
     low_conf = [f for f in dead_code_findings if f.get("confidence", 100) < 20]
     if low_conf:
@@ -639,13 +790,11 @@ def run_pipeline(
         try:
             from skylos.llm.agents import create_dead_code_agent
 
-            provider = getattr(agent_args, "provider", None)
-            base_url = getattr(agent_args, "base_url", None)
             dead_code_agent = create_dead_code_agent(
                 model=model,
                 api_key=api_key,
-                provider=provider,
-                base_url=base_url,
+                provider=resolved_provider,
+                base_url=resolved_base_url,
             )
 
             console.print("[brand]Testing LLM API connection...[/brand]")
@@ -706,6 +855,8 @@ def run_pipeline(
                     f["_source"] = "static+llm"
                     f["_confidence"] = "high"
                     f["_suppressed"] = False
+                    f["model"] = model
+                    f["provider"] = resolved_provider
                     results.append(f)
                 elif verdict == "UNCERTAIN":
                     f["_source"] = "static"
@@ -721,6 +872,8 @@ def run_pipeline(
             for f in new_dead:
                 f["_confidence"] = "high"
                 f["_suppressed"] = False
+                f["model"] = model
+                f["provider"] = resolved_provider
                 results.append(f)
 
         except Exception as e:
@@ -749,12 +902,6 @@ def run_pipeline(
                 f"[dim]Scoped LLM audit to {len(phase_2b_files)}/{len(files)} Python files[/dim]"
             )
 
-        _is_rate_limited = any(
-            (model or "").strip().lower().startswith(p)
-            for p in ("groq/", "gemini/", "ollama/", "mistral/")
-        )
-        _max_workers = 2 if _is_rate_limited else 4
-
         min_conf_map = {
             "high": Confidence.HIGH,
             "medium": Confidence.MEDIUM,
@@ -763,18 +910,29 @@ def run_pipeline(
         config = AnalyzerConfig(
             model=model,
             api_key=api_key,
-            provider=getattr(agent_args, "provider", None),
-            base_url=getattr(agent_args, "base_url", None),
+            provider=resolved_provider,
+            base_url=resolved_base_url,
+            temperature=llm_temperature,
+            max_tokens=llm_max_tokens,
+            enable_security=True,
+            enable_quality=True,
+            strict_validation=llm_strict_validation,
             quiet=getattr(agent_args, "quiet", False),
-            min_confidence=min_conf_map.get(
-                getattr(agent_args, "min_confidence", "low"), Confidence.LOW
-            ),
-            parallel=True,
-            max_workers=_max_workers,
-            smart_filter=not path.is_file(),
-            full_file_review=path.is_file(),
+            stream=llm_stream,
+            min_confidence=min_conf_map.get(llm_min_confidence, Confidence.LOW),
+            parallel=llm_parallel,
+            max_workers=llm_max_workers,
+            max_chunk_tokens=llm_max_chunk_tokens,
+            smart_filter=llm_smart_filter,
+            complexity_threshold=llm_complexity_threshold,
+            batch_functions=llm_batch_functions,
+            batch_size=llm_batch_size,
+            full_file_review=llm_full_file_review,
             repo_context_map=phase_2b_repo_context,
             force_full_file_paths=force_full_file_paths,
+            prompt_templates=llm_prompt_templates,
+            prompt_template_root=llm_prompt_template_root,
+            agent_route=llm_agent_route,
         )
         analyzer = SkylosLLM(config)
 
@@ -815,7 +973,21 @@ def run_pipeline(
                     "_confidence": "medium",
                     "_needs_review": True,
                     "_ci_blocking": False,
+                    "model": model,
+                    "provider": resolved_provider,
+                    "prompt_revision": llm_prompt_revision,
                 }
+                if llm_prompt_revision is None:
+                    llm_finding["_review_identity_incomplete"] = True
+                if not llm_only_mode:
+                    identity_category = (
+                        "SECURITY" if issue_type == "security" else "QUALITY"
+                    )
+                    llm_context_hash = hybrid_llm_context_hashes.get(identity_category)
+                    if llm_context_hash is None:
+                        llm_finding["_review_identity_incomplete"] = True
+                    else:
+                        llm_finding["_llm_analysis_context_hash"] = llm_context_hash
                 if issue_type == "security":
                     annotate_security_finding(llm_finding)
                 results.append(llm_finding)
@@ -950,8 +1122,8 @@ def run_pipeline(
                 source_cache,
                 model,
                 api_key,
-                provider=getattr(agent_args, "provider", None),
-                base_url=getattr(agent_args, "base_url", None),
+                provider=resolved_provider,
+                base_url=resolved_base_url,
             )
             enriched = sum(1 for f in enrich_findings if f.get("fixed_code"))
             phase_stats["phase_3_seconds"] = round(time.time() - phase_3_start, 1)
@@ -970,6 +1142,8 @@ def run_pipeline(
 
     if stats_out is not None:
         stats_out.update(phase_stats)
+        if analysis_review_context is not None:
+            stats_out["review_context"] = analysis_review_context
         stats_out.update(
             {
                 "elapsed_seconds": round(time.time() - pipeline_start, 1),

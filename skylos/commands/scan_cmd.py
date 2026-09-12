@@ -107,6 +107,12 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     changed_files = pre_analysis.changed_files
     trace_file = pre_analysis.trace_file
 
+    from skylos.core.review_decisions import review_scan_requirements
+
+    review_context_needed, review_proofs_needed = review_scan_requirements(project_root)
+    include_review_context = bool(args.upload) or review_context_needed
+    include_review_proofs = bool(args.upload) or review_proofs_needed
+
     try:
         if len(args.path) > 1:
             scan_path = args.path
@@ -133,6 +139,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 trace_file=trace_file,
                 config_file=config_file,
                 required_config_rules=args.select,
+                include_review_proofs=include_review_proofs,
+                include_review_context=include_review_context,
             )
 
         quiet_analysis_output = (
@@ -188,18 +196,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             except Exception as e:
                 if args.verbose:
                     console.print(f"[warn]SCA scan error: {e}[/warn]")
-
-        if args.baseline:
-            from skylos.core.baseline import load_baseline, filter_new_findings
-
-            baseline = load_baseline(project_root)
-            if baseline is None:
-                console.print(
-                    "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
-                )
-            else:
-                result = filter_new_findings(result, baseline)
-                result_json = json.dumps(result)
 
         if changed_files is not None:
             for category in [
@@ -417,6 +413,39 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 if args.verbose:
                     console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
 
+        from skylos.core.review_decisions import apply_trusted_review_decisions
+
+        result = apply_trusted_review_decisions(
+            result,
+            project_root,
+            include_identities=bool(args.upload),
+        )
+        reviewed_count = int(
+            (result.get("reviewed_findings_summary") or {}).get("suppressed_count", 0)
+            or 0
+        )
+        if reviewed_count and not machine_output:
+            console.print(
+                "[muted]Reviewed decisions:[/muted] "
+                f"{reviewed_count} finding{'s' if reviewed_count != 1 else ''} "
+                "excluded from local results (retained for audit and upload)."
+            )
+
+        if args.baseline:
+            from skylos.core.baseline import load_baseline, filter_new_findings
+
+            baseline = load_baseline(project_root)
+            if baseline is None:
+                console.print(
+                    "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
+                )
+            else:
+                result = filter_new_findings(result, baseline)
+
+        json_result = dict(result)
+        if _skip_provenance and json_result.get("provenance") is None:
+            json_result.pop("provenance", None)
+        result_json = json.dumps(json_result)
         output_result = result
         json_output_result = json.loads(result_json)
         _cli_severity = getattr(args, "severity", None)
@@ -436,6 +465,27 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 file_filter=_cli_file_filter,
             )
         output_result_json = json.dumps(json_output_result)
+
+        def upload_formatted_result() -> None:
+            if not args.upload:
+                return
+            _attach_upload_project_context(result, project_root)
+            upload_resp = upload_report(
+                result,
+                is_forced=args.force,
+                strict=args.strict,
+                quiet=True,
+                analyzer_owned=True,
+            )
+            if not upload_resp.get("success"):
+                raise SystemExit(1)
+            cloud_gate_passed = upload_resp.get("quality_gate_passed")
+            if cloud_gate_passed is None:
+                cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
+                    "passed", True
+                )
+            if cloud_gate_passed is False and not args.force:
+                raise SystemExit(1)
 
         if args.sarif:
             all_findings = []
@@ -515,6 +565,13 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
             )
+            for reviewed in output_result.get("reviewed_findings", []) or []:
+                if isinstance(reviewed, dict):
+                    _add(
+                        [reviewed],
+                        str(reviewed.get("category") or "QUALITY").upper(),
+                        None,
+                    )
 
             exporter = _get_sarif_exporter_class()(
                 all_findings,
@@ -539,24 +596,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             if incomplete_exit_code == 2:
                 raise SystemExit(incomplete_exit_code)
 
-            if args.upload:
-                _attach_upload_project_context(result, project_root)
-                upload_resp = upload_report(
-                    result,
-                    is_forced=args.force,
-                    strict=args.strict,
-                    quiet=True,
-                    analyzer_owned=True,
-                )
-                if not upload_resp.get("success"):
-                    raise SystemExit(1)
-
-                passed = upload_resp.get("quality_gate_passed")
-                if passed is None:
-                    passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
-
-                if passed is False and not args.force:
-                    raise SystemExit(1)
+            upload_formatted_result()
 
             if args.gate:
                 exit_code = _formatted_output_gate_exit_code(
@@ -588,6 +628,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             elif concise_output:
                 print(concise_output, end="")
 
+            upload_formatted_result()
+
             exit_code = _concise_scan_exit_code(
                 result,
                 config,
@@ -604,6 +646,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 _write_scan_output(args.output, llm_report)
             else:
                 print(llm_report)
+
+            upload_formatted_result()
 
             if args.gate:
                 exit_code = _formatted_output_gate_exit_code(
@@ -622,6 +666,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
         if args.github:
             _emit_github_annotations(output_result)
+            upload_formatted_result()
             if args.gate:
                 exit_code = _formatted_output_gate_exit_code(
                     result,
@@ -672,6 +717,14 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             if not upload_resp.get("success"):
                 _render_upload_failure(console, upload_resp)
                 if getattr(args, "_explicit_upload_requested", False):
+                    raise SystemExit(1)
+            else:
+                cloud_gate_passed = upload_resp.get("quality_gate_passed")
+                if cloud_gate_passed is None:
+                    cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
+                        "passed", True
+                    )
+                if cloud_gate_passed is False and not args.force:
                     raise SystemExit(1)
 
         exit_code = run_gate_interaction(

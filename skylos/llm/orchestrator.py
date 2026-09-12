@@ -134,18 +134,41 @@ class RemediationAgent:
     def _scan(self, path: Path) -> dict:
         import json
         from skylos.analyzer import analyze as run_analyze
-
-        raw = run_analyze(
-            str(path),
-            conf=0,
-            enable_danger=True,
-            enable_quality=True,
-            enable_ai_defects=True,
-            enable_secrets=True,
+        from skylos.config import load_config, resolve_config_file_path
+        from skylos.constants import parse_exclude_folders
+        from skylos.core.review_decisions import (
+            apply_trusted_review_decisions,
+            review_scan_requirements,
         )
+
+        project_root = _project_root_for_path(path)
+        config_file = resolve_config_file_path()
+        project_config = load_config(project_root, config_file=config_file)
+        exclude_folders = parse_exclude_folders(
+            config_exclude_folders=project_config.get("exclude"),
+        )
+        options = {
+            "conf": 0,
+            "enable_danger": True,
+            "enable_quality": True,
+            "enable_ai_defects": True,
+            "enable_secrets": True,
+            "exclude_folders": list(exclude_folders),
+            "config_file": config_file,
+        }
+        include_review_context, include_review_proofs = review_scan_requirements(
+            project_root
+        )
+        if include_review_context:
+            options["include_review_context"] = True
+        if include_review_proofs:
+            options["include_review_proofs"] = True
+        raw = run_analyze(str(path), **options)
         if isinstance(raw, str):
-            return json.loads(raw)
-        return raw
+            result = json.loads(raw)
+        else:
+            result = raw
+        return apply_trusted_review_decisions(result, project_root)
 
     def _create_fixer(self):
         from .agents import FixerAgent, AgentConfig
@@ -220,9 +243,7 @@ class RemediationAgent:
             executor.revert_fix(file_path)
             batch.status = "not_resolved"
             if verify.verification_error:
-                batch.fix_description = (
-                    f"Could not verify fix after remediation: {verify.verification_error}"
-                )
+                batch.fix_description = f"Could not verify fix after remediation: {verify.verification_error}"
             else:
                 batch.fix_description = (
                     f"Finding still present after fix: {verify.remaining_rule_ids}"

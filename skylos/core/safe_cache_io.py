@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import stat
 import time
 from collections.abc import Iterator
@@ -354,6 +355,59 @@ def write_text_no_symlink(
         return False
     finally:
         _close_file_descriptor(fd)
+
+
+def remove_project_tree_no_symlink(
+    project_root: str | Path,
+    tree_path: str | Path,
+) -> bool:
+    """Remove an in-project directory without following symlink components."""
+
+    if not shutil.rmtree.avoids_symlink_attacks:
+        return False
+    if os.open not in os.supports_dir_fd or os.stat not in os.supports_dir_fd:
+        return False
+    if os.stat not in os.supports_follow_symlinks:
+        return False
+
+    resolved = _resolve_project_cache_path(project_root, tree_path)
+    if resolved is None:
+        return False
+    root, path = resolved
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    if not relative.parts:
+        return False
+
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(root, _directory_open_flags())
+        for component in relative.parts[:-1]:
+            component_name = Path(component).name
+            if component_name != component or component_name in {"", ".", ".."}:
+                return False
+            next_fd = os.open(
+                component_name,
+                _directory_open_flags(),
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+
+        tree_name = relative.name
+        if tree_name in {"", ".", ".."}:
+            return False
+        tree_stat = os.stat(tree_name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(tree_stat.st_mode):
+            return False
+        shutil.rmtree(tree_name, dir_fd=directory_fd)
+        return True
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return False
+    finally:
+        _close_file_descriptor(directory_fd)
 
 
 def _project_cache_path(
