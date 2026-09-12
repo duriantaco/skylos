@@ -90,6 +90,7 @@ def _module_name(path: Path, root: Path) -> str:
 
 class _DefinitionIndex:
     def __init__(self, definitions, parsed, root):
+        self._resolved_paths: dict[Path, Path] = {}
         self.by_location = {}
         self.by_name = defaultdict(list)
         self.imports = defaultdict(list)
@@ -97,7 +98,7 @@ class _DefinitionIndex:
         self.modules = {}
         self.shadowed = set()
         for module in parsed:
-            path = module.path.resolve()
+            path = self._resolve_path(module.path)
             self.modules[path] = _module_name(path, root)
             relative = path.relative_to(root).parts
             first = (
@@ -112,7 +113,7 @@ class _DefinitionIndex:
                     self.shadowed.add(framework)
         for definition in definitions.values():
             kind = getattr(definition, "type", "")
-            path = Path(definition.filename).resolve()
+            path = self._resolve_path(Path(definition.filename))
             if path not in self.modules:
                 continue
             if kind == "parameter":
@@ -128,29 +129,34 @@ class _DefinitionIndex:
                     self.modules[path] = definition.name.rsplit(".", 1)[0]
         # A dotted setting names the module's final binding, not a stale function.
         for module in parsed:
+            path = self._resolve_path(module.path)
             active = {}
             for statement in module.tree.body:
                 for name in _bound_names(statement):
                     active.pop(name, None)
                 if isinstance(statement, _FUNCTIONS):
-                    definition = self.by_location.get(
-                        (module.path.resolve(), statement.lineno)
-                    )
+                    definition = self.by_location.get((path, statement.lineno))
                     if definition is not None:
                         active[statement.name] = definition
             active_ids = {id(item) for item in active.values()}
             for statement in module.tree.body:
                 if not isinstance(statement, _FUNCTIONS):
                     continue
-                definition = self.by_location.get(
-                    (module.path.resolve(), statement.lineno)
-                )
+                definition = self.by_location.get((path, statement.lineno))
                 if definition is not None and id(definition) not in active_ids:
                     self.by_name[definition.name] = [
                         item
                         for item in self.by_name[definition.name]
                         if item is not definition
                     ]
+
+    def _resolve_path(self, path: Path) -> Path:
+        cached = self._resolved_paths.get(path)
+        if cached is not None:
+            return cached
+        resolved = path.resolve()
+        self._resolved_paths[path] = resolved
+        return resolved
 
     def callable(self, name):
         candidates = self.by_name.get(name, ())
@@ -162,7 +168,7 @@ class _DefinitionIndex:
 class _FrameworkScanner:
     def __init__(self, parsed: ParsedPythonFile, index: _DefinitionIndex):
         self.parsed = parsed
-        self.path = parsed.path.resolve()
+        self.path = index._resolve_path(parsed.path)
         self.index = index
         self.targets = []
         self.routes: dict[str, tuple[ast.AST, dict[str, str | None]]] = {}

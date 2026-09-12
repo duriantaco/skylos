@@ -37,18 +37,31 @@ _DefByFileSimple = dict[tuple[str, str], Any]
 _DefByFileLine = dict[tuple[str, int], Any]
 
 
+def _resolved_file(path: Path, cache: dict[Path, str]) -> str:
+    cached = cache.get(path)
+    if cached is not None:
+        return cached
+    resolved = str(path.resolve())
+    cache[path] = resolved
+    return resolved
+
+
 def find_literal_plugin_registry_targets(
     definitions: dict[str, Any],
     parsed_files: Sequence[ParsedPythonFile],
 ) -> list[Any]:
+    resolved_files: dict[Path, str] = {}
     definitions_by_name = _definitions_by_name(definitions)
-    definitions_by_file_simple = _definitions_by_file_simple(definitions)
-    definitions_by_file_line = _definitions_by_file_line(definitions)
+    definitions_by_file_simple = _definitions_by_file_simple(
+        definitions, resolved_files
+    )
+    definitions_by_file_line = _definitions_by_file_line(definitions, resolved_files)
 
     registries = _collect_literal_plugin_registries(
         parsed_files,
         definitions_by_file_simple,
         definitions_by_name,
+        resolved_files,
     )
     if not registries:
         return []
@@ -63,6 +76,7 @@ def find_literal_plugin_registry_targets(
         definitions_by_file_line,
         set(registries),
         reachable_functions,
+        resolved_files,
     )
     if not live_registries:
         return []
@@ -87,14 +101,17 @@ def find_literal_plugin_registry_targets(
 # Definition indexes
 
 
-def _definitions_by_file_simple(definitions: dict[str, Any]) -> _DefByFileSimple:
+def _definitions_by_file_simple(
+    definitions: dict[str, Any], resolved_files: dict[Path, str]
+) -> _DefByFileSimple:
     lookup: _DefByFileSimple = {}
     for defn in definitions.values():
         simple = str(getattr(defn, "simple_name", ""))
         if not simple:
             continue
         try:
-            filename = str(Path(getattr(defn, "filename", "")).resolve())
+            path = Path(getattr(defn, "filename", ""))
+            filename = _resolved_file(path, resolved_files)
         except (OSError, TypeError):
             continue
         key = (filename, simple)
@@ -120,13 +137,16 @@ def _definitions_by_name(definitions: dict[str, Any]) -> _DefByName:
     return lookup
 
 
-def _definitions_by_file_line(definitions: dict[str, Any]) -> _DefByFileLine:
+def _definitions_by_file_line(
+    definitions: dict[str, Any], resolved_files: dict[Path, str]
+) -> _DefByFileLine:
     lookup: _DefByFileLine = {}
     for defn in definitions.values():
         if getattr(defn, "type", None) not in {"function", "method"}:
             continue
         try:
-            filename = str(Path(getattr(defn, "filename", "")).resolve())
+            path = Path(getattr(defn, "filename", ""))
+            filename = _resolved_file(path, resolved_files)
             line = int(getattr(defn, "line", 0) or 0)
         except (OSError, TypeError, ValueError):
             continue
@@ -142,11 +162,12 @@ def _collect_literal_plugin_registries(
     parsed_files: Sequence[ParsedPythonFile],
     definitions_by_file_simple: _DefByFileSimple,
     definitions_by_name: _DefByName,
+    resolved_files: dict[Path, str],
 ) -> dict[str, set[str]]:
     registries: dict[str, set[str]] = {}
     for parsed in parsed_files:
         try:
-            file_key = str(parsed.path.resolve())
+            file_key = _resolved_file(parsed.path, resolved_files)
         except OSError:
             continue
         for stmt in parsed.tree.body:
@@ -220,11 +241,12 @@ def _collect_live_plugin_registry_uses(
     definitions_by_file_line: _DefByFileLine,
     registry_qnames: set[str],
     reachable_functions: set[str],
+    resolved_files: dict[Path, str],
 ) -> set[str]:
     live_registries: set[str] = set()
     for parsed in parsed_files:
         try:
-            file_key = str(parsed.path.resolve())
+            file_key = _resolved_file(parsed.path, resolved_files)
         except OSError:
             continue
         import_ctx = _collect_import_context(parsed.tree)
