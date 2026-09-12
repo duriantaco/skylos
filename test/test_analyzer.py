@@ -10,6 +10,7 @@ from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
+from skylos.visitors.base import Definition
 from skylos.analysis.penalties import _check_abstract_overrides, apply_penalties
 from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
 from skylos.engines.go_runner import GoEngineError
@@ -4098,6 +4099,97 @@ function foo() {
         assert ("live.ts", "helper") not in unused_by_file
         assert ("dead.ts", "helper") in unused_by_file
         assert ("dead.ts", "foo") in unused_by_file
+
+    def test_transitive_dead_resolves_each_filename_once_per_pass(
+        self, monkeypatch, tmp_path
+    ):
+        source = tmp_path / "chain.py"
+        dead = Definition("pkg.dead", "function", source, 1)
+        middle = Definition("pkg.middle", "function", source, 2)
+        leaf = Definition("pkg.leaf", "function", source, 3)
+        middle.called_by = {dead.name}
+        leaf.called_by = {middle.name}
+        analyzer = Skylos()
+        analyzer.defs = {"leaf": leaf, "middle": middle, "dead": dead}
+        original_resolve = Path.resolve
+        resolved = []
+
+        def record_resolve(path, *args, **kwargs):
+            resolved.append(path)
+            return original_resolve(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", record_resolve)
+
+        for _ in range(2):
+            dead.references = 0
+            middle.references = 1
+            leaf.references = 1
+            analyzer._propagate_transitive_dead()
+            assert (dead.references, middle.references, leaf.references) == (0, 0, 0)
+
+        assert resolved.count(source) == 2
+
+    def test_transitive_dead_refreshes_symlink_identity_between_passes(
+        self, tmp_path
+    ):
+        dead_dir = tmp_path / "dead"
+        live_dir = tmp_path / "live"
+        dead_dir.mkdir()
+        live_dir.mkdir()
+        dead_path = dead_dir / "module.py"
+        live_path = live_dir / "module.py"
+        alias = tmp_path / "selected.py"
+        try:
+            alias.symlink_to(dead_path)
+        except OSError as error:
+            pytest.skip(f"symlinks unavailable: {error}")
+
+        dead_caller = Definition("pkg.caller", "function", dead_path, 1)
+        live_caller = Definition("pkg.caller", "function", live_path, 1)
+        live_caller.references = 1
+        live_caller.is_exported = True
+        leaf = Definition("pkg.leaf", "function", alias, 2)
+        leaf.references = 1
+        leaf.called_by = {"pkg.caller"}
+        analyzer = Skylos()
+        analyzer.defs = {
+            "dead-caller": dead_caller,
+            "live-caller": live_caller,
+            "leaf": leaf,
+        }
+
+        analyzer._propagate_transitive_dead()
+        assert leaf.references == 0
+
+        alias.unlink()
+        alias.symlink_to(live_path)
+        leaf.references = 1
+        analyzer._propagate_transitive_dead()
+
+        assert leaf.references == 1
+
+    def test_transitive_dead_does_not_swallow_path_errors(self, monkeypatch, tmp_path):
+        analyzer = Skylos()
+        analyzer.defs = {
+            "work": Definition("pkg.work", "function", tmp_path / "app.py", 1)
+        }
+        original_resolve = Path.resolve
+        attempts = 0
+
+        def fail_once(path, *args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporarily unavailable")
+            return original_resolve(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", fail_once)
+
+        with pytest.raises(OSError, match="temporarily unavailable"):
+            analyzer._propagate_transitive_dead()
+        analyzer._propagate_transitive_dead()
+
+        assert attempts == 2
 
     def test_analyze_single_file_skips_project_unused_dependency_rule(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(

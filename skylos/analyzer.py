@@ -1838,8 +1838,19 @@ class Skylos:
         dead_classes = set()
         defs_by_name_file = defaultdict(list)
         class_key_by_name_file = {}
+        resolved_filenames: dict[Path, str] = {}
+
+        def resolved_filename(filename) -> str:
+            path = Path(filename)
+            cached = resolved_filenames.get(path)
+            if cached is not None:
+                return cached
+            resolved = str(path.resolve())
+            resolved_filenames[path] = resolved
+            return resolved
+
         for key, defn in self.defs.items():
-            filename = str(Path(defn.filename).resolve())
+            filename = resolved_filename(defn.filename)
             defs_by_name_file[(defn.name, filename)].append(key)
             if defn.type in ("class", "type"):
                 class_key_by_name_file[(defn.name, filename)] = key
@@ -1851,7 +1862,7 @@ class Skylos:
         def key_for_caller(caller: str, callee_defn) -> str | None:
             if caller in self.defs:
                 return caller
-            filename = str(Path(callee_defn.filename).resolve())
+            filename = resolved_filename(callee_defn.filename)
             same_file = defs_by_name_file.get((caller, filename), [])
             if len(same_file) == 1:
                 return same_file[0]
@@ -1881,7 +1892,7 @@ class Skylos:
                 return True
             if "." not in caller:
                 return False
-            filename = str(Path(callee_defn.filename).resolve())
+            filename = resolved_filename(callee_defn.filename)
             owner = caller.rsplit(".", 1)[0]
             owner_key = class_key_by_name_file.get((owner, filename))
             return owner_key in dead_classes
