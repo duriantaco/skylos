@@ -506,6 +506,118 @@ class TestPRDescription:
 
 
 class TestOrchestrator:
+    def test_reviewed_findings_never_reach_remediation_planner(self, tmp_path):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        reviewed = {
+            "rule_id": "SKY-D215",
+            "severity": "HIGH",
+            "message": "reviewed path finding",
+            "file": str(tmp_path / "app.py"),
+            "line": 1,
+        }
+        active = {
+            "rule_id": "SKY-D324",
+            "severity": "HIGH",
+            "message": "active path finding",
+            "file": str(tmp_path / "app.py"),
+            "line": 1,
+        }
+        raw_results = {
+            "danger": [reviewed, active],
+            "quality": [],
+            "secrets": [],
+        }
+        projected_results = {
+            "danger": [active],
+            "quality": [],
+            "secrets": [],
+            "reviewed_findings": [reviewed],
+        }
+        agent = RemediationAgent()
+
+        with (
+            patch("skylos.analyzer.analyze", return_value=raw_results) as analyze,
+            patch(
+                "skylos.core.review_decisions.review_scan_requirements",
+                return_value=(True, True),
+            ),
+            patch(
+                "skylos.core.review_decisions.apply_trusted_review_decisions",
+                return_value=projected_results,
+            ) as apply_reviews,
+            patch.object(
+                agent.planner,
+                "create_plan",
+                wraps=agent.planner.create_plan,
+            ) as create_plan,
+        ):
+            summary = agent.run(tmp_path, dry_run=True, quiet=True)
+
+        assert analyze.call_args.kwargs["include_review_proofs"] is True
+        apply_reviews.assert_called_once_with(raw_results, tmp_path)
+        planned_results = create_plan.call_args.args[0]
+        assert [item["rule_id"] for item in planned_results["danger"]] == ["SKY-D324"]
+        assert summary["total_findings"] == 1
+
+    def test_remediation_scan_avoids_review_proof_without_dead_code_state(
+        self, tmp_path
+    ):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        raw_results = {"danger": [], "quality": [], "secrets": []}
+        agent = RemediationAgent()
+
+        with (
+            patch("skylos.analyzer.analyze", return_value=raw_results) as analyze,
+            patch(
+                "skylos.core.review_decisions.review_scan_requirements",
+                return_value=(False, False),
+            ),
+            patch(
+                "skylos.core.review_decisions.apply_trusted_review_decisions",
+                return_value=raw_results,
+            ),
+        ):
+            result = agent._scan(tmp_path)
+
+        assert result is raw_results
+        assert "include_review_proofs" not in analyze.call_args.kwargs
+
+    def test_remediation_scan_uses_review_config_and_default_excludes(
+        self, tmp_path, monkeypatch
+    ):
+        from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+        from skylos.llm.orchestrator import RemediationAgent
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.skylos]\nexclude = ["generated"]\n',
+            encoding="utf-8",
+        )
+        raw_results = {"danger": [], "quality": [], "secrets": []}
+        agent = RemediationAgent()
+
+        with (
+            patch("skylos.analyzer.analyze", return_value=raw_results) as analyze,
+            patch(
+                "skylos.core.review_decisions.review_scan_requirements",
+                return_value=(False, False),
+            ),
+            patch(
+                "skylos.core.review_decisions.apply_trusted_review_decisions",
+                return_value=raw_results,
+            ),
+        ):
+            result = agent._scan(tmp_path)
+
+        assert result is raw_results
+        scan_options = analyze.call_args.kwargs
+        assert set(scan_options["exclude_folders"]) == {
+            *DEFAULT_EXCLUDE_FOLDERS,
+            "generated",
+        }
+        assert scan_options["config_file"] is None
+
     def test_dry_run_no_changes(self, tmp_path):
         test_file = tmp_path / "vuln.py"
         test_file.write_text("import hashlib\nhashlib.md5(b'data')\n")
@@ -669,7 +781,9 @@ class TestOrchestrator:
         assert "Could not verify fix" in batch.fix_description
         executor.revert_fix.assert_called_once_with(str(test_file))
 
-    def test_process_batch_writes_sqli_regression_test_after_verification(self, tmp_path):
+    def test_process_batch_writes_sqli_regression_test_after_verification(
+        self, tmp_path
+    ):
         from skylos.llm.orchestrator import RemediationAgent
 
         tests_dir = tmp_path / "tests"
@@ -677,7 +791,7 @@ class TestOrchestrator:
         test_file = tmp_path / "vuln.py"
         test_file.write_text(
             "def get_user(cursor, user_id):\n"
-            "    query = f\"SELECT * FROM users WHERE id = {user_id}\"\n"
+            '    query = f"SELECT * FROM users WHERE id = {user_id}"\n'
             "    return cursor.execute(query)\n",
             encoding="utf-8",
         )
@@ -698,7 +812,7 @@ class TestOrchestrator:
             fixed_code=(
                 "def get_user(cursor, user_id):\n"
                 "    return cursor.execute(\n"
-                "        \"SELECT * FROM users WHERE id = ?\",\n"
+                '        "SELECT * FROM users WHERE id = ?",\n'
                 "        (user_id,),\n"
                 "    )\n"
             ),

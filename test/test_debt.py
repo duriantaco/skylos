@@ -1,11 +1,15 @@
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 import skylos.cli as cli
+import skylos.core.review_decisions as review_decisions
+import skylos.debt.engine as debt_engine
 from skylos.debt.advisor import (
     DebtAdvisor,
     _parse_json_object,
@@ -264,6 +268,150 @@ def test_run_debt_analysis_builds_snapshot():
         "quality",
         "dead_code",
     ]
+
+
+@pytest.mark.parametrize(
+    ("requirements", "expected_context", "expected_proofs"),
+    [
+        ((False, False), False, False),
+        ((True, False), True, False),
+        ((True, True), True, True),
+    ],
+)
+def test_run_debt_analysis_requests_review_evidence_only_when_needed(
+    tmp_path,
+    monkeypatch,
+    requirements,
+    expected_context,
+    expected_proofs,
+):
+    captured = []
+
+    def fake_analyze(*args, **kwargs):
+        captured.append((args, kwargs))
+        return json.dumps(SAMPLE_RESULT)
+
+    monkeypatch.setattr(debt_engine, "run_analyze", fake_analyze)
+    monkeypatch.setattr(
+        review_decisions,
+        "review_scan_requirements",
+        lambda project_root: requirements,
+    )
+    monkeypatch.setattr(
+        review_decisions,
+        "apply_trusted_review_decisions",
+        lambda result, project_root: result,
+    )
+
+    run_debt_analysis(tmp_path)
+
+    assert len(captured) == 1
+    options = captured[0][1]
+    assert ("include_review_context" in options) is expected_context
+    assert ("include_review_proofs" in options) is expected_proofs
+
+
+def test_run_debt_analysis_excludes_a_reviewed_quality_finding(tmp_path, monkeypatch):
+    from skylos.analyzer import analyze as real_analyze
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "pyproject.toml").write_text(
+        "[tool.skylos]\ncomplexity = 1\n",
+        encoding="utf-8",
+    )
+    source = repo / "app.py"
+    source.write_text(
+        "def choose(value):\n"
+        "    if value == 1:\n"
+        "        return 'one'\n"
+        "    if value == 2:\n"
+        "        return 'two'\n"
+        "    return 'other'\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+
+    cloud_cache = tmp_path / "cloud-review-cache"
+    local_cache = tmp_path / "local-review-cache"
+    local_cache.mkdir()
+    local_cache = local_cache.resolve()
+    monkeypatch.setattr(
+        review_decisions,
+        "_cache_root",
+        lambda value=None: Path(value) if value is not None else cloud_cache,
+    )
+    monkeypatch.setattr(
+        review_decisions,
+        "_local_cache_root",
+        lambda value=None: Path(value) if value is not None else local_cache,
+    )
+    for key in (
+        "CI",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_JOB",
+        "CI_PIPELINE_ID",
+        "BUILD_BUILDID",
+        "CIRCLE_WORKFLOW_ID",
+        "BUILD_TAG",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    authored = json.loads(
+        real_analyze(
+            str(repo),
+            conf=80,
+            enable_quality=True,
+            enable_danger=False,
+            enable_secrets=False,
+            exclude_folders=[],
+            include_review_context=True,
+        )
+    )
+    annotated = review_decisions.annotate_result_identities(authored, repo)
+    finding = next(
+        item for item in annotated["quality"] if item["rule_id"] == "SKY-Q301"
+    )
+    review_decisions.record_local_decision(
+        repo,
+        {
+            "decision_id": "reviewed-quality-debt",
+            "fingerprint_version": finding["fingerprint_version"],
+            "stable_fingerprint": finding["stable_fingerprint"],
+            "context_hash": finding["context_hash"],
+            "rule_revision": finding["rule_revision"],
+            "rule_id": finding["rule_id"],
+            "file_path": finding["file_path"],
+            "line_number": finding["line"],
+            "disposition": "false_positive",
+            "reason": "known generated branch table",
+            "created_at": "2026-01-01T00:00:00Z",
+            "language": finding["language"],
+            "symbol": finding["symbol"],
+            "section": finding["section"],
+            "category": "QUALITY",
+        },
+    )
+
+    analyze_calls = []
+
+    def capture_analyze(*args, **kwargs):
+        analyze_calls.append(dict(kwargs))
+        return real_analyze(*args, **kwargs)
+
+    monkeypatch.setattr(debt_engine, "run_analyze", capture_analyze)
+    snapshot = run_debt_analysis(repo, exclude_folders=[])
+
+    rule_ids = {
+        signal.rule_id
+        for hotspot in snapshot.all_hotspots
+        for signal in hotspot.signals
+    }
+    assert "SKY-Q301" not in rule_ids
+    assert analyze_calls[0]["include_review_context"] is True
+    assert "include_review_proofs" not in analyze_calls[0]
 
 
 def test_run_debt_analysis_changed_mode_keeps_project_score_and_filters_hotspots():
@@ -1552,9 +1700,7 @@ def test_cli_debt_show_history_json_outputs_saved_entries(tmp_path, monkeypatch)
     assert payload["history"][0]["score"]["score_pct"] == 93
 
 
-def test_cli_debt_show_history_json_rejects_symlink_history(
-    tmp_path, monkeypatch
-):
+def test_cli_debt_show_history_json_rejects_symlink_history(tmp_path, monkeypatch):
     history_dir = tmp_path / ".skylos"
     history_dir.mkdir()
     outside = tmp_path / "outside.jsonl"

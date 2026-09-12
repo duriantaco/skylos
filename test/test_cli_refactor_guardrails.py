@@ -608,6 +608,10 @@ def test_cli_guardrail_baseline_subcommand_writes_baseline(tmp_path, monkeypatch
             "skylos.commands.baseline_cmd.save_baseline",
             return_value=baseline_path,
         ) as mock_save,
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(False, False),
+        ),
         patch("skylos.commands.baseline_cmd.Console", return_value=console),
         pytest.raises(SystemExit) as exc,
     ):
@@ -620,6 +624,7 @@ def test_cli_guardrail_baseline_subcommand_writes_baseline(tmp_path, monkeypatch
         enable_quality=True,
         enable_secrets=True,
         enable_ai_defects=True,
+        exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS),
     )
     mock_save.assert_called_once()
 
@@ -644,6 +649,15 @@ def test_baseline_command_defaults_to_current_directory():
             "skylos.commands.baseline_cmd.save_baseline",
             return_value=Path(".skylos/baseline.json"),
         ),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(False, False),
+        ),
+        patch("skylos.commands.baseline_cmd.load_config", return_value={}),
+        patch(
+            "skylos.commands.baseline_cmd.resolve_config_file_path",
+            return_value=None,
+        ),
         patch("skylos.commands.baseline_cmd.Console", return_value=Mock()),
     ):
         from skylos.commands.baseline_cmd import run_baseline_command
@@ -657,6 +671,7 @@ def test_baseline_command_defaults_to_current_directory():
         enable_quality=True,
         enable_secrets=True,
         enable_ai_defects=True,
+        exclude_folders=sorted(cli.DEFAULT_EXCLUDE_FOLDERS),
     )
 
 

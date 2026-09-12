@@ -897,6 +897,86 @@ def test_main_gate_uploads_when_upload_flag_is_set(monkeypatch):
     gate.assert_called_once()
 
 
+def test_main_gate_honors_cloud_rejection_before_local_projection(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--gate", "--upload"])
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={"gate": {}}),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": True, "quality_gate_passed": False},
+        ),
+        patch("skylos.cli.run_gate_interaction", return_value=0) as local_gate,
+        patch("builtins.print"),
+    ):
+        with pytest.raises(SystemExit) as error:
+            cli.main()
+
+    assert error.value.code == 1
+    local_gate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "output_args",
+    (["--format", "concise"], ["--llm"], ["--github"]),
+    ids=("concise", "llm", "github"),
+)
+def test_formatted_upload_modes_honor_cloud_gate_rejection(monkeypatch, output_args):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", *output_args, "--gate", "--upload", "--no-provenance"],
+    )
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={"gate": {}}),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": True, "quality_gate_passed": False},
+        ) as upload,
+        patch("skylos.cli.run_gate_interaction", return_value=0) as local_gate,
+        patch("builtins.print"),
+    ):
+        with pytest.raises(SystemExit) as error:
+            cli.main()
+
+    assert error.value.code == 1
+    upload.assert_called_once()
+    local_gate.assert_not_called()
+
+
 def test_main_interactive_dry_run_does_not_modify(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},

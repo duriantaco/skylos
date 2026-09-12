@@ -229,6 +229,16 @@ class SarifExporter:
 
             properties = {"category": category}
 
+            review_decision = (
+                finding.get("review_decision")
+                if self.analyzer_owned and finding.get("_skylos_trusted_review") is True
+                else None
+            )
+            if isinstance(review_decision, dict):
+                safe_review = _sanitize_sarif_payload(review_decision)
+                if safe_review:
+                    properties["skylos_review_decision"] = safe_review
+
             kind = finding.get("kind")
             if kind:
                 properties["kind"] = sanitize_untrusted_text(kind, max_length=120)
@@ -287,6 +297,20 @@ class SarifExporter:
                 result_obj["locations"][0]["physicalLocation"]["region"]["snippet"] = {
                     "text": snippet_text
                 }
+
+            if isinstance(review_decision, dict):
+                justification = sanitize_untrusted_text(
+                    review_decision.get("reason") or "Reviewed in Skylos",
+                    max_length=_MAX_SARIF_METADATA_TEXT_LENGTH,
+                    markdown=False,
+                )
+                result_obj["suppressions"] = [
+                    {
+                        "kind": "external",
+                        "status": "accepted",
+                        "justification": justification,
+                    }
+                ]
 
             results.append(result_obj)
 

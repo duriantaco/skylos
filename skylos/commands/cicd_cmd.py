@@ -8,7 +8,7 @@ import subprocess
 REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
 
 
-def _cicd_load_results(args, *, console_factory):
+def _cicd_load_results(args, *, console_factory, load_config_func):
     if getattr(args, "input_file", None):
         try:
             with open(args.input_file) as f:
@@ -22,13 +22,40 @@ def _cicd_load_results(args, *, console_factory):
     path = getattr(args, "path", ".")
     try:
         from skylos import analyze
+        from skylos.config import resolve_config_file_path
+        from skylos.constants import parse_exclude_folders
+        from skylos.core.file_discovery import find_git_root
+        from skylos.core.review_decisions import (
+            apply_trusted_review_decisions,
+            review_scan_requirements,
+        )
+
+        target = Path(path).expanduser().resolve()
+        scan_root = target.parent if target.is_file() else target
+        project_root = find_git_root(scan_root) or scan_root
+        config_file = resolve_config_file_path()
+        project_config = load_config_func(project_root)
+        exclude_folders = parse_exclude_folders(
+            config_exclude_folders=project_config.get("exclude"),
+        )
+        include_review_context, include_review_proofs = review_scan_requirements(
+            project_root
+        )
+        analyze_kwargs = {"exclude_folders": sorted(exclude_folders)}
+        if config_file is not None:
+            analyze_kwargs["config_file"] = config_file
+        if include_review_context:
+            analyze_kwargs["include_review_context"] = True
+        if include_review_proofs:
+            analyze_kwargs["include_review_proofs"] = True
 
         previous_diff_base = os.environ.get("SKYLOS_DIFF_BASE")
         diff_base = getattr(args, "diff_base", None)
         try:
             if diff_base:
                 os.environ["SKYLOS_DIFF_BASE"] = diff_base
-            return json.loads(analyze(path)), 0
+            result = json.loads(analyze(path, **analyze_kwargs))
+            return apply_trusted_review_decisions(result, project_root), 0
         finally:
             if diff_base:
                 if previous_diff_base is None:
@@ -98,9 +125,7 @@ def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
     path = Path(raw)
     if not path.is_absolute():
         if path.name != raw:
-            raise ValueError(
-                f"{label} must be a filename in the current directory"
-            )
+            raise ValueError(f"{label} must be a filename in the current directory")
         return path
 
     runner_temp = os.environ.get("RUNNER_TEMP")
@@ -290,7 +315,9 @@ def run_cicd_command(
 
     if cicd_args.cicd_cmd == "gate":
         results, exit_code = _cicd_load_results(
-            cicd_args, console_factory=console_factory
+            cicd_args,
+            console_factory=console_factory,
+            load_config_func=load_config_func,
         )
         if exit_code:
             return exit_code
@@ -321,7 +348,9 @@ def run_cicd_command(
 
     if cicd_args.cicd_cmd == "annotate":
         results, exit_code = _cicd_load_results(
-            cicd_args, console_factory=console_factory
+            cicd_args,
+            console_factory=console_factory,
+            load_config_func=load_config_func,
         )
         if exit_code:
             return exit_code
@@ -337,7 +366,9 @@ def run_cicd_command(
         from skylos.cicd.review import run_pr_review
 
         results, exit_code = _cicd_load_results(
-            cicd_args, console_factory=console_factory
+            cicd_args,
+            console_factory=console_factory,
+            load_config_func=load_config_func,
         )
         if exit_code:
             return exit_code

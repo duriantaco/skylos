@@ -731,7 +731,14 @@ def test_precommit_snapshot_remaps_related_location_files(tmp_path):
                     }
                 ],
             }
-        ]
+        ],
+        "reviewed_findings": [
+            {
+                "file": str(source_root / "app" / "reviewed.py"),
+                "line": 7,
+                "category": "SECURITY",
+            }
+        ],
     }
 
     remapped = cli._remap_precommit_result_files(result, source_root, target_root)
@@ -740,6 +747,9 @@ def test_precommit_snapshot_remaps_related_location_files(tmp_path):
     assert finding["file"] == str((target_root / "app" / "main.py").resolve())
     assert finding["related_locations"][0]["file"] == str(
         (target_root / "deploy" / "rendered.yaml").resolve()
+    )
+    assert remapped["reviewed_findings"][0]["file"] == str(
+        (target_root / "app" / "reviewed.py").resolve()
     )
 
 

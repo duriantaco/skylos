@@ -29,6 +29,7 @@ EARLY_COMMAND_HANDLERS = {
     "city": "_run_removed_city_command",
     "suite": "run_suite_command",
     "verify": "_run_verify_command",
+    "review": "_run_review_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
     "debt": "run_debt_command",

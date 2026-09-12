@@ -19,6 +19,16 @@ _VALID_STATIC_UPLOAD_CATEGORIES = (
     "dependency",
 )
 
+_REVIEW_CATEGORY_TO_STATIC_UPLOAD_CATEGORY = {
+    "SECURITY": "danger",
+    "RELIABILITY": "reliability",
+    "AI_DEFECT": "ai_defects",
+    "QUALITY": "quality",
+    "SECRET": "secrets",
+    "DEAD_CODE": "dead_code",
+    "DEPENDENCY": "dependency",
+}
+
 
 def _parse_csv_selection(raw: str | None, valid_values: tuple[str, ...]) -> list[str]:
     if not raw:
@@ -48,7 +58,7 @@ def _build_static_upload_result(
 ) -> dict:
     category_set = set(static_categories)
     payload = {
-        "analysis_summary": static_result.get("analysis_summary") or {},
+        "analysis_summary": dict(static_result.get("analysis_summary") or {}),
     }
     if "provenance" in static_result:
         payload["provenance"] = static_result.get("provenance")
@@ -83,6 +93,22 @@ def _build_static_upload_result(
             "unused_files",
         ):
             payload[key] = list(static_result.get(key) or [])
+
+    reviewed = [
+        dict(finding)
+        for finding in static_result.get("reviewed_findings", []) or []
+        if isinstance(finding, dict)
+        and _REVIEW_CATEGORY_TO_STATIC_UPLOAD_CATEGORY.get(
+            str(finding.get("category") or "").strip().upper()
+        )
+        in category_set
+    ]
+    if "reviewed_findings" in static_result:
+        review_summary = dict(static_result.get("reviewed_findings_summary") or {})
+        review_summary["suppressed_count"] = len(reviewed)
+        payload["reviewed_findings"] = reviewed
+        payload["reviewed_findings_summary"] = review_summary
+        payload["analysis_summary"]["reviewed_findings"] = dict(review_summary)
 
     return payload
 
@@ -214,6 +240,7 @@ def _run_suite_report(
     progress_factory,
     run_analyze_func,
     get_git_root_func,
+    include_review_identities: bool,
 ):
     try:
         report = run_suite(
@@ -227,6 +254,7 @@ def _run_suite_report(
             no_provenance=args.no_provenance,
             diff_base=args.diff_base,
             get_git_root_func=get_git_root_func,
+            include_review_identities=include_review_identities,
         )
     except (FileNotFoundError, ValueError, ImportError) as exc:
         console.print(f"[bold red]Suite error: {exc}[/bold red]")
@@ -325,6 +353,7 @@ def _upload_static_suite_family(
         static_upload_result,
         quiet=args.output_json,
         scan_bundle_id=scan_bundle_id,
+        analyzer_owned=True,
     )
     if not static_upload.get("success"):
         if not args.output_json:
@@ -489,6 +518,7 @@ def run_suite_command(
         progress_factory=progress_factory,
         run_analyze_func=run_analyze_func,
         get_git_root_func=get_git_root_func,
+        include_review_identities=bool(args.upload and "static" in selected_families),
     )
     if suite_error:
         return suite_error

@@ -315,6 +315,44 @@ def test_cmd_project_unlink_removes_only_link(
     assert creds_file.exists()
 
 
+def test_cmd_project_unlink_invalidates_reviewed_finding_cache(
+    isolated_creds, monkeypatch, tmp_path
+):
+    from skylos.core.review_decisions import write_trusted_bundle
+
+    creds_dir, _creds_file = isolated_creds
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/repo.git",
+        ],
+        check=True,
+    )
+    link_path = repo_root / ".skylos" / "link.json"
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    link_path.write_text(json.dumps({"project_id": "project-a"}))
+    cache_path = write_trusted_bundle(
+        repo_root,
+        {"schema": "skylos.reviewed-findings", "version": 2, "decisions": []},
+        cache_root=creds_dir / "reviewed-findings",
+    )
+    assert cache_path is not None and cache_path.exists()
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo_root)
+
+    syncmod.cmd_project_unlink()
+
+    assert not link_path.exists()
+    assert not cache_path.exists()
+
+
 def test_cmd_project_list_marks_active_project(
     isolated_creds, monkeypatch, tmp_path, capsys
 ):
@@ -497,12 +535,28 @@ def test_cmd_pull_writes_config_and_suppressions(
     creds_file.parent.mkdir(parents=True, exist_ok=True)
     creds_file.write_text(json.dumps({"token": "TOK"}))
 
-    monkeypatch.setattr(syncmod, "SKYLOS_DIR", str(tmp_path / ".skylos"), raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/repo.git",
+        ],
+        check=True,
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
 
     def fake_api_get(endpoint, token):
         assert token == "TOK"
         if endpoint == "/api/sync/whoami":
-            return {"project": {"name": "Proj"}}
+            return {"project": {"id": "project-1", "name": "Proj"}}
         if endpoint == "/api/sync/config":
             return {
                 "config": {
@@ -519,7 +573,11 @@ def test_cmd_pull_writes_config_and_suppressions(
                 }
             }
         if endpoint == "/api/sync/suppressions":
-            return {"suppressions": [{"rule_id": "SKY-D212"}], "count": 1}
+            return {
+                "project_id": "project-1",
+                "suppressions": [{"rule_id": "SKY-D212"}],
+                "count": 1,
+            }
         raise AssertionError(f"Unexpected endpoint {endpoint}")
 
     monkeypatch.setattr(syncmod, "api_get", fake_api_get)
@@ -531,7 +589,7 @@ def test_cmd_pull_writes_config_and_suppressions(
     assert "Pulling suppressions" in out
     assert "Sync complete" in out
 
-    skylos_dir = Path(syncmod.SKYLOS_DIR)
+    skylos_dir = repo / syncmod.SKYLOS_DIR
     config_path = skylos_dir / syncmod.CONFIG_FILE
     supp_path = skylos_dir / syncmod.SUPPRESSIONS_FILE
 
@@ -545,8 +603,12 @@ def test_cmd_pull_writes_config_and_suppressions(
     assert "list_users" in config_text
 
     supp = json.loads(supp_path.read_text())
-    assert isinstance(supp, list)
-    assert supp[0]["rule_id"] == "SKY-D212"
+    assert supp["suppressions"][0]["rule_id"] == "SKY-D212"
+    trusted_files = list((creds_file.parent / "reviewed-findings").glob("*.json"))
+    assert len(trusted_files) == 1
+    trusted = json.loads(trusted_files[0].read_text())
+    assert trusted["suppressions"][0]["rule_id"] == "SKY-D212"
+    assert trusted["_local_trust"]["repository_identity"] == "github.com/acme/repo"
 
 
 def test_cmd_pull_writes_top_level_config_shape(
@@ -556,7 +618,23 @@ def test_cmd_pull_writes_top_level_config_shape(
     creds_file.parent.mkdir(parents=True, exist_ok=True)
     creds_file.write_text(json.dumps({"token": "TOK"}))
 
-    monkeypatch.setattr(syncmod, "SKYLOS_DIR", str(tmp_path / ".skylos"), raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/repo.git",
+        ],
+        check=True,
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
 
     def fake_api_get(endpoint, token):
         assert token == "TOK"
@@ -580,7 +658,7 @@ def test_cmd_pull_writes_top_level_config_shape(
 
     assert "Sync complete" in out
 
-    skylos_dir = Path(syncmod.SKYLOS_DIR)
+    skylos_dir = repo / syncmod.SKYLOS_DIR
     config_path = skylos_dir / syncmod.CONFIG_FILE
 
     config_text = config_path.read_text()
@@ -593,7 +671,23 @@ def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path
     creds_file.parent.mkdir(parents=True, exist_ok=True)
     creds_file.write_text(json.dumps({"token": "TOK"}))
 
-    monkeypatch.setattr(syncmod, "SKYLOS_DIR", str(tmp_path / ".skylos"), raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/repo.git",
+        ],
+        check=True,
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
 
     calls = []
 
@@ -616,6 +710,54 @@ def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path
         "/api/sync/config",
         "/api/sync/suppressions",
     ]
+
+
+def test_cmd_pull_rejects_suppressions_from_another_project(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/repo.git",
+        ],
+        check=True,
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
+
+    def fake_api_get(endpoint, _token):
+        if endpoint == "/api/sync/whoami":
+            return {"project": {"id": "project-a", "name": "A"}}
+        if endpoint == "/api/sync/config":
+            return {"config": {}}
+        if endpoint == "/api/sync/suppressions":
+            return {
+                "project_id": "project-b",
+                "suppressions": [],
+                "count": 0,
+            }
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+
+    with pytest.raises(SystemExit) as error:
+        syncmod.cmd_pull()
+
+    assert error.value.code == 1
+    assert "different project" in capsys.readouterr().out
+    assert not (repo / ".skylos" / syncmod.SUPPRESSIONS_FILE).exists()
+    assert list((creds_file.parent / "reviewed-findings").glob("*.json")) == []
 
 
 def test_main_usage_no_args(capsys):
@@ -673,9 +815,13 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
 
 
 def test_published_precommit_hooks_use_console_entrypoint():
-    content = Path(__file__).resolve().parents[1].joinpath(
-        ".pre-commit-hooks.yaml"
-    ).read_text(encoding="utf-8")
+    content = (
+        Path(__file__)
+        .resolve()
+        .parents[1]
+        .joinpath(".pre-commit-hooks.yaml")
+        .read_text(encoding="utf-8")
+    )
     hooks = {hook["id"]: hook for hook in syncmod.yaml.safe_load(content)}
 
     assert "python -m skylos.cli" not in content

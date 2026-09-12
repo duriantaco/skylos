@@ -127,11 +127,23 @@ def run_agent_verify_command(
         console.print(f"[bad]Path not found: {path}[/bad]")
         return 1
 
+    project_root = _project_root_for_path(path)
+    from skylos.core.review_decisions import (
+        apply_trusted_review_decisions,
+        review_scan_requirements,
+    )
+
+    include_review_context, include_review_proofs = review_scan_requirements(
+        project_root
+    )
+
     console.print("[brand]Step 1/2: Running static analysis...[/brand]")
     static_result = _run_static_dead_code_scan(
         path,
         conf=args.conf,
         exclude_folders=exclude_folders,
+        include_review_context=include_review_context,
+        include_review_proofs=include_review_proofs,
     )
     if analysis_result_incomplete(static_result):
         console.print(
@@ -139,8 +151,15 @@ def run_agent_verify_command(
             "generate fixes.[/bad]"
         )
         return 2
+    static_result = apply_trusted_review_decisions(static_result, project_root)
     all_findings = _collect_dead_code_findings(static_result)
-    defs_map = static_result.get("definitions", {})
+    reviewed_dead_code = _reviewed_dead_code_findings(static_result)
+    protected_definitions = _finding_keys(reviewed_dead_code, project_root)
+    defs_map = _without_reviewed_definitions(
+        static_result.get("definitions", {}),
+        protected_definitions,
+        project_root,
+    )
 
     if not all_findings:
         console.print("[good]No dead code findings to verify![/good]")
@@ -175,6 +194,7 @@ def run_agent_verify_command(
             defs_map=defs_map,
             verified=verified,
             new_dead=new_dead,
+            protected_definitions=protected_definitions,
         )
 
     upload_agent_run(
@@ -199,17 +219,23 @@ def _run_static_dead_code_scan(
     *,
     conf: int,
     exclude_folders: list[str],
+    include_review_context: bool = False,
+    include_review_proofs: bool = False,
 ) -> dict[str, Any]:
     from skylos.analyzer import analyze as run_static
 
-    raw = run_static(
-        str(path),
-        conf=conf,
-        enable_danger=False,
-        enable_quality=False,
-        enable_secrets=False,
-        exclude_folders=exclude_folders,
-    )
+    options = {
+        "conf": conf,
+        "enable_danger": False,
+        "enable_quality": False,
+        "enable_secrets": False,
+        "exclude_folders": exclude_folders,
+    }
+    if include_review_proofs:
+        options["include_review_proofs"] = True
+    if include_review_context:
+        options["include_review_context"] = True
+    raw = run_static(str(path), **options)
     return json.loads(raw) if isinstance(raw, str) else raw
 
 
@@ -217,6 +243,70 @@ def _collect_dead_code_findings(static_result: dict[str, Any]) -> list[dict[str,
     from skylos.deadcode.collect import collect_dead_code_findings
 
     return collect_dead_code_findings(static_result)
+
+
+def _reviewed_dead_code_findings(
+    static_result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        finding
+        for finding in static_result.get("reviewed_findings", []) or []
+        if isinstance(finding, dict)
+        and str(finding.get("category") or "").upper() == "DEAD_CODE"
+    ]
+
+
+def _finding_key(
+    finding: dict[str, Any],
+    project_root: pathlib.Path,
+) -> tuple[str, str] | None:
+    from skylos.core.review_decisions import normalize_repo_path
+
+    file_path = normalize_repo_path(
+        finding.get("file_path") or finding.get("file"),
+        project_root,
+        allow_absolute=True,
+    )
+    name = str(
+        finding.get("full_name") or finding.get("symbol") or finding.get("name") or ""
+    ).strip()
+    if file_path is None or not name:
+        return None
+    return file_path, name
+
+
+def _finding_keys(
+    findings: list[dict[str, Any]],
+    project_root: pathlib.Path,
+) -> set[tuple[str, str]]:
+    return {
+        key
+        for finding in findings
+        if (key := _finding_key(finding, project_root)) is not None
+    }
+
+
+def _without_reviewed_definitions(
+    defs_map: Any,
+    protected_definitions: set[tuple[str, str]],
+    project_root: pathlib.Path,
+) -> dict[str, Any]:
+    if not isinstance(defs_map, dict) or not protected_definitions:
+        return defs_map if isinstance(defs_map, dict) else {}
+
+    active: dict[str, Any] = {}
+    for name, info in defs_map.items():
+        definition = info if isinstance(info, dict) else {}
+        key = _finding_key(
+            {
+                "file": definition.get("file"),
+                "full_name": name,
+            },
+            project_root,
+        )
+        if key not in protected_definitions:
+            active[name] = info
+    return active
 
 
 def _run_verification_harness(
@@ -257,13 +347,17 @@ def _run_verification_harness(
     return result
 
 
-def _write_or_print_verify_result(args, console: Console, result: dict[str, Any]) -> None:
+def _write_or_print_verify_result(
+    args, console: Console, result: dict[str, Any]
+) -> None:
     if args.format != "json":
         return
 
     output = json.dumps(result, indent=2, default=str)
     if args.output:
-        pathlib.Path(args.output).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
+        pathlib.Path(
+            args.output
+        ).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
             output,
             encoding="utf-8",
         )
@@ -379,9 +473,7 @@ def _print_entry_points(console: Console, result: dict[str, Any]) -> None:
 
     console.print(f"\n[cyan]Entry points discovered ({len(entry_points)}):[/cyan]")
     for entry_point in entry_points:
-        console.print(
-            f"  - {entry_point['name']} (from {entry_point['source']})"
-        )
+        console.print(f"  - {entry_point['name']} (from {entry_point['source']})")
 
 
 def _print_net_result(console: Console, stats: dict[str, Any]) -> None:
@@ -404,8 +496,16 @@ def _handle_verify_fixes(
     defs_map: dict[str, Any],
     verified: list[dict[str, Any]],
     new_dead: list[dict[str, Any]],
+    protected_definitions: set[tuple[str, str]] | None = None,
 ) -> None:
     dead_findings = _confirmed_dead_findings(verified, new_dead)
+    if protected_definitions:
+        project_root_path = _project_root_for_path(path)
+        dead_findings = [
+            finding
+            for finding in dead_findings
+            if _finding_key(finding, project_root_path) not in protected_definitions
+        ]
     if not dead_findings:
         console.print("\n[dim]No confirmed dead code to fix[/dim]")
         return
@@ -426,7 +526,9 @@ def _confirmed_dead_findings(
     new_dead: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [
-        finding for finding in verified if finding.get("_llm_verdict") == "TRUE_POSITIVE"
+        finding
+        for finding in verified
+        if finding.get("_llm_verdict") == "TRUE_POSITIVE"
     ] + (new_dead or [])
 
 

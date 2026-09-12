@@ -706,6 +706,14 @@ def cmd_project_create() -> None:
 
 def cmd_project_unlink() -> None:
     repo_root = _find_repo_root()
+    repo_subpath = _current_repo_subpath(repo_root)
+    project_root = repo_root / repo_subpath if repo_subpath else repo_root
+    from skylos.core.review_decisions import invalidate_trusted_bundle
+
+    invalidate_trusted_bundle(
+        project_root,
+        cache_root=GLOBAL_CREDS_DIR / "reviewed-findings",
+    )
     link_path = _delete_link(repo_root)
     if link_path:
         print(f"✓ Removed repo link: {link_path}")
@@ -722,8 +730,20 @@ def cmd_pull() -> None:
         sys.exit(1)
 
     repo_root = _find_repo_root()
-    skylos_dir = repo_root / SKYLOS_DIR
-    skylos_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        skylos_dir = _ensure_safe_link_path(repo_root, create_dir=True).parent
+    except AuthError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    from skylos.core.review_decisions import invalidate_trusted_bundle
+
+    sync_subpath = _current_repo_subpath(repo_root)
+    sync_project_root = repo_root / sync_subpath if sync_subpath else repo_root
+    invalidate_trusted_bundle(
+        sync_project_root,
+        cache_root=GLOBAL_CREDS_DIR / "reviewed-findings",
+    )
 
     try:
         info = api_get(WHOAMI_ENDPOINT, token)
@@ -739,7 +759,35 @@ def cmd_pull() -> None:
 
         print("Pulling suppressions...")
         supp_data = api_get("/api/sync/suppressions", token)
+        if not isinstance(supp_data, dict):
+            raise AuthError("Invalid suppression response")
+        whoami_project = info.get("project") if isinstance(info, dict) else None
+        whoami_project_id = (
+            str(whoami_project.get("id") or "").strip()
+            if isinstance(whoami_project, dict)
+            else ""
+        )
+        suppression_project_id = str(supp_data.get("project_id") or "").strip()
+        if (
+            whoami_project_id
+            and suppression_project_id
+            and whoami_project_id != suppression_project_id
+        ):
+            raise AuthError("Suppression response belongs to a different project")
+        if not suppression_project_id and whoami_project_id:
+            supp_data = {**supp_data, "project_id": whoami_project_id}
         _write_sync_suppressions(skylos_dir, supp_data)
+
+        from skylos.core.review_decisions import write_trusted_bundle
+
+        trusted_path = write_trusted_bundle(
+            sync_project_root,
+            supp_data,
+            cache_root=GLOBAL_CREDS_DIR / "reviewed-findings",
+            service_origin=get_api_url(),
+        )
+        if trusted_path is None:
+            raise AuthError("Could not store trusted suppression state")
 
         print("\n✓ Sync complete!")
 
@@ -764,8 +812,8 @@ def _write_sync_config(skylos_dir: Path, config_data):
 
 def _write_sync_suppressions(skylos_dir: Path, supp_data):
     supp_path = skylos_dir / SUPPRESSIONS_FILE
-    with supp_path.open("w") as f:
-        json.dump(supp_data.get("suppressions", []), f, indent=2)
+    payload = supp_data if isinstance(supp_data, dict) else {}
+    _atomic_write_text(supp_path, json.dumps(payload, indent=2) + "\n")
     print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
 
 

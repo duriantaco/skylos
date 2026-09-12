@@ -298,15 +298,32 @@ def run_debt_analysis(
     target = Path(path).resolve()
     project_root = _project_root(target)
 
+    from skylos.core.review_decisions import (
+        apply_trusted_review_decisions,
+        review_scan_requirements,
+    )
+
+    include_review_context, include_review_proofs = review_scan_requirements(
+        project_root
+    )
+    analysis_options = {
+        "conf": conf,
+        "enable_quality": True,
+        "enable_danger": False,
+        "enable_secrets": False,
+        "exclude_folders": list(exclude_folders or []),
+    }
+    if include_review_context:
+        analysis_options["include_review_context"] = True
+    if include_review_proofs:
+        analysis_options["include_review_proofs"] = True
+
     raw = run_analyze(
         str(target),
-        conf=conf,
-        enable_quality=True,
-        enable_danger=False,
-        enable_secrets=False,
-        exclude_folders=list(exclude_folders or []),
+        **analysis_options,
     )
     result = json.loads(raw) if isinstance(raw, str) else raw
+    result = apply_trusted_review_decisions(result, project_root)
 
     return build_debt_snapshot(
         result,
