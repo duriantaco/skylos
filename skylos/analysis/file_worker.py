@@ -17,7 +17,7 @@ from skylos.analysis.file_processing import (
     scan_python_quality,
     set_linter_node_types,
 )
-from skylos.analysis.finding_filter import finding_is_inline_ignored
+from skylos.analysis.finding_filter import partition_inline_ignored_findings
 from skylos.config import (
     get_noqa_codes_by_line,
     get_skylos_ignore_lines,
@@ -232,45 +232,19 @@ def _custom_findings(tree, file, extra_visitors: Iterable[type] | None) -> list:
     return findings
 
 
-def _filter_inline_ignored(
-    findings,
-    category,
-    ignore_lines,
-    ignore_rules_by_line,
-) -> tuple[list, list]:
-    active = []
-    suppressed = []
-    for finding in findings:
-        if not finding_is_inline_ignored(
-            finding,
-            ignore_lines,
-            ignore_rules_by_line,
-        ):
-            active.append(finding)
-            continue
-        suppressed.append(
-            {
-                **finding,
-                "category": category,
-                "reason": "inline ignore comment",
-            }
-        )
-    return active, suppressed
-
-
 def _apply_inline_ignores(
     quality_findings,
     danger_findings,
     ignore_lines,
     ignore_rules_by_line,
 ) -> tuple[list, list, list]:
-    quality_findings, suppressed_quality = _filter_inline_ignored(
+    quality_findings, suppressed_quality = partition_inline_ignored_findings(
         quality_findings,
         "quality",
         ignore_lines,
         ignore_rules_by_line,
     )
-    danger_findings, suppressed_danger = _filter_inline_ignored(
+    danger_findings, suppressed_danger = partition_inline_ignored_findings(
         danger_findings,
         "security",
         ignore_lines,
