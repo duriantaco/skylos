@@ -3429,7 +3429,10 @@ def scan_ctx(
     for line_number, raw_line in enumerate(file_lines, start=1):
         line_content = raw_line.rstrip("\n")
 
-        if IGNORE_DIRECTIVE in line_content:
+        if (
+            ctx.get("honor_inline_ignores", True)
+            and IGNORE_DIRECTIVE in line_content
+        ):
             continue
 
         stripped_line = line_content.lstrip()
