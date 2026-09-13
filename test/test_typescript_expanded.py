@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.visitors.languages.typescript import scan_typescript_file
 
 _BENCHMARKS_DIR = Path(__file__).parent.parent / "manual" / "mixed_repo"
@@ -11,11 +12,15 @@ _BENCHMARKS_DIR = Path(__file__).parent.parent / "manual" / "mixed_repo"
 
 def _scan_ts_file(tmp_path, filename, code):
     p = tmp_path / filename
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(code, encoding="utf-8")
+    _write(p, code)
     results = scan_typescript_file(str(p))
     defs, refs, _, _, _, _, quality, danger, *_ = results
     return defs, refs, quality, danger
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert write_text_no_symlink(path, text, encoding="utf-8")
 
 
 def _scan_ts(tmp_path, code):
@@ -1196,6 +1201,107 @@ class TestTSClassDefs:
 
 
 class TestMixedRepoIntegration:
+    def test_esbuild_entry_and_jsdoc_types_are_not_reported_as_unused_files(
+        self, tmp_path
+    ):
+        from skylos.analyzer import analyze
+
+        _write(
+            tmp_path / "package.json",
+            json.dumps(
+                {
+                    "name": "e003-regression",
+                    "type": "module",
+                    "main": "src/main.js",
+                    "scripts": {"build": "node build.mjs"},
+                }
+            ),
+        )
+        _write(
+            tmp_path / "build.mjs",
+            "import { build } from 'esbuild';\n"
+            "await build({ entryPoints: {\n"
+            "  main: 'src/main.js',\n"
+            "  worker: 'src/worker.js',\n"
+            "} });\n",
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        _write(
+            src / "main.js",
+            "import { formatGreeting } from './runtime.js';\n"
+            "/** @typedef {import('./types.js').Greeting} Greeting */\n"
+            "console.log(formatGreeting({ recipient: 'world' }));\n",
+        )
+        _write(
+            src / "runtime.js",
+            "/** @param {import('./types.js').Greeting} greeting */\n"
+            "export function formatGreeting(greeting) {\n"
+            "  return `Hello, ${greeting.recipient}!`;\n"
+            "}\n",
+        )
+        _write(
+            src / "types.js",
+            "/** @typedef {{recipient: string}} Greeting */\nexport {};\n",
+        )
+        _write(
+            src / "worker.js",
+            "self.onmessage = event => self.postMessage(event.data);\n",
+        )
+        _write(src / "dead.js", "console.log('dead');\n")
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        assert {
+            (Path(finding["file"]).name, finding["rule_id"])
+            for finding in result["unused_files"]
+        } == {("dead.js", "SKY-E003")}
+
+    def test_project_ignore_suppresses_e003(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        _write(
+            tmp_path / "pyproject.toml",
+            '[tool.skylos]\nignore = ["SKY-E003"]\n',
+        )
+        _write(
+            tmp_path / "package.json", '{"name":"app","main":"src/main.js"}'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        _write(src / "main.js", "console.log('main');\n")
+        _write(src / "unused.js", "console.log('unused');\n")
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        assert result["unused_files"] == []
+
+    def test_inline_ignore_suppresses_e003_and_records_decision(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        _write(
+            tmp_path / "package.json", '{"name":"app","main":"src/main.js"}'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        _write(src / "main.js", "console.log('main');\n")
+        _write(
+            src / "unused.js",
+            "// skylos: ignore[SKY-E003] retained script\n"
+            "console.log('unused');\n",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        assert result["unused_files"] == []
+        suppressed = [
+            finding
+            for finding in result["suppressed"]
+            if finding.get("rule_id") == "SKY-E003"
+        ]
+        assert len(suppressed) == 1
+        assert suppressed[0]["reason"] == "inline ignore comment"
+
     def test_mixed_repo_tsx_jsx_refs_prevent_false_positives(self, tmp_path):
         """TSX callbacks and component usage should count as live refs."""
         from skylos.analyzer import analyze

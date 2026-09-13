@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from bisect import bisect_right
 from pathlib import Path
 
@@ -152,6 +153,38 @@ _RAW_IMPORT_FILE_EXTENSIONS = frozenset(
     {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}
 )
 _DYNAMIC_GLOB_METHODS = frozenset({"glob", "globEager"})
+_JSDOC_EXTENSIONS = frozenset({".js", ".jsx", ".mjs", ".cjs"})
+_JSDOC_TYPE_TAG_RE = re.compile(
+    r"@(?:arg|argument|enum|exception|param|prop|property|return|returns|"
+    r"satisfies|template|this|throws|type|typedef)\b"
+)
+_JSDOC_TAG_RE = re.compile(
+    r"(?:(?<=/\*\*)|(?<=\s))(?P<tag>@[A-Za-z][\w-]*)"
+)
+_JSDOC_LINK_TAG_RE = re.compile(r"\{@(?:link|linkcode|linkplain)\b")
+_JSDOC_IMPORT_TYPE_RE = re.compile(
+    r"(?:[\s({\[<>|&,:?!]|(?<=\.\.\.)|^)"
+    r"(?P<keyword>import)\s*\(\s*(?P<quote>['\"])"
+    r"(?P<source>[^'\"\r\n]+)(?P=quote)\s*\)"
+    r"(?:\s*\.\s*(?P<dot_name>[A-Za-z_$][\w$]*)|"
+    r"\s*\[\s*(?P<member_quote>['\"])(?P<bracket_name>[A-Za-z_$][\w$]*)"
+    r"(?P=member_quote)\s*\])?"
+)
+_JSDOC_IMPORT_TAG_BODY_RE = re.compile(
+    r"\s+(?:(?P<compound>(?:[A-Za-z_$][\w$]*\s*,\s*)?"
+    r"(?:\{[^{}]*\}|\*\s+as\s+[A-Za-z_$][\w$]*))"
+    r"\s+from|(?P<default>[A-Za-z_$][\w$]*)[^\S\r\n]+from)"
+    r"[^\S\r\n]*(?P<quote>['\"])"
+    r"(?P<source>[^'\"\r\n]+)(?P=quote)"
+)
+_JSDOC_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
+_JSDOC_NAME_BEFORE_TYPE_RE = re.compile(
+    r"(?:\.\.\.)?(?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|"
+    r"\[[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\])"
+)
+_JSDOC_NAME_FIRST_TYPE_TAGS = frozenset(
+    {"@arg", "@argument", "@param", "@prop", "@property"}
+)
 
 
 def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
@@ -676,7 +709,7 @@ class TypeScriptCore:
 
     def _scan_raw_imports(self) -> None:
         self.raw_imports: list[dict] = []
-        self._raw_import_seen: set[tuple[str, int, bool]] = set()
+        self._raw_import_seen: set[tuple] = set()
         c = self._defs_captures
 
         for src_node in c.get("import_src", []):
@@ -707,6 +740,7 @@ class TypeScriptCore:
                 )
 
         self._scan_dynamic_raw_imports()
+        self._scan_jsdoc_raw_imports()
 
     def _extract_import_names_from_stmt(self, import_stmt) -> list[str]:
         names = []
@@ -778,20 +812,363 @@ class TypeScriptCore:
         return self._get_text(node).strip("'\"")
 
     def _append_raw_import(
-        self, source_path: str, line: int, consume_all_exports: bool = False
+        self,
+        source_path: str,
+        line: int,
+        consume_all_exports: bool = False,
+        *,
+        names: list[str] | None = None,
+        type_only: bool = False,
     ) -> None:
-        key = (source_path, line, consume_all_exports)
+        import_names = ["*"] if names is None else list(names)
+        key = (
+            source_path,
+            line,
+            consume_all_exports,
+            tuple(import_names),
+            type_only,
+        )
         if key in self._raw_import_seen:
             return
         self._raw_import_seen.add(key)
-        self.raw_imports.append(
-            {
-                "source": source_path,
-                "names": ["*"],
-                "line": line,
-                "consume_all_exports": consume_all_exports,
-            }
-        )
+        raw_import = {
+            "source": source_path,
+            "names": import_names,
+            "line": line,
+        }
+        if consume_all_exports:
+            raw_import["consume_all_exports"] = True
+        if type_only:
+            raw_import["type_only"] = True
+        self.raw_imports.append(raw_import)
+
+    @staticmethod
+    def _jsdoc_balanced_ranges(
+        comment: str, opening_brace: int, *, stop_at_tag: bool = False
+    ) -> tuple[int, list[tuple[int, int]]] | None:
+        """Return a balanced type/link end and its unquoted content ranges."""
+        depth = 0
+        quote: str | None = None
+        escaped = False
+        range_start: int | None = None
+        ranges: list[tuple[int, int]] = []
+        template_expression_depths: list[int] = []
+        cursor = opening_brace
+
+        while cursor < len(comment):
+            char = comment[cursor]
+            if escaped:
+                escaped = False
+                cursor += 1
+                continue
+            if quote is not None:
+                if char == "\\":
+                    escaped = True
+                elif (
+                    quote == "`"
+                    and char == "$"
+                    and cursor + 1 < len(comment)
+                    and comment[cursor + 1] == "{"
+                ):
+                    depth += 1
+                    template_expression_depths.append(depth)
+                    quote = None
+                    range_start = cursor + 2
+                    cursor += 2
+                    continue
+                elif char == quote:
+                    quote = None
+                    if depth:
+                        range_start = cursor + 1
+                cursor += 1
+                continue
+            if (
+                stop_at_tag
+                and cursor > opening_brace
+                and char == "@"
+                and _JSDOC_TAG_RE.match(comment, cursor) is not None
+            ):
+                return None
+            if depth and char in {"'", '"', "`"}:
+                if range_start is not None and range_start < cursor:
+                    ranges.append((range_start, cursor))
+                range_start = None
+                quote = char
+                cursor += 1
+                continue
+            if char == "{":
+                if depth == 0:
+                    range_start = cursor + 1
+                depth += 1
+                cursor += 1
+                continue
+            if char != "}" or not depth:
+                cursor += 1
+                continue
+            if template_expression_depths and depth == template_expression_depths[-1]:
+                if range_start is not None and range_start < cursor:
+                    ranges.append((range_start, cursor))
+                template_expression_depths.pop()
+                depth -= 1
+                quote = "`"
+                range_start = None
+                cursor += 1
+                continue
+            depth -= 1
+            if depth:
+                cursor += 1
+                continue
+            if range_start is not None and range_start < cursor:
+                ranges.append((range_start, cursor))
+            return cursor + 1, ranges
+        if quote == "`":
+            return -1, []
+        return None
+
+    @classmethod
+    def _jsdoc_tags_and_type_ranges(
+        cls, comment: str, *, original_comment: str | None = None
+    ):
+        """Parse JSDoc tags once, skipping tokens inside types and links."""
+        tags = []
+        type_ranges: list[tuple[int, int]] = []
+        search_position = 0
+        seen_typedef = False
+        original_comment = original_comment or comment
+        newline_offsets = [
+            match.start() for match in re.finditer("\n", comment)
+        ]
+        all_tags = list(_JSDOC_TAG_RE.finditer(comment))
+        links = list(_JSDOC_LINK_TAG_RE.finditer(comment))
+        tag_index = 0
+        link_index = 0
+
+        while search_position < len(comment):
+            while (
+                tag_index < len(all_tags)
+                and all_tags[tag_index].start("tag") < search_position
+            ):
+                tag_index += 1
+            while (
+                link_index < len(links)
+                and links[link_index].start() < search_position
+            ):
+                link_index += 1
+            tag = all_tags[tag_index] if tag_index < len(all_tags) else None
+            link = links[link_index] if link_index < len(links) else None
+            if link is not None and (
+                tag is None or link.start() < tag.start("tag")
+            ):
+                balanced_link = cls._jsdoc_balanced_ranges(comment, link.start())
+                if balanced_link is None:
+                    break
+                if balanced_link[0] < 0:
+                    break
+                search_position = balanced_link[0]
+                link_index += 1
+                continue
+            if tag is None:
+                break
+
+            tag_index += 1
+            tags.append(tag)
+            tag_name = tag.group("tag")
+            tag_end = tag.end("tag")
+            if tag_name == "@typedef":
+                seen_typedef = True
+            if _JSDOC_TYPE_TAG_RE.fullmatch(tag_name) is None:
+                search_position = tag_end
+                continue
+            if tag_name in {"@prop", "@property"} and not seen_typedef:
+                search_position = tag_end
+                continue
+
+            position = tag_end
+            while position < len(comment) and comment[position].isspace():
+                position += 1
+            if (
+                tag_name in _JSDOC_NAME_FIRST_TYPE_TAGS
+                and position < len(comment)
+                and comment[position] != "{"
+            ):
+                name_match = _JSDOC_NAME_BEFORE_TYPE_RE.match(comment, position)
+                if name_match is None:
+                    search_position = tag_end
+                    continue
+                position = name_match.end()
+                while position < len(comment) and comment[position].isspace():
+                    position += 1
+            if position >= len(comment) or comment[position] != "{":
+                search_position = tag_end
+                continue
+            newline_index = bisect_right(newline_offsets, position)
+            line_end = (
+                newline_offsets[newline_index]
+                if newline_index < len(newline_offsets)
+                else len(comment)
+            )
+            if not comment[position + 1 : line_end].strip():
+                next_line_start = line_end + 1
+                next_line_end = (
+                    newline_offsets[newline_index + 1]
+                    if newline_index + 1 < len(newline_offsets)
+                    else len(comment)
+                )
+                next_line = original_comment[next_line_start:next_line_end]
+                if re.match(r"[^\S\r\n]*\*", next_line):
+                    search_position = tag_end
+                    continue
+
+            balanced_type = cls._jsdoc_balanced_ranges(
+                comment, position, stop_at_tag=True
+            )
+            if balanced_type is None:
+                search_position = tag_end
+                continue
+            if balanced_type[0] < 0:
+                break
+            type_end, unquoted_ranges = balanced_type
+            type_ranges.extend(unquoted_ranges)
+            search_position = type_end
+
+        return tags, type_ranges
+
+    @staticmethod
+    def _parse_jsdoc_import_tag_clause(
+        clause: str, *, original_clause: str | None = None
+    ) -> tuple[list[str], bool] | None:
+        """Return imported names and whether the clause consumes the namespace."""
+        clause = clause.strip()
+        names: list[str] = []
+        if not clause.startswith(("{", "*")):
+            if "," not in clause:
+                if _JSDOC_IDENTIFIER_RE.fullmatch(clause) is None:
+                    return None
+                return ["default"], False
+            default_name, remainder = clause.split(",", 1)
+            if _JSDOC_IDENTIFIER_RE.fullmatch(default_name.strip()) is None:
+                return None
+            default_identifier = re.match(r"[A-Za-z_$][\w$]*", clause)
+            if default_identifier is None:
+                return None
+            remainder_start = clause.index(",") + 1
+            while remainder_start < len(clause) and clause[remainder_start].isspace():
+                remainder_start += 1
+            if original_clause is not None and "*" in original_clause[
+                default_identifier.end() : remainder_start
+            ]:
+                return None
+            names.append("default")
+            clause = remainder.strip()
+
+        if clause.startswith("*"):
+            namespace = re.fullmatch(
+                r"\*\s+as\s+[A-Za-z_$][\w$]*", clause
+            )
+            return (names, True) if namespace is not None else None
+        if not (clause.startswith("{") and clause.endswith("}")):
+            return None
+
+        contents = clause[1:-1].strip()
+        if not contents:
+            return names, False
+        raw_names = contents.split(",")
+        if raw_names[-1].strip() == "":
+            raw_names.pop()
+        for raw_name in raw_names:
+            imported_name = raw_name.strip()
+            specifier = re.fullmatch(
+                r"(?:type\s+)?(?P<name>[A-Za-z_$][\w$]*)"
+                r"(?:\s+as\s+[A-Za-z_$][\w$]*)?",
+                imported_name,
+            )
+            if specifier is None:
+                return None
+            names.append(specifier.group("name"))
+        return names, False
+
+    def _scan_jsdoc_raw_imports(self) -> None:
+        if self._suffix not in _JSDOC_EXTENSIONS or not self.root_node:
+            return
+
+        for node in self._iter_nodes(self.root_node):
+            if node.type != "comment":
+                continue
+            comment = self._get_text(node)
+            if not comment.startswith("/**"):
+                continue
+
+            # Preserve offsets while removing the decorative `*` margin so an
+            # official multiline `@import { ... } from ...` tag can be parsed.
+            normalized_comment = re.sub(
+                r"(?m)^(?P<indent>[^\S\r\n]*)\*(?P<space>[^\S\r\n]?)",
+                lambda match: " " * len(match.group(0)),
+                comment,
+            )
+            tags, type_ranges = self._jsdoc_tags_and_type_ranges(
+                normalized_comment, original_comment=comment
+            )
+            range_index = 0
+            newline_offsets = [
+                match.start() for match in re.finditer("\n", comment)
+            ]
+            for match in _JSDOC_IMPORT_TYPE_RE.finditer(normalized_comment):
+                while (
+                    range_index < len(type_ranges)
+                    and type_ranges[range_index][1] <= match.start()
+                ):
+                    range_index += 1
+                if (
+                    range_index >= len(type_ranges)
+                    or not type_ranges[range_index][0]
+                    <= match.start("keyword")
+                    < type_ranges[range_index][1]
+                ):
+                    continue
+                member_name = match.group("dot_name") or match.group("bracket_name")
+                line = (
+                    node.start_point[0]
+                    + bisect_right(newline_offsets, match.start("keyword"))
+                    + 1
+                )
+                self._append_raw_import(
+                    match.group("source"),
+                    line,
+                    consume_all_exports=member_name is None,
+                    names=[member_name] if member_name else [],
+                    type_only=True,
+                )
+
+            for tag in tags:
+                if tag.group("tag") != "@import":
+                    continue
+                match = _JSDOC_IMPORT_TAG_BODY_RE.match(
+                    normalized_comment, tag.end("tag")
+                )
+                if match is None:
+                    continue
+                group_name = "compound" if match.group("compound") else "default"
+                clause = match.group(group_name)
+                clause_start, clause_end = match.span(group_name)
+                parsed_clause = self._parse_jsdoc_import_tag_clause(
+                    clause,
+                    original_clause=comment[clause_start:clause_end],
+                )
+                if parsed_clause is None:
+                    continue
+                names, consume_all_exports = parsed_clause
+                line = (
+                    node.start_point[0]
+                    + bisect_right(newline_offsets, tag.start("tag"))
+                    + 1
+                )
+                self._append_raw_import(
+                    match.group("source"),
+                    line,
+                    consume_all_exports=consume_all_exports,
+                    names=names,
+                    type_only=True,
+                )
 
     def _relative_source_for_match(self, matched_path: str) -> str:
         relative = os.path.relpath(matched_path, os.path.dirname(self.file_path))

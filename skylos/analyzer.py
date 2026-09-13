@@ -257,6 +257,35 @@ def _extend_unsuppressed_ai_defect_findings(
         all_ai_defects.append(finding)
 
 
+def _extend_unsuppressed_dead_file_findings(
+    findings,
+    *,
+    project_ignore,
+    per_file_ignore_lines,
+    per_file_ignore_rules,
+    unused_files,
+    all_suppressed,
+):
+    for finding in findings:
+        if finding.get("rule_id") in project_ignore:
+            continue
+
+        file_key = str(finding.get("file", ""))
+        ignored_lines = per_file_ignore_lines.get(file_key, set())
+        ignored_rules = per_file_ignore_rules.get(file_key, {})
+        if _finding_is_inline_ignored(finding, ignored_lines, ignored_rules):
+            all_suppressed.append(
+                {
+                    **finding,
+                    "category": "dead_code",
+                    "reason": "inline ignore comment",
+                }
+            )
+            continue
+
+        unused_files.append(finding)
+
+
 def _append_ai_verification_result(
     findings,
     check,
@@ -4948,7 +4977,14 @@ class Skylos:
         dead_ts_files = self._find_dead_ts_files(
             files, exclude_folders, workspace_inventory=workspace_inventory
         )
-        empty_files.extend(dead_ts_files)
+        _extend_unsuppressed_dead_file_findings(
+            dead_ts_files,
+            project_ignore=project_ignore,
+            per_file_ignore_lines=per_file_ignore_lines,
+            per_file_ignore_rules=per_file_ignore_rules,
+            unused_files=empty_files,
+            all_suppressed=all_suppressed,
+        )
 
         unused_ts_exports = self._find_unused_ts_exports(
             files,
