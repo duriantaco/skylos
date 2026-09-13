@@ -139,6 +139,56 @@ def test_unresolved_package_children_do_not_invent_self_cycles(mode, source):
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_unresolved_package_child_does_not_invent_larger_cycle(mode):
+    rule = _rule_for_sources(
+        {
+            "package": (
+                "/project/package/__init__.py",
+                "from . import child",
+            ),
+            "package.child": (
+                "/project/package/child.py",
+                "from .generated_sibling import value",
+            ),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    assert dict(rule._analyzer.dependencies) == {"package": {"package.child"}}
+    assert dict(rule._analyzer.architecture_dependencies) == {
+        "package": {"package.child"},
+        "package.child": {"package"},
+    }
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_unresolved_sibling_child_keeps_package_initializer_cycle(mode):
+    rule = _rule_for_sources(
+        {
+            "package.a": (
+                "/project/package/a.py",
+                "import package.b.generated",
+            ),
+            "package.b": (
+                "/project/package/b/__init__.py",
+                "import package.a",
+            ),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert set(findings[0]["cycle"]) == {"package.a", "package.b"}
+    assert dict(rule._analyzer.dependencies) == {
+        "package.a": {"package.b"},
+        "package.b": {"package.a"},
+    }
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
 @pytest.mark.parametrize(
     ("source", "targets"),
     [

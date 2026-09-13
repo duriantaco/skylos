@@ -17,6 +17,10 @@ def _module_root(module_name: str) -> str:
     return module_name.split(".")[0] if module_name else ""
 
 
+def _is_module_or_descendant(module_name: str, ancestor: str) -> bool:
+    return module_name == ancestor or module_name.startswith(f"{ancestor}.")
+
+
 def _known_module_names(module_name: str) -> Set[str]:
     if not module_name:
         return set()
@@ -74,8 +78,10 @@ def _circular_import_targets(
     Collapsing ``pkg -> pkg.child`` to ``pkg -> pkg`` invents a self-cycle,
     while discarding that edge would hide a real child-to-package cycle.
     Keep the exact resolved graph within a package; unresolved symbols still
-    fall back to their known containing module. Do not turn a more-specific
-    unresolved child that falls back to its importer into a self-cycle.
+    fall back to their known containing module. A missing descendant that falls
+    back to the importer or one of its ancestors does not add a real dependency.
+    Keep fallbacks into sibling packages because importing them can execute the
+    sibling package initializer.
     """
     if not targets:
         return {}
@@ -84,7 +90,10 @@ def _circular_import_targets(
         return {
             target: target_names
             for target, target_names in targets.items()
-            if target != from_module or not import_module.startswith(f"{target}.")
+            if not (
+                import_module.startswith(f"{target}.")
+                and _is_module_or_descendant(from_module, target)
+            )
         }
     return {root: names}
 
