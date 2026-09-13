@@ -135,7 +135,7 @@ def test_unresolved_package_children_do_not_invent_self_cycles(mode, source):
 
     assert rule.analyze() == []
     assert dict(rule._analyzer.dependencies) == {}
-    assert dict(rule._analyzer.architecture_dependencies) == {"package": {"package"}}
+    assert dict(rule._analyzer.architecture_dependencies) == {}
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
@@ -150,16 +150,31 @@ def test_unresolved_package_child_does_not_invent_larger_cycle(mode):
                 "/project/package/child.py",
                 "from .generated_sibling import value",
             ),
+            "consumer": (
+                "/project/consumer.py",
+                "import package",
+            ),
         },
         mode,
     )
 
     assert rule.analyze() == []
-    assert dict(rule._analyzer.dependencies) == {"package": {"package.child"}}
-    assert dict(rule._analyzer.architecture_dependencies) == {
+    expected_graph = {
         "package": {"package.child"},
-        "package.child": {"package"},
+        "consumer": {"package"},
     }
+    assert dict(rule._analyzer.dependencies) == expected_graph
+    architecture_graph = dict(rule._analyzer.architecture_dependencies)
+    assert architecture_graph == expected_graph
+
+    findings, summary = get_architecture_findings(
+        dependency_graph=architecture_graph,
+        module_files=dict(rule._analyzer.modules),
+        package_boundary_modules={"package.child"},
+    )
+
+    assert findings == []
+    assert summary["system_metrics"]["modularity_index"] == 0.5
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
@@ -183,6 +198,10 @@ def test_unresolved_sibling_child_keeps_package_initializer_cycle(mode):
     assert len(findings) == 1
     assert set(findings[0]["cycle"]) == {"package.a", "package.b"}
     assert dict(rule._analyzer.dependencies) == {
+        "package.a": {"package.b"},
+        "package.b": {"package.a"},
+    }
+    assert dict(rule._analyzer.architecture_dependencies) == {
         "package.a": {"package.b"},
         "package.b": {"package.a"},
     }
