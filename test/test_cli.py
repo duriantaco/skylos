@@ -56,6 +56,15 @@ def test_agent_findings_result_json_preserves_ai_defect_category():
     assert result["quality"] == []
 
 
+def test_agent_findings_result_json_preserves_unused_file_category():
+    result = cli._agent_findings_to_result_json(
+        [{"rule_id": "SKY-E003", "file": "unused.js", "line": 1}]
+    )
+
+    assert [item["rule_id"] for item in result["unused_files"]] == ["SKY-E003"]
+    assert result["quality"] == []
+
+
 class TestCleanFormatter:
     def test_clean_formatter_removes_metadata(self):
         """Test that CleanFormatter only returns the message."""
@@ -815,6 +824,39 @@ def test_apply_rule_selection_uses_public_ids_for_dead_code_without_rule_ids():
     assert filtered["unused_imports"] == []
 
 
+def test_e003_rule_selection_keeps_only_typescript_unused_files():
+    result = {
+        "analysis_summary": {"total_files": 2, "unused_files_count": 2},
+        "unused_files": [
+            {"rule_id": "SKY-E002", "file": "empty.py", "line": 1},
+            {"rule_id": "SKY-E003", "file": "unused.js", "line": 1},
+        ],
+    }
+
+    filtered = cli._apply_rule_selection(result, ["SKY-E003"])
+
+    assert filtered["unused_files"] == [result["unused_files"][1]]
+    assert filtered["analysis_summary"]["unused_files_count"] == 1
+
+
+def test_e003_is_accepted_as_a_selected_dead_code_rule():
+    args = types.SimpleNamespace(
+        select=["SKY-E003"],
+        danger=False,
+        ai_defects=False,
+        quality=False,
+        secrets=False,
+        sca=False,
+    )
+
+    cli._apply_selected_rule_analysis_flags(args)
+
+    assert args.select == ["SKY-E003"]
+    assert args.danger is False
+    assert args.ai_defects is False
+    assert args.quality is False
+
+
 def test_selected_rule_analysis_flags_use_catalog_categories_not_prefixes():
     args = types.SimpleNamespace(
         select=[
@@ -1182,6 +1224,74 @@ def test_render_results_includes_ai_defect_summary_and_table():
     assert "Call to a missing local helper" in columns["Message"][0]
     assert "security.require_auth" in columns["Message"][0]
     assert columns["Location"] == ["/root/app/views.py:5"]
+
+
+def test_render_results_includes_unused_files_in_summary_and_table():
+    output = StringIO()
+    console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=120,
+        theme=cli._skylos_console_theme(),
+    )
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "severity": "LOW",
+                "message": "Unused TypeScript/JavaScript file",
+                "file": "/root/src/unused.js",
+                "line": 1,
+            }
+        ],
+    }
+
+    cli.render_results(
+        console,
+        result,
+        tree=False,
+        root_path="/root",
+        copy_badge=False,
+    )
+
+    rendered = output.getvalue()
+    assert "Unused files: 1" in rendered
+    assert "Unused Files" in rendered
+    assert "SKY-E003" in rendered
+    assert "src/unused.js:1" in rendered
+    assert "Unused TypeScript/JavaScript file" in rendered
+
+
+def test_render_results_tree_includes_unused_files():
+    console = Mock()
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "severity": "LOW",
+                "message": "Unused TypeScript/JavaScript file",
+                "file": "/root/src/unused.js",
+                "line": 1,
+            }
+        ],
+    }
+
+    cli.render_results(console, result, tree=True, root_path="/root")
+
+    tree = next(
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], RichTree)
+    )
+    labels = [
+        str(finding.label)
+        for file_node in tree.children
+        for finding in file_node.children
+    ]
+    assert any("SKY-E003" in label for label in labels)
 
 
 def test_render_results_ai_defect_message_is_visible_at_narrow_terminal_width():
@@ -1671,6 +1781,15 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
         "unused_variables": [],
         "unused_classes": [],
         "unused_parameters": [],
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "file": "src/unused.js",
+                "line": 1,
+                "message": "Unused TypeScript/JavaScript file",
+                "severity": "LOW",
+            }
+        ],
     }
 
     sarif_path = tmp_path / "out.sarif.json"
@@ -1723,6 +1842,7 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
 
     assert "SKYLOS-DEADCODE-UNUSED_FUNCTION" in dead_rules
     assert "SKYLOS-DEADCODE-UNUSED_IMPORT" in dead_rules
+    assert "SKY-E003" in dead_rules
 
     for f in findings:
         assert isinstance(f["line_number"], int)

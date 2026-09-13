@@ -71,6 +71,26 @@ class TestGitHubAnnotations:
         assert "Unused function: old_func" in lines[0]
         assert "Unused import: os" in lines[1]
 
+    def test_unused_file_annotation_preserves_e003_rule_and_message(self):
+        result = {
+            "unused_files": [
+                {
+                    "rule_id": "SKY-E003",
+                    "severity": "LOW",
+                    "file": "src/unused.js",
+                    "line": 1,
+                    "message": "Unused TypeScript/JavaScript file",
+                }
+            ]
+        }
+
+        lines = _capture_annotations(result)
+
+        assert lines == [
+            "::notice file=src/unused.js,line=1,title=Skylos "
+            "SKY-E003::Unused TypeScript/JavaScript file"
+        ]
+
     def test_empty_result(self):
         result = {}
         lines = _capture_annotations(result)

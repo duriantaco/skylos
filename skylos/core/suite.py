@@ -14,6 +14,7 @@ _DEAD_CODE_CATEGORIES = (
     "unused_classes",
     "unused_variables",
     "unused_parameters",
+    "unused_files",
 )
 
 _DEFENSE_NOTE = (
@@ -95,6 +96,7 @@ def _annotatable_findings(result: dict[str, Any]) -> list[dict[str, Any]]:
         "unused_classes",
         "unused_variables",
         "unused_parameters",
+        "unused_files",
         "dependency_vulnerabilities",
     ]
     items: list[dict[str, Any]] = []

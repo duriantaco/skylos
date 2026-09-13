@@ -181,6 +181,7 @@ def _empty_result() -> dict:
         "unused_variables": [],
         "unused_parameters": [],
         "unused_classes": [],
+        "unused_files": [],
         "danger": [],
         "reliability": [],
         "ai_defects": [],
@@ -388,6 +389,7 @@ def run_static_on_files(
         "unused_variables",
         "unused_parameters",
         "unused_classes",
+        "unused_files",
         "danger",
         "reliability",
         "ai_defects",
@@ -587,14 +589,17 @@ def run_pipeline(
                 "unused_variables",
                 "unused_classes",
                 "unused_parameters",
+                "unused_files",
             ]:
                 for item in static_result.get(key, []) or []:
                     item["_source"] = "static"
                     item["_category"] = "dead_code"
-                    item["message"] = (
-                        item.get("message")
-                        or f"Unused {key.replace('unused_', '')}: {item.get('name')}"
+                    fallback_message = (
+                        "Unused file"
+                        if key == "unused_files"
+                        else f"Unused {key.replace('unused_', '')}: {item.get('name')}"
                     )
+                    item["message"] = item.get("message") or fallback_message
                     static_findings["dead_code"].append(item)
 
             total_static = sum(len(v) for v in static_findings.values())

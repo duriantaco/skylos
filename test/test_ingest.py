@@ -443,6 +443,31 @@ class TestCrossReference:
         xref = cross_reference(claude, skylos)
         assert xref["in_dead_code"] == 1
 
+    def test_cross_reference_treats_unused_file_as_dead_code(self):
+        claude = [
+            {
+                "file_path": "src/unused.js",
+                "line_number": 5,
+                "message": "vulnerability",
+                "severity": "HIGH",
+            }
+        ]
+        skylos = {
+            "unused_files": [
+                {
+                    "rule_id": "SKY-E003",
+                    "file": "src/unused.js",
+                    "line": 1,
+                }
+            ],
+            "danger": [],
+        }
+
+        xref = cross_reference(claude, skylos)
+
+        assert xref["in_dead_code"] == 1
+        assert xref["unique_to_claude"] == 0
+
     def test_cross_reference_via_ingest(self, tmp_path):
         ccs_file = tmp_path / "ccs.json"
         ccs_file.write_text(json.dumps(SAMPLE_CCS_REPORT))

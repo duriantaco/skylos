@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.progress import Progress
 
 from skylos.commands.suite_cmd import _write_suite_output, run_suite_command
+from skylos.core.suite import _annotatable_findings, _static_summary
 
 
 def _console_factory():
@@ -63,6 +64,17 @@ def _static_result(project_root: str) -> dict:
         "unused_variables": [],
         "unused_parameters": [],
     }
+
+
+def test_suite_counts_and_annotates_unused_files_as_dead_code():
+    result = {
+        "unused_files": [
+            {"rule_id": "SKY-E003", "file": "src/unused.js", "line": 1}
+        ]
+    }
+
+    assert _static_summary(result)["dead_code"] == 1
+    assert _annotatable_findings(result)[0]["category"] == "unused_files"
 
 
 def test_suite_json_outputs_combined_sections(tmp_path, capsys):

@@ -143,6 +143,15 @@ def test_collect_debt_signals_maps_dimensions_and_dead_code():
                 "confidence": 80,
             }
         ],
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "severity": "LOW",
+                "message": "Unused TypeScript/JavaScript file",
+                "file": "/repo/web/worker.js",
+                "line": 1,
+            }
+        ],
     }
     signals = collect_debt_signals(
         result,
@@ -154,6 +163,7 @@ def test_collect_debt_signals_maps_dimensions_and_dead_code():
     assert ("SKY-Q804", "architecture") in dimensions
     assert ("SKY-U001", "dead_code") in dimensions
     assert ("SKY-U006", "dead_code") in dimensions
+    assert ("SKY-E003", "dead_code") in dimensions
 
 
 def test_collect_debt_signals_skips_paths_outside_project_root(tmp_path):

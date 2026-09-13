@@ -334,6 +334,34 @@ def _render_unused_simple(
     console.print()
 
 
+def _render_unused_files(console: Console, root_path, limit, items):
+    if not items:
+        return
+
+    console.rule("[bold]Unused Files")
+
+    table = Table(expand=True)
+    table.add_column("#", style="muted", width=3)
+    table.add_column("Rule", style="bold", width=10)
+    table.add_column("Message", overflow="fold")
+    table.add_column("Location", style="muted", overflow="fold")
+
+    show, overflow = _display_cap(items, limit)
+    for index, item in enumerate(show, 1):
+        rule = escape(str(item.get("rule_id") or "SKY-E002"))
+        message = escape(str(item.get("message") or "Unused file"))
+        short = escape(_shorten_path(item.get("file"), root_path))
+        location = f"{short}:{item.get('line', 1)}"
+        table.add_row(str(index), rule, message, location)
+
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+        )
+    console.print(_RESULTS_DOCS_LINK)
+
+
 def _quality_detail(quality):
     raw_kind = quality.get("kind") or quality.get("metric") or "quality"
     func = quality.get("name") or quality.get("simple_name") or "<?>"
@@ -552,6 +580,7 @@ def _render_result_tree(console: Console, result, root_path=None):
     _add_unused(result.get("unused_classes"), "class")
     _add_unused(result.get("unused_variables"), "variable")
     _add_unused(result.get("unused_parameters"), "parameter")
+    _add_findings(result.get("unused_files"), "unused file", default_sev="low")
 
     _add_findings(result.get("danger"), "security", default_sev="high")
     _add_findings(result.get("reliability"), "reliability", default_sev="medium")
@@ -852,6 +881,7 @@ def render_results(
                 ),
                 _results_pill("Unused vars", len(result.get("unused_variables", []))),
                 _results_pill("Unused classes", len(result.get("unused_classes", []))),
+                _results_pill("Unused files", len(result.get("unused_files", []))),
                 _results_pill("AI defects", len(result.get("ai_defects", []) or [])),
                 _results_pill(
                     "Quality", len(result.get("quality", []) or []), bad_style="warn"
@@ -933,6 +963,12 @@ def render_results(
             "Unused Classes",
             result.get("unused_classes", []),
             name_key="name",
+        )
+        _render_unused_files(
+            console,
+            root_path,
+            limit,
+            result.get("unused_files", []),
         )
         _render_unused_simple(
             console,
