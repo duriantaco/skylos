@@ -16,7 +16,7 @@ from skylos.ui.dead_code_evidence import (
 
 logger = logging.getLogger(__name__)
 
-_RESULTS_SUPPRESS_HINT = '[muted]Suppress: # skylos: ignore (line), ignore = ["SKY-XXX"] (rule), or # skylos: ignore-start/end (block)[/muted]\n'
+_RESULTS_SUPPRESS_HINT = "[muted]Suppress a line: # skylos: ignore (Python) or // skylos: ignore (JS/TS); add [SKY-XXX] for one rule or -start/-end for a block[/muted]\n"
 _RESULTS_DOCS_LINK = (
     _RESULTS_SUPPRESS_HINT
     + "[muted]Full guide: https://docs.skylos.dev/guides/understanding-output[/muted]\n"

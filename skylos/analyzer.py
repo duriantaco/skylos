@@ -3755,6 +3755,8 @@ class Skylos:
                                 src_lines = src.splitlines(True)
                             rel = str(Path(file).relative_to(root))
                             ctx = {"relpath": rel, "lines": src_lines, "tree": None}
+                            if str(file).endswith(_TS_JS_SOURCE_EXTS):
+                                ctx["honor_inline_ignores"] = False
                             findings = list(_secrets_scan_ctx(ctx))
                             if findings:
                                 f_ignore = per_file_ignore_lines.get(str(file), set())

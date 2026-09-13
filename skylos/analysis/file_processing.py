@@ -334,7 +334,7 @@ def scan_python_quality(tree: ast.AST, source: str, file, cfg: dict) -> list[dic
 def _normalize_language_scan_output(out):
     if isinstance(out, tuple) and len(out) < 13:
         return (*out, *([None] * (13 - len(out))))
-    return out[:13]
+    return out
 
 
 def _scan_typescript_like_file(
@@ -349,6 +349,7 @@ def _scan_typescript_like_file(
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        _include_analysis_metadata=True,
     )
 
 
