@@ -407,6 +407,28 @@ if __name__ == "__main__":
         assert ("SKY-Q803", "mini_pkg.core") not in rules
         assert summary["module_metrics"]["mini_pkg.core"]["zone"] == "zone_of_pain"
 
+    def test_package_boundary_filter_ignores_self_dependencies(self):
+        graph = {
+            "mini_pkg": {"mini_pkg.core"},
+            "mini_pkg.core": {"mini_pkg.core"},
+        }
+        module_files = {
+            "mini_pkg": "/p/mini_pkg/__init__.py",
+            "mini_pkg.core": "/p/mini_pkg/core/__init__.py",
+        }
+
+        findings, summary = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+            package_boundary_modules={"mini_pkg.core"},
+        )
+
+        rules = {(finding["rule_id"], finding["name"]) for finding in findings}
+        assert ("SKY-Q802", "mini_pkg.core") not in rules
+        assert ("SKY-Q803", "mini_pkg.core") not in rules
+        assert summary["module_metrics"]["mini_pkg.core"]["ca"] == 1
+        assert summary["module_metrics"]["mini_pkg.core"]["ce"] == 0
+
     def test_q803_skips_test_modules(self):
         test_tree = ast.parse("""
 from typing import Protocol
@@ -540,6 +562,22 @@ class TestAnalyzeArchitecture:
         assert "zone_distribution" in sm
         assert "off_main_sequence" in sm["zone_distribution"]
         assert "healthy" not in sm["zone_distribution"]
+
+    def test_system_metrics_ignore_self_dependencies(self):
+        result = analyze_architecture(
+            dependency_graph={
+                "pkg.a": {"pkg.a", "pkg.b", "other.c"},
+                "pkg.b": set(),
+                "other.c": set(),
+            },
+            module_files={
+                "pkg.a": "/p/pkg/a.py",
+                "pkg.b": "/p/pkg/b.py",
+                "other.c": "/p/other/c.py",
+            },
+        )
+
+        assert result.system_metrics["modularity_index"] == 0.5
 
     def test_abstractness_from_trees(self):
         tree_a = ast.parse("""

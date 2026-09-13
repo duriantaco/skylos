@@ -346,11 +346,14 @@ def analyze_architecture(
 
     all_metrics = list(result.modules.values())
     if all_metrics:
-        total_deps = sum(len(deps) for deps in dependency_graph.values())
+        total_deps = 0
         intra_package_deps = 0
         for module, deps in dependency_graph.items():
             m_pkg = module.split(".")[0] if "." in module else module
             for dep in deps:
+                if dep == module:
+                    continue
+                total_deps += 1
                 d_pkg = dep.split(".")[0] if "." in dep else dep
                 if m_pkg == d_pkg:
                     intra_package_deps += 1
@@ -514,7 +517,8 @@ def _filter_contextual_findings(
     afferent: dict[str, set[str]] = defaultdict(set)
     for importer, deps in dependency_graph.items():
         for dep in deps:
-            afferent[dep].add(importer)
+            if dep != importer:
+                afferent[dep].add(importer)
 
     filtered = []
     for finding in findings:
