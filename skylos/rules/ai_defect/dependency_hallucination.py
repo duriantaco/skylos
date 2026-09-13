@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import re
 import site
+import stat
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -20,6 +22,8 @@ from skylos.core.safe_cache_io import (
     read_text_no_symlink,
     save_project_json_cache,
 )
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.core.file_discovery import discover_source_files
 
 # ---------------------------------------------------------------------------
 # The mapping file uses the pipreqs format: "import_name:dist_name" per line.
@@ -34,6 +38,10 @@ _MAPPING_FILENAME = "pipreqs_import_mapping.txt"
 MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
 MAX_DEPENDENCY_SCOPE_COMPONENTS = 256
 MAX_DEPENDENCY_SCOPE_PATH_CHARS = 4096
+MAX_PYTHON_SOURCE_ROOTS = 256
+MAX_PYTHON_LAYOUT_CANDIDATES = 1024
+CONVENTIONAL_PYTHON_SOURCE_ROOT = Path("src")
+PYTHON_SOURCE_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 logger = logging.getLogger(__name__)
 
 
@@ -327,20 +335,509 @@ def _collect_local_modules(repo_root):
             if p.name.startswith("."):
                 continue
 
-            if p.is_file():
+            mode = p.lstat().st_mode
+            if stat.S_ISREG(mode):
                 if p.suffix == ".py":
                     local.add(p.stem)
                 continue
 
-            if p.is_dir():
-                init_file = p / "__init__.py"
-                if init_file.exists():
+            if stat.S_ISDIR(mode):
+                if _is_local_python_file(repo_root, Path(p.name) / "__init__.py"):
                     local.add(p.name)
 
     except OSError as exc:
         logger.debug("Failed to collect local modules from %s: %s", repo_root, exc)
 
     return local
+
+
+def _contained_importer_path(repo_root, file_path, *, diff_path=False):
+    try:
+        raw_path = os.fspath(file_path)
+    except TypeError:
+        return None
+    if (
+        not isinstance(raw_path, str)
+        or not raw_path
+        or len(raw_path) > MAX_DEPENDENCY_SCOPE_PATH_CHARS
+        or "\x00" in raw_path
+    ):
+        return None
+
+    if diff_path:
+        if (
+            raw_path != raw_path.strip()
+            or "\\" in raw_path
+            or re.match(r"^[A-Za-z]:", raw_path)
+        ):
+            return None
+        relative = PurePosixPath(raw_path)
+        if (
+            not relative.parts
+            or relative.as_posix() != raw_path
+            or relative.is_absolute()
+            or ".." in relative.parts
+        ):
+            return None
+        path = repo_root.joinpath(*relative.parts)
+    else:
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = repo_root / path
+
+    path = Path(os.path.abspath(path))
+    try:
+        relative_path = path.relative_to(repo_root)
+    except ValueError:
+        return None
+    if (
+        not relative_path.parts
+        or len(relative_path.parts) > MAX_DEPENDENCY_SCOPE_COMPONENTS
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        return None
+    return relative_path
+
+
+def _known_python_files(repo_root, py_files):
+    known = set()
+    for file_path in py_files or ():
+        relative = _contained_importer_path(repo_root, file_path)
+        if relative is not None and relative.suffix in PYTHON_SOURCE_SUFFIXES:
+            known.add(relative)
+    return frozenset(known)
+
+
+def _dependency_context_python_files(repo_root, py_files):
+    if (
+        _supports_directory_fd_access(require_scandir=True)
+        and _supports_directory_fd_access()
+    ):
+        return ()
+
+    files = list(py_files or ())
+    try:
+        # On platforms without held directory handles, only the analyzer's
+        # normal Git-visible inventory is trusted as local-module evidence.
+        # Walking ignored trees or probing ad hoc paths would let untrusted
+        # repositories impose unbounded work or race symlink/junction checks.
+        files.extend(
+            discover_source_files(
+                repo_root,
+                PYTHON_SOURCE_SUFFIXES,
+                exclude_folders=DEFAULT_EXCLUDE_FOLDERS,
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        pass
+    return files
+
+
+def _collect_known_root_modules(known_files):
+    modules = set()
+    for relative in known_files:
+        if len(relative.parts) == 1 and relative.suffix == ".py":
+            modules.add(relative.stem)
+        elif (
+            len(relative.parts) == 2
+            and relative.name == "__init__.py"
+            and relative.parts[0].isidentifier()
+        ):
+            modules.add(relative.parts[0])
+    return modules
+
+
+def _collect_known_source_root_modules(
+    known_files, source_roots, *, require_package_marker=False
+):
+    modules = set()
+    roots_by_parts = {source_root.parts: source_root for source_root in source_roots}
+    for relative in known_files:
+        parts = relative.parts
+        for prefix_size in range(len(parts)):
+            source_root = roots_by_parts.get(parts[:prefix_size])
+            if source_root is None:
+                continue
+            source_parts = parts[prefix_size:]
+            if len(source_parts) == 1:
+                source_file = Path(source_parts[0])
+                if source_file.suffix == ".py":
+                    modules.add(source_file.stem)
+                continue
+            module = source_parts[0]
+            if not module.isidentifier():
+                continue
+            if (
+                require_package_marker
+                and (source_root / module / "__init__.py") not in known_files
+            ):
+                continue
+            modules.add(module)
+    return modules
+
+
+def _contained_directory(repo_root, relative_directory, *, allow_missing=False):
+    if relative_directory.is_absolute() or ".." in relative_directory.parts:
+        return None
+    current = repo_root
+    try:
+        resolved_root = repo_root.resolve(strict=True)
+        for part in relative_directory.parts:
+            current /= part
+            try:
+                mode = os.lstat(current).st_mode
+            except FileNotFoundError:
+                return current if allow_missing else None
+            if not stat.S_ISDIR(mode):
+                return None
+            current.resolve(strict=True).relative_to(resolved_root)
+        return current
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _supports_directory_fd_access(*, require_scandir=False):
+    supported = (
+        os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.stat in os.supports_follow_symlinks
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
+    if require_scandir:
+        supported = supported and os.scandir in os.supports_fd
+    return supported
+
+
+def _directory_open_flags(*, follow_symlinks=False):
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    if not follow_symlinks:
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
+def _close_directory_fd(directory_fd):
+    if directory_fd is None:
+        return True
+    try:
+        os.close(directory_fd)
+        return True
+    except OSError:
+        return False
+
+
+def _open_contained_directory_fd(repo_root, relative_directory):
+    if (
+        not _supports_directory_fd_access()
+        or relative_directory.is_absolute()
+        or ".." in relative_directory.parts
+    ):
+        return None
+    directory_fd = None
+    try:
+        resolved_root = repo_root.resolve(strict=True)
+        directory_fd = os.open(  # skylos: ignore[SKY-D215,SKY-D325] bounded no-follow directory traversal
+            resolved_root,
+            _directory_open_flags(),
+        )
+        for part in relative_directory.parts:
+            next_fd = os.open(
+                part,
+                _directory_open_flags(),
+                dir_fd=directory_fd,
+            )
+            previous_fd = directory_fd
+            directory_fd = next_fd
+            if not _close_directory_fd(previous_fd):
+                _close_directory_fd(directory_fd)
+                directory_fd = None
+                return None
+        return directory_fd
+    except (OSError, RuntimeError, ValueError):
+        _close_directory_fd(directory_fd)
+        return None
+
+
+def _is_local_python_file(repo_root, relative_path):
+    if not _supports_directory_fd_access():
+        return False
+    directory_fd = _open_contained_directory_fd(repo_root, relative_path.parent)
+    if directory_fd is None:
+        return False
+    try:
+        file_stat = os.stat(
+            relative_path.name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        return stat.S_ISREG(file_stat.st_mode)
+    except OSError:
+        return False
+    finally:
+        _close_directory_fd(directory_fd)
+
+
+def _context_has_local_python_file(ctx, relative_path):
+    if _supports_directory_fd_access():
+        return _is_local_python_file(ctx["repo_root"], relative_path)
+    return relative_path in ctx["known_python_files"]
+
+
+def _configured_python_path(candidate):
+    if not isinstance(candidate, str) or candidate != candidate.strip():
+        return None
+    if (
+        not candidate
+        or len(candidate) > MAX_DEPENDENCY_SCOPE_PATH_CHARS
+        or "\\" in candidate
+        or re.match(r"^[A-Za-z]:", candidate)
+    ):
+        return None
+    relative = PurePosixPath(candidate)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or len(relative.parts) > MAX_DEPENDENCY_SCOPE_COMPONENTS
+    ):
+        return None
+    return Path(*relative.parts)
+
+
+def _configured_python_layout(repo_root):
+    text = read_project_text_no_symlink(
+        repo_root,
+        "pyproject.toml",
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if text is None:
+        return set(), set(), set(), set()
+    try:
+        data = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, RecursionError, ValueError):
+        return set(), set(), set(), set()
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return set(), set(), set(), set()
+    setuptools = tool.get("setuptools", {})
+    if not isinstance(setuptools, dict):
+        return set(), set(), set(), set()
+    packages = setuptools.get("packages")
+    raw_package_find = packages.get("find", {}) if isinstance(packages, dict) else {}
+    package_find = raw_package_find if isinstance(raw_package_find, dict) else {}
+    raw_candidates = package_find.get("where", [])
+    if isinstance(raw_candidates, str):
+        candidates = [raw_candidates]
+    elif isinstance(raw_candidates, list):
+        candidates = raw_candidates
+    else:
+        candidates = []
+    roots = set()
+    package_dir = setuptools.get("package-dir", {})
+    if isinstance(package_dir, dict):
+        default_root = _configured_python_path(package_dir.get(""))
+        if default_root is not None:
+            roots.add(default_root)
+    for index, candidate in enumerate(candidates):
+        if index >= MAX_PYTHON_LAYOUT_CANDIDATES:
+            break
+        if len(roots) >= MAX_PYTHON_SOURCE_ROOTS:
+            break
+        relative = _configured_python_path(candidate)
+        if relative is not None:
+            roots.add(relative)
+
+    mapped_modules = set()
+    mapped_package_directories = set()
+    if isinstance(package_dir, dict):
+        for index, (package, directory) in enumerate(package_dir.items()):
+            if index >= MAX_PYTHON_LAYOUT_CANDIDATES:
+                break
+            if len(mapped_package_directories) >= MAX_PYTHON_SOURCE_ROOTS:
+                break
+            if (
+                not isinstance(package, str)
+                or not package
+                or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", package)
+            ):
+                continue
+            relative = _configured_python_path(directory)
+            if (
+                relative is not None
+                and _contained_directory(repo_root, relative) is not None
+            ):
+                mapped_modules.add(package.split(".", 1)[0])
+                mapped_package_directories.add(relative)
+    marker_required_roots = (
+        set(roots) if package_find.get("namespaces") is False else set()
+    )
+    return roots, marker_required_roots, mapped_modules, mapped_package_directories
+
+
+def _configured_python_source_roots(repo_root):
+    roots, _marker_roots, _mapped_modules, _mapped_directories = (
+        _configured_python_layout(repo_root)
+    )
+    return roots
+
+
+def _source_root_modules_from_fd(directory_fd, *, require_package_marker):
+    modules = set()
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if entry.name.startswith("."):
+                    continue
+                entry_stat = entry.stat(follow_symlinks=False)
+                if stat.S_ISREG(entry_stat.st_mode):
+                    path = Path(entry.name)
+                    if path.suffix == ".py":
+                        modules.add(path.stem)
+                    continue
+                if not stat.S_ISDIR(entry_stat.st_mode):
+                    continue
+                if not require_package_marker:
+                    modules.add(entry.name)
+                    continue
+
+                child_fd = None
+                try:
+                    child_fd = os.open(
+                        entry.name,
+                        _directory_open_flags(),
+                        dir_fd=directory_fd,
+                    )
+                    init_stat = os.stat(
+                        "__init__.py",
+                        dir_fd=child_fd,
+                        follow_symlinks=False,
+                    )
+                    if stat.S_ISREG(init_stat.st_mode):
+                        modules.add(entry.name)
+                except OSError:
+                    continue
+                finally:
+                    _close_directory_fd(child_fd)
+    except OSError:
+        return set()
+    return modules
+
+
+def _collect_source_root_modules(
+    repo_root, source_roots, *, require_package_marker=False
+):
+    modules = set()
+    for source_root in source_roots:
+        if not _supports_directory_fd_access(require_scandir=True):
+            continue
+        directory_fd = _open_contained_directory_fd(repo_root, source_root)
+        if directory_fd is None:
+            continue
+        try:
+            modules.update(
+                _source_root_modules_from_fd(
+                    directory_fd,
+                    require_package_marker=require_package_marker,
+                )
+            )
+        finally:
+            _close_directory_fd(directory_fd)
+    return modules
+
+
+def _is_file_local_import(mod, ctx, importer, *, direct_script=False):
+    if importer is None or not str(mod).isidentifier():
+        return False
+
+    directory = importer.parent
+    cache_key = (directory.as_posix(), mod, direct_script)
+    if cache_key in ctx["file_local_cache"]:
+        return ctx["file_local_cache"][cache_key]
+
+    if directory in ctx["package_context_cache"]:
+        source_context, strong_package_context = ctx["package_context_cache"][directory]
+    else:
+        source_context = any(
+            source_root in directory.parents for source_root in ctx["source_roots"]
+        )
+        strong_package_context = any(
+            package_dir == directory or package_dir in directory.parents
+            for package_dir in ctx["package_directories"]
+        )
+        current = directory
+        while not strong_package_context:
+            if _context_has_local_python_file(ctx, current / "__init__.py"):
+                strong_package_context = True
+                break
+            if not current.parts:
+                break
+            current = current.parent
+        ctx["package_context_cache"][directory] = (
+            source_context,
+            strong_package_context,
+        )
+
+    package_context = strong_package_context or (source_context and not direct_script)
+
+    is_local = not package_context and (
+        _context_has_local_python_file(ctx, directory / f"{mod}.py")
+        or _context_has_local_python_file(ctx, directory / mod / "__init__.py")
+    )
+    ctx["file_local_cache"][cache_key] = is_local
+    return is_local
+
+
+def _has_direct_script_evidence(source):
+    if source.startswith("#!"):
+        return True
+    if "__name__" not in source or "__main__" not in source:
+        return False
+    try:
+        tree = ast.parse(source)
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        return False
+
+    for statement in tree.body:
+        if not isinstance(statement, ast.If):
+            continue
+        comparison = statement.test
+        if (
+            not isinstance(comparison, ast.Compare)
+            or len(comparison.ops) != 1
+            or not isinstance(comparison.ops[0], ast.Eq)
+            or len(comparison.comparators) != 1
+        ):
+            continue
+        left, right = comparison.left, comparison.comparators[0]
+        if (
+            isinstance(left, ast.Name)
+            and left.id == "__name__"
+            and isinstance(right, ast.Constant)
+            and right.value == "__main__"
+        ) or (
+            isinstance(right, ast.Name)
+            and right.id == "__name__"
+            and isinstance(left, ast.Constant)
+            and left.value == "__main__"
+        ):
+            return True
+    return False
+
+
+def _diff_file_has_direct_script_evidence(repo_root, file_label):
+    if _contained_importer_path(repo_root, file_label, diff_path=True) is None:
+        return False
+    source = read_project_text_no_symlink(
+        repo_root,
+        file_label,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    return source is not None and _has_direct_script_evidence(source)
 
 
 def _parse_requirements_txt(path):
@@ -644,10 +1141,7 @@ def _dependency_scope_for_file(
         raw_path = os.fspath(file_path)
     except TypeError:
         return scope_cache[root]
-    if (
-        not isinstance(raw_path, str)
-        or len(raw_path) > MAX_DEPENDENCY_SCOPE_PATH_CHARS
-    ):
+    if not isinstance(raw_path, str) or len(raw_path) > MAX_DEPENDENCY_SCOPE_PATH_CHARS:
         return scope_cache[root]
 
     path = Path(raw_path)
@@ -673,9 +1167,7 @@ def _dependency_scope_for_file(
 
     declared_deps, manifest_context = scope_cache[current]
     for nested_directory in reversed(pending):
-        nested_deps, has_pyproject = _nested_pyproject_metadata(
-            root, nested_directory
-        )
+        nested_deps, has_pyproject = _nested_pyproject_metadata(root, nested_directory)
         extra_deps = (
             extra_deps_by_directory.get(nested_directory, frozenset())
             if extra_deps_by_directory
@@ -827,12 +1319,75 @@ def _is_confident_hallucination_candidate(name):
     return True
 
 
-def _build_dependency_context(repo_root):
+def _build_dependency_context(repo_root, py_files=None):
     declared_deps = _collect_declared_deps(repo_root)
+    known_python_files = _known_python_files(
+        repo_root, _dependency_context_python_files(repo_root, py_files)
+    )
+    (
+        source_roots,
+        marker_required_roots,
+        mapped_modules,
+        package_directories,
+    ) = _configured_python_layout(repo_root)
+    conventional_roots = {CONVENTIONAL_PYTHON_SOURCE_ROOT} - source_roots
+    secure_file_access = _supports_directory_fd_access()
+    secure_source_scan = _supports_directory_fd_access(require_scandir=True)
+    local_modules = _collect_local_modules(repo_root) | mapped_modules
+    if not secure_file_access:
+        local_modules.update(_collect_known_root_modules(known_python_files))
+    if secure_source_scan:
+        local_modules.update(
+            _collect_source_root_modules(
+                repo_root,
+                source_roots - marker_required_roots,
+            )
+        )
+        local_modules.update(
+            _collect_source_root_modules(
+                repo_root,
+                marker_required_roots,
+                require_package_marker=True,
+            )
+        )
+        local_modules.update(
+            _collect_source_root_modules(
+                repo_root,
+                conventional_roots,
+                require_package_marker=True,
+            )
+        )
+    else:
+        local_modules.update(
+            _collect_known_source_root_modules(
+                known_python_files,
+                source_roots - marker_required_roots,
+            )
+        )
+        local_modules.update(
+            _collect_known_source_root_modules(
+                known_python_files,
+                marker_required_roots,
+                require_package_marker=True,
+            )
+        )
+        local_modules.update(
+            _collect_known_source_root_modules(
+                known_python_files,
+                conventional_roots,
+                require_package_marker=True,
+            )
+        )
     cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
     return {
+        "repo_root": repo_root,
+        "known_python_files": known_python_files,
+        "source_roots": source_roots - marker_required_roots,
+        "package_directories": package_directories,
         "stdlib": _get_stdlib_modules(),
-        "local_modules": _collect_local_modules(repo_root),
+        "local_modules": local_modules,
+        "file_local_cache": {},
+        "package_context_cache": {},
         "declared_deps": declared_deps,
         "manifest_context": bool(declared_deps)
         or _has_dependency_manifest_context(repo_root),
@@ -871,8 +1426,7 @@ def _hallucinated_template(mod):
         "rule_id": RULE_ID_HALLUCINATION,
         "severity": SEV_CRITICAL,
         "message": (
-            f"Hallucinated dependency '{mod}'. "
-            f"Package does not exist on PyPI."
+            f"Hallucinated dependency '{mod}'. Package does not exist on PyPI."
         ),
         "col": 0,
         "symbol": mod,
@@ -883,12 +1437,33 @@ def _hallucinated_template(mod):
     }
 
 
-def _classify_import(mod, ctx):
+def _classify_import(mod, ctx, file_path=None, *, diff_path=False, direct_script=False):
     """Return a finding template (without file/line) for an import root, or None."""
     if not mod or mod.startswith("_"):
         return None
 
-    if mod in ctx["stdlib"] or mod in ctx["local_modules"]:
+    if mod in ctx["stdlib"]:
+        return None
+
+    importer = None
+    local_scope_valid = file_path is None
+    if file_path is not None:
+        importer = _contained_importer_path(
+            ctx["repo_root"], file_path, diff_path=diff_path
+        )
+        local_scope_valid = (
+            importer is not None
+            and _contained_directory(
+                ctx["repo_root"], importer.parent, allow_missing=diff_path
+            )
+            is not None
+        )
+        if local_scope_valid and not diff_path:
+            local_scope_valid = _context_has_local_python_file(ctx, importer)
+    if local_scope_valid and (
+        mod in ctx["local_modules"]
+        or _is_file_local_import(mod, ctx, importer, direct_script=direct_script)
+    ):
         return None
 
     declared_deps = ctx["declared_deps"]
@@ -991,10 +1566,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         return findings
 
     root = Path(os.path.abspath(repo_root))
-    ctx = _build_dependency_context(root)
-    scope_cache = {
-        root: (frozenset(ctx["declared_deps"]), ctx["manifest_context"])
-    }
+    py_files = list(py_files)
+    ctx = _build_dependency_context(root, py_files)
+    scope_cache = {root: (frozenset(ctx["declared_deps"]), ctx["manifest_context"])}
 
     for file_path in py_files:
         declared_deps, manifest_context = _dependency_scope_for_file(
@@ -1007,8 +1581,11 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         except OSError:
             continue
 
+        direct_script = _has_direct_script_evidence(src)
         for mod in sorted(_extract_imports(src)):
-            template = _classify_import(mod, ctx)
+            template = _classify_import(
+                mod, ctx, file_path, direct_script=direct_script
+            )
             if template is None:
                 continue
 
@@ -1029,7 +1606,7 @@ def scan_diff_added_imports(
     extra_local_modules=None,
     extra_declared_deps=None,
 ):
-    """Classify import roots added by a diff without reading files from disk.
+    """Classify import roots added by a diff against the current checkout.
 
     added_imports: iterable of (file_label, line_no, module_name) tuples.
     extra_local_modules: module roots created by the same diff, treated as
@@ -1060,6 +1637,7 @@ def scan_diff_added_imports(
     }
 
     seen = set()
+    direct_script_cache = {}
     for file_label, line_no, module_name in added_imports:
         mod = str(module_name).split(".")[0].strip()
         if (file_label, mod) in seen:
@@ -1075,7 +1653,18 @@ def scan_diff_added_imports(
         ctx["declared_deps"] = declared_deps
         ctx["manifest_context"] = manifest_context
 
-        template = _classify_import(mod, ctx)
+        script_key = str(file_label)
+        if script_key not in direct_script_cache:
+            direct_script_cache[script_key] = _diff_file_has_direct_script_evidence(
+                root, file_label
+            )
+        template = _classify_import(
+            mod,
+            ctx,
+            file_label,
+            diff_path=True,
+            direct_script=direct_script_cache[script_key],
+        )
         if template is None:
             continue
 
