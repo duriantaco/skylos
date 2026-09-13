@@ -32,6 +32,20 @@ def test_dependency_bump_advisory_catalog_matches_documentation():
     )
 
 
+def test_catalog_exposes_unused_typescript_file_rule():
+    rules_by_id = {rule["id"]: rule for rule in get_rule_catalog()}
+
+    assert rules_by_id["SKY-E003"] == {
+        "id": "SKY-E003",
+        "name": "Unused TypeScript/JavaScript file",
+        "category": "dead_code",
+        "severity": "LOW",
+        "source": "builtin",
+        "aliases": [],
+    }
+    assert rules_by_id["SKY-E002"]["category"] == "dead_code"
+
+
 def test_run_rules_command_returns_validate_failure():
     console = Mock()
 

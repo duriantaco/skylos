@@ -65,6 +65,21 @@ def test_safe_pyproject_path_rejects_non_regular_file(tmp_path):
         nudge._safe_pyproject_path(tmp_path)
 
 
+def test_unused_file_does_not_produce_clean_codebase_nudge(tmp_path, monkeypatch):
+    monkeypatch.setattr(nudge, "_is_ci", lambda: False)
+    result = {
+        "unused_files": [{"rule_id": "SKY-E003", "file": "unused.js"}],
+    }
+
+    picked = nudge.pick_nudge(
+        result,
+        _scan_args(all_checks=True, danger=True, secrets=True, quality=True),
+        tmp_path,
+    )
+
+    assert picked is None
+
+
 def test_nudges_enabled_defaults_true_for_oversized_pyproject(tmp_path, monkeypatch):
     (tmp_path / "pyproject.toml").write_text(
         "[tool.skylos]\nnudges = false\n",

@@ -247,6 +247,19 @@ def test_check_gate_strict_counts_reliability_findings():
     assert reasons == ["Strict mode: 1 issue(s) found"]
 
 
+def test_check_gate_strict_counts_unused_files():
+    results = {
+        "unused_files": [
+            {"rule_id": "SKY-E003", "file": "src/unused.js", "line": 1}
+        ]
+    }
+
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue(s) found"]
+
+
 def test_check_gate_strict_counts_circular_dependencies_but_not_advisory_quality():
     results = {
         "circular_dependencies": [

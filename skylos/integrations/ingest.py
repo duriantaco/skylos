@@ -147,6 +147,7 @@ def _extract_dead_code_files(skylos_result: dict) -> set[str]:
         "unused_imports",
         "unused_variables",
         "unused_classes",
+        "unused_files",
     ):
         for item in skylos_result.get(key, []):
             fp = item.get("file_path") or item.get("file") or ""

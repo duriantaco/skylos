@@ -64,6 +64,7 @@ def run_baseline_command(argv: list[str]) -> int:
             "unused_imports",
             "unused_classes",
             "unused_variables",
+            "unused_files",
             "danger",
             "reliability",
             "ai_defects",

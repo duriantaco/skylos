@@ -66,6 +66,7 @@ SUMMARY_CATEGORIES = (
     "unused_parameters",
     "unused_variables",
     "unused_classes",
+    "unused_files",
     "ai_defects",
     "quality",
     "circular_dependencies",

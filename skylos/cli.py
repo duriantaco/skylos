@@ -1144,6 +1144,7 @@ def _agent_findings_to_result_json(findings, *, review_context=None):
         "unused_variables": [],
         "unused_classes": [],
         "unused_parameters": [],
+        "unused_files": [],
     }
     if isinstance(review_context, dict):
         result["analysis_summary"] = {"review_context": dict(review_context)}
@@ -1164,6 +1165,8 @@ def _agent_findings_to_result_json(findings, *, review_context=None):
         "SKY-U003": "unused_variables",
         "SKY-U004": "unused_classes",
         "SKY-U006": "unused_parameters",
+        "SKY-E002": "unused_files",
+        "SKY-E003": "unused_files",
     }
 
     for f in findings or []:
@@ -1174,7 +1177,7 @@ def _agent_findings_to_result_json(findings, *, review_context=None):
         cat = str(item.get("_category") or item.get("category") or "").lower()
         rule_id = str(item.get("rule_id") or item.get("rule") or "")
 
-        if cat == "dead_code" or rule_id.startswith("SKY-U"):
+        if cat == "dead_code" or rule_id in dead_code_map:
             bucket = dead_code_map.get(rule_id, "unused_functions")
             result[bucket].append(item)
         elif cat in category_map:

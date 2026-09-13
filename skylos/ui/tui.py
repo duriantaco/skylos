@@ -57,6 +57,7 @@ DEAD_CODE_KEYS = [
     ("unused_classes", "Class"),
     ("unused_variables", "Variable"),
     ("unused_parameters", "Parameter"),
+    ("unused_files", "File"),
 ]
 
 
@@ -97,7 +98,10 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
     dc_rows, dc_raw = [], []
     for key, type_label in DEAD_CODE_KEYS:
         for item in result.get(key) or []:
-            name = item.get("name") or item.get("simple_name") or "?"
+            name = item.get("name") or item.get("simple_name")
+            if not name and key == "unused_files":
+                name = Path(str(item.get("file") or "?")).name
+            name = name or "?"
             conf = item.get("confidence", "?")
             conf_str = f"{conf}%" if isinstance(conf, (int, float)) else str(conf)
             classification = dead_code_classification(item)

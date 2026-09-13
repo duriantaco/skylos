@@ -968,6 +968,13 @@ def normalize_findings(
             "unused_variable",
             "INFO",
         )
+        _append_findings(
+            findings,
+            result.get("unused_files") or [],
+            root,
+            "dead_code",
+            "LOW",
+        )
 
     _append_findings(findings, result.get("danger") or [], root, "security", "HIGH")
     _append_findings(

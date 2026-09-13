@@ -374,6 +374,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     "unused_classes",
                     "unused_variables",
                     "unused_parameters",
+                    "unused_files",
                     "dependency_vulnerabilities",
                 ]
                 all_annotatable = []
@@ -564,6 +565,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 output_result.get("unused_parameters", []),
                 "DEAD_CODE",
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
+            )
+            _add(
+                output_result.get("unused_files", []),
+                "DEAD_CODE",
+                "SKY-E002",
             )
             for reviewed in output_result.get("reviewed_findings", []) or []:
                 if isinstance(reviewed, dict):
@@ -870,6 +876,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             "unused_variables",
             "unused_classes",
             "unused_parameters",
+            "unused_files",
         )
     )
     danger_count = len(result.get("danger", []) or [])
@@ -906,6 +913,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             "unused_variables",
             "unused_classes",
             "unused_parameters",
+            "unused_files",
             "danger",
             "reliability",
             "ai_defects",

@@ -148,6 +148,28 @@ def test_pretty_renderer_shows_rescued_and_abstained_counts():
     assert "dead-code abstained: 1" in output
 
 
+def test_pretty_renderer_summarizes_unused_files():
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "severity": "LOW",
+                "message": "Unused TypeScript/JavaScript file",
+                "file": "src/unused.js",
+                "line": 1,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result)
+    output = console.export_text()
+
+    assert "unused files: 1" in output
+    assert "SKY-E003" in output
+
+
 def test_pretty_renderer_shows_incomplete_analysis_as_an_error(tmp_path):
     result = {
         "analysis_summary": {"total_files": 1, "analysis_error_count": 1},

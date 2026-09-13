@@ -178,6 +178,7 @@ def score_dead_code(result: dict, total_loc: int) -> tuple[int, str]:
         result.get("unused_classes") or [],
         result.get("unused_variables") or [],
         result.get("unused_parameters") or [],
+        result.get("unused_files") or [],
     ]
     dead_count = sum(len(lst) for lst in dead_lists)
 
@@ -191,7 +192,8 @@ def score_dead_code(result: dict, total_loc: int) -> tuple[int, str]:
 
     score = _interpolate_dead_code_score(density)
 
-    key_issue = f"{dead_count} dead symbols ({density:.1f}/1K LOC)"
+    item_label = "item" if dead_count == 1 else "items"
+    key_issue = f"{dead_count} dead-code {item_label} ({density:.1f}/1K LOC)"
     return score, key_issue
 
 

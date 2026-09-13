@@ -22,6 +22,7 @@ from skylos.agents.center import (
     update_action_triage,
     watch_project,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def test_detect_changed_files_includes_new_changed_and_removed_files():
@@ -456,6 +457,31 @@ def test_normalize_findings_preserves_reliability_and_related_locations(tmp_path
     assert findings[0]["category"] == "reliability"
     assert findings[0]["rule_id"] == "SKY-DEP003"
     assert findings[0]["related_locations"] == related_locations
+
+
+def test_normalize_findings_preserves_unused_file_rule_and_message(tmp_path):
+    project_root = tmp_path / "repo"
+    source = project_root / "src" / "unused.js"
+    source.parent.mkdir(parents=True)
+    assert write_text_no_symlink(source, "export {};\n", encoding="utf-8")
+    result = {
+        "unused_files": [
+            {
+                "rule_id": "SKY-E003",
+                "severity": "LOW",
+                "message": "Unused TypeScript/JavaScript file",
+                "file": str(source),
+                "line": 1,
+            }
+        ]
+    }
+
+    findings = normalize_findings(result, project_root, use_debt_baseline=False)
+
+    dead_code = [item for item in findings if item["category"] == "dead_code"]
+    assert len(dead_code) == 1
+    assert dead_code[0]["rule_id"] == "SKY-E003"
+    assert dead_code[0]["message"] == "Unused TypeScript/JavaScript file"
 
 
 def test_normalize_findings_applies_debt_baseline(tmp_path):

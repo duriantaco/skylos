@@ -11,6 +11,7 @@ _FINDING_CATEGORIES = (
     "ai_defects",
     "quality",
     "secrets",
+    "unused_files",
 )
 _DEAD_CODE_CATEGORIES = (
     "unused_functions",
@@ -23,6 +24,7 @@ _SUMMARY_COUNT_KEYS = {
     "unused_imports": "unused_imports_count",
     "unused_classes": "unused_classes_count",
     "unused_variables": "unused_variables_count",
+    "unused_files": "unused_files_count",
     "danger": "danger_count",
     "reliability": "reliability_count",
     "ai_defects": "ai_defects_count",
@@ -54,6 +56,7 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
         "unused_imports": len(result.get("unused_imports", [])),
         "unused_classes": len(result.get("unused_classes", [])),
         "unused_variables": len(result.get("unused_variables", [])),
+        "unused_files": len(result.get("unused_files", [])),
         "danger": len(result.get("danger", [])),
         "reliability": len(result.get("reliability", [])),
         "ai_defects": len(result.get("ai_defects", [])),

@@ -39,6 +39,7 @@ DEAD_CODE_RESULT_KEYS = (
     "unused_variables",
     "unused_classes",
     "unused_parameters",
+    "unused_files",
 )
 AGENT_GATE_PREFIX = "Agent gate: "
 BASELINE_GATE_CONFIG = {

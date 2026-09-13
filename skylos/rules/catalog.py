@@ -116,7 +116,10 @@ _RULES = (
     RuleCatalogEntry("SKY-R103", "Skylos gate policy", "quality", "LOW"),
     RuleCatalogEntry("SKY-R104", "Pre-commit policy", "quality", "LOW"),
     RuleCatalogEntry("SKY-R105", "TypeScript type-check policy", "quality", "LOW"),
-    RuleCatalogEntry("SKY-E002", "Empty file", "quality", "LOW"),
+    RuleCatalogEntry("SKY-E002", "Empty file", "dead_code", "LOW"),
+    RuleCatalogEntry(
+        "SKY-E003", "Unused TypeScript/JavaScript file", "dead_code", "LOW"
+    ),
     RuleCatalogEntry("SKY-D200", "Dangerous call pattern", "security"),
     RuleCatalogEntry("SKY-D201", "Dynamic code execution via eval", "security", "HIGH"),
     RuleCatalogEntry("SKY-D202", "Dynamic code execution via exec", "security", "HIGH"),

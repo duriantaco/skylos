@@ -62,6 +62,26 @@ class TestSaveBaseline:
         assert "SKY-D211:app.py:50" in fps
         assert "SKY-Q301:app.py:80" in fps
 
+    def test_unused_file_round_trip_uses_rule_path_and_line(self, tmp_path):
+        result = _sample_result()
+        result["unused_files"] = [
+            {
+                "rule_id": "SKY-E003",
+                "file": "src/unused.js",
+                "line": 1,
+            }
+        ]
+        result["analysis_summary"] = {"unused_files_count": 1}
+
+        save_baseline(tmp_path, result)
+        baseline = load_baseline(tmp_path)
+        filtered = filter_new_findings(result, baseline)
+
+        assert baseline["counts"]["unused_files"] == 1
+        assert "SKY-E003:src/unused.js:1" in baseline["fingerprints"]
+        assert filtered["unused_files"] == []
+        assert filtered["analysis_summary"]["unused_files_count"] == 0
+
     def test_overwrites_existing(self, tmp_path):
         save_baseline(tmp_path, _sample_result())
         save_baseline(

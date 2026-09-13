@@ -18,6 +18,7 @@ _GITHUB_FINDING_CATEGORIES = (
     "quality",
     "secrets",
     "custom_rules",
+    "unused_files",
 )
 _GITHUB_DEAD_CODE_CATEGORIES = (
     ("unused_functions", "Unused function"),

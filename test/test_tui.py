@@ -178,6 +178,23 @@ class TestPrepareCategoryData:
         _, rows, _ = data["dead_code"]
         assert rows[0][3] == "?"
 
+    def test_dead_code_includes_unused_file_name(self):
+        result = {
+            "unused_files": [
+                {
+                    "rule_id": "SKY-E003",
+                    "file": "src/unused.js",
+                    "line": 1,
+                    "confidence": 90,
+                }
+            ]
+        }
+
+        _, rows, raw = prepare_category_data(result)["dead_code"]
+
+        assert rows[0][:3] == ("File", "unused.js", "src/unused.js:1")
+        assert raw[0]["rule_id"] == "SKY-E003"
+
     def test_dead_code_decision_is_visible(self):
         result = {
             "unused_functions": [
@@ -480,3 +497,4 @@ class TestConstants:
         assert "unused_classes" in keys
         assert "unused_variables" in keys
         assert "unused_parameters" in keys
+        assert "unused_files" in keys

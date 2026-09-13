@@ -13,6 +13,7 @@ from skylos.pipeline import (
     run_static_on_files,
     run_pipeline,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 FAKE_STATIC_RESULT = {
     "definitions": {
@@ -56,6 +57,7 @@ FAKE_STATIC_RESULT = {
     "unused_variables": [],
     "unused_parameters": [],
     "unused_classes": [],
+    "unused_files": [],
     "danger": [
         {
             "name": "eval_call",
@@ -160,6 +162,7 @@ class TestEmptyResult:
             "unused_variables",
             "unused_parameters",
             "unused_classes",
+            "unused_files",
             "danger",
             "ai_defects",
             "quality",
@@ -430,6 +433,41 @@ class TestPipelinePhase1:
 
     @patch(P_LLM)
     @patch(P_PROGRESS)
+    def test_categorises_unused_files_as_static_dead_code(
+        self, _prog, mock_llm, tmp_path
+    ):
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        source = proj / "unused.js"
+        assert write_text_no_symlink(source, "export {};\n", encoding="utf-8")
+        static_result = _fresh_static()
+        static_result["unused_files"] = [
+            {
+                "rule_id": "SKY-E003",
+                "file": str(source),
+                "line": 1,
+                "message": "Unused TypeScript/JavaScript file",
+            }
+        ]
+
+        with patch(P_STATIC_FN, return_value=static_result):
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(static_only=True, skip_verification=True),
+                console=_console(),
+                changed_files=[str(source)],
+            )
+
+        unused = [item for item in findings if item.get("rule_id") == "SKY-E003"]
+        assert len(unused) == 1
+        assert unused[0]["_category"] == "dead_code"
+        assert unused[0]["_source"] == "static"
+
+    @patch(P_LLM)
+    @patch(P_PROGRESS)
     def test_preserves_static_ai_defects_in_final_findings(
         self, _prog, mock_llm, tmp_path
     ):
@@ -631,7 +669,9 @@ class TestPipelinePhase2a:
     def _run_with_verifier(self, verified_results, tmp_path, **extra_args):
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "a.py").write_text("def dead_func(): pass")
+        assert write_text_no_symlink(
+            proj / "a.py", "def dead_func(): pass", encoding="utf-8"
+        )
 
         mock_agent = MagicMock()
         mock_agent.healthcheck.return_value = (True, "API connection successful")
@@ -723,7 +763,7 @@ class TestPipelinePhase2a:
     def test_skip_verification_passes_through(self, tmp_path):
         proj = tmp_path / "proj"
         proj.mkdir()
-        (proj / "a.py").write_text("x = 1")
+        assert write_text_no_symlink(proj / "a.py", "x = 1", encoding="utf-8")
 
         with (
             patch(P_STATIC_FN, return_value=_fresh_static()),

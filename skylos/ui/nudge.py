@@ -114,6 +114,7 @@ def pick_nudge(result, args, project_root=None):
             "unused_variables",
             "unused_classes",
             "unused_parameters",
+            "unused_files",
         )
     )
     danger_count = len(result.get("danger", []) or [])

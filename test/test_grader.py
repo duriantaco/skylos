@@ -30,6 +30,7 @@ def _empty_result(**overrides):
         "unused_classes": [],
         "unused_variables": [],
         "unused_parameters": [],
+        "unused_files": [],
     }
     base.update(overrides)
     return base
@@ -178,8 +179,18 @@ class TestScoreDeadCode:
     def test_key_issue_format(self):
         result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(5)])
         _, issue = score_dead_code(result, 5000)
-        assert "5 dead symbols" in issue
+        assert "5 dead-code items" in issue
         assert "/1K LOC" in issue
+
+    def test_unused_file_reduces_dead_code_score(self):
+        result = _empty_result(
+            unused_files=[{"rule_id": "SKY-E003", "file": "unused.js"}]
+        )
+
+        score, issue = score_dead_code(result, 1000)
+
+        assert score < 100
+        assert "1 dead-code item" in issue
 
     def test_zero_loc_uses_raw_count(self):
         result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(3)])
