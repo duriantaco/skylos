@@ -1,5 +1,31 @@
 ## Changelog
 
+## [4.37.0](https://github.com/duriantaco/skylos/compare/v4.36.1...v4.37.0) (2026-09-13)
+
+
+### Features
+
+* **deadcode:** detect unreachable nested python functions and closures ([#840](https://github.com/duriantaco/skylos/issues/840)) ([b3e27e2](https://github.com/duriantaco/skylos/commit/b3e27e25f9a4e14e49c3b19ea2cbf78312cb5997))
+* **deadcode:** detect unreachable python function groups, also harden grep verification ([#830](https://github.com/duriantaco/skylos/issues/830)) ([e893ffd](https://github.com/duriantaco/skylos/commit/e893ffdeab9d65e9f4f102b918c729300a1bccd3))
+* **deadcode:** detect unreachable python methods using receiver resolution ([#831](https://github.com/duriantaco/skylos/issues/831)) ([37b8d86](https://github.com/duriantaco/skylos/commit/37b8d86c10ad7b09e1bc8ae845e4b6992c28ad60))
+* **review:** remember reviewed findings across scans ([#842](https://github.com/duriantaco/skylos/issues/842)) ([635bc35](https://github.com/duriantaco/skylos/commit/635bc358f2acc4bca7703fc7f1a0b8c955d9cb19))
+* **verification:** add explicit local and branch comparison baselines ([#829](https://github.com/duriantaco/skylos/issues/829)) ([d99e238](https://github.com/duriantaco/skylos/commit/d99e238f7e4533901c4dca3c8455326db78578f5))
+* **verify:** compare Python working changes with HEAD ([#827](https://github.com/duriantaco/skylos/issues/827)) ([79756f8](https://github.com/duriantaco/skylos/commit/79756f8c74eee7514f440e7a6aaff372c6e5d6cd))
+
+
+### Bug Fixes
+
+* **ai-defects:** resolve nested local Python imports ([#843](https://github.com/duriantaco/skylos/issues/843)) ([7545406](https://github.com/duriantaco/skylos/commit/7545406eb19a095382b59ac7ca37208d513ffaf4))
+* **circular:** make cycle selection independent of iteration order ([#838](https://github.com/duriantaco/skylos/issues/838)) ([5124f28](https://github.com/duriantaco/skylos/commit/5124f281d9fe021d5fc7fafdf0167a8c18cc7332))
+* **circular:** skip fallback self-cycles ([#834](https://github.com/duriantaco/skylos/issues/834)) ([08a6542](https://github.com/duriantaco/skylos/commit/08a6542268cc82bc3607d53e6f5044f9d09c09f5))
+* **deadcode:** handle SKY-E003 references and reporting ([#846](https://github.com/duriantaco/skylos/issues/846)) ([be5d67f](https://github.com/duriantaco/skylos/commit/be5d67fe862ecd9b12ba6673943611412b0b49c2))
+* **typescript:** honor inline skylos ignore comments ([#845](https://github.com/duriantaco/skylos/issues/845)) ([c23dbff](https://github.com/duriantaco/skylos/commit/c23dbffe070b797cdeca695cfc1ab433cef0cdc0))
+
+
+### Performance Improvements
+
+* **deadcode:** reuse resolved paths within analysis passes ([#841](https://github.com/duriantaco/skylos/issues/841)) ([af82e8a](https://github.com/duriantaco/skylos/commit/af82e8ae68c487a79960fec426b6f1ce0dbe3297))
+
 ## [4.36.1](https://github.com/duriantaco/skylos/compare/v4.36.0...v4.36.1) (2026-09-08)
 
 
