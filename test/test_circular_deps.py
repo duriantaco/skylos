@@ -117,16 +117,105 @@ def test_real_same_package_cycles_remain_visible(mode, sources, cycle, edges):
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
 @pytest.mark.parametrize(
+    "source",
+    [
+        "import package.missing",
+        "from package.missing import value",
+        "from .missing import value",
+    ],
+)
+def test_unresolved_package_children_do_not_invent_self_cycles(mode, source):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", source),
+            "package.child": ("/project/package/child.py", "value = 'label'"),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    assert dict(rule._analyzer.dependencies) == {}
+    assert dict(rule._analyzer.architecture_dependencies) == {}
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_unresolved_package_child_does_not_invent_larger_cycle(mode):
+    rule = _rule_for_sources(
+        {
+            "package": (
+                "/project/package/__init__.py",
+                "from . import child",
+            ),
+            "package.child": (
+                "/project/package/child.py",
+                "from .generated_sibling import value",
+            ),
+            "consumer": (
+                "/project/consumer.py",
+                "import package",
+            ),
+        },
+        mode,
+    )
+
+    assert rule.analyze() == []
+    expected_graph = {
+        "package": {"package.child"},
+        "consumer": {"package"},
+    }
+    assert dict(rule._analyzer.dependencies) == expected_graph
+    architecture_graph = dict(rule._analyzer.architecture_dependencies)
+    assert architecture_graph == expected_graph
+
+    findings, summary = get_architecture_findings(
+        dependency_graph=architecture_graph,
+        module_files=dict(rule._analyzer.modules),
+        package_boundary_modules={"package.child"},
+    )
+
+    assert findings == []
+    assert summary["system_metrics"]["modularity_index"] == 0.5
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+def test_unresolved_sibling_child_keeps_package_initializer_cycle(mode):
+    rule = _rule_for_sources(
+        {
+            "package.a": (
+                "/project/package/a.py",
+                "import package.b.generated",
+            ),
+            "package.b": (
+                "/project/package/b/__init__.py",
+                "import package.a",
+            ),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert set(findings[0]["cycle"]) == {"package.a", "package.b"}
+    assert dict(rule._analyzer.dependencies) == {
+        "package.a": {"package.b"},
+        "package.b": {"package.a"},
+    }
+    assert dict(rule._analyzer.architecture_dependencies) == {
+        "package.a": {"package.b"},
+        "package.b": {"package.a"},
+    }
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
     ("source", "targets"),
     [
-        ("import package.missing", {"package"}),
         ("from package import missing", {"package"}),
         ("from package import child, missing", {"package", "package.child"}),
     ],
 )
-def test_unresolved_package_children_and_symbols_remain_conservative(
-    mode, source, targets
-):
+def test_unresolved_package_symbols_remain_conservative(mode, source, targets):
     rule = _rule_for_sources(
         {
             "package": ("/project/package/__init__.py", source),
@@ -141,6 +230,33 @@ def test_unresolved_package_children_and_symbols_remain_conservative(
     assert findings[0]["cycle"] == ["package"]
     assert rule._analyzer.dependencies["package"] == targets
     assert rule._analyzer.architecture_dependencies["package"] == targets
+
+
+@pytest.mark.parametrize("mode", ["ast", "raw"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from package import child",
+        "from . import child",
+    ],
+)
+def test_resolved_package_member_self_import_is_not_suppressed(mode, source):
+    rule = _rule_for_sources(
+        {
+            "package": ("/project/package/__init__.py", "value = 'label'"),
+            "package.child": ("/project/package/child.py", source),
+        },
+        mode,
+    )
+
+    findings = rule.analyze()
+
+    assert len(findings) == 1
+    assert findings[0]["cycle"] == ["package.child"]
+    assert dict(rule._analyzer.dependencies) == {"package.child": {"package.child"}}
+    assert dict(rule._analyzer.architecture_dependencies) == {
+        "package.child": {"package.child"}
+    }
 
 
 @pytest.mark.parametrize("mode", ["ast", "raw"])
