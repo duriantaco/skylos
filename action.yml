@@ -16,7 +16,7 @@ inputs:
     required: false
     default: "gate"
   analysis:
-    description: "Analysis types to run (space-separated): dead-code security quality ai-defects secrets"
+    description: "Analysis types to run (space-separated): dead-code security quality ai-defects secrets sca (aliases: dependency, dependencies)"
     required: false
     default: "dead-code security"
   confidence:
@@ -123,6 +123,9 @@ runs:
         if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
           FLAGS="$FLAGS --secrets"
         fi
+        if [[ "$SKYLOS_ANALYSIS" =~ (^|[[:space:]])(dependency|dependencies|sca)($|[[:space:]]) ]]; then
+          FLAGS="$FLAGS --sca"
+        fi
 
         # Run scan
         set +e
@@ -176,6 +179,9 @@ runs:
         fi
         if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
           FLAGS="$FLAGS --secrets"
+        fi
+        if [[ "$SKYLOS_ANALYSIS" =~ (^|[[:space:]])(dependency|dependencies|sca)($|[[:space:]]) ]]; then
+          FLAGS="$FLAGS --sca"
         fi
 
         python -m skylos.cli "$SKYLOS_PATH" \

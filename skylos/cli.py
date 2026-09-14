@@ -2552,12 +2552,10 @@ def _strict_scan_exit_code(result: dict, args) -> int:
 
 
 def _analysis_incomplete_exit_code(result: dict) -> int:
-    """Return the operational-error exit code when any file was not analyzed."""
-    summary = result.get("analysis_summary")
-    incomplete_languages = (
-        summary.get("incomplete_languages") if isinstance(summary, dict) else None
-    )
-    return 2 if result.get("analysis_errors") or incomplete_languages else 0
+    """Return the operational-error exit code when required analysis failed."""
+    from skylos.core.gatekeeper import _analysis_incomplete_reasons
+
+    return 2 if _analysis_incomplete_reasons(result) else 0
 
 
 def _apply_config_driven_analysis_flags(args, project_cfg, console):

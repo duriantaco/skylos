@@ -332,6 +332,70 @@ def test_sarif_bounds_and_sanitizes_untrusted_text_and_metadata():
     assert all(len(value) <= 500 for value in metadata["oversized"].values())
 
 
+def test_dependency_metadata_preserves_late_lockfile_occurrence_context():
+    metadata = {f"advisory-and-environment-field-{index}": index for index in range(35)}
+    metadata["dependency_occurrences"] = [{"file": "uv.lock", "line": 17}]
+    finding = {
+        "rule_id": "SKY-SCA-GHSA-test-context",
+        "category": "DEPENDENCY",
+        "file": "uv.lock",
+        "line": 17,
+        "metadata": metadata,
+    }
+
+    exported = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+
+    assert exported["properties"]["skylos_metadata"] == metadata
+
+
+@pytest.mark.parametrize("category,limit", [("DEPENDENCY", 64), ("SECURITY", 32)])
+def test_larger_metadata_field_budget_is_only_for_dependencies(category, limit):
+    finding = {
+        "rule_id": "SKY-SCA-GHSA-test-context",
+        "category": category,
+        "file": "uv.lock",
+        "metadata": {f"field-{index}": "x" * 1_000 for index in range(100)},
+    }
+    exported = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+    metadata = exported["properties"]["skylos_metadata"]
+
+    assert len(metadata) == limit
+    assert all(len(value) <= 500 for value in metadata.values())
+
+
+def test_dependency_metadata_keeps_total_node_depth_and_redaction_bounds():
+    token = "glpat-" + "AbCdEfGhIjKlMnOpQrStUvWx"
+    finding = {
+        "rule_id": "SKY-SCA-GHSA-test-context",
+        "category": "DEPENDENCY",
+        "file": "uv.lock",
+        "metadata": {
+            "token": token,
+            "source": "x" * 1_000 + "\u202e",
+            "deep": {"a": {"b": {"c": {"d": "past-depth-limit"}}}},
+            "many": {f"field-{index}": list(range(100)) for index in range(100)},
+        },
+    }
+    exported = SarifExporter([finding]).generate()["runs"][0]["results"][0]
+    metadata = exported["properties"]["skylos_metadata"]
+    rendered = json.dumps(metadata, ensure_ascii=False)
+
+    def count_nodes(value):
+        if isinstance(value, dict):
+            assert len(value) <= 64
+            return 1 + sum(count_nodes(item) for item in value.values())
+        if isinstance(value, list):
+            assert len(value) <= 64
+            return 1 + sum(count_nodes(item) for item in value)
+        return 1
+
+    assert token not in rendered
+    assert "\u202e" not in rendered
+    assert "past-depth-limit" not in rendered
+    assert len(metadata["source"]) <= 500
+    assert count_nodes(metadata) <= 256
+
+
 def test_sarif_snippet_preserves_source_syntax_while_remaining_safe_and_bounded():
     token = "glpat-" + "AbCdEfGhIjKlMnOpQrStUvWx"
     syntax = (
