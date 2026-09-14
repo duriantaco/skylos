@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -98,10 +99,35 @@ _SCRIPT_RUNTIME_TOOLS = frozenset(
 )
 _SCRIPT_COMMAND_SEPARATORS = frozenset({"&", "&&", ";", "|", "||"})
 _SCRIPT_ENV_WRAPPERS = frozenset({"cross-env", "cross-env-shell", "env"})
+_ESBUILD_MODULES = frozenset({"esbuild"})
 _ESBUILD_BUILD_METHODS = frozenset({"build", "buildSync", "context"})
+_STATIC_HELPER_MODULES = {
+    "node:path": "path",
+    "path": "path",
+    "node:url": "url",
+    "url": "url",
+}
+_STATIC_HELPER_NAMES = {
+    "path": frozenset({"dirname", "join", "resolve"}),
+    "url": frozenset({"fileURLToPath"}),
+}
 _ESBUILD_PROMISE_METHODS = frozenset({"catch", "finally", "then"})
 _MAX_ESBUILD_ENTRY_GLOBS = MAX_TYPESCRIPT_GLOB_MATCHES
 _MAX_ESBUILD_STATIC_STEPS = MAX_TYPESCRIPT_GLOB_MATCHES * 8
+_MAX_ESBUILD_STATIC_DEPTH = 32
+_MUTATING_CONTAINER_METHODS = frozenset(
+    {
+        "copyWithin",
+        "fill",
+        "pop",
+        "push",
+        "reverse",
+        "shift",
+        "sort",
+        "splice",
+        "unshift",
+    }
+)
 _STRING_FRAGMENT_TYPES = frozenset({"string_fragment", "escape_sequence"})
 
 
@@ -122,11 +148,28 @@ class _EsbuildStaticContext:
     direct_calls: dict[str, str]
     namespaces: dict[str, str]
     steps: int = 0
+    depth: int = 0
 
     def visit(self) -> bool:
         """Consume one bounded static-evaluation step."""
         self.steps += 1
         return self.steps <= _MAX_ESBUILD_STATIC_STEPS
+
+
+def _bounded_static_fold(func):
+    """Keep recursive folding inside the interpreter stack."""
+
+    @functools.wraps(func)
+    def wrapper(context, *args, **kwargs):
+        if context.depth >= _MAX_ESBUILD_STATIC_DEPTH:
+            return None
+        context.depth += 1
+        try:
+            return func(context, *args, **kwargs)
+        finally:
+            context.depth -= 1
+
+    return wrapper
 
 
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
@@ -1028,42 +1071,88 @@ def _discover_tsup_config_entries(
     )
 
 
+@dataclass(frozen=True)
+class _ValueImportBindings:
+    """Local names a single value (non-type) import statement introduces."""
+
+    module: str | None
+    named: dict[str, str]
+    namespaces: frozenset[str]
+    default: str | None
+
+
+_NO_IMPORT_BINDINGS = _ValueImportBindings(None, {}, frozenset(), None)
+
+
+def _namespace_import_local(source: bytes, binding: Node) -> str | None:
+    identifiers = [node for node in binding.named_children if node.type == "identifier"]
+    return _node_text(source, identifiers[-1]) if identifiers else None
+
+
+def _import_specifier_binding(source: bytes, binding: Node) -> tuple[str, str] | None:
+    """Map one value specifier's local name to the name it imports."""
+    if binding.type != "import_specifier" or _node_text(
+        source, binding
+    ).lstrip().startswith("type "):
+        return None
+    imported = binding.child_by_field_name("name")
+    if imported is None:
+        return None
+    alias = binding.child_by_field_name("alias")
+    return _node_text(source, alias or imported), _node_text(source, imported)
+
+
+def _import_clause_bindings(
+    source: bytes, clause: Node
+) -> tuple[dict[str, str], set[str], str | None]:
+    named: dict[str, str] = {}
+    namespaces: set[str] = set()
+    default: str | None = None
+    for child in clause.named_children:
+        if child.type == "identifier":
+            default = _node_text(source, child)
+    for binding in _iter_ts_nodes(clause):
+        if binding.type == "namespace_import":
+            local = _namespace_import_local(source, binding)
+            if local is not None:
+                namespaces.add(local)
+            continue
+        specifier = _import_specifier_binding(source, binding)
+        if specifier is not None:
+            named[specifier[0]] = specifier[1]
+    return named, namespaces, default
+
+
+def _value_import_bindings(
+    source: bytes, statement: Node, modules: frozenset[str]
+) -> _ValueImportBindings:
+    """Read local bindings from a value import of one of `modules`."""
+    if statement.type != "import_statement" or _node_text(
+        source, statement
+    ).lstrip().startswith("import type "):
+        return _NO_IMPORT_BINDINGS
+    module = _string_node_value(source, statement.child_by_field_name("source"))
+    if module not in modules:
+        return _NO_IMPORT_BINDINGS
+    for clause in statement.named_children:
+        if clause.type == "import_clause":
+            named, namespaces, default = _import_clause_bindings(source, clause)
+            return _ValueImportBindings(module, named, frozenset(namespaces), default)
+    return _ValueImportBindings(module, {}, frozenset(), None)
+
+
 def _esbuild_import_bindings(source: bytes, root_node) -> tuple[set[str], set[str]]:
     """Return immutable named-call and namespace bindings imported from esbuild."""
     direct: set[str] = set()
     namespaces: set[str] = set()
-
     for statement in root_node.named_children:
-        if statement.type != "import_statement":
-            continue
-        source_node = statement.child_by_field_name("source")
-        if _string_node_value(source, source_node) != "esbuild":
-            continue
-        statement_text = _node_text(source, statement).lstrip()
-        if statement_text.startswith("import type "):
-            continue
-
-        for child in statement.named_children:
-            if child.type != "import_clause":
-                continue
-            for binding in _iter_ts_nodes(child):
-                if binding.type == "import_specifier":
-                    if _node_text(source, binding).lstrip().startswith("type "):
-                        continue
-                    imported = binding.child_by_field_name("name")
-                    alias = binding.child_by_field_name("alias")
-                    imported_name = _node_text(source, imported) if imported else ""
-                    if imported_name in _ESBUILD_BUILD_METHODS:
-                        direct.add(_node_text(source, alias or imported))
-                elif binding.type == "namespace_import":
-                    identifiers = [
-                        node
-                        for node in binding.named_children
-                        if node.type == "identifier"
-                    ]
-                    if identifiers:
-                        namespaces.add(_node_text(source, identifiers[-1]))
-
+        bindings = _value_import_bindings(source, statement, _ESBUILD_MODULES)
+        direct.update(
+            local
+            for local, imported in bindings.named.items()
+            if imported in _ESBUILD_BUILD_METHODS
+        )
+        namespaces.update(bindings.namespaces)
     return direct, namespaces
 
 
@@ -1083,69 +1172,64 @@ def _esbuild_const_bindings(source: bytes, statement: Node) -> dict[str, Node]:
     return bindings
 
 
-def _esbuild_static_import_name(module_kind: str, imported_name: str) -> str | None:
-    if module_kind == "path" and imported_name in {"dirname", "join", "resolve"}:
-        return f"path.{imported_name}"
-    if module_kind == "url" and imported_name == "fileURLToPath":
-        return "url.fileURLToPath"
-    return None
-
-
-def _esbuild_static_import_specifier(
-    source: bytes, specifier: Node, module_kind: str
-) -> tuple[str, str] | None:
-    if specifier.type != "import_specifier" or _node_text(
-        source, specifier
-    ).lstrip().startswith("type "):
-        return None
-    imported = specifier.child_by_field_name("name")
-    alias = specifier.child_by_field_name("alias")
-    if imported is None:
-        return None
-    call_name = _esbuild_static_import_name(
-        module_kind, _node_text(source, imported)
-    )
-    if call_name is None:
-        return None
-    return _node_text(source, alias or imported), call_name
-
-
-def _esbuild_static_import_clause(
-    source: bytes, clause: Node, module_kind: str
-) -> tuple[dict[str, str], dict[str, str]]:
-    direct_calls: dict[str, str] = {}
-    namespaces: dict[str, str] = {}
-    for child in clause.named_children:
-        if child.type == "identifier":
-            namespaces[_node_text(source, child)] = module_kind
-        elif child.type == "namespace_import":
-            identifiers = [
-                node for node in child.named_children if node.type == "identifier"
-            ]
-            if identifiers:
-                namespaces[_node_text(source, identifiers[-1])] = module_kind
-    for specifier in _iter_ts_nodes(clause):
-        binding = _esbuild_static_import_specifier(source, specifier, module_kind)
-        if binding is not None:
-            direct_calls[binding[0]] = binding[1]
-    return direct_calls, namespaces
-
-
 def _esbuild_static_import(
     source: bytes, statement: Node
 ) -> tuple[dict[str, str], dict[str, str]]:
-    if statement.type != "import_statement" or _node_text(
-        source, statement
-    ).lstrip().startswith("import type "):
+    """Bind the `node:path` and `node:url` helpers this fold can prove."""
+    bindings = _value_import_bindings(
+        source, statement, frozenset(_STATIC_HELPER_MODULES)
+    )
+    kind = _STATIC_HELPER_MODULES.get(bindings.module or "")
+    if kind is None:
         return {}, {}
-    module = _string_node_value(source, statement.child_by_field_name("source"))
-    if module not in {"node:path", "path", "node:url", "url"}:
-        return {}, {}
-    module_kind = "path" if module in {"node:path", "path"} else "url"
-    for clause in statement.named_children:
-        if clause.type == "import_clause":
-            return _esbuild_static_import_clause(source, clause, module_kind)
-    return {}, {}
+    helpers = _STATIC_HELPER_NAMES[kind]
+    direct_calls = {
+        local: f"{kind}.{imported}"
+        for local, imported in bindings.named.items()
+        if imported in helpers
+    }
+    namespaces = dict.fromkeys(bindings.namespaces, kind)
+    if bindings.default is not None:
+        namespaces[bindings.default] = kind
+    return direct_calls, namespaces
+
+
+def _mutating_call_target(source: bytes, call_node: Node) -> Node | None:
+    function = call_node.child_by_field_name("function")
+    if function is None or function.type != "member_expression":
+        return None
+    method = function.child_by_field_name("property")
+    if method is None or _node_text(source, method) not in _MUTATING_CONTAINER_METHODS:
+        return None
+    return function
+
+
+def _esbuild_mutated_bindings(source: bytes, root_node: Node) -> set[str]:
+    """Names whose bound container is written to after it is initialized.
+
+    `const` freezes the binding, not the object, so an initializer is only
+    the call-time value when nothing writes through the name. This catches
+    writes spelled on the name itself; mutation reached through an alias or
+    through a callee is not detected, so it narrows the fold rather than
+    proving immutability.
+    """
+    mutated: set[str] = set()
+    for node in _iter_ts_nodes(root_node):
+        if node.type == "assignment_expression":
+            target = node.child_by_field_name("left")
+        elif node.type == "call_expression":
+            target = _mutating_call_target(source, node)
+        else:
+            continue
+        if target is None or target.type not in {
+            "member_expression",
+            "subscript_expression",
+        }:
+            continue
+        root = target.child_by_field_name("object")
+        if root is not None and root.type == "identifier":
+            mutated.add(_node_text(source, root))
+    return mutated
 
 
 def _esbuild_static_context(
@@ -1158,10 +1242,14 @@ def _esbuild_static_context(
     direct_calls: dict[str, str] = {}
     namespaces: dict[str, str] = {}
     for statement in root_node.named_children:
+        if statement.type == "export_statement":
+            statement = statement.child_by_field_name("declaration") or statement
         bindings.update(_esbuild_const_bindings(source, statement))
         direct, imported_namespaces = _esbuild_static_import(source, statement)
         direct_calls.update(direct)
         namespaces.update(imported_namespaces)
+    for name in _esbuild_mutated_bindings(source, root_node):
+        bindings.pop(name, None)
     return _EsbuildStaticContext(
         source=source,
         config_path=os.path.realpath(config_path),
@@ -1288,10 +1376,8 @@ def _static_esbuild_call_name(
         return None
     namespace = context.namespaces.get(_node_text(context.source, object_node))
     property_name = _node_text(context.source, property_node)
-    if namespace == "path" and property_name in {"dirname", "join", "resolve"}:
-        return f"path.{property_name}"
-    if namespace == "url" and property_name == "fileURLToPath":
-        return "url.fileURLToPath"
+    if property_name in _STATIC_HELPER_NAMES.get(namespace or "", frozenset()):
+        return f"{namespace}.{property_name}"
     return None
 
 
@@ -1318,7 +1404,7 @@ def _static_esbuild_identifier_string(
     return _static_esbuild_string(
         context,
         context.bindings[name],
-        local_strings,
+        None,
         resolving | {name},
     )
 
@@ -1402,6 +1488,7 @@ def _static_esbuild_call_string(
     return _static_esbuild_path_call(context, call_name, values)
 
 
+@_bounded_static_fold
 def _static_esbuild_string(
     context: _EsbuildStaticContext,
     node: Node | None,
@@ -1409,18 +1496,18 @@ def _static_esbuild_string(
     resolving: frozenset[str] = frozenset(),
 ) -> str | None:
     node = _unwrap_esbuild_static_expression(node)
-    if node is None or not context.visit():
+    if node is None:
         return None
     if node.type == "string":
         return _string_node_value(context.source, node)
+    if not context.visit():
+        return None
     if node.type == "identifier":
         return _static_esbuild_identifier_string(
             context, node, local_strings, resolving
         )
     if node.type == "template_string":
-        return _static_esbuild_template_string(
-            context, node, local_strings, resolving
-        )
+        return _static_esbuild_template_string(context, node, local_strings, resolving)
     if node.type == "call_expression":
         return _static_esbuild_call_string(context, node, local_strings, resolving)
     return None
@@ -1473,6 +1560,7 @@ def _static_esbuild_object_properties(
     return properties
 
 
+@_bounded_static_fold
 def _static_esbuild_object(
     context: _EsbuildStaticContext,
     node: Node | None,
@@ -1511,7 +1599,9 @@ def _static_esbuild_map_callback(
 ) -> tuple[str, Node] | None:
     if callback.type != "arrow_function":
         return None
-    parameters = callback.child_by_field_name("parameters")
+    parameters = callback.child_by_field_name(
+        "parameters"
+    ) or callback.child_by_field_name("parameter")
     body = callback.child_by_field_name("body")
     if parameters is None or body is None:
         return None
@@ -1618,6 +1708,7 @@ def _static_esbuild_object_entries(
     return entries
 
 
+@_bounded_static_fold
 def _static_esbuild_entries(
     context: _EsbuildStaticContext,
     node: Node | None,

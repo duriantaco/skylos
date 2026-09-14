@@ -10,6 +10,7 @@ from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
+    _MAX_ESBUILD_STATIC_STEPS,
     _discover_esbuild_config_entries,
     _discover_script_entry_candidates,
     _discover_vite_config_entries,
@@ -505,6 +506,148 @@ def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):
     )
 
     assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+def test_esbuild_folds_a_map_callback_without_parentheses(tmp_path):
+    """A single arrow parameter binds to `parameter`, not `parameters`."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const bundles = ['worker', 'admin'];\n"
+        "build({ entryPoints: bundles.map(name => `src/${name}.js`) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {
+        "worker.js",
+        "admin.js",
+    }
+
+
+def test_esbuild_folds_exported_const_bindings(tmp_path):
+    code = (
+        "import { join } from 'node:path';\n"
+        "import { build } from 'esbuild';\n"
+        "export const here = 'src';\n"
+        "build({ entryPoints: [join(here, 'worker.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+def test_esbuild_map_parameter_does_not_leak_into_module_bindings(tmp_path):
+    """`suffix` is evaluated in module scope, where `name` is still 'worker'."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const name = 'worker';\n"
+        "const suffix = `src/${name}.js`;\n"
+        "const bundles = ['admin'];\n"
+        "build({ entryPoints: bundles.map((name) => suffix) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {"worker.js"}
+
+
+def test_esbuild_folds_literal_arrays_larger_than_the_step_budget(tmp_path):
+    """Plain literals must not spend the budget that guards recursive folds."""
+    literals = ", ".join(
+        f"'src/filler{index}.js'" for index in range(_MAX_ESBUILD_STATIC_STEPS + 64)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"build({{ entryPoints: [{literals}, 'src/worker.js'] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+@pytest.mark.parametrize(
+    "link",
+    ["const a{index} = a{previous};\n", "const a{index} = `${{a{previous}}}`;\n"],
+    ids=["alias", "template"],
+)
+def test_esbuild_deeply_chained_bindings_abstain_without_recursing(tmp_path, link):
+    """Depth, not step count, is what overflows the interpreter stack."""
+    depth = 600
+    chain = "".join(
+        link.format(index=index, previous=index - 1) for index in range(1, depth)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const a0 = 'src/worker.js';\n"
+        f"{chain}"
+        f"build({{ entryPoints: [a{depth - 1}] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_deeply_chained_spreads_abstain_without_recursing(tmp_path):
+    depth = 600
+    chain = "".join(
+        f"const o{index} = {{ ...o{index - 1} }};\n" for index in range(1, depth)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const o0 = { entryPoints: ['src/worker.js'] };\n"
+        f"{chain}"
+        f"build(o{depth - 1});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "options.entryPoints = ['src/new.js'];\nbuild(options);\n",
+        "options['entryPoints'] = ['src/new.js'];\nbuild(options);\n",
+        "build({ ...options });\n",
+    ],
+)
+def test_esbuild_abstains_when_a_const_container_is_mutated(tmp_path, mutation):
+    """`const` blocks rebinding, not mutation, so the initializer is not the value."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const options = { entryPoints: ['src/old.js'] };\n"
+        "options.entryPoints = ['src/new.js'];\n"
+        f"{mutation}"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "old.js", "new.js") == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "entries.push('src/new.js');\n",
+        "entries.pop();\n",
+        "entries.splice(0, 1);\n",
+        "entries.reverse();\n",
+        "entries[0] = 'src/new.js';\n",
+    ],
+)
+def test_esbuild_abstains_when_a_const_entry_array_is_mutated(tmp_path, mutation):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const entries = ['src/old.js'];\n"
+        f"{mutation}"
+        "build({ entryPoints: entries });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "old.js", "new.js") == set()
+
+
+def test_esbuild_still_folds_non_mutating_methods_on_const_bindings(tmp_path):
+    """`.map()` reads its receiver; only mutating methods disqualify a binding."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const bundles = ['worker', 'admin'];\n"
+        "build({ entryPoints: bundles.map((name) => `src/${name}.js`) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {
+        "worker.js",
+        "admin.js",
+    }
 
 
 @pytest.mark.parametrize("method", ["catch", "finally", "then"])
