@@ -389,6 +389,124 @@ def test_esbuild_only_uses_immutable_runtime_imports(
     )
 
 
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            (
+                "import { dirname, join } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const here = dirname(fileURLToPath(import.meta.url));\n"
+                "const shared = { bundle: true };\n"
+                "build({ ...shared, "
+                "entryPoints: [join(here, 'src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import path from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { context } from 'esbuild';\n"
+                "const filename = fileURLToPath(import.meta.url);\n"
+                "const dirname = path.dirname(filename);\n"
+                "context({ entryPoints: "
+                "[path.resolve(dirname, 'src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import path from 'node:path';\n"
+                "import { build } from 'esbuild';\n"
+                "const shared = { bundle: true };\n"
+                "build({ ...shared, "
+                "entryPoints: [path.join('src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import { build } from 'esbuild';\n"
+                "const sourceDir = 'src';\n"
+                "build({ entryPoints: [`${sourceDir}/worker.js`] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import * as esbuild from 'esbuild';\n"
+                "const bundles = ['worker', 'admin'];\n"
+                "esbuild.context({ entryPoints: "
+                "bundles.map((name) => `src/${name}.js`) });\n"
+            ),
+            {"worker.js", "admin.js"},
+        ),
+        (
+            (
+                "import { dirname, resolve } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const root = dirname(fileURLToPath(import.meta.url));\n"
+                "build({ entryPoints: { "
+                "worker: resolve(root, 'src/worker.js'), "
+                "admin: resolve(root, 'src/admin.js') } });\n"
+            ),
+            {"worker.js", "admin.js"},
+        ),
+    ],
+)
+def test_esbuild_folds_static_computed_entries(tmp_path, code, expected):
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == expected
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "let sourceDir = 'src';\n",
+        "const sourceDir = runtimeDir();\n",
+        "const sourceDir = `${sourceDir}`;\n",
+    ],
+)
+def test_esbuild_rejects_dynamic_template_bindings(tmp_path, setup):
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"{setup}"
+        "build({ entryPoints: [`${sourceDir}/dead.js`] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+def test_esbuild_rejects_unproven_path_helpers(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const root = 'src';\n"
+        "const join = (...parts) => parts.join('/');\n"
+        "build({ entryPoints: [join(root, 'dead.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+@pytest.mark.parametrize(
+    "path_import",
+    [
+        "import type { join } from 'node:path';",
+        "import { type join } from 'node:path';",
+    ],
+)
+def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):
+    code = (
+        f"{path_import}\n"
+        "import { build } from 'esbuild';\n"
+        "build({ entryPoints: [join('src', 'dead.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
 @pytest.mark.parametrize("method", ["catch", "finally", "then"])
 def test_esbuild_top_level_promise_chains_still_execute_the_build(tmp_path, method):
     code = (
