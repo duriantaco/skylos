@@ -77,14 +77,16 @@ scanners:
 skylos compare . --against snyk.sarif --sca
 ```
 
-`--sca` may query OSV with package and version metadata. It queries only exact
-direct pins; ranges such as `>=2.0` and `^1.2.3` are recorded as unresolved
-rather than treated as installed versions. It does not provide full
-lockfile/transitive resolution, so
-the report keeps `DEPENDENCY` category coverage incomplete and does not claim
+`--sca` may query OSV with package and version metadata. It queries exact direct
+manifest pins and recorded packages from `uv.lock` format 1 and
+`package-lock.json` versions 1–3, including locked transitives. Manifest ranges
+such as `>=2.0` and `^1.2.3` remain unresolved; lockfile markers are retained,
+not evaluated as an installed production environment. The report keeps
+`DEPENDENCY` category coverage incomplete and does not claim
 Snyk/Trivy-equivalent completeness. Its receipt records operation status,
-supported manifests, unsupported lockfiles, unresolved versions, bounded
-inventory/query counts, and scope. Project-owned OSV cache data is never
+supported manifests/lockfiles, unsupported inputs, unresolved entries, bounded
+inventory/query counts, and scope. See [dependency scanning](./dependency-scanning.md)
+for source handling and limitations. Project-owned OSV cache data is never
 read or written, so it cannot skip a query, establish a clean result, or dirty
 the scanned repository.
 Dependency hallucination registry checks remain disabled in comparison mode,

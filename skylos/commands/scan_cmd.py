@@ -534,6 +534,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             _add(output_result.get("ai_defects", []), "AI_DEFECT", None)
             _add(output_result.get("quality", []), "QUALITY", None)
             _add(output_result.get("secrets", []), "SECRET", None)
+            _add(
+                output_result.get("dependency_vulnerabilities", []), "DEPENDENCY", None
+            )
             _add(output_result.get("custom_rules", []), "CUSTOM", None)
             _add(
                 output_result.get("analysis_errors", []),

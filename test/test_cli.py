@@ -2850,6 +2850,75 @@ def test_incomplete_language_summary_uses_operational_exit_code():
     assert cli._analysis_incomplete_exit_code(result) == 2
 
 
+@pytest.mark.parametrize(
+    ("receipt", "expected_exit"),
+    [
+        ({"status": "incomplete", "complete": False}, 2),
+        ({"status": "unavailable", "complete": False}, 2),
+        ({"status": "unknown", "complete": False}, 2),
+        ({"status": "no_supported_manifests", "complete": False}, 0),
+        ({"status": "complete", "complete": True}, 0),
+        (
+            {
+                "status": "complete_with_unresolved_versions",
+                "complete": True,
+                "unresolved_dependency_count": 3,
+            },
+            0,
+        ),
+        ({}, 0),
+    ],
+)
+@pytest.mark.parametrize("gate_args", [[], ["--gate"]])
+def test_main_json_sca_operational_status_controls_exit_and_upload(
+    monkeypatch, receipt, expected_exit, gate_args
+):
+    result = {
+        "analysis_summary": {
+            "total_files": 1,
+            "sca_coverage": {**receipt, "category_complete": False},
+        },
+        "analysis_errors": [],
+        "dependency_vulnerabilities": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--json",
+            "--sca",
+            "--force",
+            "--upload",
+            "--no-provenance",
+            *gate_args,
+        ],
+    )
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+    exit_code = 0
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.upload_report", return_value={"success": True}) as upload,
+        patch("builtins.print") as mock_print,
+    ):
+        try:
+            cli.main()
+        except SystemExit as exc:
+            exit_code = exc.code
+
+    assert exit_code == expected_exit
+    mock_print.assert_called_once_with(json.dumps(result))
+    if expected_exit:
+        upload.assert_not_called()
+    else:
+        upload.assert_called_once()
+
+
 def test_main_incomplete_analysis_renders_without_badge_then_exits_two(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1, "analysis_error_count": 1},

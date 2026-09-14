@@ -1,0 +1,142 @@
+# Dependency scanning
+
+`skylos . --sca --format json` inventories dependencies and queries OSV for
+known vulnerabilities in exact package versions. `-a` also enables SCA.
+Lockfiles are parsed as data: Skylos does not install dependencies, run package
+scripts, synchronize environments, or execute workspace code for SCA.
+
+## Supported inventories
+
+| Input | Coverage |
+| --- | --- |
+| `uv.lock` format 1 | Recorded public PyPI packages, including transitive packages and all locked environments |
+| `package-lock.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
+| `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved |
+
+The scanner discovers these files recursively, excluding dependency/build
+directories. It combines lockfiles with direct manifest pins: an old or empty
+lockfile must not silently hide a different manifest version. Identical
+ecosystem/name/version queries are deduplicated, while every source occurrence
+is retained. When both a manifest and a lockfile record the same version, the
+finding prefers the lockfile location.
+
+This is a **recorded inventory**, not a claim about what is installed in
+production. Development groups, extras, optional dependencies, Python/platform
+markers, workspace origins, and dependency edges remain available in finding
+metadata. Markers are not evaluated against the scanner's host. npm v1 cannot
+reliably distinguish direct dependencies from hoisted transitives; uncertain
+classification remains `unknown`.
+
+Local workspace packages are not queried as public packages. Explicit private
+registries, Git dependencies, and external archives remain unresolved, rather
+than being guessed to have public-registry identities. Known local/non-registry
+identities also prevent matching direct manifest pins in the lockfile's project
+and recorded workspace directories from being reinterpreted as public packages.
+Unrelated nested projects retain their own manifest inventory.
+
+npm permits omitted or registry-relative `resolved` values; those retain
+`registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
+for the configured registry, not proof of package provenance. This scanner does
+not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+
+## Results and failures
+
+Findings use the existing `SKY-SCA-*` rule IDs and
+`dependency_vulnerabilities` result field. Metadata includes package identity,
+lockfile location, dependency context, and `dependency_occurrences`. The same
+metadata is preserved in SARIF properties within the exporter's bounded
+depth, item, text, and node budgets. CLI JSON and SARIF both include dependency
+findings, including retained findings from an incomplete detail lookup.
+
+OSV's batch endpoint returns advisory IDs. Skylos fetches each distinct full
+advisory once per scan, with no project-owned or persistent cache. Findings now
+include available summaries, CVE aliases, references, severity information,
+affected ranges, and package-specific reported fixes. `advisory_status` records
+whether a full matching advisory was available; `advisory_error` explains a
+failed lookup or package mismatch without exposing transport credentials.
+
+Severity uses published numeric CVSS scores or recognized severity labels.
+CVSS vectors are preserved as `severity_vectors`, but are not converted into
+numeric scores. If only a vector—or no severity—is supplied, the severity stays
+`UNKNOWN` rather than being guessed. `fixed_versions` retains reported release
+fixes; a single `fixed_version` upgrade hint is emitted only when supported
+stable-version ranges establish an unambiguous newer fix. Multiple branches
+and unsupported version syntax retain their evidence without a guessed upgrade.
+
+`analysis_summary.sca_coverage` reports parsing/query completion, package and
+occurrence counts, local packages, unresolved entries, unsupported lockfiles,
+and inventory limits. Up to 25 lockfile issues are included as examples;
+aggregate counts are not truncated. For lockfiles, `inventory_scope` is
+`all_recorded_lockfile_environments`.
+
+The nested `query.advisory_details` receipt records distinct IDs, requests,
+successful/failed/skipped lookups, accepted bytes, and limits. Failure to fetch
+details does not erase a batch-confirmed finding: the finding stays visible,
+the scan becomes incomplete, and CLI exit code 2 applies. An advisory that was
+retrieved successfully may still legitimately omit optional severity/fix data.
+
+- Malformed/unreadable locks, unsupported schema versions, unresolved external
+  lock entries, inventory limits, or failed OSV requests produce incomplete
+  operational results. CLI exit code **2** signals this failure, even with
+  `--force` or an advisory gate. JSON is emitted before exit; upload is skipped.
+- A completed inventory with findings can fail a configured vulnerability gate
+  with exit code **1**. Reporting without a gate does not make findings an
+  operational error.
+- Manifest ranges remain explicit unresolved versions. No supported inputs and
+  limited category coverage are not, by themselves, operational failures.
+
+`category_complete` remains `false`: these inputs do not cover all package
+managers or establish a complete installed environment. `pnpm-lock.yaml`,
+`yarn.lock`, `poetry.lock`, `Pipfile.lock`, and `npm-shrinkwrap.json` are not
+parsed. In particular, npm shrinkwrap takes precedence for npm installation;
+scanning a neighboring package-lock does not describe that installation.
+Lockfile freshness and production reachability are not verified.
+
+Inventories are bounded by per-file/total bytes, file/directory counts, and
+package counts; graph traversal has additional bounds. Local records also count
+toward package limits. A project-owned OSV cache is neither read nor written.
+OSV queries send package names, ecosystems, and exact versions—not source code
+or registry credentials. Advisory availability and detail depend on OSV.
+Full-advisory retrieval is limited to 512 distinct IDs, four concurrent
+requests, 1 MiB per advisory, and 32 MiB total accepted response data. A
+45-second collection deadline stops new detail work; HTTP connect/read timeouts
+and deadline checks bound normal requests, but are not a guaranteed process-wide
+wall-clock timeout for a slowly streaming server. Redirects are not followed.
+Batch matches also have size/count bounds. If OSV returns another page of
+matches, the current client retains the known matches and reports incomplete
+coverage rather than silently treating the first page as the complete result.
+
+## CI
+
+For a CLI job:
+
+```bash
+skylos . --sca --gate --format json
+```
+
+In an existing Skylos GitHub Action step, enable SCA explicitly:
+
+```yaml
+with:
+  path: .
+  mode: gate
+  analysis: dead-code security sca
+```
+
+`dependency` and `dependencies` are aliases for `sca`. Both the scan and optional
+upload paths recognize these exact, space-separated tokens. The Action default
+remains `dead-code security`; this change does not enable uploads or change
+permissions. Use an Action revision containing this support.
+
+`skylos cicd init` already generates a workflow with SCA enabled. No Ansible,
+container-image scanning, or C++ engine is introduced by this lockfile change.
+
+## Format references
+
+The formats are described in [npm's package-lock documentation](https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json/)
+and [uv's project layout documentation](https://docs.astral.sh/uv/concepts/projects/layout/).
+uv's detailed serialization is defined by its
+[lockfile wire format](https://github.com/astral-sh/uv/blob/main/crates/uv-resolver/src/lock/mod.rs).
+Advisory retrieval follows the official
+[OSV batch API](https://google.github.io/osv.dev/post-v1-querybatch/) and
+[full-advisory endpoint](https://google.github.io/osv.dev/get-v1-vulns/).

@@ -10,6 +10,7 @@ _MAX_SARIF_MESSAGE_LENGTH = 4_000
 _MAX_SARIF_SNIPPET_LENGTH = 2_000
 _MAX_SARIF_METADATA_TEXT_LENGTH = 500
 _MAX_SARIF_METADATA_ITEMS = 32
+_MAX_SARIF_DEPENDENCY_METADATA_ITEMS = 64
 _MAX_SARIF_METADATA_NODES = 256
 
 
@@ -252,7 +253,17 @@ class SarifExporter:
 
             metadata = finding.get("metadata")
             if isinstance(metadata, dict) and metadata:
-                safe_metadata = _sanitize_sarif_payload(metadata)
+                # Lockfile environment context plus full advisory details can
+                # exceed 32 fields. Keep their locations without changing the
+                # existing total-node, depth, text or redaction safeguards.
+                metadata_items = (
+                    _MAX_SARIF_DEPENDENCY_METADATA_ITEMS
+                    if category == "DEPENDENCY"
+                    else _MAX_SARIF_METADATA_ITEMS
+                )
+                safe_metadata = _sanitize_sarif_payload(
+                    metadata, max_items=metadata_items
+                )
                 if safe_metadata:
                     properties["skylos_metadata"] = safe_metadata
 
@@ -317,7 +328,7 @@ class SarifExporter:
         return results
 
 
-def _sanitize_sarif_payload(value):
+def _sanitize_sarif_payload(value, *, max_items=_MAX_SARIF_METADATA_ITEMS):
     # SARIF properties are machine-readable JSON, not a Markdown sink. Keep
     # evidence symbols and trace arrows stable while still bounding content,
     # removing unsafe controls, and redacting credentials. Human-facing SARIF
@@ -325,7 +336,7 @@ def _sanitize_sarif_payload(value):
     return sanitize_bounded_payload(
         value,
         max_depth=4,
-        max_items=_MAX_SARIF_METADATA_ITEMS,
+        max_items=max_items,
         max_text_length=_MAX_SARIF_METADATA_TEXT_LENGTH,
         max_nodes=_MAX_SARIF_METADATA_NODES,
         markdown=False,

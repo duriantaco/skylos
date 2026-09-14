@@ -106,6 +106,56 @@ def test_gate_incomplete_analysis_is_not_advisory_or_force_bypass(clean_results)
     assert exit_code == 2
 
 
+@pytest.mark.parametrize("status", ["incomplete", "unavailable", "unknown"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_gate_fails_on_sca_operational_failure(clean_results, status, strict):
+    clean_results["analysis_summary"] = {
+        "sca_coverage": {
+            "status": status,
+            "complete": False,
+            "category_complete": False,
+        }
+    }
+
+    passed, reasons = check_gate(clean_results, {}, strict=strict)
+
+    assert passed is False
+    assert reasons == [f"Dependency vulnerability scan incomplete (status: {status})"]
+    assert (
+        run_gate_interaction(
+            result=clean_results,
+            config={},
+            strict=strict,
+            advisory=True,
+            force=True,
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"status": "no_supported_manifests", "complete": False},
+        {"status": "complete", "complete": True},
+        {
+            "status": "complete_with_unresolved_versions",
+            "complete": True,
+            "unresolved_dependency_count": 3,
+        },
+        {},
+    ],
+)
+def test_gate_allows_sca_coverage_limitations(clean_results, receipt):
+    clean_results["analysis_summary"] = {
+        "sca_coverage": {**receipt, "category_complete": False}
+    }
+
+    assert check_gate(clean_results, {}) == (True, [])
+    assert check_gate(clean_results, {}, strict=True) == (True, [])
+    assert run_gate_interaction(result=clean_results, config={}) == 0
+
+
 def test_gate_strict_mode(clean_results):
     clean_results["quality"] = [
         {
