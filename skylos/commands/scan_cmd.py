@@ -75,6 +75,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = _build_main_parser()
     args = _parse_main_cli_args(parser, argv)
+    if getattr(args, "baseline_ref", None) is not None:
+        args.baseline = True
     if getattr(args, "tui", False):
         if getattr(args, "output", None):
             parser.error(
@@ -436,7 +438,40 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             from skylos.core.baseline import load_baseline, filter_new_findings
 
             baseline = load_baseline(project_root)
-            if baseline is None:
+            if "dependency_vulnerabilities" in result:
+                from skylos.config import dependency_baseline_policy_locked
+                from skylos.core.baseline_source import load_dependency_baseline
+
+                dependency_baseline, dependency_source = load_dependency_baseline(
+                    project_root, ref=getattr(args, "baseline_ref", None)
+                )
+                disabled_reason = None
+                gate_config = config.get("gate")
+                if args.upload:
+                    disabled_reason = "upload_requires_full_findings"
+                elif args.strict or (
+                    isinstance(gate_config, dict) and gate_config.get("strict")
+                ):
+                    disabled_reason = "strict_requires_full_findings"
+                elif dependency_baseline_policy_locked(config):
+                    disabled_reason = "synced_policy_requires_full_findings"
+                elif dependency_baseline is None:
+                    disabled_reason = dependency_source["status"]
+                result = filter_new_findings(
+                    result,
+                    baseline or {},
+                    project_root=project_root,
+                    dependency_baseline=dependency_baseline or {},
+                    dependency_disabled_reason=disabled_reason,
+                    dependency_source=dependency_source,
+                )
+                if not machine_output:
+                    receipt = result["analysis_summary"]["dependency_baseline"]
+                    console.print(
+                        f"[muted]Dependency baseline: {receipt['existing_count']} existing, "
+                        f"{receipt['new_count']} remaining ({receipt['status']}).[/muted]"
+                    )
+            elif baseline is None:
                 console.print(
                     "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
                 )
