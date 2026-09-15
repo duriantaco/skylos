@@ -300,8 +300,8 @@ def test_lockfile_inventory_bound_prevents_network_queries(
 def test_supported_lockfiles_no_longer_count_as_unsupported(tmp_path, osv):
     _npm_lock(tmp_path / "package-lock.json")
     _uv_lock(tmp_path / "uv.lock")
-    (tmp_path / "pnpm-lock.yaml").write_text(
-        "lockfileVersion: '9.0'\n", encoding="utf-8"
+    (tmp_path / "yarn.lock").write_text(
+        "# unsupported Yarn lockfile\n", encoding="utf-8"
     )
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["supported_lockfile_count"] == 2

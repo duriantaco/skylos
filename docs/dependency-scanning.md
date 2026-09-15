@@ -11,6 +11,7 @@ scripts, synchronize environments, or execute workspace code for SCA.
 | --- | --- |
 | `uv.lock` format 1 | Recorded public PyPI packages, including transitive packages and all locked environments |
 | `package-lock.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
+| `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
 | `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved |
 
 The scanner discovers these files recursively, excluding dependency/build
@@ -38,6 +39,33 @@ npm permits omitted or registry-relative `resolved` values; those retain
 `registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
 for the configured registry, not proof of package provenance. This scanner does
 not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+
+### pnpm lockfiles
+
+Version 6.0 records package metadata and dependency edges together. Version 9.0
+splits them into `packages` and `snapshots`; Skylos joins those tables and keeps
+each full snapshot key as `package_path`. Multiple peer-dependency contexts
+therefore retain separate occurrences, while OSV queries for the same package
+and version are still deduplicated. Importer paths identify workspace consumers.
+Development and optional usage, plus recorded OS/CPU/libc/engine constraints,
+remain metadata rather than host-specific filters. Usage is also recorded per
+workspace, so a baseline cannot hide a move from development to production in
+one workspace just because another workspace already uses that package.
+
+Integrity-only pnpm resolutions use `registry_unspecified`, not verified public
+provenance. Local links are not queried. Git, private-registry, and archive
+sources are reported as gaps rather than guessed from their name/version.
+Missing package/snapshot records and unresolved dependency edges also make the
+scan incomplete without discarding findings for other valid package entries.
+Source references that may contain URL credentials are redacted; sensitive peer
+contexts use stable hashes so they still remain distinct in baselines.
+
+Only schema versions 6.0 and 9.0 are supported in this implementation. YAML
+aliases, custom tags, duplicate keys, and excessive nesting are rejected.
+Nonempty `packageManagerDependencies`, `configDependencies`, and
+`ignoredOptionalDependencies` are reported as unsupported inventory.
+No package installation, workspace script execution,
+lockfile rewriting, or artifact download is performed.
 
 ## Results and failures
 
@@ -86,8 +114,8 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   limited category coverage are not, by themselves, operational failures.
 
 `category_complete` remains `false`: these inputs do not cover all package
-managers or establish a complete installed environment. `pnpm-lock.yaml`,
-`yarn.lock`, `poetry.lock`, `Pipfile.lock`, and `npm-shrinkwrap.json` are not
+managers or establish a complete installed environment. `yarn.lock`,
+`poetry.lock`, `Pipfile.lock`, and `npm-shrinkwrap.json` are not
 parsed. In particular, npm shrinkwrap takes precedence for npm installation;
 scanning a neighboring package-lock does not describe that installation.
 Lockfile freshness and production reachability are not verified.
@@ -130,10 +158,10 @@ inputs returns exit 2 without replacing an existing baseline.
 
 Matching uses the exact advisory ID, ecosystem, package name/version, severity,
 manifest path relative to the scan directory, workspace roots, and recorded
-usage/environment context. npm installation paths also distinguish separate
-copies; uv's array indexes do not. Line changes, checkout location changes, and
-uv package-table reordering do not make the same issue new. A new advisory,
-version, consumer, usage context, or severity remains visible. Advisory aliases
+usage/environment context. npm installation paths and pnpm snapshot keys also
+distinguish separate copies; uv's array indexes do not. Line changes, checkout
+location changes, and uv package-table reordering do not make the same issue new.
+A new advisory, version, consumer, usage context, or severity remains visible. Advisory aliases
 are retained in findings, but are not used to merge distinct baseline IDs.
 
 Only matching findings with complete advisory details can be excluded. If the
@@ -193,6 +221,8 @@ The formats are described in [npm's package-lock documentation](https://docs.npm
 and [uv's project layout documentation](https://docs.astral.sh/uv/concepts/projects/layout/).
 uv's detailed serialization is defined by its
 [lockfile wire format](https://github.com/astral-sh/uv/blob/main/crates/uv-resolver/src/lock/mod.rs).
+pnpm publishes specifications for [lockfile 6.0](https://github.com/pnpm/spec/blob/master/lockfile/6.0.md)
+and [lockfile 9.0](https://github.com/pnpm/spec/blob/master/lockfile/9.0.md).
 Advisory retrieval follows the official
 [OSV batch API](https://google.github.io/osv.dev/post-v1-querybatch/) and
 [full-advisory endpoint](https://google.github.io/osv.dev/get-v1-vulns/).
