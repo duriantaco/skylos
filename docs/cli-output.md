@@ -18,6 +18,7 @@ Skylos keeps the default terminal output stable for existing scripts and copy/pa
 | Machine-readable results | `skylos . --format json` | Programmatic use and external integrations |
 | AI-ready report | `skylos . --format llm` | Agent workflows and structured reasoning systems |
 | GitHub Actions annotations | `skylos . --format github` | Inline workflow annotations in GitHub checks |
+| GitLab Code Quality report | `skylos . --format gitlab -o gl-code-quality-report.json` | Findings in GitLab merge request reports |
 | Interactive terminal triage | `skylos . --tui` | Keyboard-driven exploration of findings |
 
 ## Human Terminal Output
@@ -103,6 +104,18 @@ skylos . --format llm
 skylos . --format github
 ```
 
+Use `gitlab` to save a GitLab Code Quality JSON array:
+
+```bash
+skylos . --danger --quality --gate --format gitlab -o gl-code-quality-report.json
+```
+
+Declare the file as a GitLab `artifacts:reports:codequality` artifact. This
+format creates a report, not bot comments or a GitLab SAST report. It keeps
+the normal gate and incomplete-scan exit behavior. For a pinned scanner CI
+example, comparison setup, and GitLab tier limits, see
+[GitLab Code Quality](./gitlab-code-quality.md).
+
 ## Exit Codes And Incomplete Analysis
 
 Skylos reserves exit status `0` for successful command completion, `1` for
@@ -152,7 +165,7 @@ skylos . --select SKY-D211,SKY-D215 --format pretty
 skylos . --select SKY-L012 --select SKY-D225 --format json
 ```
 
-`--select` applies to rich, pretty, concise, JSON, LLM, GitHub, and SARIF
+`--select` applies to rich, pretty, concise, JSON, LLM, GitHub, GitLab, and SARIF
 reports. It filters reported findings rather than promising that shared
 analysis phases will not execute. A selected report omits the aggregate grade,
 because that grade describes the unfiltered scan. Analysis errors remain
@@ -189,4 +202,5 @@ The TUI uses a category sidebar plus a selectable finding list and detail pane. 
 - Tooling and integrations: `skylos . --format json`
 - AI-assisted workflows: `skylos . --format llm`
 - GitHub Actions annotations: `skylos . --format github`
+- GitLab merge request reports: `skylos . --format gitlab -o gl-code-quality-report.json`
 - Deep interactive investigation: `skylos . --tui`

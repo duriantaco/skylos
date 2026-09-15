@@ -1,0 +1,41 @@
+# Copy this job into .gitlab-ci.yml after preparing the trusted scanner image.
+# See ../gitlab-code-quality.md. SKYLOS_SCANNER_IMAGE must be an immutable
+# image reference (registry/path@sha256:...) supplied by the project operator.
+# The image must contain a reviewed Skylos build with --format gitlab support.
+skylos-code-quality:
+  stage: test
+  inherit:
+    default: false
+    variables: false
+  image:
+    name: "$SKYLOS_SCANNER_IMAGE"
+    entrypoint: [""]
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+  before_script: []
+  after_script: []
+  services: []
+  cache: []
+  dependencies: []
+  interruptible: true
+  timeout: 15m
+  allow_failure: false
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+  script:
+    - cd /opt/skylos-ci
+    - >-
+      /opt/skylos/bin/python -I /opt/skylos/bin/skylos "$CI_PROJECT_DIR"
+      --config-file /opt/skylos-ci/pyproject.toml
+      --danger --secrets --quality --ai-defects --gate
+      --no-upload --no-provenance --no-grep-verify
+      --format gitlab -o "$CI_PROJECT_DIR/gl-code-quality-report.json"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      codequality: gl-code-quality-report.json
+    paths:
+      - gl-code-quality-report.json

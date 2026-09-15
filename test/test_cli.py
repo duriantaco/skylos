@@ -2080,6 +2080,7 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
         "strict": False,
         "quiet": True,
         "analyzer_owned": True,
+        "gitlab_full_scan": False,
     }
     mock_print.assert_called_once()
     printed_payload = json.loads(mock_print.call_args.args[0])
