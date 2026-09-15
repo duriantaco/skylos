@@ -452,6 +452,16 @@ def test_esbuild_only_uses_immutable_runtime_imports(
         ),
         (
             (
+                "import { dirname, join } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const here = dirname(fileURLToPath(import.meta.url));\n"
+                "build({ entryPoints: [join(here, '/src/worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
                 "import * as esbuild from 'esbuild';\n"
                 "const bundles = ['worker', 'admin'];\n"
                 "esbuild.context({ entryPoints: "
@@ -593,6 +603,16 @@ def test_esbuild_deeply_chained_bindings_abstain_without_recursing(tmp_path, lin
         "const a0 = 'src/worker.js';\n"
         f"{chain}"
         f"build({{ entryPoints: [a{depth - 1}] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_deeply_chained_members_abstain_without_recursing(tmp_path):
+    """Chain length is bounded by the config, not by the fold's depth budget."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"build({{ entryPoints: [a{'.b' * 1200}('src/worker.js')] }});\n"
     )
 
     assert _esbuild_entries(tmp_path, code, "worker.js") == set()

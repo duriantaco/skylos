@@ -1219,14 +1219,7 @@ def _mutating_call_target(source: bytes, call_node: Node) -> Node | None:
 
 
 def _esbuild_mutated_bindings(source: bytes, root_node: Node) -> set[str]:
-    """Names whose bound container is written to after it is initialized.
-
-    `const` freezes the binding, not the object, so an initializer is only
-    the call-time value when nothing writes through the name. This catches
-    writes spelled on the name itself; mutation reached through an alias or
-    through a callee is not detected, so it narrows the fold rather than
-    proving immutability.
-    """
+    """Names whose bound container is written to after it is initialized."""
     mutated: set[str] = set()
     for node in _iter_ts_nodes(root_node):
         if node.type == "assignment_expression":
@@ -1460,7 +1453,11 @@ def _static_esbuild_path_call(
     if call_name == "path.dirname" and len(values) == 1:
         return os.path.dirname(values[0])
     if call_name == "path.join" and values:
-        return os.path.normpath(os.path.join(*values))
+        # `join` concatenates then normalizes
+        head, *rest = values
+        return os.path.normpath(
+            os.path.join(head, *(segment.lstrip("/") for segment in rest))
+        )
     if call_name == "path.resolve" and values:
         return os.path.abspath(os.path.join(context.default_base_dir, *values))
     return None

@@ -44,25 +44,25 @@ def string_literal_value(source: bytes, node: Any) -> str | None:
 
 
 def member_chain(source: bytes, node: Any) -> list[str]:
-    if node.type in {_IDENTIFIER, "property_identifier"}:
-        return [node_text(source, node)]
-    if node.type != "member_expression":
-        return []
-
-    object_node = node.child_by_field_name("object")
-    property_node = node.child_by_field_name("property")
-    if object_node is None or property_node is None:
-        return []
-    return member_chain(source, object_node) + [node_text(source, property_node)]
+    """Flatten `a.b.c` to its name parts, walking the spine without recursing."""
+    parts: list[str] = []
+    current: Any | None = node
+    while current is not None and current.type == "member_expression":
+        object_node = current.child_by_field_name("object")
+        property_node = current.child_by_field_name("property")
+        if object_node is None or property_node is None:
+            current = None
+            break
+        parts.append(node_text(source, property_node))
+        current = object_node
+    if current is not None and current.type in {_IDENTIFIER, "property_identifier"}:
+        parts.append(node_text(source, current))
+    parts.reverse()
+    return parts
 
 
 def is_type_only(node: Any) -> bool:
-    """Report whether an import statement or specifier is type-only.
-
-    The `type` keyword is a direct child, so this stays exact where a text
-    prefix test misses `import  type {x}`, `import /*c*/ type {x}` and any
-    specifier that wraps a line between `type` and the name.
-    """
+    """Report whether an import statement or specifier is type-only."""
     return any(child.type == "type" for child in node.children)
 
 
