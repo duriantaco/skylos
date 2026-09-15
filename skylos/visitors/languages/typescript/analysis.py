@@ -1453,11 +1453,16 @@ def _static_esbuild_path_call(
     if call_name == "path.dirname" and len(values) == 1:
         return os.path.dirname(values[0])
     if call_name == "path.join" and values:
-        # `join` concatenates then normalizes
-        head, *rest = values
-        return os.path.normpath(
-            os.path.join(head, *(segment.lstrip("/") for segment in rest))
-        )
+        # `join` drops empty segments, concatenates, and only then normalizes:
+        # the first non-empty segment sets the root and a later absolute one
+        # merely extends it. `resolve` is the call that restarts from a root.
+        segments = [segment for segment in values if segment]
+        if not segments:
+            return os.curdir
+        head, *rest = segments
+        joined = os.path.join(head, *(segment.lstrip("/") for segment in rest))
+        # normpath keeps a doubled leading slash; Node's join never emits one.
+        return os.path.normpath(re.sub("^//+", "/", joined))
     if call_name == "path.resolve" and values:
         return os.path.abspath(os.path.join(context.default_base_dir, *values))
     return None

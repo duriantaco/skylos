@@ -536,6 +536,19 @@ def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):
     assert _esbuild_entries(tmp_path, code, "dead.js") == set()
 
 
+def test_esbuild_join_keeps_the_root_after_an_empty_segment(tmp_path):
+    """`join` drops empty segments, so the next one still sets the root."""
+    absolute = (tmp_path / "src" / "worker.js").resolve()
+    code = (
+        "import { join } from 'node:path';\n"
+        "import { build } from 'esbuild';\n"
+        "const prefix = '';\n"
+        f"build({{ entryPoints: [join(prefix, '{absolute}')] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
 def test_esbuild_folds_a_map_callback_without_parentheses(tmp_path):
     """A single arrow parameter binds to `parameter`, not `parameters`."""
     code = (
