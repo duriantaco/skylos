@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.38.0](https://github.com/duriantaco/skylos/compare/v4.37.0...v4.38.0) (2026-09-15)
+
+
+### Features
+
+* **sca:** scan pnpm lockfiles with workspace context ([#850](https://github.com/duriantaco/skylos/issues/850)) ([d9d9405](https://github.com/duriantaco/skylos/commit/d9d9405b41c9fba13679ebc196f3308352d713e5))
+* **sca:** scan uv and npm lockfiles with advisory details ([#847](https://github.com/duriantaco/skylos/issues/847)) ([6bb2d05](https://github.com/duriantaco/skylos/commit/6bb2d056018c73fe8b8c9377d52a9a3a16c9c0c2))
+
+
+### Bug Fixes
+
+* **sca:** resolve CI security scan warnings ([#849](https://github.com/duriantaco/skylos/issues/849)) ([a54b5c6](https://github.com/duriantaco/skylos/commit/a54b5c638145c7cdc88523f833ccbdf35238c4fc))
+
 ## [4.37.0](https://github.com/duriantaco/skylos/compare/v4.36.1...v4.37.0) (2026-09-13)
 
 
