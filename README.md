@@ -138,6 +138,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
+| GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Single-rule review | `skylos . --select SKY-L012 --format concise` | Enables the matching analyzer family and reports only that exact rule with its full message | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -546,6 +547,7 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 | Integration | Link | Purpose |
 |:---|:---|:---|
 | GitHub Action | [GitHub Action](./action.yml) | PR gates, annotations, and CI enforcement |
+| GitLab Code Quality | [GitLab setup](./docs/gitlab-code-quality.md) | merge request report artifacts; no comment-posting bot or API token |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
@@ -572,6 +574,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./docs/cli-output.md) |
 | Optional Ruff linting through the Skylos CLI | [Python Linting](./docs/python-linting.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
+| GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Dependency CVEs, uv/npm/pnpm lockfiles, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext, redirect_stdout
 from types import ModuleType
 from typing import Sequence
 
@@ -9,6 +10,16 @@ from skylos.core.safe_cache_io import write_text_no_symlink
 def _write_scan_output(path: str, text: str) -> None:
     if not write_text_no_symlink(path, text, encoding="utf-8"):
         raise OSError(f"could not safely write output file: {path}")
+
+
+def _check_managed_gitlab_delivery(response: dict) -> None:
+    if "gitlab_delivery_exit_code" not in response:
+        return
+    import sys
+
+    print(response["gitlab_delivery_message"], file=sys.stderr)
+    if response["gitlab_delivery_exit_code"] == 2:
+        raise SystemExit(2)
 
 
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
@@ -75,6 +86,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = _build_main_parser()
     args = _parse_main_cli_args(parser, argv)
+    gitlab_output = getattr(args, "format", "rich") == "gitlab"
     if getattr(args, "baseline_ref", None) is not None:
         args.baseline = True
     if getattr(args, "tui", False):
@@ -87,7 +99,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     args._explicit_upload_requested = bool(getattr(args, "upload", False))
 
     try:
-        context = _build_main_scan_context(args)
+        with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
+            context = _build_main_scan_context(args)
     except cli_module.ConfigError as exc:
         parser.error(str(exc))
 
@@ -103,11 +116,18 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
 
-    pre_analysis = _run_pre_analysis_steps(args, project_root, console)
+    with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
+        pre_analysis = _run_pre_analysis_steps(args, project_root, console)
     pytest_fixtures_ok = pre_analysis.pytest_fixtures_ok
     custom_rules_data = pre_analysis.custom_rules_data
     changed_files = pre_analysis.changed_files
     trace_file = pre_analysis.trace_file
+
+    from skylos.cloud.gitlab import cli_full_scan
+
+    gitlab_full_scan = cli_full_scan(
+        args, config, project_root, changed_files=changed_files
+    )
 
     from skylos.core.review_decisions import review_scan_requirements
 
@@ -154,7 +174,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             analyzer_logger_level = analyzer_logger.level
             analyzer_logger.setLevel(logging.WARNING)
             try:
-                result_json = run_main_analysis()
+                with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
+                    result_json = run_main_analysis()
             finally:
                 analyzer_logger.setLevel(analyzer_logger_level)
         else:
@@ -512,9 +533,12 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 strict=args.strict,
                 quiet=True,
                 analyzer_owned=True,
+                gitlab_full_scan=gitlab_full_scan,
             )
             if not upload_resp.get("success"):
+                _check_managed_gitlab_delivery(upload_resp)
                 raise SystemExit(1)
+            _check_managed_gitlab_delivery(upload_resp)
             cloud_gate_passed = upload_resp.get("quality_gate_passed")
             if cloud_gate_passed is None:
                 cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
@@ -630,6 +654,41 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
             _write_scan_output(args.sarif, _json.dumps(sarif_data, indent=2))
 
+        if gitlab_output:
+            from skylos.core.file_discovery import find_git_root
+            from skylos.reporting.gitlab import build_gitlab_report
+
+            # GitLab resolves locations from the checkout root, even when the
+            # user scans only a subdirectory or a single file. Anchor discovery
+            # to the scan target, not the invoking shell's unrelated checkout.
+            report_root = find_git_root(project_root) or project_root
+            report = build_gitlab_report(output_result, project_root=report_root)
+            report_json = json.dumps(report.findings, separators=(",", ":")) + "\n"
+            if args.output:
+                _write_scan_output(args.output, report_json)
+            else:
+                print(report_json, end="")
+
+            for diagnostic in report.diagnostics:
+                print(f"Skylos GitLab report incomplete: {diagnostic}", file=sys.stderr)
+            incomplete_exit_code = _strict_scan_exit_code(result, args)
+            if not report.complete or incomplete_exit_code == 2:
+                if not report.diagnostics:
+                    print("Skylos GitLab scan incomplete.", file=sys.stderr)
+                raise SystemExit(2)
+
+            with redirect_stdout(sys.stderr):
+                upload_formatted_result()
+                if args.gate:
+                    exit_code = _formatted_output_gate_exit_code(
+                        result, config, args, provenance=prov_report
+                    )
+                    if exit_code:
+                        raise SystemExit(exit_code)
+            if incomplete_exit_code:
+                raise SystemExit(incomplete_exit_code)
+            return
+
         if args.json:
             if args.output:
                 _write_scan_output(args.output, output_result_json)
@@ -727,6 +786,14 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             return
 
     except Exception as e:
+        if gitlab_output:
+            # Exceptions can contain scanned text, credentials, or host paths.
+            # Do not put them in the artifact or claim a clean/complete report.
+            print(
+                "Skylos GitLab scan incomplete: analysis or report writing failed.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from None
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
 
@@ -757,12 +824,15 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 is_forced=args.force,
                 strict=args.strict,
                 analyzer_owned=True,
+                gitlab_full_scan=gitlab_full_scan,
             )
             if not upload_resp.get("success"):
+                _check_managed_gitlab_delivery(upload_resp)
                 _render_upload_failure(console, upload_resp)
                 if getattr(args, "_explicit_upload_requested", False):
                     raise SystemExit(1)
             else:
+                _check_managed_gitlab_delivery(upload_resp)
                 cloud_gate_passed = upload_resp.get("quality_gate_passed")
                 if cloud_gate_passed is None:
                     cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
@@ -1073,13 +1143,16 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             is_forced=args.force,
             strict=args.strict,
             analyzer_owned=True,
+            gitlab_full_scan=gitlab_full_scan,
         )
 
         if not upload_resp.get("success"):
+            _check_managed_gitlab_delivery(upload_resp)
             _render_upload_failure(console, upload_resp)
             if getattr(args, "_explicit_upload_requested", False):
                 raise SystemExit(1)
         else:
+            _check_managed_gitlab_delivery(upload_resp)
             passed = upload_resp.get("quality_gate_passed")
             if passed is None:
                 passed = (upload_resp.get("quality_gate") or {}).get("passed", True)

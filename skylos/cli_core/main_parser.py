@@ -131,7 +131,7 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument(
         "--format",
-        choices=("rich", "pretty", "json", "llm", "github", "concise"),
+        choices=("rich", "pretty", "json", "llm", "github", "gitlab", "concise"),
         default="rich",
         help=(
             "Output format. Use 'pretty' for grouped human output or "
