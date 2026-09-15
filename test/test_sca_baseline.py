@@ -141,6 +141,48 @@ def test_root_and_group_order_do_not_define_identity(tmp_path):
     )
 
 
+@pytest.mark.parametrize("change", ["peer", "patch", "workspace", "platform"])
+def test_pnpm_snapshot_context_changes_remain_new(tmp_path, change):
+    original = finding(tmp_path)
+    original["file"] = str(tmp_path / "pnpm-lock.yaml")
+    occurrence = original["metadata"]["dependency_occurrences"][0]
+    occurrence.update(
+        file=original["file"],
+        package_path="example@1.0.0(react@18.0.0)",
+        dependency_roots=["packages/app"],
+        dependency_markers={"os": ["linux"]},
+    )
+    baseline = saved(tmp_path, result(original))
+    current = copy.deepcopy(original)
+    changed = current["metadata"]["dependency_occurrences"][0]
+    if change == "peer":
+        changed["package_path"] = "example@1.0.0(react@19.0.0)"
+    elif change == "patch":
+        changed["package_path"] = "example@1.0.0(patch_hash=abc)(react@18.0.0)"
+    elif change == "workspace":
+        changed["dependency_roots"].append("packages/worker")
+    else:
+        changed["dependency_markers"] = {"os": ["linux", "darwin"]}
+    assert filter_new_findings(result(current), baseline, project_root=tmp_path)[
+        "dependency_vulnerabilities"
+    ] == [current]
+
+
+def test_pnpm_line_movement_does_not_change_snapshot_identity(tmp_path):
+    original = finding(tmp_path)
+    original["file"] = str(tmp_path / "pnpm-lock.yaml")
+    occurrence = original["metadata"]["dependency_occurrences"][0]
+    occurrence.update(file=original["file"], package_path="example@1.0.0(react@18.0.0)")
+    baseline = saved(tmp_path, result(original))
+    original["line"] = occurrence["line"] = 300
+    assert (
+        filter_new_findings(result(original), baseline, project_root=tmp_path)[
+            "dependency_vulnerabilities"
+        ]
+        == []
+    )
+
+
 def test_pypi_names_are_canonical_but_npm_names_are_not(tmp_path):
     old = finding(tmp_path, ecosystem="PyPI", package_name="My_Package")
     new = finding(tmp_path, ecosystem="PyPI", package_name="my-package")
