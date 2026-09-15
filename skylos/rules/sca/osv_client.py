@@ -15,7 +15,6 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable
 
-OSV_ADVISORY_URL = "https://api.osv.dev/v1/vulns/"
 MAX_ADVISORIES = 512
 MAX_ADVISORY_BYTES = 1_048_576
 MAX_TOTAL_ADVISORY_BYTES = 33_554_432
@@ -245,14 +244,18 @@ def fetch_advisories(ids: list[str], client) -> AdvisoryFetchResult:
             total_bytes += count
 
     def fetch_one(advisory_id):
+        if not is_valid_advisory_id(advisory_id):
+            return None, "invalid_advisory_id"
         with state_lock:
             remaining = deadline - time.monotonic()
             if stop.is_set() or remaining <= 0:
                 return None, "detail_deadline_exceeded"
             attempted.add(advisory_id)
         try:
+            # Keep the fixed origin visible at the request boundary. The ID is
+            # a validated ASCII path segment, and redirects are disabled below.
             response = client.get(
-                OSV_ADVISORY_URL + advisory_id,
+                f"https://api.osv.dev/v1/vulns/{advisory_id}",
                 timeout=(min(5.0, remaining), min(15.0, remaining)),
                 stream=True,
                 allow_redirects=False,

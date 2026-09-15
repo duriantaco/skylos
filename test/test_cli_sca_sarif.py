@@ -131,7 +131,7 @@ def osv(monkeypatch):
 def _write_lockfile(project, kind):
     if kind == "npm":
         path = project / "package-lock.json"
-        path.write_text(
+        path.write_text(  # skylos: ignore[SKY-D324] all callers use the pytest project fixture
             json.dumps(
                 {
                     "lockfileVersion": 3,
@@ -150,7 +150,7 @@ def _write_lockfile(project, kind):
         return path, "lodash", "4.17.20", "npm"
 
     path = project / "uv.lock"
-    path.write_text(
+    path.write_text(  # skylos: ignore[SKY-D324] all callers use the pytest project fixture
         "version = 1\nrevision = 3\n"
         '[[package]]\nname = "local-app"\nversion = "0.1.0"\n'
         'source = { virtual = "." }\n'
@@ -233,7 +233,8 @@ def test_cli_lockfile_advisories_reach_json_sarif_and_gate(
 ):
     lockfile, name, version, ecosystem = _write_lockfile(project, kind)
     if with_source:
-        (project / "app.py").write_text(
+        source = project / "app.py"
+        source.write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
             'raise AssertionError("static analyzer must not execute this module")\n',
             encoding="utf-8",
         )
@@ -355,7 +356,10 @@ def test_cli_preserves_published_numeric_severity_in_both_reports(
 
 
 def test_cli_malformed_lockfile_still_writes_both_reports(project, monkeypatch, osv):
-    (project / "package-lock.json").write_text("{invalid", encoding="utf-8")
+    lockfile = project / "package-lock.json"
+    lockfile.write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
+        "{invalid", encoding="utf-8"
+    )
     exit_code, result, sarif = _run_cli(project, monkeypatch, "--force")
     assert exit_code == 2
     assert result["dependency_vulnerabilities"] == []

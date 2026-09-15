@@ -20,14 +20,14 @@ def _npm_lock(path, *, version="1.2.3", resolved=None, duplicate=False):
     }
     if duplicate:
         packages["node_modules/other/node_modules/example"] = dict(record, dev=True)
-    path.write_text(
+    path.write_text(  # skylos: ignore[SKY-D324] all callers pass literal filenames under pytest tmp_path
         json.dumps({"lockfileVersion": 3, "packages": packages}, indent=2),
         encoding="utf-8",
     )
 
 
 def _uv_lock(path, *, version="1.2.3", registry="https://pypi.org/simple"):
-    path.write_text(
+    path.write_text(  # skylos: ignore[SKY-D324] all callers pass literal filenames under pytest tmp_path
         'version = 1\nrevision = 3\nrequires-python = ">=3.10"\n'
         '[[package]]\nname = "local-app"\nversion = "0.1.0"\n'
         'source = { virtual = "." }\n'
@@ -178,16 +178,20 @@ def test_unreadable_or_unsupported_lockfile_is_operational_failure(
         writer(target)
         path.symlink_to(target)
     elif invalid == "invalid_utf8":
-        path.write_bytes(b"\xff")
+        path.write_bytes(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
+            b"\xff"
+        )
     elif invalid == "future_version":
-        path.write_text(
+        path.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
             '{"lockfileVersion": 999, "packages": {}}'
             if filename.endswith("json")
             else "version = 999\npackage = []\n",
             encoding="utf-8",
         )
     else:
-        path.write_text(invalid, encoding="utf-8")
+        path.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
+            invalid, encoding="utf-8"
+        )
     result = sca.scan_dependencies(tmp_path)
     assert result.receipt["status"] == "incomplete"
     assert result.receipt["parse_error_count"] == 1
