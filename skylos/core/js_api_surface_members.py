@@ -7,6 +7,12 @@ from skylos.core.js_api_surface_utils import (
     relative_posix as _relative_posix,
     safe_name as _safe_name,
 )
+from skylos.core.js_ast import (
+    is_type_only as _is_type_only,
+    iter_import_clause_bindings as _import_clause_bindings,
+    node_text as _node_text,
+    string_literal_value as _string_literal_value,
+)
 
 
 def _object_export_members(source: bytes, node: Any | None) -> list[tuple[str, str]]:
@@ -265,14 +271,12 @@ def _module_scope_import_bindings(
         )
         if source_literal is None or clause is None:
             continue
-        type_only = any(child.type == "type" for child in node.children)
-        for local_name, imported_name, specifier_type_only in _import_clause_bindings(
-            source, clause
-        ):
-            bindings[local_name] = (
+        type_only = _is_type_only(node)
+        for binding in _import_clause_bindings(source, clause):
+            bindings[binding.local] = (
                 source_literal,
-                imported_name,
-                type_only or specifier_type_only,
+                binding.imported,
+                type_only or binding.type_only,
             )
     return bindings
 
@@ -285,42 +289,6 @@ def _locally_exported_names(source: bytes, root_node: Any) -> set[str]:
         and _export_source_literal(source, node) is None
         for original_name, _, _ in _named_export_clause_pairs(source, node)
     }
-
-
-def _import_clause_bindings(source: bytes, clause: Any):
-    for child in clause.named_children:
-        if child.type == "named_imports":
-            yield from _named_import_bindings(source, child)
-            continue
-        if child.type == "identifier":
-            name_node = child
-        elif child.type == "namespace_import":
-            name_node = next(
-                (node for node in child.named_children if node.type == "identifier"),
-                None,
-            )
-        else:
-            continue
-        name = _safe_name(_node_text(source, name_node))
-        if name is not None:
-            yield name, "default" if child.type == "identifier" else "*", False
-
-
-def _named_import_bindings(source: bytes, clause: Any):
-    for specifier in clause.named_children:
-        if specifier.type != "import_specifier":
-            continue
-        name_node = specifier.child_by_field_name("name")
-        alias_node = specifier.child_by_field_name("alias")
-        imported_name = _safe_name(
-            _string_literal_value(source, name_node)
-            if name_node is not None and name_node.type == "string"
-            else _node_text(source, name_node)
-        )
-        local_name = _safe_name(_node_text(source, alias_node or name_node))
-        if imported_name is not None and local_name is not None:
-            type_only = any(child.type == "type" for child in specifier.children)
-            yield local_name, imported_name, type_only
 
 
 def _collect_module_scope_bindings(
@@ -478,17 +446,6 @@ def _value_kind(node: Any | None) -> str:
     if node.type in {"class", "class_declaration", "class_expression"}:
         return "class"
     return "value"
-def _member_chain(source: bytes, node: Any) -> list[str]:
-    if node.type in {"identifier", "property_identifier"}:
-        return [_node_text(source, node)]
-    if node.type != "member_expression":
-        return []
-
-    object_node = node.child_by_field_name("object")
-    property_node = node.child_by_field_name("property")
-    if object_node is None or property_node is None:
-        return []
-    return _member_chain(source, object_node) + [_node_text(source, property_node)]
 def _property_key_name(source: bytes, node: Any | None) -> str | None:
     if node is None:
         return None
@@ -497,22 +454,11 @@ def _property_key_name(source: bytes, node: Any | None) -> str | None:
     if node.type == "string":
         return _safe_name(_string_literal_value(source, node))
     return None
-def _string_literal_value(source: bytes, node: Any) -> str | None:
-    text = _node_text(source, node).strip()
-    if len(text) < 2:
-        return None
-    if text[0] not in {"'", '"'} or text[-1] != text[0]:
-        return None
-    return text[1:-1]
 def _iter_nodes(node: Any):
     stack = [node]
     while stack:
         current = stack.pop()
         yield current
         stack.extend(reversed(current.named_children))
-def _node_text(source: bytes, node: Any | None) -> str:
-    if node is None:
-        return ""
-    return source[node.start_byte : node.end_byte].decode("utf-8", "replace")
 def _node_line(node: Any) -> int:
     return int(node.start_point[0]) + 1

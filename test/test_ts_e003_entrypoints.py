@@ -365,6 +365,21 @@ def test_jsdoc_many_closed_links_and_properties_stay_bounded(tmp_path):
             set(),
         ),
         (
+            "import  type { build } from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
+            "import /* bundler */ type { build } from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
+            "import {\n  type\n  build,\n} from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
             "import esbuild from 'esbuild';",
             "esbuild.build({ entryPoints: ['src/dead.js'] });",
             set(),
@@ -496,6 +511,9 @@ def test_esbuild_rejects_unproven_path_helpers(tmp_path):
     [
         "import type { join } from 'node:path';",
         "import { type join } from 'node:path';",
+        "import  type { join } from 'node:path';",
+        "import /* paths */ type { join } from 'node:path';",
+        "import {\n  type\n  join,\n} from 'node:path';",
     ],
 )
 def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):

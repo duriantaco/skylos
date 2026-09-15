@@ -14,7 +14,6 @@ from skylos.core.js_api_surface_members import (
     _exported_function_signature_names,
     _exported_namespace_names,
     _locally_exported_names,
-    _member_chain,
     _module_scope_exportable_bindings,
     _module_scope_import_bindings,
     _named_export_clause_pairs,
@@ -31,6 +30,7 @@ from skylos.core.js_api_surface_utils import (
     resolve_entrypoint_target as _resolve_entrypoint_target,
     safe_name as _safe_name,
 )
+from skylos.core.js_ast import member_chain as _member_chain
 from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.visitors.languages.typescript import is_minified_js_source
 from skylos.visitors.languages.typescript.core import TypeScriptCore
