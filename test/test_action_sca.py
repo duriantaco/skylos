@@ -23,7 +23,7 @@ def _run_step(action, step_name, analysis, tmp_path):
     step = next(step for step in action["runs"]["steps"] if step["name"] == step_name)
     calls = tmp_path / "cli-calls.jsonl"
     stub = tmp_path / "stub_python.py"
-    stub.write_text(
+    stub.write_text(  # skylos: ignore[SKY-D324] fixed filename under pytest tmp_path
         textwrap.dedent(
             """\
             import json

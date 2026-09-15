@@ -114,6 +114,62 @@ For a CLI job:
 skylos . --sca --gate --format json
 ```
 
+### Report only new dependency issues
+
+Capture the current findings explicitly, then compare later scans with them:
+
+```bash
+skylos baseline . --sca
+skylos . --sca --baseline --gate --format json --sarif results.sarif
+```
+
+The ordinary `skylos baseline .` command still does not enable SCA or make OSV
+requests. `--sca` adds dependency findings to the baseline after a completed
+scan. An incomplete scan, failed lookup, or absence of supported dependency
+inputs returns exit 2 without replacing an existing baseline.
+
+Matching uses the exact advisory ID, ecosystem, package name/version, severity,
+manifest path relative to the scan directory, workspace roots, and recorded
+usage/environment context. npm installation paths also distinguish separate
+copies; uv's array indexes do not. Line changes, checkout location changes, and
+uv package-table reordering do not make the same issue new. A new advisory,
+version, consumer, usage context, or severity remains visible. Advisory aliases
+are retained in findings, but are not used to merge distinct baseline IDs.
+
+Only matching findings with complete advisory details can be excluded. If the
+current SCA scan is incomplete, no dependency findings are excluded. Unsupported
+or ambiguous identity data also remains visible. This is a recorded-finding
+baseline, not a claim that accepted packages are safe or reachable in production.
+
+JSON keeps matching findings in `baseline_dependency_vulnerabilities`; new
+findings remain in `dependency_vulnerabilities` and SARIF. The
+`analysis_summary.dependency_baseline` receipt gives the status and both counts.
+The original `sca_coverage` receipt is preserved. Older baselines without the
+versioned dependency section still work for their existing finding categories,
+but cannot exclude dependency findings. Baseline files are bounded to 2 MB,
+and dependency sections to 20,000 fingerprints; unsafe file links are rejected.
+
+In CI, explicitly select a **trusted base revision** containing the reviewed
+baseline, not the pull request's editable baseline:
+
+```bash
+skylos . --sca --baseline-ref "$TRUSTED_BASE_SHA" --gate --format json
+```
+
+Set `TRUSTED_BASE_SHA` from trusted CI metadata, such as the pull request target
+branch's base commit SHA, and make that commit available in the local Git clone.
+`--baseline-ref` implies `--baseline` and reads the dependency baseline from an
+immutable Git object. It is not accepted through project-controlled `addopts`.
+Without an explicit ref in CI, or if the selected baseline cannot be read,
+Skylos retains all dependency findings and records the reason; it never falls
+back to the checkout's dependency baseline. This restriction applies to the
+new dependency baseline support, not the older non-dependency baseline format.
+
+Uploads, strict scans, synced Cloud policy, and agent pre-commit checks retain
+full dependency findings. A local baseline does not override those policies.
+The CLI commands above support this workflow; this change does not add a
+`baseline-ref` input to the composite GitHub Action or change generated workflows.
+
 In an existing Skylos GitHub Action step, enable SCA explicitly:
 
 ```yaml

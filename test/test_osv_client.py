@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 import threading
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -82,14 +84,65 @@ def test_fetches_full_documents_once_and_only_fixed_origin():
     assert result.receipt["failed_count"] == 0
     assert result.receipt["skipped_count"] == 0
     assert len(client.calls) == 2
+    assert {url for url, _kwargs in client.calls} == {
+        f"https://api.osv.dev/v1/vulns/{first}",
+        f"https://api.osv.dev/v1/vulns/{second}",
+    }
     for url, kwargs in client.calls:
-        assert url.startswith("https://api.osv.dev/v1/vulns/")
         assert kwargs == {
             "timeout": (5.0, 15.0),
             "stream": True,
             "allow_redirects": False,
         }
     assert all(response.closed for response in client.responses.values())
+
+
+@pytest.mark.parametrize(
+    "advisory_id",
+    ["A", "0", "GHSA-test_1234.abcd", "CVE-2024-12345", "X" * 200],
+)
+def test_prepared_advisory_url_keeps_exact_fixed_origin_and_single_segment(advisory_id):
+    from requests import Request
+
+    client = Client({advisory_id: Response(advisory(advisory_id))})
+    result = osv.fetch_advisories([advisory_id], client)
+
+    assert result.receipt["complete"] is True
+    assert len(client.calls) == 1
+    url, options = client.calls[0]
+    assert url == f"https://api.osv.dev/v1/vulns/{advisory_id}"
+    prepared_url = Request("GET", url).prepare().url
+    assert prepared_url == url
+    parsed = urlsplit(prepared_url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "api.osv.dev"
+    assert parsed.path == f"/v1/vulns/{advisory_id}"
+    assert parsed.query == parsed.fragment == ""
+    assert parsed.username is parsed.password is parsed.port is None
+    assert options["allow_redirects"] is False
+
+
+def test_worker_revalidates_id_before_transport(monkeypatch):
+    validation_results = iter([True, False])
+    monkeypatch.setattr(
+        osv, "is_valid_advisory_id", lambda value: next(validation_results)
+    )
+    client = Client({})
+    advisory_id = "GHSA-test-1234-abcd"
+
+    result = osv.fetch_advisories([advisory_id], client)
+
+    assert result.errors == {advisory_id: "invalid_advisory_id"}
+    assert result.receipt["requested_count"] == 0
+    assert client.calls == []
+
+
+def test_static_scanner_recognizes_actual_client_fixed_origin():
+    from skylos.rules.danger.danger import scan_ctx
+
+    source_path = Path(osv.__file__)
+    findings = scan_ctx(source_path.parent, [source_path])
+    assert not [finding for finding in findings if finding["rule_id"] == "SKY-D216"]
 
 
 @pytest.mark.parametrize(
@@ -104,6 +157,15 @@ def test_fetches_full_documents_once_and_only_fixed_origin():
         "https://example.invalid/path",
         "GHSA-back\\slash",
         "GHSA-control\n",
+        "//example.invalid/path",
+        "GHSA-user@example.invalid",
+        "GHSA:8443",
+        "GHSA-%252f-example",
+        "GHSA-carriage\rreturn",
+        "GHSA-tab\t",
+        "GHSA-null\0",
+        ".",
+        "..",
         "GHSA-non-ascii-\u00e9",
         "X" * 201,
         123,
@@ -121,7 +183,7 @@ def test_rejects_unsafe_or_unbounded_ids_without_transport(unsafe_id):
     assert client.calls == []
 
 
-@pytest.mark.parametrize("status", [301, 302, 307, 400, 404, 429, 500, 503])
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308, 400, 404, 429, 500, 503])
 def test_http_errors_and_redirects_are_explicit_failures(status):
     advisory_id = "GHSA-test-1234-abcd"
     response = Response(advisory(), status=status)
@@ -133,6 +195,24 @@ def test_http_errors_and_redirects_are_explicit_failures(status):
     assert not response.iterated
     assert response.closed
     assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "location", ["https://example.invalid/advisory", "/other/path"]
+)
+def test_redirect_location_never_triggers_another_request(location):
+    advisory_id = "GHSA-test-1234-abcd"
+    response = Response(advisory(), status=302, headers={"Location": location})
+    client = Client({advisory_id: response})
+
+    result = osv.fetch_advisories([advisory_id], client)
+
+    assert result.errors == {advisory_id: "http_302"}
+    assert len(client.calls) == 1
+    assert client.calls[0][0] == f"https://api.osv.dev/v1/vulns/{advisory_id}"
+    assert client.calls[0][1]["allow_redirects"] is False
+    assert not response.iterated
+    assert response.closed
 
 
 @pytest.mark.parametrize(

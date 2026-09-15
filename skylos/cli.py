@@ -4191,7 +4191,11 @@ def main() -> None:
                         snapshot_dir.cleanup()
 
                 if baseline is not None:
-                    result = filter_new_findings(result, baseline)
+                    result = filter_new_findings(
+                        result,
+                        baseline,
+                        dependency_disabled_reason="precommit_requires_full_dependencies",
+                    )
 
                 for category in [
                     "unused_functions",

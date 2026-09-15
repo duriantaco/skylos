@@ -244,6 +244,13 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Only report findings not in the baseline. Run 'skylos baseline .' first.",
     )
     parser.add_argument(
+        "--baseline-ref",
+        metavar="REF",
+        default=None,
+        help="Read dependency baseline from a trusted Git revision (implies --baseline). "
+        "Required for dependency baseline filtering in CI; use the target branch commit SHA.",
+    )
+    parser.add_argument(
         "--diff-base",
         type=str,
         default=None,

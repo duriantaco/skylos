@@ -10,6 +10,28 @@ CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
 class ConfigError(ValueError):
     """thrown when your selected config file cannot be loaded."""
 
+
+class _LoadedConfig(dict):
+    """Config data with loader-owned policy provenance, outside editable keys."""
+
+    __slots__ = ("_dependency_baseline_locked",)
+
+    def __init__(self, config: dict, *, dependency_baseline_locked: bool):
+        super().__init__(config)
+        self._dependency_baseline_locked = dependency_baseline_locked
+
+    @property
+    def dependency_baseline_locked(self) -> bool:
+        return self._dependency_baseline_locked
+
+
+def dependency_baseline_policy_locked(config: dict) -> bool:
+    """Whether the loader found synced policy that local baselines cannot waive."""
+    return (
+        isinstance(config, _LoadedConfig) and config.dependency_baseline_locked is True
+    )
+
+
 DEFAULTS = {
     "complexity": 10,
     "nesting": 3,
@@ -152,7 +174,7 @@ def load_config(start_path, config_file=None) -> dict:
         final_cfg = _merge_user_config(final_cfg, synced_cfg)
 
     if not root_config:
-        return final_cfg
+        return _finalize_loaded_config(final_cfg, synced_cfg)
 
     try:
         final_cfg = _merge_user_config(
@@ -164,8 +186,20 @@ def load_config(start_path, config_file=None) -> dict:
     except Exception:
         if explicit_config is not None:
             raise ConfigError(f"Could not load config file: {root_config}")
-        return final_cfg
-    return _restore_synced_policy_precedence(final_cfg, synced_cfg)
+        return _finalize_loaded_config(final_cfg, synced_cfg)
+    return _finalize_loaded_config(
+        _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
+    )
+
+
+def _finalize_loaded_config(final_cfg: dict, synced_cfg: dict) -> dict:
+    # Derive provenance only from the separately loaded synced configuration,
+    # after every repository merge. A TOML key cannot impersonate this attribute.
+    synced_gate = synced_cfg.get("gate")
+    policy_locked = (
+        isinstance(synced_gate, dict) and bool(synced_gate)
+    ) or _has_synced_security_policy(synced_cfg)
+    return _LoadedConfig(final_cfg, dependency_baseline_locked=policy_locked)
 
 
 def resolve_config_file_path(config_file=None) -> Path | None:
@@ -592,7 +626,14 @@ def _safe_dead_code_rule_dict(value):
         parent = value.get("parent_class")
     if isinstance(parent, dict):
         safe_parent = {}
-        for key in ("name", "full_name", "module", "path", "base_class", "base_classes"):
+        for key in (
+            "name",
+            "full_name",
+            "module",
+            "path",
+            "base_class",
+            "base_classes",
+        ):
             item = _safe_string_or_list(parent.get(key))
             if item is not None:
                 safe_parent[key] = item
