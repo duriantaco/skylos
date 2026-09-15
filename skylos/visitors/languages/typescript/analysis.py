@@ -1458,11 +1458,15 @@ def _static_esbuild_path_call(
         # merely extends it. `resolve` is the call that restarts from a root.
         segments = [segment for segment in values if segment]
         if not segments:
-            return os.curdir
+            return "."
         head, *rest = segments
         joined = os.path.join(head, *(segment.lstrip("/") for segment in rest))
-        # normpath keeps a doubled leading slash; Node's join never emits one.
-        return os.path.normpath(re.sub("^//+", "/", joined))
+        if os.sep == "/":
+            # posixpath.normpath keeps a doubled leading slash and Node's
+            # posix join never emits one. On Windows both keep it, because
+            # there it roots a UNC share rather than an ordinary path.
+            joined = re.sub("^//+", "/", joined)
+        return os.path.normpath(joined)
     if call_name == "path.resolve" and values:
         return os.path.abspath(os.path.join(context.default_base_dir, *values))
     return None

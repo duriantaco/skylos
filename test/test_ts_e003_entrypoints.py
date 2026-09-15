@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import ntpath
+import posixpath
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.visitors.base import Definition
+from skylos.visitors.languages.typescript import analysis
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     _MAX_ESBUILD_STATIC_STEPS,
@@ -534,6 +538,30 @@ def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):
     )
 
     assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+@pytest.mark.parametrize(
+    ("path_module", "expected"),
+    [
+        (posixpath, "/server/share/project/src/worker.js"),
+        (ntpath, r"\\server\share\project\src\worker.js"),
+    ],
+    ids=["posix", "windows"],
+)
+def test_esbuild_join_squashes_a_doubled_slash_only_on_posix(
+    monkeypatch, path_module, expected
+):
+    """A doubled leading slash roots a UNC share on Windows, nothing on POSIX."""
+    # Change only this module's path operations, not the host OS.
+    monkeypatch.setattr(
+        analysis, "os", SimpleNamespace(path=path_module, sep=path_module.sep)
+    )
+
+    folded = analysis._static_esbuild_path_call(
+        None, "path.join", ["//server/share/project", "src", "worker.js"]
+    )
+
+    assert folded == expected
 
 
 def test_esbuild_join_keeps_the_root_after_an_empty_segment(tmp_path):
