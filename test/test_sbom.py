@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from skylos.commands.sbom_cmd import run_sbom_command
-from skylos.core.safe_cache_io import write_text_no_symlink
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    write_text_no_symlink,
+)
 from skylos.reporting.sbom import cyclonedx_bom
 from skylos.rules.sca import vulnerability_scanner as sca
 
@@ -233,7 +236,10 @@ def test_invalid_root_is_rejected(tmp_path, capsys, target):
 def test_output_cannot_replace_dependency_input(tmp_path, capsys, name):
     _write(tmp_path, name, "preserve input")
     assert run_sbom_command([str(tmp_path), "--output", str(tmp_path / name)]) == 2
-    assert (tmp_path / name).read_text() == "preserve input"
+    assert (
+        read_project_text_no_symlink(tmp_path, tmp_path / name, max_bytes=1024)
+        == "preserve input"
+    )
     assert "overwrite" in capsys.readouterr().err
 
 
