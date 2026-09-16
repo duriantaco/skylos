@@ -8,10 +8,8 @@ skylos verify app.py
 skylos verify .
 ```
 
-The [integration plan](behavior-integration-plan.md) tracks rollout into existing
-comprehensive scans and branch review. Its first step provides a shared
-`compare_source_changes` service for prepared `SourceSnapshot` inputs and a
-`ComparisonScope`. The current Git adapter calls that service; Git loading,
+The shared `compare_source_changes` service compares prepared `SourceSnapshot`
+inputs within a `ComparisonScope`. The Git adapter calls that service; Git loading,
 terminal rendering and command exit policy remain outside source comparison.
 
 Skylos compares affected Python functions in Git HEAD with the current working
