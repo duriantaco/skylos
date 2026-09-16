@@ -47,6 +47,7 @@ from skylos.core.grep_verify_common import (
     _run_grep_request,
     _trusted_which,
     execute_grep_batch,
+    grep_verification_scope,
     replay_grep_results,
 )
 
@@ -3745,3 +3746,71 @@ class TestGrepVerifyParallel:
         )
         assert "lib.helper" in verdicts
         assert verdicts["lib.helper"].alive
+
+
+def _write_scan_boundary_project(root: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("ignored_evidence/\n", encoding="utf-8")
+    package = root / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "candidates.py").write_text(
+        "def used_in_excluded_dir():\n    return 1\n\n\n"
+        "def used_in_ignored_dir():\n    return 2\n\n\n"
+        "def used_in_visible_dir():\n    return 3\n\n\n"
+        "def never_used():\n    return 4\n",
+        encoding="utf-8",
+    )
+    for directory, name in (
+        ("excluded_evidence", "used_in_excluded_dir"),
+        ("ignored_evidence", "used_in_ignored_dir"),
+        ("visible_evidence", "used_in_visible_dir"),
+    ):
+        (root / directory).mkdir()
+        (root / directory / "reference.py").write_text(
+            f"from pkg.candidates import {name}\n\n{name}()\n", encoding="utf-8"
+        )
+
+
+@pytest.mark.parametrize(
+    "backend", [pytest.param("rg", marks=requires_ripgrep), "grep"]
+)
+def test_grep_verify_ignores_evidence_outside_the_scan_boundary(tmp_path, backend):
+    from skylos.analyzer import analyze
+
+    _write_scan_boundary_project(tmp_path)
+    real_which = shutil.which
+
+    def which(executable):
+        if backend == "grep" and executable == "rg":
+            return None
+        return real_which(executable)
+
+    with patch("skylos.core.grep_verify_common.shutil.which", side_effect=which):
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                exclude_folders=["excluded_evidence"],
+                grep_verify=True,
+            )
+        )
+
+    assert {item["name"] for item in result["unused_functions"]} == {
+        "used_in_excluded_dir",
+        "used_in_ignored_dir",
+        "never_used",
+    }
+
+
+def test_grep_verification_scope_without_git_only_applies_exclusions(tmp_path):
+    (tmp_path / "excluded").mkdir()
+    (tmp_path / "kept").mkdir()
+    excluded = str(tmp_path / "excluded" / "reference.py")
+    kept = str(tmp_path / "kept" / "reference.py")
+
+    with grep_verification_scope(str(tmp_path), ["excluded"]):
+        assert grep_verify_common_module._is_ignored_grep_path(excluded)
+        assert not grep_verify_common_module._is_ignored_grep_path(kept)
+
+    assert not grep_verify_common_module._is_ignored_grep_path(excluded)

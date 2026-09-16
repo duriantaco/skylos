@@ -19,6 +19,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.file_discovery import list_git_visible_files, should_exclude_path
 from skylos.core.grep_search_state import grep_probe_limit, retain_grep_probe
 
 logger = logging.getLogger(__name__)
@@ -481,6 +482,61 @@ def _split_grep_evidence(line: str) -> tuple[str, int | None, str]:
     )
 
 
+@dataclass(slots=True)
+class _GrepScope:
+    """The analyzer's scan boundary, which grep evidence must not cross."""
+
+    root: Path
+    exclude_folders: tuple[str, ...]
+    visible_files: frozenset[str] | None
+    verdicts: dict[str, bool] = field(default_factory=dict)
+
+    def excludes(self, path: str) -> bool:
+        excluded = self.verdicts.get(path)
+        if excluded is None:
+            excluded = self._excludes(Path(path))
+            self.verdicts[path] = excluded
+        return excluded
+
+    def _excludes(self, path: Path) -> bool:
+        if should_exclude_path(path, self.root, self.exclude_folders):
+            return True
+        if self.visible_files is None:
+            return False
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError:
+            return False
+        return relative.as_posix() not in self.visible_files
+
+
+_GREP_SCOPE: ContextVar[_GrepScope | None] = ContextVar("grep_scope", default=None)
+
+
+@contextmanager
+def grep_verification_scope(
+    project_root: str | Path,
+    exclude_folders: Sequence[str] | None,
+) -> Iterator[None]:
+    """Drop grep evidence from files the analyzer was told not to scan."""
+    root = Path(os.path.abspath(project_root))
+    visible_files: frozenset[str] | None = None
+    git_files = list_git_visible_files(root) if root.is_dir() else None
+    if git_files is not None:
+        resolved_root = root.resolve()
+        visible_files = frozenset(
+            file_path.relative_to(resolved_root).as_posix()
+            for file_path in git_files
+            if _path_is_within(file_path, resolved_root)
+        )
+    scope = _GrepScope(root, tuple(exclude_folders or ()), visible_files)
+    token = _GREP_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _GREP_SCOPE.reset(token)
+
+
 def _is_ignored_grep_path(path: str) -> bool:
     components = [
         component for component in path.replace("\\", "/").split("/") if component
@@ -496,10 +552,13 @@ def _is_ignored_grep_path(path: str) -> bool:
         "__pycache__",
         "node_modules",
     }
-    return any(
+    if any(
         component in ignored_names or component.endswith(".egg-info")
         for component in components
-    )
+    ):
+        return True
+    scope = _GREP_SCOPE.get()
+    return scope is not None and scope.excludes(path)
 
 
 def _filter_null_grep_output(stdout: str) -> list[str]:
