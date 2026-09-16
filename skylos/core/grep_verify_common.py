@@ -19,7 +19,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from skylos.core.file_discovery import list_git_visible_files, should_exclude_path
+from skylos.core.file_discovery import (
+    _exclude_candidates,
+    list_git_visible_files,
+    should_exclude_path,
+)
 from skylos.core.grep_search_state import grep_probe_limit, retain_grep_probe
 
 logger = logging.getLogger(__name__)
@@ -374,7 +378,7 @@ def _ripgrep_command(request: GrepRequest, rg: str) -> list[str]:
         cmd.append("-F")
     for glob in request.include_globs:
         cmd.extend(["-g", glob])
-    for directory in _GREP_EXCLUDE_DIRS:
+    for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names()):
         cmd.extend(["-g", f"!**/{directory}/**"])
     return cmd
 
@@ -489,6 +493,7 @@ class _GrepScope:
     root: Path
     exclude_folders: tuple[str, ...]
     visible_files: frozenset[str] | None
+    prune_names: tuple[str, ...] = ()
     verdicts: dict[str, bool] = field(default_factory=dict)
 
     def excludes(self, path: str) -> bool:
@@ -513,6 +518,69 @@ class _GrepScope:
 _GREP_SCOPE: ContextVar[_GrepScope | None] = ContextVar("grep_scope", default=None)
 
 
+def _scope_prune_names() -> tuple[str, ...]:
+    scope = _GREP_SCOPE.get()
+    return scope.prune_names if scope is not None else ()
+
+
+_GREP_PRUNE_DEPTH = 3
+
+
+def _visible_directories(visible_files: frozenset[str]) -> set[str]:
+    visible_dirs: set[str] = set()
+    for file_path in visible_files:
+        parent = os.path.dirname(file_path)
+        while parent and parent not in visible_dirs:
+            visible_dirs.add(parent)
+            parent = os.path.dirname(parent)
+    return visible_dirs
+
+
+def _subdirectories(directory: str) -> list[os.DirEntry[str]]:
+    try:
+        with os.scandir(directory) as entries:
+            return [entry for entry in entries if entry.is_dir(follow_symlinks=False)]
+    except OSError:
+        return []
+
+
+def _invisible_directories(root: Path, visible_files: frozenset[str]) -> list[str]:
+    """Shallow directories holding no git-visible file and no name collision."""
+    visible_dirs = _visible_directories(visible_files)
+    invisible: list[str] = []
+    pending: list[tuple[str, str, int]] = [(str(root), "", 1)]
+    while pending:
+        directory, relative, depth = pending.pop()
+        for entry in _subdirectories(directory):
+            child = f"{relative}/{entry.name}" if relative else entry.name
+            if child in visible_dirs:
+                if depth < _GREP_PRUNE_DEPTH:
+                    pending.append((entry.path, child, depth + 1))
+            elif not any(
+                visible == child or visible.endswith(f"/{child}")
+                for visible in visible_dirs
+            ):
+                invisible.append(child)
+    return sorted(invisible)
+
+
+def _prune_names(
+    exclude_folders: Sequence[str],
+    root: Path,
+    visible_files: frozenset[str] | None,
+) -> tuple[str, ...]:
+    """Paths the search backends can skip without changing the boundary."""
+    names: dict[str, None] = {}
+    for exclude_folder in exclude_folders:
+        for candidate in _exclude_candidates(exclude_folder, root):
+            if candidate and "*" not in candidate and not candidate.startswith("/"):
+                names[candidate] = None
+    if visible_files is not None:
+        for directory in _invisible_directories(root, visible_files):
+            names.setdefault(directory, None)
+    return tuple(name for name in names if name not in _GREP_EXCLUDE_DIRS)
+
+
 @contextmanager
 def grep_verification_scope(
     project_root: str | Path,
@@ -529,7 +597,10 @@ def grep_verification_scope(
             for file_path in git_files
             if _path_is_within(file_path, resolved_root)
         )
-    scope = _GrepScope(root, tuple(exclude_folders or ()), visible_files)
+    exclusions = tuple(exclude_folders or ())
+    scope = _GrepScope(
+        root, exclusions, visible_files, _prune_names(exclusions, root, visible_files)
+    )
     token = _GREP_SCOPE.set(scope)
     try:
         yield
@@ -797,7 +868,8 @@ def _grep_fallback_command(
     for glob in request.include_globs:
         includes.extend(["--include", glob])
     excludes: list[str] = []
-    for directory in _GREP_EXCLUDE_DIRS:
+    scope_names = (name for name in _scope_prune_names() if "/" not in name)
+    for directory in (*_GREP_EXCLUDE_DIRS, *scope_names):
         excludes.extend(["--exclude-dir", directory])
     return [
         grep,

@@ -3814,3 +3814,64 @@ def test_grep_verification_scope_without_git_only_applies_exclusions(tmp_path):
         assert not grep_verify_common_module._is_ignored_grep_path(kept)
 
     assert not grep_verify_common_module._is_ignored_grep_path(excluded)
+
+
+@pytest.mark.parametrize(
+    "backend", [pytest.param("rg", marks=requires_ripgrep), "grep"]
+)
+def test_grep_backends_prune_the_scan_boundary_before_searching(tmp_path, backend):
+    _write_scan_boundary_project(tmp_path)
+    real_which = shutil.which
+
+    def which(executable):
+        if backend == "grep" and executable == "rg":
+            return None
+        return real_which(executable)
+
+    request = GrepRequest(
+        pattern="used_in_",
+        project_root=str(tmp_path),
+        use_regex=False,
+        include_globs=("*.py",),
+        fixed_string=True,
+        max_results=50,
+    )
+    with (
+        patch("skylos.core.grep_verify_common.shutil.which", side_effect=which),
+        patch(
+            "skylos.core.grep_verify_common._is_ignored_grep_path",
+            return_value=False,
+        ),
+        grep_verification_scope(str(tmp_path), ["excluded_evidence"]),
+    ):
+        lines = _run_grep_request(request, require_complete=True)
+
+    directories = {Path(line.split(":", 1)[0]).parent.name for line in lines}
+    assert directories == {"pkg", "visible_evidence"}
+
+
+def test_grep_commands_carry_scope_exclusions(tmp_path):
+    request = GrepRequest(
+        pattern="name",
+        project_root=str(tmp_path),
+        use_regex=False,
+        include_globs=("*.py",),
+        fixed_string=True,
+        max_results=5,
+    )
+    excludes = ["excluded/", "nested/dir", "*.generated", str(tmp_path / "abs")]
+    with grep_verification_scope(str(tmp_path), excludes):
+        rg_command = grep_verify_common_module._ripgrep_command(request, "rg")
+        grep_command = grep_verify_common_module._grep_fallback_command(
+            request, "grep", str(tmp_path)
+        )
+
+    assert "--no-ignore" in rg_command
+    for name in ("excluded", "nested/dir", "abs"):
+        assert ["-g", f"!**/{name}/**"] == rg_command[
+            rg_command.index(f"!**/{name}/**") - 1 : rg_command.index(f"!**/{name}/**")
+            + 1
+        ]
+    assert not any("generated" in part for part in rg_command)
+    assert "excluded" in grep_command and "abs" in grep_command
+    assert not any("nested" in part or "generated" in part for part in grep_command)
