@@ -2182,6 +2182,12 @@ def _run_baseline_command(argv):
     return run_baseline_command(argv)
 
 
+def _run_sbom_command(argv):
+    from skylos.commands.sbom_cmd import run_sbom_command
+
+    return run_sbom_command(argv)
+
+
 def _run_badge_command(_argv):
     from skylos.commands.badge_cmd import run_badge_command
 

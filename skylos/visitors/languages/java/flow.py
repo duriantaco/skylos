@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .properties import JavaPropertyResources
+from .source_helpers import JavaSourceHelpers
+
 
 REQUEST_SOURCE_METHODS = {
     "getParameter",
@@ -142,6 +145,14 @@ class JavaFlowState:
     xss_safe_vars: set[str] = field(default_factory=set)
     constants: dict[str, int | bool | str] = field(default_factory=dict)
     object_types: dict[str, str] = field(default_factory=dict)
+    # Preserve package identity for source-backed helper resolution. The older
+    # object_types map intentionally uses simple names for JDK sink matching.
+    source_types: dict[str, str] = field(default_factory=dict)
+    # Property-backed constants are crypto evidence only, never branch/safety
+    # proofs. Object IDs preserve aliases without sharing mutable branch state.
+    crypto_constants: dict[str, str] = field(default_factory=dict)
+    property_objects: dict[str, int] = field(default_factory=dict)
+    property_values: dict[int, dict[str, str]] = field(default_factory=dict)
     map_entries: dict[tuple[str, str], JavaTaint] = field(default_factory=dict)
     list_entries: dict[str, list[JavaTaint]] = field(default_factory=dict)
     tainted_collections: set[str] = field(default_factory=set)
@@ -164,6 +175,12 @@ class JavaFlowState:
             xss_safe_vars=set(self.xss_safe_vars),
             constants=dict(self.constants),
             object_types=dict(self.object_types),
+            source_types=dict(self.source_types),
+            crypto_constants=dict(self.crypto_constants),
+            property_objects=dict(self.property_objects),
+            property_values={
+                key: dict(value) for key, value in self.property_values.items()
+            },
             map_entries=dict(self.map_entries),
             list_entries={key: list(value) for key, value in self.list_entries.items()},
             tainted_collections=set(self.tainted_collections),
@@ -194,6 +211,26 @@ class JavaFlowState:
             name: value
             for name, value in left.object_types.items()
             if right.object_types.get(name) == value
+        }
+        self.source_types = {
+            name: value
+            for name, value in left.source_types.items()
+            if right.source_types.get(name) == value
+        }
+        self.crypto_constants = {
+            name: value
+            for name, value in left.crypto_constants.items()
+            if right.crypto_constants.get(name) == value
+        }
+        self.property_objects = {
+            name: value
+            for name, value in left.property_objects.items()
+            if right.property_objects.get(name) == value
+        }
+        self.property_values = {
+            key: dict(value)
+            for key, value in left.property_values.items()
+            if right.property_values.get(key) == value
         }
         self.map_entries = self._merge_map_entries(left.map_entries, right.map_entries)
         self.list_entries = self._merge_list_entries(
@@ -283,13 +320,27 @@ class JavaHelperSummary:
 
 
 class JavaSecurityFlowAnalyzer:
-    def __init__(self, root_node, file_path: str, source_bytes: bytes) -> None:
+    def __init__(
+        self,
+        root_node,
+        file_path: str,
+        source_bytes: bytes,
+        *,
+        enable_source_helpers: bool = True,
+    ) -> None:
         self.root_node = root_node
         self.file_path = file_path
         self.source = source_bytes
         self.findings: list[dict] = []
         self.seen: set[tuple[str, int, str]] = set()
         self.helper_summaries: dict[tuple[str | None, str, int], JavaHelperSummary] = {}
+        self.source_helpers = (
+            JavaSourceHelpers(root_node, file_path, source_bytes)
+            if enable_source_helpers and root_node is not None
+            else None
+        )
+        self.property_resources: JavaPropertyResources | None = None
+        self._crypto_receiver_names: set[str] | None = None
 
     def scan(self) -> list[dict]:
         self.helper_summaries = self._collect_helper_summaries()
@@ -320,6 +371,7 @@ class JavaSecurityFlowAnalyzer:
                 state.tainted_vars.add(name)
             if type_name:
                 state.object_types[name] = type_name
+                state.source_types[name] = self._param_type(param)
         return state
 
     def _collect_helper_summaries(
@@ -379,51 +431,60 @@ class JavaSecurityFlowAnalyzer:
         body = method_node.child_by_field_name("body")
         if body is None:
             return False
-        return self._block_returns_taint(body, state)
+        returns_taint, _ = self._summary_block_flow(body, state)
+        return returns_taint
 
-    def _block_returns_taint(self, block_node, state: JavaFlowState) -> bool:
+    def _summary_block_flow(
+        self, block_node, state: JavaFlowState
+    ) -> tuple[bool, bool]:
+        """Return (tainted return seen, execution can reach the next statement)."""
         for statement in self._block_statements(block_node):
-            if statement.type == "return_statement":
-                expr = self._first_expression_child(statement)
-                if expr is not None and self._expr_facts(expr, state).tainted:
-                    return True
-                continue
-            if statement.type == "if_statement":
-                condition = statement.child_by_field_name("condition")
-                selected = self._eval_condition(condition, state)
-                consequence = statement.child_by_field_name("consequence")
-                alternative = statement.child_by_field_name("alternative")
-                if selected is True:
-                    if consequence is not None and self._statement_returns_taint(
-                        consequence, state.copy()
-                    ):
-                        return True
-                elif selected is False:
-                    if alternative is not None and self._statement_returns_taint(
-                        alternative, state.copy()
-                    ):
-                        return True
-                else:
-                    if consequence is not None and self._statement_returns_taint(
-                        consequence, state.copy()
-                    ):
-                        return True
-                    if alternative is not None and self._statement_returns_taint(
-                        alternative, state.copy()
-                    ):
-                        return True
-                continue
-            self._process_statement(statement, state, collect_findings=False)
-        return False
+            returns_taint, continues = self._summary_statement_flow(statement, state)
+            if returns_taint or not continues:
+                return returns_taint, continues
+        return False, True
 
-    def _statement_returns_taint(self, statement, state: JavaFlowState) -> bool:
+    def _summary_statement_flow(
+        self, statement, state: JavaFlowState
+    ) -> tuple[bool, bool]:
+        if statement is None:
+            return False, True
         if statement.type == "return_statement":
             expr = self._first_expression_child(statement)
-            return expr is not None and self._expr_facts(expr, state).tainted
+            return expr is not None and self._expr_facts(expr, state).tainted, False
+        if statement.type == "throw_statement":
+            return False, False
         if statement.type == "block":
-            return self._block_returns_taint(statement, state)
+            return self._summary_block_flow(statement, state)
+        if statement.type == "if_statement":
+            self._forget_property_effects(
+                statement.child_by_field_name("condition"), state
+            )
+            selected = self._eval_condition(
+                statement.child_by_field_name("condition"), state
+            )
+            consequence = statement.child_by_field_name("consequence")
+            alternative = statement.child_by_field_name("alternative")
+            if selected is not None:
+                return self._summary_statement_flow(
+                    consequence if selected else alternative, state
+                )
+            left, right = state.copy(), state.copy()
+            left_taint, left_continues = self._summary_statement_flow(consequence, left)
+            right_taint, right_continues = self._summary_statement_flow(
+                alternative, right
+            )
+            # A returning/throwing branch cannot contribute its assignments to
+            # a later return. Only merge states that actually fall through.
+            if left_continues and right_continues:
+                state.merge_from(left, right)
+            elif left_continues:
+                state.merge_from(left, left)
+            elif right_continues:
+                state.merge_from(right, right)
+            return left_taint or right_taint, left_continues or right_continues
         self._process_statement(statement, state, collect_findings=False)
-        return False
+        return False, True
 
     def _process_statement(
         self, statement, state: JavaFlowState, *, collect_findings: bool = True
@@ -484,8 +545,7 @@ class JavaSecurityFlowAnalyzer:
         if expr.type == "assignment_expression":
             self._process_assignment(expr, state, collect_findings=collect_findings)
             return
-        if collect_findings:
-            self._scan_expression_effects(expr, state)
+        self._scan_expression_effects(expr, state, collect_findings=collect_findings)
 
     def _process_variable_declarator(
         self, declarator, state: JavaFlowState, *, collect_findings: bool
@@ -496,17 +556,23 @@ class JavaSecurityFlowAnalyzer:
             return
         name = self._text(name_node)
         declared_type = self._declared_type_for_declarator(declarator)
+        declaration_type = declarator.parent.child_by_field_name("type")
+        source_type = self._text(declaration_type) or None
         if value_node is None:
             if declared_type:
                 state.object_types[name] = declared_type
+            if source_type:
+                state.source_types[name] = source_type
             return
-        if collect_findings:
-            self._scan_expression_effects(value_node, state)
+        self._scan_expression_effects(
+            value_node, state, collect_findings=collect_findings
+        )
         self._assign_var(
             name,
             value_node,
             state,
             declared_type=declared_type,
+            source_type=source_type,
         )
 
     def _process_assignment(
@@ -516,11 +582,17 @@ class JavaSecurityFlowAnalyzer:
         right = assignment.child_by_field_name("right")
         if right is None:
             return
-        if collect_findings:
-            self._scan_expression_effects(right, state)
+        self._scan_expression_effects(right, state, collect_findings=collect_findings)
+        if left is not None and left.type != "identifier":
+            self._invalidate_property_references(right, state)
         name = self._assignment_target_name(left)
         if name:
             self._assign_var(name, right, state)
+            if self._text(assignment.child_by_field_name("operator")) != "=":
+                # Compound assignments are not plain RHS replacement. Until
+                # their full value is modeled, do not use it as crypto proof.
+                state.constants.pop(name, None)
+                state.crypto_constants.pop(name, None)
 
     def _assign_var(
         self,
@@ -529,16 +601,36 @@ class JavaSecurityFlowAnalyzer:
         state: JavaFlowState,
         *,
         declared_type: str | None = None,
+        source_type: str | None = None,
     ) -> None:
         state.guarded_path_vars.discard(name)
         state.guarded_url_vars.discard(name)
         state.guarded_redirect_vars.discard(name)
         state.pending_path_objects.pop(name, None)
 
+        crypto_value = self._crypto_algorithm(value_node, state)
+        state.crypto_constants.pop(name, None)
+        if isinstance(crypto_value, str) and (
+            len(state.crypto_constants) < MAX_CONSTANT_ENTRIES
+            and len(crypto_value) <= MAX_CONSTANT_STRING_CHARS
+            and sum(map(len, state.crypto_constants.values())) + len(crypto_value)
+            <= MAX_CONSTANT_STORE_CHARS
+        ):
+            state.crypto_constants[name] = crypto_value
+
+        self._assign_properties(name, value_node, state)
         const_value = self._eval_constant(value_node, state)
         self._store_constant(name, const_value, state)
 
         object_type = self._object_creation_type(value_node)
+        if object_type:
+            source_type = self._text(value_node.child_by_field_name("type"))
+        elif value_node.type == "identifier":
+            source_type = state.source_types.get(self._text(value_node), source_type)
+        if source_type:
+            state.source_types[name] = source_type
+        else:
+            state.source_types.pop(name, None)
         builder_type = self._http_request_builder_type(value_node)
         if object_type:
             state.object_types[name] = object_type
@@ -596,6 +688,7 @@ class JavaSecurityFlowAnalyzer:
     def _process_if_statement(
         self, node, state: JavaFlowState, *, collect_findings: bool
     ) -> None:
+        self._forget_property_effects(node.child_by_field_name("condition"), state)
         guarded_after = self._path_guards_from_if(node, state)
         guarded_urls_after = self._url_guards_from_if(node, state)
         guarded_redirects_after = self._redirect_guards_from_if(node, state)
@@ -727,19 +820,36 @@ class JavaSecurityFlowAnalyzer:
                     return index
         return default_index
 
-    def _scan_expression_effects(self, node, state: JavaFlowState) -> None:
+    def _scan_expression_effects(
+        self, node, state: JavaFlowState, *, collect_findings: bool = True
+    ) -> None:
+        # Do not claim constants across nested mutations: Java evaluates
+        # arguments before their enclosing call, whereas this shared walker is
+        # sink-oriented. Keep this slice conservative rather than simulating
+        # argument snapshots or changing all existing taint evaluation order.
+        uncertain_properties = self._forget_property_effects(
+            node, state, skip_root=True
+        )
         for child in self._iter_nodes(node):
             if child.type == "method_invocation":
                 self._process_method_effects(child, state)
-                self._process_method_sinks(child, state)
+                if collect_findings:
+                    self._process_method_sinks(child, state)
             elif child.type == "object_creation_expression":
-                self._process_constructor_sinks(child, state)
-                self._process_weak_random(child, state)
+                for arg in self._object_creation_args(child):
+                    self._invalidate_property_references(arg, state)
+                if collect_findings:
+                    self._process_constructor_sinks(child, state)
+                    self._process_weak_random(child, state)
+        for object_id in uncertain_properties:
+            state.property_values.pop(object_id, None)
 
     def _process_method_effects(self, call, state: JavaFlowState) -> None:
         method = self._call_name(call)
         receiver = self._receiver_name(call)
         args = self._call_args(call)
+
+        self._process_property_effects(call, state)
 
         if method == "add" and receiver and args:
             value = self._expr_facts(args[0], state)
@@ -787,6 +897,28 @@ class JavaSecurityFlowAnalyzer:
         method = self._call_name(call)
         args = self._call_args(call)
         line = self._line(call)
+
+        if (
+            method == "getInstance"
+            and args
+            and args[0].type != "string_literal"
+            and self._matches_java_type(
+                self._receiver_text(call), "java.security.MessageDigest"
+            )
+            and not self._crypto_receiver_shadowed(call)
+        ):
+            algorithm = self._crypto_algorithm(args[0], state)
+            normalized = algorithm.upper() if isinstance(algorithm, str) else None
+            if normalized in {"MD5", "SHA1", "SHA-1"}:
+                md5 = normalized == "MD5"
+                self._add_finding(
+                    "SKY-D207" if md5 else "SKY-D208",
+                    "MEDIUM",
+                    f"Weak hash algorithm {'MD5' if md5 else 'SHA-1'}. Use SHA-256 or better.",
+                    line,
+                    category="weak_hash",
+                    cwe="CWE-328",
+                )
 
         if method == "addCookie" and self._args_mention_names(
             args, state.insecure_cookie_vars
@@ -1094,8 +1226,10 @@ class JavaSecurityFlowAnalyzer:
         args = self._call_args(call)
         receiver = self._receiver_name(call)
         receiver_class = None
+        source_type = None
         if receiver:
             receiver_class = state.object_types.get(receiver)
+            source_type = state.source_types.get(receiver)
         if receiver_class is None:
             object_node = call.child_by_field_name("object")
             if (
@@ -1103,9 +1237,24 @@ class JavaSecurityFlowAnalyzer:
                 and object_node.type == "object_creation_expression"
             ):
                 receiver_class = self._object_creation_type(object_node)
+                source_type = self._text(object_node.child_by_field_name("type"))
         if receiver_class is None and call.child_by_field_name("object") is None:
             receiver_class = self._class_name_for_node(call)
-        return self.helper_summaries.get((receiver_class, method, len(args)))
+        if source_type and "." in source_type:
+            # A qualified external type must not borrow the safe/unsafe summary
+            # of an unrelated same-named class in this file.
+            receiver_class = (
+                self.source_helpers.local_type_name(source_type)
+                if self.source_helpers is not None
+                else None
+            )
+        if receiver_class is not None:
+            summary = self.helper_summaries.get((receiver_class, method, len(args)))
+            if summary is not None:
+                return summary
+        if self.source_helpers is not None and source_type:
+            return self.source_helpers.summary(source_type, method, len(args))
+        return None
 
     def _is_request_source_call(self, call, state: JavaFlowState) -> bool:
         method = self._call_name(call)
@@ -1516,6 +1665,206 @@ class JavaSecurityFlowAnalyzer:
             ):
                 return True
         return False
+
+    def _matches_java_type(self, raw_type: str, qualified_name: str) -> bool:
+        return self.source_helpers is not None and self.source_helpers.matches_type(
+            raw_type, qualified_name
+        )
+
+    def _crypto_receiver_shadowed(self, call) -> bool:
+        first = self._receiver_text(call).split(".", 1)[0]
+        # Keep lexical bindings even when reassignment clears inferred types.
+        # Fields/parameters in other classes are conservatively ambiguous too.
+        if self._crypto_receiver_names is None:
+            self._crypto_receiver_names = {
+                self._text(node.child_by_field_name("name"))
+                for node in self._iter_nodes(self.root_node)
+                if node.type
+                in {"variable_declarator", "formal_parameter", "enhanced_for_statement"}
+            }
+        return first in self._crypto_receiver_names
+
+    def _assign_properties(self, name: str, value_node, state: JavaFlowState) -> None:
+        value_node = self._strip_parentheses(value_node)
+        while value_node is not None and value_node.type == "cast_expression":
+            value_node = self._strip_parentheses(
+                value_node.child_by_field_name("value")
+            )
+        alias = (
+            state.property_objects.get(self._text(value_node))
+            if value_node is not None and value_node.type == "identifier"
+            else None
+        )
+        state.property_objects.pop(name, None)
+        if len(state.property_objects) >= MAX_CONSTANT_ENTRIES:
+            self._invalidate_property_references(value_node, state)
+            return
+        if alias is not None:
+            state.property_objects[name] = alias
+        elif (
+            value_node is not None
+            and value_node.type == "object_creation_expression"
+            and self._matches_java_type(
+                self._text(value_node.child_by_field_name("type")),
+                "java.util.Properties",
+            )
+            and not any(child.type == "class_body" for child in value_node.children)
+            and not self._object_creation_args(value_node)
+        ):
+            object_id = value_node.start_byte
+            state.property_objects[name] = object_id
+            state.property_values[object_id] = {}
+        else:
+            # Arrays, conditionals and unsupported alias-producing values may
+            # expose a tracked object. Do not leave its old values trusted.
+            self._invalidate_property_references(value_node, state)
+        live_objects = set(state.property_objects.values())
+        state.property_values = {
+            key: value
+            for key, value in state.property_values.items()
+            if key in live_objects
+        }
+
+    def _invalidate_property_references(self, node, state: JavaFlowState) -> set[int]:
+        invalidated: set[int] = set()
+        if node is None or not state.property_objects:
+            return invalidated
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type in {"method_invocation", "object_creation_expression"}:
+                # Their arguments are processed separately. Passing a getter's
+                # string result is not the same as passing the Properties object.
+                continue
+            if current.type == "identifier":
+                object_id = state.property_objects.get(self._text(current))
+                if object_id is not None:
+                    state.property_values.pop(object_id, None)
+                    invalidated.add(object_id)
+            stack.extend(current.named_children)
+        return invalidated
+
+    def _forget_property_effects(
+        self, node, state: JavaFlowState, *, skip_root: bool = False
+    ) -> set[int]:
+        invalidated: set[int] = set()
+        if node is None or not state.property_objects:
+            return invalidated
+        for call in self._method_calls(node):
+            if skip_root and self._same_node(call, node):
+                continue
+            for arg in self._call_args(call):
+                invalidated.update(self._invalidate_property_references(arg, state))
+            object_id = state.property_objects.get(self._receiver_name(call))
+            if object_id is not None and self._call_name(call) != "getProperty":
+                state.property_values.pop(object_id, None)
+                invalidated.add(object_id)
+        return invalidated
+
+    def _process_property_effects(self, call, state: JavaFlowState) -> None:
+        args = self._call_args(call)
+        for arg in args:
+            self._invalidate_property_references(arg, state)
+        object_id = state.property_objects.get(self._receiver_name(call))
+        if object_id is None:
+            return
+        method = self._call_name(call)
+        if method == "getProperty" and len(args) in {1, 2}:
+            return
+        values = state.property_values.get(object_id)
+        if method == "clear" and not args:
+            state.property_values[object_id] = {}
+            return
+        if values is None:
+            return
+        if method == "load" and len(args) == 1:
+            resource_name = self._classpath_resource_name(args[0], state)
+            loaded = None
+            if resource_name is not None and self.source_helpers is not None:
+                if self.property_resources is None:
+                    package = self.source_helpers.package_name
+                    if package is not None:
+                        self.property_resources = JavaPropertyResources(
+                            self.file_path, package
+                        )
+                if self.property_resources is not None:
+                    loaded = self.property_resources.load(resource_name)
+            if loaded is None:
+                state.property_values.pop(object_id, None)
+                return
+            values.update(loaded)
+        elif method in {"setProperty", "put"} and len(args) == 2:
+            key = self._eval_constant(args[0], state)
+            value = self._crypto_algorithm(args[1], state)
+            if not isinstance(key, str) or not isinstance(value, str):
+                state.property_values.pop(object_id, None)
+                return
+            values[key] = value
+        elif method == "remove" and len(args) == 1:
+            key = self._eval_constant(args[0], state)
+            if not isinstance(key, str):
+                state.property_values.pop(object_id, None)
+                return
+            values.pop(key, None)
+        else:
+            state.property_values.pop(object_id, None)
+            return
+        if (
+            len(values) > MAX_CONSTANT_ENTRIES
+            or sum(len(key) + len(value) for key, value in values.items())
+            > MAX_CONSTANT_STORE_CHARS
+        ):
+            state.property_values.pop(object_id, None)
+
+    def _classpath_resource_name(self, node, state: JavaFlowState) -> str | None:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "method_invocation":
+            return None
+        args = self._call_args(node)
+        if self._call_name(node) != "getResourceAsStream" or len(args) != 1:
+            return None
+        loader = node.child_by_field_name("object")
+        if (
+            loader is None
+            or loader.type != "method_invocation"
+            or self._call_name(loader) != "getClassLoader"
+            or self._call_args(loader)
+        ):
+            return None
+        owner = loader.child_by_field_name("object")
+        if (
+            owner is None
+            or owner.type != "method_invocation"
+            or self._call_name(owner) != "getClass"
+            or self._call_args(owner)
+            or self._receiver_text(owner) not in {"", "this"}
+        ):
+            return None
+        resource_name = self._eval_constant(args[0], state)
+        return resource_name if isinstance(resource_name, str) else None
+
+    def _crypto_algorithm(self, node, state: JavaFlowState) -> str | None:
+        node = self._strip_parentheses(node)
+        if node is None:
+            return None
+        if node.type == "identifier":
+            value = state.crypto_constants.get(self._text(node))
+            if value is not None:
+                return value
+        if node.type == "method_invocation" and self._call_name(node) == "getProperty":
+            object_id = state.property_objects.get(self._receiver_name(node))
+            values = state.property_values.get(object_id)
+            args = self._call_args(node)
+            if values is None or len(args) not in {1, 2}:
+                return None
+            key = self._eval_constant(args[0], state)
+            if not isinstance(key, str):
+                return None
+            if key in values:
+                return values[key]
+            return self._crypto_algorithm(args[1], state) if len(args) == 2 else None
+        value = self._eval_constant(node, state)
+        return value if isinstance(value, str) else None
 
     def _eval_condition(self, node, state: JavaFlowState) -> bool | None:
         value = self._eval_constant(node, state)

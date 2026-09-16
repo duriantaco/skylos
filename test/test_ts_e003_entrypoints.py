@@ -96,8 +96,7 @@ def test_jsdoc_import_type_records_a_named_type_edge(tmp_path):
             {"names": ["Greeting"], "line": 1},
         ),
         (
-            "/** @import DefaultType,\n{Greeting} "
-            "from './types.js' */\n",
+            "/** @import DefaultType,\n{Greeting} from './types.js' */\n",
             {"names": ["default", "Greeting"], "line": 1},
         ),
         (
@@ -255,10 +254,7 @@ def test_jsdoc_recovers_after_an_unclosed_type(tmp_path):
     source.parent.mkdir(parents=True)
     _write(
         source,
-        "/**\n"
-        " * @type {string\n"
-        " * @type {import('./live.js').Value}\n"
-        " */\n",
+        "/**\n * @type {string\n * @type {import('./live.js').Value}\n */\n",
     )
 
     assert _raw_imports(source) == [
@@ -276,9 +272,7 @@ def test_jsdoc_does_not_recover_tags_hidden_by_an_unclosed_template(tmp_path):
     source.parent.mkdir(parents=True)
     _write(
         source,
-        "/** @type {`plain\n"
-        " * @type {import('./dead.js').Value}\n"
-        " */\n",
+        "/** @type {`plain\n * @type {import('./dead.js').Value}\n */\n",
     )
 
     assert _raw_imports(source) == []
@@ -289,9 +283,7 @@ def test_jsdoc_recovers_a_tag_after_an_unclosed_template_interpolation(tmp_path)
     source.parent.mkdir(parents=True)
     _write(
         source,
-        "/** @type {`${string\n"
-        " * @type {import('./live.js').Value}\n"
-        " */\n",
+        "/** @type {`${string\n * @type {import('./live.js').Value}\n */\n",
     )
 
     assert _raw_imports(source) == [
@@ -423,10 +415,6 @@ def test_esbuild_top_level_initializers_execute_the_build(tmp_path, call):
     [
         "function run() { build({ entryPoints: ['src/dead.js'] }); } run();",
         "if (false) build({ entryPoints: ['src/dead.js'] });",
-        "build(options);",
-        "build({ ...options });",
-        "build({ entryPoints });",
-        "build({ entryPoints: [...entries] });",
         "build({ get entryPoints() { return ['src/dead.js']; } });",
         "esbuild['build']({ entryPoints: ['src/dead.js'] });",
     ],
@@ -442,6 +430,275 @@ def test_esbuild_abstains_when_execution_or_options_are_not_static(tmp_path, cal
     )
 
     assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "build(options);",
+        "build({ ...options });",
+        "build({ entryPoints });",
+        "build({ entryPoints: [...entries] });",
+    ],
+)
+def test_esbuild_resolves_unmodified_constant_options(tmp_path, call):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const entries = ['src/worker.js'];\n"
+        "const entryPoints = entries;\n"
+        "const options = { entryPoints };\n"
+        f"{call}\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js", "dead.js") == {"worker.js"}
+
+
+@pytest.mark.parametrize(
+    ("setup", "options", "expected"),
+    [
+        (
+            "import { dirname, join } from 'node:path';\n"
+            "import { fileURLToPath } from 'node:url';\n"
+            "const here = dirname(fileURLToPath(import.meta.url));\n"
+            "const shared = { bundle: true, plugins: [makePlugin()] };\n",
+            "{ ...shared, entryPoints: [join(here, 'src', 'worker.js')] }",
+            {"worker.js"},
+        ),
+        (
+            "import path from 'node:path';\n"
+            "import { fileURLToPath } from 'node:url';\n"
+            "const __filename = fileURLToPath(import.meta.url);\n"
+            "const __dirname = path.dirname(__filename);\n",
+            "{ entryPoints: [path.resolve(__dirname, 'src', 'worker.js')] }",
+            {"worker.js"},
+        ),
+        (
+            "import path from 'path';\nconst base = { bundle: true };\n",
+            "{ ...base, entryPoints: [path.join('src', 'worker.js')] }",
+            {"worker.js"},
+        ),
+        (
+            "const root = 'src';\n",
+            "{ entryPoints: [`${root}/worker.js`] }",
+            {"worker.js"},
+        ),
+        (
+            "const names = ['worker', 'popup'];\n",
+            "{ entryPoints: names.map((name) => `src/${name}.js`) }",
+            {"worker.js", "popup.js"},
+        ),
+        (
+            "import { dirname, resolve } from 'path';\n"
+            "import { fileURLToPath } from 'url';\n"
+            "const root = dirname(fileURLToPath(import.meta.url));\n",
+            "{ entryPoints: { worker: resolve(root, 'src/worker.js'), "
+            "popup: resolve(root, 'src/popup.js') } }",
+            {"worker.js", "popup.js"},
+        ),
+        (
+            "import * as p from 'node:path';\n"
+            "import * as u from 'node:url';\n"
+            "const root = p.dirname(u.fileURLToPath(import.meta.url));\n",
+            "{ absWorkingDir: root, entryPoints: [{ in: p.join('src', 'worker.js'), out: 'worker' }] }",
+            {"worker.js"},
+        ),
+        (
+            "import { join as pathJoin } from 'node:path';\n",
+            "{ entryPoints: ['worker'].map(n => pathJoin('src', `${n}.js`)) }",
+            {"worker.js"},
+        ),
+    ],
+)
+def test_esbuild_issue_852_static_expressions(tmp_path, setup, options, expected):
+    code = f"import {{ build }} from 'esbuild';\n{setup}\nawait build({options});\n"
+    assert (
+        _esbuild_entries(tmp_path, code, "worker.js", "popup.js", "dead.js") == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "entries.push('src/popup.js');",
+        "entries[0] = 'src/popup.js';",
+        "delete entries[0];",
+        "entries.length--;",
+        "const alias = entries; alias.pop();",
+        "const container = { entries }; container.entries.pop();",
+        "unknown(entries);",
+        "new Unknown(entries);",
+        "let alias = entries;",
+        "globalThis.options = entries;",
+        "function expose() { return entries; } expose().pop();",
+    ],
+)
+def test_esbuild_does_not_assume_const_arrays_are_immutable(tmp_path, mutation):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const entries = ['src/worker.js'];\n"
+        f"{mutation}\n"
+        "build({ entryPoints: entries });\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js", "popup.js") == set()
+
+
+@pytest.mark.parametrize(
+    ("setup", "options"),
+    [
+        ("let source = 'src';", "{ entryPoints: [`${source}/worker.js`] }"),
+        (
+            "const source = process.env.SOURCE;",
+            "{ entryPoints: [`${source}/worker.js`] }",
+        ),
+        ("const source = ['src/worker.js'];", "{ ...unknown, entryPoints: source }"),
+        ("const source = ['src/worker.js'];", "{ entryPoints: source, ...unknown }"),
+        ("const source = ['src/worker.js'];", "{ [key]: true, entryPoints: source }"),
+        ("const source = readdirSync('src');", "{ entryPoints: source }"),
+        (
+            "const source = later; const later = ['src/worker.js'];",
+            "{ entryPoints: source }",
+        ),
+        ("const source = source;", "{ entryPoints: source }"),
+        (
+            "const join = (...args) => 'src/worker.js';",
+            "{ entryPoints: [join('src', 'worker.js')] }",
+        ),
+        (
+            "import { join } from 'other-package';",
+            "{ entryPoints: [join('src', 'worker.js')] }",
+        ),
+        (
+            "import type { join } from 'node:path';",
+            "{ entryPoints: [join('src', 'worker.js')] }",
+        ),
+        (
+            "import { type join } from 'node:path';",
+            "{ entryPoints: [join('src', 'worker.js')] }",
+        ),
+        (
+            "import path from 'node:path'; path.join = unknown;",
+            "{ entryPoints: [path.join('src', 'worker.js')] }",
+        ),
+        (
+            "import path from 'node:path';",
+            "{ entryPoints: ['worker'].map(path => path.join('src', 'worker.js')) }",
+        ),
+        (
+            "const source = ['worker'];",
+            "{ entryPoints: source.map(async n => `src/${n}.js`) }",
+        ),
+        (
+            "const source = ['worker'];",
+            "{ entryPoints: source.map(async(n) => `src/${n}.js`) }",
+        ),
+        (
+            "Array.prototype.map = unknown;",
+            "{ entryPoints: ['worker'].map(n => `src/${n}.js`) }",
+        ),
+        (
+            "const source = ['worker'];",
+            "{ entryPoints: source.map(n => { return `src/${n}.js`; }) }",
+        ),
+        (
+            "const source = ['worker'];",
+            "{ entryPoints: source.map((n, i) => `src/${n}.js`) }",
+        ),
+        ("", "{ entryPoints: [unknown, 'src/worker.js'] }"),
+        ("", r"{ entryPoints: ['src/\u0077orker.js'] }"),
+    ],
+)
+def test_esbuild_abstains_on_unproven_static_expressions(tmp_path, setup, options):
+    code = f"import {{ build }} from 'esbuild';\n{setup}\nbuild({options});\n"
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_object_spreads_follow_javascript_overwrite_order(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const first = { entryPoints: ['src/dead.js'] };\n"
+        "const last = { entryPoints: ['src/worker.js'] };\n"
+        "build({ ...first, entryPoints: ['src/dead.js'], ...last });\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js", "dead.js") == {"worker.js"}
+
+
+def test_esbuild_path_join_does_not_reset_on_later_absolute_segment(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "import { join } from 'node:path';\n"
+        "build({ entryPoints: [join('src', '/worker.js')] });\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+def test_esbuild_constant_is_not_available_before_declaration(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "build({ entryPoints });\n"
+        "const entryPoints = ['src/worker.js'];\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_constant_folding_is_bounded(tmp_path):
+    aliases = "\n".join(f"const a{i} = a{i - 1};" for i in range(1, 200))
+    entries = ",".join("'src/worker.js'" for _ in range(1025))
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const a0 = ['src/worker.js'];\n"
+        f"{aliases}\n"
+        f"build({{ entryPoints: a199 }});\nbuild({{ entryPoints: [{entries}] }});\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_abstains_when_working_directory_changes(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "import { resolve } from 'node:path';\n"
+        "process.chdir('elsewhere');\n"
+        "build({ entryPoints: [resolve('src', 'worker.js')] });\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_does_not_trust_a_replaced_namespace_method(tmp_path):
+    code = (
+        "import * as esbuild from 'esbuild';\n"
+        "esbuild.build = unknown;\n"
+        "esbuild.build({ entryPoints: ['src/worker.js'] });\n"
+    )
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_computed_roots_keep_imports_live_without_hiding_dead_files(tmp_path):
+    from skylos.analyzer import analyze
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"type": "module", "scripts": {"build": "node scripts/build.mjs"}}),
+    )
+    _write(
+        tmp_path / "scripts" / "build.mjs",
+        "import { dirname, resolve } from 'node:path';\n"
+        "import { fileURLToPath } from 'node:url';\n"
+        "import { build } from 'esbuild';\n"
+        "const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');\n"
+        "const names = ['worker', 'popup'];\n"
+        "const shared = { bundle: true };\n"
+        "build({ ...shared, entryPoints: names.map(n => resolve(root, `src/${n}.js`)) });\n",
+    )
+    _write(tmp_path / "src" / "worker.js", "import './helper.js';\n")
+    _write(tmp_path / "src" / "popup.js", "console.log('popup');\n")
+    _write(tmp_path / "src" / "helper.js", "console.log('helper');\n")
+    _write(tmp_path / "src" / "dead.js", "console.log('unused');\n")
+
+    result = json.loads(analyze(str(tmp_path), conf=0))
+
+    assert result["analysis_errors"] == []
+    assert {
+        (Path(finding["file"]).name, finding["rule_id"])
+        for finding in result["unused_files"]
+    } == {("dead.js", "SKY-E003")}
 
 
 def test_esbuild_static_advanced_entries_and_working_directory(tmp_path):
@@ -493,19 +750,18 @@ def test_esbuild_js_config_requires_an_esm_package(tmp_path):
     build_file = tmp_path / "build.js"
     _write(
         build_file,
-        "import { build } from 'esbuild';\n"
-        "build({ entryPoints: ['src/dead.js'] });\n",
+        "import { build } from 'esbuild';\nbuild({ entryPoints: ['src/dead.js'] });\n",
     )
     files = {str(dead.resolve())}
 
-    assert _discover_esbuild_config_entries(
-        str(build_file), files, str(tmp_path)
-    ) == set()
+    assert (
+        _discover_esbuild_config_entries(str(build_file), files, str(tmp_path)) == set()
+    )
 
     _write(tmp_path / "package.json", json.dumps({"type": "module"}))
-    assert _discover_esbuild_config_entries(
-        str(build_file), files, str(tmp_path)
-    ) == {str(dead.resolve())}
+    assert _discover_esbuild_config_entries(str(build_file), files, str(tmp_path)) == {
+        str(dead.resolve())
+    }
 
 
 def test_esbuild_static_globs_use_esbuild_wildcards(tmp_path):
@@ -513,8 +769,7 @@ def test_esbuild_static_globs_use_esbuild_wildcards(tmp_path):
     build_file = tmp_path / "build.mjs"
     _write(
         build_file,
-        "import { build } from 'esbuild';\n"
-        "build({ entryPoints: ['src/**/*.js'] });\n",
+        "import { build } from 'esbuild';\nbuild({ entryPoints: ['src/**/*.js'] });\n",
     )
 
     assert _discover_esbuild_config_entries(
@@ -522,7 +777,9 @@ def test_esbuild_static_globs_use_esbuild_wildcards(tmp_path):
         {str(path.resolve()) for path in sources.values()},
         str(tmp_path),
     ) == {str(path.resolve()) for path in sources.values()}
-    assert _esbuild_glob_matches("*" + "a" * 200_000 + "b", "a" * 200_000 + "c") is False
+    assert (
+        _esbuild_glob_matches("*" + "a" * 200_000 + "b", "a" * 200_000 + "c") is False
+    )
 
 
 def test_esbuild_many_globs_reuse_the_file_inventory(tmp_path):
@@ -540,9 +797,7 @@ def test_esbuild_many_globs_reuse_the_file_inventory(tmp_path):
     )
 
     started = time.perf_counter()
-    result = _discover_esbuild_config_entries(
-        str(build_file), files, str(tmp_path)
-    )
+    result = _discover_esbuild_config_entries(str(build_file), files, str(tmp_path))
 
     assert result == files
     assert time.perf_counter() - started < 5
@@ -589,9 +844,9 @@ def test_existing_vite_and_vitest_glob_syntax_is_preserved(tmp_path):
         "export default { test: { include: ['src/[ab].test.ts'] } };\n",
     )
 
-    assert _discover_vite_config_entries(
-        str(vite_config), files, str(tmp_path)
-    ) == {str(sources["page1.js"].resolve())}
+    assert _discover_vite_config_entries(str(vite_config), files, str(tmp_path)) == {
+        str(sources["page1.js"].resolve())
+    }
     assert _discover_vitest_config_entries(
         str(vitest_config), files, str(tmp_path)
     ) == {
@@ -641,9 +896,7 @@ def test_package_scripts_distinguish_executed_build_files(
 ):
     build_file = tmp_path / "build.mjs"
     _write(build_file, "export {};\n")
-    _write(
-        tmp_path / "package.json", json.dumps({"scripts": {"build": command}})
-    )
+    _write(tmp_path / "package.json", json.dumps({"scripts": {"build": command}}))
 
     direct, executable, _ = _discover_script_entry_candidates(str(tmp_path))
 
@@ -672,9 +925,7 @@ def test_package_managers_preserve_custom_runner_configs(command, tmp_path):
     _write(config, "export default {};\n")
     _write(
         tmp_path / "package.json",
-        json.dumps(
-            {"scripts": {"test": f"{command} --config custom.config.ts"}}
-        ),
+        json.dumps({"scripts": {"test": f"{command} --config custom.config.ts"}}),
     )
 
     _, _, configs = _discover_script_entry_candidates(str(tmp_path))

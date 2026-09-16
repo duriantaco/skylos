@@ -14,6 +14,7 @@ from tree_sitter import Language, Parser
 
 from skylos.core.file_discovery import should_exclude_path
 
+from .esbuild_static import EsbuildStaticOptions, esbuild_entry_values
 from .nextjs import (
     NEXTJS_CONVENTION_EXPORTS,
     NEXTJS_CONVENTION_FILES,
@@ -1050,18 +1051,6 @@ def _esbuild_import_bindings(source: bytes, root_node) -> tuple[set[str], set[st
     return direct, namespaces
 
 
-def _unwrap_esbuild_static_expression(node):
-    while node is not None and node.type in {
-        "as_expression",
-        "parenthesized_expression",
-        "satisfies_expression",
-    }:
-        node = node.child_by_field_name("expression") or (
-            node.named_children[0] if node.named_children else None
-        )
-    return node
-
-
 def _is_top_level_esbuild_call(source: bytes, call_node) -> bool:
     """Accept only calls that a package script evaluates directly at module load."""
     current = call_node
@@ -1145,90 +1134,6 @@ def _is_esbuild_call(
     )
 
 
-def _static_esbuild_string(source: bytes, node) -> str | None:
-    node = _unwrap_esbuild_static_expression(node)
-    if node is None:
-        return None
-    if node.type == "string":
-        return _string_node_value(source, node)
-    if node.type != "template_string" or any(
-        child.type == "template_substitution" for child in node.named_children
-    ):
-        return None
-    text = _node_text(source, node)
-    return text[1:-1] if len(text) >= 2 else None
-
-
-def _static_esbuild_object(source: bytes, node) -> dict[str, object] | None:
-    node = _unwrap_esbuild_static_expression(node)
-    if node is None or node.type != "object":
-        return None
-
-    properties: dict[str, object] = {}
-    for child in node.named_children:
-        if child.type == "comment":
-            continue
-        if child.type != "pair":
-            return None
-        key = _pair_key_text(source, child)
-        value = _pair_value_node(child)
-        if key is None or value is None:
-            return None
-        properties[key] = value
-    return properties
-
-
-def _static_esbuild_entries(source: bytes, node) -> list[str] | None:
-    node = _unwrap_esbuild_static_expression(node)
-    if node is None:
-        return None
-
-    if node.type == "array":
-        entries: list[str] = []
-        expecting_value = True
-        saw_value = False
-        for child in node.children:
-            if child.type in {"[", "]", "comment"}:
-                continue
-            if child.type == ",":
-                if expecting_value:
-                    return None
-                expecting_value = True
-                continue
-            if not expecting_value:
-                return None
-            saw_value = True
-            expecting_value = False
-            if child.type == "comment":
-                continue
-            value = _static_esbuild_string(source, child)
-            if value is not None:
-                entries.append(value)
-                continue
-            advanced = _static_esbuild_object(source, child)
-            if advanced is None or set(advanced) != {"in", "out"}:
-                return None
-            input_path = _static_esbuild_string(source, advanced.get("in"))
-            output_path = _static_esbuild_string(source, advanced.get("out"))
-            if input_path is None or output_path is None:
-                return None
-            entries.append(input_path)
-        if not saw_value:
-            return []
-        return entries
-
-    entry_map = _static_esbuild_object(source, node)
-    if entry_map is None:
-        return None
-    entries = []
-    for value_node in entry_map.values():
-        value = _static_esbuild_string(source, value_node)
-        if value is None:
-            return None
-        entries.append(value)
-    return entries
-
-
 def _discover_esbuild_config_entries(
     config_path: str, ts_files: set[str], default_base_dir: str
 ) -> set[str]:
@@ -1236,9 +1141,11 @@ def _discover_esbuild_config_entries(
     suffix = Path(config_path).suffix.lower()
     if suffix in {".cjs", ".cts"}:
         return set()
-    if suffix in {".js", ".jsx"} and _read_json_file(
-        os.path.join(default_base_dir, "package.json")
-    ).get("type") != "module":
+    if (
+        suffix in {".js", ".jsx"}
+        and _read_json_file(os.path.join(default_base_dir, "package.json")).get("type")
+        != "module"
+    ):
         return set()
     source, root_node = _load_entry_config_ast(config_path)
     if source is None or root_node is None or root_node.has_error:
@@ -1247,6 +1154,18 @@ def _discover_esbuild_config_entries(
     direct_bindings, namespace_bindings = _esbuild_import_bindings(source, root_node)
     if not direct_bindings and not namespace_bindings:
         return set()
+    static_options = EsbuildStaticOptions(
+        source,
+        root_node,
+        config_path,
+        default_base_dir,
+        direct_bindings,
+        namespace_bindings,
+    )
+    if static_options.working_directory_changed:
+        return set()
+    direct_bindings = direct_bindings - static_options.unsafe
+    namespace_bindings = namespace_bindings - static_options.unsafe
 
     matches: set[str] = set()
     glob_requests: set[tuple[str, str]] = set()
@@ -1258,21 +1177,21 @@ def _discover_esbuild_config_entries(
         arguments = node.child_by_field_name("arguments")
         if arguments is None or not arguments.named_children:
             continue
-        options = _static_esbuild_object(source, arguments.named_children[0])
-        if options is None or "entryPoints" not in options:
+        options = static_options.evaluate(arguments.named_children[0])
+        if not isinstance(options, dict) or "entryPoints" not in options:
             continue
 
         base_dir = default_base_dir
         if "absWorkingDir" in options:
-            working_dir = _static_esbuild_string(source, options["absWorkingDir"])
-            if working_dir is None:
+            working_dir = options["absWorkingDir"]
+            if not isinstance(working_dir, str):
                 continue
             resolved_base = resolve_bounded_base(default_base_dir, working_dir)
             if resolved_base is None:
                 continue
             base_dir = resolved_base
 
-        entry_values = _static_esbuild_entries(source, options["entryPoints"])
+        entry_values = esbuild_entry_values(options["entryPoints"])
         if entry_values is None:
             continue
         for entry in dict.fromkeys(entry_values):
@@ -1678,9 +1597,7 @@ def _iter_entry_discoveries(
         elif tool == "playwright":
             entry_files = _discover_playwright_config_entries(config_path, ts_files)
         elif tool == "tsup":
-            entry_files = _discover_tsup_config_entries(
-                config_path, ts_files, base_dir
-            )
+            entry_files = _discover_tsup_config_entries(config_path, ts_files, base_dir)
         else:
             entry_files = _discover_vite_config_entries(config_path, ts_files, base_dir)
         for entry_file in sorted(entry_files):

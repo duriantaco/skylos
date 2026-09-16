@@ -12,6 +12,8 @@ scripts, synchronize environments, or execute workspace code for SCA.
 | `uv.lock` format 1 | Recorded public PyPI packages, including transitive packages and all locked environments |
 | `package-lock.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
 | `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
+| `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
+| `yarn.lock` Classic v1; Berry formats 4, 6, 8 | Recorded npm packages, including transitives, aliases, optional/peer declarations and recorded workspaces |
 | `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved |
 
 The scanner discovers these files recursively, excluding dependency/build
@@ -67,6 +69,82 @@ Nonempty `packageManagerDependencies`, `configDependencies`, and
 No package installation, workspace script execution,
 lockfile rewriting, or artifact download is performed.
 
+### Poetry lockfiles
+
+Poetry's default PyPI entries omit their source. Explicit custom indexes must
+identify a supported public PyPI endpoint; private indexes, Git, and archive
+sources stay explicit gaps. Directory dependencies are counted as local and
+are never queried as public packages.
+
+Skylos retains legacy categories, dependency groups, optional flags, extras,
+Python requirements, and group-specific markers. The lock alone does not say
+which packages are direct dependencies of the project, so that classification
+remains unknown. Dependency constraints are preserved, not resolved. Only
+unambiguous recorded targets receive graph links; uncertain ranges and omitted
+project-root back-references remain unknown graph edges without discarding
+the exact package inventory.
+
+### Yarn lockfiles
+
+Classic's `# yarn lockfile v1` format and Berry's `__metadata.version` values
+4, 6, and 8 are supported. These are **lockfile schema versions**, not Yarn
+CLI versions. Other schemas, including version 10, fail explicitly.
+
+Skylos preserves multiple versions, npm aliases, workspace roots, optional
+metadata, peer declarations, and recorded environment conditions. Yarn locks
+do not separate development from production usage, and Berry does not record
+all virtual peer installations. Skylos does not invent those classifications
+or installed peer-provider relationships.
+
+Patched, Git, archive, private-registry, and unsupported local-source records
+remain gaps. Manifest `resolutions` overrides can prevent matching a recorded
+dependency descriptor to a lock entry; these are explicit incomplete-graph
+issues even when all package versions are present. No Yarn commands, package
+scripts, or dependency installation are run.
+
+## Export an SBOM offline
+
+Create a software bill of materials (a list of recorded dependencies):
+
+```bash
+skylos sbom . --output sbom.cdx.json
+```
+
+The default output is CycloneDX 1.6 JSON. Omit `--output` or use `--output -`
+to write JSON to stdout. `--format cyclonedx-json` is also accepted. This is a
+separate offline inventory command: it does not contact OSV, run a vulnerability
+scan, execute project code, or require Cloud changes.
+
+The artifact includes every supported exact public package identity, not just
+vulnerable packages. It preserves multiple versions, deduplicated package URLs,
+relative source locations, and recorded context in
+`skylos:dependency:occurrence` properties. Only known recorded dependency edges
+are exported to the CycloneDX graph; missing graph nodes mean unknown, not
+dependency-free. Incomplete inventories omit the graph entirely.
+
+`metadata.properties` contains `skylos:inventory:receipt`, a JSON-encoded record
+of counts and gaps. No source snippets, absolute checkout paths, or transport
+URLs are included. Output is deterministic for identical inputs and Skylos
+versions; there is no generated timestamp or random serial number.
+
+- Exit **0** means the supported inventory was exported. With a matching lock
+  in the same project/workspace and ecosystem, manifest ranges remain recorded
+  limitations; lock freshness and range satisfaction are not verified.
+- Exit **2** means incomplete input coverage or a read/write error. Examples:
+  malformed locks, unsupported locks, unknown schemas, limits, unresolved
+  sources, manifest ranges without a corresponding recorded lock inventory,
+  or no supported inputs. Available components are still written when possible.
+- Existing input manifests and lockfiles cannot be selected as output files.
+  Output parents must exist; unsafe linked output paths are rejected.
+
+This is a **pre-build, partial inventory**, not an installed-environment or
+licence attestation. Local workspace packages are counted but not exported as
+public third-party components. Private/unresolved sources, unsupported package
+managers, licences, artifact hashes, and production environment selection are
+not filled in. CycloneDX `compositions` therefore remains `incomplete`, even
+when the supported inventory export succeeds. SBOM import, SPDX output and
+licence policy are not included in this first version.
+
 ## Results and failures
 
 Findings use the existing `SKY-SCA-*` rule IDs and
@@ -114,8 +192,7 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   limited category coverage are not, by themselves, operational failures.
 
 `category_complete` remains `false`: these inputs do not cover all package
-managers or establish a complete installed environment. `yarn.lock`,
-`poetry.lock`, `Pipfile.lock`, and `npm-shrinkwrap.json` are not
+managers or establish a complete installed environment. `Pipfile.lock` and `npm-shrinkwrap.json` are not
 parsed. In particular, npm shrinkwrap takes precedence for npm installation;
 scanning a neighboring package-lock does not describe that installation.
 Lockfile freshness and production reachability are not verified.
@@ -223,6 +300,12 @@ uv's detailed serialization is defined by its
 [lockfile wire format](https://github.com/astral-sh/uv/blob/main/crates/uv-resolver/src/lock/mod.rs).
 pnpm publishes specifications for [lockfile 6.0](https://github.com/pnpm/spec/blob/master/lockfile/6.0.md)
 and [lockfile 9.0](https://github.com/pnpm/spec/blob/master/lockfile/9.0.md).
+Poetry serialization is defined in its
+[locker implementation](https://github.com/python-poetry/poetry/blob/2.1.4/src/poetry/packages/locker.py).
+Yarn documents [Classic lockfiles](https://classic.yarnpkg.com/lang/en/docs/yarn-lock/)
+and implements Berry serialization in its
+[project writer](https://github.com/yarnpkg/berry/blob/%40yarnpkg/cli/4.9.2/packages/yarnpkg-core/sources/Project.ts).
+SBOM output follows the [CycloneDX 1.6 schema](https://cyclonedx.org/schema/bom-1.6.schema.json).
 Advisory retrieval follows the official
 [OSV batch API](https://google.github.io/osv.dev/post-v1-querybatch/) and
 [full-advisory endpoint](https://google.github.io/osv.dev/get-v1-vulns/).

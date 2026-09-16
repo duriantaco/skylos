@@ -48,6 +48,18 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos sbom [path] [--output sbom.cdx.json]",
+        "desc": "Export supported dependency inventory as offline CycloneDX 1.6 JSON",
+        "details": [
+            "--output, -o  Write a file; default '-' writes JSON to stdout",
+            "--format cyclonedx-json  CycloneDX JSON output (default)",
+            "No installs, project scripts, or network requests",
+            "Exit 2 on unreadable, unsupported, or incomplete inputs; keeps partial output",
+            "Includes all recorded environments, not an installed or licence inventory",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos defend <path>",
         "desc": "Verify agent guardrails before deployment (gate + evidence)",
         "group": "Core Analysis",
