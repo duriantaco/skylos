@@ -19,7 +19,13 @@ Skylos keeps the default terminal output stable for existing scripts and copy/pa
 | AI-ready report | `skylos . --format llm` | Agent workflows and structured reasoning systems |
 | GitHub Actions annotations | `skylos . --format github` | Inline workflow annotations in GitHub checks |
 | GitLab Code Quality report | `skylos . --format gitlab -o gl-code-quality-report.json` | Findings in GitLab merge request reports |
+| Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | CycloneDX 1.6 dependency inventory; no advisory requests |
 | Interactive terminal triage | `skylos . --tui` | Keyboard-driven exploration of findings |
+
+`sbom` is a separate inventory command, not a scan-output format. It includes
+supported exact package versions whether or not they have known vulnerabilities.
+See [dependency scanning](./dependency-scanning.md#export-an-sbom-offline) for
+supported lockfiles, partial-inventory limits, and exit codes.
 
 ## Human Terminal Output
 

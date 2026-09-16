@@ -139,6 +139,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
+| Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Single-rule review | `skylos . --select SKY-L012 --format concise` | Enables the matching analyzer family and reports only that exact rule with its full message | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -450,6 +451,12 @@ output. This also covers `dist/bin/palee.js` mapping to `bin/palee.ts` and
 `dist/src/index.js` mapping to `src/index.ts`. If both source locations exist,
 the `src/` mapping keeps priority; unrelated files are not treated as entries.
 
+For ESM build scripts invoked by package scripts, Skylos also follows top-level
+esbuild calls using unchanged constants, spreads, templates, Node path helpers,
+and simple literal-array maps. Build scripts are never executed. Nested build
+calls and filesystem-generated entry lists remain unsupported and may still
+produce unused-file findings.
+
 VitePress configs at `.vitepress/config.*` and `.vitepress/config/index.*`
 are recognised as development entrypoints for `.js`, `.ts`, `.mjs` and `.mts`.
 Other files in `.vitepress` still need a reference or another entrypoint rule.
@@ -577,7 +584,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
-| Dependency CVEs, uv/npm/pnpm lockfiles, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
+| Dependency CVEs, uv/npm/pnpm/Poetry/Yarn lockfiles, offline SBOM, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](./dictionary.md) |
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
