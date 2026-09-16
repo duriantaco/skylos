@@ -3748,18 +3748,24 @@ class TestGrepVerifyParallel:
         assert verdicts["lib.helper"].alive
 
 
+def _write(path: Path, text: str) -> None:
+    path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        text, encoding="utf-8"
+    )
+
+
 def _write_scan_boundary_project(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    (root / ".gitignore").write_text("ignored_evidence/\n", encoding="utf-8")
+    _write(root / ".gitignore", "ignored_evidence/\n")
     package = root / "pkg"
     package.mkdir()
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "candidates.py").write_text(
+    _write(package / "__init__.py", "")
+    _write(
+        package / "candidates.py",
         "def used_in_excluded_dir():\n    return 1\n\n\n"
         "def used_in_ignored_dir():\n    return 2\n\n\n"
         "def used_in_visible_dir():\n    return 3\n\n\n"
         "def never_used():\n    return 4\n",
-        encoding="utf-8",
     )
     for directory, name in (
         ("excluded_evidence", "used_in_excluded_dir"),
@@ -3767,8 +3773,9 @@ def _write_scan_boundary_project(root: Path) -> None:
         ("visible_evidence", "used_in_visible_dir"),
     ):
         (root / directory).mkdir()
-        (root / directory / "reference.py").write_text(
-            f"from pkg.candidates import {name}\n\n{name}()\n", encoding="utf-8"
+        _write(
+            root / directory / "reference.py",
+            f"from pkg.candidates import {name}\n\n{name}()\n",
         )
 
 
@@ -3781,12 +3788,12 @@ def test_grep_verify_ignores_evidence_outside_the_scan_boundary(tmp_path, backen
     _write_scan_boundary_project(tmp_path)
     real_which = shutil.which
 
-    def which(executable):
-        if backend == "grep" and executable == "rg":
-            return None
-        return real_which(executable)
-
-    with patch("skylos.core.grep_verify_common.shutil.which", side_effect=which):
+    with patch(
+        "skylos.core.grep_verify_common.shutil.which",
+        side_effect=lambda executable: (
+            None if backend == "grep" and executable == "rg" else real_which(executable)
+        ),
+    ):
         result = json.loads(
             analyze(
                 str(tmp_path),
@@ -3823,11 +3830,6 @@ def test_grep_backends_prune_the_scan_boundary_before_searching(tmp_path, backen
     _write_scan_boundary_project(tmp_path)
     real_which = shutil.which
 
-    def which(executable):
-        if backend == "grep" and executable == "rg":
-            return None
-        return real_which(executable)
-
     request = GrepRequest(
         pattern="used_in_",
         project_root=str(tmp_path),
@@ -3837,7 +3839,14 @@ def test_grep_backends_prune_the_scan_boundary_before_searching(tmp_path, backen
         max_results=50,
     )
     with (
-        patch("skylos.core.grep_verify_common.shutil.which", side_effect=which),
+        patch(
+            "skylos.core.grep_verify_common.shutil.which",
+            side_effect=lambda executable: (
+                None
+                if backend == "grep" and executable == "rg"
+                else real_which(executable)
+            ),
+        ),
         patch(
             "skylos.core.grep_verify_common._is_ignored_grep_path",
             return_value=False,
@@ -3875,3 +3884,65 @@ def test_grep_commands_carry_scope_exclusions(tmp_path):
     assert not any("generated" in part for part in rg_command)
     assert "excluded" in grep_command and "abs" in grep_command
     assert not any("nested" in part or "generated" in part for part in grep_command)
+
+
+@requires_ripgrep
+def test_streamed_ripgrep_retry_keeps_the_scan_boundary(tmp_path):
+    from skylos.analyzer import analyze
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _write(tmp_path / ".gitignore", "*_local.py\n")
+    package = tmp_path / "pkg"
+    package.mkdir()
+    _write(package / "__init__.py", "")
+    _write(package / "candidates.py", "def used_in_ignored_file():\n    return 1\n")
+    _write(
+        package / "ref_local.py",
+        "from pkg.candidates import used_in_ignored_file\n\nused_in_ignored_file()\n",
+    )
+
+    def overflow(*_args, **_kwargs):
+        raise _GrepOutputLimitExceeded("forced streamed retry")
+
+    with patch("skylos.core.grep_verify_common._run_ripgrep_batch", overflow):
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+
+    assert [item["name"] for item in result["unused_functions"]] == [
+        "used_in_ignored_file"
+    ]
+
+
+@pytest.mark.parametrize(
+    "backend", [pytest.param("rg", marks=requires_ripgrep), "grep"]
+)
+def test_glob_named_untracked_directories_are_not_pruned(tmp_path, backend):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _write(tmp_path / ".gitignore", "[[]ab]/\n")
+    for directory in ("a", "b", "[ab]"):
+        (tmp_path / directory).mkdir()
+        _write(tmp_path / directory / "ref.py", "helper()\n")
+    request = GrepRequest(
+        pattern="helper",
+        project_root=str(tmp_path),
+        use_regex=False,
+        include_globs=("*.py",),
+        fixed_string=True,
+        max_results=50,
+    )
+    real_which = shutil.which
+
+    with (
+        patch(
+            "skylos.core.grep_verify_common.shutil.which",
+            side_effect=lambda executable: (
+                None
+                if backend == "grep" and executable == "rg"
+                else real_which(executable)
+            ),
+        ),
+        grep_verification_scope(str(tmp_path), None),
+    ):
+        assert grep_verify_common_module._GREP_SCOPE.get().prune_names == ()
+        lines = _run_grep_request(request, require_complete=True)
+
+    assert {Path(line.split(":", 1)[0]).parent.name for line in lines} == {"a", "b"}

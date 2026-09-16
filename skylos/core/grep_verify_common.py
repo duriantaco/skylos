@@ -15,7 +15,7 @@ import unicodedata
 from bisect import bisect_right
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -524,6 +524,7 @@ def _scope_prune_names() -> tuple[str, ...]:
 
 
 _GREP_PRUNE_DEPTH = 3
+_GLOB_METACHARACTERS = frozenset("*?[]{}\\")
 
 
 def _visible_directories(visible_files: frozenset[str]) -> set[str]:
@@ -534,6 +535,15 @@ def _visible_directories(visible_files: frozenset[str]) -> set[str]:
             visible_dirs.add(parent)
             parent = os.path.dirname(parent)
     return visible_dirs
+
+
+def _directory_suffixes(directories: set[str]) -> set[str]:
+    """Every trailing path segment sequence of the given directories."""
+    suffixes: set[str] = set()
+    for directory in directories:
+        parts = directory.split("/")
+        suffixes.update("/".join(parts[index:]) for index in range(len(parts)))
+    return suffixes
 
 
 def _subdirectories(directory: str) -> list[os.DirEntry[str]]:
@@ -547,20 +557,17 @@ def _subdirectories(directory: str) -> list[os.DirEntry[str]]:
 def _invisible_directories(root: Path, visible_files: frozenset[str]) -> list[str]:
     """Shallow directories holding no git-visible file and no name collision."""
     visible_dirs = _visible_directories(visible_files)
+    visible_suffixes = _directory_suffixes(visible_dirs)
     invisible: list[str] = []
     pending: list[tuple[str, str, int]] = [(str(root), "", 1)]
     while pending:
         directory, relative, depth = pending.pop()
         for entry in _subdirectories(directory):
             child = f"{relative}/{entry.name}" if relative else entry.name
-            if child in visible_dirs:
-                if depth < _GREP_PRUNE_DEPTH:
-                    pending.append((entry.path, child, depth + 1))
-            elif not any(
-                visible == child or visible.endswith(f"/{child}")
-                for visible in visible_dirs
-            ):
+            if child not in visible_suffixes:
                 invisible.append(child)
+            elif child in visible_dirs and depth < _GREP_PRUNE_DEPTH:
+                pending.append((entry.path, child, depth + 1))
     return sorted(invisible)
 
 
@@ -570,15 +577,25 @@ def _prune_names(
     visible_files: frozenset[str] | None,
 ) -> tuple[str, ...]:
     """Paths the search backends can skip without changing the boundary."""
-    names: dict[str, None] = {}
-    for exclude_folder in exclude_folders:
-        for candidate in _exclude_candidates(exclude_folder, root):
-            if candidate and "*" not in candidate and not candidate.startswith("/"):
-                names[candidate] = None
+    candidates = [
+        candidate
+        for exclude_folder in exclude_folders
+        for candidate in _exclude_candidates(exclude_folder, root)
+    ]
     if visible_files is not None:
-        for directory in _invisible_directories(root, visible_files):
-            names.setdefault(directory, None)
-    return tuple(name for name in names if name not in _GREP_EXCLUDE_DIRS)
+        candidates.extend(_invisible_directories(root, visible_files))
+    # Backends read these as globs, so any name with glob syntax stays with
+    # the post-search filter instead of being escaped per backend dialect.
+    return tuple(
+        dict.fromkeys(
+            name
+            for name in candidates
+            if name
+            and not name.startswith("/")
+            and name not in _GREP_EXCLUDE_DIRS
+            and _GLOB_METACHARACTERS.isdisjoint(name)
+        )
+    )
 
 
 @contextmanager
@@ -1256,8 +1273,8 @@ def _streamed_grep_process_threads(
 ) -> None:
     process_state.readers = [
         threading.Thread(
-            target=_read_streamed_grep_output,
-            args=(process, process_state, search_state),
+            target=copy_context().run,
+            args=(_read_streamed_grep_output, process, process_state, search_state),
             daemon=True,
         ),
         threading.Thread(
