@@ -183,14 +183,15 @@ of receiving a score.
 | Security frozen | seeded dev | Bandit | Python | 3 | 0 | 6 | 3 | 4 | 7 | 64.33 |
 | Security frozen | seeded dev | Bandit | TypeScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Security frozen | seeded dev | Bandit | Go | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
-| Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 105 | 0 | 15 | 120 | 94.37 |
+| Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 120 | 0 | 0 | 120 | 100.0 |
 | Quality frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 | Agent review frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 
-These frozen results already show useful gaps to investigate before any public
-claim: OWASP Java still has request-wrapper interprocedural, LDAP injection,
-XPath injection, and property-driven weak-hash gaps. Frozen dead-code dev is
-now at full JavaScript, TypeScript, Go, and Java score; the remaining Python
+The OWASP Java row includes the source-helper and properties rechecks described
+below; the other suites were not rerun as part of those changes. These frozen
+results still have limits: passing this 240-case development subset does not
+establish general Java coverage or unseen-code accuracy. Frozen dead-code
+dev is now at full JavaScript, TypeScript, Go, and Java score; the remaining Python
 dead-code residuals are benchmark-label review items around duplicate
 dead-class method reporting and an unlabeled genuinely unreachable helper. The
 seeded security dev suite is now at full recall with one Python `urljoin`
@@ -224,7 +225,7 @@ tree-sitter analyzer with the older regex-heavy scanner retained only as a
 failure fallback. Coverage includes cookies, weak randomness, command
 execution, SQL, LDAP, XPath, XSS, path traversal, and trust-boundary session
 writes. The previous `TP=109` exploratory result used an FP-prone unknown
-wrapper accessor shortcut and was rejected. Remaining Java misses are
+wrapper accessor shortcut and was rejected. Remaining Java misses at that point were
 request-wrapper interprocedural flows, LDAP injection, XPath injection, and
 weak-hash algorithms loaded through project properties.
 
@@ -413,8 +414,35 @@ Latest full test run:
 ```
 ## Latest Frozen OWASP Java Security Result
 
-Run: `security.owasp-java.dev` with Skylos Java structured flow analyzer as the primary path and legacy request/servlet scanner as failure fallback only. Unknown external request-wrapper accessors are not treated as tainted without a real same-project summary.
+Rechecked on 2026-09-16 using the unchanged 240-case frozen development manifest
+(`SHA-256: 92eec0c9d56e4386764b421b83e4b792e4826c4eb98c29a975f0739ea889ca15`).
+The full recheck called the Java static analyzer directly and reused the corpus
+normalizer and scorer. It did not execute Java or use holdout cases. This is
+not a full CLI rerun or an independent evaluation on unseen examples.
+
+The same baseline first reproduced `TP=105 FP=0 FN=15 TN=120`. Source-backed
+request helpers and corrected branch/list/map propagation recover ten misses:
+four cross-file helper cases and six within-file flow cases. Unknown external
+helpers are not treated as request sources without source evidence, and
+external summaries are not used to prove safety.
+
+A follow-up adds bounded, source-set-local `Properties.load` / `getProperty`
+tracking and variable-backed `MessageDigest.getInstance` checks. It recovers the
+remaining five property-driven weak-hash cases, moving the intermediate result
+`TP=115 FP=0 FN=5 TN=120` to the result below. Resource reads reject symlinks and
+traversal. Unknown loads, unsupported defaults/aliases, and unresolved mutations
+do not become constant proofs; property values do not drive general branch or
+security-guard decisions.
 
 | Tool | TP | FP | FN | TN | Score |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Skylos | 105 | 0 | 15 | 120 | 94.37 |
+| Skylos | 120 | 0 | 0 | 120 | 100.0 |
+
+The helper-flow CLI checks cover its ten recovered cases and two safe controls:
+`TP=10 FP=0 FN=0 TN=2`, with no analysis errors and no security findings in
+either safe control. The properties follow-up has separate CLI checks covering
+all five recovered weak-hash cases and four safe controls:
+`TP=5 FP=0 FN=0 TN=4`, again with no analysis errors or security findings in
+the safe controls. All 240 latest direct-analysis cases completed without
+analysis errors. Custom resource loaders, runtime classpaths, recursive helper
+chains, and other unsupported Java behavior remain outside this evaluation.

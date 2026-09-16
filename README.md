@@ -444,6 +444,22 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+Java security analysis follows directly implemented request-data helpers in
+same-package files or source files identified by exact imports or fully qualified
+names under a verified local source root. Helper reads are bounded and reject
+symlinks; no Java code or build scripts are executed. This is not full classpath
+or recursive helper analysis. Unknown helpers are not assumed to be request
+sources or sanitizers.
+
+Java weak-hash checks also follow local algorithm variables and values loaded
+through `java.util.Properties` from literal classloader resources. Resource
+lookup stays within the matching `src/main/resources` or `src/test/resources`
+directory. Missing resources, unsupported loaders/layouts, conflicting branch
+values, and unresolved mutations remain unknown. Properties are used only as
+crypto evidence, never to prove a security guard or choose a safe branch. This
+does not resolve arbitrary runtime classpaths, JAR resources, or environment
+overrides.
+
 TypeScript and JavaScript dead code analysis recognizes `package.json` entry
 fields, including `bin`. For targets under `dist/` or `out/`, it checks the
 matching `src/` location first, then the package root, before the declared
@@ -511,7 +527,7 @@ Frozen `golden-v0.2` highlights:
 |:---|:---|:---|
 | Dead code seeded dev | overall score 96.28; TS/JS/Go/Java score 100.0; Python score 93.33 | Python residuals are label-review items |
 | Security seeded dev | overall score 96.52; full recall with one Python `urljoin` false positive | label should be reviewed |
-| OWASP Java security dev | TP=105 FP=0 FN=15 TN=120, score 94.37 | request-wrapper, LDAP, XPath, and property weak-hash gaps remain |
+| OWASP Java security dev | TP=120 FP=0 FN=0 TN=120, score 100.0 | 240-case development subset, not general Java coverage; direct static analysis plus focused CLI checks |
 | Quality seeded dev | TP=1 FP=0 FN=0 TN=1, score 100.0 | one seeded case only |
 
 For methodology, commands, competitor rows, and caveats, see
