@@ -1,5 +1,29 @@
 ## Changelog
 
+## [4.38.0](https://github.com/duriantaco/skylos/compare/v4.37.0...v4.38.0) (2026-09-17)
+
+
+### Features
+
+* **gitlab:** add code quality reports and managed CI uploads ([#851](https://github.com/duriantaco/skylos/issues/851)) ([480faa4](https://github.com/duriantaco/skylos/commit/480faa470ad44fd2990e5fa20225260f5b7b302d))
+* **sca:** add Poetry and Yarn scanning with offline SBOM export ([#854](https://github.com/duriantaco/skylos/issues/854)) ([fad21b3](https://github.com/duriantaco/skylos/commit/fad21b34995d89ee94022becf86abd1d1a344471))
+* **sca:** scan pnpm lockfiles with workspace context ([#850](https://github.com/duriantaco/skylos/issues/850)) ([d9d9405](https://github.com/duriantaco/skylos/commit/d9d9405b41c9fba13679ebc196f3308352d713e5))
+* **sca:** scan uv and npm lockfiles with advisory details ([#847](https://github.com/duriantaco/skylos/issues/847)) ([6bb2d05](https://github.com/duriantaco/skylos/commit/6bb2d056018c73fe8b8c9377d52a9a3a16c9c0c2))
+
+
+### Bug Fixes
+
+* **grep-verify:** keep rescue evidence inside the analyzer scan boundary ([#858](https://github.com/duriantaco/skylos/issues/858)) ([93b69dd](https://github.com/duriantaco/skylos/commit/93b69dd11e8d6dd9bc97891dd1170e96af53aca1))
+* **java:** detect security issues across helper files and properties ([#856](https://github.com/duriantaco/skylos/issues/856)) ([2a814d1](https://github.com/duriantaco/skylos/commit/2a814d1365ab58499b16d9ed6f84446e7fa8fd6b))
+* **sca:** resolve CI security scan warnings ([#849](https://github.com/duriantaco/skylos/issues/849)) ([a54b5c6](https://github.com/duriantaco/skylos/commit/a54b5c638145c7cdc88523f833ccbdf35238c4fc))
+* **security:** recognize literal pytest path parameters ([#859](https://github.com/duriantaco/skylos/issues/859)) ([afc6c6a](https://github.com/duriantaco/skylos/commit/afc6c6ab56b9971ab8f8e4b5db56e03ea8c59e4e))
+* **typescript:** fold static esbuild entry points ([#853](https://github.com/duriantaco/skylos/issues/853)) ([a94808f](https://github.com/duriantaco/skylos/commit/a94808fb581251e103bc7582cc2086489e186af0))
+
+
+### Documentation
+
+* **security:** add security research note ([#857](https://github.com/duriantaco/skylos/issues/857)) ([f3c974b](https://github.com/duriantaco/skylos/commit/f3c974b8577edae17bada7fd7322ec0c9399c7ba))
+
 ## [4.37.0](https://github.com/duriantaco/skylos/compare/v4.36.1...v4.37.0) (2026-09-13)
 
 
