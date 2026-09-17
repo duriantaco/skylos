@@ -5,6 +5,11 @@ known vulnerabilities in exact package versions. `-a` also enables SCA.
 Lockfiles are parsed as data: Skylos does not install dependencies, run package
 scripts, synchronize environments, or execute workspace code for SCA.
 
+For packages reported inside a built container image, use the separate
+[`skylos ingest trivy` workflow](./container-image-reports.md). It imports an
+existing Trivy vulnerability report without running a scanner or container;
+repository SCA does not inspect the built image.
+
 ## Supported inventories
 
 | Input | Coverage |
