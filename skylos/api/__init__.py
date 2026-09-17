@@ -99,6 +99,7 @@ __all__ = [
     "_validate_github_oidc_request_url",
     "_append_query_param",
     "_try_github_oidc_token",
+    "_try_gitlab_oidc_token",
     "get_project_token",
     "get_project_info",
     "get_credit_balance",
@@ -203,11 +204,39 @@ def _detect_ci():
 
     if os.getenv("GITLAB_CI") == "true":
         return "gitlab", {
+            # Routing hints only. Cloud must independently verify the signed
+            # token and GitLab API context before trusting any CI identity.
+            "server_url": os.getenv("CI_SERVER_URL"),
+            "project_id": os.getenv("CI_PROJECT_ID"),
+            "project_path": os.getenv("CI_PROJECT_PATH"),
+            "project_namespace": os.getenv("CI_PROJECT_NAMESPACE"),
             "pipeline_id": os.getenv("CI_PIPELINE_ID"),
+            "pipeline_source": os.getenv("CI_PIPELINE_SOURCE"),
             "job_id": os.getenv("CI_JOB_ID"),
             "commit_sha": os.getenv("CI_COMMIT_SHA"),
             "commit_branch": os.getenv("CI_COMMIT_BRANCH"),
+            "default_branch": os.getenv("CI_DEFAULT_BRANCH"),
+            "ref_protected": os.getenv("CI_COMMIT_REF_PROTECTED"),
             "merge_request_iid": os.getenv("CI_MERGE_REQUEST_IID"),
+            "merge_request_source_project_id": os.getenv(
+                "CI_MERGE_REQUEST_SOURCE_PROJECT_ID"
+            ),
+            "merge_request_target_project_id": os.getenv(
+                "CI_MERGE_REQUEST_TARGET_PROJECT_ID"
+            ),
+            "merge_request_source_project_path": os.getenv(
+                "CI_MERGE_REQUEST_SOURCE_PROJECT_PATH"
+            ),
+            "merge_request_target_project_path": os.getenv(
+                "CI_MERGE_REQUEST_TARGET_PROJECT_PATH"
+            ),
+            "merge_request_source_branch_name": os.getenv(
+                "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+            ),
+            "merge_request_target_branch_name": os.getenv(
+                "CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+            ),
+            "merge_request_diff_base_sha": os.getenv("CI_MERGE_REQUEST_DIFF_BASE_SHA"),
             "user_login": os.getenv("GITLAB_USER_LOGIN"),
         }
 
@@ -335,6 +364,25 @@ def _try_github_oidc_token():
     return None
 
 
+def _try_gitlab_oidc_token() -> str | None:
+    """Use an explicit GitLab.com job ID token, without trusting its claims here.
+
+    No JWT decoding or network discovery belongs on this path. Cloud owns
+    signature, audience, issuer, job and repository authorization checks.
+    """
+    if (
+        os.getenv("GITLAB_CI") != "true"
+        or os.getenv("CI_SERVER_URL") != "https://gitlab.com"
+    ):
+        return None
+    token = os.getenv("SKYLOS_GITLAB_ID_TOKEN", "")
+    if not token or len(token) > 16_384:
+        return None
+    if any(ord(char) < 33 or ord(char) > 126 for char in token):
+        return None
+    return f"gitlab_oidc:{token}"
+
+
 def get_project_token() -> str | None:
     token = os.getenv("SKYLOS_TOKEN")
     if token:
@@ -343,6 +391,10 @@ def get_project_token() -> str | None:
     oidc = _try_github_oidc_token()
     if oidc:
         return oidc
+
+    gitlab_oidc = _try_gitlab_oidc_token()
+    if gitlab_oidc:
+        return gitlab_oidc
 
     repo_root = _get_repo_root_for_link()
     link_path = repo_root / LINK_FILE
@@ -373,7 +425,7 @@ def get_project_info(token) -> dict | None:
     try:
         resp = requests.get(
             WHOAMI_URL,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_build_auth_headers(token),
             timeout=SUBPROCESS_TIMEOUT,
         )
         if resp.status_code == 200:
@@ -386,7 +438,7 @@ def get_project_info(token) -> dict | None:
 def get_credit_balance(token=None) -> dict | None:
     if token is None:
         token = get_project_token()
-    if not token or token.startswith("oidc:"):
+    if not token or token.startswith(("oidc:", "gitlab_oidc:")):
         return None
     try:
         resp = requests.get(
@@ -512,6 +564,8 @@ def _ci_commit(meta: dict) -> str | None:
 
 
 def _ci_branch(provider: str | None, meta: dict) -> str | None:
+    if provider == "gitlab" and meta.get("merge_request_source_branch_name"):
+        return meta["merge_request_source_branch_name"]
     branch = (
         meta.get("change_branch")
         or meta.get("git_branch")
@@ -564,6 +618,17 @@ def _build_ci_metadata(provider: str | None, meta: dict, pr_number: int | None) 
 
 
 def _build_auth_headers(token):
+    if token and token.startswith("gitlab_oidc:"):
+        headers = {
+            "Authorization": f"Bearer {token[len('gitlab_oidc:') :]}",
+            "X-Skylos-Auth": "gitlab_oidc",
+        }
+        from skylos.cloud.gitlab import managed_project_root
+
+        project_root = managed_project_root(get_git_root())
+        if project_root is not None:
+            headers["X-Skylos-Project-Root"] = project_root
+        return headers
     if token and token.startswith("oidc:"):
         return {
             "Authorization": f"Bearer {token[5:]}",
@@ -687,20 +752,34 @@ def _prepare_report_upload(
     analysis_mode="static",
     scan_bundle_id=None,
     analyzer_owned=False,
+    gitlab_managed=False,
+    gitlab_full_scan=False,
 ) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
+    if gitlab_managed:
+        from skylos.cloud.gitlab import managed_checkout_root
+
+        checkout_root = managed_checkout_root()
+        if checkout_root is not None:
+            git_root = str(checkout_root)
     project_root = _infer_upload_project_root(result_json, git_root)
 
+    normalization_input = result_json
+    if gitlab_managed:
+        from skylos.cloud.gitlab import managed_report_paths
+
+        normalization_input = managed_report_paths(result_json, git_root, project_root)
+
     all_findings = _normalize_result_sections(
-        result_json,
+        normalization_input,
         UPLOAD_FINDING_SPECS,
         git_root,
         extract_metadata=True,
         analyzer_owned=analyzer_owned,
     )
     reviewed_findings = (
-        result_json.get("reviewed_findings", []) if analyzer_owned else []
+        normalization_input.get("reviewed_findings", []) if analyzer_owned else []
     )
     if isinstance(reviewed_findings, list):
         for reviewed in reviewed_findings:
@@ -753,6 +832,14 @@ def _prepare_report_upload(
         project_root=project_root,
         workspace_data=workspace_data,
     )
+    if gitlab_managed:
+        from skylos.cloud.gitlab import scan_receipt
+
+        metadata["gitlab_scan_receipt"] = scan_receipt(
+            result_json,
+            analyzer_owned=analyzer_owned,
+            full_scan=gitlab_full_scan,
+        )
     core_payload.update(metadata)
     legacy_payload = _build_legacy_payload(core_payload, definitions)
     compatibility_payload = _build_compatibility_inline_payload(
@@ -1063,14 +1150,23 @@ def _finalize_report_upload(
     quiet=False,
     strict=False,
     is_forced=False,
+    gitlab_managed=False,
 ) -> dict:
+    if gitlab_managed and response.status_code in (401, 402):
+        return _managed_report_rejected()
     error_result = _report_upload_error_result(response)
     if error_result:
         return error_result
 
-    data = response.json()
+    data = _safe_response_json(response) if gitlab_managed else response.json()
     scan_id = data.get("scanId") or data.get("scan_id")
     quality_gate = data.get("quality_gate", {})
+    if gitlab_managed and (
+        not isinstance(scan_id, str)
+        or not scan_id
+        or not isinstance(quality_gate, dict)
+    ):
+        return _report_transport_failure(_GITLAB_DELIVERY_UNKNOWN)
     passed = quality_gate.get("passed", True)
     new_violations = quality_gate.get("new_violations", 0)
     plan = data.get("plan", "free")
@@ -1084,10 +1180,18 @@ def _finalize_report_upload(
             scan_id=scan_id,
             credits_left=data.get("credits_remaining"),
         )
+    result = _report_upload_success_result(data, scan_id, passed, plan)
+    if gitlab_managed:
+        from skylos.cloud.gitlab import delivery_receipt
+
+        result.update(delivery_receipt(data.get("gitlab_delivery")))
+        # The CLI evaluates this independent delivery status before its gate;
+        # retaining the saved scan ID and gate result avoids a misleading retry.
+        return result
     _enforce_report_quality_gate(
         passed, strict=strict, is_forced=is_forced, quiet=quiet
     )
-    return _report_upload_success_result(data, scan_id, passed, plan)
+    return result
 
 
 def _report_upload_error_result(response) -> dict | None:
@@ -1206,13 +1310,16 @@ def _post_json_with_retries(
     accepted_statuses=(200, 201, 401, 402),
     timeout=NETWORK_TIMEOUT_LONG,
 ):
+    managed = headers.get("X-Skylos-Auth") == "gitlab_oidc"
     try:
         safe_url = _validate_api_request_url(url)
     except ValueError as exc:
+        if managed:
+            return None, "Invalid managed Cloud endpoint configuration."
         return None, f"Unsafe API URL: {exc}"
 
     last_err = None
-    for attempt in range(3):
+    for attempt in range(1 if managed else 3):
         try:
             if not quiet:
                 if attempt == 0 and initial_message:
@@ -1223,17 +1330,55 @@ def _post_json_with_retries(
                 safe_url,
                 json=payload,
                 headers=headers,
-                timeout=timeout,
+                timeout=300 if managed else timeout,
+                **({"allow_redirects": False} if managed else {}),
             )
+            if managed and response.status_code >= 500:
+                return None, _GITLAB_DELIVERY_UNKNOWN
             if response.status_code in accepted_statuses:
                 return response, None
             if not quiet and response.status_code >= 400:
                 print(" failed.")
+            if managed:
+                return None, _GITLAB_DELIVERY_UNKNOWN
             last_err = f"Server Error {response.status_code}: {response.text}"
         except requests.exceptions.RequestException as e:
+            if managed:
+                return None, _GITLAB_DELIVERY_UNKNOWN
             last_err = f"Connection Error: {str(e)}"
 
     return None, last_err or "Unknown error"
+
+
+_GITLAB_DELIVERY_UNKNOWN = (
+    "GitLab upload/delivery outcome unknown. Check Cloud before starting a fresh "
+    "pipeline; the scan may already be saved and comments may have changed. "
+    "No automatic re-upload was attempted."
+)
+
+
+def _report_transport_failure(error: str | None) -> dict:
+    result = {"success": False, "error": error or "Unknown error"}
+    if error == _GITLAB_DELIVERY_UNKNOWN:
+        result.update(
+            {
+                "code": "GITLAB_DELIVERY_UNKNOWN",
+                "gitlab_delivery_exit_code": 2,
+                "gitlab_delivery_message": _GITLAB_DELIVERY_UNKNOWN,
+            }
+        )
+    return result
+
+
+def _managed_report_rejected() -> dict:
+    message = "Managed GitLab upload was rejected. Check the job identity, Cloud plan and project integration setup."
+    return {
+        "success": False,
+        "error": message,
+        "code": "GITLAB_UPLOAD_REJECTED",
+        "gitlab_delivery_exit_code": 2,
+        "gitlab_delivery_message": message,
+    }
 
 
 def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
@@ -1304,13 +1449,14 @@ def upload_report_legacy(
         initial_message=initial_message,
     )
     if response is None:
-        return {"success": False, "error": last_err or "Unknown error"}
+        return _report_transport_failure(last_err)
     return _finalize_report_upload(
         response,
         grade_data=grade_data,
         quiet=quiet,
         strict=strict,
         is_forced=is_forced,
+        gitlab_managed=token.startswith("gitlab_oidc:"),
     )
 
 
@@ -1323,6 +1469,19 @@ def upload_report_compatibility(
     is_forced=False,
     initial_message=None,
 ) -> dict:
+    if token.startswith("gitlab_oidc:"):
+        message = (
+            "Managed GitLab uploads require full report data. "
+            "The local report is retained; upgrade Cloud before a fresh pipeline. "
+            "Lossy compatibility fallback is disabled."
+        )
+        return {
+            "success": False,
+            "code": "UPLOAD_PROTOCOL_UNSUPPORTED",
+            "error": message,
+            "gitlab_delivery_exit_code": 2,
+            "gitlab_delivery_message": message,
+        }
     if prepared.compatibility_payload_size_bytes > _legacy_inline_upload_limit_bytes():
         return _build_compatibility_upload_too_large_error(prepared)
     return upload_report_legacy(
@@ -1380,6 +1539,7 @@ def upload_report_v2(
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
+            gitlab_managed=token.startswith("gitlab_oidc:"),
         )
     finally:
         for artifact in artifacts.values():
@@ -1407,7 +1567,9 @@ def _start_report_artifact_upload(
             initial_message=initial_message,
             accepted_statuses=(200, 201, 400, 401, 402, 404, 405, 501),
         )
-        if _retry_artifact_init_without_optional_artifact(
+        if not token.startswith(
+            "gitlab_oidc:"
+        ) and _retry_artifact_init_without_optional_artifact(
             init_response,
             artifacts,
             skipped_artifacts,
@@ -1424,7 +1586,7 @@ def _start_report_artifact_upload(
             }
         return {
             "complete": True,
-            "result": {"success": False, "error": last_err or "Unknown error"},
+            "result": _report_transport_failure(last_err),
         }
     if init_response.status_code in (404, 405, 501):
         return {
@@ -1432,6 +1594,8 @@ def _start_report_artifact_upload(
             "result": _build_large_upload_protocol_error(prepared),
         }
     if init_response.status_code == 400:
+        if token.startswith("gitlab_oidc:"):
+            return {"complete": True, "result": _managed_report_rejected()}
         return {
             "complete": True,
             "result": _build_report_init_error(init_response),
@@ -1445,6 +1609,7 @@ def _start_report_artifact_upload(
                 quiet=quiet,
                 strict=strict,
                 is_forced=is_forced,
+                gitlab_managed=token.startswith("gitlab_oidc:"),
             ),
         }
     init_data = init_response.json() or {}
@@ -1645,7 +1810,7 @@ def _complete_report_artifact_upload(
         timeout=UPLOAD_TIMEOUT,
     )
     if complete_response is None:
-        return {"error": {"success": False, "error": last_err or "Unknown error"}}
+        return {"error": _report_transport_failure(last_err)}
     return {"response": complete_response}
 
 
@@ -1657,6 +1822,7 @@ def upload_report(
     analysis_mode="static",
     scan_bundle_id=None,
     analyzer_owned=False,
+    gitlab_full_scan=False,
 ) -> dict:
     token = get_project_token()
     if not token:
@@ -1677,7 +1843,22 @@ def upload_report(
         analysis_mode=analysis_mode,
         scan_bundle_id=scan_bundle_id,
         analyzer_owned=analyzer_owned,
+        gitlab_managed=token.startswith("gitlab_oidc:"),
+        gitlab_full_scan=gitlab_full_scan,
     )
+
+    if token.startswith("gitlab_oidc:"):
+        from skylos.cloud.gitlab import managed_project_root
+
+        try:
+            root_hint = managed_project_root(get_git_root())
+        except ValueError:
+            return {"success": False, "error": "Invalid GitLab project-root binding."}
+        if root_hint is not None and prepared.metadata.get("project_root") != root_hint:
+            return {
+                "success": False,
+                "error": "GitLab project-root binding does not match scan root.",
+            }
 
     if _should_use_legacy_inline_report_upload(prepared):
         return upload_report_legacy(
@@ -1697,6 +1878,12 @@ def upload_report(
         is_forced=is_forced,
     )
     if _should_retry_with_degraded_large_upload(upload_result):
+        if token.startswith("gitlab_oidc:"):
+            return {
+                **upload_result,
+                "gitlab_delivery_exit_code": 2,
+                "gitlab_delivery_message": "Managed GitLab upload requires a compatible Cloud artifact endpoint. The local report is retained; upgrade Cloud before a fresh pipeline. Lossy compatibility fallback is disabled.",
+            }
         if not quiet:
             print(
                 " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",

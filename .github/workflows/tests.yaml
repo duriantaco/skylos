@@ -40,6 +40,9 @@ jobs:
           cd skylos/engines/go
           GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
 
+      - name: Install ripgrep for grep-verify backend tests
+        run: sudo apt-get install -y ripgrep
+
       - name: Create venv + install deps
         run: |
           uv venv

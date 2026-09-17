@@ -141,6 +141,29 @@ def test_root_and_group_order_do_not_define_identity(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "field,old,new",
+    [
+        ("lockfile_requires_python", ">=3.10", ">=3.12"),
+        (
+            "dependency_extra_requirements",
+            {"tls": [{"name": "cryptography", "requirement": "cryptography >=40"}]},
+            {"tls": [{"name": "cryptography", "requirement": "cryptography >=43"}]},
+        ),
+    ],
+)
+def test_poetry_extended_context_changes_remain_new(tmp_path, field, old, new):
+    original = finding(tmp_path, ecosystem="PyPI")
+    original["file"] = str(tmp_path / "poetry.lock")
+    occurrence = original["metadata"]["dependency_occurrences"][0]
+    occurrence.update(file=original["file"], **{field: old})
+    baseline = saved(tmp_path, result(original))
+    occurrence[field] = new
+    assert filter_new_findings(result(original), baseline, project_root=tmp_path)[
+        "dependency_vulnerabilities"
+    ] == [original]
+
+
 @pytest.mark.parametrize("change", ["peer", "patch", "workspace", "platform"])
 def test_pnpm_snapshot_context_changes_remain_new(tmp_path, change):
     original = finding(tmp_path)

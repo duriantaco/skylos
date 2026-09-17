@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from skylos.visitors.languages.typescript import analysis
+from skylos.visitors.languages.typescript import analysis, esbuild_static
 
 
 @pytest.fixture(params=[posixpath, ntpath], ids=["posix", "windows"])
 def path_style(monkeypatch, request):
     path_module = request.param
     monkeypatch.setattr(
-        analysis, "os", SimpleNamespace(path=path_module, sep=path_module.sep)
+        esbuild_static, "os", SimpleNamespace(path=path_module, sep=path_module.sep)
     )
     return path_module
 
@@ -63,7 +63,7 @@ def path_style(monkeypatch, request):
 )
 def test_static_join_matches_node(path_style, segments, posix, windows):
     expected = posix if path_style is posixpath else windows
-    assert analysis._static_esbuild_path_call(None, "path.join", segments) == expected
+    assert esbuild_static.path_call(None, "path.join", segments) == expected
 
 
 @pytest.mark.parametrize(
@@ -98,7 +98,7 @@ def test_static_join_matches_node(path_style, segments, posix, windows):
 )
 def test_static_dirname_matches_node(path_style, value, posix, windows):
     expected = posix if path_style is posixpath else windows
-    assert analysis._static_esbuild_path_call(None, "path.dirname", [value]) == expected
+    assert esbuild_static.path_call(None, "path.dirname", [value]) == expected
 
 
 @pytest.mark.parametrize(
@@ -111,8 +111,10 @@ def test_static_dirname_matches_node(path_style, value, posix, windows):
     ],
 )
 def test_static_windows_join_abstains_on_ambiguous_colons(monkeypatch, segments):
-    monkeypatch.setattr(analysis, "os", SimpleNamespace(path=ntpath, sep=ntpath.sep))
-    assert analysis._static_esbuild_path_call(None, "path.join", segments) is None
+    monkeypatch.setattr(
+        esbuild_static, "os", SimpleNamespace(path=ntpath, sep=ntpath.sep)
+    )
+    assert esbuild_static.path_call(None, "path.join", segments) is None
 
 
 @pytest.mark.parametrize(
@@ -138,12 +140,10 @@ def test_composed_path_helpers_keep_the_correct_entry_path(
     ).encode()
     parser = analysis._entry_parser_for_path("build.mjs")
     root = parser.parse(source).root_node
-    context = analysis._esbuild_static_context(
-        source, root, "/project/build.mjs", "/project"
+    context = esbuild_static.EsbuildStaticOptions(
+        source, root, "/project/build.mjs", "/project", {"build"}, set()
     )
     monkeypatch.setattr(
-        analysis, "os", SimpleNamespace(path=posixpath, sep=posixpath.sep)
+        esbuild_static, "os", SimpleNamespace(path=posixpath, sep=posixpath.sep)
     )
-    assert (
-        analysis._static_esbuild_string(context, context.bindings["entry"]) == expected
-    )
+    assert context.evaluate(context.constants["entry"]) == expected

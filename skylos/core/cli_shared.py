@@ -50,7 +50,7 @@ _SAFE_ADDOPTS_VALUE_OPTIONS = frozenset(
 )
 
 _SAFE_ADDOPTS_CHOICES = {
-    "--format": {"rich", "pretty", "json", "llm", "github", "concise"},
+    "--format": {"rich", "pretty", "json", "llm", "github", "gitlab", "concise"},
     "--severity": {"critical", "high", "medium", "low"},
 }
 

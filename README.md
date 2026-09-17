@@ -138,6 +138,8 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
+| GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
+| Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Single-rule review | `skylos . --select SKY-L012 --format concise` | Enables the matching analyzer family and reports only that exact rule with its full message | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -442,12 +444,34 @@ or `--include-folder` to override an excluded folder.
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
+Java security analysis follows directly implemented request-data helpers in
+same-package files or source files identified by exact imports or fully qualified
+names under a verified local source root. Helper reads are bounded and reject
+symlinks; no Java code or build scripts are executed. This is not full classpath
+or recursive helper analysis. Unknown helpers are not assumed to be request
+sources or sanitizers.
+
+Java weak-hash checks also follow local algorithm variables and values loaded
+through `java.util.Properties` from literal classloader resources. Resource
+lookup stays within the matching `src/main/resources` or `src/test/resources`
+directory. Missing resources, unsupported loaders/layouts, conflicting branch
+values, and unresolved mutations remain unknown. Properties are used only as
+crypto evidence, never to prove a security guard or choose a safe branch. This
+does not resolve arbitrary runtime classpaths, JAR resources, or environment
+overrides.
+
 TypeScript and JavaScript dead code analysis recognizes `package.json` entry
 fields, including `bin`. For targets under `dist/` or `out/`, it checks the
 matching `src/` location first, then the package root, before the declared
 output. This also covers `dist/bin/palee.js` mapping to `bin/palee.ts` and
 `dist/src/index.js` mapping to `src/index.ts`. If both source locations exist,
 the `src/` mapping keeps priority; unrelated files are not treated as entries.
+
+For ESM build scripts invoked by package scripts, Skylos also follows top-level
+esbuild calls using unchanged constants, spreads, templates, Node path helpers,
+and simple literal-array maps. Build scripts are never executed. Nested build
+calls and filesystem-generated entry lists remain unsupported and may still
+produce unused-file findings.
 
 VitePress configs at `.vitepress/config.*` and `.vitepress/config/index.*`
 are recognised as development entrypoints for `.js`, `.ts`, `.mjs` and `.mts`.
@@ -503,7 +527,7 @@ Frozen `golden-v0.2` highlights:
 |:---|:---|:---|
 | Dead code seeded dev | overall score 96.28; TS/JS/Go/Java score 100.0; Python score 93.33 | Python residuals are label-review items |
 | Security seeded dev | overall score 96.52; full recall with one Python `urljoin` false positive | label should be reviewed |
-| OWASP Java security dev | TP=105 FP=0 FN=15 TN=120, score 94.37 | request-wrapper, LDAP, XPath, and property weak-hash gaps remain |
+| OWASP Java security dev | TP=120 FP=0 FN=0 TN=120, score 100.0 | 240-case development subset, not general Java coverage; direct static analysis plus focused CLI checks |
 | Quality seeded dev | TP=1 FP=0 FN=0 TN=1, score 100.0 | one seeded case only |
 
 For methodology, commands, competitor rows, and caveats, see
@@ -546,6 +570,7 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 | Integration | Link | Purpose |
 |:---|:---|:---|
 | GitHub Action | [GitHub Action](./action.yml) | PR gates, annotations, and CI enforcement |
+| GitLab Code Quality | [GitLab setup](./docs/gitlab-code-quality.md) | merge request report artifacts; no comment-posting bot or API token |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
@@ -572,9 +597,10 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./docs/cli-output.md) |
 | Optional Ruff linting through the Skylos CLI | [Python Linting](./docs/python-linting.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
+| GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
-| Dependency CVEs, uv/npm/pnpm lockfiles, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
+| Dependency CVEs, uv/npm/pnpm/Poetry/Yarn lockfiles, offline SBOM, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](./dictionary.md) |
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |

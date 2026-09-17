@@ -31,6 +31,13 @@ coverage.xml
 .mcpregistry_github_token
 .mcpregistry_registry_token
 /PR_LOG.md
+# Local Git worktrees and manual validation artifacts (JSON/SARIF reports).
+/.worktrees/
+# Private local research and planning notes; not public documentation.
+/docs/research/
+/docs/behavior-integration-plan.md
+/docs/llm-grounding-plan.md
+/docs/opaque-identifier-plan.md
 /manual/*
 !/manual/agent_behavior/
 !/manual/agent_behavior/**

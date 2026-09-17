@@ -1,0 +1,41 @@
+# Operator setup is required; see ../gitlab-managed-uploads.md.
+# SKYLOS_SCANNER_IMAGE must be an operator-reviewed image reference pinned by
+# sha256 digest, with Skylos installed and configuration outside the checkout.
+skylos-managed-upload:
+  stage: test
+  inherit:
+    default: false
+    variables: false
+  image:
+    name: "$SKYLOS_SCANNER_IMAGE"
+    entrypoint: [""]
+  id_tokens:
+    SKYLOS_GITLAB_ID_TOKEN:
+      aud: skylos
+  variables:
+    GIT_SUBMODULE_STRATEGY: none
+    SKYLOS_PROJECT_ROOT: ""
+  before_script: []
+  after_script: []
+  services: []
+  cache: []
+  dependencies: []
+  interruptible: true
+  timeout: 15m
+  allow_failure: false
+  rules:
+    - if: '$CI_SERVER_URL == "https://gitlab.com" && $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID && $CI_MERGE_REQUEST_TARGET_PROJECT_ID == $CI_PROJECT_ID'
+    - if: '$CI_SERVER_URL == "https://gitlab.com" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+    - when: never
+  script:
+    - cd /opt/skylos-ci
+    - >-
+      /opt/skylos/bin/python -I /opt/skylos/bin/skylos "$CI_PROJECT_DIR"
+      --config-file /opt/skylos-ci/pyproject.toml
+      --all --gate --upload --no-provenance --no-grep-verify
+      --format json -o "$CI_PROJECT_DIR/skylos-report.json"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - skylos-report.json

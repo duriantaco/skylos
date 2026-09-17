@@ -31,6 +31,11 @@ _CONTEXT_FIELDS = (
     "lockfile_required_markers",
     "environment_scope",
 )
+# Optional additions preserve fingerprints for older uv/npm/pnpm occurrences.
+_EXTENDED_CONTEXT_FIELDS = (
+    "lockfile_requires_python",
+    "dependency_extra_requirements",
+)
 _ADVISORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -146,6 +151,13 @@ def dependency_fingerprints(finding, project_root=None) -> set[str] | None:
             return None
         try:
             context = _context({key: occurrence.get(key) for key in _CONTEXT_FIELDS})
+            context.update(
+                {
+                    key: _context(occurrence[key])
+                    for key in _EXTENDED_CONTEXT_FIELDS
+                    if key in occurrence
+                }
+            )
             if ecosystem == "npm":
                 # npm install paths distinguish identical transitive versions
                 # under different consumers. uv's package_path is an unstable

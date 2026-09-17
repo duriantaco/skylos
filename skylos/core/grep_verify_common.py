@@ -15,10 +15,15 @@ import unicodedata
 from bisect import bisect_right
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.file_discovery import (
+    _exclude_candidates,
+    list_git_visible_files,
+    should_exclude_path,
+)
 from skylos.core.grep_search_state import grep_probe_limit, retain_grep_probe
 
 logger = logging.getLogger(__name__)
@@ -373,7 +378,7 @@ def _ripgrep_command(request: GrepRequest, rg: str) -> list[str]:
         cmd.append("-F")
     for glob in request.include_globs:
         cmd.extend(["-g", glob])
-    for directory in _GREP_EXCLUDE_DIRS:
+    for directory in (*_GREP_EXCLUDE_DIRS, *_scope_prune_names()):
         cmd.extend(["-g", f"!**/{directory}/**"])
     return cmd
 
@@ -481,6 +486,148 @@ def _split_grep_evidence(line: str) -> tuple[str, int | None, str]:
     )
 
 
+@dataclass(slots=True)
+class _GrepScope:
+    """The analyzer's scan boundary, which grep evidence must not cross."""
+
+    root: Path
+    exclude_folders: tuple[str, ...]
+    visible_files: frozenset[str] | None
+    prune_names: tuple[str, ...] = ()
+    verdicts: dict[str, bool] = field(default_factory=dict)
+
+    def excludes(self, path: str) -> bool:
+        excluded = self.verdicts.get(path)
+        if excluded is None:
+            excluded = self._excludes(Path(path))
+            self.verdicts[path] = excluded
+        return excluded
+
+    def _excludes(self, path: Path) -> bool:
+        if should_exclude_path(path, self.root, self.exclude_folders):
+            return True
+        if self.visible_files is None:
+            return False
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError:
+            return False
+        return relative.as_posix() not in self.visible_files
+
+
+_GREP_SCOPE: ContextVar[_GrepScope | None] = ContextVar("grep_scope", default=None)
+
+
+def _scope_prune_names() -> tuple[str, ...]:
+    scope = _GREP_SCOPE.get()
+    return scope.prune_names if scope is not None else ()
+
+
+_GREP_PRUNE_DEPTH = 3
+_GLOB_METACHARACTERS = frozenset("*?[]{}\\")
+
+
+def _visible_directories(visible_files: frozenset[str]) -> set[str]:
+    visible_dirs: set[str] = set()
+    for file_path in visible_files:
+        parent = os.path.dirname(file_path)
+        while parent and parent not in visible_dirs:
+            visible_dirs.add(parent)
+            parent = os.path.dirname(parent)
+    return visible_dirs
+
+
+def _directory_suffixes(directories: set[str]) -> set[str]:
+    """Every trailing path segment sequence of the given directories."""
+    suffixes: set[str] = set()
+    for directory in directories:
+        parts = directory.split("/")
+        suffixes.update("/".join(parts[index:]) for index in range(len(parts)))
+    return suffixes
+
+
+def _subdirectories(directory: str) -> list[os.DirEntry[str]]:
+    try:
+        with os.scandir(directory) as entries:
+            return [entry for entry in entries if entry.is_dir(follow_symlinks=False)]
+    except OSError:
+        return []
+
+
+def _invisible_directories(root: Path, visible_files: frozenset[str]) -> list[str]:
+    """Shallow directories holding no git-visible file and no name collision."""
+    visible_dirs = _visible_directories(visible_files)
+    visible_suffixes = _directory_suffixes(visible_dirs)
+    invisible: list[str] = []
+    pending: list[tuple[str, str, int]] = [(str(root), "", 1)]
+    while pending:
+        directory, relative, depth = pending.pop()
+        for entry in _subdirectories(directory):
+            child = f"{relative}/{entry.name}" if relative else entry.name
+            if child not in visible_suffixes:
+                invisible.append(child)
+            elif child in visible_dirs and depth < _GREP_PRUNE_DEPTH:
+                pending.append((entry.path, child, depth + 1))
+    return sorted(invisible)
+
+
+def _prune_names(
+    exclude_folders: Sequence[str],
+    root: Path,
+    visible_files: frozenset[str] | None,
+) -> tuple[str, ...]:
+    """Paths the search backends can skip without changing the boundary."""
+    candidates = [
+        candidate
+        for exclude_folder in exclude_folders
+        for candidate in _exclude_candidates(exclude_folder, root)
+    ]
+    if visible_files is not None:
+        candidates.extend(_invisible_directories(root, visible_files))
+    # Backends read these as globs, so any name with glob syntax stays with
+    # the post-search filter instead of being escaped per backend dialect.
+    # A basename equal to the search root also prunes the root itself in both
+    # backends. Leave that child exclusion to the authoritative result filter.
+    return tuple(
+        dict.fromkeys(
+            name
+            for name in candidates
+            if name
+            and not name.startswith("/")
+            and name != root.name
+            and name not in _GREP_EXCLUDE_DIRS
+            and _GLOB_METACHARACTERS.isdisjoint(name)
+        )
+    )
+
+
+@contextmanager
+def grep_verification_scope(
+    project_root: str | Path,
+    exclude_folders: Sequence[str] | None,
+) -> Iterator[None]:
+    """Drop grep evidence from files the analyzer was told not to scan."""
+    root = Path(os.path.abspath(project_root))
+    visible_files: frozenset[str] | None = None
+    git_files = list_git_visible_files(root) if root.is_dir() else None
+    if git_files is not None:
+        resolved_root = root.resolve()
+        visible_files = frozenset(
+            file_path.relative_to(resolved_root).as_posix()
+            for file_path in git_files
+            if _path_is_within(file_path, resolved_root)
+        )
+    exclusions = tuple(exclude_folders or ())
+    scope = _GrepScope(
+        root, exclusions, visible_files, _prune_names(exclusions, root, visible_files)
+    )
+    token = _GREP_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _GREP_SCOPE.reset(token)
+
+
 def _is_ignored_grep_path(path: str) -> bool:
     components = [
         component for component in path.replace("\\", "/").split("/") if component
@@ -496,10 +643,13 @@ def _is_ignored_grep_path(path: str) -> bool:
         "__pycache__",
         "node_modules",
     }
-    return any(
+    if any(
         component in ignored_names or component.endswith(".egg-info")
         for component in components
-    )
+    ):
+        return True
+    scope = _GREP_SCOPE.get()
+    return scope is not None and scope.excludes(path)
 
 
 def _filter_null_grep_output(stdout: str) -> list[str]:
@@ -738,7 +888,8 @@ def _grep_fallback_command(
     for glob in request.include_globs:
         includes.extend(["--include", glob])
     excludes: list[str] = []
-    for directory in _GREP_EXCLUDE_DIRS:
+    scope_names = (name for name in _scope_prune_names() if "/" not in name)
+    for directory in (*_GREP_EXCLUDE_DIRS, *scope_names):
         excludes.extend(["--exclude-dir", directory])
     return [
         grep,
@@ -1125,8 +1276,8 @@ def _streamed_grep_process_threads(
 ) -> None:
     process_state.readers = [
         threading.Thread(
-            target=_read_streamed_grep_output,
-            args=(process, process_state, search_state),
+            target=copy_context().run,
+            args=(_read_streamed_grep_output, process, process_state, search_state),
             daemon=True,
         ),
         threading.Thread(

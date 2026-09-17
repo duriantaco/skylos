@@ -12,6 +12,7 @@ EARLY_COMMAND_HANDLERS = {
     "key": "_run_key_command",
     "credits": "_run_credits_command",
     "baseline": "_run_baseline_command",
+    "sbom": "_run_sbom_command",
     "init": "_run_init_command",
     "badge": "_run_badge_command",
     "whitelist": "_run_whitelist_command",

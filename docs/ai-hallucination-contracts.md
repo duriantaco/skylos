@@ -136,8 +136,3 @@ Contracts are repo truth for generated code. They are not a replacement for
 Semgrep, CodeQL, Sonar, Snyk, or GitHub Advanced Security. Those tools are
 broad query engines, security analyzers, or platforms. Skylos contracts are a
 local verification layer for agent-written code before review or merge.
-
-Keep the local contract useful and free. Paid product surface should be built
-around organization control: central policy registry, inheritance across repos,
-SSO/RBAC, audit logs, signed verification artifacts, private package/API
-intelligence, and review workflow integrations.

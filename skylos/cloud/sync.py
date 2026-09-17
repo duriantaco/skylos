@@ -324,12 +324,12 @@ def _safe_sync_url(endpoint: str) -> str:
 
 def _try_ci_oidc_token() -> str | None:
     try:
-        from skylos.api import _try_github_oidc_token
+        from skylos.api import _try_github_oidc_token, _try_gitlab_oidc_token
     except ImportError:
         return None
 
     try:
-        token = _try_github_oidc_token()
+        token = _try_github_oidc_token() or _try_gitlab_oidc_token()
     except (OSError, RuntimeError, ValueError):
         return None
     if isinstance(token, str):
@@ -409,6 +409,8 @@ def clear_token() -> bool:
 
 
 def mask_token(token: str | None) -> str:
+    if isinstance(token, str) and token.startswith("gitlab_oidc:"):
+        return "<GitLab job ID token>"
     if not token or len(token) <= 12:
         return "****"
     return token[:8] + "..." + token[-4:]
@@ -419,6 +421,10 @@ class AuthError(Exception):
 
 
 def _auth_headers(token: str | None) -> dict[str, str]:
+    if token and str(token).startswith("gitlab_oidc:"):
+        from skylos.api import _build_auth_headers
+
+        return _build_auth_headers(token)
     if token and str(token).startswith("oidc:"):
         return {
             "Authorization": f"Bearer {token[5:]}",

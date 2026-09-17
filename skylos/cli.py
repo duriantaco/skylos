@@ -960,8 +960,8 @@ def _skylos_console_theme():
     )
 
 
-def setup_logger(output_file=None):
-    console = Console(theme=_skylos_console_theme())
+def setup_logger(output_file=None, *, stderr=False):
+    console = Console(theme=_skylos_console_theme(), stderr=stderr)
 
     logger = logging.getLogger("skylos")
     logger.setLevel(logging.INFO)
@@ -1244,6 +1244,7 @@ def _is_main_machine_output(args) -> bool:
         getattr(args, "json", False)
         or getattr(args, "llm", False)
         or getattr(args, "github", False)
+        or getattr(args, "format", "rich") == "gitlab"
         or getattr(args, "concise", False)
     )
 
@@ -2181,6 +2182,12 @@ def _run_baseline_command(argv):
     return run_baseline_command(argv)
 
 
+def _run_sbom_command(argv):
+    from skylos.commands.sbom_cmd import run_sbom_command
+
+    return run_sbom_command(argv)
+
+
 def _run_badge_command(_argv):
     from skylos.commands.badge_cmd import run_badge_command
 
@@ -2252,7 +2259,15 @@ def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> 
         from skylos.api import get_git_root as _get_git_root
         from skylos.cloud.project_context import project_context_for_upload
 
-        upload_context = project_context_for_upload(project_root, _get_git_root())
+        git_root = _get_git_root()
+        if (
+            os.getenv("GITLAB_CI") == "true"
+            and os.getenv("CI_SERVER_URL") == "https://gitlab.com"
+        ):
+            from skylos.core.file_discovery import find_git_root
+
+            git_root = find_git_root(project_root)
+        upload_context = project_context_for_upload(project_root, git_root)
         result["project_root"] = upload_context["project_root"]
         result.setdefault("analysis_summary", {})["project_root"] = upload_context[
             "project_root"
@@ -2377,7 +2392,11 @@ def _build_main_scan_context(args):
     _apply_selected_rule_analysis_flags(args)
 
     project_root = _resolve_main_project_root(args.path)
-    logger = setup_logger()
+    logger = (
+        setup_logger(stderr=True)
+        if getattr(args, "format", "rich") == "gitlab"
+        else setup_logger()
+    )
     console = logger.console
 
     if args.verbose:

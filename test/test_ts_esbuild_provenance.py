@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.visitors.languages.typescript import analysis
+from skylos.visitors.languages.typescript import esbuild_static
 from skylos.visitors.languages.typescript.analysis import (
     _discover_esbuild_config_entries,
 )
@@ -187,7 +187,7 @@ def test_esbuild_map_source_alias_cycle_abstains(tmp_path):
 
 
 def test_esbuild_nested_maps_share_the_static_depth_limit(tmp_path, monkeypatch):
-    monkeypatch.setattr(analysis, "_MAX_ESBUILD_STATIC_DEPTH", 4)
+    monkeypatch.setattr(esbuild_static, "_MAX_DEPTH", 4)
     code = (
         "build({entryPoints: ['worker'].map(name => `${name}`)"
         ".map(name => `${name}`).map(name => `src/${name}.js`)});\n"
