@@ -2132,6 +2132,7 @@ class Skylos:
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.core.grep_cache import GrepCache
         from skylos.core.grep_verify import grep_verify_findings
+        from skylos.core.grep_verify_common import grep_verification_scope
 
         self.__dict__.pop("_grep_verify_incomplete_candidates", None)
         report = getattr(self, "_grep_verify_report", None)
@@ -2175,13 +2176,17 @@ class Skylos:
                 if report_filter is not None
                 else {}
             )
-            verdicts = grep_verify_findings(
-                candidates,
+            with grep_verification_scope(
                 project_root,
-                cache=grep_cache,
-                time_budget=grep_budget,
-                **filter_kwargs,
-            )
+                getattr(self, "_analysis_scope", {}).get("excluded_folders"),
+            ):
+                verdicts = grep_verify_findings(
+                    candidates,
+                    project_root,
+                    cache=grep_cache,
+                    time_budget=grep_budget,
+                    **filter_kwargs,
+                )
         finally:
             if use_project_cache:
                 grep_cache.save(grep_root)
