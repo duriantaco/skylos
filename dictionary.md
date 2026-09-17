@@ -188,6 +188,22 @@ Finding types:
 | D325 | MEDIUM | Symlink-following file read | Python |
 | D326 | HIGH | Unsafe archive extraction | Python |
 
+For Python path checks (`D215`, `D324`, `D325`), direct
+`pytest.mark.parametrize` decorators can establish that a filename parameter
+contains only literal relative paths. Supported forms include import aliases,
+multiple columns, stacked decorators, and `pytest.param(..., id="...")`.
+Only the proven columns lose parameter taint; other inputs remain checked.
+
+This is a narrow static check for top-level `test_*` functions in test files.
+It requires unchanged pytest API bindings and straight-line test bodies.
+Indirect fixture values, dynamic lists, reassigned parameters, unknown
+decorators, class/module parametrization, and unsupported control flow keep
+the existing conservative behavior. Absolute paths and parent-directory
+components are not accepted as evidence. Interpolation checks are unchanged.
+Proof is limited to 256 rows per decorator, 32 parameter names, and 4096
+characters per filename; larger inputs keep the normal parameter taint.
+Skylos does not execute pytest or load `conftest.py` to resolve these values.
+
 ### Agent And Build Command Safety
 
 | ID | Severity | Name | Languages / Scope |

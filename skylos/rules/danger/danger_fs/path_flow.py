@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
+from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 
 
 SYMLINK_WRITE_RULE = "SKY-D324"
@@ -191,6 +192,12 @@ class _PathFlowChecker(TaintVisitor):
             }
         ]
         self._emitted = set()
+        self._literal_pytest_paths = {}
+
+    def visit_Module(self, node):
+        if _is_probable_test_file(self.file_path):
+            self._literal_pytest_paths = literal_path_parameters(node)
+        self.generic_visit(node)
 
     def _push(self):
         super()._push()
@@ -290,6 +297,8 @@ class _PathFlowChecker(TaintVisitor):
                 self._set_symlink_sensitive(name, False)
             else:
                 self._set_path_like(name, False)
+                if name in self._literal_pytest_paths.get(fn, ()):
+                    self._set(name, False)
 
     def _is_pytest_tmp_fixture_param(self, name: str, fn: ast.AST) -> bool:
         if name not in PYTEST_TMP_FIXTURE_NAMES:
@@ -609,9 +618,10 @@ class _PathFlowChecker(TaintVisitor):
                 self._flag_symlink_read_if_unsafe(node, first_path)
 
         if qn == "os.open" and first_path is not None:
-            if not _node_mentions(node, {"O_NOFOLLOW"}) and not self._current_safety()[
-                "nofollow"
-            ]:
+            if (
+                not _node_mentions(node, {"O_NOFOLLOW"})
+                and not self._current_safety()["nofollow"]
+            ):
                 if self._os_open_uses_write_flags(node):
                     self._flag_symlink_write_if_unsafe(node, first_path)
                 else:
