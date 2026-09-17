@@ -12,6 +12,10 @@ def run_ingest_command(
     )
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_cmd")
 
+    from skylos.commands.trivy_image_cmd import add_trivy_image_parser
+
+    add_trivy_image_parser(ingest_sub)
+
     p_ccs = ingest_sub.add_parser(
         "claude-security", help="Ingest Claude Code Security JSON"
     )
@@ -50,7 +54,11 @@ def run_ingest_command(
 
     ingest_args = ingest_parser.parse_args(argv)
 
-    if ingest_args.ingest_cmd == "claude-security":
+    if ingest_args.ingest_cmd == "trivy":
+        from skylos.commands.trivy_image_cmd import run_trivy_image_import
+
+        return run_trivy_image_import(ingest_args)
+    elif ingest_args.ingest_cmd == "claude-security":
         from skylos.integrations.ingest import ingest_claude_security
 
         result = ingest_claude_security(

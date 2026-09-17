@@ -209,6 +209,12 @@ COMMANDS = [
     {
         "name": "skylos ingest",
         "desc": "Ingest findings from external tools",
+        "details": [
+            "trivy --input report.json: import container vulnerability results offline",
+            "--fail-on high --expect-image repository@sha256:digest: check a pinned image report",
+            "--output report.json / --sarif image.sarif: export imported image findings",
+            "claude-security --input report.json: ingest Claude Code Security findings",
+        ],
         "group": "Utility",
     },
     {
