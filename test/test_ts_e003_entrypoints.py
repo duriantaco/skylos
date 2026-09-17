@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import ntpath
+import posixpath
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.visitors.base import Definition
+from skylos.visitors.languages.typescript import esbuild_static
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     _discover_esbuild_config_entries,
@@ -356,6 +360,21 @@ def test_jsdoc_many_closed_links_and_properties_stay_bounded(tmp_path):
             set(),
         ),
         (
+            "import  type { build } from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
+            "import /* bundler */ type { build } from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
+            "import {\n  type\n  build,\n} from 'esbuild';",
+            "build({ entryPoints: ['src/dead.js'] });",
+            set(),
+        ),
+        (
             "import esbuild from 'esbuild';",
             "esbuild.build({ entryPoints: ['src/dead.js'] });",
             set(),
@@ -379,6 +398,326 @@ def test_esbuild_only_uses_immutable_runtime_imports(
         )
         == expected
     )
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            (
+                "import { dirname, join } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const here = dirname(fileURLToPath(import.meta.url));\n"
+                "const shared = { bundle: true };\n"
+                "build({ ...shared, "
+                "entryPoints: [join(here, 'src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import path from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { context } from 'esbuild';\n"
+                "const filename = fileURLToPath(import.meta.url);\n"
+                "const dirname = path.dirname(filename);\n"
+                "context({ entryPoints: "
+                "[path.resolve(dirname, 'src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import path from 'node:path';\n"
+                "import { build } from 'esbuild';\n"
+                "const shared = { bundle: true };\n"
+                "build({ ...shared, "
+                "entryPoints: [path.join('src', 'worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import { build } from 'esbuild';\n"
+                "const sourceDir = 'src';\n"
+                "build({ entryPoints: [`${sourceDir}/worker.js`] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import { dirname, join } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const here = dirname(fileURLToPath(import.meta.url));\n"
+                "build({ entryPoints: [join(here, '/src/worker.js')] });\n"
+            ),
+            {"worker.js"},
+        ),
+        (
+            (
+                "import * as esbuild from 'esbuild';\n"
+                "const bundles = ['worker', 'admin'];\n"
+                "esbuild.context({ entryPoints: "
+                "bundles.map((name) => `src/${name}.js`) });\n"
+            ),
+            {"worker.js", "admin.js"},
+        ),
+        (
+            (
+                "import { dirname, resolve } from 'node:path';\n"
+                "import { fileURLToPath } from 'node:url';\n"
+                "import { build } from 'esbuild';\n"
+                "const root = dirname(fileURLToPath(import.meta.url));\n"
+                "build({ entryPoints: { "
+                "worker: resolve(root, 'src/worker.js'), "
+                "admin: resolve(root, 'src/admin.js') } });\n"
+            ),
+            {"worker.js", "admin.js"},
+        ),
+    ],
+)
+def test_esbuild_folds_static_computed_entries(tmp_path, code, expected):
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == expected
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "let sourceDir = 'src';\n",
+        "const sourceDir = runtimeDir();\n",
+        "const sourceDir = `${sourceDir}`;\n",
+    ],
+)
+def test_esbuild_rejects_dynamic_template_bindings(tmp_path, setup):
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"{setup}"
+        "build({ entryPoints: [`${sourceDir}/dead.js`] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+def test_esbuild_rejects_unproven_path_helpers(tmp_path):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const root = 'src';\n"
+        "const join = (...parts) => parts.join('/');\n"
+        "build({ entryPoints: [join(root, 'dead.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+@pytest.mark.parametrize(
+    "path_import",
+    [
+        "import type { join } from 'node:path';",
+        "import { type join } from 'node:path';",
+        "import  type { join } from 'node:path';",
+        "import /* paths */ type { join } from 'node:path';",
+        "import {\n  type\n  join,\n} from 'node:path';",
+    ],
+)
+def test_esbuild_rejects_type_only_path_helpers(tmp_path, path_import):
+    code = (
+        f"{path_import}\n"
+        "import { build } from 'esbuild';\n"
+        "build({ entryPoints: [join('src', 'dead.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "dead.js") == set()
+
+
+@pytest.mark.parametrize(
+    ("path_module", "expected"),
+    [
+        (posixpath, "/server/share/project/src/worker.js"),
+        (ntpath, r"\\server\share\project\src\worker.js"),
+    ],
+    ids=["posix", "windows"],
+)
+def test_esbuild_join_squashes_a_doubled_slash_only_on_posix(
+    monkeypatch, path_module, expected
+):
+    """A doubled leading slash roots a UNC share on Windows, nothing on POSIX."""
+    # Change only this module's path operations, not the host OS.
+    monkeypatch.setattr(
+        esbuild_static, "os", SimpleNamespace(path=path_module, sep=path_module.sep)
+    )
+
+    folded = esbuild_static.path_call(
+        None, "path.join", ["//server/share/project", "src", "worker.js"]
+    )
+
+    assert folded == expected
+
+
+def test_esbuild_join_keeps_the_root_after_an_empty_segment(tmp_path):
+    """`join` drops empty segments, so the next one still sets the root."""
+    absolute = (tmp_path / "src" / "worker.js").resolve()
+    code = (
+        "import { join } from 'node:path';\n"
+        "import { build } from 'esbuild';\n"
+        "const prefix = '';\n"
+        f"build({{ entryPoints: [join(prefix, '{absolute}')] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+def test_esbuild_folds_a_map_callback_without_parentheses(tmp_path):
+    """A single arrow parameter binds to `parameter`, not `parameters`."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const bundles = ['worker', 'admin'];\n"
+        "build({ entryPoints: bundles.map(name => `src/${name}.js`) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {
+        "worker.js",
+        "admin.js",
+    }
+
+
+def test_esbuild_folds_exported_const_bindings(tmp_path):
+    code = (
+        "import { join } from 'node:path';\n"
+        "import { build } from 'esbuild';\n"
+        "export const here = 'src';\n"
+        "build({ entryPoints: [join(here, 'worker.js')] });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+def test_esbuild_map_parameter_does_not_leak_into_module_bindings(tmp_path):
+    """`suffix` is evaluated in module scope, where `name` is still 'worker'."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const name = 'worker';\n"
+        "const suffix = `src/${name}.js`;\n"
+        "const bundles = ['admin'];\n"
+        "build({ entryPoints: bundles.map((name) => suffix) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {"worker.js"}
+
+
+def test_esbuild_folds_literal_arrays_at_the_collection_limit(tmp_path):
+    """Keep main's collection bound without dropping entries at that boundary."""
+    literals = ", ".join(
+        f"'src/filler{index}.js'" for index in range(esbuild_static._MAX_ITEMS - 1)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"build({{ entryPoints: [{literals}, 'src/worker.js'] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == {"worker.js"}
+
+
+@pytest.mark.parametrize(
+    "link",
+    ["const a{index} = a{previous};\n", "const a{index} = `${{a{previous}}}`;\n"],
+    ids=["alias", "template"],
+)
+def test_esbuild_deeply_chained_bindings_abstain_without_recursing(tmp_path, link):
+    """Depth, not step count, is what overflows the interpreter stack."""
+    depth = 600
+    chain = "".join(
+        link.format(index=index, previous=index - 1) for index in range(1, depth)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const a0 = 'src/worker.js';\n"
+        f"{chain}"
+        f"build({{ entryPoints: [a{depth - 1}] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_deeply_chained_members_abstain_without_recursing(tmp_path):
+    """Chain length is bounded by the config, not by the fold's depth budget."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        f"build({{ entryPoints: [a{'.b' * 1200}('src/worker.js')] }});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+def test_esbuild_deeply_chained_spreads_abstain_without_recursing(tmp_path):
+    depth = 600
+    chain = "".join(
+        f"const o{index} = {{ ...o{index - 1} }};\n" for index in range(1, depth)
+    )
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const o0 = { entryPoints: ['src/worker.js'] };\n"
+        f"{chain}"
+        f"build(o{depth - 1});\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js") == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "options.entryPoints = ['src/new.js'];\nbuild(options);\n",
+        "options['entryPoints'] = ['src/new.js'];\nbuild(options);\n",
+        "build({ ...options });\n",
+    ],
+)
+def test_esbuild_abstains_when_a_const_container_is_mutated(tmp_path, mutation):
+    """`const` blocks rebinding, not mutation, so the initializer is not the value."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const options = { entryPoints: ['src/old.js'] };\n"
+        "options.entryPoints = ['src/new.js'];\n"
+        f"{mutation}"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "old.js", "new.js") == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "entries.push('src/new.js');\n",
+        "entries.pop();\n",
+        "entries.splice(0, 1);\n",
+        "entries.reverse();\n",
+        "entries[0] = 'src/new.js';\n",
+    ],
+)
+def test_esbuild_abstains_when_a_const_entry_array_is_mutated(tmp_path, mutation):
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const entries = ['src/old.js'];\n"
+        f"{mutation}"
+        "build({ entryPoints: entries });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "old.js", "new.js") == set()
+
+
+def test_esbuild_still_folds_non_mutating_methods_on_const_bindings(tmp_path):
+    """`.map()` reads its receiver; only mutating methods disqualify a binding."""
+    code = (
+        "import { build } from 'esbuild';\n"
+        "const bundles = ['worker', 'admin'];\n"
+        "build({ entryPoints: bundles.map((name) => `src/${name}.js`) });\n"
+    )
+
+    assert _esbuild_entries(tmp_path, code, "worker.js", "admin.js") == {
+        "worker.js",
+        "admin.js",
+    }
 
 
 @pytest.mark.parametrize("method", ["catch", "finally", "then"])

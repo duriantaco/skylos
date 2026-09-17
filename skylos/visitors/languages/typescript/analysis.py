@@ -13,6 +13,7 @@ import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser
 
 from skylos.core.file_discovery import should_exclude_path
+from skylos.core.js_ast import is_type_only, iter_import_clause_bindings
 
 from .esbuild_static import EsbuildStaticOptions, esbuild_entry_values
 from .nextjs import (
@@ -1016,38 +1017,27 @@ def _esbuild_import_bindings(source: bytes, root_node) -> tuple[set[str], set[st
     """Return immutable named-call and namespace bindings imported from esbuild."""
     direct: set[str] = set()
     namespaces: set[str] = set()
-
     for statement in root_node.named_children:
-        if statement.type != "import_statement":
+        if statement.type != "import_statement" or is_type_only(statement):
             continue
-        source_node = statement.child_by_field_name("source")
-        if _string_node_value(source, source_node) != "esbuild":
+        if (
+            _string_node_value(source, statement.child_by_field_name("source"))
+            != "esbuild"
+        ):
             continue
-        statement_text = _node_text(source, statement).lstrip()
-        if statement_text.startswith("import type "):
-            continue
-
-        for child in statement.named_children:
-            if child.type != "import_clause":
+        for clause in statement.named_children:
+            if clause.type != "import_clause":
                 continue
-            for binding in _iter_ts_nodes(child):
-                if binding.type == "import_specifier":
-                    if _node_text(source, binding).lstrip().startswith("type "):
-                        continue
-                    imported = binding.child_by_field_name("name")
-                    alias = binding.child_by_field_name("alias")
-                    imported_name = _node_text(source, imported) if imported else ""
-                    if imported_name in _ESBUILD_BUILD_METHODS:
-                        direct.add(_node_text(source, alias or imported))
-                elif binding.type == "namespace_import":
-                    identifiers = [
-                        node
-                        for node in binding.named_children
-                        if node.type == "identifier"
-                    ]
-                    if identifiers:
-                        namespaces.add(_node_text(source, identifiers[-1]))
-
+            for binding in iter_import_clause_bindings(source, clause):
+                if binding.type_only:
+                    continue
+                if binding.kind == "namespace":
+                    namespaces.add(binding.local)
+                elif (
+                    binding.kind == "named"
+                    and binding.imported in _ESBUILD_BUILD_METHODS
+                ):
+                    direct.add(binding.local)
     return direct, namespaces
 
 
