@@ -586,12 +586,15 @@ def _prune_names(
         candidates.extend(_invisible_directories(root, visible_files))
     # Backends read these as globs, so any name with glob syntax stays with
     # the post-search filter instead of being escaped per backend dialect.
+    # A basename equal to the search root also prunes the root itself in both
+    # backends. Leave that child exclusion to the authoritative result filter.
     return tuple(
         dict.fromkeys(
             name
             for name in candidates
             if name
             and not name.startswith("/")
+            and name != root.name
             and name not in _GREP_EXCLUDE_DIRS
             and _GLOB_METACHARACTERS.isdisjoint(name)
         )

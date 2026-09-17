@@ -3946,3 +3946,55 @@ def test_glob_named_untracked_directories_are_not_pruned(tmp_path, backend):
         lines = _run_grep_request(request, require_complete=True)
 
     assert {Path(line.split(":", 1)[0]).parent.name for line in lines} == {"a", "b"}
+
+
+@pytest.mark.parametrize(
+    "backend", [pytest.param("rg", marks=requires_ripgrep), "grep"]
+)
+@pytest.mark.parametrize("exclusion", ["gitignore", "explicit"])
+@pytest.mark.parametrize("execution", ["direct", "batch"])
+def test_root_name_collision_keeps_visible_grep_evidence(
+    tmp_path, backend, exclusion, execution
+):
+    root = tmp_path / "site"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    if exclusion == "gitignore":
+        _write(root / ".gitignore", "/site/\n")
+    (root / "site").mkdir()
+    _write(root / "site" / "ignored.py", "helper()\n")
+    visible = root / "visible.py"
+    _write(visible, "helper()\n")
+    request = GrepRequest(
+        pattern="helper",
+        project_root=str(root),
+        use_regex=False,
+        include_globs=("*.py",),
+        fixed_string=True,
+        max_results=50,
+    )
+    real_which = shutil.which
+
+    with (
+        patch(
+            "skylos.core.grep_verify_common.shutil.which",
+            side_effect=lambda executable: (
+                None
+                if backend == "grep" and executable == "rg"
+                else real_which(executable)
+            ),
+        ),
+        grep_verification_scope(
+            str(root), ["site"] if exclusion == "explicit" else None
+        ),
+    ):
+        if execution == "batch":
+            results = execute_grep_batch([request])
+            assert request in results, "verification must complete"
+            lines = results[request]
+        else:
+            lines = _run_grep_request(request, require_complete=True)
+
+    # The child directory remains outside the scan boundary, but matching its
+    # name must not prune the checkout itself and lose the legitimate caller.
+    assert tuple(lines) == (f"{visible}:1:helper()",)
