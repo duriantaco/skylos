@@ -6,6 +6,7 @@ import os
 import posixpath
 import re
 import subprocess
+from pathlib import Path
 
 import requests
 from rich.console import Console
@@ -23,6 +24,7 @@ from skylos.cicd.risk_passport import (
     build_risk_passport,
     format_risk_passport_markdown,
 )
+from skylos.core.file_discovery import find_git_root
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -62,6 +64,12 @@ def run_pr_review(
         )
         return
 
+    try:
+        review_root = _review_root_for_results(results)
+    except ValueError as exc:
+        console.print(f"[red]Skylos PR review unavailable: {exc}[/red]")
+        raise SystemExit(2) from None
+
     if grade and previous_grade is None:
         previous_grade = _fetch_previous_grade(diff_base)
 
@@ -70,17 +78,39 @@ def run_pr_review(
     if llm_findings:
         all_findings = _merge_llm_findings(all_findings, llm_findings)
 
-    regression_findings = _detect_regressions_from_diff(diff_base)
+    # A deletion-only hunk has no new lines to attach an ordinary finding to.
+    # Validate the diff even in summary-only mode before posting any report.
+    try:
+        changed_ranges = get_changed_line_ranges(
+            diff_base,
+            cwd=review_root,
+            raise_on_error=True,
+            include_deletion_anchors=False,
+        )
+        regression_findings = _detect_regressions_from_diff(
+            diff_base, cwd=review_root, raise_on_error=True
+        )
+        comment_ranges = (
+            get_changed_line_ranges(diff_base, cwd=review_root, raise_on_error=True)
+            if regression_findings and not summary_only
+            else changed_ranges
+        )
+    except ValueError as exc:
+        console.print(f"[red]Skylos PR review unavailable: {exc}[/red]")
+        raise SystemExit(2) from None
 
     if not summary_only:
-        changed_ranges = get_changed_line_ranges(diff_base)
-        findings = filter_findings_to_diff(all_findings, changed_ranges)
+        findings = filter_findings_to_diff(
+            all_findings, changed_ranges, project_root=review_root
+        )
         findings.extend(regression_findings)
     else:
         findings = all_findings + regression_findings
 
     all_findings.extend(regression_findings)
-    provenance = _resolve_review_provenance(results, diff_base=diff_base)
+    provenance = _resolve_review_provenance(
+        results, diff_base=diff_base, project_root=review_root
+    )
     risk_passport = build_risk_passport(
         all_findings=all_findings,
         diff_findings=findings,
@@ -94,7 +124,8 @@ def run_pr_review(
             pr_number,
             repo,
             evidence_cards=evidence_cards,
-            changed_ranges=changed_ranges,
+            changed_ranges=comment_ranges,
+            project_root=review_root,
         )
 
     _post_summary_comment(
@@ -114,12 +145,48 @@ def run_pr_review(
     )
 
 
-def _resolve_review_provenance(results: dict, *, diff_base: str) -> dict | None:
+def _review_root_for_results(results: dict) -> Path:
+    """Resolve Git diffs against the repository described by the scan report."""
+    summary = results.get("analysis_summary")
+    scope = summary.get("comparison_scope") if isinstance(summary, dict) else None
+    if isinstance(scope, dict) and "repository_root" in scope:
+        raw_root = scope["repository_root"]
+        explicit_root = True
+    elif "project_root" in results:
+        raw_root = results["project_root"]
+        explicit_root = True
+    else:
+        raw_root = Path.cwd()
+        explicit_root = False
+
+    if not isinstance(raw_root, (str, os.PathLike)) or not raw_root:
+        raise ValueError("scan report has an invalid project root")
+    root_path = Path(raw_root)
+    if explicit_root and not root_path.is_absolute():
+        raise ValueError("scan report project root must be absolute")
+    try:
+        target = root_path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("scan report project root is unavailable") from exc
+    if not target.is_dir():
+        raise ValueError("scan report project root is not a directory")
+    git_root = find_git_root(target)
+    if git_root is None:
+        raise ValueError("scan report project root is not in a Git repository")
+    return git_root
+
+
+def _resolve_review_provenance(
+    results: dict,
+    *,
+    diff_base: str,
+    project_root: str | os.PathLike[str] | None = None,
+) -> dict | None:
     provenance = results.get("provenance")
     if isinstance(provenance, dict):
         return provenance
 
-    project_root = results.get("project_root") or "."
+    project_root = project_root or results.get("project_root") or "."
     try:
         from skylos.reporting.provenance import analyze_provenance
 
@@ -129,22 +196,40 @@ def _resolve_review_provenance(results: dict, *, diff_base: str) -> dict | None:
         return None
 
 
-def get_changed_line_ranges(base_ref: str = "origin/main") -> list[dict]:
+def get_changed_line_ranges(
+    base_ref: str = "origin/main",
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    raise_on_error: bool = False,
+    include_deletion_anchors: bool = True,
+) -> list[dict]:
     try:
         result = subprocess.run(
             ["git", "diff", "--unified=0", f"{base_ref}...HEAD"],
+            cwd=cwd,
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
+            if raise_on_error:
+                raise ValueError(
+                    "Cannot compare changes: Git diff failed; check that the "
+                    "base ref exists in the scanned repository"
+                )
             return []
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if raise_on_error:
+            raise ValueError("Cannot compare changes: git is not installed") from exc
         return []
 
-    return _parse_unified_diff(result.stdout)
+    return _parse_unified_diff(
+        result.stdout, include_deletion_anchors=include_deletion_anchors
+    )
 
 
-def _parse_unified_diff(diff_output: str) -> list[dict]:
+def _parse_unified_diff(
+    diff_output: str, *, include_deletion_anchors: bool = True
+) -> list[dict]:
     entries = []
     current_file = None
 
@@ -157,6 +242,8 @@ def _parse_unified_diff(diff_output: str) -> list[dict]:
         if hunk_match and current_file:
             start = int(hunk_match.group(1))
             count = int(hunk_match.group(2) or 1)
+            if count == 0 and not include_deletion_anchors:
+                continue
             anchor = max(1, start)
             entries.append(
                 {
@@ -169,17 +256,30 @@ def _parse_unified_diff(diff_output: str) -> list[dict]:
     return entries
 
 
-def _get_per_file_diffs(base_ref: str = "origin/main") -> dict[str, str]:
+def _get_per_file_diffs(
+    base_ref: str = "origin/main",
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    raise_on_error: bool = False,
+) -> dict[str, str]:
     """Return a dict mapping file paths to their individual diff text."""
     try:
         result = subprocess.run(
             ["git", "diff", "--unified=3", f"{base_ref}...HEAD"],
+            cwd=cwd,
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
+            if raise_on_error:
+                raise ValueError(
+                    "Cannot compare changes: Git diff failed; check that the "
+                    "base ref exists in the scanned repository"
+                )
             return {}
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if raise_on_error:
+            raise ValueError("Cannot compare changes: git is not installed") from exc
         return {}
 
     file_diffs: dict[str, str] = {}
@@ -204,9 +304,14 @@ def _get_per_file_diffs(base_ref: str = "origin/main") -> dict[str, str]:
     return file_diffs
 
 
-def _detect_regressions_from_diff(base_ref: str = "origin/main") -> list[dict]:
+def _detect_regressions_from_diff(
+    base_ref: str = "origin/main",
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    raise_on_error: bool = False,
+) -> list[dict]:
     """Run security regression detection on the PR diff."""
-    file_diffs = _get_per_file_diffs(base_ref)
+    file_diffs = _get_per_file_diffs(base_ref, cwd=cwd, raise_on_error=raise_on_error)
     regression_findings: list[dict] = []
 
     for file_path, diff_text in file_diffs.items():
@@ -229,14 +334,23 @@ def _detect_regressions_from_diff(base_ref: str = "origin/main") -> list[dict]:
 
 
 def filter_findings_to_diff(
-    findings: list[dict], changed_ranges: list[dict]
+    findings: list[dict],
+    changed_ranges: list[dict],
+    *,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> list[dict]:
     if not changed_ranges:
         return []
 
     ranges_by_file = {}
     for r in changed_ranges:
-        ranges_by_file.setdefault(r["file"], []).append((r["start"], r["end"]))
+        file = (
+            _project_relative_file(r["file"], project_root)
+            if project_root is not None
+            else r["file"]
+        )
+        if file is not None:
+            ranges_by_file.setdefault(file, []).append((r["start"], r["end"]))
 
     filtered = []
     for finding in findings:
@@ -245,6 +359,7 @@ def filter_findings_to_diff(
             finding.get("line", 0),
             finding.get("line", 0),
             ranges_by_file,
+            project_root=project_root,
         ):
             filtered.append(finding)
             continue
@@ -261,6 +376,7 @@ def filter_findings_to_diff(
                 location.get("start_line", 0),
                 location.get("end_line", location.get("start_line", 0)),
                 ranges_by_file,
+                project_root=project_root,
             ):
                 filtered.append(finding)
                 break
@@ -288,6 +404,24 @@ def _same_location_file(left: str, right: str) -> bool:
     return left == right or left.endswith("/" + right) or right.endswith("/" + left)
 
 
+def _project_relative_file(
+    file: str, project_root: str | os.PathLike[str]
+) -> str | None:
+    """Map a finding and a Git path to the same exact project-relative name."""
+    if not isinstance(file, str) or not file:
+        return None
+    normalized = os.path.normpath(file)
+    if os.path.isabs(normalized):
+        try:
+            normalized = os.path.relpath(normalized, os.path.abspath(project_root))
+        except ValueError:
+            return None
+    normalized = posixpath.normpath(normalized.replace(os.sep, "/"))
+    if normalized in (".", "..") or normalized.startswith("../"):
+        return None
+    return normalized
+
+
 def _spans_overlap(
     left_start: int,
     left_end: int,
@@ -300,7 +434,12 @@ def _spans_overlap(
 def _diff_ranges_for_file(
     file: str,
     ranges_by_file: dict[str, list[tuple[int, int]]],
+    *,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> list[tuple[int, int]]:
+    if project_root is not None:
+        relative_file = _project_relative_file(file, project_root)
+        return ranges_by_file.get(relative_file, []) if relative_file else []
     exact = ranges_by_file.get(file)
     if exact:
         return exact
@@ -315,6 +454,8 @@ def _location_overlaps_diff(
     start_line: object,
     end_line: object,
     ranges_by_file: dict[str, list[tuple[int, int]]],
+    *,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> bool:
     span = _validated_location_span(file, start_line, end_line)
     if span is None:
@@ -324,7 +465,7 @@ def _location_overlaps_diff(
     return any(
         _spans_overlap(normalized_start, normalized_end, changed_start, changed_end)
         for changed_start, changed_end in _diff_ranges_for_file(
-            normalized_file, ranges_by_file
+            normalized_file, ranges_by_file, project_root=project_root
         )
     )
 
@@ -360,6 +501,19 @@ _MAX_SECURITY_EVIDENCE_TEXT_LENGTH = 500
 _MAX_SECURITY_EVIDENCE_LIST_ITEMS = 12
 
 
+_DEAD_CODE_REVIEW_KINDS = {
+    "unused_functions": ("SKY-U001", "Unused function"),
+    "unused_imports": ("SKY-U002", "Unused import"),
+    "unused_variables": ("SKY-U003", "Unused variable"),
+    "unused_classes": ("SKY-U004", "Unused class"),
+    "unused_parameters": ("SKY-U006", "Unused parameter"),
+    "unused_files": ("SKY-E002", "Unused file"),
+    "unused_fixtures": ("SKY-U000", "Unused fixture"),
+    "unused_exports": ("SKY-U000", "Unused export"),
+    "forgotten": ("SKY-U001", "Unused function"),
+}
+
+
 def _flatten_findings(results: dict) -> list[dict]:
     findings = []
 
@@ -388,6 +542,46 @@ def _flatten_findings(results: dict) -> list[dict]:
             if isinstance(related_locations, list):
                 finding["related_locations"] = related_locations
             _copy_safe_finding_metadata(f, finding)
+            findings.append(finding)
+
+    # "forgotten" may contain a function already listed in unused_functions.
+    # Review it once, with the ordinary dead-code rule and source location.
+    seen_dead_code = set()
+    for section, (default_rule, label) in _DEAD_CODE_REVIEW_KINDS.items():
+        for item in results.get(section, []) or []:
+            if not isinstance(item, dict):
+                continue
+            file = item.get("file") or item.get("file_path") or ""
+            line = item.get("line") or item.get("line_number") or 1
+            name = item.get("name") or item.get("simple_name") or ""
+            identity = (file, line, name)
+            if identity in seen_dead_code:
+                continue
+            seen_dead_code.add(identity)
+            message = (
+                item.get("message")
+                or item.get("msg")
+                or item.get("detail")
+                or (f"{label}: {name}" if name else label)
+            )
+            finding = {
+                "file": file,
+                "line": line,
+                "message": sanitize_untrusted_text(
+                    message, max_length=4_000, preserve_newlines=True
+                ),
+                "rule_id": item.get("rule_id") or default_rule,
+                "severity": item.get("severity") or "LOW",
+                "category": "dead_code",
+            }
+            if isinstance(item.get("confidence"), int):
+                finding["confidence"] = item["confidence"]
+            reason = item.get("dead_code_reason")
+            if isinstance(reason, str) and reason:
+                safe_reason = sanitize_untrusted_text(reason, max_length=1_000)
+                finding["explanation"] = safe_reason
+                finding["_review_reason"] = safe_reason
+            _copy_safe_finding_metadata(item, finding)
             findings.append(finding)
 
     return findings
@@ -769,15 +963,19 @@ def _format_evidence_card_comment(
     card = card or build_evidence_card(finding)
     safe_rule_id = sanitize_markdown_text(card.rule_id, max_length=120)
     rule_str = f" `{safe_rule_id}`" if safe_rule_id else ""
-    risk = {
-        "security": "security finding",
-        "security_regression": "security regression",
-        "secret": "secret exposure",
-        "reliability": "reliability issue",
-        "quality": "quality issue",
-        "dependency": "dependency issue",
-        "custom": "custom rule match",
-    }[card.kind]
+    risk = (
+        "dead code"
+        if finding.get("category") == "dead_code"
+        else {
+            "security": "security finding",
+            "security_regression": "security regression",
+            "secret": "secret exposure",
+            "reliability": "reliability issue",
+            "quality": "quality issue",
+            "dependency": "dependency issue",
+            "custom": "custom rule match",
+        }[card.kind]
+    )
     raw_location = f"{card.file}:{card.line}" if card.file else str(card.line)
     location = sanitize_markdown_text(raw_location, max_length=600)
 
@@ -838,12 +1036,15 @@ def _post_pr_review(
     *,
     evidence_cards: bool = False,
     changed_ranges: list[dict] | None = None,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> None:
     comments = []
     for f in findings:
         if not f.get("file") or not f.get("line"):
             continue
-        comment_file, comment_line = _review_comment_location(f, changed_ranges)
+        comment_file, comment_line = _review_comment_location(
+            f, changed_ranges, project_root=project_root
+        )
         body = (
             _format_evidence_card_comment(f)
             if evidence_cards
@@ -911,7 +1112,10 @@ def _related_location_spans(finding: dict) -> list[tuple[str, int, int]]:
 
 
 def _changed_overlap_line(
-    span: tuple[str, int, int], changed_ranges: list[dict]
+    span: tuple[str, int, int],
+    changed_ranges: list[dict],
+    *,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> int | None:
     file, start_line, end_line = span
     for changed in changed_ranges:
@@ -922,7 +1126,16 @@ def _changed_overlap_line(
             changed_start,
             changed_end,
         )
-        if changed_span is None or not _same_location_file(file, changed_span[0]):
+        if changed_span is None:
+            continue
+        if project_root is not None:
+            relative_file = _project_relative_file(file, project_root)
+            matches_file = relative_file is not None and relative_file == (
+                _project_relative_file(changed_span[0], project_root)
+            )
+        else:
+            matches_file = _same_location_file(file, changed_span[0])
+        if not matches_file:
             continue
         if _spans_overlap(start_line, end_line, changed_span[1], changed_span[2]):
             return max(start_line, changed_span[1])
@@ -930,7 +1143,10 @@ def _changed_overlap_line(
 
 
 def _review_comment_location(
-    finding: dict, changed_ranges: list[dict] | None
+    finding: dict,
+    changed_ranges: list[dict] | None,
+    *,
+    project_root: str | os.PathLike[str] | None = None,
 ) -> tuple[str, int]:
     primary = (str(finding.get("file", "")), int(finding.get("line") or 1))
     if not changed_ranges:
@@ -939,7 +1155,9 @@ def _review_comment_location(
     candidates = [(primary[0], primary[1], primary[1])]
     candidates.extend(_related_location_spans(finding))
     for candidate in candidates:
-        comment_line = _changed_overlap_line(candidate, changed_ranges)
+        comment_line = _changed_overlap_line(
+            candidate, changed_ranges, project_root=project_root
+        )
         if comment_line is not None:
             return candidate[0], comment_line
     return primary
@@ -997,7 +1215,9 @@ def _post_summary_comment(
         for cat in (
             "danger",
             "reliability",
+            "ai_defects",
             "quality",
+            "dead_code",
             "secrets",
             "custom_rules",
             "security_regression",

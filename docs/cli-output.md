@@ -178,6 +178,21 @@ because that grade describes the unfiltered scan. Analysis errors remain
 visible regardless of selection and still exit with code 2, preventing an
 incomplete scan from appearing clean.
 
+## Review Changed Lines
+
+`skylos . --diff origin/main --format json` analyzes the selected project for
+context and reports code findings on changed lines. Use `--diff-base origin/main`
+to report findings anywhere in changed files instead. A valid diff with no
+changed lines or files has no diff findings. An unavailable base ref exits with
+status 2 instead of returning the full scan as a PR result. Both scoped reports
+omit the full-project grade, which would describe findings that are not shown.
+The JSON `definitions` and `dead_code_evidence` fields retain full-project
+analysis context; the finding lists and their summary counts are scoped.
+Diff-scoped reports cannot be combined with `--upload`, because Cloud treats
+uploaded scans as full-project results. Run a separate full scan to upload.
+Removing a call can make an unchanged function dead; neither diff mode currently
+reports that function unless its definition is also in the selected scope.
+
 ## Selectable Terminal UI
 
 Use the TUI when you want keyboard-driven triage:
