@@ -80,6 +80,7 @@ RELEVANT_FILENAMES = {
     "go.mod",
     "go.sum",
     "gradle.lockfile",
+    "npm-shrinkwrap.json",
     "package-lock.json",
     "package.json",
     "pdm.lock",

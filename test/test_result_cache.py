@@ -49,6 +49,20 @@ def test_corrupt_trace_cache_entry_is_a_miss(tmp_path):
     assert load_trace_cache(tmp_path, key) is None
 
 
+def test_trace_cache_key_includes_npm_shrinkwrap_content(tmp_path):
+    lockfile = tmp_path / "npm-shrinkwrap.json"
+    lockfile.write_text('{"lockfileVersion": 3, "packages": {}}\n', encoding="utf-8")
+    original_key = build_trace_cache_key(tmp_path, [tmp_path])
+
+    lockfile.write_text(
+        '{"lockfileVersion": 3, "packages": {"node_modules/example": '
+        '{"version": "1.2.3"}}}\n',
+        encoding="utf-8",
+    )
+
+    assert build_trace_cache_key(tmp_path, [tmp_path]) != original_key
+
+
 def test_trace_cache_save_and_load_round_trips_payload(tmp_path):
     (tmp_path / "app.py").write_text("def f(): pass\n", encoding="utf-8")
     key, fingerprint = build_trace_cache_key(

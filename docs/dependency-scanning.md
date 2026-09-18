@@ -15,7 +15,7 @@ repository SCA does not inspect the built image.
 | Input | Coverage |
 | --- | --- |
 | `uv.lock` format 1 | Recorded public PyPI packages, including transitive packages and all locked environments |
-| `package-lock.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
+| `package-lock.json`, `npm-shrinkwrap.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
 | `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
 | `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
 | `yarn.lock` Classic v1; Berry formats 4, 6, 8 | Recorded npm packages, including transitives, aliases, optional/peer declarations and recorded workspaces |
@@ -46,6 +46,29 @@ npm permits omitted or registry-relative `resolved` values; those retain
 `registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
 for the configured registry, not proof of package provenance. This scanner does
 not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+
+### npm shrinkwrap
+
+`npm-shrinkwrap.json` uses the same supported schemas as `package-lock.json`.
+When both names exist in a directory, Skylos selects shrinkwrap and does not
+read or inventory the neighboring package-lock, following
+[npm's precedence rule](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/).
+This selection happens before parsing and inventory limits. An unreadable,
+symlinked, malformed, or unsupported shrinkwrap makes the scan incomplete;
+it never causes fallback to a potentially different package-lock inventory.
+Directories named `npm-shrinkwrap.json` are also invalid selected inputs.
+
+The receipt records `ignored_lockfile_count` and up to 25 `ignored_lockfiles`
+path examples, identifying the selected shrinkwrap and
+`npm_shrinkwrap_precedence` reason.
+SBOM receipts use relative paths for both filenames. Precedence is local to
+each directory: other nested projects, other package managers, and direct
+manifest pins remain independently inventoried. Findings and SBOM occurrences
+retain the shrinkwrap filename and package location.
+
+Only explicit `lockfileVersion` values 1, 2, and 3 are supported. Legacy files
+without that field and future schema versions fail explicitly. Skylos does not
+run npm to migrate locks, install packages, or infer missing metadata.
 
 ### pnpm lockfiles
 
@@ -197,9 +220,8 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   limited category coverage are not, by themselves, operational failures.
 
 `category_complete` remains `false`: these inputs do not cover all package
-managers or establish a complete installed environment. `Pipfile.lock` and `npm-shrinkwrap.json` are not
-parsed. In particular, npm shrinkwrap takes precedence for npm installation;
-scanning a neighboring package-lock does not describe that installation.
+managers or establish a complete installed environment. `Pipfile.lock` is not
+parsed.
 Lockfile freshness and production reachability are not verified.
 
 Inventories are bounded by per-file/total bytes, file/directory counts, and
