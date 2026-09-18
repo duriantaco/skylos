@@ -210,6 +210,8 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     (root / "c.cs").write_text("class C {}", encoding="utf-8")
     (root / "c.kt").write_text("class C", encoding="utf-8")
     (root / "c.kts").write_text("val x = 1", encoding="utf-8")
+    (root / "widget.cpp").write_text("int widget() { return 1; }", encoding="utf-8")
+    (root / "widget.hpp").write_text("int widget();", encoding="utf-8")
     (root / "d.js").write_text("console.log('x')", encoding="utf-8")
     (root / "e.jsx").write_text("export const X = () => null", encoding="utf-8")
     (root / "b.txt").write_text("no", encoding="utf-8")
@@ -220,7 +222,7 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
         if cmd[:3] == ["git", "diff", "--name-only"]:
             return (
                 b"a.py\na.pyi\na.pyw\nb.tsx\nc.go\nc.cs\nc.kt\nc.kts\n"
-                b"d.js\ne.jsx\nb.txt\nmissing.py\nmissing.ts\n"
+                b"d.js\ne.jsx\nwidget.cpp\nwidget.hpp\nb.txt\nmissing.py\nmissing.ts\n"
             )
         raise AssertionError("unexpected cmd")
 
@@ -243,6 +245,8 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
         "c.kts",
         "d.js",
         "e.jsx",
+        "widget.cpp",
+        "widget.hpp",
     ]
 
 

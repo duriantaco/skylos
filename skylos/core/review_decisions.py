@@ -130,6 +130,12 @@ _LANGUAGES = {
     ".ts": "typescript",
     ".tsx": "typescript",
     ".java": "java",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
     ".go": "go",
     ".php": "php",
     ".rs": "rust",
@@ -1356,6 +1362,10 @@ def _tree_sitter_language(language: str, suffix: str):
         factory = grammar.language_php
     elif language == "rust":
         import tree_sitter_rust as grammar
+
+        factory = grammar.language
+    elif language == "cpp":
+        import tree_sitter_cpp as grammar
 
         factory = grammar.language
     elif language == "dart":

@@ -60,9 +60,10 @@ The local/workspace API suite currently has deterministic proof for:
 | Go | `go_workspace_api_surface` | Exported selectors from local modules, workspaces, and local replacements |
 | Java | `java_workspace_api_surface` | Explicitly attributable local types and statically knowable members |
 
-PHP, Rust, Dart, C#, Kotlin, and Shell remain supported by their existing
-Skylos static-analysis rules, but deterministic local/workspace API proof is
-not implemented for those languages. Their expected checks are emitted as
+PHP, Rust, Dart, C#, Kotlin, and Shell retain their existing static-analysis
+coverage; C++ currently has only narrow file-local dead-code detection.
+Deterministic local/workspace API proof is not implemented for any of those
+languages. Their expected checks are emitted as
 unsupported and `skylos verify` reports `incomplete` rather than silently
 claiming a complete proof.
 

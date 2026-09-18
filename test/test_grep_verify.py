@@ -3355,6 +3355,13 @@ class TestDetectLanguage:
     def test_java(self):
         assert detect_language("App.java") == "java"
 
+    def test_cpp(self):
+        for suffix in (".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"):
+            assert detect_language(f"widget{suffix}") == "cpp"
+            assert f"*{suffix}" in source_globs_for_language("cpp")
+        assert "*.h" in source_globs_for_language("cpp")
+        assert detect_language("widget.h") != "cpp"
+
     def test_php(self):
         assert detect_language("index.php") == "php"
 

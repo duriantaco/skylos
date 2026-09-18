@@ -33,6 +33,7 @@ _PYTHON_EXTS = {".py", ".pyi"}
 _TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _GO_EXTS = {".go"}
 _JAVA_EXTS = {".java"}
+_CPP_EXTS = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
 _PHP_EXTS = {".php"}
 _RUST_EXTS = {".rs"}
 _DART_EXTS = {".dart"}
@@ -49,6 +50,13 @@ _ALL_SOURCE_GLOBS = [
     "*.cjs",
     "*.go",
     "*.java",
+    "*.cpp",
+    "*.cc",
+    "*.cxx",
+    "*.hpp",
+    "*.hh",
+    "*.hxx",
+    "*.h",
     "*.php",
     "*.rs",
     "*.dart",
@@ -69,6 +77,8 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "typescript": ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs"],
     "go": ["*.go"],
     "java": ["*.java"],
+    # Ambiguous .h files are not parsed as C++, but can still refer to C++ symbols.
+    "cpp": ["*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h"],
     "php": ["*.php"],
     "rust": ["*.rs"],
     "dart": ["*.dart"],
@@ -290,6 +300,8 @@ def detect_language(file_path: str) -> str:
         return "go"
     if ext in _JAVA_EXTS:
         return "java"
+    if ext in _CPP_EXTS:
+        return "cpp"
     if ext in _PHP_EXTS:
         return "php"
     if ext in _RUST_EXTS:

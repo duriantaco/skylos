@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "4.38.0"
 requires-python = ">=3.10"
-description = "Open-source, local-first static analysis and PR gates for Python, TypeScript/JavaScript, Go, Java, Kotlin, PHP, Rust, Dart, C#, and Shell. Finds dead code, security issues, secrets, quality regressions, and AI-code mistakes."
+description = "Open-source, local-first static analysis and PR gates for Python, TypeScript/JavaScript, Go, Java, Kotlin, PHP, Rust, Dart, C#, C++, and Shell. Finds dead code, security issues, secrets, quality regressions, and AI-code mistakes."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -83,6 +83,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0,<0.24",
     "tree-sitter-php>=0.24.1,<0.25",
     "tree-sitter-rust>=0.24.2,<0.25",
+    "tree-sitter-cpp>=0.23.4,<0.24",
     "tree-sitter-dart-orchard>=0.3.2,<0.6",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",

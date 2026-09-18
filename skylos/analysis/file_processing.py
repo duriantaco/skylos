@@ -57,6 +57,11 @@ from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.secrets import SECRET_CONFIG_SUFFIXES
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.visitors.languages.csharp import scan_csharp_file
+from skylos.visitors.languages.cpp import (
+    CPP_HEADER_EXTS,
+    CPP_SOURCE_EXTS,
+    scan_cpp_file,
+)
 from skylos.visitors.languages.dart import scan_dart_file
 from skylos.visitors.languages.go import scan_go_file
 from skylos.visitors.languages.java import scan_java_file
@@ -80,6 +85,7 @@ TS_JS_SOURCE_EXTS = (
     ".cjs",
 )
 KOTLIN_SOURCE_EXTS = (".kt", ".kts")
+CPP_ANALYSIS_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
 LINTER_RULE_NODE_TYPES = {
@@ -388,6 +394,14 @@ def _scan_rust_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
+def _scan_cpp_file(file, cfg, *, enable_danger_rules: bool, **_options):
+    return scan_cpp_file(
+        file,
+        cfg,
+        enable_danger_rules=enable_danger_rules,
+    )
+
+
 def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
     return scan_dart_file(
         file,
@@ -456,6 +470,7 @@ NON_PYTHON_SCANNERS = (
     ((".java",), _scan_java_like_file),
     ((".php",), _scan_php_file),
     ((".rs",), _scan_rust_file),
+    (CPP_ANALYSIS_EXTS, _scan_cpp_file),
     ((".dart",), _scan_dart_file),
     ((".cs",), _scan_csharp_file),
     (KOTLIN_SOURCE_EXTS, _scan_kotlin_file),
