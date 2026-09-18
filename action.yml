@@ -1,5 +1,5 @@
 name: "Skylos - Python SAST, Dead Code Detection & PR Gate"
-description: "SAST, dead code detection, secrets scanning, and PR gating for Python, TypeScript, Java, and Go."
+description: "SAST, dead code, secrets, PR gates, and digest-pinned container image vulnerability scans."
 author: "Skylos (founder@skylos.dev)"
 
 branding:
@@ -11,8 +11,20 @@ inputs:
     description: "Path to scan (default: current directory)"
     required: false
     default: "."
+  image:
+    description: "Optional repository@sha256:digest to scan instead of source code; requires an installed Trivy"
+    required: false
+    default: ""
+  image-platform:
+    description: "Required with image: deployment os/architecture[/variant], for example linux/amd64"
+    required: false
+    default: ""
+  image-fail-on:
+    description: "Image severity threshold for mode gate: low, medium, high, or critical"
+    required: false
+    default: "high"
   mode:
-    description: "Scan mode: 'scan' (report only), 'gate' (fail on issues), 'review' (PR comments + gate)"
+    description: "Scan mode: 'scan' (report only), 'gate' (fail on issues), or source-only 'review' (PR comments + gate)"
     required: false
     default: "gate"
   analysis:
@@ -38,13 +50,13 @@ inputs:
 outputs:
   findings-count:
     description: "Total number of findings"
-    value: ${{ steps.scan.outputs.findings_count }}
+    value: ${{ steps.scan.outputs.findings_count || steps.image_scan.outputs.findings_count }}
   gate-passed:
-    description: "Whether the quality gate passed (true/false)"
-    value: ${{ steps.gate.outputs.passed }}
+    description: "Whether the requested gate passed (true/false)"
+    value: ${{ steps.gate.outputs.passed || steps.image_scan.outputs.passed }}
   report-path:
     description: "Path to the JSON report file"
-    value: ${{ steps.scan.outputs.report }}
+    value: ${{ steps.scan.outputs.report || steps.image_scan.outputs.report }}
 
 runs:
   using: "composite"
@@ -56,6 +68,7 @@ runs:
 
     - name: Detect Go sources
       id: go_sources
+      if: inputs.image == ''
       shell: bash
       env:
         SKYLOS_PATH: ${{ inputs.path }}
@@ -96,8 +109,94 @@ runs:
       shell: bash
       run: python -m pip install "${{ github.action_path }}"
 
+    - name: Run Skylos Image Scan
+      id: image_scan
+      if: inputs.image != ''
+      shell: bash
+      env:
+        SKYLOS_IMAGE: ${{ inputs.image }}
+        SKYLOS_IMAGE_PLATFORM: ${{ inputs.image-platform }}
+        SKYLOS_IMAGE_FAIL_ON: ${{ inputs.image-fail-on }}
+        SKYLOS_MODE: ${{ inputs.mode }}
+      run: |
+        if [[ -z "${RUNNER_TEMP:-}" ]]; then
+          echo "::error::RUNNER_TEMP is required for image reports"
+          exit 2
+        fi
+        if ! REPORT_DIR=$(python -I -c 'import pathlib,sys,tempfile; root=pathlib.Path(sys.argv[1]).resolve(strict=True); print(tempfile.mkdtemp(prefix="skylos-image-", dir=root))' "$RUNNER_TEMP"); then
+          echo "::error::Could not create a private image report directory"
+          exit 2
+        fi
+        REPORT="$REPORT_DIR/report.json"
+        echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+
+        if [[ "$SKYLOS_MODE" != "scan" && "$SKYLOS_MODE" != "gate" ]]; then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Image scans support mode scan or gate, not review"
+          exit 2
+        fi
+        if [[ -z "$SKYLOS_IMAGE_PLATFORM" ]]; then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::image-platform is required when image is set"
+          exit 2
+        fi
+        if [[ "$SKYLOS_MODE" == "gate" ]]; then
+          case "$SKYLOS_IMAGE_FAIL_ON" in
+            low|medium|high|critical) ;;
+            *)
+              echo "passed=false" >> "$GITHUB_OUTPUT"
+              echo "::error::image-fail-on must be low, medium, high, or critical"
+              exit 2
+              ;;
+          esac
+        fi
+
+        ARGS=(image scan "$SKYLOS_IMAGE" --platform "$SKYLOS_IMAGE_PLATFORM" --output "$REPORT")
+        if [[ "$SKYLOS_MODE" == "gate" ]]; then
+          ARGS+=(--fail-on "$SKYLOS_IMAGE_FAIL_ON")
+        fi
+
+        set +e
+        python -I -m skylos.cli "${ARGS[@]}"
+        SCAN_STATUS=$?
+        set -e
+
+        if [[ ! -f "$REPORT" ]]; then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Image scan did not write a report"
+          exit 2
+        fi
+        if ! COUNT=$(python -I -c 'import json,sys; data=json.load(open(sys.argv[1],encoding="utf-8")); findings=data["container_vulnerabilities"]; assert isinstance(findings,list); print(len(findings))' "$REPORT"); then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Image scan report could not be read"
+          exit 2
+        fi
+        echo "findings_count=$COUNT" >> "$GITHUB_OUTPUT"
+        echo "### Skylos Image Scan Results" >> "$GITHUB_STEP_SUMMARY"
+        echo "Found **$COUNT** reported container vulnerability finding(s)." >> "$GITHUB_STEP_SUMMARY"
+
+        if [[ "$SKYLOS_MODE" == "gate" ]]; then
+          if [[ "$SCAN_STATUS" -eq 0 ]]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+        if [[ "$SCAN_STATUS" -eq 2 ]]; then
+          echo "::error::Image scan was incomplete; refusing a clean result"
+          exit 2
+        fi
+        if [[ "$SCAN_STATUS" -eq 1 && "$SKYLOS_MODE" == "gate" ]]; then
+          exit 1
+        fi
+        if [[ "$SCAN_STATUS" -ne 0 ]]; then
+          echo "::error::Image scan failed with exit code $SCAN_STATUS"
+          exit 2
+        fi
+
     - name: Run Skylos Scan
       id: scan
+      if: inputs.image == ''
       shell: bash
       env:
         SKYLOS_PATH: ${{ inputs.path }}
@@ -158,6 +257,7 @@ runs:
         fi
 
     - name: Upload to Skylos Dashboard
+      if: inputs.image == ''
       shell: bash
       env:
         SKYLOS_TOKEN: ${{ inputs.token }}
@@ -190,7 +290,7 @@ runs:
           --upload || echo "Upload failed (non-fatal)"
 
     - name: Post GitHub Annotations
-      if: always()
+      if: always() && inputs.image == ''
       shell: bash
       run: |
         python -m skylos.cli cicd annotate \
@@ -198,7 +298,7 @@ runs:
           --max 50 || true
 
     - name: Post PR Review Comments
-      if: github.event_name == 'pull_request' && (inputs.mode == 'review')
+      if: inputs.image == '' && github.event_name == 'pull_request' && (inputs.mode == 'review')
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -215,7 +315,7 @@ runs:
 
     - name: Quality Gate
       id: gate
-      if: inputs.mode == 'gate' || inputs.mode == 'review'
+      if: inputs.image == '' && (inputs.mode == 'gate' || inputs.mode == 'review')
       shell: bash
       run: |
         set +e
@@ -232,10 +332,19 @@ runs:
         fi
 
     - name: Upload Report Artifact
-      if: always()
+      if: always() && inputs.image == ''
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: skylos-report
         path: skylos-report.json
+        if-no-files-found: error
+        retention-days: 30
+
+    - name: Upload Image Report Artifact
+      if: always() && inputs.image != '' && steps.image_scan.outputs.report != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: skylos-image-report
+        path: ${{ steps.image_scan.outputs.report }}
         if-no-files-found: error
         retention-days: 30

@@ -28,6 +28,41 @@ cannot silently filter the scan. It does not prove that the vulnerability
 database is fresh or that every package was checked. The result's
 `receipt.scan_complete` remains `null`.
 
+## Scan an image with the GitHub Action
+
+The Skylos composite GitHub Action can run an image-only scan instead of its
+usual repository scan. Install a reviewed, pinned Trivy version in the caller's
+job before the Skylos Action step (see the
+[Trivy installation guide](https://trivy.dev/docs/latest/getting-started/installation/)).
+Then pass the immutable image reference from a trusted build or push step:
+
+```yaml
+with:
+  image: ${{ needs.build.outputs.image_ref }}
+  image-platform: linux/amd64
+  image-fail-on: high
+  mode: gate
+```
+
+`image` must be a full `repository@sha256:<64-hex-digest>` reference; a mutable
+tag is not accepted. `image-platform` is required whenever `image` is set.
+`image-fail-on` defaults to `high` and accepts `low`, `medium`, `high`, or
+`critical`. With `mode: gate`, findings at or above that severity fail the job.
+With `mode: scan`, findings are reported without a severity gate, but an
+incomplete scan still fails. `mode: review` is not supported for image scans.
+When `image` is set, the Action does not run repository analysis.
+
+Supply the digest and platform from trusted build configuration, not a PR title,
+branch name, mutable tag, or other pull-request-controlled value. Do not run a
+`pull_request_target` job with secrets against untrusted PR code. The Action
+reads the image from the registry; it does not start the container. It stores
+normalized JSON in runner temporary storage and uploads it as a workflow
+artifact, including when a severity gate fails. Treat the artifact as
+potentially sensitive and review who can access it. Image mode does not upload
+to Skylos Cloud, post source-code annotations or review comments, or upload
+SARIF to GitHub code scanning. It does not install Trivy or configure registry
+credentials for you.
+
 ## Import an existing Trivy report
 
 If Trivy runs in a separate job or environment, import its JSON report instead:
@@ -180,9 +215,9 @@ and [container-image guide](https://trivy.dev/docs/latest/target/container_image
 
 Configure artifact retention to run even when the severity check fails. Review
 access permissions before retaining reports. This example does not install
-tools, change CI permissions, upload SARIF, or add an image input to Skylos's
-composite GitHub Action. GitLab jobs can retain the files as ordinary artifacts;
-this command does not create a GitLab Container Scanning report.
+tools, change CI permissions, upload SARIF, or use the composite Action's
+image-only mode. GitLab jobs can retain the files as ordinary artifacts; this
+command does not create a GitLab Container Scanning report.
 
 ## Trust and privacy limits
 
@@ -204,10 +239,10 @@ than exporting the raw image configuration, but normalized package names and
 image identities can still be confidential. Review artifacts before sharing.
 Reports over 20 MiB are rejected as incomplete (exit `2`).
 
-The direct command does not install Trivy, configure registry credentials, add
-an image input to the Skylos GitHub Action, upload to Skylos Cloud, or create a
-GitLab Container Scanning report. Installed-package SBOMs, SBOM import, license
-policy, runtime container testing, and vulnerability reachability analysis are
-also outside this feature.
+The direct command and GitHub Action image mode do not install Trivy, configure
+registry credentials, upload to Skylos Cloud, or create a GitLab Container
+Scanning report. Installed-package SBOMs, SBOM import, license policy, runtime
+container testing, and vulnerability reachability analysis are also outside
+this feature.
 Repository dependency scanning and offline SBOM export remain separate; see
 [dependency scanning](./dependency-scanning.md).

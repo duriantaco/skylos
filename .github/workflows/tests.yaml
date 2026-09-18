@@ -113,6 +113,67 @@ jobs:
             . --json --no-provenance > /tmp/skylos-python-syntax.json
           grep -q '"stale_helper"' /tmp/skylos-python-syntax.json
 
+  image_action_smoke:
+    name: action-image-smoke
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install checksum-verified Trivy
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/trivy_0.74.0_Linux-64bit.tar.gz"
+          install_dir="$RUNNER_TEMP/skylos-trivy-bin"
+          mkdir -p "$install_dir"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          printf '%s  %s\n' \
+            '2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a' \
+            "$archive" | sha256sum --check --status
+          tar -xzf "$archive" -C "$install_dir" trivy
+          sudo install -m 0755 "$install_dir/trivy" /usr/local/bin/trivy
+
+      - name: Scan pinned public image with local action
+        id: image_scan
+        uses: ./
+        with:
+          image: docker.io/library/alpine@sha256:1f3591b8a02ea153f41c5bba878ad477f63ab3d19349762cb77504db02a23e15
+          image-platform: linux/amd64
+          mode: scan
+
+      - name: Verify image scan receipt
+        shell: bash
+        env:
+          REPORT: ${{ steps.image_scan.outputs.report-path }}
+          FINDINGS_COUNT: ${{ steps.image_scan.outputs.findings-count }}
+        run: |
+          python -I - "$REPORT" "$FINDINGS_COUNT" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          report = Path(sys.argv[1])
+          assert report.is_file(), report
+          data = json.loads(report.read_text(encoding="utf-8"))
+          receipt = data["receipt"]
+          assert receipt["execution"]["status"] == "completed", receipt
+          assert receipt["import_complete"] is True, receipt
+          assert receipt["identity_verified"] is True, receipt
+          assert receipt["platform_verified"] is True, receipt
+          assert not receipt["errors"], receipt
+          assert data["gate"]["scope"] == "direct_image_scan", data["gate"]
+          assert data["gate"]["status"] == "not_requested", data["gate"]
+          assert len(data["container_vulnerabilities"]) == int(sys.argv[2])
+          print("Verified pinned image scan:", len(data["container_vulnerabilities"]), "finding(s)")
+          PY
+
   test:
     name: test
     runs-on: ubuntu-latest
