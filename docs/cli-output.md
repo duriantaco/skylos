@@ -16,6 +16,7 @@ Skylos keeps the default terminal output stable for existing scripts and copy/pa
 | Compact human report | `skylos . --format pretty` | Quick local review and PR discussion |
 | Copyable plain output | `skylos . --format concise` | CI logs, scripts, editors, and automation |
 | Machine-readable results | `skylos . --format json` | Programmatic use and external integrations |
+| Smaller machine-readable results | `skylos . --format json-ci` | CI jobs and agents that need findings without the full symbol inventory |
 | AI-ready report | `skylos . --format llm` | Agent workflows and structured reasoning systems |
 | GitHub Actions annotations | `skylos . --format github` | Inline workflow annotations in GitHub checks |
 | GitLab Code Quality report | `skylos . --format gitlab -o gl-code-quality-report.json` | Findings in GitLab merge request reports |
@@ -102,13 +103,19 @@ Example:
 src/app.py:42  SKY-L012  Call to 'security.require_auth()' resolves to no definition on local modules.
 ```
 
-Use `json`, `llm`, or `github` for structured consumers:
+Use `json`, `json-ci`, `llm`, or `github` for structured consumers:
 
 ```bash
 skylos . --format json
+skylos . --format json-ci
 skylos . --format llm
 skylos . --format github
 ```
+
+`json-ci` keeps the same findings, per-finding evidence, and summary counts as
+`json`. It omits only the top-level `dead_code_evidence` ledger and
+`definitions` map, which can make a full scan report large. Use `json` when
+you need those full symbol details; its output is unchanged.
 
 Use `gitlab` to save a GitLab Code Quality JSON array:
 

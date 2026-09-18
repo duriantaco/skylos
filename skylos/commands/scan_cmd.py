@@ -33,6 +33,29 @@ def _write_scan_output(path: str, text: str) -> None:
         raise OSError(f"could not safely write output file: {path}")
 
 
+# Top-level ledger/context blobs omitted by `--format json-ci`. These back the
+# full scan state (cloud upload, TUI detail views, SARIF enrichment) but dwarf
+# the findings themselves: on a mid-size repo they measured ~31 MB and ~17 MB
+# against 96 findings. `--format json` is untouched.
+_CI_JSON_OMITTED_TOP_LEVEL_KEYS = ("dead_code_evidence", "definitions")
+
+
+def _build_ci_json_payload(payload):
+    """Return a copy of `payload` without the top-level bulk fields.
+
+    Findings, per-finding evidence, summary counts (including the small
+    dead-code aggregate), analysis errors and exit behavior all survive. The
+    input is never mutated, so cloud upload and other consumers retain the
+    complete result.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    return {
+        k: v for k, v in payload.items() if k not in _CI_JSON_OMITTED_TOP_LEVEL_KEYS
+    }
+
+
 def _check_managed_gitlab_delivery(response: dict) -> None:
     if "gitlab_delivery_exit_code" not in response:
         return
@@ -557,7 +580,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 category=_cli_category,
                 file_filter=_cli_file_filter,
             )
-        output_result_json = json.dumps(json_output_result)
+        display_payload = json_output_result
+        if getattr(args, "json_ci", False):
+            display_payload = _build_ci_json_payload(json_output_result)
+        output_result_json = json.dumps(display_payload)
 
         def upload_formatted_result() -> None:
             if not args.upload:

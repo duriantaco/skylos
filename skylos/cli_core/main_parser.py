@@ -131,11 +131,24 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument(
         "--format",
-        choices=("rich", "pretty", "json", "llm", "github", "gitlab", "concise"),
+        choices=(
+            "rich",
+            "pretty",
+            "json",
+            "json-ci",
+            "llm",
+            "github",
+            "gitlab",
+            "concise",
+        ),
         default="rich",
         help=(
             "Output format. Use 'pretty' for grouped human output or "
-            "'concise' for IDE-friendly file:line findings only."
+            "'concise' for IDE-friendly file:line findings only. "
+            "'json-ci' is a compact JSON for CI and agents: it keeps "
+            "findings, per-finding evidence and summary counts but omits "
+            "the top-level 'dead_code_evidence' and 'definitions' bulk. "
+            "'json' is unchanged."
         ),
     )
     parser.set_defaults(concise=False)
@@ -355,6 +368,7 @@ def apply_main_output_format(
     output_format = getattr(args, "format", "rich")
     flag_by_format = {
         "json": "json",
+        "json-ci": "json",
         "llm": "llm",
         "github": "github",
     }
@@ -375,6 +389,11 @@ def apply_main_output_format(
             setattr(args, flag_by_format[output_format], True)
         elif output_format == "concise":
             args.concise = True
+
+    # Track whether the compact CI/agent JSON was requested. The stripped
+    # variant shares the plain `json` output path; only the payload building
+    # differs, so the two are distinguished here rather than downstream.
+    setattr(args, "json_ci", output_format == "json-ci")
 
     return args
 
