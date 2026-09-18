@@ -295,7 +295,7 @@ def test_manual_workflow_runs_pinned_image_scan_and_checks_receipt():
     image_scan = next(step for step in job["steps"] if step.get("id") == "image_scan")
     assert image_scan["uses"] == "./"
     assert image_scan["with"] == {
-        "image": "docker.io/library/alpine@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e",
+        "image": "docker.io/library/alpine@sha256:1f3591b8a02ea153f41c5bba878ad477f63ab3d19349762cb77504db02a23e15",
         "image-platform": "linux/amd64",
         "mode": "scan",
     }
