@@ -15,6 +15,7 @@ repository SCA does not inspect the built image.
 | Input | Coverage |
 | --- | --- |
 | `uv.lock` format 1 | Recorded public PyPI packages, including transitive packages and all locked environments |
+| `Pipfile.lock` spec 6 | Recorded public PyPI packages across default, development, and custom categories, including transitives |
 | `package-lock.json`, `npm-shrinkwrap.json` versions 1, 2, 3 | Recorded npm packages, including nested installations and multiple versions; v2/v3 use the authoritative `packages` table |
 | `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
 | `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
@@ -46,6 +47,25 @@ npm permits omitted or registry-relative `resolved` values; those retain
 `registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
 for the configured registry, not proof of package provenance. This scanner does
 not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+
+### Pipenv lockfiles
+
+Skylos reads `Pipfile.lock` spec 6 as JSON without running Pipenv, installing
+packages, or contacting package indexes. It inventories recorded exact versions
+from `default` (production), `develop` (development), and custom categories.
+Categories and package environment markers remain in finding and SBOM context;
+markers are not evaluated against the scanning machine. The lock does not
+identify which packages are direct rather than transitive or record their
+dependency edges, so Skylos does not invent those classifications or SBOM graph
+links.
+
+Only packages associated with a supported public PyPI source are sent to OSV.
+Private indexes and Git or archive sources remain explicit inventory gaps;
+local path packages are counted separately and never queried as public
+packages. Source URLs and credentials are not included in findings or the SBOM.
+Skylos does not validate artifact hashes or verify that `Pipfile.lock` is fresh
+relative to `Pipfile`. `skylos sbom` exports the supported package inventory
+entirely offline.
 
 ### npm shrinkwrap
 
@@ -220,9 +240,8 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   limited category coverage are not, by themselves, operational failures.
 
 `category_complete` remains `false`: these inputs do not cover all package
-managers or establish a complete installed environment. `Pipfile.lock` is not
-parsed.
-Lockfile freshness and production reachability are not verified.
+managers or establish a complete installed environment. Lockfile freshness and
+production reachability are not verified.
 
 Inventories are bounded by per-file/total bytes, file/directory counts, and
 package counts; graph traversal has additional bounds. Local records also count

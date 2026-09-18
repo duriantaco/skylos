@@ -300,9 +300,20 @@ def test_lockfile_inventory_bound_prevents_network_queries(
 def test_supported_lockfiles_no_longer_count_as_unsupported(tmp_path, osv):
     _npm_lock(tmp_path / "package-lock.json")
     _uv_lock(tmp_path / "uv.lock")
-    (tmp_path / "Pipfile.lock").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "Pipfile.lock").write_text(
+        json.dumps(
+            {
+                "_meta": {
+                    "pipfile-spec": 6,
+                    "sources": [{"name": "pypi", "url": "https://pypi.org/simple"}],
+                },
+                "default": {"example": {"version": "==1.2.3"}},
+            }
+        ),
+        encoding="utf-8",
+    )
     result = sca.scan_dependencies(tmp_path)
-    assert result.receipt["supported_lockfile_count"] == 2
-    assert result.receipt["unsupported_lockfile_count"] == 1
+    assert result.receipt["supported_lockfile_count"] == 3
+    assert result.receipt["unsupported_lockfile_count"] == 0
     assert result.receipt["scope"] == sca.SCA_LOCKFILE_COVERAGE_SCOPE
     assert {query["package"]["ecosystem"] for query in osv.queries} == {"PyPI", "npm"}

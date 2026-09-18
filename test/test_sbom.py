@@ -189,12 +189,14 @@ def test_incomplete_lockfile_retains_available_components(tmp_path, capsys, file
     assert "incomplete" in captured.err
 
 
-def test_unsupported_lockfile_is_explicit_export_gap(tmp_path, capsys):
+def test_invalid_pipfile_lock_is_explicit_export_gap(tmp_path, capsys):
     _npm(tmp_path)
     _write(tmp_path, "Pipfile.lock", "{}")
     assert run_sbom_command([str(tmp_path)]) == 2
     receipt = _receipt(json.loads(capsys.readouterr().out))
-    assert receipt["unsupported_lockfile_count"] == 1
+    assert receipt["lockfile_candidate_count"] == 2
+    assert receipt["parse_error_count"] == 1
+    assert receipt["unsupported_lockfile_count"] == 0
     assert receipt["complete"] is False
 
 
