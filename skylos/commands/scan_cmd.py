@@ -18,31 +18,21 @@ def _write_scan_output(path: str, text: str) -> None:
 # against 96 findings. `--format json` is untouched.
 _CI_JSON_OMITTED_TOP_LEVEL_KEYS = ("dead_code_evidence", "definitions")
 
-# Same blob nested inside the summary. Only the bulk is dropped; the sibling
-# count fields that CI gates read are preserved.
-_CI_JSON_OMITTED_SUMMARY_KEYS = ("dead_code_evidence",)
-
 
 def _build_ci_json_payload(payload):
-    """Return a copy of `payload` with the dead-code bulk stripped.
+    """Return a copy of `payload` without the top-level bulk fields.
 
-    Findings, per-finding evidence, summary counts, analysis errors and exit
-    behavior all survive; only the full-symbol ledger and the definitions map
-    are removed. The input is never mutated, so callers that still need the
-    complete result (cloud upload, TUI) are unaffected.
+    Findings, per-finding evidence, summary counts (including the small
+    dead-code aggregate), analysis errors and exit behavior all survive. The
+    input is never mutated, so cloud upload and other consumers retain the
+    complete result.
     """
     if not isinstance(payload, dict):
         return payload
 
-    stripped = {k: v for k, v in payload.items() if k not in _CI_JSON_OMITTED_TOP_LEVEL_KEYS}
-
-    summary = stripped.get("analysis_summary")
-    if isinstance(summary, dict):
-        stripped["analysis_summary"] = {
-            k: v for k, v in summary.items() if k not in _CI_JSON_OMITTED_SUMMARY_KEYS
-        }
-
-    return stripped
+    return {
+        k: v for k, v in payload.items() if k not in _CI_JSON_OMITTED_TOP_LEVEL_KEYS
+    }
 
 
 def _check_managed_gitlab_delivery(response: dict) -> None:
