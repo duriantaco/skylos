@@ -35,6 +35,7 @@ from skylos.constants import (
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
+from skylos.visitors.languages.cpp import CPP_HEADER_EXTS, CPP_SOURCE_EXTS
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -466,6 +467,7 @@ _TS_JS_SOURCE_EXTS = (
 )
 _PHP_SOURCE_EXTS = (".php",)
 _RUST_SOURCE_EXTS = (".rs",)
+_CPP_SOURCE_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
 _KOTLIN_SOURCE_EXTS = (".kt", ".kts")
@@ -1510,6 +1512,12 @@ class Skylos:
         ".java": "Java",
         ".php": "PHP",
         ".rs": "Rust",
+        ".cpp": "C++",
+        ".cc": "C++",
+        ".cxx": "C++",
+        ".hpp": "C++",
+        ".hh": "C++",
+        ".hxx": "C++",
         ".dart": "Dart",
         ".cs": "C#",
         ".kt": "Kotlin",
@@ -1543,6 +1551,7 @@ class Skylos:
             ".java",
             *(_PHP_SOURCE_EXTS),
             *(_RUST_SOURCE_EXTS),
+            *(_CPP_SOURCE_EXTS),
             *(_DART_SOURCE_EXTS),
             *(_CSHARP_SOURCE_EXTS),
             *(_KOTLIN_SOURCE_EXTS),
@@ -1571,6 +1580,12 @@ class Skylos:
             "java",
             "php",
             "rs",
+            "cpp",
+            "cc",
+            "cxx",
+            "hpp",
+            "hh",
+            "hxx",
             "dart",
             "cs",
             "kt",
@@ -3721,7 +3736,9 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
-                    elif str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
+                    elif str(definition.filename).endswith(
+                        _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
+                    ):
                         key = f"{definition.filename}:{definition.name}"
                     else:
                         key = definition.name

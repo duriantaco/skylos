@@ -30,7 +30,7 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis CLI for Python, TypeScript,
-JavaScript, Java, Go, Kotlin, PHP, Rust, Dart, C#, Shell, and deployment config. It
+JavaScript, Java, Go, Kotlin, PHP, Rust, Dart, C#, C++, Shell, and deployment config. It
 runs locally by default and can also be used as a CI/CD PR gate.
 
 Use Skylos when you want one command to check a repo or pull request for:
@@ -443,6 +443,7 @@ or `--include-folder` to override an excluded folder.
 | Rust | Yes | Yes | Partial | Unsupported | Rust parser coverage plus security sink/source checks |
 | Dart | Yes | Yes | Partial | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Yes | Yes | Partial | Unsupported | C# symbol coverage plus selected ASP.NET, process, SQL, HTTP, and file sinks |
+| C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
@@ -452,6 +453,12 @@ names under a verified local source root. Helper reads are bounded and reject
 symlinks; no Java code or build scripts are executed. This is not full classpath
 or recursive helper analysis. Unknown helpers are not assumed to be request
 sources or sanitizers.
+
+C++ analysis covers `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, and `.hxx`. The first
+release reports only apparently unused file-local free functions. Without a
+build configuration, it cannot fully resolve templates, overloads, macros, or
+external usage; these findings are a conservative heuristic, not a proof of
+C++ deadness. Ambiguous `.h` files and C files are not analyzed as C++.
 
 Java weak-hash checks also follow local algorithm variables and values loaded
 through `java.util.Properties` from literal classloader resources. Resource

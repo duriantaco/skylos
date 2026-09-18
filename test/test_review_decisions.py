@@ -1484,6 +1484,17 @@ def test_tree_sitter_semantic_hash_distinguishes_javascript_asi():
     )
 
 
+def test_tree_sitter_semantic_hash_for_cpp_ignores_spacing():
+    from skylos.core.review_decisions import _semantic_source_hash
+
+    compact = "static int answer(){return 42;}\n"
+    spaced = "static int answer() { return 42; }\n"
+
+    assert _semantic_source_hash(compact, "cpp", ".cpp") == _semantic_source_hash(
+        spaced, "cpp", ".cpp"
+    )
+
+
 def test_projection_only_fingerprints_findings_targeted_by_active_decisions(
     tmp_path, monkeypatch
 ):

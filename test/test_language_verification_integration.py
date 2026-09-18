@@ -30,6 +30,12 @@ def _write(root: Path, relative: str, source: str) -> Path:
         ("main.rs", "fn main() {}\n", "rust", "rust_workspace_api_surface"),
         ("main.dart", "void main() {}\n", "dart", "dart_workspace_api_surface"),
         ("Program.cs", "class Program {}\n", "csharp", "csharp_workspace_api_surface"),
+        (
+            "module.cpp",
+            "int main() { return 0; }\n",
+            "cpp",
+            "cpp_workspace_api_surface",
+        ),
         ("Main.kt", "fun main() {}\n", "kotlin", "kotlin_workspace_api_surface"),
         ("main.sh", "echo ok\n", "shell", "shell_workspace_api_surface"),
     ],
@@ -109,6 +115,7 @@ class App {
     _write(tmp_path, "native/main.rs", "fn main() {}\n")
     _write(tmp_path, "mobile/main.dart", "void main() {}\n")
     _write(tmp_path, "dotnet/Program.cs", "class Program {}\n")
+    _write(tmp_path, "native/module.cpp", "int main() { return 0; }\n")
     _write(tmp_path, "jvm/Main.kt", "fun main() {}\n")
     _write(tmp_path, "scripts/entrypoint.sh", "echo ok\n")
 
@@ -117,6 +124,7 @@ class App {
     assert payload["status"] == "incomplete"
     coverage = payload["coverage"]
     assert coverage["detected_languages"] == [
+        "cpp",
         "csharp",
         "dart",
         "go",
@@ -138,6 +146,7 @@ class App {
         "rust_workspace_api_surface",
         "dart_workspace_api_surface",
         "csharp_workspace_api_surface",
+        "cpp_workspace_api_surface",
         "kotlin_workspace_api_surface",
         "shell_workspace_api_surface",
     }
@@ -154,6 +163,7 @@ class App {
         "rust_workspace_api_surface",
         "dart_workspace_api_surface",
         "csharp_workspace_api_surface",
+        "cpp_workspace_api_surface",
         "kotlin_workspace_api_surface",
         "shell_workspace_api_surface",
     ):

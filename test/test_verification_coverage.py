@@ -62,6 +62,8 @@ def test_expected_checks_cover_every_discovered_source_language():
             Path("main.rs"),
             Path("main.dart"),
             Path("Program.cs"),
+            Path("module.cpp"),
+            Path("module.hpp"),
             Path("Main.kt"),
             Path("build.kts"),
             Path("entrypoint.sh"),
@@ -78,6 +80,7 @@ def test_expected_checks_cover_every_discovered_source_language():
         "rust",
         "dart",
         "csharp",
+        "cpp",
         "kotlin",
         "shell",
     }
@@ -86,6 +89,7 @@ def test_expected_checks_cover_every_discovered_source_language():
         "rust_workspace_api_surface",
         "dart_workspace_api_surface",
         "csharp_workspace_api_surface",
+        "cpp_workspace_api_surface",
         "kotlin_workspace_api_surface",
         "shell_workspace_api_surface",
     }
