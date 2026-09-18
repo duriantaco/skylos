@@ -207,6 +207,17 @@ COMMANDS = [
         "group": "Utility",
     },
     {
+        "name": "skylos image scan IMAGE@sha256:<digest> --platform os/arch",
+        "desc": "Run installed Trivy on a pinned container image and report vulnerabilities",
+        "details": [
+            "--platform linux/amd64: select and verify the image platform",
+            "--fail-on high: fail for reported high or critical vulnerabilities",
+            "--output result.json / --sarif result.sarif: save normalized reports",
+            "--timeout-seconds 300: bound scanner execution time",
+        ],
+        "group": "Utility",
+    },
+    {
         "name": "skylos ingest",
         "desc": "Ingest findings from external tools",
         "details": [

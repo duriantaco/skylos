@@ -106,7 +106,12 @@ def _same_path(left: Path, right: Path) -> bool:
 def _safe_output_selection(args: argparse.Namespace) -> bool:
     """Check collisions before any writes; the writer rejects linked paths."""
     try:
-        input_path = Path(os.path.abspath(Path(args.input_file).expanduser()))
+        input_file = getattr(args, "input_file", None)
+        input_path = (
+            Path(os.path.abspath(Path(input_file).expanduser()))
+            if input_file is not None
+            else None
+        )
         selected: list[Path] = []
         outputs = []
         if args.output != "-":
@@ -121,7 +126,7 @@ def _safe_output_selection(args: argparse.Namespace) -> bool:
                 or any(
                     part.casefold() in {".git", ".hg", ".svn"} for part in path.parts
                 )
-                or _same_path(path, input_path)
+                or (input_path is not None and _same_path(path, input_path))
                 or any(_same_path(path, other) for other in selected)
             ):
                 return False
@@ -147,12 +152,13 @@ def _json(document: dict) -> str:
     return json.dumps(document, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
 
 
-def run_trivy_image_import(args: argparse.Namespace) -> int:
-    document = load_trivy_image_report(
-        args.input_file,
-        expected_image=args.expect_image,
-        expected_platform=args.expect_platform,
-    )
+def render_trivy_image_document(
+    args: argparse.Namespace,
+    document: dict,
+    *,
+    gate_scope: str = "supplied_report",
+) -> int:
+    """Apply the same report gate and output path to imports and direct scans."""
     output_safe = _safe_output_selection(args)
     if not output_safe:
         _error(
@@ -161,6 +167,7 @@ def run_trivy_image_import(args: argparse.Namespace) -> int:
             "Output must be a separate report file, not an input, protected file, or another output.",
         )
     exit_code = _gate(document, args.fail_on, args.expect_image)
+    document["gate"]["scope"] = gate_scope
 
     if args.sarif and output_safe:
         from skylos.reporting.container_sarif import container_sarif
@@ -189,8 +196,11 @@ def run_trivy_image_import(args: argparse.Namespace) -> int:
         sys.stdout.write(_json(document))
 
     if exit_code == 2:
+        operation = (
+            "Image scan" if gate_scope == "direct_image_scan" else "Image report import"
+        )
         print(
-            "Image report import incomplete; see receipt.errors in the JSON report.",
+            f"{operation} incomplete; see receipt.errors in the JSON report.",
             file=sys.stderr,
         )
     elif exit_code == 1:
@@ -198,3 +208,12 @@ def run_trivy_image_import(args: argparse.Namespace) -> int:
             "Image report exceeded the requested severity threshold.", file=sys.stderr
         )
     return exit_code
+
+
+def run_trivy_image_import(args: argparse.Namespace) -> int:
+    document = load_trivy_image_report(
+        args.input_file,
+        expected_image=args.expect_image,
+        expected_platform=args.expect_platform,
+    )
+    return render_trivy_image_document(args, document)

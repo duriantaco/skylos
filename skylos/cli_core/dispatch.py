@@ -35,6 +35,7 @@ EARLY_COMMAND_HANDLERS = {
     "defend": "run_defend_command",
     "debt": "run_debt_command",
     "ingest": "run_ingest_command",
+    "image": "_run_image_command",
     "provenance": "run_provenance_command",
     "rules": "_handle_rules_command",
     "cicd": "run_cicd_command",
