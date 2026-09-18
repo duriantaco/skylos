@@ -197,6 +197,14 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
         {**issue, "file": _relative_file(issue["file"], root)}
         for issue in receipt.get("lockfile_issues", [])
     ]
+    receipt["ignored_lockfiles"] = [
+        {
+            **item,
+            "file": _relative_file(item["file"], root),
+            "selected_file": _relative_file(item["selected_file"], root),
+        }
+        for item in receipt.get("ignored_lockfiles", [])
+    ]
     # Query/cache fields belong to SCA, not an offline SBOM operation.
     for field in ("queried_dependency_count", "cache_hit_count", "cache_policy"):
         receipt.pop(field, None)

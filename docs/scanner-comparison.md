@@ -79,8 +79,10 @@ skylos compare . --against snyk.sarif --sca
 
 `--sca` may query OSV with package and version metadata. It queries exact direct
 manifest pins and recorded packages from `uv.lock` format 1,
-`package-lock.json` versions 1–3, and `pnpm-lock.yaml` versions 6.0/9.0,
-including locked transitives. Manifest ranges such as `>=2.0` and `^1.2.3`
+`package-lock.json` / `npm-shrinkwrap.json` versions 1–3,
+`pnpm-lock.yaml` versions 6.0/9.0, and supported Poetry/Yarn locks,
+including locked transitives. Shrinkwrap takes precedence over a package-lock
+in the same directory. Manifest ranges such as `>=2.0` and `^1.2.3`
 remain unresolved; lockfile markers are retained,
 not evaluated as an installed production environment. The report keeps
 `DEPENDENCY` category coverage incomplete and does not claim

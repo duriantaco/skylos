@@ -331,8 +331,10 @@ def _records(data: dict, version: int, max_packages: int) -> list[tuple]:
 def parse_package_lock(
     path: Path, *, text: str | None = None, max_packages: int = 5000
 ) -> LockfileInventory:
-    """Parse npm lockfile versions 1–3, including every recorded environment.
+    """Parse package-lock or npm-shrinkwrap versions 1–3 as recorded data.
 
+    Both filenames share npm's schema. Selection and same-directory precedence
+    are handled by the collector; this parser retains the supplied source path.
     npm v1 does not distinguish hoisted transitives from direct dependencies;
     its top-level dependency kind is therefore unknown. Modern lockfiles use
     the authoritative packages table and declarations of root/workspace nodes.
