@@ -571,7 +571,7 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 
 | Integration | Link | Purpose |
 |:---|:---|:---|
-| GitHub Action | [GitHub Action](./action.yml) | PR gates, annotations, and CI enforcement |
+| GitHub Action | [GitHub Action](./action.yml) | Repository PR gates or optional digest-pinned container-image gates |
 | GitLab Code Quality | [GitLab setup](./docs/gitlab-code-quality.md) | merge request report artifacts; no comment-posting bot or API token |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants |
@@ -589,6 +589,12 @@ skylos cicd init --upload --scan-path apps/api
 The generated upload workflow uses GitHub OIDC, sends PR head commit/branch
 metadata, and supports monorepo subprojects through `--scan-path`.
 
+To scan a built image with the composite Action, install a pinned Trivy version
+in the caller's job and set `image` to a trusted `repository@sha256:<digest>`
+build output plus `image-platform`. This runs an image-only scan; `mode: gate`
+uses `image-fail-on` (default `high`), while `mode: scan` only reports findings.
+See [container-image scanning](./docs/container-image-reports.md#scan-an-image-with-the-github-action).
+
 ## Documentation Map
 
 | Need | Read This |
@@ -603,6 +609,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Dependency CVEs, uv/npm/pnpm/Poetry/Yarn lockfiles, offline SBOM, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
+| Digest-pinned container-image scanning and GitHub Action setup | [Container-image scanning](./docs/container-image-reports.md) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](./dictionary.md) |
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
