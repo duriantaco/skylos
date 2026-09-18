@@ -22,10 +22,18 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
 
 SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
 PINNED_ACTIONS_CHECKOUT = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
-PINNED_ACTIONS_SETUP_PYTHON = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-PINNED_ACTIONS_UPLOAD_ARTIFACT = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-PINNED_ACTIONS_DOWNLOAD_ARTIFACT = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
-PINNED_CLAUDE_CODE_ACTION = "anthropics/claude-code-action@1dc994ee7a008f0ecc866d9ac23ef036b7229f84"
+PINNED_ACTIONS_SETUP_PYTHON = (
+    "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+)
+PINNED_ACTIONS_UPLOAD_ARTIFACT = (
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+)
+PINNED_ACTIONS_DOWNLOAD_ARTIFACT = (
+    "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+)
+PINNED_CLAUDE_CODE_ACTION = (
+    "anthropics/claude-code-action@1dc994ee7a008f0ecc866d9ac23ef036b7229f84"
+)
 
 
 def _installed_skylos_version() -> str | None:
@@ -115,7 +123,7 @@ def generate_workflow(
             '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
             '            pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
             (
-                f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} "
+                f"            skylos {scan_target}{analysis_flags}{baseline_flag} "
                 '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
                 "--json -o skylos-results.json"
             ),

@@ -586,8 +586,9 @@ skylos cicd init --upload
 skylos cicd init --upload --scan-path apps/api
 ```
 
-The generated upload workflow uses GitHub OIDC, sends PR head commit/branch
-metadata, and supports monorepo subprojects through `--scan-path`.
+The generated workflow reviews changed lines on pull requests and uploads full
+scans on pushes using GitHub OIDC. It supports monorepo subprojects through
+`--scan-path`.
 
 To scan a built image with the composite Action, install a pinned Trivy version
 in the caller's job and set `image` to a trusted `repository@sha256:<digest>`

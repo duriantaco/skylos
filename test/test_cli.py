@@ -3130,6 +3130,10 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
         ),
         patch("skylos.cli.subprocess.Popen", return_value=proc) as popen,
         patch("skylos.api.get_project_token", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(False, False),
+        ),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
@@ -3227,6 +3231,10 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
         ),
         patch("skylos.cli.subprocess.Popen", return_value=proc),
         patch("skylos.api.get_project_token", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(False, False),
+        ),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
@@ -3274,6 +3282,28 @@ def test_render_upload_failure_shows_generic_error_for_other_failures():
 
 class TestDiffFlag:
     """Tests for --diff line-level filtering."""
+
+    @pytest.mark.parametrize("scope_flag", ["--diff", "--diff-base"])
+    def test_diff_scoped_scan_cannot_upload_as_full_scan(
+        self, monkeypatch, capsys, scope_flag
+    ):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", ".", scope_flag, "HEAD", "--upload", "--json"],
+        )
+
+        with (
+            patch("skylos.cli.run_analyze") as analyze,
+            patch("skylos.cli.upload_report") as upload,
+            pytest.raises(SystemExit) as exit_info,
+        ):
+            cli.main()
+
+        assert exit_info.value.code == 2
+        assert "diff-scoped results cannot be uploaded" in capsys.readouterr().err
+        analyze.assert_not_called()
+        upload.assert_not_called()
 
     def test_diff_flag_parses_with_explicit_ref(self, monkeypatch):
         """--diff origin/main sets args.diff to 'origin/main'."""
@@ -3477,6 +3507,166 @@ class TestDiffFlag:
         assert len(output["ai_defects"]) == 1
         assert output["ai_defects"][0]["rule_id"] == "SKY-A103"
 
+    def test_diff_with_no_changed_lines_hides_existing_findings(self, monkeypatch):
+        monkeypatch.setattr(
+            cli.sys, "argv", ["skylos", ".", "--diff", "HEAD", "--json"]
+        )
+        result = {
+            "analysis_summary": {"total_files": 1, "unused_functions_count": 1},
+            "unused_functions": [{"name": "old", "file": "src/app.py", "line": 1}],
+            "grade": {"overall": {"score": 0, "letter": "F"}},
+        }
+        printed = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+            patch("builtins.print", side_effect=lambda value: printed.append(value)),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+
+        output = json.loads(printed[0])
+        assert output["unused_functions"] == []
+        assert output["analysis_summary"]["unused_functions_count"] == 0
+        assert "grade" not in output
+
+    def test_diff_without_findings_does_not_claim_entire_codebase_is_clean(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--diff", "HEAD"])
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [{"name": "old", "file": "src/app.py", "line": 1}],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli.print_badge") as badge,
+            patch("skylos.cli._is_tty", return_value=True),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+
+        badge.assert_not_called()
+        output = capsys.readouterr().out
+        assert "no diff findings" in output
+        assert "100% dead-code free" not in output
+        assert "Clean codebase" not in output
+
+    def test_diff_without_changed_lines_reports_retained_prerequisite(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", ".", "--select", "SKY-GPU001", "--diff", "HEAD"],
+        )
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "reliability": [
+                {
+                    "rule_id": "SKY-GPU000",
+                    "file": ".skylos/gpu-targets.yml",
+                    "line": 1,
+                    "message": "GPU target contract is required",
+                }
+            ],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli._is_tty", return_value=True),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+
+        output = capsys.readouterr().out
+        assert "showing selected prerequisite findings" in output
+        assert "no diff findings" not in output
+        assert "No issues found on changed lines" not in output
+
+    def test_diff_in_subdirectory_matches_git_root_relative_path(
+        self, monkeypatch, tmp_path
+    ):
+        scan_path = tmp_path / "src"
+        scan_path.mkdir()
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", str(scan_path), "--diff", "HEAD~1", "--json"],
+        )
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [
+                {"name": "new_dead", "file": str(scan_path / "foo.py"), "line": 1}
+            ],
+        }
+        diff_output = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+def new_dead(): pass\n"
+        )
+        printed = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.core.file_discovery.find_git_root", return_value=tmp_path),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+            patch("builtins.print", side_effect=lambda value: printed.append(value)),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout=diff_output)
+            cli.main()
+
+        diff_calls = [
+            call
+            for call in git_diff.call_args_list
+            if call.args[0][:3] == ["git", "diff", "--unified=0"]
+        ]
+        assert len(diff_calls) == 1
+        assert diff_calls[0].kwargs["cwd"] == tmp_path
+        assert json.loads(printed[0])["unused_functions"][0]["name"] == "new_dead"
+
+    def test_diff_with_invalid_base_fails_instead_of_reporting_full_scan(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(
+            cli.sys, "argv", ["skylos", ".", "--diff", "missing", "--json"]
+        )
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [{"name": "old", "file": "src/app.py", "line": 1}],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+        ):
+            git_diff.return_value = Mock(returncode=128, stdout="", stderr="bad ref")
+            with pytest.raises(SystemExit) as exit_info:
+                cli.main()
+
+        assert exit_info.value.code == 2
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "Skylos diff unavailable" in output.err
+
     def test_diff_base_filters_ai_defects_to_changed_files(self, monkeypatch):
         """--diff-base filters ai_defects to changed files."""
         monkeypatch.setattr(
@@ -3526,6 +3716,119 @@ class TestDiffFlag:
         output = json.loads(captured_output[0])
         assert len(output["ai_defects"]) == 1
         assert output["ai_defects"][0]["file"] == "src/app.py"
+
+    def test_diff_base_with_no_changed_files_drops_old_findings_and_grade(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--diff-base",
+                "HEAD",
+                "--json",
+                "--strict",
+                "--no-provenance",
+            ],
+        )
+        result = {
+            "analysis_summary": {"total_files": 2, "circular_dependencies_count": 1},
+            "circular_dependencies": [
+                {"rule_id": "SKY-CIRC", "file": "src/old.py", "line": 1}
+            ],
+            "unused_functions": [
+                {"rule_id": "SKY-U001", "file": "src/old.py", "line": 3}
+            ],
+            "grade": {"grade": "A+"},
+        }
+        printed = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.subprocess.run") as git_diff,
+            patch("skylos.cli.print_badge") as badge,
+            patch("builtins.print", side_effect=lambda value: printed.append(value)),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+
+        output = json.loads(printed[0])
+        assert output["circular_dependencies"] == []
+        assert output["unused_functions"] == []
+        assert output["analysis_summary"]["circular_dependencies_count"] == 0
+        assert "grade" not in output
+        badge.assert_not_called()
+
+    def test_diff_base_with_invalid_ref_fails_before_analysis(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", ".", "--diff-base", "missing", "--json", "--no-provenance"],
+        )
+
+        with (
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.run_analyze") as analyze,
+            patch("skylos.cli.subprocess.run") as git_diff,
+        ):
+            git_diff.return_value = Mock(returncode=128, stdout="", stderr="bad ref")
+            with pytest.raises(SystemExit) as exit_info:
+                cli.main()
+
+        assert exit_info.value.code == 2
+        analyze.assert_not_called()
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "Skylos diff unavailable" in output.err
+
+    def test_diff_base_in_subdirectory_uses_git_root_paths(self, monkeypatch, tmp_path):
+        scan_path = tmp_path / "src"
+        scan_path.mkdir()
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", str(scan_path), "--diff-base", "HEAD~1", "--json"],
+        )
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [
+                {"name": "new_dead", "file": "src/dead.py", "line": 1},
+                {"name": "scan_relative_dead", "file": "dead.py", "line": 2},
+                {"name": "old_dead", "file": "src/old.py", "line": 1},
+            ],
+        }
+        printed = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as analyze,
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.core.file_discovery.find_git_root", return_value=tmp_path),
+            patch("skylos.cli.subprocess.run") as git_diff,
+            patch("builtins.print", side_effect=lambda value: printed.append(value)),
+        ):
+            git_diff.return_value = Mock(returncode=0, stdout="src/dead.py\n")
+            cli.main()
+
+        diff_calls = [
+            call
+            for call in git_diff.call_args_list
+            if call.args[0][:3] == ["git", "diff", "--name-only"]
+        ]
+        assert len(diff_calls) == 1
+        assert diff_calls[0].kwargs["cwd"] == tmp_path
+        assert analyze.call_args.kwargs["changed_files"] == {
+            str(tmp_path / "src" / "dead.py")
+        }
+        assert [
+            item["name"] for item in json.loads(printed[0])["unused_functions"]
+        ] == ["new_dead", "scan_relative_dead"]
 
     def test_diff_keeps_selected_gpu_contract_prerequisite(self, monkeypatch):
         monkeypatch.setattr(

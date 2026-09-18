@@ -1,10 +1,11 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 from skylos.cicd.review import (
     _parse_unified_diff,
     filter_findings_to_diff,
+    get_changed_line_ranges,
     _flatten_findings,
     _merge_llm_findings,
     _format_review_comment,
@@ -12,6 +13,7 @@ from skylos.cicd.review import (
     _post_summary_comment,
     _review_comment_location,
     _detect_pr_number,
+    run_pr_review,
 )
 from skylos.cicd.evidence import build_evidence_card
 
@@ -93,6 +95,7 @@ def test_parse_unified_diff_keeps_deletion_only_hunk_anchor():
 """
 
     assert _parse_unified_diff(diff) == [{"file": "app/main.py", "start": 6, "end": 6}]
+    assert _parse_unified_diff(diff, include_deletion_anchors=False) == []
 
 
 def test_filter_findings_to_diff(sample_results):
@@ -110,6 +113,377 @@ def test_filter_findings_to_diff(sample_results):
 def test_filter_findings_empty_ranges():
     findings = [{"file": "a.py", "line": 1, "message": "test"}]
     assert filter_findings_to_diff(findings, []) == []
+
+
+def test_pr_review_ignores_old_finding_after_deletion_only_hunk():
+    diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# note\n"
+    results = {
+        "quality": [
+            {"file": "a.py", "line": 1, "rule_id": "SKY-Q301", "message": "Old issue"}
+        ]
+    }
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=diff),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", diff_base="main")
+
+    post_review.assert_not_called()
+    assert len(post_summary.call_args.args[0]) == 1
+    assert post_summary.call_args.args[1] == []
+
+
+def test_pr_review_keeps_deletion_anchor_for_security_regression():
+    diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# guard\n"
+    regression = {
+        "file": "a.py",
+        "line": 1,
+        "rule_id": "SKY-L021",
+        "message": "Guard removed",
+        "kind": "security_regression",
+        "category": "security_regression",
+    }
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch(
+            "skylos.cicd.review._detect_regressions_from_diff",
+            return_value=[regression],
+        ),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=diff),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment"),
+    ):
+        run_pr_review({}, pr_number=1, repo="owner/repo", diff_base="main")
+
+    assert post_review.call_args.args[0] == [regression]
+    assert post_review.call_args.kwargs["changed_ranges"] == [
+        {"file": "a.py", "start": 1, "end": 1}
+    ]
+
+
+def test_pr_review_reports_new_unused_function_once():
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -0,0 +1,2 @@\n+def unused():\n+    return 1\n"
+    )
+    unused = {"file": "a.py", "line": 1, "name": "unused", "confidence": 100}
+    results = {
+        "unused_functions": [unused],
+        "forgotten": [{**unused, "status": "EXPIRED"}],
+    }
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=diff),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", diff_base="main")
+
+    comments = post_review.call_args.args[0]
+    assert len(comments) == 1
+    assert comments[0]["rule_id"] == "SKY-U001"
+    assert comments[0]["message"] == "Unused function: unused"
+    assert comments[0]["category"] == "dead_code"
+    assert len(post_summary.call_args.args[0]) == 1
+    assert len(post_summary.call_args.args[1]) == 1
+
+
+def test_pr_review_does_not_match_old_same_named_file(tmp_path):
+    diff = (
+        "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n"
+        "@@ -0,0 +1 @@\n+# changed\n"
+    )
+    results = {
+        "unused_functions": [
+            {"file": str(tmp_path / "src" / "foo.py"), "line": 1, "name": "old"}
+        ]
+    }
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review.find_git_root", return_value=tmp_path),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=diff),
+        ),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", diff_base="main")
+
+    post_review.assert_not_called()
+    assert post_summary.call_args.args[1] == []
+
+
+def test_pr_review_uses_report_repository_instead_of_current_directory(
+    tmp_path, monkeypatch
+):
+    current_repo = tmp_path / "current"
+    report_repo = tmp_path / "report"
+    for repo_dir in (current_repo, report_repo):
+        (repo_dir / ".git").mkdir(parents=True)
+    monkeypatch.chdir(current_repo)
+
+    report_diff = (
+        "diff --git a/report.py b/report.py\n"
+        "--- a/report.py\n+++ b/report.py\n"
+        "@@ -0,0 +1 @@\n+changed\n"
+    )
+    current_diff = (
+        "diff --git a/current.py b/current.py\n"
+        "--- a/current.py\n+++ b/current.py\n"
+        "@@ -0,0 +1 @@\n+changed\n"
+    )
+
+    def git_diff(*args, **kwargs):
+        return Mock(
+            returncode=0,
+            stdout=report_diff if kwargs.get("cwd") == report_repo else current_diff,
+        )
+
+    results = {
+        "project_root": str(report_repo),
+        "quality": [
+            {
+                "file": str(report_repo / "report.py"),
+                "line": 1,
+                "rule_id": "SKY-Q301",
+                "message": "Issue in report repository",
+            }
+        ],
+    }
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch("skylos.cicd.review.subprocess.run", side_effect=git_diff) as git_run,
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment"),
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", diff_base="main")
+
+    assert [finding["file"] for finding in post_review.call_args.args[0]] == [
+        str(report_repo / "report.py")
+    ]
+    assert all(call.kwargs.get("cwd") == report_repo for call in git_run.call_args_list)
+
+
+def test_pr_review_prefers_scanned_repository_over_upload_project_root(
+    tmp_path, monkeypatch
+):
+    report_repo = tmp_path / "report"
+    (report_repo / ".git").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    results = {
+        "project_root": ".",
+        "analysis_summary": {"comparison_scope": {"repository_root": str(report_repo)}},
+    }
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch(
+            "skylos.cicd.review.subprocess.run",
+            return_value=Mock(returncode=0, stdout=""),
+        ) as git_run,
+        patch("skylos.cicd.review._post_pr_review"),
+        patch("skylos.cicd.review._post_summary_comment"),
+    ):
+        run_pr_review(results, pr_number=1, repo="owner/repo", diff_base="main")
+
+    assert all(call.kwargs.get("cwd") == report_repo for call in git_run.call_args_list)
+
+
+def test_pr_review_invalid_report_root_does_not_post_comments(tmp_path):
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._detect_regressions_from_diff") as regressions,
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            run_pr_review(
+                {"project_root": str(tmp_path / "missing")},
+                pr_number=1,
+                repo="owner/repo",
+                diff_base="main",
+            )
+
+    assert exit_info.value.code == 2
+    regressions.assert_not_called()
+    post_review.assert_not_called()
+    post_summary.assert_not_called()
+
+
+def test_pr_review_rejects_relative_report_root_in_another_repository(
+    tmp_path, monkeypatch
+):
+    current_repo = tmp_path / "current"
+    (current_repo / ".git").mkdir(parents=True)
+    (current_repo / "package").mkdir()
+    monkeypatch.chdir(current_repo)
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._resolve_review_provenance", return_value=None),
+        patch("skylos.cicd.review.build_risk_passport", return_value={}),
+        patch("skylos.cicd.review.subprocess.run") as git_diff,
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        git_diff.return_value = Mock(returncode=0, stdout="")
+        with pytest.raises(SystemExit) as exit_info:
+            run_pr_review(
+                {"project_root": "package"},
+                pr_number=1,
+                repo="owner/repo",
+                diff_base="main",
+            )
+
+    assert exit_info.value.code == 2
+    git_diff.assert_not_called()
+    post_review.assert_not_called()
+    post_summary.assert_not_called()
+
+
+def test_pr_review_invalid_base_does_not_post_comments():
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review._detect_regressions_from_diff", return_value=[]),
+        patch("skylos.cicd.review.subprocess.run") as git_diff,
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        git_diff.return_value = Mock(returncode=128, stdout="", stderr="bad ref")
+        with pytest.raises(SystemExit) as exit_info:
+            run_pr_review({}, pr_number=1, repo="owner/repo", diff_base="missing")
+
+    assert exit_info.value.code == 2
+    post_review.assert_not_called()
+    post_summary.assert_not_called()
+
+
+def test_pr_review_summary_only_invalid_base_does_not_post_comments():
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review.subprocess.run") as git_diff,
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        git_diff.return_value = Mock(returncode=128, stdout="", stderr="bad ref")
+        with pytest.raises(SystemExit) as exit_info:
+            run_pr_review(
+                {},
+                pr_number=1,
+                repo="owner/repo",
+                diff_base="missing",
+                summary_only=True,
+            )
+
+    assert exit_info.value.code == 2
+    post_review.assert_not_called()
+    post_summary.assert_not_called()
+
+
+def test_pr_review_failed_regression_diff_does_not_post_comments():
+    def git_diff(command, **kwargs):
+        return Mock(
+            returncode=128 if "--unified=3" in command else 0,
+            stdout="",
+            stderr="bad ref",
+        )
+
+    with (
+        patch("skylos.cicd.review._gh_available", return_value=True),
+        patch("skylos.cicd.review.subprocess.run", side_effect=git_diff),
+        patch("skylos.cicd.review._post_pr_review") as post_review,
+        patch("skylos.cicd.review._post_summary_comment") as post_summary,
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            run_pr_review({}, pr_number=1, repo="owner/repo", diff_base="missing")
+
+    assert exit_info.value.code == 2
+    post_review.assert_not_called()
+    post_summary.assert_not_called()
+
+
+def test_pr_review_carries_dead_code_reason_into_comment():
+    finding = _flatten_findings(
+        {
+            "unused_functions": [
+                {
+                    "file": "a.py",
+                    "line": 3,
+                    "name": "old",
+                    "confidence": 95,
+                    "dead_code_reason": "No static references were found.",
+                }
+            ]
+        }
+    )[0]
+
+    assert "No static references were found." in _format_review_comment(finding)
+    card = _format_evidence_card_comment(finding)
+    assert "No static references were found." in card
+    assert "Confidence:** 95%" in card
+
+
+def test_diff_range_lookup_uses_selected_project(tmp_path):
+    with patch("skylos.cicd.review.subprocess.run") as git_diff:
+        git_diff.return_value.returncode = 0
+        git_diff.return_value.stdout = ""
+        assert get_changed_line_ranges("HEAD", cwd=tmp_path, raise_on_error=True) == []
+
+    assert git_diff.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_diff_range_lookup_rejects_invalid_base(tmp_path):
+    with patch("skylos.cicd.review.subprocess.run") as git_diff:
+        git_diff.return_value.returncode = 128
+        git_diff.return_value.stderr = "fatal: unknown revision"
+        with pytest.raises(ValueError, match="Cannot compare"):
+            get_changed_line_ranges("missing", cwd=tmp_path, raise_on_error=True)
+
+
+def test_diff_filter_does_not_confuse_same_basename_in_different_directories(
+    tmp_path,
+):
+    finding = {"file": str(tmp_path / "src" / "foo.py"), "line": 1}
+    root_file_change = [{"file": "foo.py", "start": 1, "end": 1}]
+    nested_file_change = [{"file": "src/foo.py", "start": 1, "end": 1}]
+
+    assert (
+        filter_findings_to_diff([finding], root_file_change, project_root=tmp_path)
+        == []
+    )
+    assert filter_findings_to_diff(
+        [finding], nested_file_change, project_root=tmp_path
+    ) == [finding]
 
 
 def test_filter_findings_to_diff_matches_related_location_span():
@@ -783,6 +1157,25 @@ def test_summary_comment_lists_reliability_category():
         _post_summary_comment([finding], [finding], 42, "owner/repo")
 
     assert "| reliability | 1 |" in captured["body"]
+
+
+def test_summary_comment_counts_changed_dead_code_once():
+    finding = {
+        "category": "dead_code",
+        "severity": "LOW",
+        "rule_id": "SKY-U001",
+        "message": "Unused function: unused",
+        "file": "a.py",
+        "line": 1,
+    }
+
+    with patch("skylos.cicd.review.subprocess.run") as gh:
+        _post_summary_comment([finding], [finding], 42, "owner/repo")
+
+    command = gh.call_args.args[0]
+    body = command[command.index("--body") + 1]
+    assert "**1** issue(s) on changed lines | **1** total" in body
+    assert "| dead_code | 1 |" in body
 
 
 def test_summary_comment_includes_evidence_counts_when_enabled():

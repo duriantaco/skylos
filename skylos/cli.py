@@ -2977,30 +2977,35 @@ def _run_pre_analysis_steps(args, project_root, console):
     changed_files = None
     if getattr(args, "diff_base", None):
         try:
+            from skylos.core.file_discovery import find_git_root
+
+            diff_root = find_git_root(project_root) or project_root
             os.environ["SKYLOS_DIFF_BASE"] = args.diff_base
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
-                cwd=project_root,
+                cwd=diff_root,
                 capture_output=True,
                 text=True,
             )
             if diff_result.returncode == 0:
                 changed_files = set()
                 for line in diff_result.stdout.strip().splitlines():
-                    changed_files.add(str((project_root / line).resolve()))
+                    changed_files.add(str((diff_root / line).resolve()))
                 if not quiet_output:
                     console.print(
                         f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
                         f"(full scan on changed, defs/refs-only on rest)"
                     )
-            elif not quiet_output:
-                console.print(
-                    f"[warn]git diff failed: {diff_result.stderr.strip()}. "
-                    f"Running full analysis.[/warn]"
+            else:
+                print(
+                    "Skylos diff unavailable: Git diff failed; check that the "
+                    "base ref exists in the scanned repository",
+                    file=sys.stderr,
                 )
+                raise SystemExit(2)
         except FileNotFoundError:
-            if not quiet_output:
-                console.print("[warn]git not found. Running full analysis.[/warn]")
+            print("Skylos diff unavailable: git is not installed", file=sys.stderr)
+            raise SystemExit(2) from None
 
     return SimpleNamespace(
         pytest_fixtures_ok=pytest_fixtures_ok,

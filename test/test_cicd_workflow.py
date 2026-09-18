@@ -184,6 +184,10 @@ def test_workflow_with_upload():
     analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
     assert "skylos sync pull" in sync_step["run"]
     assert "--upload" in analysis_step["run"]
+    pr_scan, push_scan = analysis_step["run"].split("\nelse\n", 1)
+    assert '--diff-base "$pr_base_ref" --diff "$pr_base_ref"' in pr_scan
+    assert "--upload" not in pr_scan
+    assert "--upload" in push_scan
     assert analysis_step["env"] == {
         "SKYLOS_COMMIT": "${{ github.event.pull_request.head.sha || github.sha }}",
         "SKYLOS_BRANCH": "${{ github.event.pull_request.head.ref || github.ref_name }}",
