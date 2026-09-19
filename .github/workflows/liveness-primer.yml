@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  LIVENESS_PRIMER_REF: 1438a928dd00cbb3b1098a9edc82480f43daabdb # v0.2.0
+
 concurrency:
   group: liveness-primer-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -18,16 +21,54 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Check out trusted Skylos base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: _trusted_skylos
+          persist-credentials: false
+
       - name: Check out pinned liveness_primer
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: mcdigman/liveness_primer
-          ref: d6f3118a2cfc465426500eab449005fe56845c58 # v0.1.0
+          ref: ${{ env.LIVENESS_PRIMER_REF }}
           path: _liveness_primer
           persist-credentials: false
 
+      - name: Install Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - name: Build trusted base Go engine
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
+
+          trusted_checkout_sha="$(git -C _trusted_skylos rev-parse HEAD)"
+          if [[ "$trusted_checkout_sha" != "$TRUSTED_BASE_SHA" ]]; then
+            echo "Trusted checkout does not match the pull request base" >&2
+            exit 1
+          fi
+
+          engine_dir="$RUNNER_TEMP/skylos-go-engine"
+          mkdir -p "$engine_dir" "$RUNNER_TEMP/skylos-go-build" "$RUNNER_TEMP/skylos-go-gopath"
+          cd _trusted_skylos/skylos/engines/go
+          GOCACHE="$RUNNER_TEMP/skylos-go-build" GOPATH="$RUNNER_TEMP/skylos-go-gopath" \
+            go build -trimpath -o "$engine_dir/skylos-go" ./cmd/skylos-go
+          "$engine_dir/skylos-go" --version
+
       - name: Install uv
-        uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.12.5"
           python-version: "3.13"
@@ -35,7 +76,8 @@ jobs:
 
       - name: Compare base with the pull request merge result
         env:
-          SKYLOS_REPOSITORY: https://github.com/duriantaco/skylos
+          SKYLOS_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
+          SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go', runner.temp) }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MERGE_SHA: ${{ github.sha }}
           REPORT_JSON: liveness-primer-report.json
@@ -57,6 +99,7 @@ jobs:
             --old "$BASE_SHA" \
             --new "$MERGE_SHA" \
             --all \
+            --container \
             --output github \
             --json-out "$REPORT_JSON" \
             --jobs 2 \
@@ -67,7 +110,7 @@ jobs:
 
       - name: Upload blast-radius evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: liveness-primer-report
           path: |
