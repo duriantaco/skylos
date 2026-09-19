@@ -59,9 +59,25 @@ def _collect_findings(items, finding_type):
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="skylos clean",
-        description="Interactively or deterministically clean dead code.",
+        description=(
+            "Preview or apply Python dead-code edits for imports and functions."
+        ),
+        epilog=(
+            "With no mode flag, Skylos asks about each edit and can write files only "
+            "after final confirmation. --dry-run never writes. --apply writes matching "
+            "edits without prompting.\n\n"
+            "Exit 0 means the cleanup command completed; individual transform failures "
+            "are printed but do not currently make the process exit nonzero."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        metavar="PATH",
+        help="Python file or source directory to scan (default: current directory)",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--dry-run",

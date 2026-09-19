@@ -43,7 +43,11 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
+        help=(
+            "(PRO source-scan option) Verify scan findings with the neuro-symbolic "
+            "prover. For AI-code verification and the Python working-tree model, "
+            "use 'skylos verify [path]'."
+        ),
     )
     parser.add_argument(
         "--trace",
@@ -236,7 +240,10 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--all",
         action="store_true",
         dest="all_checks",
-        help="Enable all checks: --danger --secrets --quality --ai-defects --sca",
+        help=(
+            "Enable the main source analyzers: --danger --secrets --quality "
+            "--ai-defects --sca"
+        ),
     )
     parser.add_argument(
         "--no-grep-verify",
