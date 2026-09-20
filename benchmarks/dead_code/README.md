@@ -56,6 +56,135 @@ Python-only scanners are scored only on Python cases; non-Python cases are
 reported as skipped for that scanner instead of being counted as false
 negatives.
 
+## Jev semantic research benchmark
+
+The Jev runner tests whether a typed decision model can add useful semantic
+evidence to dead-code review. It is a research benchmark, not part of the
+Skylos analyzer or a release gate.
+
+First inspect the request plan. This does not use the network or require a key:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py
+```
+
+The default checked-in manifest contains 124 ground-truth symbols: 47 unused
+and 77 used. It is useful for request validation and regression testing, but
+Skylos already scores every labeled symbol correctly there. A Jev tie on this
+suite does not demonstrate incremental value. The runner asks for each decision
+twice:
+
+1. `original` uses the checked-in fixture.
+2. `neutralized` replaces obvious answer cues in names such as
+   `unused_helper` and `staleHelper` before asking the same question.
+
+The manifest labels and case descriptions are joined to the answers locally
+after the response. They are never included in the API request. Each request
+contains only one selected fixture's source/config files, the target kind,
+file and symbol, and the fixed decision rubric.
+
+For the real comparison with existing classifiers, point the same runner at
+the frozen sibling benchmark corpus. The runner accepts
+`skylos-golden-benchmark/v1`, requires frozen labels and closed label coverage,
+and preserves each label ID in the local result so it can be joined with the
+existing Skylos, Vulture, and Ruff results. Label IDs, expectations, review
+reasons, and manifest descriptions are withheld from Jev.
+
+From the Skylos repository, inspect the golden development plan:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py \
+  --manifest ../skylos-benchmarks/manifests/dead_code.dev.json
+```
+
+That development split currently contains 48 labels across 9 cases. Use it to
+choose the prompt and confidence threshold after a live run. Run the existing
+Skylos baseline against exactly the same label IDs from the sibling repository:
+
+```bash
+cd ../skylos-benchmarks
+python3 runners/run_benchmark.py \
+  --manifest manifests/dead_code.dev.json \
+  --tool skylos
+```
+
+A live run requires a TypeSafe API key. Store it in `TYPESAFE_API_KEY`; do not
+put it in a command argument, source file, contract, or committed shell script.
+The experiment runs outside the production path, but Jev itself is a hosted
+service: live mode sends fixture source over the network and is not an offline
+model run. See the official [API reference](https://docs.typesafe.ai/api),
+[model list](https://docs.typesafe.ai/models), and
+[confidence guide](https://docs.typesafe.ai/confidence).
+
+Run the checked-in smoke suite with:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py --live
+```
+
+Live mode is explicit because it sends the benchmark fixture source to
+`https://api.typesafe.ai/v1/systemone` and incurs API usage. The runner pins
+`jev-1.13.0`, rejects redirects and malformed responses, stops on the first
+failed batch, and checkpoints to the ignored
+`jev-dead-code-results.json` file. The key and source text are not stored in
+that report.
+
+Run a small smoke case before the whole suite:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py --live --case basic-unused-symbols
+```
+
+Then run the golden development split:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py \
+  --live \
+  --manifest ../skylos-benchmarks/manifests/dead_code.dev.json \
+  --output jev-dead-code-golden-dev-results.json
+```
+
+After choosing a confidence threshold on that development result, freeze the
+prompt digest. The checked-in adversarial manifest remains useful as a public
+stress set:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py \
+  --live \
+  --manifest benchmarks/dead_code/adversarial_manifest.json \
+  --output jev-dead-code-adversarial-results.json
+```
+
+The report preserves the full Choice probability distribution and scores
+coverage, accuracy on decided items, unused precision/recall, unsafe removals,
+Brier score, log loss, latency, token usage, and original/neutralized decision
+consistency. Latency is split into end-to-end request time and local response
+contract validation time, with mean, p50, p95, and maximum values. Request time
+still combines network transfer, TypeSafe service work, response download, and
+JSON decoding. The API does not expose enough timing data to isolate server-side
+constrained generation or schema enforcement, so the report says that directly
+instead of attributing service latency to one step.
+
+A Jev decision must remain advisory until a frozen holdout has zero known-used
+symbols classified as removable at the selected threshold. The current holdout
+is small, so even zero observed errors is not enough by itself for automatic
+deletion.
+
+For the actual frozen-corpus experiment, tune on `dead_code.dev.json`, then run
+the Jev-unseen fresh holdout once with the same prompt digest and threshold:
+
+```bash
+python3 scripts/jev_dead_code_benchmark.py \
+  --live \
+  --manifest ../skylos-benchmarks/manifests/dead_code.fresh_holdout.json \
+  --output jev-dead-code-golden-holdout-results.json
+```
+
+Judge incremental value label by label: whether Jev corrects existing Skylos
+errors, how many known-live symbols it marks unreferenced, how often it abstains,
+and the latency and cost at the frozen threshold. Aggregate accuracy alone is
+not enough for a removal decision.
+
 ## Case Shape
 
 Each case declares explicit unused and used symbols:

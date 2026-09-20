@@ -26,7 +26,7 @@ Latest local result:
 
 | Scanner | Cases | Skipped | TP | FP | FN | TN | Precision | Recall | F1 | Score |
 |:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Skylos | 16 | 0 | 36 | 0 | 0 | 59 | 1.0 | 1.0 | 1.0 | 100.0 |
+| Skylos | 21 | 0 | 47 | 0 | 0 | 77 | 1.0 | 1.0 | 1.0 | 100.0 |
 | Vulture | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | Ruff | 13 | 3 | 2 | 0 | 28 | 50 | 1.0 | 0.0667 | 0.125 | 62.67 |
 
@@ -37,6 +37,31 @@ the current local environment, so it was skipped in the latest rerun.
 The dead-code suite covers Python framework liveness, package entrypoints,
 plugin loading, SQLAlchemy models, and cross-language Go, Java, TypeScript, and
 JavaScript reachability cases.
+
+### Jev semantic research baseline
+
+`scripts/jev_dead_code_benchmark.py` evaluates a different question: can the
+pinned `jev-1.13.0` typed decision model classify the same labeled symbols from
+source alone well enough to help review uncertain dead-code findings?
+
+```bash
+# Request plan only; local and free.
+python3 scripts/jev_dead_code_benchmark.py
+
+# Explicit paid/network run. Reads TYPESAFE_API_KEY from the environment.
+python3 scripts/jev_dead_code_benchmark.py --live
+```
+
+Ground-truth labels and case descriptions are withheld from Jev. The runner
+uses original and answer-signal-neutralized identifier arms, pins the model and
+prompt digest, validates the complete Choice distribution, and reports
+abstention-aware threshold metrics and calibration. It also reads the frozen
+`skylos-golden-benchmark/v1` manifests in the sibling benchmark corpus and
+retains their label IDs locally for exact comparison with existing classifier
+results. This is a research result, not a scanner row: Jev does not produce a
+static reachability proof, and no live result has been recorded in this
+repository yet. Full method and holdout procedure:
+[benchmarks/dead_code/README.md](./benchmarks/dead_code/README.md#jev-semantic-research-benchmark).
 
 ### External Demo Target
 

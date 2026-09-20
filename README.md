@@ -646,7 +646,7 @@ tool is universally state of the art.
 
 | Suite | Current Skylos Result | Baseline |
 |:---|:---|:---|
-| Dead code regression | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67; Vulture not installed in latest local rerun |
+| Dead code regression | 21 cases, TP=47 FP=0 FN=0 TN=77, score 100.0 | Ruff and Vulture are optional comparison installs |
 | Security regression | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit score 47.14 on Python-applicable cases |
 | Quality regression | 13 cases, score 100.0 | regression gate only |
 | Agent review | 25 cases, score 100.0 | regression gate only |
@@ -663,6 +663,16 @@ Frozen `golden-v0.2` highlights:
 
 For methodology, commands, competitor rows, and caveats, see
 [BENCHMARK.md](./BENCHMARK.md).
+
+An experimental Jev runner can blindly score the pinned `jev-1.13.0` typed
+decision model against the checked-in 124 dead-code labels or the frozen
+`skylos-benchmarks` corpus. It withholds labels and review reasons from the
+request, retains golden label IDs locally for exact classifier comparison, and
+repeats the test with answer-signaling identifiers neutralized. Live mode sends
+fixture source to TypeSafe, requires an explicit flag and a separate
+`TYPESAFE_API_KEY`, and records request versus local contract-validation
+latency. No live Jev result is claimed here yet. See the
+[dead-code benchmark guide](./benchmarks/dead_code/README.md#jev-semantic-research-benchmark).
 
 ### Real-project regression testing
 
