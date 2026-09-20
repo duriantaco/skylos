@@ -124,13 +124,31 @@ def _build_suite_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos suite",
         description=(
-            "Run the full local Skylos suite: static analysis, technical debt, "
-            "AI defense, and provenance summary"
+            "Build one report from static analysis, technical debt, AI defense, "
+            "and provenance checks for a source directory."
         ),
+        epilog=(
+            "The static family enables dependency and AI dependency checks, which "
+            "may query OSV.dev and public package registries. Local means analysis "
+            "runs on this machine; it does not mean offline. Uploading is opt-in.\n\n"
+            "Findings are report-only and do not change the default exit status. "
+            "Operational, output, or upload failures return nonzero; an uploaded "
+            "Cloud quality-gate failure also returns nonzero."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path", nargs="?", default=".", help="Path to scan")
     parser.add_argument(
-        "--json", action="store_true", dest="output_json", help="Output as JSON"
+        "path",
+        nargs="?",
+        default=".",
+        metavar="DIRECTORY",
+        help="Source directory to scan (default: current directory)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output the combined report as JSON",
     )
     parser.add_argument(
         "-o", "--output", dest="output_file", help="Write output to file"
@@ -161,7 +179,10 @@ def _build_suite_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--upload",
         action="store_true",
-        help="Upload selected scan families to Skylos Cloud as separate scans in one suite bundle",
+        help=(
+            "Upload selected scan families to Skylos Cloud as separate scans in "
+            "one suite bundle"
+        ),
     )
     parser.add_argument(
         "--families",

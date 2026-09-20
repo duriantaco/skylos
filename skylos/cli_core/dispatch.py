@@ -30,6 +30,7 @@ EARLY_COMMAND_HANDLERS = {
     "city": "_run_removed_city_command",
     "suite": "run_suite_command",
     "verify": "_run_verify_command",
+    "preflight": "_run_preflight_command",
     "review": "_run_review_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
@@ -40,6 +41,13 @@ EARLY_COMMAND_HANDLERS = {
     "rules": "_handle_rules_command",
     "cicd": "run_cicd_command",
 }
+
+# These commands own enough flags and execution semantics that their argparse
+# help is the source of truth. Parsing --help exits before target analysis,
+# artifact inspection, scanner execution, uploads, or file edits can start.
+NATIVE_HELP_COMMANDS = frozenset(
+    {"clean", "defend", "image", "preflight", "suite", "verify"}
+)
 
 
 def is_first_level_help_request(argv) -> bool:
@@ -52,6 +60,7 @@ def run_early_command_help(
     console_factory: Callable[[], Console] = Console,
 ) -> int:
     from skylos.ui.help import COMMANDS
+    from rich.padding import Padding
 
     console = console_factory()
     matches = [
@@ -60,26 +69,28 @@ def run_early_command_help(
         if item.get("name", "").split()[:2] == ["skylos", command]
     ]
     if not matches:
-        console.print(f"[bold]Usage:[/bold] skylos {command} [options]")
+        console.print(
+            f"[bold]Usage:[/bold] {escape(f'skylos {command} [options]')}"
+        )
         console.print("\nRun [bold]skylos commands[/bold] for all commands.")
         return 0
 
     console.print("[bold]Usage:[/bold]")
     for item in matches:
-        console.print(f"  {escape(item['name'])}")
+        console.print(Padding(escape(item["name"]), (0, 0, 0, 2)))
 
     console.print("\n[bold]Description:[/bold]")
     for item in matches:
-        console.print(f"  {escape(item['desc'])}")
+        console.print(Padding(escape(item["desc"]), (0, 0, 0, 2)))
 
     detail_lines = []
     for item in matches:
         for detail in item.get("details", []):
             detail_lines.append(detail)
     if detail_lines:
-        console.print("\n[bold]Options:[/bold]")
+        console.print("\n[bold]Details:[/bold]")
         for detail in detail_lines:
-            console.print(f"  {escape(detail)}")
+            console.print(Padding(f"• {escape(detail)}", (0, 0, 0, 2)))
 
     console.print("\nRun [bold]skylos commands[/bold] for all commands.")
     return 0
@@ -94,11 +105,20 @@ def dispatch_early_command(
     if not argv:
         return namespace["_run_command_overview"]([])
 
+    if len(argv) == 1 and argv[0] in {"-h", "--help"}:
+        return namespace["_run_command_overview"]([])
+
     handler_name = EARLY_COMMAND_HANDLERS.get(argv[0])
     if handler_name is None:
         return None
 
     if is_first_level_help_request(argv):
+        if argv[0] in NATIVE_HELP_COMMANDS:
+            # ``image`` has one operation. Show its actionable scan flags at
+            # the family-level help entry instead of stopping at a one-row
+            # subcommand list.
+            help_argv = ["scan", argv[1]] if argv[0] == "image" else argv[1:]
+            return namespace[handler_name](help_argv)
         return run_early_command_help(argv[0], console_factory=console_factory)
 
     return namespace[handler_name](argv[1:])

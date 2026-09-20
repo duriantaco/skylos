@@ -39,7 +39,20 @@ def run_verify_command(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos verify",
-        description="Verify code for AI-code defects and compare Python working changes with Git HEAD.",
+        description=(
+            "Scan source code for AI-code and quality defects. For Python working "
+            "trees, also model affected function behavior against Git HEAD."
+        ),
+        epilog=(
+            "By default, PATH is scanned as a whole source target; the Git behavior "
+            "model is a separate Python-only result. Path targets enable dependency "
+            "hallucination checks, which may query public package registries; use "
+            "--no-dependency-hallucinations to disable those lookups.\n\n"
+            "Output: a human report on a terminal; JSON when redirected, when using "
+            "--stdin, or in the file selected by --output.\n"
+            "Exit codes: 0 pass, 1 fail, 2 incomplete. --no-fail always exits 0."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_target_args(parser)
     _add_scope_args(parser)
@@ -78,7 +91,10 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--project-context",
         action="store_true",
-        help="When --file is set, scan the project path and filter to that file.",
+        help=(
+            "When --file is set, scan the whole project for context and return "
+            "findings for that file."
+        ),
     )
 
 

@@ -96,11 +96,24 @@ def _build_defend_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos defend",
         description=(
-            "Verify AI-agent guardrails before deployment "
-            "(static pre-deployment agent verification)"
+            "Report static guardrail findings for supported LLM integrations in "
+            "Python and TypeScript/JavaScript source."
         ),
+        epilog=(
+            "Findings are report-only and exit 0 unless --fail-on, --min-score, or "
+            "an explicit policy requests a gate. Upload failures and requested gate "
+            "failures exit 1. A result with no detected integrations means none were "
+            "found in the supported source scope."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        metavar="DIRECTORY",
+        help="Source directory to scan (default: current directory)",
+    )
     parser.add_argument(
         "--json", action="store_true", dest="output_json", help="Output as JSON"
     )
@@ -134,7 +147,7 @@ def _build_defend_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--policy",
         dest="policy_file",
-        help="Path to skylos-defend.yaml policy file",
+        help="Path to a skylos-defend.yaml policy; its gate settings can affect exit 1",
     )
     parser.add_argument(
         "--owasp",
