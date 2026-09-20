@@ -46,6 +46,7 @@ def test_liveness_primer_workflow_covers_all_prs_read_only_and_advisory():
     }
 
     job = workflow["jobs"]["blast-radius"]
+    assert job["name"] == "Skylos analyzer blast radius"
     assert "if" not in job  # Draft PRs get evidence too.
     assert job["runs-on"] == "ubuntu-24.04"
     assert job["timeout-minutes"] == 45
@@ -64,7 +65,7 @@ def test_liveness_primer_workflow_pins_actions_and_toolchain():
 
     assert {step["uses"] for step in action_steps} == {
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
+        "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d",
     }
@@ -131,6 +132,27 @@ def test_liveness_primer_workflow_builds_trusted_base_go_engine():
     assert comparison["env"]["SKYLOS_GO_BIN"] == (
         "${{ format('{0}/skylos-go-engine/skylos-go', runner.temp) }}"
     )
+
+
+def test_liveness_primer_workflow_discloses_go_engine_coverage_boundary():
+    workflow = _workflow()
+    steps = workflow["jobs"]["blast-radius"]["steps"]
+    boundary = next(
+        step
+        for step in steps
+        if step.get("name") == "Record Go engine coverage boundary"
+    )
+
+    assert boundary["env"] == {
+        "TRUSTED_BASE_SHA": "${{ github.event.pull_request.base.sha }}"
+    }
+    assert boundary["shell"] == "bash"
+    script = boundary["run"]
+    assert '[[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in script
+    assert '>> "$GITHUB_STEP_SUMMARY"' in script
+    assert "uses the Go engine built from base commit" in script
+    assert "Changes under \\`skylos/engines/go/\\` are outside" in script
+    assert "::notice title=Go engine coverage boundary::" in script
 
 
 def test_liveness_primer_workflow_uses_locked_comparison_contract():
@@ -352,6 +374,7 @@ def _run_workflow_step(
         "GIT_EXIT": "0",
         "GO_EXIT": "0",
         "ENGINE_EXIT": "0",
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "step summary.md"),
         **(overrides or {}),
     }
     (tmp_path / "_trusted_skylos/skylos/engines/go").mkdir(parents=True, exist_ok=True)
@@ -388,6 +411,29 @@ def test_trusted_go_build_executes_and_probes_engine(tmp_path: Path) -> None:
         ],
     ]
     assert (tmp_path / "version probe").read_text() == "engine-version-probed\n"
+
+
+def test_go_engine_coverage_boundary_is_emitted(tmp_path: Path) -> None:
+    result = _run_workflow_step(tmp_path, "Record Go engine coverage boundary")
+
+    assert result.returncode == 0, result.stderr
+    summary = (tmp_path / "step summary.md").read_text()
+    assert "## Go engine coverage boundary" in summary
+    assert "base commit `" + ("a" * 40) + "`" in summary
+    assert "Changes under `skylos/engines/go/` are outside" in summary
+    assert "::notice title=Go engine coverage boundary::" in result.stdout
+
+
+def test_go_engine_coverage_boundary_rejects_non_commit_ref(tmp_path: Path) -> None:
+    result = _run_workflow_step(
+        tmp_path,
+        "Record Go engine coverage boundary",
+        {"TRUSTED_BASE_SHA": "main"},
+    )
+
+    assert result.returncode == 1
+    assert "Invalid pull request base SHA" in result.stderr
+    assert not (tmp_path / "step summary.md").exists()
 
 
 @pytest.mark.parametrize(

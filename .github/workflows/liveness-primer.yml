@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   blast-radius:
-    name: Python dead-code blast radius
+    name: Skylos analyzer blast radius
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -36,8 +36,29 @@ jobs:
           path: _liveness_primer
           persist-credentials: false
 
+      - name: Record Go engine coverage boundary
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request base SHA" >&2
+            exit 1
+          fi
+
+          {
+            echo "## Go engine coverage boundary"
+            echo
+            echo "This comparison uses the Go engine built from base commit \`$TRUSTED_BASE_SHA\` for both detector revisions."
+            echo "Changes under \`skylos/engines/go/\` are outside this blast-radius result."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::notice title=Go engine coverage boundary::Both detector revisions use the Go engine built from the pull request base; changes under skylos/engines/go/ are not covered."
+
       - name: Install Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.22"
           cache: false
