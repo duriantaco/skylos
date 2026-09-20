@@ -10,6 +10,7 @@ import subprocess
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.preflight import run_preflight
 
 
@@ -25,19 +26,21 @@ def _write_profile(
 ) -> Path:
     profile = root / ".skylos" / "gpu-targets.yml"
     profile.parent.mkdir(parents=True, exist_ok=True)
-    profile.write_text(
-        "\n".join(
-            (
-                "version: 1",
-                "targets:",
-                "  - name: t4",
-                "    vendor: nvidia",
-                f'    driver: "{driver}"',
-                '    compute_capability: "7.5"',
-                f'    platform: "{platform}"',
-                "",
-            )
-        ),
+    content = "\n".join(
+        (
+            "version: 1",
+            "targets:",
+            "  - name: t4",
+            "    vendor: nvidia",
+            f'    driver: "{driver}"',
+            '    compute_capability: "7.5"',
+            f'    platform: "{platform}"',
+            "",
+        )
+    )
+    assert write_text_no_symlink(
+        profile,
+        content,
         encoding="utf-8",
     )
     return profile

@@ -10,13 +10,18 @@ import subprocess
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.preflight import inspector, run_preflight
 
 
 def _tool(tmp_path: Path, project: Path) -> Path:
     tool = tmp_path / "trusted-tools" / "cuobjdump"
     tool.parent.mkdir(exist_ok=True)
-    tool.write_text("test fixture; never executed\n", encoding="utf-8")
+    assert write_text_no_symlink(
+        tool,
+        "test fixture; never executed\n",
+        encoding="utf-8",
+    )
     tool.chmod(0o755)
     assert not tool.resolve().is_relative_to(project.resolve())
     return tool
@@ -32,15 +37,17 @@ def _profile(project: Path, *, include_l4: bool = False) -> None:
     compute_capability: "8.9"
     platform: "linux/amd64"
 """ if include_l4 else ""
-    profile.write_text(
-        """version: 1
+    content = """version: 1
 targets:
   - name: t4
     vendor: nvidia
     driver: "535.104.05"
     compute_capability: "7.5"
     platform: "linux/amd64"
-""" + l4,
+""" + l4
+    assert write_text_no_symlink(
+        profile,
+        content,
         encoding="utf-8",
     )
 

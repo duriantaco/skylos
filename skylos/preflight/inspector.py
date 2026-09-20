@@ -307,7 +307,9 @@ def inspect_local_cuda_artifact(
     identity_verified = False
     if is_single_file:
         digest, digest_error = _hash_regular_file(
-            artifact_path, expected=None, deadline=deadline
+            artifact_path,
+            expected=candidates[0] if candidates else None,
+            deadline=deadline,
         )
         if digest_error:
             errors.append(digest_error)
@@ -692,8 +694,19 @@ def _snapshot_candidate(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        destination_flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        destination_flags |= os.O_CLOEXEC
     try:
-        source_descriptor = os.open(candidate.path, flags)
+        source_descriptor = os.open(  # skylos: ignore[SKY-D215] no-follow and inode-verified
+            candidate.path, flags
+        )
         source_stat = os.fstat(source_descriptor)
         if not stat.S_ISREG(source_stat.st_mode) or _fingerprint(source_stat) != (
             candidate.device,
@@ -702,9 +715,9 @@ def _snapshot_candidate(
             candidate.mtime_ns,
         ):
             return None, None, "artifact changed before private snapshotting"
-        destination_descriptor = os.open(
+        destination_descriptor = os.open(  # skylos: ignore[SKY-D215] private exclusive snapshot
             snapshot_path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            destination_flags,
             0o600,
         )
         copied = 0
@@ -962,10 +975,16 @@ def _elf_dynamic_metadata(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     descriptor = None
     result: _ElfDynamicMetadata | None = None
     try:
-        descriptor = os.open(candidate.path, flags)
+        descriptor = os.open(  # skylos: ignore[SKY-D215] private verified snapshot
+            candidate.path, flags
+        )
         file_stat = os.fstat(descriptor)
         if _fingerprint(file_stat) != (
             candidate.device,
@@ -1419,9 +1438,15 @@ def _read_binary_header(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     descriptor = None
     try:
-        descriptor = os.open(candidate.path, flags)
+        descriptor = os.open(  # skylos: ignore[SKY-D215] no-follow and inode-verified
+            candidate.path, flags
+        )
         file_stat = os.fstat(descriptor)
         if _fingerprint(file_stat) != (
             candidate.device,
@@ -1454,9 +1479,15 @@ def _hash_regular_file(
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     descriptor = None
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(  # skylos: ignore[SKY-D215] bounded verified file
+            path, flags
+        )
         file_stat = os.fstat(descriptor)
         if not stat.S_ISREG(file_stat.st_mode):
             return None, "Artifact identity source is not a regular file."
