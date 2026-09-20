@@ -2254,6 +2254,12 @@ def _run_verify_command(argv):
     return run_verify_command(argv)
 
 
+def _run_preflight_command(argv):
+    from skylos.commands.preflight_cmd import run_preflight_command
+
+    return run_preflight_command(argv, console_factory=Console)
+
+
 def _run_review_command(argv):
     from skylos.commands.review_cmd import run_review_command
 

@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -14,6 +15,7 @@ from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
 from skylos.cli_core.main_parser import build_main_parser
 from skylos.commands.scan_cmd import run_scan_command
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
+from skylos.ui.help import COMMANDS
 
 
 @pytest.fixture(autouse=True)
@@ -81,6 +83,30 @@ def test_cli_public_entrypoint_stays_compatibility_facade():
     assert run_scan_command.__module__ == "skylos.commands.scan_cmd"
 
 
+def test_command_map_covers_every_active_early_command_family():
+    documented = {item["name"].split()[1] for item in COMMANDS}
+    active = set(EARLY_COMMAND_HANDLERS) - {"city"}
+
+    assert active <= documented
+
+
+def test_command_map_covers_every_direct_agent_subcommand():
+    parser = cli._build_agent_parser()
+    subparsers = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    documented = {
+        parts[2]
+        for item in COMMANDS
+        if len(parts := item["name"].split()) >= 3
+        and parts[:2] == ["skylos", "agent"]
+    }
+
+    assert set(subparsers.choices) <= documented
+
+
 def test_cli_grade_render_only_shows_scanned_categories():
     console = Console(record=True, width=120, theme=cli._skylos_console_theme())
     grade_data = {
@@ -120,6 +146,109 @@ def test_cli_guardrail_overview_dispatch_exits_zero(monkeypatch):
     mock_overview.assert_called_once()
 
 
+@pytest.mark.parametrize("help_flag", ["--help", "-h"])
+def test_cli_guardrail_root_help_uses_command_chooser(monkeypatch, help_flag):
+    monkeypatch.setattr(sys, "argv", ["skylos", help_flag])
+
+    with (
+        patch("skylos.ui.help.print_command_overview") as mock_overview,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_overview.assert_called_once()
+
+
+def test_command_overview_distinguishes_source_artifact_and_image_checks():
+    from skylos.ui.help import print_command_overview
+
+    console = Console(record=True, width=100, color_system=None)
+
+    print_command_overview(console)
+
+    output = console.export_text()
+    assert "skylos verify [PATH]" in output
+    assert "Python working changes" in output
+    assert "skylos preflight [ARTIFACT]" in output
+    assert "built GPU artifact" in output
+    assert "skylos image scan IMAGE" in output
+    assert "container vulnerabilities" in output
+    assert "100% accuracy" not in output
+
+
+def test_preflight_help_names_scope_configuration_and_exit_codes(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(sys, "argv", ["skylos", "preflight", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert ".skylos/gpu-targets.yml" in output
+    assert "Scope: source changes and container CVEs are outside this check" in output
+    assert "Valid reports are concise on a terminal and JSON when redirected" in output
+    assert "Exit codes: 0 PASS, 1 FAIL, 2 UNKNOWN" in output
+
+
+@pytest.mark.parametrize(
+    ("command", "required_text"),
+    [
+        (
+            "verify",
+            (
+                "--stdin",
+                "--contract",
+                "--no-dependency-hallucinations",
+                "human report on a terminal",
+            ),
+        ),
+        (
+            "suite",
+            (
+                "--families",
+                "--static-categories",
+                "may query OSV.dev",
+                "Findings are report-only",
+            ),
+        ),
+        (
+            "defend",
+            (
+                "--fail-on",
+                "--min-score",
+                "Python and TypeScript/JavaScript",
+                "Findings are report-only",
+            ),
+        ),
+        (
+            "image",
+            (
+                "IMAGE",
+                "--platform",
+                "trusted Trivy executable",
+                "Without --fail-on",
+            ),
+        ),
+    ],
+)
+def test_primary_command_help_exposes_real_options_and_semantics(
+    monkeypatch, capsys, command, required_text
+):
+    monkeypatch.setattr(sys, "argv", ["skylos", command, "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    for expected in required_text:
+        assert expected in output
+
+
 def test_cli_guardrail_commands_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "commands"])
 
@@ -132,6 +261,25 @@ def test_cli_guardrail_commands_dispatch_exits_zero(monkeypatch):
 
     assert exc.value.code == 0
     mock_commands.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("debt", "skylos debt [path]"),
+        ("sonar", "skylos sonar import [properties_file]"),
+    ],
+)
+def test_active_command_family_help_has_real_usage(
+    monkeypatch, capsys, command, expected
+):
+    monkeypatch.setattr(sys, "argv", ["skylos", command, "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert expected in capsys.readouterr().out
 
 
 def test_cli_guardrail_tour_dispatch_exits_zero(monkeypatch):
@@ -327,7 +475,7 @@ def test_cli_guardrail_lint_help_documents_optional_extra(monkeypatch, capsys):
     assert exc.value.code == 0
     mock_lint.assert_not_called()
     output = capsys.readouterr().out
-    assert "skylos lint [path ...] [Ruff options]" in output
+    assert "skylos lint [RUFF_ARGS ...]" in output
     assert 'pip install "skylos[lint]"' in output
     assert "ruff check" in output
 
@@ -335,20 +483,18 @@ def test_cli_guardrail_lint_help_documents_optional_extra(monkeypatch, capsys):
 def test_cli_guardrail_clean_help_lists_noninteractive_flags(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["skylos", "clean", "--help"])
 
-    with (
-        patch("skylos.commands.clean_cmd.run_clean_command") as mock_clean,
-        pytest.raises(SystemExit) as exc,
-    ):
+    with pytest.raises(SystemExit) as exc:
         cli.main()
 
     assert exc.value.code == 0
-    mock_clean.assert_not_called()
     output = capsys.readouterr().out
-    assert "skylos clean [--dry-run|--apply]" in output
-    assert "--confidence N" in output
-    assert "--types import,function" in output
-    assert "--exclude FOLDER" in output
+    assert "usage: skylos clean" in output
+    assert "--confidence" in output
+    assert "--types" in output
+    assert "--exclude" in output
     assert "--comment-out" in output
+    assert "With no mode flag" in output
+    assert "--dry-run never writes" in output
 
 
 def test_cli_guardrail_whoami_dispatch_exits_zero(monkeypatch):

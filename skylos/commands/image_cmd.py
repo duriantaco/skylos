@@ -30,14 +30,31 @@ MAX_TIMEOUT_SECONDS = 900
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skylos image",
-        description="Scan a pinned container image using an installed Trivy.",
+        description=(
+            "Scan a digest-pinned remote registry image using an installed Trivy."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command")
     scan = subparsers.add_parser(
         "scan",
         help="Scan a registry image, then report its vulnerabilities",
+        description=(
+            "Scan a digest-pinned image from a remote registry with a trusted Trivy "
+            "executable installed on PATH. This requires network access and any "
+            "credentials needed by the registry."
+        ),
+        epilog=(
+            "Without --fail-on, vulnerability findings are report-only and exit 0.\n"
+            "Exit codes: 0 completed (or gate passed), 1 requested severity gate "
+            "failed, 2 scan or report incomplete."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    scan.add_argument("image", help="Repository image pinned to a sha256 digest")
+    scan.add_argument(
+        "image",
+        metavar="IMAGE@sha256:DIGEST",
+        help="Repository image pinned to a sha256 digest",
+    )
     scan.add_argument(
         "--platform",
         required=True,
@@ -46,7 +63,10 @@ def _parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on",
         choices=["low", "medium", "high", "critical"],
-        help="Fail the check for reported findings at or above this severity",
+        help=(
+            "Exit 1 for findings at or above this severity; omitted means "
+            "findings are report-only"
+        ),
     )
     scan.add_argument(
         "-o", "--output", default="-", help="Normalized JSON file; default: stdout"
