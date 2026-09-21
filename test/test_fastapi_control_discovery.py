@@ -859,6 +859,24 @@ def test_only_fastapi_candidate_files_are_parsed_and_candidate_errors_are_incomp
     assert broken["files_skipped"] == 1
 
 
+def test_relative_library_named_imports_do_not_prove_fastapi_controls(tmp_path):
+    _write(
+        tmp_path,
+        """
+from .fastapi import FastAPI, Depends
+from .fastapi.params import Security
+
+app = FastAPI()
+
+@app.get("/admin", dependencies=[Depends(require_admin), Security(require_user)])
+def admin():
+    return "ok"
+""",
+    )
+
+    assert discover_fastapi_controls(tmp_path, tmp_path)["controls"] == []
+
+
 def test_non_library_paths_are_covered_but_not_collected_as_controls(tmp_path):
     _write(
         tmp_path,

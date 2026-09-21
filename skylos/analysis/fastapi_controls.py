@@ -706,6 +706,11 @@ class _FastAPIControlCollector(ast.NodeVisitor):
                 continue
             bound = item.asname or item.name
             self.bindings.shadow(bound)
+            # A relative import names a local module, even when its spelling
+            # matches a known library. Keep the binding shadowed, but do not
+            # grant it FastAPI or standard-library provenance.
+            if node.level:
+                continue
             if module == "fastapi" and item.name in {"FastAPI", "APIRouter"}:
                 self.bindings.constructors[bound] = item.name
             elif module in {"fastapi", "fastapi.params"} and item.name in {
