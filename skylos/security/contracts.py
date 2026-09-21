@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from skylos.core.file_discovery import find_git_root
 from skylos.core.git_context import GitContext
 
 RULE_ID = "SKY-SC001"
@@ -48,6 +49,12 @@ def load_security_contracts(
     config: dict | None, project_root: str | os.PathLike[str]
 ) -> list[SecurityContract]:
     root = Path(project_root).resolve()
+    repository_root = find_git_root(root)
+    repository_prefix = (
+        root.relative_to(repository_root)
+        if repository_root is not None and root != repository_root
+        else None
+    )
     contracts = []
     raw_contracts = (config or {}).get("security_contracts") or []
     if not isinstance(raw_contracts, list):
@@ -77,7 +84,7 @@ def load_security_contracts(
         if not guards:
             continue
 
-        rel_path = _normalize_rel_path(root, file_path)
+        rel_path = _normalize_rel_path(root, file_path, repository_prefix)
         if not rel_path:
             continue
         contract_id = (
@@ -174,8 +181,19 @@ def detect_security_contract_regressions(
     return findings
 
 
-def _normalize_rel_path(root: Path, file_path: str) -> str | None:
+def _normalize_rel_path(
+    root: Path, file_path: str, repository_prefix: Path | None = None
+) -> str | None:
     candidate = Path(file_path)
+    if repository_prefix is not None and not candidate.is_absolute():
+        # Cloud records discovered controls relative to the Git repository.
+        # A scan of a monorepo project uses the project directory as its
+        # analyzer root, so remove that prefix before matching changed files
+        # and reading the contract's before/after route snapshots.
+        try:
+            candidate = candidate.relative_to(repository_prefix)
+        except ValueError:
+            pass
     resolved = (
         candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
     )

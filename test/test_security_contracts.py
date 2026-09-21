@@ -42,6 +42,61 @@ def test_load_security_contracts_accepts_fastapi_contracts(tmp_path):
     assert contract.guards == ("require_admin",)
 
 
+def test_repo_relative_promoted_contract_runs_from_monorepo_project(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    project = repo / "services" / "api"
+    project.mkdir(parents=True)
+    target = project / "app.py"
+    target.write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/admin')\n"
+        "def endpoint():\n"
+        "    return {}\n",
+        encoding="utf-8",
+    )
+    config = {
+        "security_contracts": [
+            {
+                "id": "control-promoted",
+                "framework": "fastapi",
+                "file": "services/api/app.py",
+                "handler": "endpoint",
+                "guards": ["require_admin"],
+            }
+        ]
+    }
+    before = (
+        "from fastapi import FastAPI, Depends\n"
+        "app = FastAPI()\n"
+        "@app.get('/admin', dependencies=[Depends(require_admin)])\n"
+        "def endpoint():\n"
+        "    return {}\n"
+    )
+
+    def fake_run(_context, command, *args):
+        assert command == "show"
+        assert args == ("HEAD:services/api/app.py",)
+        return type("Result", (), {"returncode": 0, "stdout": before})()
+
+    monkeypatch.setattr(
+        "skylos.security.contracts.resolve_diff_base_ref", lambda _: "HEAD"
+    )
+    monkeypatch.setattr("skylos.security.contracts.GitContext.run", fake_run)
+
+    contracts = load_security_contracts(config, project)
+    assert len(contracts) == 1
+    assert contracts[0].file_path == "app.py"
+    findings = detect_security_contract_regressions(
+        project, config, changed_files={str(target)}
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "SKY-SC001"
+
+
 def test_load_security_contracts_rejects_paths_outside_repo(tmp_path):
     outside = tmp_path.parent / "outside.py"
     config = {
