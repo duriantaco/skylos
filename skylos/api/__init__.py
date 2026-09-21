@@ -1151,6 +1151,7 @@ def _finalize_report_upload(
     strict=False,
     is_forced=False,
     gitlab_managed=False,
+    post_success=None,
 ) -> dict:
     if gitlab_managed and response.status_code in (401, 402):
         return _managed_report_rejected()
@@ -1185,6 +1186,24 @@ def _finalize_report_upload(
         from skylos.cloud.gitlab import delivery_receipt
 
         result.update(delivery_receipt(data.get("gitlab_delivery")))
+    if post_success is not None:
+        try:
+            extra = post_success(result)
+        except Exception:
+            logger.debug("Post-upload processing failed", exc_info=True)
+            extra = {
+                "control_registry": {
+                    "status": "unavailable",
+                    "discovered_controls": 0,
+                    "imported_controls": 0,
+                    "skipped_controls": 0,
+                    "truncated": False,
+                    "reason": "post_upload_failed",
+                }
+            }
+        if isinstance(extra, dict):
+            result.update(extra)
+    if gitlab_managed:
         # The CLI evaluates this independent delivery status before its gate;
         # retaining the saved scan ID and gate result avoids a misleading retry.
         return result
@@ -1441,6 +1460,7 @@ def upload_report_legacy(
     strict=False,
     is_forced=False,
     initial_message: str | None = "Uploading scan results...",
+    post_success=None,
 ) -> dict:
     response, last_err = _post_report_payload(
         token,
@@ -1457,6 +1477,7 @@ def upload_report_legacy(
         strict=strict,
         is_forced=is_forced,
         gitlab_managed=token.startswith("gitlab_oidc:"),
+        post_success=post_success,
     )
 
 
@@ -1468,6 +1489,7 @@ def upload_report_compatibility(
     strict=False,
     is_forced=False,
     initial_message=None,
+    post_success=None,
 ) -> dict:
     if token.startswith("gitlab_oidc:"):
         message = (
@@ -1492,6 +1514,7 @@ def upload_report_compatibility(
         strict=strict,
         is_forced=is_forced,
         initial_message=initial_message,
+        post_success=post_success,
     )
 
 
@@ -1502,6 +1525,7 @@ def upload_report_v2(
     quiet=False,
     strict=False,
     is_forced=False,
+    post_success=None,
 ) -> dict:
     artifacts = _build_report_artifacts(prepared)
     try:
@@ -1540,6 +1564,7 @@ def upload_report_v2(
             strict=strict,
             is_forced=is_forced,
             gitlab_managed=token.startswith("gitlab_oidc:"),
+            post_success=post_success,
         )
     finally:
         for artifact in artifacts.values():
@@ -1831,6 +1856,13 @@ def upload_report(
             "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
         }
 
+    # Bind discovery to the working-tree state at upload start. Re-reading
+    # source only after a slow report request returns could attach a newer
+    # control snapshot to the already-saved scan ID.
+    from skylos.cloud.control_registry import capture_scan_controls
+
+    control_discovery_snapshot = capture_scan_controls(result_json)
+
     if not quiet:
         info = get_project_info(token)
         if info and info.get("ok"):
@@ -1846,6 +1878,28 @@ def upload_report(
         gitlab_managed=token.startswith("gitlab_oidc:"),
         gitlab_full_scan=gitlab_full_scan,
     )
+
+    def import_discovered_controls(upload_result):
+        from skylos.cloud.control_registry import (
+            format_control_registry_status,
+            import_scan_controls,
+        )
+
+        status = import_scan_controls(
+            result_json,
+            scan_id=upload_result.get("scan_id"),
+            commit_hash=prepared.metadata.get("commit_hash"),
+            branch=prepared.metadata.get("branch"),
+            base_url=BASE_URL,
+            auth_headers=_build_auth_headers(token),
+            project_root=prepared.metadata.get("project_root"),
+            discovery_snapshot=control_discovery_snapshot,
+        )
+        if not quiet:
+            message = format_control_registry_status(status)
+            if message:
+                print(f"\n{message}")
+        return {"control_registry": status}
 
     if token.startswith("gitlab_oidc:"):
         from skylos.cloud.gitlab import managed_project_root
@@ -1868,6 +1922,7 @@ def upload_report(
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
+            post_success=import_discovered_controls,
         )
 
     upload_result = upload_report_v2(
@@ -1876,6 +1931,7 @@ def upload_report(
         quiet=quiet,
         strict=strict,
         is_forced=is_forced,
+        post_success=import_discovered_controls,
     )
     if _should_retry_with_degraded_large_upload(upload_result):
         if token.startswith("gitlab_oidc:"):
@@ -1897,6 +1953,7 @@ def upload_report(
             strict=strict,
             is_forced=is_forced,
             initial_message=None,
+            post_success=import_discovered_controls,
         )
     return upload_result
 
