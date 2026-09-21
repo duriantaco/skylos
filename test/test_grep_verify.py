@@ -3337,6 +3337,66 @@ class TestAnalyzerGrepVerifyCache:
         assert mock_grep.call_args.kwargs["cache"] is cache
 
 
+class TestTypeScriptBindingEvidenceOwnership:
+    @staticmethod
+    def _finding(path: Path, *, kind: str = "function") -> dict:
+        return {
+            "name": "issue877DeadHelper",
+            "full_name": "issue877DeadHelper",
+            "simple_name": "issue877DeadHelper",
+            "type": kind,
+            "file": str(path),
+            "line": 1,
+            "confidence": 100,
+        }
+
+    def test_unrelated_file_name_match_does_not_rescue_typescript_binding(
+        self, tmp_path
+    ):
+        source = tmp_path / "unused.ts"
+        unrelated = tmp_path / "test_scanner.py"
+        finding = self._finding(source)
+
+        with patch.object(
+            grep_verify_module,
+            "multi_strategy_search",
+            return_value={
+                "test_references": [
+                    f'{unrelated}:9:assert "issue877DeadHelper" in unused'
+                ]
+            },
+        ):
+            verdicts = grep_verify_findings([finding], str(tmp_path))
+
+        assert verdicts == {}
+
+    def test_same_file_evidence_can_still_rescue_typescript_binding(self, tmp_path):
+        source = tmp_path / "unused.ts"
+        finding = self._finding(source)
+
+        with patch.object(
+            grep_verify_module,
+            "multi_strategy_search",
+            return_value={"references": [f"{source}:9:issue877DeadHelper();"]},
+        ):
+            verdicts = grep_verify_findings([finding], str(tmp_path))
+
+        assert verdicts["issue877DeadHelper"].alive is True
+
+    def test_grep_cannot_rescue_typescript_import_binding(self, tmp_path):
+        source = tmp_path / "unused.ts"
+        finding = self._finding(source, kind="import")
+
+        with patch.object(
+            grep_verify_module,
+            "multi_strategy_search",
+            return_value={"references": [f"{source}:9:issue877DeadHelper();"]},
+        ):
+            verdicts = grep_verify_findings([finding], str(tmp_path))
+
+        assert verdicts == {}
+
+
 class TestDetectLanguage:
     def test_python(self):
         assert detect_language("foo.py") == "python"

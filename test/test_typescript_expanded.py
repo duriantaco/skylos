@@ -1201,6 +1201,42 @@ class TestTSClassDefs:
 
 
 class TestMixedRepoIntegration:
+    def test_unrelated_test_strings_do_not_hide_typescript_dead_code(self, tmp_path):
+        """Regression for #877: grep evidence must respect TS binding owners."""
+        from skylos.analyzer import analyze
+
+        source = tmp_path / "unused.ts"
+        _write(
+            source,
+            'import { issue877UnusedImport } from "some-module";\n'
+            "\n"
+            "function issue877DeadHelper() { return 42; }\n"
+            "class Issue877DeadClass {}\n"
+            "\n"
+            "export function issue877LiveEntry() { return 100; }\n",
+        )
+        _write(
+            tmp_path / "test_scanner.py",
+            "EXPECTED_UNUSED = {\n"
+            '    "issue877DeadHelper",\n'
+            '    "issue877UnusedImport",\n'
+            '    "Issue877DeadClass",\n'
+            "}\n",
+        )
+
+        result = json.loads(analyze(str(source), conf=0))
+
+        unused_functions = {
+            item["name"] for item in result.get("unused_functions", [])
+        }
+        unused_imports = {item["name"] for item in result.get("unused_imports", [])}
+        unused_classes = {item["name"] for item in result.get("unused_classes", [])}
+
+        assert "issue877DeadHelper" in unused_functions
+        assert "issue877UnusedImport" in unused_imports
+        assert "Issue877DeadClass" in unused_classes
+        assert result["analysis_summary"]["grep_verify"]["rescued_count"] == 0
+
     def test_esbuild_entry_and_jsdoc_types_are_not_reported_as_unused_files(
         self, tmp_path
     ):
