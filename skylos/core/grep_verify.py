@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from skylos.core.grep_search_state import (
@@ -18,6 +19,8 @@ from skylos.core.grep_verify_common import (
     _GrepDeadlineExceeded,
     _GrepEvidence,
     _GrepExecutionIncomplete,
+    _grep_line_path,
+    _grep_paths_equal,
     _run_grep,
     detect_language,
     execute_grep_batch,
@@ -383,10 +386,11 @@ def _apply_deterministic_rules(
 
 
 def _filter_evidence(finding, results, evidence_filter):
+    filtered = _filter_typescript_binding_evidence(finding, results)
     if evidence_filter is None:
-        return results
+        return filtered
     try:
-        filtered = evidence_filter(finding, results)
+        filtered = evidence_filter(finding, filtered)
         return GrepSearchResults(
             filtered,
             truncated_strategies=getattr(results, "truncated_strategies", frozenset()),
@@ -394,6 +398,57 @@ def _filter_evidence(finding, results, evidence_filter):
     except Exception as exc:
         # A failed ownership check cannot justify a negative verdict.
         raise _GrepExecutionIncomplete("Source ownership verification failed") from exc
+
+
+_TYPESCRIPT_BINDING_EXTENSIONS = frozenset({".ts", ".tsx", ".mts", ".cts"})
+
+
+def _filter_typescript_binding_evidence(
+    finding: dict, results: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """Keep grep rescues within the lexical owner of a TypeScript binding.
+
+    TypeScript imports and non-exported declarations are file-local bindings.
+    The AST reference pass and resolved import graph establish their real uses;
+    an equal spelling in another file cannot make the binding live.  Grep is
+    therefore only allowed to supplement non-import findings with evidence
+    from the defining file, and cannot override an unused-import decision.
+    """
+    finding_file = str(finding.get("file", ""))
+    if Path(finding_file).suffix.lower() not in _TYPESCRIPT_BINDING_EXTENSIONS:
+        return results
+    if finding.get("type") == "import":
+        return {}
+
+    filtered: dict[str, list[str]] = {}
+    try:
+        resolved_finding_file = Path(finding_file).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        resolved_finding_file = None
+
+    for strategy, evidence in results.items():
+        owned_evidence = []
+        for line in evidence:
+            evidence_path = _grep_line_path(line)
+            if not evidence_path:
+                continue
+            same_file = _grep_paths_equal(finding_file, evidence_path)
+            if not same_file and resolved_finding_file is not None:
+                try:
+                    same_file = (
+                        Path(evidence_path).resolve(strict=False)
+                        == resolved_finding_file
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    same_file = False
+            if same_file:
+                owned_evidence.append(line)
+        if owned_evidence:
+            filtered[strategy] = owned_evidence
+    return GrepSearchResults(
+        filtered,
+        truncated_strategies=getattr(results, "truncated_strategies", frozenset()),
+    )
 
 
 def _search_verification_evidence(
