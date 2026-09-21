@@ -43,6 +43,7 @@ from skylos.visitors.languages.typescript.analysis import (
     _discover_ts_vscode_lifecycle_entry_files,
     find_dead_ts_files,
     find_unused_ts_exports,
+    mark_package_api_ts_exports_consumed,
 )
 from skylos.analysis.ast_cache import (
     MODE_IGNORE,
@@ -1839,6 +1840,14 @@ class Skylos:
     ):
         if not hasattr(self, "ts_consumed_exports"):
             return
+        mark_package_api_ts_exports_consumed(
+            self.defs,
+            self.ts_consumed_exports,
+            files or [],
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
         lifecycle_entry_points = _discover_ts_vscode_lifecycle_entry_files(
             files or [],
             project_root=str(self._project_root),
