@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -40,6 +42,50 @@ def admin():
             }
         }
     }
+
+
+def test_report_payload_carries_scope_in_inline_and_artifact_protocols(
+    tmp_path, monkeypatch
+):
+    result = _scan_result(tmp_path)
+    result["provenance"] = None
+    monkeypatch.setattr(api, "get_git_info", lambda: ("abc123", "main", "actor", {}))
+    monkeypatch.setattr(api, "get_git_root", lambda: str(tmp_path))
+    monkeypatch.setattr(api, "detect_ai_code", lambda _root: {"detected": False})
+    monkeypatch.setattr(api, "_load_repo_link", lambda _root: {})
+
+    prepared = api._prepare_report_upload(result)
+    expected = result["analysis_summary"]["comparison_scope"]
+
+    assert prepared.core_payload["comparison_scope"] == expected
+    assert prepared.legacy_payload["comparison_scope"] == expected
+    assert "comparison_scope" not in prepared.metadata
+
+    artifacts = api._build_report_artifacts(prepared)
+    try:
+        with gzip.open(
+            artifacts["scan_report"].file_path, "rt", encoding="utf-8"
+        ) as stream:
+            uploaded_report = json.load(stream)
+        assert uploaded_report["comparison_scope"] == expected
+    finally:
+        for artifact in artifacts.values():
+            artifact.cleanup()
+
+
+def test_invalid_scope_cannot_be_uploaded_as_a_complete_claim(tmp_path, monkeypatch):
+    result = _scan_result(tmp_path)
+    result["provenance"] = None
+    result["analysis_summary"]["comparison_scope"]["excluded_folders"] = [42]
+    monkeypatch.setattr(api, "get_git_info", lambda: ("abc123", "main", "actor", {}))
+    monkeypatch.setattr(api, "get_git_root", lambda: str(tmp_path))
+    monkeypatch.setattr(api, "detect_ai_code", lambda _root: {"detected": False})
+    monkeypatch.setattr(api, "_load_repo_link", lambda _root: {})
+
+    prepared = api._prepare_report_upload(result)
+
+    assert "comparison_scope" not in prepared.core_payload
+    assert "comparison_scope" not in prepared.legacy_payload
 
 
 def test_imports_discovered_controls_with_scan_and_monorepo_identity(

@@ -40,6 +40,7 @@ from skylos.api._payloads import (
     _compact_upload_finding,
     _extract_workspace_upload_metadata,
     _infer_upload_project_root,
+    _upload_comparison_scope,
     _int_upload_value as _int_upload_value,
     _json_size_bytes,
     _truncate_upload_text as _truncate_upload_text,
@@ -841,6 +842,9 @@ def _prepare_report_upload(
             full_scan=gitlab_full_scan,
         )
     core_payload.update(metadata)
+    comparison_scope = _upload_comparison_scope(result_json)
+    if comparison_scope is not None:
+        core_payload["comparison_scope"] = comparison_scope
     legacy_payload = _build_legacy_payload(core_payload, definitions)
     compatibility_payload = _build_compatibility_inline_payload(
         all_findings,

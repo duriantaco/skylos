@@ -13,6 +13,7 @@ __all__ = [
     "_compact_upload_finding",
     "_extract_workspace_upload_metadata",
     "_infer_upload_project_root",
+    "_upload_comparison_scope",
     "_int_upload_value",
     "_json_size_bytes",
     "_truncate_upload_text",
@@ -68,6 +69,59 @@ def _infer_upload_project_root(payload, git_root) -> str | None:
             if normalized is not None:
                 return normalized
     return None
+
+
+def _upload_comparison_scope(payload: Any) -> dict[str, Any] | None:
+    """Carry a bounded analyzer scope with every report upload protocol.
+
+    Cloud needs this exact scan surface to distinguish a complete project
+    snapshot from a partial upload. Invalid or oversized metadata is omitted
+    so Cloud treats the scan as incomplete rather than trusting a truncated
+    claim.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    summary = payload.get("analysis_summary")
+    if not isinstance(summary, dict):
+        return None
+    scope = summary.get("comparison_scope")
+    if not isinstance(scope, dict):
+        return None
+    kind = scope.get("kind")
+    scan_path = scope.get("scan_path")
+    repository_root = scope.get("repository_root")
+    complete = scope.get("complete_repository")
+    changed = scope.get("changed_files_only")
+    excluded = scope.get("excluded_folders")
+    if (
+        not isinstance(kind, str)
+        or not kind
+        or len(kind) > 80
+        or not isinstance(scan_path, str)
+        or not scan_path
+        or len(scan_path) > 2048
+        or not isinstance(repository_root, str)
+        or not repository_root
+        or len(repository_root) > 2048
+        or not isinstance(complete, bool)
+        or not isinstance(changed, bool)
+        or not isinstance(excluded, list)
+        or len(excluded) > 200
+        or any(
+            not isinstance(item, str) or not item or len(item) > 160
+            for item in excluded
+        )
+    ):
+        return None
+    return {
+        "kind": kind,
+        "scan_path": scan_path,
+        "repository_root": repository_root,
+        "complete_repository": complete,
+        "changed_files_only": changed,
+        "excluded_folders": list(excluded),
+    }
 
 
 def _extract_workspace_upload_metadata(payload) -> dict[str, Any] | None:
