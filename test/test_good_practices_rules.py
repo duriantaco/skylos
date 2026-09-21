@@ -255,3 +255,67 @@ def test_repo_policy_accepts_configured_type_checker(tmp_path):
     )
 
     assert analyze_repo_policy(tmp_path, {}) == []
+
+
+def test_repo_policy_skips_python_checks_on_typescript_project(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        """
+        [tool.skylos]
+        complexity = 10
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text('{"name": "ts-project"}', encoding="utf-8")
+    (tmp_path / "index.ts").write_text('console.log("hello");', encoding="utf-8")
+
+    findings = analyze_repo_policy(tmp_path, {})
+    rule_ids = {f["rule_id"] for f in findings}
+    assert "SKY-R101" not in rule_ids
+    assert "SKY-R102" not in rule_ids
+
+
+def test_repo_policy_respects_source_files_without_python(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        """
+        [tool.skylos]
+        complexity = 10
+        """,
+        encoding="utf-8",
+    )
+    ts_file = tmp_path / "index.ts"
+    ts_file.write_text('console.log("hello");', encoding="utf-8")
+
+    findings = analyze_repo_policy(
+        tmp_path,
+        {},
+        source_files=[ts_file],
+    )
+    rule_ids = {f["rule_id"] for f in findings}
+    assert "SKY-R101" not in rule_ids
+    assert "SKY-R102" not in rule_ids
+
+
+def test_repo_policy_ignores_python_files_in_excluded_folders(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        """
+        [tool.skylos]
+        complexity = 10
+        exclude = ["scripts"]
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text('{"name": "ts-project"}', encoding="utf-8")
+    (tmp_path / "index.ts").write_text('console.log("hello");', encoding="utf-8")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "build.py").write_text('print("build")', encoding="utf-8")
+
+    findings = analyze_repo_policy(
+        tmp_path,
+        {"exclude": ["scripts"]},
+        exclude_folders={"scripts"},
+    )
+    rule_ids = {f["rule_id"] for f in findings}
+    assert "SKY-R101" not in rule_ids
+    assert "SKY-R102" not in rule_ids
+
