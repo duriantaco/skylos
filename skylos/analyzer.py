@@ -4767,9 +4767,10 @@ class Skylos:
 
             try:
                 policy_findings = analyze_repo_policy(
-                    root,
+                    project_root,
                     project_cfg,
                     changed_files=requested_changed_files,
+                    exclude_folders=exclude_folders,
                 )
                 if policy_findings:
                     all_quality.extend(policy_findings)
