@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dynamic-dispatch-second-opinion",
+      "path": "fixtures/jev_dynamic_dispatch",
+      "description": "Can a second opinion distinguish dynamically invoked functions from an uninvoked peer?",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic research fixture with no source-embedded answers."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "code.py", "symbol": "handler_c"}
+        ],
+        "used": [
+          {"kind": "function", "file": "code.py", "symbol": "handler_a"},
+          {"kind": "function", "file": "code.py", "symbol": "handler_b"},
+          {"kind": "function", "file": "code.py", "symbol": "handler_d"}
+        ]
+      }
+    }
+  ]
+}

@@ -31,6 +31,9 @@ coverage.xml
 .mcpregistry_github_token
 .mcpregistry_registry_token
 /PR_LOG.md
+/jev-dead-code-results.json
+/jev-dead-code-*-results.json
+/jev-dead-code-*-comparison.json
 # Local Git worktrees and manual validation artifacts (JSON/SARIF reports).
 /.worktrees/
 # Private local research and planning notes; not public documentation.
