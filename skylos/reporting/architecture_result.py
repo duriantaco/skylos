@@ -28,8 +28,13 @@ def attach_circular_and_architecture(
     architecture_main_guard_modules,
     pyproject_entrypoint_qnames,
     pyproject_entrypoint_modules,
+    *,
+    ts_importers_of=None,
+    project_root=None,
+    workspace_inventory=None,
 ):
-    if not project_cfg.get("check_circular", True):
+    check_circular = project_cfg.get("check_circular", True)
+    if not check_circular and not enable_quality:
         return
     circular_rule = _build_circular_rule(files, modmap, all_raw_imports)
     try:
@@ -37,7 +42,7 @@ def attach_circular_and_architecture(
     except Exception:
         _debug_traceback()
         return
-    if circular_findings:
+    if check_circular and circular_findings:
         result["circular_dependencies"] = circular_findings
     if enable_quality:
         _attach_architecture(
@@ -53,6 +58,9 @@ def attach_circular_and_architecture(
             architecture_main_guard_modules,
             pyproject_entrypoint_qnames,
             pyproject_entrypoint_modules,
+            ts_importers_of,
+            project_root,
+            workspace_inventory,
         )
 
 
@@ -85,6 +93,9 @@ def _attach_architecture(
     architecture_main_guard_modules,
     pyproject_entrypoint_qnames,
     pyproject_entrypoint_modules,
+    ts_importers_of,
+    project_root,
+    workspace_inventory,
 ):
     try:
         findings, summary = _architecture_findings(
@@ -98,6 +109,9 @@ def _attach_architecture(
             architecture_main_guard_modules,
             pyproject_entrypoint_qnames,
             pyproject_entrypoint_modules,
+            ts_importers_of,
+            project_root,
+            workspace_inventory,
         )
     except Exception:
         _debug_traceback()
@@ -118,6 +132,9 @@ def _architecture_findings(
     architecture_main_guard_modules,
     pyproject_entrypoint_qnames,
     pyproject_entrypoint_modules,
+    ts_importers_of,
+    project_root,
+    workspace_inventory,
 ):
     from skylos.analysis.architecture import get_architecture_findings
 
@@ -133,12 +150,27 @@ def _architecture_findings(
     )
     package_modules = _package_boundary_modules(all_raw_imports, modmap, mod_files)
     mod_trees = _architecture_module_trees(files, modmap, architecture_abstractness)
-    return get_architecture_findings(
+    module_abstractness = dict(architecture_abstractness or {})
+    module_loc = dict(architecture_loc or {})
+    module_packages = {}
+    unmeasured_ts_modules = _add_typescript_architecture(
+        files,
+        project_root,
+        ts_importers_of,
+        dep_graph,
+        mod_files,
+        module_abstractness,
+        module_loc,
+        module_packages,
+        workspace_inventory,
+    )
+    findings, summary = get_architecture_findings(
         dependency_graph=dep_graph,
         module_files=mod_files,
         module_trees=mod_trees,
-        module_abstractness=architecture_abstractness,
-        module_loc=architecture_loc,
+        module_abstractness=module_abstractness,
+        module_loc=module_loc,
+        module_packages=module_packages,
         entrypoint_modules=entrypoint_modules,
         package_boundary_modules=package_modules,
         layer_policy=project_cfg.get("architecture"),
@@ -146,6 +178,91 @@ def _architecture_findings(
             project_cfg.get("architecture")
         ),
     )
+    if unmeasured_ts_modules:
+        # Graph and layer checks remain valid without a parseable source, but
+        # file-level I/A/D warnings would assume A=0 and invent a signal.
+        findings = [
+            finding
+            for finding in findings
+            if not (
+                finding.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+                and finding.get("name") in unmeasured_ts_modules
+            )
+        ]
+        summary["abstractness_unavailable_modules"] = sorted(unmeasured_ts_modules)
+    return findings, summary
+
+
+def _add_typescript_architecture(
+    files,
+    project_root,
+    ts_importers_of,
+    dep_graph,
+    module_files,
+    module_abstractness,
+    module_loc,
+    module_packages,
+    workspace_inventory,
+):
+    from skylos.analysis.typescript_architecture import build_ts_architecture_inputs
+
+    root = Path(project_root) if project_root is not None else _source_root(files)
+    ts_graph, ts_files, ts_abstractness, ts_loc = build_ts_architecture_inputs(
+        files, root, ts_importers_of or {}
+    )
+    if not ts_files:
+        return set()
+
+    # Python and TypeScript may share a relative stem (for example app.py and
+    # app.ts). Keep both nodes while retaining the directory prefix used by
+    # architecture layer patterns.
+    names = {}
+    occupied = set(module_files) | set(ts_files)
+    for name in sorted(ts_files):
+        if name not in module_files:
+            names[name] = name
+            continue
+        suffix = 1
+        candidate = f"{name}.ts"
+        while candidate in occupied:
+            suffix += 1
+            candidate = f"{name}.ts{suffix}"
+        names[name] = candidate
+        occupied.add(candidate)
+
+    workspace_packages = sorted(
+        (
+            (package.root, package.name)
+            for package in getattr(workspace_inventory, "packages", ())
+        ),
+        key=lambda package: len(package[0].parts),
+        reverse=True,
+    )
+    root_package = getattr(workspace_inventory, "root_package", None)
+    root_package_name = root_package.name if root_package is not None else "root"
+    for name, file_path in ts_files.items():
+        renamed = names[name]
+        module_files[renamed] = file_path
+        module_packages[renamed] = _typescript_release_unit(
+            Path(file_path), workspace_packages, root_package_name
+        )
+        if name in ts_abstractness:
+            module_abstractness[renamed] = ts_abstractness[name]
+        if name in ts_loc:
+            module_loc[renamed] = ts_loc[name]
+    for name, dependencies in ts_graph.items():
+        dep_graph[names[name]] = {names[dep] for dep in dependencies}
+    return {names[name] for name in ts_files if name not in ts_abstractness}
+
+
+def _typescript_release_unit(file_path, workspace_packages, root_package_name):
+    for package_root, package_name in workspace_packages:
+        try:
+            file_path.relative_to(package_root)
+        except ValueError:
+            continue
+        return package_name
+    return root_package_name
 
 
 def _architecture_entrypoint_modules(

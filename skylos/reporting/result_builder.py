@@ -75,6 +75,7 @@ def build_analysis_result(
     architecture_main_guard_modules=None,
     pyproject_entrypoint_qnames=None,
     pyproject_entrypoint_modules=None,
+    ts_importers_of=None,
     config_file=None,
     analysis_errors=None,
     include_review_proofs=False,
@@ -152,6 +153,9 @@ def build_analysis_result(
         architecture_main_guard_modules,
         pyproject_entrypoint_qnames,
         pyproject_entrypoint_modules,
+        ts_importers_of=ts_importers_of,
+        project_root=getattr(analyzer, "_project_root", None),
+        workspace_inventory=workspace_inventory,
     )
     if isinstance(getattr(analyzer, "_review_context", None), dict):
         _attach_effective_review_config_hashes(result, project_cfg)
