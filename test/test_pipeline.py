@@ -737,6 +737,96 @@ class TestPipelinePhase2a:
         dead = [f for f in findings if f.get("_category") == "dead_code"]
         assert len(dead) == 0
 
+    def test_jev_agreement_retains_static_finding_without_llm_confirmation(
+        self, tmp_path
+    ):
+        verified = [
+            {
+                "name": "dead_func",
+                "file": "/proj/a.py",
+                "line": 20,
+                "_category": "dead_code",
+                "_jev_agreed": True,
+            },
+        ]
+        findings, agent = self._run_with_verifier(
+            verified, tmp_path, jev_precheck=True
+        )
+
+        dead = [f for f in findings if f.get("_category") == "dead_code"]
+        assert len(dead) == 1
+        assert dead[0]["_source"] == "static"
+        assert dead[0]["_confidence"] == "medium"
+        assert dead[0]["_suppressed"] is False
+        assert dead[0].get("_verified_by_llm") is not True
+        assert agent.verify_candidates.call_args.kwargs["jev_precheck"] is True
+        agent.healthcheck.assert_not_called()
+
+    def test_jev_judge_suppresses_confidently_used_finding(self, tmp_path):
+        verified = [
+            {
+                "name": "live_func",
+                "file": "/proj/a.py",
+                "line": 20,
+                "_category": "dead_code",
+                "_jev_judged_retained": True,
+                "_llm_verdict": "FALSE_POSITIVE",
+                "_verified_by_llm": False,
+            },
+        ]
+        findings, agent = self._run_with_verifier(
+            verified, tmp_path, jev_judge=True
+        )
+
+        assert [f for f in findings if f.get("_category") == "dead_code"] == []
+        assert verified[0]["_suppressed"] is True
+        assert verified[0]["_source"] == "static+jev"
+        assert agent.verify_candidates.call_args.kwargs["jev_judge"] is True
+        assert agent.verify_candidates.call_args.kwargs["jev_precheck"] is False
+        agent.healthcheck.assert_not_called()
+
+    def test_jev_judge_retains_unused_without_llm_or_fix_provenance(
+        self, tmp_path
+    ):
+        verified = [
+            {
+                "name": "dead_func",
+                "file": "/proj/a.py",
+                "line": 20,
+                "_category": "dead_code",
+                "_jev_agreed": True,
+                "_verified_by_llm": False,
+            },
+        ]
+        findings, agent = self._run_with_verifier(
+            verified, tmp_path, jev_judge=True
+        )
+
+        dead = [f for f in findings if f.get("_category") == "dead_code"]
+        assert len(dead) == 1
+        assert dead[0]["_source"] == "static+jev"
+        assert dead[0]["_confidence"] == "medium"
+        assert dead[0]["_suppressed"] is False
+        assert dead[0].get("_llm_verdict") is None
+        assert agent.verify_candidates.call_args.kwargs["jev_judge"] is True
+        agent.healthcheck.assert_not_called()
+
+    def test_llm_false_positive_overrides_stale_jev_agreement(self, tmp_path):
+        verified = [
+            {
+                "name": "dead_func",
+                "file": "/proj/a.py",
+                "line": 20,
+                "_category": "dead_code",
+                "_jev_agreed": True,
+                "_llm_verdict": "FALSE_POSITIVE",
+            },
+        ]
+        findings, _ = self._run_with_verifier(verified, tmp_path)
+
+        dead = [f for f in findings if f.get("_category") == "dead_code"]
+        assert dead == []
+
     def test_uncertain_suppressed_from_output(self, tmp_path):
         verified = [
             {
