@@ -14,6 +14,7 @@ from skylos.visitors.languages.typescript.analysis import (
     demote_unconsumed_ts_exports,
     find_unused_ts_exports,
     find_dead_ts_files,
+    mark_package_api_ts_exports_consumed,
     _is_nextjs_convention_file,
     _NEXTJS_CONVENTION_EXPORTS,
     _discover_vitest_config_entries,
@@ -28,6 +29,14 @@ def _make_def(name, typ, filename, line=1, exported=False):
 
 def _scan_raw_imports(*paths: Path) -> dict[str, list[dict]]:
     return {str(path): scan_typescript_file(str(path))[12] for path in paths}
+
+
+def _scan_defs(*paths: Path) -> dict[str, Definition]:
+    definitions = {}
+    for path in paths:
+        for index, definition in enumerate(scan_typescript_file(str(path))[0]):
+            definitions[f"{path}:{index}:{definition.name}"] = definition
+    return definitions
 
 
 # ---------- Export demotion exceptions ----------
@@ -360,6 +369,270 @@ class TestWildcardPassthrough:
 
         consumed, _, _ = build_ts_import_graph(ts_raw_imports, defs)
         assert "helper" in consumed[str(mod_file)]
+
+
+class TestPackageApiConsumption:
+    def test_package_entrypoint_star_reexport_consumes_public_binding(self, tmp_path):
+        src_dir = tmp_path / "src"
+        engine_dir = src_dir / "engine"
+        engine_dir.mkdir(parents=True)
+        entry_file = src_dir / "index.ts"
+        engine_file = engine_dir / "index.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"reexport-repro","main":"dist/src/index.js"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text('export * from "./engine";\n', encoding="utf-8")
+        engine_file.write_text(
+            "export const processReview = () => true;\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file, engine_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file, engine_file],
+            project_root=str(tmp_path),
+        )
+
+        assert marked == {(str(engine_file), "processReview")}
+        assert consumed_exports == {str(engine_file): {"processReview"}}
+        assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
+
+    def test_star_reexport_does_not_consume_default_or_ambiguous_names(
+        self, tmp_path
+    ):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        entry_file = src_dir / "index.ts"
+        first_file = src_dir / "first.ts"
+        second_file = src_dir / "second.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"precision-repro","main":"src/index.ts"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            'export * from "./first";\nexport * from "./second";\n',
+            encoding="utf-8",
+        )
+        first_file.write_text(
+            "export default function hiddenDefault() { return false; }\n"
+            'export function Collision() { return "first"; }\n'
+            "export function FirstOnly() { return true; }\n",
+            encoding="utf-8",
+        )
+        second_file.write_text(
+            'export function Collision() { return "second"; }\n',
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file, first_file, second_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file, first_file, second_file],
+            project_root=str(tmp_path),
+        )
+
+        assert (str(first_file), "FirstOnly") in marked
+        assert all(name != "hiddenDefault" for _file, name in marked)
+        assert all(name != "Collision" for _file, name in marked)
+
+        demoted = demote_unconsumed_ts_exports(definitions, consumed_exports)
+        demoted_names = {definition.simple_name for definition in demoted}
+        assert "FirstOnly" not in demoted_names
+        assert {"hiddenDefault", "Collision"} <= demoted_names
+
+    def test_internal_barrel_does_not_become_public_api(self, tmp_path):
+        src_dir = tmp_path / "src"
+        internal_dir = src_dir / "internal"
+        internal_dir.mkdir(parents=True)
+        entry_file = src_dir / "index.ts"
+        barrel_file = internal_dir / "index.ts"
+        feature_file = internal_dir / "feature.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"internal-repro","main":"src/index.ts"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            "export const publicRoot = true;\n", encoding="utf-8"
+        )
+        barrel_file.write_text('export * from "./feature";\n', encoding="utf-8")
+        feature_file.write_text(
+            "export const staleFeature = true;\n", encoding="utf-8"
+        )
+
+        definitions = _scan_defs(entry_file, barrel_file, feature_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file, barrel_file, feature_file],
+            project_root=str(tmp_path),
+        )
+
+        assert (str(entry_file), "publicRoot") in marked
+        assert (str(feature_file), "staleFeature") not in marked
+
+        demoted = demote_unconsumed_ts_exports(definitions, consumed_exports)
+        assert {definition.simple_name for definition in demoted} == {
+            "staleFeature"
+        }
+
+    def test_bin_entrypoint_does_not_make_module_exports_public(self, tmp_path):
+        cli_file = tmp_path / "src" / "cli.ts"
+        cli_file.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"name":"cli-repro","bin":"src/cli.ts"}',
+            encoding="utf-8",
+        )
+        cli_file.write_text(
+            "export function unusedCliHelper() { return true; }\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(cli_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [cli_file],
+            project_root=str(tmp_path),
+        )
+
+        assert marked == set()
+        demoted = demote_unconsumed_ts_exports(definitions, consumed_exports)
+        assert [definition.simple_name for definition in demoted] == [
+            "unusedCliHelper"
+        ]
+
+    def test_namespace_reexport_consumes_its_typescript_surface(self, tmp_path):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        entry_file = src_dir / "index.ts"
+        engine_file = src_dir / "engine.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"namespace-repro","main":"src/index.ts"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            'export * as engine from "./engine";\n', encoding="utf-8"
+        )
+        engine_file.write_text(
+            "export const helper = () => true;\n"
+            "export default function defaultHelper() { return true; }\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file, engine_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file, engine_file],
+            project_root=str(tmp_path),
+        )
+
+        assert (str(engine_file), "helper") in marked
+        assert (str(engine_file), "defaultHelper") in marked
+        assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
+
+    def test_javascript_entrypoint_is_not_promoted_by_typescript_api_logic(
+        self, tmp_path
+    ):
+        entry_file = tmp_path / "src" / "index.js"
+        entry_file.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"name":"javascript-repro","main":"src/index.js"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            "export function orphanHandler() { return false; }\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file],
+            project_root=str(tmp_path),
+        )
+
+        assert marked == set()
+        assert [
+            definition.simple_name
+            for definition in demote_unconsumed_ts_exports(
+                definitions, consumed_exports
+            )
+        ] == ["orphanHandler"]
+
+    def test_public_class_consumes_qualified_methods(self, tmp_path):
+        entry_file = tmp_path / "src" / "index.ts"
+        entry_file.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"name":"class-repro","main":"src/index.ts"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            "export class PublicEngine { run() { return true; } }\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file],
+            project_root=str(tmp_path),
+        )
+
+        assert marked == {
+            (str(entry_file), "PublicEngine"),
+            (str(entry_file), "PublicEngine.run"),
+        }
+        assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
+
+    def test_string_browser_entrypoint_is_public_api(self, tmp_path):
+        entry_file = tmp_path / "src" / "browser.ts"
+        entry_file.parent.mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"name":"browser-repro","browser":"src/browser.ts"}',
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            "export const browserApi = () => true;\n",
+            encoding="utf-8",
+        )
+
+        definitions = _scan_defs(entry_file)
+        consumed_exports = {}
+
+        marked = mark_package_api_ts_exports_consumed(
+            definitions,
+            consumed_exports,
+            [entry_file],
+            project_root=str(tmp_path),
+        )
+
+        assert marked == {(str(entry_file), "browserApi")}
+        assert demote_unconsumed_ts_exports(definitions, consumed_exports) == []
 
 
 class TestNamespaceImportConsumption:
