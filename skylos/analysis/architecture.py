@@ -204,6 +204,7 @@ def analyze_architecture(
     module_abstractness: dict[str, dict[str, Any]] | None = None,
     module_loc: dict[str, int] | None = None,
     iad_findings_advisory: bool = True,
+    module_packages: dict[str, str] | None = None,
 ) -> ArchitectureResult:
     result = ArchitectureResult()
 
@@ -306,10 +307,9 @@ def analyze_architecture(
     package_modules: dict[str, list[str]] = defaultdict(list)
     for module_name in all_modules:
         parts = module_name.split(".")
-        if len(parts) > 1:
-            package = ".".join(parts[:-1])
-        else:
-            package = module_name
+        package = (module_packages or {}).get(module_name)
+        if not package:
+            package = ".".join(parts[:-1]) if len(parts) > 1 else module_name
         package_modules[package].append(module_name)
 
     for package, members in package_modules.items():
@@ -349,12 +349,12 @@ def analyze_architecture(
         total_deps = 0
         intra_package_deps = 0
         for module, deps in dependency_graph.items():
-            m_pkg = module.split(".")[0] if "." in module else module
+            m_pkg = (module_packages or {}).get(module, module.split(".")[0])
             for dep in deps:
                 if dep == module:
                     continue
                 total_deps += 1
-                d_pkg = dep.split(".")[0] if "." in dep else dep
+                d_pkg = (module_packages or {}).get(dep, dep.split(".")[0])
                 if m_pkg == d_pkg:
                     intra_package_deps += 1
 
@@ -440,6 +440,7 @@ def get_architecture_findings(
     private_helper_ca_limit: int = 3,
     layer_policy: dict[str, Any] | None = None,
     iad_findings_advisory: bool = True,
+    module_packages: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
@@ -448,6 +449,7 @@ def get_architecture_findings(
         module_abstractness=module_abstractness,
         module_loc=module_loc,
         iad_findings_advisory=iad_findings_advisory,
+        module_packages=module_packages,
     )
 
     contextual_entrypoints = set(entrypoint_modules or ())

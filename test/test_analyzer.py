@@ -1984,6 +1984,317 @@ max_args = false
             result.get("quality", [])
         )
 
+    def test_typescript_architecture_metrics_and_layer_policy(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"name": "architecture-repro"}\n', encoding="utf-8"
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.skylos.architecture]\n"
+            "strict = false\n\n"
+            "[[tool.skylos.architecture.layers]]\n"
+            'name = "domain"\n'
+            'patterns = ["src.domain"]\n\n'
+            "[[tool.skylos.architecture.layers]]\n"
+            'name = "api"\n'
+            'patterns = ["src.api"]\n\n'
+            "[[tool.skylos.architecture.rules]]\n"
+            'from = "domain"\n'
+            'deny = ["api"]\n',
+            encoding="utf-8",
+        )
+        domain = tmp_path / "src" / "domain" / "model.ts"
+        api = tmp_path / "src" / "api" / "client.ts"
+        domain.parent.mkdir(parents=True)
+        api.parent.mkdir(parents=True)
+        domain.write_text(
+            'import { getValue } from "../api/client";\n'
+            "export const value = getValue();\n",
+            encoding="utf-8",
+        )
+        api.write_text("export const getValue = () => 1;\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        architecture = result["architecture_metrics"]
+        assert architecture["system_metrics"]["total_modules"] == 2
+        assert sorted(m["ca"] for m in architecture["module_metrics"].values()) == [
+            0,
+            1,
+        ]
+        assert sorted(m["ce"] for m in architecture["module_metrics"].values()) == [
+            0,
+            1,
+        ]
+        assert architecture["layer_policy"]["checked_edges"] == 1
+        assert architecture["layer_policy"]["violation_count"] == 1
+        violations = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-Q805"
+        ]
+        assert len(violations) == 1
+        assert violations[0]["file"] == str(domain)
+        assert violations[0]["from_layer"] == "domain"
+        assert violations[0]["to_layer"] == "api"
+        assert result["analysis_summary"]["quality_count"] == len(
+            result.get("quality", [])
+        )
+
+    def test_typescript_architecture_uses_workspace_package_boundaries(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"private": true, "workspaces": ["packages/*"]}\n',
+            encoding="utf-8",
+        )
+        app_dir = tmp_path / "packages" / "app"
+        ui_dir = tmp_path / "packages" / "ui"
+        app_dir.mkdir(parents=True)
+        ui_dir.mkdir(parents=True)
+        (app_dir / "package.json").write_text(
+            '{"name": "@scope/app"}\n', encoding="utf-8"
+        )
+        (ui_dir / "package.json").write_text(
+            '{"name": "@scope/ui", "exports": {".": "./src/index.ts"}}\n',
+            encoding="utf-8",
+        )
+        app_entry = app_dir / "src" / "main.ts"
+        ui_entry = ui_dir / "src" / "index.ts"
+        app_entry.parent.mkdir()
+        ui_entry.parent.mkdir()
+        app_entry.write_text(
+            'import { Button } from "@scope/ui";\nexport const app = Button;\n',
+            encoding="utf-8",
+        )
+        ui_entry.write_text("export const Button = 1;\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        architecture = result["architecture_metrics"]
+        assert architecture["system_metrics"]["total_modules"] == 2
+        assert architecture["system_metrics"]["modularity_index"] == 0.0
+        assert {"@scope/app", "@scope/ui"} <= architecture["packages"].keys()
+        assert architecture["packages"]["@scope/app"]["module_count"] == 1
+        assert architecture["packages"]["@scope/ui"]["module_count"] == 1
+
+    def test_typescript_architecture_zone_rules_distinguish_interfaces(self, tmp_path):
+        source = tmp_path / "src"
+        source.mkdir()
+        (source / "service.ts").write_text(
+            "export function service() { return 1; }\n", encoding="utf-8"
+        )
+        (source / "contract.ts").write_text(
+            "export interface Contract { run(): number }\n", encoding="utf-8"
+        )
+        for name in ("first", "second"):
+            (source / f"{name}.ts").write_text(
+                'import { service } from "./service";\n'
+                "export const result = service();\n",
+                encoding="utf-8",
+            )
+        (source / "uses_contract.ts").write_text(
+            'import type { Contract } from "./contract";\n'
+            "export type ActiveContract = Contract;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["src.service"]["ca"] == 2
+        assert metrics["src.service"]["abstractness"] == 0.0
+        assert metrics["src.contract"]["ca"] == 1
+        assert metrics["src.contract"]["abstractness"] == 1.0
+        zone_rules = {
+            (finding["rule_id"], finding["name"])
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        }
+        assert ("SKY-Q802", "src.service") in zone_rules
+        assert ("SKY-Q803", "src.service") in zone_rules
+        assert ("SKY-Q802", "src.contract") not in zone_rules
+        assert ("SKY-Q803", "src.contract") not in zone_rules
+        service_finding = next(
+            finding
+            for finding in result["quality"]
+            if finding["rule_id"] == "SKY-Q803" and finding["name"] == "src.service"
+        )
+        hints = " ".join(item["hint"] for item in service_finding["remediations"])
+        assert "public package exports" in hints
+        assert "rename the module" not in hints
+
+    def test_typescript_architecture_reports_dependency_inversion(self, tmp_path):
+        source = tmp_path / "src"
+        source.mkdir()
+        (source / "stable.ts").write_text(
+            'import { unstable } from "./unstable";\n'
+            "export const value = unstable();\n",
+            encoding="utf-8",
+        )
+        (source / "unstable.ts").write_text(
+            'import { first } from "./first";\n'
+            'import { second } from "./second";\n'
+            'import { third } from "./third";\n'
+            "export function unstable() { return first + second + third; }\n",
+            encoding="utf-8",
+        )
+        for name in ("first", "second", "third"):
+            (source / f"{name}.ts").write_text(
+                f"export const {name} = 1;\n", encoding="utf-8"
+            )
+        for index in range(4):
+            (source / f"consumer_{index}.ts").write_text(
+                'import { value } from "./stable";\nexport const result = value;\n',
+                encoding="utf-8",
+            )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["src.stable"]["ca"] == 4
+        assert metrics["src.stable"]["ce"] == 1
+        assert metrics["src.unstable"]["ca"] == 1
+        assert metrics["src.unstable"]["ce"] == 3
+        dip_findings = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") == "SKY-Q804"
+        ]
+        assert any(
+            finding["name"] == "src.stable"
+            and finding["value"] == "src.stable -> src.unstable"
+            for finding in dip_findings
+        )
+
+    def test_typescript_architecture_counts_isolated_module_without_findings(
+        self, tmp_path
+    ):
+        (tmp_path / "main.ts").write_text(
+            "export const answer = 42;\n", encoding="utf-8"
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        architecture = result["architecture_metrics"]
+        assert architecture["system_metrics"]["total_modules"] == 1
+        assert len(architecture["module_metrics"]) == 1
+        assert next(iter(architecture["module_metrics"].values()))["ca"] == 0
+        assert next(iter(architecture["module_metrics"].values()))["ce"] == 0
+        assert not any(
+            f.get("rule_id")
+            in {"SKY-Q801", "SKY-Q802", "SKY-Q803", "SKY-Q804", "SKY-Q805"}
+            for f in result.get("quality", [])
+        )
+
+    def test_typescript_architecture_runs_when_circular_report_is_disabled(
+        self, tmp_path
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.skylos]\ncheck_circular = false\n", encoding="utf-8"
+        )
+        (tmp_path / "main.ts").write_text(
+            "export const answer = 42;\n", encoding="utf-8"
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        assert result["architecture_metrics"]["system_metrics"]["total_modules"] == 1
+        assert "circular_dependencies" not in result
+
+    def test_python_architecture_runs_when_circular_report_is_disabled(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.skylos]\ncheck_circular = false\n", encoding="utf-8"
+        )
+        (tmp_path / "main.py").write_text("VALUE = 42\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        assert result["architecture_metrics"]["system_metrics"]["total_modules"] == 1
+        assert "circular_dependencies" not in result
+
+    def test_typescript_architecture_skips_iad_when_source_is_unmeasured(
+        self, tmp_path, monkeypatch
+    ):
+        import skylos.analysis.typescript_architecture as ts_architecture
+
+        (tmp_path / "consumer.ts").write_text(
+            'import { value } from "./dependency";\nexport const result = value;\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "dependency.ts").write_text(
+            "export const value = 1;\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(ts_architecture, "_MAX_SOURCE_BYTES", 4)
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        metrics = result["architecture_metrics"]
+        assert metrics["system_metrics"]["total_modules"] == 2
+        assert metrics["abstractness_unavailable_modules"] == [
+            "consumer",
+            "dependency",
+        ]
+        assert not any(
+            finding["rule_id"] in {"SKY-Q802", "SKY-Q803"}
+            for finding in result.get("quality", [])
+        )
+
+    def test_mixed_python_typescript_architecture_modules_do_not_collide(
+        self, tmp_path
+    ):
+        (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (tmp_path / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        architecture = result["architecture_metrics"]
+        assert architecture["system_metrics"]["total_modules"] == 2
+        assert len(architecture["module_metrics"]) == 2
+
+    def test_typescript_architecture_ignores_edges_to_excluded_source(self, tmp_path):
+        (tmp_path / "main.ts").write_text(
+            'import { generated } from "./generated/data";\n'
+            "export const value = generated;\n",
+            encoding="utf-8",
+        )
+        generated = tmp_path / "generated" / "data.ts"
+        generated.parent.mkdir()
+        generated.write_text("export const generated = 1;\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                exclude_folders=["generated"],
+                enable_quality=True,
+                grep_verify=False,
+            )
+        )
+
+        architecture = result["architecture_metrics"]
+        assert architecture["system_metrics"]["total_modules"] == 1
+        assert len(architecture["module_metrics"]) == 1
+        assert next(iter(architecture["module_metrics"].values()))["ca"] == 0
+        assert next(iter(architecture["module_metrics"].values()))["ce"] == 0
+        assert not any(
+            f.get("rule_id")
+            in {"SKY-Q801", "SKY-Q802", "SKY-Q803", "SKY-Q804", "SKY-Q805"}
+            for f in result.get("quality", [])
+        )
+
     def test_analyze_architecture_metrics_preserve_dotted_submodule_imports(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -4139,9 +4450,7 @@ function foo() {
 
         assert resolved.count(source) == 2
 
-    def test_transitive_dead_refreshes_symlink_identity_between_passes(
-        self, tmp_path
-    ):
+    def test_transitive_dead_refreshes_symlink_identity_between_passes(self, tmp_path):
         dead_dir = tmp_path / "dead"
         live_dir = tmp_path / "live"
         dead_dir.mkdir()

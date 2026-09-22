@@ -12,7 +12,7 @@ def _iad_scope_fields(advisory: bool) -> dict[str, Any]:
     if advisory:
         fields["advisory_reason"] = (
             "Martin's instability/abstractness/distance metric was defined for "
-            "release units. Skylos reports it at Python file granularity as an "
+            "release units. Skylos reports it at source-file granularity as an "
             "architecture signal; it is not gate-blocking unless I/A/D enforcement "
             "is enabled."
         )
@@ -40,8 +40,20 @@ def _iad_docs_url(rule_id: str) -> str:
     return f"https://docs.skylos.dev/rules/{rule_id}"
 
 
-def _iad_remediations(module_name: str, zone: str) -> list[dict[str, str]]:
+def _iad_remediations(
+    module_name: str, zone: str, file_path: str = ""
+) -> list[dict[str, str]]:
     simple_name = module_name.rsplit(".", 1)[-1]
+    is_ts_js = Path(file_path).suffix.lower() in {
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+    }
     if simple_name.startswith("_"):
         helper_hint = (
             "This module is already marked private. If it belongs to one release-unit, "
@@ -50,6 +62,13 @@ def _iad_remediations(module_name: str, zone: str) -> list[dict[str, str]]:
             "to move the metric."
         )
         helper_title = "Keep private-helper intent explicit"
+    elif is_ts_js:
+        helper_hint = (
+            f"If '{module_name}' is an internal helper, keep it out of public "
+            "package exports or place it under an internal module path. Do not add "
+            "fake imports or one-off abstractions just to move the metric."
+        )
+        helper_title = "Mark internal helpers as private"
     else:
         private_name = f"_{simple_name}"
         helper_hint = (
@@ -68,7 +87,7 @@ def _iad_remediations(module_name: str, zone: str) -> list[dict[str, str]]:
         {
             "title": "Introduce a real abstraction boundary",
             "hint": (
-                "Add a Protocol or ABC only when consumers genuinely need an interface "
+                "Add an interface, Protocol, or ABC only when consumers genuinely need one "
                 "with multiple implementations or an extension boundary. Avoid header "
                 "interfaces created only to satisfy the score."
             ),
@@ -134,7 +153,7 @@ def generate_architecture_findings(
                     "basename": Path(m.file_path).name if m.file_path else name,
                     "line": 1,
                     "docs_url": _iad_docs_url("SKY-Q802"),
-                    "remediations": _iad_remediations(name, m.zone),
+                    "remediations": _iad_remediations(name, m.zone, m.file_path),
                     **_iad_scope_fields(iad_findings_advisory),
                 }
             )
@@ -173,7 +192,7 @@ def generate_architecture_findings(
                     "basename": Path(m.file_path).name if m.file_path else name,
                     "line": 1,
                     "docs_url": _iad_docs_url("SKY-Q803"),
-                    "remediations": _iad_remediations(name, m.zone),
+                    "remediations": _iad_remediations(name, m.zone, m.file_path),
                     **_iad_scope_fields(iad_findings_advisory),
                 }
             )

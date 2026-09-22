@@ -560,11 +560,11 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
 | Q701 | MEDIUM | High coupling | Python | CBO-style signal |
 | Q702 | MEDIUM | Low cohesion | Python | LCOM-style signal |
-| Q801 | MEDIUM | High architectural instability | Python |
-| Q802 | MEDIUM | Distance from main sequence | Python |
-| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python |
-| Q804 | MEDIUM | Dependency Inversion Principle violation | Python |
-| Q805 | MEDIUM | Architecture layer policy violation | Python |
+| Q801 | MEDIUM | High architectural instability | Reserved | no current finding emission |
+| Q802 | MEDIUM | Distance from main sequence | Python, TS/JS |
+| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python, TS/JS |
+| Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
+| Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
 | C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
@@ -586,6 +586,17 @@ uses project ignores, not inline comments, consistently across supported files.
 | R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
 | R105 | MEDIUM | Repository missing TypeScript type-check command | Repo policy |
 | CIRC | varies | Circular dependency | Python |
+
+Architecture metrics include scanned TS/JS modules and use `package.json`
+workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
+interfaces, abstract classes, concrete classes, and functions as a file-level
+abstractness heuristic. If a TS/JS source cannot be parsed or opened with
+no-follow directory descriptors on the host platform, its module still
+participates in the dependency graph, but Q802/Q803 are suppressed for that
+module and its name appears in
+`architecture_metrics.abstractness_unavailable_modules`. Q804 and Q805 can
+still use its resolved imports. Q801 is cataloged but does not currently emit
+findings in any language.
 
 ## Dead Code and Reachability
 
