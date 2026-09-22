@@ -1,0 +1,32 @@
+{
+  "workflows": [
+    {
+      "name": "intake",
+      "before": [
+        "atlasflow.callbacks.record_start",
+        "atlasflow.callbacks.stamp_batch"
+      ],
+      "steps": [
+        "atlasflow.actions.fetch_batches",
+        "atlasflow.actions.merge_catalog",
+        "atlasflow.actions.validate_records"
+      ],
+      "plugins": ["ledger", "receipt"],
+      "after": ["atlasflow.callbacks.note_accept"]
+    },
+    {
+      "name": "settlement",
+      "before": ["atlasflow.callbacks.emit_signal"],
+      "steps": [
+        "atlasflow.actions.collect_invoices",
+        "atlasflow.actions.render_receipts",
+        "atlasflow.actions.compress_payloads"
+      ],
+      "plugins": ["invoice", "storage"],
+      "after": [
+        "atlasflow.callbacks.mark_success",
+        "atlasflow.callbacks.stamp_result"
+      ]
+    }
+  ]
+}

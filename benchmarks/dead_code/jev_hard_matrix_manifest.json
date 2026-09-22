@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "split": "hard_matrix",
+  "cases": [
+    {
+      "id": "reachable-state-flow",
+      "path": "fixtures/jev_hard_matrix/state_flow",
+      "description": "A closed state machine reaches handlers by constructed function names; another complete chain is not reachable from the fixed start state.",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "stages.py", "symbol": "stage_birch"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_drift"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_fjord"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_harbor"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_juniper"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_lilac"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_nectar"}
+        ],
+        "used": [
+          {"kind": "function", "file": "stages.py", "symbol": "stage_amber"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_cobalt"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_ember"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_glade"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_iris"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_kelp"},
+          {"kind": "function", "file": "stages.py", "symbol": "stage_moss"}
+        ]
+      }
+    },
+    {
+      "id": "indirect-module-matrix",
+      "path": "fixtures/jev_hard_matrix/module_matrix",
+      "description": "A fixed work plan resolves a module and a same-named function independently; the opposite module/function combinations are never called.",
+      "taxonomy": ["multi_file", "plugin_loading", "dynamic_dispatch"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_bracken"},
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_dahlia"},
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_fennel"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_apricot"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_celery"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_elm"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_garnet"}
+        ],
+        "used": [
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_apricot"},
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_celery"},
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_elm"},
+          {"kind": "function", "file": "workers/coral.py", "symbol": "render_garnet"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_bracken"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_dahlia"},
+          {"kind": "function", "file": "workers/indigo.py", "symbol": "render_fennel"}
+        ]
+      }
+    },
+    {
+      "id": "closed-callback-surface",
+      "path": "fixtures/jev_hard_matrix/callback_surface",
+      "description": "The closed callback table directly references six functions, while similarly shaped functions outside the table have no callers.",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_basil"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_denim"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_fir"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_heather"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_jade"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_lumen"}
+        ],
+        "used": [
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_agate"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_caper"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_ecru"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_gold"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_ivory"},
+          {"kind": "function", "file": "callbacks.py", "symbol": "paint_khaki"}
+        ]
+      }
+    }
+  ]
+}

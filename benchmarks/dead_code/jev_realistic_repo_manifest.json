@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "workflow-config-registry",
+      "path": "fixtures/jev_realistic_repo",
+      "description": "A package dispatches workflow stages and callbacks named in JSON and plugin targets stored in a Python registry.",
+      "taxonomy": ["dynamic_dispatch", "multi_file", "plugin_loading", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic package fixture. The manifest is the only answer key."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 10.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "normalize_rows"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "publish_snapshot"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "flush_metrics"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "reshape_events"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "rotate_indexes"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "prune_sessions"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "trace_step"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "audit_before"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "mark_queue"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "send_notice"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "record_latency"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "trace_finish"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "catalog_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "search_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "event_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "audit_adapter"}
+        ],
+        "used": [
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "fetch_batches"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "merge_catalog"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "validate_records"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "collect_invoices"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "render_receipts"},
+          {"kind": "function", "file": "atlasflow/actions.py", "symbol": "compress_payloads"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "record_start"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "stamp_batch"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "note_accept"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "emit_signal"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "mark_success"},
+          {"kind": "function", "file": "atlasflow/callbacks.py", "symbol": "stamp_result"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "ledger_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "receipt_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "invoice_adapter"},
+          {"kind": "function", "file": "atlasflow/plugins.py", "symbol": "storage_adapter"}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "profiles": {
+    "morning": "orchidkit.handlers:handle_amber",
+    "evening": "orchidkit.handlers:handle_drift"
+  },
+  "default": "morning"
+}
