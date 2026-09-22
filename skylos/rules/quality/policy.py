@@ -2,32 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
-
-SKIP_DIR_NAMES = {
-    *DEFAULT_EXCLUDE_FOLDERS,
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-    "venv",
-    "env",
-    ".env",
-    ".yarn",
-    ".pnpm",
-    ".pnpm-store",
-    ".cache",
-    ".tox",
-    "vendor",
-}
+from skylos.constants import parse_exclude_folders
+from skylos.core.file_discovery import should_exclude_path
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -87,50 +67,33 @@ def _finding(
     }
 
 
-def _should_skip_dir(name: str, skip_names: set[str]) -> bool:
-    if name in skip_names:
-        return True
-    if name.endswith(".egg-info"):
-        return True
-    return False
-
-
 def _iter_repo_files(
-    root: Path,
-    filename: str | None = None,
-    *,
-    exclude_folders: set[str] | None = None,
+    root: Path, exclude_folders: tuple[str, ...], filename: str | None = None
 ):
-    skip_names = set(SKIP_DIR_NAMES)
-    if exclude_folders:
-        for ef in exclude_folders:
-            clean = ef.replace("\\", "/").strip("/").split("/")[-1]
-            if clean:
-                skip_names.add(clean)
-
     for current_root, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            name for name in dirnames if not _should_skip_dir(name, skip_names)
-        ]
         base = Path(current_root)
+        # Repo policy concerns project code, even when a scan also inspects
+        # dependencies. A pyvenv.cfg identifies virtualenv code without
+        # assuming every directory named env contains dependencies.
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name != ".ruff_cache"
+            and not (base / name / "pyvenv.cfg").is_file()
+            and not should_exclude_path(base / name, root, exclude_folders)
+        ]
         for item in filenames:
-            if filename is None or item == filename:
-                yield base / item
+            path = base / item
+            if (filename is None or item == filename) and not should_exclude_path(
+                path, root, exclude_folders
+            ):
+                yield path
 
 
-def _has_python_sources(
-    root: Path,
-    *,
-    source_files: list[Path] | None = None,
-    exclude_folders: set[str] | None = None,
-) -> bool:
-    if source_files is not None:
-        return any(
-            str(path).endswith((".py", ".pyi", ".pyw")) for path in source_files
-        )
+def _has_python_sources(root: Path, exclude_folders: tuple[str, ...]) -> bool:
     return any(
         path.suffix in {".py", ".pyi", ".pyw"}
-        for path in _iter_repo_files(root, exclude_folders=exclude_folders)
+        for path in _iter_repo_files(root, exclude_folders)
     )
 
 
@@ -166,16 +129,12 @@ def _package_scripts_run_tsc(package_json: Path) -> bool:
     return any("tsc" in str(command) for command in scripts.values())
 
 
-def _iter_package_json_files(
-    root: Path, *, exclude_folders: set[str] | None = None
-):
-    for package_json in _iter_repo_files(
-        root, "package.json", exclude_folders=exclude_folders
-    ):
+def _iter_package_json_files(root: Path, exclude_folders: tuple[str, ...]):
+    for package_json in _iter_repo_files(root, exclude_folders, "package.json"):
         yield package_json
 
 
-def _policy_files(root: Path, *, exclude_folders: set[str] | None = None) -> set[str]:
+def _policy_files(root: Path, exclude_folders: tuple[str, ...]) -> set[str]:
     files = {
         root / "pyproject.toml",
         root / "mypy.ini",
@@ -185,15 +144,12 @@ def _policy_files(root: Path, *, exclude_folders: set[str] | None = None) -> set
         root / ".pre-commit-config.yaml",
         root / ".pre-commit-config.yml",
     }
-    files.update(_iter_package_json_files(root, exclude_folders=exclude_folders))
+    files.update(_iter_package_json_files(root, exclude_folders))
     return {str(path.resolve()) for path in files}
 
 
 def _changed_policy_files(
-    root: Path,
-    changed_files: set[str] | None,
-    *,
-    exclude_folders: set[str] | None = None,
+    root: Path, changed_files: set[str] | None, exclude_folders: tuple[str, ...]
 ) -> bool:
     if changed_files is None:
         return True
@@ -203,10 +159,7 @@ def _changed_policy_files(
         else str(Path(path).resolve())
         for path in changed_files
     }
-    return bool(
-        normalized_changed
-        & _policy_files(root, exclude_folders=exclude_folders)
-    )
+    return bool(normalized_changed & _policy_files(root, exclude_folders))
 
 
 def analyze_repo_policy(
@@ -214,17 +167,17 @@ def analyze_repo_policy(
     config: dict[str, Any] | None = None,
     *,
     changed_files: set[str] | None = None,
-    source_files: list[Path] | None = None,
-    exclude_folders: set[str] | list[str] | None = None,
+    exclude_folders: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     root_path = Path(root).resolve()
     config = config or {}
-    config_excludes = set(config.get("exclude") or [])
-    effective_excludes = set(exclude_folders or set()) | config_excludes
-
-    if not _changed_policy_files(
-        root_path, changed_files, exclude_folders=effective_excludes
-    ):
+    if exclude_folders is None:
+        effective_excludes = tuple(
+            parse_exclude_folders(config_exclude_folders=config.get("exclude"))
+        )
+    else:
+        effective_excludes = tuple(exclude_folders)
+    if not _changed_policy_files(root_path, changed_files, effective_excludes):
         return []
 
     ignore = set(config.get("ignore") or [])
@@ -232,13 +185,11 @@ def analyze_repo_policy(
     pyproject = _read_toml(pyproject_path)
     findings: list[dict[str, Any]] = []
 
-    has_py = _has_python_sources(
-        root_path,
-        source_files=source_files,
-        exclude_folders=effective_excludes,
-    )
+    has_python_sources = (
+        "SKY-R101" not in ignore or "SKY-R102" not in ignore
+    ) and _has_python_sources(root_path, effective_excludes)
 
-    if "SKY-R101" not in ignore and has_py:
+    if "SKY-R101" not in ignore and has_python_sources:
         if not _has_type_checker_config(root_path, pyproject):
             findings.append(
                 _finding(
@@ -254,7 +205,7 @@ def analyze_repo_policy(
                 )
             )
 
-    if "SKY-R102" not in ignore and has_py:
+    if "SKY-R102" not in ignore and has_python_sources:
         if not _has_ruff_config(root_path, pyproject):
             findings.append(
                 _finding(
@@ -303,9 +254,7 @@ def analyze_repo_policy(
         )
 
     if "SKY-R105" not in ignore:
-        for package_json in _iter_package_json_files(
-            root_path, exclude_folders=effective_excludes
-        ):
+        for package_json in _iter_package_json_files(root_path, effective_excludes):
             package_root = package_json.parent
             if (
                 package_root / "tsconfig.json"
