@@ -307,11 +307,15 @@ def test_repo_policy_skips_python_checks_on_typescript_project(tmp_path):
     assert "SKY-R102" not in rule_ids
 
 
-@pytest.mark.parametrize("suffix", [".pyi", ".pyw"])
-def test_repo_policy_recognizes_python_stub_and_windowed_sources(tmp_path, suffix):
-    (tmp_path / f"module{suffix}").write_text(
-        "def api() -> int: ...\n", encoding="utf-8"
-    )
+def test_repo_policy_recognizes_python_stub_source(tmp_path):
+    (tmp_path / "module.pyi").write_text("def api() -> int: ...\n", encoding="utf-8")
+
+    rule_ids = {finding["rule_id"] for finding in analyze_repo_policy(tmp_path)}
+    assert {"SKY-R101", "SKY-R102"} <= rule_ids
+
+
+def test_repo_policy_recognizes_python_windowed_source(tmp_path):
+    (tmp_path / "module.pyw").write_text("def api() -> int: ...\n", encoding="utf-8")
 
     rule_ids = {finding["rule_id"] for finding in analyze_repo_policy(tmp_path)}
     assert {"SKY-R101", "SKY-R102"} <= rule_ids
