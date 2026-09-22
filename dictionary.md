@@ -590,9 +590,10 @@ uses project ignores, not inline comments, consistently across supported files.
 Architecture metrics include scanned TS/JS modules and use `package.json`
 workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
 interfaces, abstract classes, concrete classes, and functions as a file-level
-abstractness heuristic. If a TS/JS source cannot be parsed safely, its module
-still participates in the dependency graph, but Q802/Q803 are suppressed for
-that module and its name appears in
+abstractness heuristic. If a TS/JS source cannot be parsed or opened with
+no-follow directory descriptors on the host platform, its module still
+participates in the dependency graph, but Q802/Q803 are suppressed for that
+module and its name appears in
 `architecture_metrics.abstractness_unavailable_modules`. Q804 and Q805 can
 still use its resolved imports. Q801 is cataloged but does not currently emit
 findings in any language.

@@ -96,6 +96,62 @@ def test_symlink_and_oversize_source_are_not_read(tmp_path, monkeypatch):
     assert loc == {"safe": 0}
 
 
+def test_parent_directory_swap_cannot_read_outside_project(tmp_path, monkeypatch):
+    import skylos.analysis.typescript_architecture as architecture
+
+    project = tmp_path / "project"
+    source_dir = project / "src"
+    source_dir.mkdir(parents=True)
+    source = source_dir / "safe.ts"
+    source.write_text("export const safe = 1;\n")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / source.name).write_text(
+        "export interface Outside {}\nexport const value = 1;\n"
+    )
+
+    original_open = architecture.os.open
+    swapped = False
+
+    def swap_parent_before_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            source_dir.rename(project / "original_src")
+            source_dir.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(architecture.os, "open", swap_parent_before_open)
+
+    graph, files, abstractness, loc = build_ts_architecture_inputs(
+        [source], project, {}
+    )
+
+    assert swapped
+    assert graph == {"src.safe": set()}
+    assert files == {"src.safe": str(source)}
+    assert abstractness == {}
+    assert loc == {"src.safe": 0}
+
+
+def test_source_read_fails_closed_without_no_follow(tmp_path, monkeypatch):
+    import skylos.analysis.typescript_architecture as architecture
+
+    source = tmp_path / "safe.ts"
+    source.write_text("export interface Safe {}\n")
+    monkeypatch.delattr(architecture.os, "O_NOFOLLOW", raising=False)
+
+    graph, files, abstractness, loc = build_ts_architecture_inputs(
+        [source], tmp_path, {}
+    )
+
+    assert graph == {"safe": set()}
+    assert files == {"safe": str(source)}
+    assert abstractness == {}
+    assert loc == {"safe": 0}
+
+
 def test_all_supported_ts_js_suffixes_are_included(tmp_path):
     suffixes = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
     paths = []

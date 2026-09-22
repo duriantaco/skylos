@@ -66,24 +66,59 @@ def _module_names(paths: set[Path], root: Path) -> dict[Path, str]:
     return names
 
 
-def _read_source(path: Path) -> bytes | None:
-    # O_NOFOLLOW prevents a changed final path from redirecting a source read;
-    # O_NONBLOCK avoids hanging if a source file is replaced with a FIFO.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
+def _read_source(path: Path, root: Path) -> bytes | None:
+    # Open every component relative to the project directory descriptor. A
+    # resolved path can otherwise be redirected outside the project if an
+    # attacker swaps a parent directory for a symlink before the final open.
+    if not all(
+        hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+    ):
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        relative = path.relative_to(root)
+    except ValueError:
+        return None
+    if not relative.parts or ".." in relative.parts:
+        return None
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        file_flags |= os.O_CLOEXEC
+
+    directory_fd = None
+    file_fd = None
+    try:
+        # The resolved scan root's ancestors are caller/CI-controlled, not
+        # writable entries inside the scanned project.
+        directory_fd = os.open(  # skylos: ignore[SKY-D215] trusted scan root, no-follow final component
+            root, directory_flags
+        )
+        for part in relative.parts[:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            previous_fd = directory_fd
+            directory_fd = next_fd
+            os.close(previous_fd)
+        file_fd = os.open(  # skylos: ignore[SKY-D215] contained basename under no-follow directory descriptors
+            relative.name, file_flags, dir_fd=directory_fd
+        )
+        file_stat = os.fstat(file_fd)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > _MAX_SOURCE_BYTES:
             return None
-        with os.fdopen(fd, "rb", closefd=False) as source:
+        with os.fdopen(file_fd, "rb") as source:
+            file_fd = None
             data = source.read(_MAX_SOURCE_BYTES + 1)
         return data if len(data) <= _MAX_SOURCE_BYTES else None
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         return None
     finally:
-        os.close(fd)
+        for fd in (file_fd, directory_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def _abstractness(source: bytes, path: Path) -> dict | None:
@@ -166,7 +201,7 @@ def build_ts_architecture_inputs(
                 graph[names[importer_path]].add(target_name)
 
     for path, name in names.items():
-        source = _read_source(path)
+        source = _read_source(path, project_root)
         # Supplying LOC even for unreadable/oversize files prevents the generic
         # architecture analyzer from falling back to an unbounded source read.
         module_loc[name] = (
