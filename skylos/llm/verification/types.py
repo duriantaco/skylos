@@ -61,6 +61,12 @@ class VerifyStats:
     edges_resolved: int = 0
     edges_spurious: int = 0
     haiku_prefiltered: int = 0
+    jev_enabled: bool = False
+    jev_agreed: int = 0
+    jev_disagreed: int = 0
+    jev_judged_retained: int = 0
+    jev_uncertain: int = 0
+    jev_unavailable: int = 0
     llm_calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0

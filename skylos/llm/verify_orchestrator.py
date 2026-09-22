@@ -2483,6 +2483,17 @@ def _build_verification_output(
             "survivors_reclassified_dead": stats.survivors_reclassified_dead,
             "entry_points_discovered": stats.entry_points_discovered,
             "haiku_prefiltered": stats.haiku_prefiltered,
+            **(
+                {
+                    "jev_agreed": stats.jev_agreed,
+                    "jev_disagreed": stats.jev_disagreed,
+                    "jev_judged_retained": stats.jev_judged_retained,
+                    "jev_uncertain": stats.jev_uncertain,
+                    "jev_unavailable": stats.jev_unavailable,
+                }
+                if stats.jev_enabled
+                else {}
+            ),
             "llm_calls": stats.llm_calls,
             "prompt_tokens": stats.prompt_tokens,
             "completion_tokens": stats.completion_tokens,
@@ -2552,7 +2563,6 @@ def _entry_discovery_planned_llm_calls(
     return 1
 
 
-
 def run_verification(
     findings: list[dict],
     defs_map: dict[str, Any],
@@ -2574,6 +2584,9 @@ def run_verification(
     verification_mode: str = VERIFICATION_MODE_PRODUCTION,
     grep_workers: int = 4,
     parallel_grep: bool = False,
+    jev_precheck: bool = False,
+    jev_judge: bool = False,
+    jev_only: bool = False,
     harness_runner: Any | None = None,
     harness_budget: Any | None = None,
 ) -> dict[str, Any]:
@@ -2588,6 +2601,8 @@ def run_verification(
             f"Invalid verification_mode={verification_mode!r}. "
             f"Expected one of: {sorted(VALID_VERIFICATION_MODES)}"
         )
+    if jev_only and (not jev_judge or jev_precheck):
+        raise ValueError("jev_only requires jev_judge without jev_precheck")
     judge_all_mode = verification_mode == VERIFICATION_MODE_JUDGE_ALL
 
     git_root = _find_git_root(project_root)
@@ -2614,7 +2629,10 @@ def run_verification(
         config.base_url = base_url
 
     agent = DeadCodeVerifierAgent(config)
-    stats = VerifyStats(total_findings=len(findings))
+    stats = VerifyStats(
+        total_findings=len(findings),
+        jev_enabled=jev_precheck or jev_judge,
+    )
 
     log = _logger(quiet)
     log(f"Verification mode: {verification_mode}")
@@ -2690,7 +2708,14 @@ def run_verification(
         batch_verify_findings=_batch_verify_findings,
         build_graph_context=_build_graph_context,
         verify_with_graph_context=verify_with_graph_context,
-        should_audit_suppression=_should_audit_suppression,
+        should_audit_suppression=(
+            lambda finding: (
+                not finding.get("_jev_judged_retained")
+                and _should_audit_suppression(finding)
+            )
+        )
+        if jev_judge
+        else _should_audit_suppression,
         audit_suppressed_finding=audit_suppressed_finding,
         find_local_on_emit_survivors=_find_local_on_emit_survivors,
         find_survivors=_find_survivors,
@@ -2719,9 +2744,15 @@ def run_verification(
         ops=ops,
     )
 
-    discovered_eps = run_entry_discovery_phase(
-        ctx,
-        enable_entry_discovery=enable_entry_discovery,
+    # Jev judge mode makes Jev the first model used for static candidates.
+    # Discovery is a separate model call and must not precede its verdict.
+    discovered_eps = (
+        []
+        if jev_judge
+        else run_entry_discovery_phase(
+            ctx,
+            enable_entry_discovery=enable_entry_discovery,
+        )
     )
 
     to_verify = run_candidate_selection_phase(
@@ -2733,25 +2764,42 @@ def run_verification(
         judge_all_mode=judge_all_mode,
     )
 
-    to_verify = run_haiku_prefilter_phase(
-        ctx,
-        to_verify,
-        config=config,
-    )
+    if jev_precheck or jev_judge:
+        from skylos.llm.verification.jev_precheck import run_jev_precheck_phase
 
-    run_verify_findings_phase(
-        ctx,
-        to_verify,
-        batch_mode=batch_mode,
-    )
+        to_verify = run_jev_precheck_phase(
+            ctx,
+            to_verify,
+            project_root=project_root,
+            jev_judge=jev_judge,
+            jev_only=jev_only,
+        )
 
-    run_suppression_audit_phase(
-        ctx,
-        findings,
-        enable_suppression_challenge=enable_suppression_challenge,
-        max_suppression_audit=max_suppression_audit,
-    )
+    # Haiku is another model pass; in judge mode only uncertain/unavailable
+    # candidates may reach the general LLM verifier.
+    if not jev_judge:
+        to_verify = run_haiku_prefilter_phase(
+            ctx,
+            to_verify,
+            config=config,
+        )
 
+    if not jev_only:
+        run_verify_findings_phase(
+            ctx,
+            to_verify,
+            batch_mode=batch_mode,
+        )
+
+        run_suppression_audit_phase(
+            ctx,
+            findings,
+            enable_suppression_challenge=enable_suppression_challenge,
+            max_suppression_audit=max_suppression_audit,
+        )
+
+    # Local propagation has no model calls. Jev-agreed unused candidates have
+    # no LLM verdict, so this phase cannot rewrite their final judgment.
     run_propagate_alive_phase(ctx, findings)
 
     haiku_note = (
@@ -2759,20 +2807,25 @@ def run_verification(
         if stats.haiku_prefiltered
         else ""
     )
+    false_positive_label = "suppressed as alive" if jev_judge else "LLM false positives"
     log(
         f"  Results: {stats.verified_true_positive} confirmed dead, "
-        f"{stats.verified_false_positive} LLM false positives{haiku_note}, "
+        f"{stats.verified_false_positive} {false_positive_label}{haiku_note}, "
         f"{stats.deterministic_suppressed} deterministically suppressed, "
         f"{stats.suppression_reclassified_dead} suppressions reopened as dead, "
         f"{stats.uncertain} uncertain"
     )
 
-    new_dead = run_survivor_challenge_phase(
-        ctx,
-        findings,
-        enable_survivor_challenge=enable_survivor_challenge,
-        max_challenge=max_challenge,
-        batch_mode=batch_mode,
+    new_dead = (
+        []
+        if jev_judge
+        else run_survivor_challenge_phase(
+            ctx,
+            findings,
+            enable_survivor_challenge=enable_survivor_challenge,
+            max_challenge=max_challenge,
+            batch_mode=batch_mode,
+        )
     )
 
     return run_finalize_phase(

@@ -34,6 +34,9 @@ def run_verification_harness(
     max_suppression_audit: int = 20,
     quiet: bool = False,
     verification_mode: str = "production",
+    jev_precheck: bool = False,
+    jev_judge: bool = False,
+    jev_only: bool = False,
     grep_workers: int = 4,
     parallel_grep: bool = False,
 ) -> HarnessResult:
@@ -51,6 +54,9 @@ def run_verification_harness(
         metadata={
             "verification_mode": verification_mode,
             "batch_mode": batch_mode,
+            "jev_precheck": jev_precheck,
+            "jev_judge": jev_judge,
+            "jev_only": jev_only,
         },
         tool_registry=default_verification_tool_registry(),
     )
@@ -76,6 +82,9 @@ def run_verification_harness(
             max_suppression_audit=max_suppression_audit,
             quiet=quiet,
             verification_mode=verification_mode,
+            jev_precheck=jev_precheck,
+            jev_judge=jev_judge,
+            jev_only=jev_only,
             grep_workers=grep_workers,
             parallel_grep=parallel_grep,
             harness_runner=runner,

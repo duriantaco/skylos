@@ -48,7 +48,11 @@ def _partition_alive_findings(findings: list[dict]) -> tuple[set[str], list[dict
     for finding in findings:
         verdict = finding.get("_llm_verdict", "")
         full_name = finding.get("full_name", finding.get("name", ""))
-        if verdict == "FALSE_POSITIVE":
+        # A Jev-only retained decision is final for that candidate, but is
+        # not independent proof that its callees are alive. In particular,
+        # an incorrect Jev answer must not overturn another candidate's
+        # broad-LLM TRUE_POSITIVE through transitive propagation.
+        if verdict == "FALSE_POSITIVE" and not finding.get("_jev_judged_retained"):
             fp_names.add(full_name)
         elif verdict == "TRUE_POSITIVE":
             tp_findings.append(finding)
