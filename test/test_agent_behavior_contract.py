@@ -521,7 +521,7 @@ def test_observations_reject_excessive_json_nesting_without_crashing(tmp_path):
         "[" * 10_000 + "0" + "]" * 10_000,
     )
 
-    with pytest.raises(AgentBehaviorError, match="Invalid observation JSON"):
+    with pytest.raises(AgentBehaviorError, match="nesting exceeds"):
         load_behavior_observations(observation_path, project_root=tmp_path)
 
 
