@@ -28,7 +28,7 @@ def _git(repo: Path, *args: str) -> str:
             "--no-pager",
             "--no-replace-objects",
             "-c",
-            "core.hooksPath=/dev/null",
+            f"core.hooksPath={os.devnull}",
             "-c",
             "core.fsmonitor=false",
             "-c",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -17,7 +18,9 @@ import pytest
 from skylos.commands.verify_cmd import run_verify_command
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.verification import refactor
+from skylos.verification import windows_snapshot
 from skylos.verification.refactor import verify_refactor
+from skylos.verification.windows_snapshot import _relative_parts as _windows_parts
 from skylos.verify_change import verify_change_path
 
 
@@ -38,7 +41,7 @@ def _git(repo: Path, *args: str) -> str:
     for key in _GIT_ENV:
         env.pop(key, None)
     return subprocess.run(
-        ["git", "-c", "core.hooksPath=/dev/null", *args],
+        ["git", "-c", f"core.hooksPath={os.devnull}", *args],
         cwd=repo,
         env=env,
         check=True,
@@ -434,6 +437,8 @@ def test_working_snapshot_detects_changed_metadata(make_repo, monkeypatch):
 def test_working_snapshot_requires_descriptor_relative_no_follow_support(
     make_repo, monkeypatch
 ):
+    if os.name == "nt":
+        pytest.skip("Windows uses a separate handle-relative source reader")
     repo, commit = make_repo({"app.py": _IDENTITY})
     monkeypatch.setattr(os, "supports_dir_fd", set())
 
@@ -444,6 +449,231 @@ def test_working_snapshot_requires_descriptor_relative_no_follow_support(
         "Platform does not support safe working source snapshot reads"
         in result["comparison"]["reasons"]
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [r"..\outside.py", "app.py:stream.py", "CON.py", "pkg./app.py", "pkg//app.py"],
+)
+def test_windows_snapshot_rejects_native_path_aliases_on_all_platforms(name):
+    with pytest.raises(ValueError, match="Unsafe path"):
+        _windows_parts(name)
+
+
+def test_windows_snapshot_accepts_plain_git_relative_path():
+    assert _windows_parts("pkg/helper.py") == ("pkg", "helper.py")
+
+
+@pytest.mark.parametrize(
+    ("case_sensitive", "expected_attributes"),
+    [(False, windows_snapshot._OBJ_CASE_INSENSITIVE), (True, 0)],
+)
+def test_windows_native_child_open_uses_pinned_parent_and_single_name(
+    case_sensitive, expected_attributes
+):
+    api = object.__new__(windows_snapshot._WindowsApi)
+    observed = {}
+
+    def fake_nt_create_file(handle, access, attributes, *rest):
+        object_attributes = attributes._obj
+        observed["parent"] = object_attributes.root_directory
+        observed["name"] = object_attributes.object_name.contents.buffer
+        observed["attributes"] = object_attributes.attributes
+        handle._obj.value = 123
+        return 0
+
+    api.nt_create_file = fake_nt_create_file
+
+    assert (
+        api.open_child(
+            42,
+            "app.py",
+            directory=False,
+            case_sensitive=case_sensitive,
+        )
+        == 123
+    )
+    assert observed == {
+        "parent": 42,
+        "name": "app.py",
+        "attributes": expected_attributes,
+    }
+
+
+def test_windows_case_sensitivity_query_uses_directory_information():
+    api = object.__new__(windows_snapshot._WindowsApi)
+    observed = {}
+
+    def fake_get_information(handle, info_class, info, size):
+        observed.update(handle=handle, info_class=info_class, size=size)
+        info._obj.flags = windows_snapshot._FILE_CS_FLAG_CASE_SENSITIVE_DIR
+        return 1
+
+    api.get_basic_info = fake_get_information
+
+    assert api.case_sensitive(42) is True
+    assert observed == {
+        "handle": 42,
+        "info_class": windows_snapshot._FILE_CASE_SENSITIVE_INFO_CLASS,
+        "size": ctypes.sizeof(windows_snapshot._FileCaseSensitiveInfo),
+    }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_compares_changed_behavior(make_repo):
+    repo, commit = make_repo({"app.py": _IDENTITY})
+    _write(repo, "app.py", "def run(value):\n    return 'different'\n")
+
+    sources, hashes = refactor._current_sources(repo)
+    result = verify_refactor(repo, base=commit, file="app.py", symbol="run")
+    whole_repo = verify_change_path(repo, analyze_func=lambda path, **kwargs: {})
+
+    assert sources["app.py"] == "def run(value):\n    return 'different'\n"
+    assert hashes["app.py"] == hashlib.sha256(sources["app.py"].encode()).hexdigest()
+    assert result["comparison"]["status"] == "different"
+    assert result["comparison"]["differences"]
+    assert whole_repo["behavior"]["status"] == "different"
+    assert whole_repo["behavior"]["comparisons"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+@pytest.mark.parametrize(
+    "name", [r"..\outside.py", "app.py:stream.py", "CON.py", "pkg./app.py"]
+)
+def test_windows_working_snapshot_rejects_native_path_aliases(make_repo, name):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+
+    with pytest.raises(ValueError, match="Unsafe path"):
+        refactor._current_sources(repo, name)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_rejects_directory_junction(make_repo, tmp_path):
+    repo, _ = make_repo({"app.py": _IDENTITY, "pkg/helper.py": _IDENTITY})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "helper.py").write_text(_IDENTITY, encoding="utf-8")
+    (repo / "pkg").rename(repo / "saved")
+    junction = repo / "pkg"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    with pytest.raises(ValueError):
+        refactor._current_sources(repo)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_rejects_root_junction(make_repo, tmp_path):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    alias = tmp_path / "repository junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(alias), str(repo)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    with pytest.raises(ValueError, match="Cannot open working source snapshot root"):
+        refactor._current_sources(alias)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_rejects_leaf_symlink(make_repo, tmp_path):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    outside = tmp_path / "outside.py"
+    outside.write_text(_IDENTITY, encoding="utf-8")
+    (repo / "app.py").unlink()
+    (repo / "app.py").symlink_to(outside)
+
+    with pytest.raises(ValueError):
+        refactor._current_sources(repo)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_deleted_source_is_absent(make_repo):
+    repo, _ = make_repo({"app.py": _IDENTITY, "helper.py": _IDENTITY})
+    (repo / "helper.py").unlink()
+
+    sources, hashes = refactor._current_sources(repo)
+
+    assert sources == {"app.py": _IDENTITY}
+    assert set(hashes) == {"app.py"}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_reads_case_only_rename(make_repo):
+    repo, _ = make_repo({"Case.py": _IDENTITY})
+    (repo / "Case.py").rename(repo / "temporary.py")
+    (repo / "temporary.py").rename(repo / "case.py")
+
+    sources, hashes = refactor._current_sources(repo)
+
+    assert sources == {"Case.py": _IDENTITY}
+    assert hashes["Case.py"] == hashlib.sha256(_IDENTITY.encode()).hexdigest()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_keeps_case_sensitive_names_distinct(make_repo):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    directory = repo / "sensitive"
+    directory.mkdir()
+    enabled = subprocess.run(
+        ["fsutil", "file", "setCaseSensitiveInfo", str(directory), "enable"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert enabled.returncode == 0, enabled.stderr
+    upper = "def upper():\n    return 'upper'\n"
+    lower = "def lower():\n    return 'lower'\n"
+    (directory / "Case.py").write_text(upper, encoding="utf-8")
+    (directory / "case.py").write_text(lower, encoding="utf-8")
+
+    sources, hashes = refactor._current_sources(
+        repo, ("sensitive/Case.py", "sensitive/case.py")
+    )
+
+    assert sources["sensitive/Case.py"] == upper
+    assert sources["sensitive/case.py"] == lower
+    assert hashes["sensitive/Case.py"] != hashes["sensitive/case.py"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_keeps_file_size_limit(make_repo, monkeypatch):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    monkeypatch.setattr(refactor, "_MAX_FILE_BYTES", len(_IDENTITY.encode()) - 1)
+
+    with pytest.raises(ValueError, match="verification size limit"):
+        refactor._current_sources(repo)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_working_snapshot_detects_modified_file_metadata(
+    make_repo, monkeypatch
+):
+    repo, _ = make_repo({"app.py": _IDENTITY})
+    information = windows_snapshot._WindowsApi.information
+    file_calls = 0
+
+    def changed_after_read(self, handle):
+        nonlocal file_calls
+        info, basic = information(self, handle)
+        if not info.attributes & windows_snapshot._FILE_ATTRIBUTE_DIRECTORY:
+            file_calls += 1
+            if file_calls == 2:
+                basic.change_time += 1
+        return info, basic
+
+    monkeypatch.setattr(windows_snapshot._WindowsApi, "information", changed_after_read)
+
+    with pytest.raises(ValueError, match="changed while being read"):
+        refactor._current_sources(repo)
 
 
 @pytest.mark.parametrize("name", ["../app.py", "/app.py", ".", "\0"])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 import stat
 import subprocess
@@ -247,6 +248,33 @@ def _read_working_source(root_fd: int, name: str) -> bytes | None:
             os.close(directory_fd)
 
 
+@contextmanager
+def _working_source_reader(root: Path):
+    if os.name == "nt":
+        from skylos.verification.windows_snapshot import WindowsSourceReader
+
+        with WindowsSourceReader(root, max_file_bytes=_MAX_FILE_BYTES) as reader:
+            yield reader.read
+        return
+
+    if (
+        os.open not in os.supports_dir_fd
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+    ):
+        raise ValueError("Platform does not support safe working source snapshot reads")
+    try:
+        root_fd = os.open(  # skylos: ignore[SKY-D215] caller-selected Git root opened as a no-follow directory anchor
+            root, _source_directory_flags()
+        )
+    except OSError as exc:
+        raise ValueError("Cannot open working source snapshot root") from exc
+    try:
+        yield lambda name: _read_working_source(root_fd, name)
+    finally:
+        os.close(root_fd)
+
+
 def _current_sources(
     root: Path,
     selected: str | tuple[str, ...] | None = None,
@@ -273,23 +301,11 @@ def _current_sources(
         names.update((selected,) if isinstance(selected, str) else selected)
     if len(names) > _MAX_FILES:
         raise ValueError("Working source snapshot exceeds the verification file limit")
-    if (
-        os.open not in os.supports_dir_fd
-        or not hasattr(os, "O_DIRECTORY")
-        or not hasattr(os, "O_NOFOLLOW")
-    ):
-        raise ValueError("Platform does not support safe working source snapshot reads")
-    try:
-        root_fd = os.open(  # skylos: ignore[SKY-D215] caller-selected Git root opened as a no-follow directory anchor
-            root, _source_directory_flags()
-        )
-    except OSError as exc:
-        raise ValueError("Cannot open working source snapshot root") from exc
     sources, hashes = {}, {}
     total = 0
-    try:
+    with _working_source_reader(root) as read_source:
         for name in sorted(names):
-            raw = _read_working_source(root_fd, name)
+            raw = read_source(name)
             if raw is None:
                 continue
             total += len(raw)
@@ -300,8 +316,6 @@ def _current_sources(
             if name.endswith(".py"):
                 sources[name] = _decode_source(raw, name)
             hashes[name] = hashlib.sha256(raw).hexdigest()
-    finally:
-        os.close(root_fd)
     return sources, hashes
 
 
