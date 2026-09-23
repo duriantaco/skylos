@@ -1,5 +1,29 @@
 ## Changelog
 
+## [4.39.0](https://github.com/duriantaco/skylos/compare/v4.38.0...v4.39.0) (2026-09-23)
+
+
+### Features
+
+* **action:** scan pinned container images with Trivy ([#863](https://github.com/duriantaco/skylos/issues/863)) ([3e3dbbb](https://github.com/duriantaco/skylos/commit/3e3dbbb7fb6b6da00e8c6712004a808969f7efb9))
+* **agent:** add optional Jev dead-code review and benchmarks ([#883](https://github.com/duriantaco/skylos/issues/883)) ([32133c0](https://github.com/duriantaco/skylos/commit/32133c0cc61d1314127cfcc1786814c6b99af67a))
+* **cli:** add --format json-ci for compact CI/agent JSON output ([#869](https://github.com/duriantaco/skylos/issues/869)) ([25b472d](https://github.com/duriantaco/skylos/commit/25b472db97eb822a0ebf911211f146dc2d4ec26f))
+* **container:** import trivy image vulnerability reports ([#860](https://github.com/duriantaco/skylos/issues/860)) ([170e25e](https://github.com/duriantaco/skylos/commit/170e25e02244ff968f72a32908ce0fd5052045e1))
+* **container:** scan pinned images with Trivy ([#862](https://github.com/duriantaco/skylos/issues/862)) ([f62d655](https://github.com/duriantaco/skylos/commit/f62d655cfee11f1b18c522d45f8f5f84f525db5f))
+* **cpp:** add conservative C++ source analysis ([#868](https://github.com/duriantaco/skylos/issues/868)) ([20585f3](https://github.com/duriantaco/skylos/commit/20585f3cd90c8199ef6dc9c7dc15fc982d3ae8d7))
+* **preflight:** verify GPU artifacts against fleet ([#872](https://github.com/duriantaco/skylos/issues/872)) ([2d8b62e](https://github.com/duriantaco/skylos/commit/2d8b62e28aeb3c6c3e921f6f965192f8dc604658))
+* **sca:** scan npm shrinkwrap lockfiles ([#864](https://github.com/duriantaco/skylos/issues/864)) ([8537c0a](https://github.com/duriantaco/skylos/commit/8537c0a93d8f8efc4efa61e52d4407e6af8679a0))
+* **sca:** scan Pipfile.lock dependencies ([#865](https://github.com/duriantaco/skylos/issues/865)) ([82d463a](https://github.com/duriantaco/skylos/commit/82d463adccc1afce37f4f808cb0a810630f902ec))
+
+
+### Bug Fixes
+
+* **architecture:** analyze TypeScript and JavaScript import graphs ([#882](https://github.com/duriantaco/skylos/issues/882)) ([d46c52a](https://github.com/duriantaco/skylos/commit/d46c52a846b31d278b057c5496d7050703663345))
+* **cicd:** scope PR findings and fail closed on diff errors ([#867](https://github.com/duriantaco/skylos/issues/867)) ([86cf012](https://github.com/duriantaco/skylos/commit/86cf0121906659b85da7628fb82626ea78e57bb5))
+* **dead-code:** preserve TypeScript package barrel exports ([#881](https://github.com/duriantaco/skylos/issues/881)) ([1520f65](https://github.com/duriantaco/skylos/commit/1520f65627b4f23eb12e36f6775c557d9ab81f82))
+* **dead-code:** respect TypeScript binding ownership ([#879](https://github.com/duriantaco/skylos/issues/879)) ([0dd1b1b](https://github.com/duriantaco/skylos/commit/0dd1b1b28bbc279e9ca19f081a2e4ec7038090cc))
+* **policy:** prevent false positive SKY-R101 and SKY-R102 on non-Pyth… ([#880](https://github.com/duriantaco/skylos/issues/880)) ([bff468e](https://github.com/duriantaco/skylos/commit/bff468ea7af9225714d08ed181a6f1fd3ac58ddb))
+
 ## [4.38.0](https://github.com/duriantaco/skylos/compare/v4.37.0...v4.38.0) (2026-09-17)
 
 
