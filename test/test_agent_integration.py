@@ -344,7 +344,11 @@ def test_agent_scan_defaults_to_fast_review_without_dead_code_verification(tmp_p
     assert args.skip_verification is True
 
 
-def test_agent_scan_can_opt_into_dead_code_verification(tmp_path):
+@pytest.mark.parametrize("jev_flag", ["--jev-precheck", "--jev-judge"])
+def test_agent_scan_can_opt_into_dead_code_verification(
+    tmp_path, jev_flag, monkeypatch
+):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-typesafe-key")
     sample = tmp_path / "sample.py"
     sample.write_text("print('hi')\n")
 
@@ -356,7 +360,14 @@ def test_agent_scan_can_opt_into_dead_code_verification(tmp_path):
         ),
         patch(
             "sys.argv",
-            ["skylos", "agent", "scan", str(sample), "--verify-dead-code"],
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(sample),
+                "--verify-dead-code",
+                jev_flag,
+            ],
         ),
     ):
         from skylos.cli import main
@@ -367,9 +378,217 @@ def test_agent_scan_can_opt_into_dead_code_verification(tmp_path):
     assert exc.value.code == 0
     args = mock_pipeline.call_args.kwargs["agent_args"]
     assert args.skip_verification is False
+    assert args.jev_precheck is (jev_flag == "--jev-precheck")
+    assert args.jev_judge is (jev_flag == "--jev-judge")
 
 
-def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
+def test_agent_scan_jev_llm_selector_enables_judge(tmp_path, monkeypatch):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-typesafe-key")
+
+    with (
+        patch("skylos.cli.run_pipeline", return_value=[]) as mock_pipeline,
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(sample),
+                "--verify-dead-code",
+                "--dead-code-review",
+                "jev-llm",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    args = mock_pipeline.call_args.kwargs["agent_args"]
+    assert args.jev_judge is True
+    assert args.jev_only is False
+
+
+@pytest.mark.parametrize("jev_flag", ["--jev-precheck", "--jev-judge"])
+def test_agent_scan_rejects_jev_without_dead_code_verification(tmp_path, jev_flag):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+
+    with (
+        patch("skylos.cli.run_pipeline") as mock_pipeline,
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch(
+            "sys.argv",
+            ["skylos", "agent", "scan", str(sample), jev_flag],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    mock_pipeline.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "agent_args",
+    [
+        ["verify", "--dead-code-review", "jev"],
+        ["verify", "--dead-code-review", "jev-llm"],
+        ["verify", "--jev-precheck"],
+        ["verify", "--jev-judge"],
+        ["scan", "--verify-dead-code", "--dead-code-review", "jev-llm"],
+    ],
+)
+def test_agent_jev_modes_require_typesafe_key_before_llm_setup(
+    tmp_path, monkeypatch, capsys, agent_args
+):
+    sample = tmp_path / "sample.py"
+    sample.write_text("def old_func():\n    pass\n")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+    with (
+        patch("skylos.cli._ensure_llm_support") as mock_llm_support,
+        patch("skylos.cli.resolve_llm_runtime") as mock_llm_runtime,
+        patch(
+            "sys.argv",
+            ["skylos", "agent", agent_args[0], str(sample), *agent_args[1:]],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 1
+    output = capsys.readouterr().out
+    assert "TYPESAFE_API_KEY" in output
+    assert "https://console.typesafe.ai/" in output
+    mock_llm_support.assert_not_called()
+    mock_llm_runtime.assert_not_called()
+
+
+def test_agent_verify_jev_only_skips_llm_runtime(tmp_path, monkeypatch):
+    sample = tmp_path / "sample.py"
+    sample.write_text("def old_func():\n    pass\n")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-typesafe-key")
+
+    with (
+        patch("skylos.cli._ensure_llm_support") as mock_llm_support,
+        patch("skylos.cli.resolve_llm_runtime") as mock_llm_runtime,
+        patch(
+            "skylos.commands.agent_verify_cmd.run_agent_verify_command",
+            return_value=0,
+        ) as mock_verify,
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "verify",
+                str(sample),
+                "--dead-code-review",
+                "jev",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_llm_support.assert_not_called()
+    mock_llm_runtime.assert_not_called()
+    args = mock_verify.call_args.args[0]
+    assert args.jev_judge is True
+    assert args.jev_only is True
+    assert mock_verify.call_args.kwargs["api_key"] is None
+    assert mock_verify.call_args.kwargs["provider"] == "typesafe"
+
+
+def test_agent_verify_jev_only_reaches_harness(tmp_path):
+    from skylos.commands.agent_verify_cmd import _run_verification_harness
+
+    args = SimpleNamespace(
+        max_verify=50,
+        max_challenge=20,
+        no_entry_discovery=False,
+        no_survivor_challenge=False,
+        quiet=True,
+        verification_mode="judge_all",
+        jev_precheck=False,
+        jev_judge=True,
+        jev_only=True,
+        grep_workers=4,
+        parallel_grep=False,
+        fix=False,
+    )
+    fake_run = SimpleNamespace(summary_dict=lambda: {})
+    with patch("skylos.llm.harness.run_verification_harness") as mock_harness:
+        mock_harness.return_value = SimpleNamespace(output={}, run=fake_run)
+        _run_verification_harness(
+            args,
+            tmp_path,
+            findings=[],
+            defs_map={},
+            model="jev-1.13.0",
+            api_key=None,
+            provider="typesafe",
+            base_url=None,
+        )
+
+    assert mock_harness.call_args.kwargs["jev_judge"] is True
+    assert mock_harness.call_args.kwargs["jev_only"] is True
+    assert mock_harness.call_args.kwargs["api_key"] is None
+
+
+def test_agent_scan_jev_only_redirects_to_verify(tmp_path, capsys):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+
+    with (
+        patch("skylos.cli.run_pipeline") as mock_pipeline,
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(sample),
+                "--verify-dead-code",
+                "--dead-code-review",
+                "jev",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 2
+    assert "agent verify" in capsys.readouterr().out
+    mock_pipeline.assert_not_called()
+
+
+@pytest.mark.parametrize("jev_flag", ["--jev-precheck", "--jev-judge"])
+def test_agent_verify_json_uses_harness_and_writes_metadata(
+    tmp_path, jev_flag, monkeypatch
+):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-typesafe-key")
     sample = tmp_path / "sample.py"
     sample.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "def old_func():\n    pass\n"
@@ -432,6 +651,7 @@ def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
                 str(sample),
                 "--format",
                 "json",
+                jev_flag,
                 "--output",
                 str(output_path),
             ],
@@ -456,6 +676,26 @@ def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
     assert kwargs["project_root"] == str(sample.parent)
     assert kwargs["api_key"] == "fake-key"
     assert kwargs["verification_mode"] == "judge_all"
+    assert kwargs["jev_precheck"] is (jev_flag == "--jev-precheck")
+    assert kwargs["jev_judge"] is (jev_flag == "--jev-judge")
+
+
+def test_agent_verify_fix_excludes_jev_only_agreement():
+    from skylos.commands.agent_verify_cmd import _confirmed_dead_findings
+
+    jev_only = {"name": "jev_only", "_jev_agreed": True}
+    llm_confirmed = {"name": "llm_confirmed", "_llm_verdict": "TRUE_POSITIVE"}
+    judged_used = {"name": "judged_used", "_jev_judged_retained": True}
+    judged_unused = {
+        "name": "judged_unused",
+        "_jev_agreed": True,
+        "_llm_verdict": "TRUE_POSITIVE",
+    }
+    assert _confirmed_dead_findings(
+        [jev_only, judged_used, judged_unused, llm_confirmed], []
+    ) == [
+        llm_confirmed
+    ]
 
 
 def test_agent_verify_refuses_fixes_from_incomplete_static_analysis(tmp_path):

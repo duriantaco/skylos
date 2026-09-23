@@ -681,6 +681,9 @@ class DeadCodeAgent:
         batch_mode=True,
         quiet=False,
         verification_mode="production",
+        jev_precheck=False,
+        jev_judge=False,
+        jev_only=False,
     ):
         from skylos.llm.harness import run_verification_harness
 
@@ -696,6 +699,9 @@ class DeadCodeAgent:
             batch_mode=batch_mode,
             quiet=quiet,
             verification_mode=verification_mode,
+            jev_precheck=jev_precheck,
+            jev_judge=jev_judge,
+            jev_only=jev_only,
         )
         return harness_result.output
 

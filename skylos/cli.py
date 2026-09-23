@@ -3365,6 +3365,26 @@ def _build_agent_parser():
         action="store_true",
         help="Run the slower LLM dead-code verification pass before showing final results",
     )
+    jev_scan_mode = p_scan.add_mutually_exclusive_group()
+    jev_scan_mode.add_argument(
+        "--dead-code-review",
+        choices=["llm", "jev", "jev-llm"],
+        default="llm",
+        help=(
+            "Dead-code review mode with --verify-dead-code: llm (default) "
+            "or jev-llm; Jev-only review is available via agent verify"
+        ),
+    )
+    jev_scan_mode.add_argument(
+        "--jev-precheck",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    jev_scan_mode.add_argument(
+        "--jev-judge",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     p_scan.add_argument(
         "--with-fixes",
         action="store_true",
@@ -3714,6 +3734,50 @@ def _build_agent_parser():
     return agent_parser
 
 
+def _configure_agent_dead_code_review(
+    agent_args, cmd: str, console: Console
+) -> int | None:
+    """Normalize review flags and reject modes that cannot run safely."""
+    if cmd not in {"scan", "verify"}:
+        return None
+
+    mode = getattr(agent_args, "dead_code_review", "llm")
+    if mode in {"jev", "jev-llm"}:
+        agent_args.jev_judge = True
+    agent_args.jev_only = mode == "jev"
+
+    if cmd == "scan":
+        if agent_args.jev_only:
+            console.print(
+                "[bad]Jev-only review is available with `skylos agent verify "
+                "PATH --dead-code-review jev`. Agent scan has other LLM "
+                "phases.[/bad]"
+            )
+            return 2
+        if (
+            getattr(agent_args, "jev_precheck", False)
+            or getattr(agent_args, "jev_judge", False)
+        ) and not getattr(agent_args, "verify_dead_code", False):
+            console.print(
+                "[bad]Jev dead-code review requires --verify-dead-code "
+                "with `skylos agent scan`.[/bad]"
+            )
+            return 2
+
+    uses_jev = getattr(agent_args, "jev_precheck", False) or getattr(
+        agent_args, "jev_judge", False
+    )
+    if uses_jev and not os.environ.get("TYPESAFE_API_KEY", "").strip():
+        console.print(
+            "[bad]Jev review requires TYPESAFE_API_KEY. Get a key at "
+            "https://console.typesafe.ai/ and set it in your environment "
+            "(for example, `export TYPESAFE_API_KEY=...`). Do not put "
+            "the key in a command argument or commit it.[/bad]"
+        )
+        return 1
+    return None
+
+
 def main() -> None:
     """
     Dispatch top-level skylos CLI command.
@@ -3744,6 +3808,10 @@ def main() -> None:
             agent_args.agent_cmd = "audit"
             agent_args.security_workflow_alias = "security-deep"
             cmd = "audit"
+
+        review_error = _configure_agent_dead_code_review(agent_args, cmd, console)
+        if review_error is not None:
+            sys.exit(review_error)
 
         if cmd == "replay":
             from skylos.commands.agent_replay_cmd import run_agent_replay_command
@@ -4815,46 +4883,53 @@ def main() -> None:
                     _print_security_deep_workflow(console, workflow)
             sys.exit(ci_summary.exit_code if ci_summary is not None else 0)
 
-        if not _ensure_llm_support():
-            Console().print("[bold red]Agent module not available[/bold red]")
-            sys.exit(1)
+        jev_only_verify = cmd == "verify" and agent_args.jev_only
+        if jev_only_verify:
+            from skylos.benchmarks._jev_dead_code_dataset import JEV_MODEL
 
-        model = agent_args.model
-
-        _provider_override = getattr(agent_args, "provider", None)
-        if _provider_override and model == "gpt-4.1":
-            _provider_default_models = {
-                "anthropic": "claude-sonnet-4-20250514",
-                "google": "gemini/gemini-2.0-flash",
-                "mistral": "mistral/mistral-large-latest",
-                "groq": "groq/llama3-70b-8192",
-                "deepseek": "deepseek/deepseek-chat",
-                "xai": "xai/grok-2",
-                "together": "together/meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
-                "ollama": "ollama/llama3",
-            }
-            if _provider_override in _provider_default_models:
-                model = _provider_default_models[_provider_override]
-
-        provider, api_key, base_url, _is_local = resolve_llm_runtime(
-            model=model,
-            provider_override=_provider_override,
-            base_url_override=getattr(agent_args, "base_url", None),
-            console=console,
-            allow_prompt=_is_tty(),
-        )
-
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
-            os.environ["SKYLOS_LLM_BASE_URL"] = base_url
-
-        if api_key is None or api_key == "":
-            if not _is_local:
-                env_var = PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
-                console.print(
-                    f"[bad]No {env_var} configured. Run `skylos key` or set the environment variable.[/bad]"
-                )
+            model = JEV_MODEL
+            provider, api_key, base_url = "typesafe", None, None
+        else:
+            if not _ensure_llm_support():
+                Console().print("[bold red]Agent module not available[/bold red]")
                 sys.exit(1)
+
+            model = agent_args.model
+
+            _provider_override = getattr(agent_args, "provider", None)
+            if _provider_override and model == "gpt-4.1":
+                _provider_default_models = {
+                    "anthropic": "claude-sonnet-4-20250514",
+                    "google": "gemini/gemini-2.0-flash",
+                    "mistral": "mistral/mistral-large-latest",
+                    "groq": "groq/llama3-70b-8192",
+                    "deepseek": "deepseek/deepseek-chat",
+                    "xai": "xai/grok-2",
+                    "together": "together/meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
+                    "ollama": "ollama/llama3",
+                }
+                if _provider_override in _provider_default_models:
+                    model = _provider_default_models[_provider_override]
+
+            provider, api_key, base_url, _is_local = resolve_llm_runtime(
+                model=model,
+                provider_override=_provider_override,
+                base_url_override=getattr(agent_args, "base_url", None),
+                console=console,
+                allow_prompt=_is_tty(),
+            )
+
+            if base_url:
+                os.environ["OPENAI_BASE_URL"] = base_url
+                os.environ["SKYLOS_LLM_BASE_URL"] = base_url
+
+            if api_key is None or api_key == "":
+                if not _is_local:
+                    env_var = PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
+                    console.print(
+                        f"[bad]No {env_var} configured. Run `skylos key` or set the environment variable.[/bad]"
+                    )
+                    sys.exit(1)
 
         agent_project_cfg = load_config(getattr(agent_args, "path", Path.cwd()))
         agent_exclude_folders = list(

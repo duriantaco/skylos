@@ -175,6 +175,7 @@ def test_default_verification_tool_registry_lists_expected_tools():
     assert {
         "entry_discovery",
         "deterministic_suppression",
+        "jev_precheck",
         "batch_verify",
         "graph_verify",
         "suppression_audit",
@@ -497,6 +498,7 @@ def test_verification_harness_wraps_existing_verifier(tmp_path):
             max_verify=10,
             max_challenge=5,
             quiet=True,
+            jev_precheck=True,
         )
 
     assert harness_result.output == result
@@ -506,6 +508,7 @@ def test_verification_harness_wraps_existing_verifier(tmp_path):
     mock_run.assert_called_once()
     assert mock_run.call_args.kwargs["harness_runner"] is not None
     assert mock_run.call_args.kwargs["harness_budget"].max_llm_calls == 2
+    assert mock_run.call_args.kwargs["jev_precheck"] is True
 
 
 def test_verification_harness_writes_default_project_trace(tmp_path):

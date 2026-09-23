@@ -1,0 +1,862 @@
+{
+  "version": 1,
+  "split": "hard_suite_v2_125",
+  "cases": [
+    {
+      "id": "reachable-state-flow",
+      "path": "fixtures/jev_hard_matrix/state_flow",
+      "description": "A closed state machine reaches handlers by constructed function names; another complete chain is not reachable from the fixed start state.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_birch"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_drift"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_fjord"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_harbor"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_juniper"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_lilac"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_nectar"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_amber"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_cobalt"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_ember"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_glade"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_iris"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_kelp"
+          },
+          {
+            "kind": "function",
+            "file": "stages.py",
+            "symbol": "stage_moss"
+          }
+        ]
+      }
+    },
+    {
+      "id": "indirect-module-matrix",
+      "path": "fixtures/jev_hard_matrix/module_matrix",
+      "description": "A fixed work plan resolves a module and a same-named function independently; the opposite module/function combinations are never called.",
+      "taxonomy": [
+        "multi_file",
+        "plugin_loading",
+        "dynamic_dispatch"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_bracken"
+          },
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_dahlia"
+          },
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_fennel"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_apricot"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_celery"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_elm"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_garnet"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_apricot"
+          },
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_celery"
+          },
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_elm"
+          },
+          {
+            "kind": "function",
+            "file": "workers/coral.py",
+            "symbol": "render_garnet"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_bracken"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_dahlia"
+          },
+          {
+            "kind": "function",
+            "file": "workers/indigo.py",
+            "symbol": "render_fennel"
+          }
+        ]
+      }
+    },
+    {
+      "id": "closed-callback-surface",
+      "path": "fixtures/jev_hard_matrix/callback_surface",
+      "description": "The closed callback table directly references six functions, while similarly shaped functions outside the table have no callers.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels are frozen separately from the scanned source."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_basil"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_denim"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_fir"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_heather"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_jade"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_lumen"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_agate"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_caper"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_ecru"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_gold"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_ivory"
+          },
+          {
+            "kind": "function",
+            "file": "callbacks.py",
+            "symbol": "paint_khaki"
+          }
+        ]
+      }
+    },
+    {
+      "id": "config-command-routing",
+      "path": "fixtures/jev_dispatch_matrix/config_router",
+      "description": "Functions are selected from a JSON configuration at runtime through module reflection.",
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture; answer labels are present only in this manifest."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "birch"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "dune"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "fern"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "harbor"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "amber"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "cobalt"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "ember"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "glade"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "iris"
+          },
+          {
+            "kind": "function",
+            "file": "actions.py",
+            "symbol": "juniper"
+          }
+        ]
+      }
+    },
+    {
+      "id": "composed-event-callback-routing",
+      "path": "fixtures/jev_dispatch_matrix/event_router",
+      "description": "A dispatcher constructs callback names from an event sequence and invokes them reflectively.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture; answer labels are present only in this manifest."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_beta"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_delta"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_zeta"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_theta"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_alpha"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_gamma"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_epsilon"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_eta"
+          },
+          {
+            "kind": "function",
+            "file": "receiver.py",
+            "symbol": "on_iota"
+          }
+        ]
+      }
+    },
+    {
+      "id": "workflow-config-registry",
+      "path": "fixtures/jev_realistic_repo",
+      "description": "A package dispatches workflow stages and callbacks named in JSON and plugin targets stored in a Python registry.",
+      "taxonomy": [
+        "dynamic_dispatch",
+        "multi_file",
+        "plugin_loading",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic package fixture. The manifest is the only answer key."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 10
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "normalize_rows"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "publish_snapshot"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "flush_metrics"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "reshape_events"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "rotate_indexes"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "prune_sessions"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "trace_step"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "audit_before"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "mark_queue"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "send_notice"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "record_latency"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "trace_finish"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "catalog_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "search_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "event_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "audit_adapter"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "fetch_batches"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "merge_catalog"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "validate_records"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "collect_invoices"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "render_receipts"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/actions.py",
+            "symbol": "compress_payloads"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "record_start"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "stamp_batch"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "note_accept"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "emit_signal"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "mark_success"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/callbacks.py",
+            "symbol": "stamp_result"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "ledger_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "receipt_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "invoice_adapter"
+          },
+          {
+            "kind": "function",
+            "file": "atlasflow/plugins.py",
+            "symbol": "storage_adapter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "installed-package-surface",
+      "path": "fixtures/jev_package_surface",
+      "description": "A small installed command package with TOML entry points, JSON-selected handlers, direct helpers, test-only use, and unreachable transitive helpers.",
+      "taxonomy": [
+        "package_entrypoint",
+        "dynamic_dispatch",
+        "pytest",
+        "multi_file"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic package; labels are outside the source snapshot."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "src/orchidkit/handlers.py",
+            "symbol": "handle_cobalt"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/handlers.py",
+            "symbol": "handle_birch"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/backends.py",
+            "symbol": "open_birch"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/backends.py",
+            "symbol": "close_cobalt"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/transforms.py",
+            "symbol": "normalize_cobalt"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/transforms.py",
+            "symbol": "normalize_birch"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "src/orchidkit/cli.py",
+            "symbol": "parse_args"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/cli.py",
+            "symbol": "read_profiles"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/cli.py",
+            "symbol": "resolve_handler"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/cli.py",
+            "symbol": "main"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/handlers.py",
+            "symbol": "handle_amber"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/handlers.py",
+            "symbol": "handle_drift"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/backends.py",
+            "symbol": "open_amber"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/transforms.py",
+            "symbol": "normalize_amber"
+          },
+          {
+            "kind": "function",
+            "file": "src/orchidkit/transforms.py",
+            "symbol": "normalize_drift"
+          },
+          {
+            "kind": "function",
+            "file": "tests/test_transforms.py",
+            "symbol": "test_normalize_drift"
+          }
+        ]
+      }
+    },
+    {
+      "id": "closed-async-event-surface",
+      "path": "fixtures/jev_method_surface",
+      "description": "A finite configured event sequence traverses an asyncio queue and invokes callbacks by constructed names.",
+      "taxonomy": [
+        "multi_file",
+        "dynamic_dispatch",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels live only in this manifest."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_bn2"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_px4"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_vk8"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_ct6"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_jf5"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_mb7"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_yr4"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_hp6"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_ef5"
+          }
+        ],
+        "used": [
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_zq7"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_lw9"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_dh3"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_rm1"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_ka9"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_sq2"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_gx1"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_tc3"
+          },
+          {
+            "kind": "function",
+            "file": "handlers.py",
+            "symbol": "on_nv8"
+          }
+        ]
+      }
+    }
+  ]
+}

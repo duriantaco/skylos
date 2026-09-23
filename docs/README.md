@@ -7,6 +7,7 @@ This repository keeps lightweight local docs for features that need examples clo
 | Official real-project regression testing and PR comparison reports | [liveness_primer](./liveness-primer.md) |
 | Generated codebase navigator for contributors | [Skylos Repo Map](./repo-map/index.html) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./cli-output.md) |
+| Optional Jev and LLM dead-code review modes, API keys, and safety limits | [Dead-code Review](./dead-code-review.md) |
 | Optional Ruff Python linting through the Skylos CLI | [Python Linting](./python-linting.md) |
 | Deterministic AI-code verification coverage and language support | [AI Code Verification](./ai-code-verification.md) |
 | Local contracts for verifying AI-written code | [AI Hallucination Contracts](./ai-hallucination-contracts.md) |

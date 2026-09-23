@@ -788,8 +788,13 @@ def run_pipeline(
 
     dead_code_agent = None
     if not skip_2a:
+        verifier_label = (
+            "Jev judging, with LLM fallback for"
+            if getattr(agent_args, "jev_judge", False)
+            else "LLM verifying"
+        )
         console.print(
-            f"[brand]Phase 2a:[/brand] LLM verifying "
+            f"[brand]Phase 2a:[/brand] {verifier_label} "
             f"{len(dead_code_findings)} dead-code findings..."
         )
         try:
@@ -802,20 +807,28 @@ def run_pipeline(
                 base_url=resolved_base_url,
             )
 
-            console.print("[brand]Testing LLM API connection...[/brand]")
-            api_ok, api_message = dead_code_agent.healthcheck()
-
-            if not api_ok:
-                console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
-                console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
-                console.print(
-                    "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
-                )
-                skip_2a = True
-                _2a_state["failed"] = True
-                dead_code_agent = None
+            if getattr(agent_args, "jev_precheck", False) or getattr(
+                agent_args, "jev_judge", False
+            ):
+                # A preflight completion would call the broad LLM even when
+                # Jev agrees with every static candidate. The verifier will
+                # make its own request if any candidate needs escalation.
+                console.print("[dim]LLM connection check deferred until needed.[/dim]")
             else:
-                console.print(f"[good]✓[/good] {api_message}")
+                console.print("[brand]Testing LLM API connection...[/brand]")
+                api_ok, api_message = dead_code_agent.healthcheck()
+
+                if not api_ok:
+                    console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
+                    console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
+                    console.print(
+                        "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
+                    )
+                    skip_2a = True
+                    _2a_state["failed"] = True
+                    dead_code_agent = None
+                else:
+                    console.print(f"[good]✓[/good] {api_message}")
         except Exception as e:
             console.print(f"[warn]LLM verification setup failed: {e}[/warn]")
             skip_2a = True
@@ -835,6 +848,8 @@ def run_pipeline(
                     "verification_mode",
                     "judge_all",
                 ),
+                jev_precheck=bool(getattr(agent_args, "jev_precheck", False)),
+                jev_judge=bool(getattr(agent_args, "jev_judge", False)),
             )
             verified = result.get("verified_findings", dead_code_findings)
             new_dead = result.get("new_dead_code", [])
@@ -848,6 +863,16 @@ def run_pipeline(
                 f"[good]✓ Verified:[/good] {tp} confirmed dead, "
                 f"{fp + det} suppressed as alive, {unc} suppressed as uncertain"
             )
+            if getattr(agent_args, "jev_judge", False):
+                verify_stats = result.get("stats", {})
+                console.print(
+                    "[dim]Jev judged: "
+                    f"{verify_stats.get('jev_agreed', 0)} unused, "
+                    f"{verify_stats.get('jev_judged_retained', 0)} used; "
+                    f"{verify_stats.get('jev_uncertain', 0)} uncertain, "
+                    f"{verify_stats.get('jev_unavailable', 0)} unavailable "
+                    "sent to LLM fallback.[/dim]"
+                )
             if new_dead:
                 console.print(
                     f"[good]✓ Survivors challenged:[/good] {len(new_dead)} "
@@ -856,12 +881,29 @@ def run_pipeline(
 
             for f in verified:
                 verdict = f.get("_llm_verdict", "UNCERTAIN")
-                if verdict == "TRUE_POSITIVE":
+                if f.get("_jev_judged_retained") is True:
+                    # A confident Jev "used" answer is a final suppression
+                    # in judge mode. It is not LLM proof or a fix candidate.
+                    f["_source"] = "static+jev"
+                    f["_confidence"] = "low"
+                    f["_suppressed"] = True
+                elif verdict == "TRUE_POSITIVE":
                     f["_source"] = "static+llm"
                     f["_confidence"] = "high"
                     f["_suppressed"] = False
                     f["model"] = model
                     f["provider"] = resolved_provider
+                    results.append(f)
+                elif f.get("_jev_agreed") is True and not f.get("_llm_verdict"):
+                    # Preserve the candidate without making a Jev-only
+                    # judgment eligible for an LLM-confirmed fix.
+                    f["_source"] = (
+                        "static+jev"
+                        if getattr(agent_args, "jev_judge", False)
+                        else "static"
+                    )
+                    f["_confidence"] = "medium"
+                    f["_suppressed"] = False
                     results.append(f)
                 elif verdict == "UNCERTAIN":
                     f["_source"] = "static"
@@ -1162,6 +1204,8 @@ def run_pipeline(
                 "verification_mode": getattr(
                     agent_args, "verification_mode", "production"
                 ),
+                "jev_precheck": bool(getattr(agent_args, "jev_precheck", False)),
+                "jev_judge": bool(getattr(agent_args, "jev_judge", False)),
             }
         )
 

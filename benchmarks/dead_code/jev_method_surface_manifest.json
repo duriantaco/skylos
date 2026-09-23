@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "split": "async_event_surface_probe",
+  "cases": [
+    {
+      "id": "closed-async-event-surface",
+      "path": "fixtures/jev_method_surface",
+      "description": "A finite configured event sequence traverses an asyncio queue and invokes callbacks by constructed names.",
+      "taxonomy": ["multi_file", "dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic source; labels live only in this manifest."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "handlers.py", "symbol": "on_bn2"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_px4"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_vk8"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_ct6"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_jf5"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_mb7"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_yr4"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_hp6"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_ef5"}
+        ],
+        "used": [
+          {"kind": "function", "file": "handlers.py", "symbol": "on_zq7"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_lw9"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_dh3"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_rm1"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_ka9"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_sq2"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_gx1"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_tc3"},
+          {"kind": "function", "file": "handlers.py", "symbol": "on_nv8"}
+        ]
+      }
+    }
+  ]
+}

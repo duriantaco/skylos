@@ -1318,12 +1318,14 @@ def test_run_verification_reopens_weak_llm_false_positive(MockAgent, tmp_path):
     assert stats["llm_calls"] == 2
 
 
+@pytest.mark.parametrize("jev_judge", [False, True])
 @patch("skylos.llm.verify_orchestrator._deterministic_suppress")
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_reopens_soft_deterministic_suppression(
     MockAgent,
     mock_deterministic_suppress,
     tmp_path,
+    jev_judge,
 ):
     mock_instance = MockAgent.return_value
     mock_instance._call_llm.return_value = json.dumps(
@@ -1367,6 +1369,7 @@ def test_run_verification_reopens_soft_deterministic_suppression(
         batch_mode=False,
         enable_entry_discovery=False,
         enable_survivor_challenge=False,
+        jev_judge=jev_judge,
     )
 
     verified = result["verified_findings"][0]

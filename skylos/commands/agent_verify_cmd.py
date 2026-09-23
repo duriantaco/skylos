@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 import shutil
@@ -28,7 +29,7 @@ def add_agent_verify_parser(
 ) -> None:
     parser = agent_sub.add_parser(
         "verify",
-        help="LLM-verify dead code findings (reduce false positives, catch more dead code)",
+        help="Review dead-code findings with an LLM, Jev, or both",
     )
     parser.add_argument("path", help="File or directory to analyze")
     add_model_arg(parser)
@@ -42,7 +43,7 @@ def add_agent_verify_parser(
         "--max-verify",
         type=int,
         default=50,
-        help="Max findings to verify with LLM (default: 50)",
+        help="Max dead-code findings to review (default: 50)",
     )
     parser.add_argument(
         "--max-challenge",
@@ -66,8 +67,28 @@ def add_agent_verify_parser(
         default="judge_all",
         help=(
             "Dead-code verifier mode: judge_all sends nearly every refs==0 "
-            "candidate to the LLM"
+            "candidate for review"
         ),
+    )
+    jev_mode = parser.add_mutually_exclusive_group()
+    jev_mode.add_argument(
+        "--dead-code-review",
+        choices=["llm", "jev", "jev-llm"],
+        default="llm",
+        help=(
+            "Review mode: llm (default), jev only, or jev first with LLM "
+            "fallback; Jev modes require TYPESAFE_API_KEY"
+        ),
+    )
+    jev_mode.add_argument(
+        "--jev-precheck",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    jev_mode.add_argument(
+        "--jev-judge",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--format",
@@ -167,7 +188,12 @@ def run_agent_verify_command(
         return 0
 
     console.print(f"  Found {len(all_findings)} dead code findings")
-    console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
+    if getattr(args, "jev_only", False):
+        console.print("\n[brand]Step 2/2: Jev dead-code review...[/brand]")
+    elif getattr(args, "jev_judge", False):
+        console.print("\n[brand]Step 2/2: Jev review with LLM fallback...[/brand]")
+    else:
+        console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
 
     result = _run_verification_harness(
         args,
@@ -186,7 +212,7 @@ def run_agent_verify_command(
     if not _write_or_print_verify_result(args, console, result):
         return 2
     _print_verify_summary(args, console, result, stats, verified, new_dead)
-    _print_net_result(console, stats)
+    _print_net_result(console, stats, jev_only=bool(getattr(args, "jev_only", False)))
 
     if getattr(args, "fix", False):
         _handle_verify_fixes(
@@ -338,6 +364,9 @@ def _run_verification_harness(
         enable_survivor_challenge=not args.no_survivor_challenge,
         quiet=getattr(args, "quiet", False),
         verification_mode=getattr(args, "verification_mode", "judge_all"),
+        jev_precheck=bool(getattr(args, "jev_precheck", False)),
+        jev_judge=bool(getattr(args, "jev_judge", False)),
+        jev_only=bool(getattr(args, "jev_only", False)),
         grep_workers=getattr(args, "grep_workers", 4),
         parallel_grep=bool(
             getattr(args, "parallel_grep", False) or getattr(args, "fix", False)
@@ -394,6 +423,37 @@ def _print_verify_summary(
         f"[green]{stats['verified_false_positive']}[/green]",
     )
     summary_table.add_row("Uncertain", str(stats["uncertain"]))
+    if getattr(args, "jev_precheck", False):
+        summary_table.add_row(
+            "Jev agreed / broad verifier skipped",
+            str(stats.get("jev_agreed", 0)),
+        )
+        summary_table.add_row(
+            "Jev disagreement / uncertain / unavailable",
+            " / ".join(
+                str(stats.get(key, 0))
+                for key in ("jev_disagreed", "jev_uncertain", "jev_unavailable")
+            ),
+        )
+    elif getattr(args, "jev_judge", False):
+        summary_table.add_row(
+            "Jev judged unused / used (LLM skipped)",
+            " / ".join(
+                str(stats.get(key, 0))
+                for key in ("jev_agreed", "jev_judged_retained")
+            ),
+        )
+        summary_table.add_row(
+            (
+                "Jev uncertain / unavailable (unverified)"
+                if getattr(args, "jev_only", False)
+                else "Jev uncertain / unavailable (LLM fallback)"
+            ),
+            " / ".join(
+                str(stats.get(key, 0))
+                for key in ("jev_uncertain", "jev_unavailable")
+            ),
+        )
     summary_table.add_row(
         "Entry points discovered",
         str(stats["entry_points_discovered"]),
@@ -430,7 +490,12 @@ def _print_false_positives(
     console: Console,
     verified: list[dict[str, Any]],
 ) -> None:
-    fps = [f for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE"]
+    fps = [
+        f
+        for f in verified
+        if f.get("_llm_verdict") == "FALSE_POSITIVE"
+        or f.get("_jev_judged_retained") is True
+    ]
     if not fps:
         return
 
@@ -443,7 +508,11 @@ def _print_false_positives(
         table.add_row(
             finding.get("name", "?"),
             f"{finding.get('file', '?')}:{finding.get('line', '?')}",
-            finding.get("_llm_rationale", "")[:100],
+            (
+                finding.get("_llm_rationale")
+                or finding.get("_jev_rationale")
+                or ""
+            )[:100],
         )
     console.print(table)
 
@@ -479,15 +548,22 @@ def _print_entry_points(console: Console, result: dict[str, Any]) -> None:
         console.print(f"  - {entry_point['name']} (from {entry_point['source']})")
 
 
-def _print_net_result(console: Console, stats: dict[str, Any]) -> None:
+def _print_net_result(
+    console: Console, stats: dict[str, Any], *, jev_only: bool = False
+) -> None:
     total_removed = stats["verified_false_positive"]
     total_added = stats["survivors_reclassified_dead"]
     net = stats["total_findings"] - total_removed + total_added
+    result_label = (
+        "retained findings (unverified included)"
+        if jev_only
+        else "verified findings"
+    )
     console.print(
         f"\n[brand]Net result:[/brand] {stats['total_findings']} findings "
         f"-> [green]-{total_removed} FP[/green] "
         f"[red]+{total_added} new[/red] "
-        f"= {net} verified findings"
+        f"= {net} {result_label}"
     )
 
 
@@ -532,6 +608,9 @@ def _confirmed_dead_findings(
         finding
         for finding in verified
         if finding.get("_llm_verdict") == "TRUE_POSITIVE"
+        and not (
+            finding.get("_jev_agreed") or finding.get("_jev_judged_retained")
+        )
     ] + (new_dead or [])
 
 

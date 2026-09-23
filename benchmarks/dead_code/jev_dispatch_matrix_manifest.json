@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "config-command-routing",
+      "path": "fixtures/jev_dispatch_matrix/config_router",
+      "description": "Functions are selected from a JSON configuration at runtime through module reflection.",
+      "taxonomy": ["multi_file", "dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture; answer labels are present only in this manifest."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "actions.py", "symbol": "birch"},
+          {"kind": "function", "file": "actions.py", "symbol": "dune"},
+          {"kind": "function", "file": "actions.py", "symbol": "fern"},
+          {"kind": "function", "file": "actions.py", "symbol": "harbor"}
+        ],
+        "used": [
+          {"kind": "function", "file": "actions.py", "symbol": "amber"},
+          {"kind": "function", "file": "actions.py", "symbol": "cobalt"},
+          {"kind": "function", "file": "actions.py", "symbol": "ember"},
+          {"kind": "function", "file": "actions.py", "symbol": "glade"},
+          {"kind": "function", "file": "actions.py", "symbol": "iris"},
+          {"kind": "function", "file": "actions.py", "symbol": "juniper"}
+        ]
+      }
+    },
+    {
+      "id": "composed-event-callback-routing",
+      "path": "fixtures/jev_dispatch_matrix/event_router",
+      "description": "A dispatcher constructs callback names from an event sequence and invokes them reflectively.",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic fixture; answer labels are present only in this manifest."
+      },
+      "scan": {"confidence": 0, "grep_verify": true},
+      "budget": {"max_seconds": 5.0},
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "receiver.py", "symbol": "on_beta"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_delta"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_zeta"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_theta"}
+        ],
+        "used": [
+          {"kind": "function", "file": "receiver.py", "symbol": "on_alpha"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_gamma"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_epsilon"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_eta"},
+          {"kind": "function", "file": "receiver.py", "symbol": "on_iota"}
+        ]
+      }
+    }
+  ]
+}

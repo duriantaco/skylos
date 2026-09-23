@@ -43,6 +43,41 @@ classifying security impact.
   tests, package scripts, or other target-code execution unless the user asked
   for that behavior or the repo is trusted.
 
+## Jev Dead-Code Verification
+
+`skylos .` remains static-only. `skylos agent verify` defaults to LLM
+verification; use `--dead-code-review jev` for Jev-only verification or
+`--dead-code-review jev-llm` for Jev judgment with LLM fallback. Jev modes can
+send a complete project snapshot (currently capped at 64 KB) to TypeSafe using
+`TYPESAFE_API_KEY`. Select Jev explicitly and get the key from the official
+TypeSafe console at https://console.typesafe.ai/.
+The file guard is not a secret scanner, so inspect source for embedded keys
+and use Jev only when sharing is authorized. Legacy flags remain available:
+
+- `--jev-precheck` is the original router. Jev agreement that a static
+  candidate is unused at confidence >=0.8 skips its broad LLM check;
+  disagreement and uncertainty fall back to the LLM. Jev does not suppress
+  findings in this mode.
+- `--jev-judge` lets Jev decide both unused and used when its confidence
+  **and chosen-answer probability** are each >=0.9. Confident unused findings
+  remain; confident used findings are suppressed. Uncertain, unavailable, or
+  invalid Jev decisions fall back to broad candidate verification. Separate
+  LLM entry discovery, Haiku prefilter, and survivor challenge are skipped in
+  this mode, even on a Jev outage; it is not full LLM-only equivalence.
+
+No Jev judgment authorizes `--fix`. Jev-only mode makes no LLM
+calls: uncertain or unavailable Jev decisions remain visible as unverified
+static findings. Jev+LLM mode requires a configured LLM provider and sends
+uncertain or unavailable candidates to the LLM. An explicitly selected Jev
+mode must report missing `TYPESAFE_API_KEY` rather than silently ignoring Jev.
+`agent scan` still has other LLM phases, so Jev-only applies to `agent verify`, not
+to the full agent scan. Normal scans need no Jev key.
+
+The latest 59-label multi-arm accuracy comparison is in `benchmark_jev.md`;
+earlier holdout results and reproduction commands are in `BENCHMARK.md` and
+`benchmarks/dead_code/README.md`. The synthetic suite is not independent
+deployment evidence or automatic-removal evidence.
+
 ## Common Commands
 
 ```bash

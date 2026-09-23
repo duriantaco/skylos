@@ -54,6 +54,7 @@ current directory. `suite` and `defend` require a directory; `verify` and
 | Question | Command | Input checked |
 |:---|:---|:---|
 | What problems are in this source tree? | `skylos PATH` | Source files and project configuration; dead code by default, every main source analyzer with `-a` |
+| Should a model review static dead-code findings? | `skylos agent verify [PATH]` | LLM by default; optional [Jev-only or Jev-plus-LLM review](./docs/dead-code-review.md) |
 | Does this code contain AI-code mistakes? | `skylos verify [PATH]` | AI-defect checks over the selected file or tree, plus a separate Git HEAD behavior comparison for supported Python working changes |
 | Will this exact local GPU build fit the machines we ship to? | `skylos preflight [ARTIFACT]` | A local built file or directory and `.skylos/gpu-targets.yml`; an OCI reference is identity-only and returns `UNKNOWN` in the CLI |
 | What vulnerabilities are in this container image? | `skylos image scan IMAGE@sha256:<digest> --platform os/arch` | A remote registry image scanned by a separately installed Trivy; `--fail-on` turns findings into a gate |
@@ -663,6 +664,70 @@ Frozen `golden-v0.2` highlights:
 
 For methodology, commands, competitor rows, and caveats, see
 [BENCHMARK.md](./BENCHMARK.md).
+
+An experimental Jev runner can blindly score the pinned `jev-1.13.0` typed
+decision model against the checked-in 124 dead-code labels or the frozen
+`skylos-benchmarks` corpus. It withholds labels and review reasons from the
+request, retains golden label IDs locally for exact classifier comparison, and
+repeats the test with answer-signaling identifiers neutralized when that can be
+done without changing fixture semantics. An offline comparator now reports
+label-by-label corrections, regressions, abstentions, and unsafe removals
+against a frozen Skylos result. Live mode sends
+fixture source to TypeSafe, requires an explicit flag and a separate
+`TYPESAFE_API_KEY`; it supports bounded, resumable runs and records request
+versus local contract-validation latency. Normal Skylos scans need no Jev key.
+We ran a paid six-request Jev-only fresh holdout on 33 frozen labels: 26/33
+decisions at confidence 0.8, 24/26 correct among those decisions, and no
+known-used symbol classified as unused. A paired paid cascade run on the same
+holdout kept F1 at 0.72 while reducing broad-verifier calls from 8 to 4; it
+did not improve classification. See the
+[dead-code benchmark guide](./benchmarks/dead_code/README.md#jev-semantic-research-benchmark).
+The [59-label same-run comparison](./benchmark_jev.md) reports total accuracy
+for pure Skylos (57.6%), LLM-only (69.5%), the original Jev precheck router
+(67.8%), and the initial Jev judge mode (88.1%). After two safety fixes, a
+separate paid judge-only run on the final code scored 51/59 (86.4%); it has no
+same-run LLM-only arm. The judge threshold was chosen on this synthetic suite,
+so these are development results, not an independent holdout or a guarantee
+for real repositories.
+An expanded [125-label repository-style suite](./benchmark_jev.md#expanded-repository-style-suite-v2-no-paid-results-yet)
+adds cross-file workflow, installable-package, and async event-bus traps.
+Its pure Skylos baseline is 71/125 (56.8%); no paid Jev/LLM result has been
+run on that expanded suite yet.
+
+On a harder 19-label dynamic-dispatch challenge, Jev correctly routed all
+11 used symbols to the LLM and skipped it for six unused symbols. The paired
+final score still tied at F1=0.727: both arms retained six false positives
+from a JSON-configured router. This is a measured limitation, not a claimed
+accuracy improvement.
+
+Dead-code review is opt-in. A normal `skylos .` scan stays local and uses no
+model. `skylos agent verify .` uses the LLM verifier by default; choose Jev
+explicitly when you want it:
+
+```bash
+skylos agent verify . --format json                         # LLM only
+skylos agent verify . --dead-code-review jev --format json  # Jev only
+skylos agent verify . --dead-code-review jev-llm --format json  # Jev, then LLM if uncertain
+```
+
+Jev-only needs `TYPESAFE_API_KEY`, not an LLM key. Confident Jev "unused"
+decisions retain a static finding and confident "used" decisions suppress it;
+uncertain or unavailable decisions leave the finding visible as unverified.
+Jev-plus-LLM also needs a configured LLM provider and sends uncertain
+decisions to the LLM. Jev alone never authorizes `--fix`. If you select either
+Jev mode without `TYPESAFE_API_KEY`, Skylos stops with setup instructions
+instead of silently switching review modes. Get a key by signing in at the official
+[TypeSafe console](https://console.typesafe.ai/) (access may require an
+invitation), then set `TYPESAFE_API_KEY` in your environment; do not put it in
+source control or a command-line argument.
+
+Jev sends a bounded project source snapshot to TypeSafe (currently at most
+64 KB). Check it for embedded secrets and confirm sharing is authorized; the
+local file guard is not a secret scanner. Oversized or unsafe snapshots cannot
+be judged by Jev. The older `--jev-judge` and `--jev-precheck` flags remain
+available for compatibility; use `--dead-code-review` for new workflows.
+See the [dead-code review guide](./docs/dead-code-review.md) for key setup,
+fallback behavior, and limitations.
 
 ### Real-project regression testing
 

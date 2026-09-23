@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "split": "package_surface_dev",
+  "cases": [
+    {
+      "id": "installed-package-surface",
+      "path": "fixtures/jev_package_surface",
+      "description": "A small installed command package with TOML entry points, JSON-selected handlers, direct helpers, test-only use, and unreachable transitive helpers.",
+      "taxonomy": ["package_entrypoint", "dynamic_dispatch", "pytest", "multi_file"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Original synthetic package; labels are outside the source snapshot."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "src/orchidkit/handlers.py", "symbol": "handle_cobalt"},
+          {"kind": "function", "file": "src/orchidkit/handlers.py", "symbol": "handle_birch"},
+          {"kind": "function", "file": "src/orchidkit/backends.py", "symbol": "open_birch"},
+          {"kind": "function", "file": "src/orchidkit/backends.py", "symbol": "close_cobalt"},
+          {"kind": "function", "file": "src/orchidkit/transforms.py", "symbol": "normalize_cobalt"},
+          {"kind": "function", "file": "src/orchidkit/transforms.py", "symbol": "normalize_birch"}
+        ],
+        "used": [
+          {"kind": "function", "file": "src/orchidkit/cli.py", "symbol": "parse_args"},
+          {"kind": "function", "file": "src/orchidkit/cli.py", "symbol": "read_profiles"},
+          {"kind": "function", "file": "src/orchidkit/cli.py", "symbol": "resolve_handler"},
+          {"kind": "function", "file": "src/orchidkit/cli.py", "symbol": "main"},
+          {"kind": "function", "file": "src/orchidkit/handlers.py", "symbol": "handle_amber"},
+          {"kind": "function", "file": "src/orchidkit/handlers.py", "symbol": "handle_drift"},
+          {"kind": "function", "file": "src/orchidkit/backends.py", "symbol": "open_amber"},
+          {"kind": "function", "file": "src/orchidkit/transforms.py", "symbol": "normalize_amber"},
+          {"kind": "function", "file": "src/orchidkit/transforms.py", "symbol": "normalize_drift"},
+          {"kind": "function", "file": "tests/test_transforms.py", "symbol": "test_normalize_drift"}
+        ]
+      }
+    }
+  ]
+}

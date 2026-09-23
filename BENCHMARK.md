@@ -38,6 +38,59 @@ The dead-code suite covers Python framework liveness, package entrypoints,
 plugin loading, SQLAlchemy models, and cross-language Go, Java, TypeScript, and
 JavaScript reachability cases.
 
+### Jev semantic research baseline
+
+`scripts/jev_dead_code_benchmark.py` evaluates a different question: can the
+pinned `jev-1.13.0` typed decision model classify the same labeled symbols from
+source alone well enough to help review uncertain dead-code findings?
+
+```bash
+# Request plan only; local and free.
+python3 scripts/jev_dead_code_benchmark.py
+
+# Explicit paid/network smoke run. Reads TYPESAFE_API_KEY from the environment.
+python3 scripts/jev_dead_code_benchmark.py --live --case basic-unused-symbols \
+  --max-requests 2 --output jev-dead-code-smoke-results.json
+```
+
+Ground-truth labels and case descriptions are withheld from Jev. The runner
+uses original and answer-signal-neutralized identifier arms, pins the model and
+prompt digest, validates the complete Choice distribution, and reports
+abstention-aware threshold metrics and calibration. It also reads the frozen
+`skylos-golden-benchmark/v1` manifests in the sibling benchmark corpus and
+retains their label IDs locally for exact comparison with existing classifier
+results. Completed runs can now be compared label by label with a frozen Skylos
+summary using the offline `scripts/jev_compare.py` command. Runs refuse to
+overwrite existing reports, support validated resume, and can pin manifest and
+prompt digests before a holdout call. Jev also powers the opt-in
+`--jev-precheck` verification router and the newer opt-in `--jev-judge` mode;
+neither produces a static reachability proof or authorizes deletion. In judge
+mode, both confidence and chosen-answer probability must reach 0.9 before a
+Jev used/unused answer becomes final for a static candidate; otherwise the
+broad LLM verifier handles it. On the paid 33-label fresh holdout, Jev decided
+26 labels at confidence 0.8 and got 24 of those right, with zero known-used
+symbols marked unused. In a paired baseline/cascade run, F1 stayed 0.72 and
+broad LLM calls fell from 8 to 4. This is not a general performance claim:
+the holdout is small and Jev agreed on all nine static candidates it skipped.
+The separate 19-label dynamic-dispatch challenge exposed 11 disagreements
+with Skylos static candidates; Jev correctly routed all 11 to the general
+verifier and skipped it for six correctly unused symbols. Even so, both
+arms finished with six false positives and F1=0.727. Broad LLM calls fell
+from 20 to 16, and reported broad-LLM tokens from 37,259 to 24,865.
+The newer [59-label same-run Jev benchmark](./benchmark_jev.md) reports total
+accuracy for pure Skylos (57.6%), Skylos+LLM (69.5%), the original
+Jev-precheck router (67.8%), and the initial Jev judge mode (88.1%) on a broader
+five-case suite. A separate final-code judge-only run after safety fixes scored
+51/59 (86.4%); it is not a same-run comparison with the other arms. The judge
+threshold was selected on this synthetic suite; neither result is an
+independent holdout or an automatic-removal claim.
+Broad-LLM call counts exclude TypeSafe usage.
+The newer [125-label repository-style v2 suite](./benchmark_jev.md#expanded-repository-style-suite-v2-no-paid-results-yet)
+adds 66 labels and has only a local pure-Skylos baseline so far: 71/125
+(56.8%). It is not comparable to the paid 59-label arms as if run together.
+Full method and holdout procedure:
+[benchmarks/dead_code/README.md](./benchmarks/dead_code/README.md#jev-semantic-research-benchmark).
+
 ### External Demo Target
 
 Run:

@@ -79,6 +79,11 @@ def default_verification_tool_registry() -> HarnessToolRegistry:
         description="Pre-filter exported symbols with a cheaper verifier.",
     )
     registry.register(
+        "jev_precheck",
+        category="llm",
+        description="Precheck dead-code candidates and route uncertain cases to the LLM.",
+    )
+    registry.register(
         "batch_verify",
         category="llm",
         description="Verify dead-code candidates in batches.",
