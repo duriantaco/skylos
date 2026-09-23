@@ -54,7 +54,7 @@ def _git(repo: Path, *args: str) -> str:
 def _write(repo: Path, name: str, source: str) -> None:
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    assert write_text_no_symlink(path, source, encoding="utf-8")
+    assert write_text_no_symlink(path, source, encoding="utf-8", newline="")
 
 
 @pytest.fixture
@@ -250,7 +250,9 @@ def test_symlinked_import_is_not_used_as_source(make_repo, tmp_path):
 def test_working_snapshot_preserves_encoded_bytes_and_line_endings(make_repo):
     repo, _ = make_repo({"app.py": _IDENTITY})
     source = "# coding: latin-1\r\ndef run(value):\r\n    return 'caf\xe9'\r\n"
-    assert write_text_no_symlink(repo / "app.py", source, encoding="latin-1")
+    assert write_text_no_symlink(
+        repo / "app.py", source, encoding="latin-1", newline=""
+    )
 
     sources, hashes = refactor._current_sources(repo)
 
@@ -632,8 +634,8 @@ def test_windows_working_snapshot_keeps_case_sensitive_names_distinct(make_repo)
     assert enabled.returncode == 0, enabled.stderr
     upper = "def upper():\n    return 'upper'\n"
     lower = "def lower():\n    return 'lower'\n"
-    (directory / "Case.py").write_text(upper, encoding="utf-8")
-    (directory / "case.py").write_text(lower, encoding="utf-8")
+    _write(repo, "sensitive/Case.py", upper)
+    _write(repo, "sensitive/case.py", lower)
 
     sources, hashes = refactor._current_sources(
         repo, ("sensitive/Case.py", "sensitive/case.py")

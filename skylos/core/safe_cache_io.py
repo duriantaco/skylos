@@ -327,6 +327,7 @@ def write_text_no_symlink(
     text: str,
     *,
     encoding: str = "utf-8",
+    newline: str | None = None,
 ) -> bool:
     """Create or replace a regular file without following path symlinks."""
 
@@ -345,7 +346,7 @@ def write_text_no_symlink(
         if not stat.S_ISREG(stat_result.st_mode) or stat_result.st_nlink != 1:
             return False
         os.ftruncate(fd, 0)
-        with os.fdopen(fd, "w", encoding=encoding) as handle:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as handle:
             fd = None
             handle.write(text)
             handle.flush()

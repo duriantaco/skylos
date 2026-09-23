@@ -47,7 +47,7 @@ def _git(repo: Path, *args: str) -> str:
 def _write(repo: Path, name: str, source: str, *, encoding: str = "utf-8") -> None:
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    assert write_text_no_symlink(path, source, encoding=encoding)
+    assert write_text_no_symlink(path, source, encoding=encoding, newline="")
 
 
 def _commit(repo: Path, *names: str) -> str:
