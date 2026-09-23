@@ -29,11 +29,11 @@ jobs:
 
       - name: Verify Windows working-source snapshots
         shell: bash
-        run: |
-          .venv/Scripts/python.exe -m pytest -q \
-            test/test_refactor_verify.py \
-            test/test_behavior_baselines.py \
-            -k 'windows_working_snapshot or windows_snapshot or windows_native_child_open or windows_case_sensitivity or unchanged_symbol_records_snapshot_identity or working_snapshot_preserves_encoded_bytes_and_line_endings or snapshot_identity_hashes_exact_encoded_bytes'
+        run: >-
+          .venv/Scripts/python.exe -m pytest -q
+          test/test_refactor_verify.py
+          test/test_behavior_baselines.py
+          -k 'windows_working_snapshot or windows_snapshot or windows_native_child_open or windows_case_sensitivity or unchanged_symbol_records_snapshot_identity or working_snapshot_preserves_encoded_bytes_and_line_endings or snapshot_identity_hashes_exact_encoded_bytes'
 
   test_matrix:
     name: test-matrix (${{ matrix.install_target }})
