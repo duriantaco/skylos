@@ -183,7 +183,10 @@ def test_unsafe_or_incomplete_scope_falls_back_without_upload(
     small_project, extra_path, contents
 ):
     root, source = small_project
-    (root / extra_path).write_text(contents, encoding="utf-8")
+    fixture_file = root / extra_path
+    fixture_file.write_text(  # skylos: ignore[SKY-D324] literal pytest parametrization under tmp_path
+        contents, encoding="utf-8"
+    )
 
     def forbidden(*_args):
         pytest.fail("unsafe project must not be uploaded")

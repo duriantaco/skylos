@@ -44,6 +44,7 @@ from skylos.benchmarks._jev_dead_code_dataset import (  # noqa: E402
 from skylos.commands.agent_verify_cmd import (  # noqa: E402
     _collect_dead_code_findings,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink  # noqa: E402
 from skylos.llm.harness import run_verification_harness  # noqa: E402
 
 
@@ -51,17 +52,50 @@ DEFAULT_MANIFEST = (
     REPO_ROOT / "benchmarks" / "dead_code" / "jev_hard_suite_v2_manifest.json"
 )
 MAX_CASES = 20
+BENCHMARK_ARMS = frozenset({"static", "baseline", "cascade", "judge"})
 
 
 def _source_root(parent: Path, files: list[dict[str, str]], arm: str) -> Path:
-    root = parent / arm / "project"
-    root.mkdir(parents=True)
+    try:
+        if parent.is_symlink() or not parent.is_dir():
+            raise OSError("source parent is not a real directory")
+        parent = parent.resolve(strict=True)
+    except OSError as exc:
+        raise JevBenchmarkError("cannot use benchmark source parent") from exc
+    if arm not in BENCHMARK_ARMS:
+        raise JevBenchmarkError(f"unsupported benchmark arm: {arm}")
+
+    arm_root = parent / arm
+    root = arm_root / "project"
+    try:
+        # These directories must be new. Refuse a pre-positioned symlink or file
+        # instead of following it while staging the isolated source snapshot.
+        arm_root.mkdir(mode=0o700)
+        root.mkdir(mode=0o700)
+    except OSError as exc:
+        raise JevBenchmarkError(f"cannot create isolated {arm} source root") from exc
+
     for item in files:
         relative = Path(item["path"])
-        destination = root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(item["content"], encoding="utf-8")
-    return root.resolve()
+        if (
+            relative.is_absolute()
+            or bool(relative.anchor)
+            or bool(relative.drive)
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
+            raise JevBenchmarkError(f"unsafe staged source path: {item['path']}")
+        destination = root.joinpath(*relative.parts)
+        try:
+            destination.relative_to(root)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError) as exc:
+            raise JevBenchmarkError(
+                f"cannot create staged source parent: {item['path']}"
+            ) from exc
+        if not write_text_no_symlink(destination, item["content"], encoding="utf-8"):
+            raise JevBenchmarkError(f"cannot safely stage source: {item['path']}")
+    return root.resolve(strict=True)
 
 
 def _scan(root: Path, *, scan: dict | None = None) -> tuple[list[dict], dict]:

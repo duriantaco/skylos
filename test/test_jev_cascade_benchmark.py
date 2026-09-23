@@ -9,6 +9,58 @@ from scripts import jev_cascade_benchmark as benchmark
 from scripts.jev_cascade_benchmark import _matches, _reported, _score
 
 
+def test_source_root_stages_nested_file_without_following_symlinks(tmp_path: Path):
+    root = benchmark._source_root(
+        tmp_path,
+        [{"path": "pkg/module.py", "content": "answer = 42\n"}],
+        "static",
+    )
+
+    assert root == (tmp_path / "static" / "project").resolve()
+    assert (root / "pkg" / "module.py").read_text(encoding="utf-8") == ("answer = 42\n")
+
+
+@pytest.mark.parametrize(
+    "path", ["../escape.py", "pkg/../../escape.py", "/escape.py", ""]
+)
+def test_source_root_rejects_paths_outside_snapshot(tmp_path: Path, path: str):
+    with pytest.raises(benchmark.JevBenchmarkError, match="unsafe staged source path"):
+        benchmark._source_root(
+            tmp_path,
+            [{"path": path, "content": "escaped = True\n"}],
+            "static",
+        )
+
+    assert not list(tmp_path.rglob("escape.py"))
+
+
+def test_source_root_rejects_preexisting_arm_symlink(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (tmp_path / "static").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable")
+
+    with pytest.raises(
+        benchmark.JevBenchmarkError, match="cannot create isolated static source root"
+    ):
+        benchmark._source_root(
+            tmp_path,
+            [{"path": "module.py", "content": "escaped = True\n"}],
+            "static",
+        )
+
+    assert not (outside / "project").exists()
+
+
+def test_source_root_rejects_unknown_arm(tmp_path: Path):
+    with pytest.raises(benchmark.JevBenchmarkError, match="unsupported benchmark arm"):
+        benchmark._source_root(tmp_path, [], "../outside")
+
+    assert not any(tmp_path.iterdir())
+
+
 def test_cascade_reported_keeps_jev_only_static_finding():
     output = {
         "verified_findings": [

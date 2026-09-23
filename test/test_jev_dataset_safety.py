@@ -17,7 +17,10 @@ from skylos.benchmarks.jev_dead_code import run_jev_manifest
 def _manifest(tmp_path: Path, source: str, *, symbol: str = "unused_helper") -> Path:
     fixture = tmp_path / "fixtures" / "sample"
     fixture.mkdir(parents=True)
-    (fixture / "app.py").write_text(source, encoding="utf-8")
+    source_file = fixture / "app.py"
+    source_file.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
+        source, encoding="utf-8"
+    )
     manifest = {
         "version": 1,
         "cases": [
@@ -36,7 +39,9 @@ def _manifest(tmp_path: Path, source: str, *, symbol: str = "unused_helper") -> 
         ],
     }
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(manifest), encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
+        json.dumps(manifest), encoding="utf-8"
+    )
     return path
 
 
@@ -94,7 +99,10 @@ def test_sensitive_or_answer_key_file_aborts_before_network(
     tmp_path, filename, contents
 ):
     manifest = _manifest(tmp_path, "def unused_helper():\n    pass\n")
-    (tmp_path / "fixtures" / "sample" / filename).write_text(contents)
+    fixture_file = tmp_path / "fixtures" / "sample" / filename
+    fixture_file.write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal pytest parametrization under tmp_path
+        contents
+    )
     calls = []
 
     def send(payload, key):

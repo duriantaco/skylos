@@ -70,14 +70,19 @@ def _fixture(tmp_path, *, omit_javascript_neutral: bool = False):
     path = tmp_path / "manifests" / "manifest.json"
     path.parent.mkdir()
     raw = json.dumps(manifest)
-    path.write_text(raw, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
+        raw, encoding="utf-8"
+    )
     for case in manifest["cases"]:
         source = tmp_path / case["source"]["local_path"]
         source.mkdir(parents=True)
         content = "\n".join(
             f"def {label['match']['symbol']}():\n    pass\n" for label in case["labels"]
         )
-        (source / "module.py").write_text(content, encoding="utf-8")
+        source_file = source / "module.py"
+        source_file.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
+            content, encoding="utf-8"
+        )
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     scanner = {
         "suite": "dead_code",

@@ -12,7 +12,9 @@ from skylos.commands.agent_verify_cmd import _confirmed_dead_findings
 
 def _candidate(project):
     source = project / "module.py"
-    source.write_text("def _spare():\n    return 1\n", encoding="utf-8")
+    source.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
+        "def _spare():\n    return 1\n", encoding="utf-8"
+    )
     return {
         "name": "_spare",
         "full_name": "module._spare",
