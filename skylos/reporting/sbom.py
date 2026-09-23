@@ -197,6 +197,10 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
         {**issue, "file": _relative_file(issue["file"], root)}
         for issue in receipt.get("lockfile_issues", [])
     ]
+    receipt["lockfile_limitations"] = [
+        {**limitation, "file": _relative_file(limitation["file"], root)}
+        for limitation in receipt.get("lockfile_limitations", [])
+    ]
     receipt["ignored_lockfiles"] = [
         {
             **item,
@@ -221,9 +225,11 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
     receipt["unlocked_manifest_files"] = sorted(
         {_relative_file(gap["file"], root) for gap in unlocked}
     )
+    # SCA may finish despite known coverage limits, but an exact SBOM may not.
     receipt["complete"] = bool(
         receipt.get("complete")
         and not receipt.get("unsupported_lockfile_count")
+        and not receipt.get("lockfile_limitation_count")
         and not invalid_identity_count
         and not unlocked
     )

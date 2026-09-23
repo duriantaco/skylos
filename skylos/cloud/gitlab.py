@@ -207,11 +207,17 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
                 for engine in engines.values()
             )
     complete = bool(complete)
-    # Missing SCA evidence cannot resolve previously reported dependencies.
+    # Missing or limited SCA evidence cannot resolve previously reported dependencies.
     sca = summary.get("sca_coverage") if isinstance(summary, dict) else None
-    sca_complete = isinstance(sca, dict) and sca.get("status") in (
-        "complete",
-        "no_supported_manifests",
+    sca_complete = (
+        isinstance(sca, dict)
+        and sca.get("status")
+        in (
+            "complete",
+            "no_supported_manifests",
+        )
+        and type(sca.get("lockfile_limitation_count", 0)) is int
+        and not sca.get("lockfile_limitation_count", 0)
     )
     return {
         "complete": complete,

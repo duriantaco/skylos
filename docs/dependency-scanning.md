@@ -112,10 +112,18 @@ contexts use stable hashes so they still remain distinct in baselines.
 
 Only schema versions 6.0 and 9.0 are supported in this implementation. YAML
 aliases, custom tags, duplicate keys, and excessive nesting are rejected.
-Nonempty `packageManagerDependencies`, `configDependencies`, and
-`ignoredOptionalDependencies` are reported as unsupported inventory.
-No package installation, workspace script execution,
-lockfile rewriting, or artifact download is performed.
+For version 9.0, Skylos recognizes pnpm's leading environment document followed
+by the project document. The two documents are validated independently before
+their package graphs are combined; `packageManagerDependencies` and
+`configDependencies` are inventoried as direct environment dependencies.
+Ambiguous streams, conflicting records, cross-document references that would
+repair an incomplete graph, and extra documents are rejected.
+`ignoredOptionalDependencies` remains unsupported inventory. A valid nonempty
+`bundledDependencies` or `bundleDependencies` field keeps the containing
+package queryable but records `bundled_dependencies_not_enumerated` as a
+coverage limitation because the lockfile does not identify the bundled
+versions. No package installation, workspace script execution, lockfile
+rewriting, or artifact download is performed.
 
 ### Poetry lockfiles
 
@@ -219,9 +227,10 @@ and unsupported version syntax retain their evidence without a guessed upgrade.
 
 `analysis_summary.sca_coverage` reports parsing/query completion, package and
 occurrence counts, local packages, unresolved entries, unsupported lockfiles,
-and inventory limits. Up to 25 lockfile issues are included as examples;
-aggregate counts are not truncated. For lockfiles, `inventory_scope` is
-`all_recorded_lockfile_environments`.
+and inventory limits. Up to 25 lockfile issues and lockfile limitations are
+included as examples; `unresolved_lockfile_dependency_count` and
+`lockfile_limitation_count` are not truncated. For lockfiles,
+`inventory_scope` is `all_recorded_lockfile_environments`.
 
 The nested `query.advisory_details` receipt records distinct IDs, requests,
 successful/failed/skipped lookups, accepted bytes, and limits. Failure to fetch
@@ -238,6 +247,10 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   operational error.
 - Manifest ranges remain explicit unresolved versions. No supported inputs and
   limited category coverage are not, by themselves, operational failures.
+- Lockfile coverage limitations such as unenumerated bundled dependencies do
+  not turn a completed OSV query into an operational failure. They remain
+  explicit in `limitations` and `lockfile_limitations`; stricter completeness
+  consumers such as SBOM graph export do not claim full dependency coverage.
 
 `category_complete` remains `false`: these inputs do not cover all package
 managers or establish a complete installed environment. Lockfile freshness and

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from skylos.rules.sca import pnpm_lockfile
 from skylos.rules.sca.lockfile_types import LockfileLimitError, LockfileParseError
@@ -386,6 +387,310 @@ def test_new_or_uncovered_inventory_sections_are_explicit(section):
     data = document()
     data[section] = {"plugin": "1.0.0"}
     assert "unsupported_lockfile_section" in reasons(parse(data))
+
+
+def test_pnpm_environment_and_project_documents_are_combined():
+    environment = document(
+        packages={"pnpm@12.4.1": registry(engines={"node": ">=20"})},
+        importers={
+            ".": {
+                "configDependencies": {},
+                "packageManagerDependencies": {
+                    "pnpm": {"specifier": "12.4.1", "version": "12.4.1"}
+                },
+            }
+        },
+    )
+    project = document(
+        packages={"left-pad@1.3.0": registry()},
+        importers={
+            ".": {
+                "dependencies": {"left-pad": {"specifier": "1.3.0", "version": "1.3.0"}}
+            }
+        },
+    )
+
+    result = parse_pnpm_lock(
+        Path("pnpm-lock.yaml"),
+        text=yaml.safe_dump_all(
+            [environment, project], explicit_start=True, sort_keys=False
+        ),
+    )
+
+    assert result.unresolved == []
+    assert result.package_count == 3
+    assert {dependency["name"] for dependency in result.dependencies} == {
+        "left-pad",
+        "pnpm",
+    }
+    groups = {
+        dependency["name"]: dependency["dependency_groups"]
+        for dependency in result.dependencies
+    }
+    assert groups == {
+        "left-pad": ["dependencies"],
+        "pnpm": ["packageManagerDependencies"],
+    }
+
+
+def _environment_document(*, packages=None, snapshots=None, root=None):
+    return document(
+        packages={} if packages is None else packages,
+        snapshots=snapshots,
+        importers={
+            ".": {"configDependencies": {}} if root is None else root,
+        },
+    )
+
+
+def _dump_documents(*documents):
+    return yaml.safe_dump_all(documents, explicit_start=True, sort_keys=False)
+
+
+@pytest.mark.parametrize(
+    "layout",
+    ["project_then_environment", "two_environments", "second_env_with_settings"],
+)
+def test_pnpm_rejects_ambiguous_multidocument_layouts(layout):
+    environment = _environment_document()
+    project = document(packages={}, importers={".": {}})
+    if layout == "project_then_environment":
+        documents = (project, environment)
+    else:
+        second = _environment_document()
+        if layout == "second_env_with_settings":
+            second["settings"] = {"autoInstallPeers": True}
+        documents = (environment, second)
+
+    with pytest.raises(LockfileParseError, match="unsupported pnpm"):
+        parse_pnpm_lock(Path("pnpm-lock.yaml"), text=_dump_documents(*documents))
+
+
+@pytest.mark.parametrize("with_empty_project", [False, True])
+def test_pnpm_environment_document_requires_a_project_document(with_empty_project):
+    environment = _environment_document()
+    text = (
+        _dump_documents(environment, None)
+        if with_empty_project
+        else yaml.safe_dump(environment, sort_keys=False)
+    )
+
+    with pytest.raises(LockfileParseError):
+        parse_pnpm_lock(Path("pnpm-lock.yaml"), text=text)
+
+
+@pytest.mark.parametrize("trailing", ["---\n", "---\nextra: document\n"])
+def test_pnpm_rejects_third_or_empty_trailing_document(trailing):
+    environment = _environment_document()
+    project = document(packages={}, importers={".": {}})
+    text = _dump_documents(environment, project) + trailing
+
+    with pytest.raises(LockfileParseError, match="document stream"):
+        parse_pnpm_lock(Path("pnpm-lock.yaml"), text=text)
+
+
+@pytest.mark.parametrize("table", ["packages", "snapshots"])
+def test_pnpm_multidocument_duplicate_records_must_agree(table):
+    package_key = "shared@1.0.0"
+    environment_packages = {package_key: registry()}
+    project_packages = {package_key: registry()}
+    environment_snapshots = {package_key: {}}
+    project_snapshots = {package_key: {}}
+    if table == "packages":
+        project_packages[package_key] = registry(engines={"node": ">=20"})
+    else:
+        environment_snapshots[package_key] = {"optional": True}
+    environment = _environment_document(
+        packages=environment_packages,
+        snapshots=environment_snapshots,
+    )
+    project = document(
+        packages=project_packages,
+        snapshots=project_snapshots,
+        importers={".": {}},
+    )
+
+    with pytest.raises(LockfileParseError, match="conflicting"):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+@pytest.mark.parametrize("metadata_document", ["environment", "project"])
+def test_pnpm_documents_cannot_supply_each_others_package_snapshot_half(
+    metadata_document,
+):
+    package_key = "shared@1.0.0"
+    environment = _environment_document(
+        packages={package_key: registry()}
+        if metadata_document == "environment"
+        else {},
+        snapshots={package_key: {}} if metadata_document == "project" else {},
+    )
+    project = document(
+        packages={package_key: registry()} if metadata_document == "project" else {},
+        snapshots={package_key: {}} if metadata_document == "environment" else {},
+        importers={".": {}},
+    )
+
+    with pytest.raises(LockfileParseError, match="cross-document pnpm package"):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+def test_pnpm_documents_cannot_resolve_each_others_dependency_references():
+    package_key = "shared@1.0.0"
+    environment = _environment_document(
+        packages={},
+        snapshots={},
+        root={
+            "configDependencies": {"shared": {"specifier": "1.0.0", "version": "1.0.0"}}
+        },
+    )
+    project = document(
+        packages={package_key: registry()},
+        snapshots={package_key: {}},
+        importers={".": {}},
+    )
+
+    with pytest.raises(LockfileParseError, match="cross-document pnpm dependency"):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+def test_pnpm_environment_dependencies_cannot_link_to_project_workspaces():
+    environment = _environment_document(
+        root={
+            "configDependencies": {
+                "@local/tool": {
+                    "specifier": "workspace:*",
+                    "version": "link:packages/tool",
+                }
+            }
+        },
+    )
+    project = document(
+        packages={},
+        importers={".": {}, "packages/tool": {}},
+    )
+
+    with pytest.raises(LockfileParseError):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+def test_pnpm_environment_root_cannot_repair_a_missing_project_root():
+    environment = _environment_document()
+    project = document(
+        packages={},
+        importers={
+            "packages/app": {
+                "dependencies": {
+                    "root": {"specifier": "workspace:*", "version": "link:../.."}
+                }
+            }
+        },
+    )
+
+    with pytest.raises(LockfileParseError, match="no root importer"):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+def test_pnpm_multidocument_node_bound_is_cumulative(monkeypatch):
+    environment = _environment_document()
+    project = document(packages={}, importers={".": {}})
+    monkeypatch.setattr(pnpm_lockfile, "_MAX_NODES", 20)
+
+    for single_document in (environment, project):
+        loader = pnpm_lockfile._LockLoader(
+            yaml.safe_dump(single_document, sort_keys=False)
+        )
+        try:
+            assert loader.get_single_data() is not None
+        finally:
+            loader.dispose()
+    with pytest.raises(LockfileLimitError, match="YAML tree"):
+        parse_pnpm_lock(
+            Path("pnpm-lock.yaml"),
+            text=_dump_documents(environment, project),
+        )
+
+
+def test_pnpm_multidocument_preserves_second_document_source_lines():
+    package_key = "left-pad@1.3.0"
+    environment = _environment_document()
+    project = document(
+        packages={package_key: registry()},
+        importers={
+            ".": {
+                "dependencies": {"left-pad": {"specifier": "1.3.0", "version": "1.3.0"}}
+            }
+        },
+    )
+    text = _dump_documents(environment, project)
+    expected_line = next(
+        line_number
+        for line_number, line in enumerate(text.splitlines(), 1)
+        if line == f"  {package_key}: {{}}"
+    )
+
+    result = parse_pnpm_lock(Path("pnpm-lock.yaml"), text=text)
+
+    assert len(result.dependencies) == 1
+    assert result.dependencies[0]["line"] == expected_line
+
+
+@pytest.mark.parametrize("version", [6, 9])
+@pytest.mark.parametrize("field", ["bundledDependencies", "bundleDependencies"])
+@pytest.mark.parametrize("value", [True, ["some-bundled-dep"]], ids=["all", "named"])
+def test_bundled_dependencies_are_a_coverage_limitation_not_unresolved_inventory(
+    version, field, value
+):
+    result = parse(
+        document(version, packages={"bundler-pkg@1.0.0": registry(**{field: value})})
+    )
+
+    assert [dependency["name"] for dependency in result.dependencies] == ["bundler-pkg"]
+    assert result.unresolved == []
+    assert len(result.limitations) == 1
+    assert result.limitations[0]["reason"] == "bundled_dependencies_not_enumerated"
+    assert result.limitations[0]["name"] == "bundler-pkg"
+    assert result.limitations[0]["version"] == "1.0.0"
+    assert result.dependencies[0]["dependency_graph_complete"] is False
+
+
+@pytest.mark.parametrize("field", ["bundledDependencies", "bundleDependencies"])
+@pytest.mark.parametrize("value", [False, []], ids=["false", "empty"])
+def test_empty_bundled_dependencies_do_not_create_a_limitation(field, value):
+    result = parse(document(packages={"bundler-pkg@1.0.0": registry(**{field: value})}))
+
+    assert result.unresolved == []
+    assert result.limitations == []
+    assert "dependency_graph_complete" not in result.dependencies[0]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "some-bundled-dep", [1], [""]],
+    ids=["null", "string", "non-string-name", "invalid-name"],
+)
+def test_malformed_bundled_dependencies_remain_an_inventory_error(value):
+    result = parse(
+        document(packages={"bundler-pkg@1.0.0": registry(bundledDependencies=value)})
+    )
+
+    assert reasons(result) == {"invalid_package_metadata"}
+    assert result.limitations == []
 
 
 @pytest.mark.parametrize("root", ["../outside", "/absolute", "a/../b", "a\\b", "a//b"])

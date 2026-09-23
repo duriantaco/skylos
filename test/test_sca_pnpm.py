@@ -55,6 +55,15 @@ def _write_lockfile(project, document=None):
     return path
 
 
+def _write_lockfile_documents(project, *documents):
+    path = project / "pnpm-lock.yaml"
+    path.write_text(  # skylos: ignore[SKY-D324] all callers use a fresh pytest tmp_path directory
+        yaml.safe_dump_all(documents, explicit_start=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _query_identities(osv):
     return {
         (query["package"]["name"], query["version"], query["package"]["ecosystem"])
@@ -93,6 +102,83 @@ def test_pnpm_discovery_reaches_analyzer_without_target_execution(
     assert metadata["dependency_kind"] == "direct"
     assert metadata["dependency_roots"] == [""]
     assert metadata["dependency_occurrences"][0]["file"] == str(lockfile)
+
+
+def test_pnpm_environment_and_project_documents_have_complete_coverage(tmp_path, osv):
+    _write_lockfile_documents(
+        tmp_path,
+        _document(
+            importers={
+                ".": {
+                    "configDependencies": {},
+                    "packageManagerDependencies": {
+                        "pnpm": {"specifier": "12.4.1", "version": "12.4.1"}
+                    },
+                }
+            },
+            packages={"pnpm@12.4.1": {"engines": {"node": ">=20"}}},
+        ),
+        _document(
+            importers={
+                ".": {
+                    "dependencies": {
+                        "left-pad": {
+                            "specifier": "1.3.0",
+                            "version": "1.3.0",
+                        }
+                    }
+                }
+            },
+            packages={"left-pad@1.3.0": {}},
+        ),
+    )
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert result.receipt["status"] == "complete"
+    assert result.receipt["complete"] is True
+    assert result.receipt["parse_error_count"] == 0
+    assert result.receipt["supported_lockfile_count"] == 1
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert _query_identities(osv) == {
+        ("left-pad", "1.3.0", "npm"),
+        ("pnpm", "12.4.1", "npm"),
+    }
+
+
+def test_pnpm_bundled_dependencies_are_reported_as_a_complete_scan_limitation(
+    tmp_path, osv
+):
+    _write_lockfile(
+        tmp_path,
+        _document(
+            importers={
+                ".": {
+                    "dependencies": {
+                        "bundler-pkg": {
+                            "specifier": "1.0.0",
+                            "version": "1.0.0",
+                        }
+                    }
+                }
+            },
+            packages={
+                "bundler-pkg@1.0.0": {"bundledDependencies": ["some-bundled-dep"]}
+            },
+        ),
+    )
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert result.receipt["status"] == "complete"
+    assert result.receipt["complete"] is True
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 0
+    assert result.receipt["lockfile_limitation_count"] == 1
+    assert result.receipt["lockfile_limitations"][0]["reason"] == (
+        "bundled_dependencies_not_enumerated"
+    )
+    assert "bundled_dependencies_not_enumerated" in result.receipt["limitations"]
+    assert _query_identities(osv) == {("bundler-pkg", "1.0.0", "npm")}
 
 
 @pytest.mark.parametrize("version", [6, 9])

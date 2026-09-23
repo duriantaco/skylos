@@ -165,7 +165,7 @@ def _write_lockfile(project, kind):
     return path, "urllib3", "1.26.4", "PyPI"
 
 
-def _run_cli(project, monkeypatch, *extra_args):
+def _run_cli(project, monkeypatch, *extra_args, gate=True):
     json_path = project.parent / "report.json"
     sarif_path = project.parent / "report.sarif"
     monkeypatch.setattr(
@@ -175,7 +175,7 @@ def _run_cli(project, monkeypatch, *extra_args):
             "skylos",
             str(project),
             "--sca",
-            "--gate",
+            *(("--gate",) if gate else ()),
             "--format",
             "json",
             "--no-upload",
