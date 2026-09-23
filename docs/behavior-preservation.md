@@ -176,8 +176,10 @@ and helper depth 8. Exhausting a budget
 produces `incomplete`. Snapshot reads are bounded to 4,096 inputs, 1 MiB per file,
 and 16 MiB total; exceeding a bound, decoding failures, or source symlinks also
 prevent certification. Working-tree reads open each directory and file without
-following symlinks. Platforms without the required safe directory-relative
-file operations return `unknown` rather than certifying the snapshot.
+following symlinks or Windows reparse points. POSIX uses directory-relative file
+descriptors; Windows uses handle-relative opens. If the required safe operations
+are unavailable, verification returns `unknown` rather than certifying the
+snapshot.
 Unchanged Git submodules are treated as external
 dependencies; a changed submodule commit or dirty submodule prevents comparison.
 

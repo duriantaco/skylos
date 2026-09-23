@@ -10,6 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  windows_verify:
+    name: windows-verify-working-snapshot
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+
+      - name: Install Python and focused test dependencies
+        shell: bash
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          uv pip install --python .venv/Scripts/python.exe -e . pytest
+
+      - name: Verify Windows working-source snapshots
+        shell: bash
+        run: >-
+          .venv/Scripts/python.exe -m pytest -q
+          test/test_refactor_verify.py
+          test/test_behavior_baselines.py
+          -k 'windows_working_snapshot or windows_snapshot or windows_native_child_open or windows_case_sensitivity or unchanged_symbol_records_snapshot_identity or working_snapshot_preserves_encoded_bytes_and_line_endings or snapshot_identity_hashes_exact_encoded_bytes'
+
   test_matrix:
     name: test-matrix (${{ matrix.install_target }})
     runs-on: ubuntu-latest
@@ -177,14 +202,17 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    needs: [test_matrix, docker_smoke]
+    needs: [test_matrix, docker_smoke, windows_verify]
     if: ${{ always() }}
 
     steps:
       - name: Require matrix success
         run: |
-          if [ "${{ needs.test_matrix.result }}" != "success" ] || [ "${{ needs.docker_smoke.result }}" != "success" ]; then
+          if [ "${{ needs.test_matrix.result }}" != "success" ] ||
+             [ "${{ needs.docker_smoke.result }}" != "success" ] ||
+             [ "${{ needs.windows_verify.result }}" != "success" ]; then
             echo "test_matrix result: ${{ needs.test_matrix.result }}"
             echo "docker_smoke result: ${{ needs.docker_smoke.result }}"
+            echo "windows_verify result: ${{ needs.windows_verify.result }}"
             exit 1
           fi
