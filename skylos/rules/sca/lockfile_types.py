@@ -19,7 +19,8 @@ class LockfileInventory:
 
     Dependencies use the existing SCA name/version/ecosystem/file/line shape.
     Local workspace packages are counted separately and never queried as public
-    registry packages. Unsupported external entries remain explicit problems.
+    registry packages. Unsupported external entries remain explicit problems;
+    known non-operational coverage gaps remain explicit limitations.
     """
 
     format_version: int
@@ -29,3 +30,4 @@ class LockfileInventory:
     non_registry_names: list[str] = field(default_factory=list)
     workspace_paths: list[str] = field(default_factory=list)
     unresolved: list[dict] = field(default_factory=list)
+    limitations: list[dict] = field(default_factory=list)

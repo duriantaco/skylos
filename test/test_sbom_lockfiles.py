@@ -47,6 +47,22 @@ child@^2:
   version "2.0.0"
 """
 
+PNPM_BUNDLED = """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      bundler-pkg:
+        specifier: 1.0.0
+        version: 1.0.0
+packages:
+  bundler-pkg@1.0.0:
+    resolution: {integrity: sha512-fixture}
+    bundledDependencies:
+      - some-bundled-dep
+snapshots:
+  bundler-pkg@1.0.0: {}
+"""
+
 
 def _berry():
     return {
@@ -179,6 +195,31 @@ def test_yarn_resolved_graph_survives_export(tmp_path, text):
         for component in document["components"]
         for item in component["evidence"]["occurrences"]
     )
+
+
+def test_pnpm_bundled_dependencies_keep_sbom_graph_and_receipt_incomplete(tmp_path):
+    _write(tmp_path, "pnpm-lock.yaml", PNPM_BUNDLED)
+
+    document = _export(tmp_path)
+
+    assert document.receipt["status"] == "incomplete"
+    assert document.receipt["complete"] is False
+    assert document.receipt["lockfile_limitation_count"] == 1
+    assert document.receipt["lockfile_limitations"] == [
+        {
+            "package": "bundler-pkg@1.0.0",
+            "line": 14,
+            "name": "bundler-pkg",
+            "version": "1.0.0",
+            "reason": "bundled_dependencies_not_enumerated",
+            "file": "pnpm-lock.yaml",
+        }
+    ]
+    component = _components(document)["pkg:npm/bundler-pkg@1.0.0"]
+    occurrence = _occurrences(component)[0]
+    assert occurrence["dependency_graph_complete"] is False
+    assert "pkg:npm/bundler-pkg@1.0.0" not in _graph(document)
+    assert str(tmp_path) not in json.dumps(document)
 
 
 def test_berry_workspace_optional_and_environment_context(tmp_path):

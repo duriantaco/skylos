@@ -13,7 +13,7 @@ from test.test_cli_sca_sarif import (
     osv as osv,
     project as project,
 )
-from test.test_sca_pnpm import _document, _write_lockfile
+from test.test_sca_pnpm import _document, _write_lockfile, _write_lockfile_documents
 
 
 @pytest.mark.parametrize("version", [6, 9])
@@ -110,6 +110,77 @@ def test_cli_pnpm_clean_advisory_response_passes(project, monkeypatch, osv, vers
     assert sarif["runs"][0]["results"] == []
     assert result["analysis_summary"]["sca_coverage"]["complete"] is True
     assert osv.advisory_requests == []
+
+
+def test_cli_pnpm_multidocument_lockfile_passes_without_gate(project, monkeypatch, osv):
+    _write_lockfile_documents(
+        project,
+        _document(
+            importers={
+                ".": {
+                    "configDependencies": {},
+                    "packageManagerDependencies": {
+                        "pnpm": {"specifier": "12.4.1", "version": "12.4.1"}
+                    },
+                }
+            },
+            packages={"pnpm@12.4.1": {}},
+        ),
+        _document(
+            importers={
+                ".": {
+                    "dependencies": {
+                        "left-pad": {
+                            "specifier": "1.3.0",
+                            "version": "1.3.0",
+                        }
+                    }
+                }
+            },
+            packages={"left-pad@1.3.0": {}},
+        ),
+    )
+    osv.vulnerable = False
+
+    exit_code, result, sarif = _run_cli(project, monkeypatch, gate=False)
+
+    assert exit_code == 0
+    assert result["dependency_vulnerabilities"] == []
+    assert sarif["runs"][0]["results"] == []
+    assert result["analysis_summary"]["sca_coverage"]["status"] == "complete"
+
+
+def test_cli_pnpm_bundled_dependency_limitation_passes_without_gate(
+    project, monkeypatch, osv
+):
+    _write_lockfile(
+        project,
+        _document(
+            importers={
+                ".": {
+                    "dependencies": {
+                        "bundler-pkg": {
+                            "specifier": "1.0.0",
+                            "version": "1.0.0",
+                        }
+                    }
+                }
+            },
+            packages={
+                "bundler-pkg@1.0.0": {"bundledDependencies": ["some-bundled-dep"]}
+            },
+        ),
+    )
+    osv.vulnerable = False
+
+    exit_code, result, sarif = _run_cli(project, monkeypatch, gate=False)
+
+    assert exit_code == 0
+    assert result["dependency_vulnerabilities"] == []
+    assert sarif["runs"][0]["results"] == []
+    coverage = result["analysis_summary"]["sca_coverage"]
+    assert coverage["status"] == "complete"
+    assert coverage["lockfile_limitation_count"] == 1
 
 
 @pytest.mark.parametrize("version", [6, 9])

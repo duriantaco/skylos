@@ -163,6 +163,15 @@ def test_missing_or_unresolved_dependency_receipt_cannot_resolve_old_findings(co
     }
 
 
+def test_lockfile_limitation_keeps_receipt_complete_without_full_scan():
+    result = _complete()
+    result["analysis_summary"]["sca_coverage"]["lockfile_limitation_count"] = 1
+    assert scan_receipt(result, analyzer_owned=True, full_scan=True) == {
+        "complete": True,
+        "full_scan": False,
+    }
+
+
 @pytest.fixture
 def full_invocation(tmp_path, monkeypatch):
     monkeypatch.delenv("SKYLOS_PROJECT_ROOT", raising=False)

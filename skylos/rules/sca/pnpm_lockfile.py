@@ -26,7 +26,15 @@ _MAX_BYTES = 10_000_000
 _MAX_NODES = 200_000
 _MAX_DEPTH = 64
 _MAX_GRAPH_WORK = 100_000
-_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
+_PROJECT_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
+_ENVIRONMENT_SECTIONS = ("configDependencies", "packageManagerDependencies")
+_SECTIONS = _PROJECT_SECTIONS + _ENVIRONMENT_SECTIONS
+_ENVIRONMENT_DOCUMENT_KEYS = {
+    "lockfileVersion",
+    "importers",
+    "packages",
+    "snapshots",
+}
 
 
 class _MarkedDict(dict):
@@ -231,8 +239,236 @@ def _metadata_problems(entry):
             or not all(isinstance(value, str) for value in entry[field].values())
         ):
             yield {"reason": "invalid_package_metadata", "field": field}
-    if entry.get("bundledDependencies") or entry.get("bundleDependencies"):
-        yield {"reason": "unsupported_bundled_dependencies"}
+    for field in ("bundledDependencies", "bundleDependencies"):
+        if field not in entry:
+            continue
+        value = entry[field]
+        if type(value) is not bool and (
+            not isinstance(value, list)
+            or not all(_name(name) is not None for name in value)
+        ):
+            yield {"reason": "invalid_package_metadata", "field": field}
+
+
+def _metadata_limitations(entry):
+    if any(
+        entry.get(field) is True
+        or (
+            isinstance(entry.get(field), list)
+            and bool(entry[field])
+            and all(_name(name) is not None for name in entry[field])
+        )
+        for field in ("bundledDependencies", "bundleDependencies")
+    ):
+        yield {"reason": "bundled_dependencies_not_enumerated"}
+
+
+def _copy_marked_mapping(mapping):
+    copied = _MarkedDict()
+    copied.update(mapping)
+    copied.lines.update(getattr(mapping, "lines", {}))
+    return copied
+
+
+def _merge_marked_mappings(first, second):
+    """Merge lockfile tables without allowing one document to shadow another."""
+    merged = _copy_marked_mapping(first)
+    for key, value in second.items():
+        if key in merged and merged[key] != value:
+            raise LockfileParseError("conflicting pnpm lockfile documents")
+        if key not in merged:
+            merged[key] = value
+            merged.lines[key] = _line(second, key)
+    return merged
+
+
+def _is_environment_document(data):
+    """Recognize pnpm's narrowly defined leading environment lock document."""
+    if (
+        not isinstance(data, dict)
+        or set(data) != _ENVIRONMENT_DOCUMENT_KEYS
+        or str(data.get("lockfileVersion")) != "9.0"
+    ):
+        return False
+    importers = data.get("importers")
+    packages = data.get("packages")
+    snapshots = data.get("snapshots")
+    if (
+        not isinstance(importers, dict)
+        or set(importers) != {"."}
+        or not isinstance(packages, dict)
+        or not isinstance(snapshots, dict)
+    ):
+        return False
+    root = importers["."]
+    return (
+        isinstance(root, dict)
+        and bool(set(root) & set(_ENVIRONMENT_SECTIONS))
+        and not (set(root) - set(_ENVIRONMENT_SECTIONS))
+    )
+
+
+def _dependency_references(data, sections):
+    importers = data.get("importers", {})
+    snapshots = data.get("snapshots", {})
+    for table, allowed_sections in (
+        (importers, sections),
+        (snapshots, ("dependencies", "optionalDependencies")),
+    ):
+        for entry in table.values():
+            if not isinstance(entry, dict):
+                continue
+            for section in allowed_sections:
+                declarations = entry.get(section, {})
+                if not isinstance(declarations, dict):
+                    continue
+                for name, declaration in declarations.items():
+                    reference = (
+                        declaration.get("version")
+                        if isinstance(declaration, dict)
+                        else declaration
+                    )
+                    if _name(name) is not None and isinstance(reference, str):
+                        yield name, reference
+
+
+def _reject_cross_document_repairs(environment, project):
+    """Do not let either document make an incomplete peer look complete."""
+    environment_packages = environment["packages"]
+    environment_snapshots = environment["snapshots"]
+    project_packages = project.get("packages", {})
+    project_snapshots = project.get("snapshots", {})
+
+    if any(
+        reference.startswith("link:")
+        for _, reference in _dependency_references(environment, _ENVIRONMENT_SECTIONS)
+    ):
+        raise LockfileParseError("unsupported pnpm environment dependency reference")
+
+    for (
+        importers,
+        packages,
+        snapshots,
+        other_packages,
+        other_snapshots,
+        sections,
+    ) in (
+        (
+            environment["importers"],
+            environment_packages,
+            environment_snapshots,
+            project_packages,
+            project_snapshots,
+            _ENVIRONMENT_SECTIONS,
+        ),
+        (
+            project.get("importers", {}),
+            project_packages,
+            project_snapshots,
+            environment_packages,
+            environment_snapshots,
+            _SECTIONS,
+        ),
+    ):
+        snapshot_bases = {_base_key(key) for key in snapshots}
+        other_snapshot_bases = {_base_key(key) for key in other_snapshots}
+        if (set(packages) - snapshot_bases) & other_snapshot_bases or (
+            snapshot_bases - set(packages)
+        ) & set(other_packages):
+            raise LockfileParseError("cross-document pnpm package record")
+
+        combined_snapshots = {**other_snapshots, **snapshots}
+        for name, reference in _dependency_references(
+            {"importers": importers, "snapshots": snapshots},
+            sections,
+        ):
+            if (
+                _reference(name, reference, 9, snapshots) is None
+                and _reference(name, reference, 9, combined_snapshots) is not None
+            ):
+                raise LockfileParseError("cross-document pnpm dependency reference")
+
+
+def _merge_environment_document(environment, project):
+    """Combine pnpm's env and project inventories after strict shape checks."""
+    if (
+        not _is_environment_document(environment)
+        or not isinstance(project, dict)
+        or _is_environment_document(project)
+    ):
+        raise LockfileParseError("unsupported pnpm multi-document lockfile")
+    if str(project.get("lockfileVersion")) != "9.0":
+        raise LockfileParseError("conflicting pnpm lockfile documents")
+
+    project_importers = project.get("importers", {})
+    project_packages = project.get("packages", {})
+    project_snapshots = project.get("snapshots", {})
+    if not all(
+        isinstance(table, dict)
+        for table in (project_importers, project_packages, project_snapshots)
+    ):
+        raise LockfileParseError("invalid pnpm project lockfile document")
+    if "." not in project_importers or not isinstance(project_importers["."], dict):
+        raise LockfileParseError("pnpm project document has no root importer")
+    if any(
+        isinstance(importer, dict)
+        and any(section in importer for section in _ENVIRONMENT_SECTIONS)
+        for importer in project_importers.values()
+    ):
+        raise LockfileParseError("unsupported pnpm project lockfile document")
+    _reject_cross_document_repairs(environment, project)
+
+    importers = _copy_marked_mapping(project_importers)
+    environment_root = environment["importers"]["."]
+    importers["."] = _merge_marked_mappings(importers["."], environment_root)
+    importers.lines["."] = _line(
+        project_importers,
+        ".",
+        _line(environment["importers"], "."),
+    )
+
+    merged = _copy_marked_mapping(project)
+    for key, value in (
+        (
+            "packages",
+            _merge_marked_mappings(environment["packages"], project_packages),
+        ),
+        (
+            "snapshots",
+            _merge_marked_mappings(environment["snapshots"], project_snapshots),
+        ),
+        ("importers", importers),
+    ):
+        merged[key] = value
+        merged.lines[key] = _line(
+            project,
+            key,
+            _line(environment, key),
+        )
+    return merged
+
+
+def _load_lockfile_document(text):
+    """Load one lockfile, accepting pnpm's bounded env + project stream."""
+    loader = _LockLoader(text)
+    try:
+        documents = []
+        while loader.check_data():
+            if len(documents) == 2:
+                raise LockfileParseError("unsupported pnpm YAML document stream")
+            documents.append(loader.get_data())
+    finally:
+        loader.dispose()
+
+    if len(documents) == 1:
+        if _is_environment_document(documents[0]):
+            raise LockfileParseError(
+                "pnpm environment document has no project document"
+            )
+        return documents[0]
+    if len(documents) == 2:
+        return _merge_environment_document(documents[0], documents[1])
+    raise LockfileParseError("unsupported pnpm YAML document stream")
 
 
 def _table(data, key, inventory):
@@ -326,11 +562,7 @@ def parse_pnpm_lock(
     try:
         if len(text.encode("utf-8")) > _MAX_BYTES:
             raise LockfileLimitError("lockfile size exceeds limit")
-        loader = _LockLoader(text)
-        try:
-            data = loader.get_single_data()
-        finally:
-            loader.dispose()
+        data = _load_lockfile_document(text)
     except (yaml.YAMLError, UnicodeError, RecursionError, ValueError) as exc:
         if isinstance(exc, LockfileParseError):
             raise
@@ -443,16 +675,6 @@ def parse_pnpm_lock(
             )
             continue
         roots[root] = importer
-        for field in ("packageManagerDependencies", "configDependencies"):
-            if importer is not data and importer.get(field):
-                inventory.unresolved.append(
-                    {
-                        "reason": "unsupported_lockfile_section",
-                        "section": field,
-                        "package": _display_key(key, version),
-                        "line": _line(importer, field),
-                    }
-                )
     inventory.workspace_paths = sorted(roots)
     inventory.local_package_count = len(roots)
     inventory.package_count = len(records) + len(roots)
@@ -593,10 +815,16 @@ def parse_pnpm_lock(
                 dict(problem, reason=source_error, source_type=source_type)
             )
             continue
+        record_limitations = {}
         for entry in (metadata,) if metadata is snapshot else (metadata, snapshot):
             inventory.unresolved.extend(
                 dict(problem, **issue) for issue in _metadata_problems(entry)
             )
+            for limitation in _metadata_limitations(entry):
+                record_limitations.setdefault(
+                    limitation["reason"], dict(problem, **limitation)
+                )
+        inventory.limitations.extend(record_limitations.values())
         usage = contexts[key]
         groups = {group for _, group, _, _ in usage}
         if (
@@ -644,6 +872,8 @@ def parse_pnpm_lock(
             "source_type": source_type,
             "dependencies": edges_by_key[key],
         }
+        if "bundled_dependencies_not_enumerated" in record_limitations:
+            dependency["dependency_graph_complete"] = False
         inventory.dependencies.append(dependency)
     inventory.non_registry_names = sorted(non_registry_names)
     return inventory
