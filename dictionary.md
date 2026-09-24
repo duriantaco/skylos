@@ -144,6 +144,11 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
 | D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
 
+For D251, a bare `sessionId` name is not treated as credential evidence by
+itself. Explicit authentication-qualified names (such as `authSessionId`) and
+direct member expressions with authentication or cookie-qualified paths remain
+findings. D270 storage checks are unchanged.
+
 ### AI Supply Chain Security
 
 | ID | Severity | Name | File Types | Details |

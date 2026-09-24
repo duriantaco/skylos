@@ -2443,6 +2443,90 @@ class TestSensitiveDataInLogs:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D251" in ids
 
+    def test_console_log_non_auth_session_id_safe(self, tmp_path):
+        code = (
+            'import { generateSessionId, writeSessionNote } from "../storage";\n'
+            "const sessionId = generateSessionId();\n"
+            "writeSessionNote({ session_id: sessionId });\n"
+            "console.log(`✓ Session recorded: ${sessionId}`);\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "currentSessionId",
+            "studySessionId",
+            "nonAuthSessionId",
+            "unauthenticatedSessionId",
+        ],
+    )
+    def test_console_log_non_auth_qualified_session_id_safe(self, tmp_path, name):
+        code = f"const {name} = getRecordId();\nconsole.log({name});\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "authSessionId",
+            "authenticatedSessionId",
+            "authCurrentSessionId",
+            "authorizedSessionId",
+            "cookie_session_id",
+            "loginSessionId",
+            "oauthSessionId",
+        ],
+    )
+    def test_console_log_auth_qualified_session_id(self, tmp_path, name):
+        code = f"const {name} = getSession();\nconsole.log({name});\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "req.cookies.currentSessionId",
+            "authContext.sessionId",
+            "cookieJar.sessionId",
+            "req.sessionID",
+            "(req.cookies).sessionId",
+            "req.cookies!.sessionId",
+            "(req.cookies as any).sessionId",
+            'req["cookies"].sessionId',
+            "auth().sessionId",
+            'req.cookies["sessionId"]',
+            'auth["sessionId"]',
+            'req["sessionID"]',
+            "(req.cookies.sessionId)",
+            "req.cookies.sessionId!",
+            "(req.cookies.sessionId as string)",
+            "authSessionId!",
+            "(authSessionId as string)",
+        ],
+    )
+    def test_console_log_auth_session_property(self, tmp_path, expression):
+        code = f"console.log({expression});\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_log_record_session_property_safe(self, tmp_path):
+        code = "console.log(studyRecord.sessionId);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    def test_console_log_non_auth_session_id_safe_in_javascript(self, tmp_path):
+        code = "const sessionId = makeRecordId();\nconsole.log(sessionId);\n"
+        _, _, _, danger = _scan_ts_file(tmp_path, "session.js", code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
     def test_console_log_string_safe(self, tmp_path):
         """console.log with string literal should NOT trigger."""
         code = 'console.log("Application started");\n'
@@ -2647,6 +2731,12 @@ class TestLocalStorageTokens:
 
     def test_localstorage_jwt(self, tmp_path):
         code = 'localStorage.setItem("jwt", data.jwt);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_localstorage_session_id(self, tmp_path):
+        code = 'localStorage.setItem("sessionId", sessionId);\n'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D270" in ids
