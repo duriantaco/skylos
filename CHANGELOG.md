@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.39.1](https://github.com/duriantaco/skylos/compare/v4.39.0...v4.39.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **sca:** support pnpm multi-document lockfiles ([#886](https://github.com/duriantaco/skylos/issues/886)) ([5b3a4f6](https://github.com/duriantaco/skylos/commit/5b3a4f6f15585224a553ce62e59188a35a03e018))
+* **typescript:** avoid D251 for non-auth session IDs ([#888](https://github.com/duriantaco/skylos/issues/888)) ([b5dd956](https://github.com/duriantaco/skylos/commit/b5dd956dccd62931bd5bb32bded48376f1a5db6b))
+
 ## [4.39.0](https://github.com/duriantaco/skylos/compare/v4.38.0...v4.39.0) (2026-09-23)
 
 
