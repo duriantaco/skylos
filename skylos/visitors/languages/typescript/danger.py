@@ -188,6 +188,7 @@ _BASE64_CHARS = set(
 )
 
 _LOG_METHODS = {"log", "warn", "error", "info", "debug", "trace"}
+_LOG_SESSION_ID_SUFFIX = "sessionid"
 
 _LOG_SENSITIVE_SUFFIXES = (
     "password",
@@ -202,13 +203,38 @@ _LOG_SENSITIVE_SUFFIXES = (
     "privatekey",
     "accesstoken",
     "refreshtoken",
-    "sessionid",
     "ssn",
     "creditcard",
     "cardnumber",
     "cvv",
     "pin",
 )
+
+# A session ID is not necessarily an authentication secret: CLIs commonly use
+# one as a public identifier for a local record or command run. Keep D251 for
+# names that explicitly identify an authentication session instead of treating
+# every value ending in ``sessionId`` as a credential.
+_LOG_AUTH_SESSION_CONTEXTS = {
+    "auth",
+    "authenticated",
+    "authentication",
+    "authorized",
+    "authorization",
+    "bearer",
+    "cookie",
+    "cookies",
+    "credential",
+    "credentials",
+    "jwt",
+    "login",
+    "oauth",
+    "sso",
+    "token",
+}
+
+_LOG_AUTH_SESSION_NEGATIONS = {"no", "non", "not", "un"}
+_LOG_REQUEST_OBJECTS = {"req", "request"}
+_LOG_IDENTIFIER_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 
 _TIMING_SENSITIVE_SUFFIXES = (
     "password",
@@ -235,7 +261,7 @@ _STORAGE_SENSITIVE_SUFFIXES = (
     "bearer",
     "accesstoken",
     "refreshtoken",
-    "sessionid",
+    _LOG_SESSION_ID_SUFFIX,
     "sessionkey",
     "privatekey",
 )
@@ -350,12 +376,48 @@ def _get_text(source: bytes, node) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
+def _has_auth_session_context(name: str) -> bool:
+    words = [match.group(0).lower() for match in _LOG_IDENTIFIER_WORD_RE.finditer(name)]
+    saw_negated_context = False
+    for index, word in enumerate(words):
+        if word not in _LOG_AUTH_SESSION_CONTEXTS:
+            continue
+        previous = words[index - 1] if index else ""
+        previous_previous = words[index - 2] if index > 1 else ""
+        if previous in _LOG_AUTH_SESSION_NEGATIONS or (
+            word == "auth"
+            and previous == "o"
+            and previous_previous in _LOG_AUTH_SESSION_NEGATIONS
+        ):
+            saw_negated_context = True
+            continue
+        return True
+    if saw_negated_context:
+        return False
+
+    compact = re.sub(r"[^a-z0-9]", "", name.lower())
+    if compact.endswith(_LOG_SESSION_ID_SUFFIX):
+        compact = compact[: -len(_LOG_SESSION_ID_SUFFIX)]
+    if any(
+        compact.endswith(f"{negation}{context}")
+        for negation in _LOG_AUTH_SESSION_NEGATIONS
+        for context in _LOG_AUTH_SESSION_CONTEXTS
+    ):
+        return False
+    return any(
+        compact == context or compact.endswith(context)
+        for context in _LOG_AUTH_SESSION_CONTEXTS
+    )
+
+
 def _is_sensitive_name(name: str) -> bool:
     normalized = name.lower().replace("_", "")
     for suffix in _LOG_SENSITIVE_SUFFIXES:
         if normalized == suffix or normalized.endswith(suffix):
             return True
-    return False
+    if not normalized.endswith(_LOG_SESSION_ID_SUFFIX):
+        return False
+    return _has_auth_session_context(name)
 
 
 def _is_timing_sensitive(name: str) -> bool:
@@ -367,12 +429,50 @@ def _is_timing_sensitive(name: str) -> bool:
 
 
 def _extract_var_name(node, source_bytes: bytes) -> str | None:
+    node = _unwrap_ts_expression(node)
+    if node is None:
+        return None
     if node.type == "identifier":
         return _get_text(source_bytes, node)
     if node.type == "member_expression":
         prop = node.child_by_field_name("property")
         if prop:
             return _get_text(source_bytes, prop)
+    if node.type == "subscript_expression":
+        path = _static_member_path(node, source_bytes)
+        if path:
+            return path[-1]
+    return None
+
+
+def _sensitive_log_name(node, source_bytes: bytes) -> str | None:
+    name = _extract_var_name(node, source_bytes)
+    if not name:
+        return None
+    if _is_sensitive_name(name):
+        return name
+
+    # Preserve the finding for direct authentication/cookie paths such as
+    # ``req.cookies.sessionId`` while allowing neutral record IDs such as
+    # ``study.sessionId``.
+    if not name.lower().replace("_", "").endswith(_LOG_SESSION_ID_SUFFIX):
+        return None
+
+    path = _static_member_path(node, source_bytes)
+    if path is not None:
+        if any(_has_auth_session_context(part) for part in path[:-1]) or (
+            len(path) == 2 and path[0].lower() in _LOG_REQUEST_OBJECTS
+        ):
+            return name
+
+    expression = _unwrap_ts_expression(node)
+    if expression is not None and expression.type == "member_expression":
+        receiver = _unwrap_ts_expression(expression.child_by_field_name("object"))
+        if receiver is not None and receiver.type == "call_expression":
+            callee = receiver.child_by_field_name("function")
+            callee_name = _extract_var_name(callee, source_bytes)
+            if callee_name and _has_auth_session_context(callee_name):
+                return name
     return None
 
 
@@ -1815,8 +1915,8 @@ def scan_danger(
             if child.type in ("(", ")", ","):
                 continue
 
-            var_name = _extract_var_name(child, source_bytes)
-            if var_name and _is_sensitive_name(var_name):
+            var_name = _sensitive_log_name(child, source_bytes)
+            if var_name:
                 findings.append(
                     {
                         "rule_id": "SKY-D251",
@@ -1835,8 +1935,8 @@ def scan_danger(
                     if sub.type == "template_substitution":
                         for sub_child in sub.children:
                             if sub_child.type not in ("${", "}"):
-                                var_name = _extract_var_name(sub_child, source_bytes)
-                                if var_name and _is_sensitive_name(var_name):
+                                var_name = _sensitive_log_name(sub_child, source_bytes)
+                                if var_name:
                                     findings.append(
                                         {
                                             "rule_id": "SKY-D251",
