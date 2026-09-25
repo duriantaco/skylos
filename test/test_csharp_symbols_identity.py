@@ -10,7 +10,9 @@ from skylos.visitors.languages.csharp import scan_csharp_file
 
 
 def _write(path: Path, source: str) -> None:
-    path.write_text(source, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] literal fixture path under pytest tmp_path
+        source, encoding="utf-8"
+    )
 
 
 def _unused(result: dict, category: str) -> set[str]:

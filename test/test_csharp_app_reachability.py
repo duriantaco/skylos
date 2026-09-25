@@ -12,7 +12,9 @@ from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 def _write(root: Path, relative: str, source: str) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] literal fixture path under pytest tmp_path
+        source, encoding="utf-8"
+    )
 
 
 def _scan(root: Path) -> dict:
