@@ -125,8 +125,19 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | PHP | 是 | 是 | 部分 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
 | Rust | 是 | 是 | 部分 | Rust parser 覆盖，加上安全 sinks 和 sources |
 | Dart | 是 | 是 | 部分 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
-| C# | 是 | 是 | 部分 | C# 符号覆盖，加上部分 ASP.NET、process、SQL、HTTP 和文件 sinks |
+| C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
 | Shell | 否 | 是 | 部分 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
+
+C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
+类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
+配置入口仍视为可被外部使用。暂不分析 C# 源文件的可达性；质量检查可识别直接代码块中无条件 `return`、`throw`、
+`break` 或 `continue` 后的语句，但并非完整控制流分析。安全检查覆盖部分
+不可信输入汇入点；使用 `--secrets` 或 `-a` 时，也会对 `.cs` 文件运行通用
+密钥扫描。C# 污点分析暂不跟踪插值原始字符串中的表达式。SCA 会收集
+`.csproj` 中直接声明的 NuGet `PackageReference`；
+只有无条件的精确 `Version`（`[version]`）且没有本地 `Update`/`Remove` 修改时
+才会查询漏洞；`VersionOverride` 和集中管理的版本不在此范围内。普通版本号只是最低版本约束；没有已解析的
+锁文件时，实际安装版本及漏洞状态仍未知，也不会列出传递依赖。
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
 

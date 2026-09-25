@@ -21,6 +21,19 @@ def _complete():
     }
 
 
+def _nuget_unresolved_coverage():
+    return {
+        "status": "complete_with_unresolved_versions",
+        "complete": False,
+        "category_complete": False,
+        "unresolved_dependency_count": 1,
+        "nuget_unresolved_count": 1,
+        "parse_error_count": 0,
+        "unresolved_lockfile_dependency_count": 0,
+        "query": {"status": "complete", "complete": True},
+    }
+
+
 def test_managed_finding_paths_use_original_analyzer_file_without_mutating_result(
     tmp_path,
 ):
@@ -159,6 +172,39 @@ def test_missing_or_unresolved_dependency_receipt_cannot_resolve_old_findings(co
         result["analysis_summary"]["sca_coverage"] = coverage
     assert scan_receipt(result, analyzer_owned=True, full_scan=True) == {
         "complete": True,
+        "full_scan": False,
+    }
+
+
+def test_nuget_coverage_gap_is_operationally_complete_but_not_full_scan():
+    result = _complete()
+    result["analysis_summary"]["sca_coverage"] = _nuget_unresolved_coverage()
+
+    assert scan_receipt(result, analyzer_owned=True, full_scan=True) == {
+        "complete": True,
+        "full_scan": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"unresolved_dependency_count": 0},
+        {"nuget_unresolved_count": 0},
+        {"parse_error_count": 1},
+        {"query": {"status": "incomplete", "complete": False}},
+        {"limit_reasons": ["manifest_count_limit_exceeded"]},
+    ],
+)
+def test_spoofed_nuget_coverage_gap_does_not_confirm_delivery(change):
+    result = _complete()
+    result["analysis_summary"]["sca_coverage"] = {
+        **_nuget_unresolved_coverage(),
+        **change,
+    }
+
+    assert scan_receipt(result, analyzer_owned=True, full_scan=True) == {
+        "complete": False,
         "full_scan": False,
     }
 

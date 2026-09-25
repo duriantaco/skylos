@@ -175,7 +175,15 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
                     "no_supported_manifests": False,
                 }
                 complete = complete and isinstance(status, str) and status in expected
-                complete = complete and coverage.get("complete") is expected.get(status)
+                if (
+                    status == "complete_with_unresolved_versions"
+                    and coverage.get("complete") is False
+                ):
+                    complete = complete and _valid_nuget_unresolved_receipt(coverage)
+                else:
+                    complete = complete and coverage.get("complete") is expected.get(
+                        status
+                    )
                 complete = complete and all(
                     type(coverage.get(key, 0)) is int and coverage.get(key, 0) == 0
                     for key in (
@@ -223,6 +231,27 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
         "complete": complete,
         "full_scan": complete and full_scan is True and sca_complete,
     }
+
+
+def _valid_nuget_unresolved_receipt(coverage: dict) -> bool:
+    """Keep coverage gaps distinct from scan failure before reconciling comments."""
+    unresolved = coverage.get("unresolved_dependency_count")
+    nuget_unresolved = coverage.get("nuget_unresolved_count")
+    query = coverage.get("query")
+    return (
+        type(unresolved) is int
+        and type(nuget_unresolved) is int
+        and 0 < nuget_unresolved <= unresolved
+        and coverage.get("category_complete") is False
+        and type(coverage.get("parse_error_count")) is int
+        and coverage["parse_error_count"] == 0
+        and type(coverage.get("unresolved_lockfile_dependency_count")) is int
+        and coverage["unresolved_lockfile_dependency_count"] == 0
+        and not coverage.get("limit_reasons")
+        and isinstance(query, dict)
+        and query.get("status") == "complete"
+        and query.get("complete") is True
+    )
 
 
 def delivery_receipt(value) -> dict:

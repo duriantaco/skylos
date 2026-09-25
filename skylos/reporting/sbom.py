@@ -21,9 +21,12 @@ from skylos.rules.sca.uv_lockfile import _name as _pypi_name
 from skylos.rules.sca.vulnerability_scanner import (
     DependencyInventory,
     _DEPENDENCY_CONTEXT_KEYS,
+    _NUGET_NAME_RE,
+    _NUGET_VERSION_RE,
+    _nuget_is_queryable,
 )
 
-_PURL_TYPES = {"PyPI": "pypi", "npm": "npm", "Go": "golang"}
+_PURL_TYPES = {"PyPI": "pypi", "npm": "npm", "Go": "golang", "NuGet": "nuget"}
 _SOURCE_REFERENCE = re.compile(r"://|\b(?:git@|git\+|file:|link:|portal:)")
 _GO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~+/-]{0,511}\Z")
 
@@ -100,6 +103,14 @@ def _identity(dependency: dict) -> tuple[str, str, str] | None:
         ):
             return None
         version = "v" + version.removeprefix("v")
+    elif kind == "nuget":
+        if (
+            not _nuget_is_queryable(dependency)
+            or not _NUGET_NAME_RE.fullmatch(name)
+            or not _NUGET_VERSION_RE.fullmatch(version)
+        ):
+            return None
+        name = name.lower()
     else:
         return None
     # Scope separators remain separators; an npm scope's @ is percent encoded.

@@ -173,6 +173,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".php",
     ".rs",
     ".dart",
+    ".cs",
     ".kt",
     ".kts",
 )
@@ -255,15 +256,27 @@ SAFE_TEST_HINTS = {
     "fake",
     "placeholder",
     "dummy",
-    "test_",
-    "_test",
     "test_test_",
     "changeme",
-    "password",
-    "secret",
     "not_a_real",
     "do_not_use",
 }
+# A provider-shaped credential is not safe merely because its random payload
+# contains a word such as "secret" or "password". Likewise, "sk_test_" is a
+# real Stripe key mode. Only explicit placeholder markers at token boundaries
+# suppress a match; embedded marker-like substrings remain visible.
+_PLACEHOLDER_MARKER_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9])(?:"
+    + "|".join(
+        re.escape(hint) for hint in sorted(SAFE_TEST_HINTS, key=len, reverse=True)
+    )
+    + r")(?![A-Za-z])"
+)
+
+
+def _is_obvious_placeholder(token: str) -> bool:
+    return bool(_PLACEHOLDER_MARKER_RE.search(token))
+
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NPM_PACKAGE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,213}$")
@@ -446,8 +459,7 @@ def _looks_like_ordered_character_set(value: str, *, min_entropy: float) -> bool
     """Require every alphanumeric character to be part of an ordered run."""
     residual, removed = _without_long_ordered_ascii_runs(value)
     if removed < _ORDERED_ASCII_RUN_MIN_LENGTH or any(
-        character not in _ORDERED_CHARACTER_SET_PUNCTUATION
-        for character in residual
+        character not in _ORDERED_CHARACTER_SET_PUNCTUATION for character in residual
     ):
         return False
     return _entropy(residual) < min_entropy
@@ -462,10 +474,7 @@ def _bare_candidate_is_complete_ordered_character_set(
 ) -> bool:
     """Return whether a bare candidate spans one complete quoted character set."""
     left = start - 1
-    while (
-        left >= 0
-        and line_content[left] in _ORDERED_CHARACTER_SET_PUNCTUATION
-    ):
+    while left >= 0 and line_content[left] in _ORDERED_CHARACTER_SET_PUNCTUATION:
         left -= 1
     if left < 0 or line_content[left] not in {"'", '"'}:
         return False
@@ -613,8 +622,7 @@ def _looks_like_secret_template_prefix(value: str) -> bool:
         elif char.isdigit():
             character_classes.append("digit")
     transitions = sum(
-        left != right
-        for left, right in zip(character_classes, character_classes[1:])
+        left != right for left, right in zip(character_classes, character_classes[1:])
     )
     return transitions >= 10
 
@@ -3429,10 +3437,7 @@ def scan_ctx(
     for line_number, raw_line in enumerate(file_lines, start=1):
         line_content = raw_line.rstrip("\n")
 
-        if (
-            ctx.get("honor_inline_ignores", True)
-            and IGNORE_DIRECTIVE in line_content
-        ):
+        if ctx.get("honor_inline_ignores", True) and IGNORE_DIRECTIVE in line_content:
             continue
 
         stripped_line = line_content.lstrip()
@@ -3457,15 +3462,7 @@ def scan_ctx(
             for regex_match in pattern_matches:
                 potential_secret = regex_match.group(0)
 
-                token_lowercase = potential_secret.lower()
-                has_safe_hint = False
-
-                for safe_hint in SAFE_TEST_HINTS:
-                    if safe_hint in token_lowercase:
-                        has_safe_hint = True
-                        break
-
-                if has_safe_hint:
+                if _is_obvious_placeholder(potential_secret):
                     continue
 
                 col_pos = regex_match.start()
@@ -3502,10 +3499,7 @@ def scan_ctx(
                         potential_secret = regex_match.group(0)
                         if potential_secret in raw_provider_tokens:
                             continue
-                        if any(
-                            safe_hint in potential_secret.lower()
-                            for safe_hint in SAFE_TEST_HINTS
-                        ):
+                        if _is_obvious_placeholder(potential_secret):
                             continue
                         match_key = (
                             provider_name,
@@ -3543,9 +3537,8 @@ def scan_ctx(
                 }
                 for regex_match in pattern_regex.finditer(decoded_value):
                     potential_secret = regex_match.group(0)
-                    if potential_secret in standard_tokens or any(
-                        safe_hint in potential_secret.lower()
-                        for safe_hint in SAFE_TEST_HINTS
+                    if potential_secret in standard_tokens or _is_obvious_placeholder(
+                        potential_secret
                     ):
                         continue
                     findings.append(
@@ -3625,15 +3618,7 @@ def scan_ctx(
             if is_bare and _looks_like_identifier(clean_token):
                 continue
 
-            token_lowercase = clean_token.lower()
-            has_safe_hint = False
-
-            for safe_hint in SAFE_TEST_HINTS:
-                if safe_hint in token_lowercase:
-                    has_safe_hint = True
-                    break
-
-            if has_safe_hint:
+            if _is_obvious_placeholder(clean_token):
                 continue
             tok_entropy = _entropy(clean_token)
 

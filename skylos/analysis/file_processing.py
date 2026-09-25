@@ -410,10 +410,13 @@ def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
-def _scan_csharp_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_csharp_file(
+    file, cfg, *, enable_quality_rules: bool, enable_danger_rules: bool
+):
     return scan_csharp_file(
         file,
         cfg,
+        enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
     )
 

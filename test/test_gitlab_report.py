@@ -473,6 +473,50 @@ def test_documented_coverage_limitations_are_not_export_failures(status):
     assert report.complete
 
 
+def _nuget_unresolved_coverage():
+    return {
+        "status": "complete_with_unresolved_versions",
+        "complete": False,
+        "category_complete": False,
+        "unresolved_dependency_count": 1,
+        "nuget_unresolved_count": 1,
+        "parse_error_count": 0,
+        "unresolved_lockfile_dependency_count": 0,
+        "query": {"status": "complete", "complete": True},
+    }
+
+
+def test_nuget_coverage_gap_is_not_gitlab_report_failure():
+    report = _report(
+        {
+            "analysis_summary": {"sca_coverage": _nuget_unresolved_coverage()},
+            "danger": [_finding()],
+        }
+    )
+
+    assert report.complete
+    assert len(report.findings) == 1
+    assert report.diagnostics == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"unresolved_dependency_count": 0},
+        {"nuget_unresolved_count": 0},
+        {"parse_error_count": 1},
+        {"query": {"status": "incomplete", "complete": False}},
+        {"limit_reasons": ["manifest_count_limit_exceeded"]},
+    ],
+)
+def test_spoofed_nuget_coverage_gap_is_not_clean_report(change):
+    coverage = {**_nuget_unresolved_coverage(), **change}
+    report = _report({"analysis_summary": {"sca_coverage": coverage}})
+
+    assert not report.complete
+    assert "Invalid dependency analysis completion receipt." in report.diagnostics
+
+
 def test_output_limit_retains_bounded_findings_and_reports_incomplete(monkeypatch):
     monkeypatch.setattr(gitlab, "MAX_FINDINGS", 2)
     report = _report({"danger": [_finding(line=line) for line in (1, 2, 3)]})

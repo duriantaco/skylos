@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .core import scan_symbols
 from .danger import scan_danger
+from .quality import scan_quality
 
 
 class DummyVisitor:
@@ -40,6 +41,7 @@ def scan_csharp_file(
     file_path: str,
     config: dict | None = None,
     *,
+    enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
 ) -> tuple:
     if config is None:
@@ -58,6 +60,7 @@ def scan_csharp_file(
 
     defs, refs, raw_imports = scan_symbols(str(path), source)
     findings = scan_danger(str(path), source) if enable_danger_rules else []
+    quality_findings = scan_quality(str(path), source) if enable_quality_rules else []
 
     return (
         defs,
@@ -66,7 +69,7 @@ def scan_csharp_file(
         set(),
         DummyVisitor(),
         DummyVisitor(),
-        [],
+        quality_findings,
         findings,
         [],
         None,

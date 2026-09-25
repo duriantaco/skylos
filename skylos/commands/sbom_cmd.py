@@ -38,19 +38,23 @@ def run_sbom_command(argv: list[str]) -> int:
         )
         return 2
 
-    if args.output != "-" and Path(args.output).name.casefold() in {
-        "requirements.txt",
-        "pyproject.toml",
-        "package.json",
-        "go.mod",
-        "uv.lock",
-        "package-lock.json",
-        "pnpm-lock.yaml",
-        "poetry.lock",
-        "yarn.lock",
-        "pipfile.lock",
-        "npm-shrinkwrap.json",
-    }:
+    if args.output != "-" and (
+        Path(args.output).name.casefold()
+        in {
+            "requirements.txt",
+            "pyproject.toml",
+            "package.json",
+            "go.mod",
+            "uv.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "poetry.lock",
+            "yarn.lock",
+            "pipfile.lock",
+            "npm-shrinkwrap.json",
+        }
+        or Path(args.output).suffix.casefold() == ".csproj"
+    ):
         print(
             "SBOM error: output must not overwrite a dependency input.", file=sys.stderr
         )
