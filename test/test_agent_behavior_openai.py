@@ -779,7 +779,11 @@ def test_live_observer_rejects_duplicate_response_keys():
 def test_live_observer_rejects_excessive_json_nesting_without_crashing():
     session = FakeSession(FakeResponse(body=b"[" * 10_000 + b"0" + b"]" * 10_000))
 
-    with pytest.raises(AgentEndpointError, match="invalid JSON"):
+    # JSON parsers differ in whether they reject this depth before our shape guard.
+    with pytest.raises(
+        AgentEndpointError,
+        match=r"invalid JSON|agent endpoint response nesting exceeds",
+    ):
         observe_openai_chat(
             _target(),
             _scenario(),
