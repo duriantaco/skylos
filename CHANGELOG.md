@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.39.2](https://github.com/duriantaco/skylos/compare/v4.39.1...v4.39.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **csharp:** surface benchmark findings and report coverage accurately ([#890](https://github.com/duriantaco/skylos/issues/890)) ([627cb06](https://github.com/duriantaco/skylos/commit/627cb062dd4481f3f801c7735a3e6ba40315ca2c))
+
 ## [4.39.1](https://github.com/duriantaco/skylos/compare/v4.39.0...v4.39.1) (2026-09-24)
 
 
