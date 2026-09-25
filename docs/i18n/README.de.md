@@ -200,8 +200,27 @@ Timeout-Pflicht beizubringen.
 | PHP | Ja | Ja | Teilweise | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
 | Rust | Ja | Ja | Teilweise | Rust-Parser-Abdeckung plus Security-Sink/Source-Prüfungen |
 | Dart | Ja | Ja | Teilweise | Dart-Parser-Abdeckung plus ausgewählte Security-Sinks und -Sources |
-| C# | Ja | Ja | Teilweise | C#-Symbolabdeckung plus ausgewählte ASP.NET-, Process-, SQL-, HTTP- und File-Sinks |
+| C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
 | Shell | Nein | Ja | Teilweise | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
+
+C#-Dead-Code-Funde sind konservativ: Bei einer vollständigen Analyse einer
+ausführbaren oder Web-Anwendung gelten unreferenzierte öffentliche Typen und
+Methoden als Kandidaten mit geringer Konfidenz. Bibliotheks-APIs, geschützte
+Member sowie bekannte Framework- und konfigurierte Einstiegspunkte bleiben
+extern erreichbar. Die Erreichbarkeit von C#-Quelldateien wird nicht analysiert.
+Die Qualitätsprüfung erkennt Anweisungen nach einem unbedingten
+`return`, `throw`, `break` oder `continue` im direkten Block, bietet aber keine
+vollständige Kontrollflussanalyse. Die Sicherheitsprüfungen umfassen ausgewählte
+Senken für nicht vertrauenswürdige Eingaben sowie generische Secret-Prüfungen
+in `.cs`-Dateien mit `--secrets` oder `-a`. Ausdrücke in interpolierten
+Raw-Strings werden von der C#-Taint-Analyse noch nicht verfolgt. SCA
+inventarisiert direkte NuGet-`PackageReference`-Einträge in `.csproj`-Dateien.
+Nur unbedingte, exakt festgelegte `Version`-Werte (`[version]`) ohne lokale
+`Update`-/`Remove`-Änderungen werden gegen Advisories geprüft;
+`VersionOverride` und zentral verwaltete Versionen nicht.
+Gewöhnliche NuGet-Versionen sind Untergrenzen. Ohne aufgelöste Lockdatei
+bleiben installierte Version und Schwachstellenstatus unbekannt; transitive
+Pakete werden nicht inventarisiert.
 
 Regelfamilien und Scanner-Scope stehen in der
 [Rules Reference](https://docs.skylos.dev/rules-reference).

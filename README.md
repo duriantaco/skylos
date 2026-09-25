@@ -565,10 +565,27 @@ or `--include-folder` to override an excluded folder.
 | PHP | Yes | Yes | Partial | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
 | Rust | Yes | Yes | Partial | Unsupported | Rust parser coverage plus security sink/source checks |
 | Dart | Yes | Yes | Partial | Unsupported | Dart parser coverage plus selected security sinks and sources |
-| C# | Yes | Yes | Partial | Unsupported | C# symbol coverage plus selected ASP.NET, process, SQL, HTTP, and file sinks |
+| C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
 | Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
+
+C# dead-code findings are conservative: in a complete executable or web
+application scan, unreferenced public types and methods are low-confidence
+candidates; library APIs, protected members, and known framework or configured
+entry points remain externally reachable. C# source-file reachability is not
+implemented. Quality scanning detects statements after unconditional
+`return`, `throw`, `break`, or `continue` in a direct block; it is not full
+control-flow analysis. Security coverage includes selected tainted-input
+sinks and generic secret scanning of `.cs` files when `--secrets` or `-a` is
+enabled. Interpolated raw-string expressions are not yet followed by C# taint
+analysis. SCA inventories direct NuGet `PackageReference` entries in `.csproj`
+files. Only unconditional exact `Version` pins (`[version]`) without local
+`Update`/`Remove` mutations, not `VersionOverride` or centrally managed
+versions, can be checked against
+advisories. Ordinary NuGet version values are minimum bounds, so without a
+resolved lockfile their installed versions and vulnerability status remain
+unknown. Transitive packages are not inventoried.
 
 Java security analysis follows directly implemented request-data helpers in
 same-package files or source files identified by exact imports or fully qualified

@@ -65,9 +65,8 @@ _SEVERITY_RANK = {
     "minor": 3,
     "info": 4,
 }
-# All native SCA receipts carry both fields. "no_supported_manifests" describes
-# an inventory limitation, not an interrupted scan; it is the sole non-complete
-# state that does not by itself make the report operationally incomplete.
+# All native SCA receipts carry both fields. Coverage gaps can make `complete`
+# false without interrupting a NuGet scan, but only with explicit gap evidence.
 _SCA_COMPLETION_STATES = {
     "complete": True,
     "complete_with_unresolved_versions": True,
@@ -335,11 +334,37 @@ def _sca_completion_diagnostic(coverage: object) -> str | None:
     status = coverage.get("status")
     if not isinstance(status, str) or status not in _SCA_COMPLETION_STATES:
         return invalid
+    if (
+        status == "complete_with_unresolved_versions"
+        and coverage.get("complete") is False
+    ):
+        return None if _valid_nuget_unresolved_receipt(coverage) else invalid
     if coverage.get("complete") is not _SCA_COMPLETION_STATES[status]:
         return invalid
     if not coverage["complete"] and status != "no_supported_manifests":
         return "Dependency vulnerability analysis is incomplete."
     return None
+
+
+def _valid_nuget_unresolved_receipt(coverage: dict) -> bool:
+    """Accept incomplete coverage only when NuGet gaps, not scan errors, caused it."""
+    unresolved = coverage.get("unresolved_dependency_count")
+    nuget_unresolved = coverage.get("nuget_unresolved_count")
+    query = coverage.get("query")
+    return (
+        type(unresolved) is int
+        and type(nuget_unresolved) is int
+        and 0 < nuget_unresolved <= unresolved
+        and coverage.get("category_complete") is False
+        and type(coverage.get("parse_error_count")) is int
+        and coverage["parse_error_count"] == 0
+        and type(coverage.get("unresolved_lockfile_dependency_count")) is int
+        and coverage["unresolved_lockfile_dependency_count"] == 0
+        and not coverage.get("limit_reasons")
+        and isinstance(query, dict)
+        and query.get("status") == "complete"
+        and query.get("complete") is True
+    )
 
 
 def _scan_diagnostics(result: dict) -> set[str]:

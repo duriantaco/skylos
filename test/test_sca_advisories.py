@@ -105,6 +105,48 @@ def test_id_only_batch_is_enriched_with_severity_and_matching_fix(monkeypatch):
     assert all(response.closed for response in transport.responses)
 
 
+def test_nuget_advisory_matches_package_id_case_insensitively(monkeypatch):
+    nuget_dependency = {
+        "name": "Newtonsoft.Json",
+        "version": "13.0.1",
+        "ecosystem": "NuGet",
+        "file": "/fixture/App.csproj",
+        "line": 1,
+        "exact": True,
+    }
+    document = {
+        "id": "GHSA-test-one",
+        "summary": "NuGet dependency advisory",
+        "affected": [
+            {
+                "package": {"name": "newtonsoft.json", "ecosystem": "NuGet"},
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM",
+                        "events": [{"introduced": "0"}, {"fixed": "13.0.2"}],
+                    }
+                ],
+            }
+        ],
+    }
+    transport = Transport(
+        [{"vulns": [{"id": "GHSA-test-one"}]}],
+        {"GHSA-test-one": document},
+    )
+
+    result = scan(monkeypatch, transport, [nuget_dependency])
+
+    assert transport.posts[0]["queries"] == [
+        {
+            "package": {"name": "Newtonsoft.Json", "ecosystem": "NuGet"},
+            "version": "13.0.1",
+        }
+    ]
+    assert result.receipt["complete"] is True
+    assert result[0]["metadata"]["advisory_status"] == "complete"
+    assert result[0]["metadata"]["fixed_version"] == "13.0.2"
+
+
 def test_advisory_fetch_deduplicates_across_versions_and_batches(monkeypatch):
     monkeypatch.setattr(sca, "OSV_BATCH_LIMIT", 1)
     transport = Transport(

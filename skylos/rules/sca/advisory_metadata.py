@@ -38,6 +38,8 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         return []
     if ecosystem == "PyPI":
         name = re.sub(r"[-_.]+", "-", name).lower()
+    elif ecosystem == "NuGet":
+        name = name.casefold()
     matching = []
     for affected in _objects(vuln.get("affected")):
         package = affected.get("package")
@@ -46,6 +48,8 @@ def _matching_affected(vuln: dict, dep: dict) -> list[dict]:
         candidate = package.get("name")
         if ecosystem == "PyPI" and isinstance(candidate, str):
             candidate = re.sub(r"[-_.]+", "-", candidate).lower()
+        elif ecosystem == "NuGet" and isinstance(candidate, str):
+            candidate = candidate.casefold()
         if candidate == name:
             matching.append(affected)
     return matching
@@ -141,15 +145,21 @@ def _release_version(value, ecosystem: str) -> tuple[int, ...] | None:
     pattern = (
         r"[0-9]+(?:\.[0-9]+)*"
         if ecosystem == "PyPI"
+        else r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){0,3}"
+        if ecosystem == "NuGet"
         else r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     )
-    if ecosystem not in {"PyPI", "npm", "Go"} or not re.fullmatch(pattern, value):
+    if ecosystem not in {"PyPI", "npm", "Go", "NuGet"} or not re.fullmatch(
+        pattern, value
+    ):
         return None
     parts = tuple(int(part) for part in value.split("."))
     # PEP 440 pads stable release segments with zero during comparison.
     if ecosystem == "PyPI":
         while len(parts) > 1 and parts[-1] == 0:
             parts = parts[:-1]
+    elif ecosystem == "NuGet":
+        parts += (0,) * (4 - len(parts))
     return parts
 
 
@@ -180,7 +190,7 @@ def _fix_metadata(matching: list[dict], dep: dict) -> dict:
     fixes, display, intervals, explicit_versions = [], [], [], []
     understood = bool(matching)
     ecosystem = dep.get("ecosystem", "")
-    expected_type = "ECOSYSTEM" if ecosystem == "PyPI" else "SEMVER"
+    expected_type = "ECOSYSTEM" if ecosystem in {"PyPI", "NuGet"} else "SEMVER"
     for affected in matching:
         versions = affected.get("versions", [])
         if not isinstance(versions, list) or any(

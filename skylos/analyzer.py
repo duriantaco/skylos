@@ -2369,6 +2369,13 @@ class Skylos:
             if d.type == "method":
                 _methods_by_file_and_name[(str(d.filename), d.simple_name)].append(d)
 
+        csharp_by_name = defaultdict(list)
+        csharp_by_simple = defaultdict(list)
+        for definition in self.defs.values():
+            if str(definition.filename).endswith(_CSHARP_SOURCE_EXTS):
+                csharp_by_name[definition.name].append(definition)
+                csharp_by_simple[definition.simple_name].append(definition)
+
         def _matching_type_members(
             type_name: str, member_name: str, ref_file: str
         ) -> list:
@@ -2389,12 +2396,93 @@ class Skylos:
             ]
             return same_file or matches
 
+        def _csharp_matching_arity(definitions, arity):
+            if arity is None:
+                return definitions
+            matches = []
+            for definition in definitions:
+                if definition.type != "method":
+                    continue
+                minimum = getattr(definition, "csharp_min_arity", None)
+                if minimum is None:
+                    if getattr(definition, "csharp_arity", None) == arity:
+                        matches.append(definition)
+                    continue
+                maximum = getattr(definition, "csharp_max_arity", None)
+                if minimum <= arity and (maximum is None or arity <= maximum):
+                    matches.append(definition)
+            return matches
+
         total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
 
         for i, (ref, ref_file) in enumerate(self.refs, 1):
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
+
+            if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
+                if ref.startswith("@type:"):
+                    type_name = ref[len("@type:") :]
+                    matches = [
+                        definition
+                        for definition in csharp_by_name.get(type_name, [])
+                        if definition.type == "class"
+                    ]
+                    if not matches:
+                        simple = type_name.rsplit(".", 1)[-1]
+                        candidates = [
+                            definition
+                            for definition in csharp_by_simple.get(simple, [])
+                            if definition.type == "class"
+                        ]
+                        if "." in type_name:
+                            qualified = [
+                                definition
+                                for definition in candidates
+                                if definition.name.endswith(f".{type_name}")
+                            ]
+                            if qualified:
+                                candidates = qualified
+                        same_file = [
+                            definition
+                            for definition in candidates
+                            if str(definition.filename) == str(ref_file)
+                        ]
+                        matches = same_file or candidates
+                    for definition in matches:
+                        definition.references += 1
+                    continue
+
+                ref_name, separator, arity_text = ref.rpartition("#")
+                arity = int(arity_text) if separator and arity_text.isdigit() else None
+                if arity is None:
+                    ref_name = ref
+
+                matches = _csharp_matching_arity(
+                    csharp_by_name.get(ref_name, []), arity
+                )
+                if not matches:
+                    simple = ref_name.rsplit(".", 1)[-1]
+                    candidates = _csharp_matching_arity(
+                        csharp_by_simple.get(simple, []), arity
+                    )
+                    if "." in ref_name:
+                        qualified = [
+                            definition
+                            for definition in candidates
+                            if definition.name.endswith(f".{ref_name}")
+                        ]
+                        if qualified:
+                            candidates = qualified
+                    same_file = [
+                        definition
+                        for definition in candidates
+                        if str(definition.filename) == str(ref_file)
+                    ]
+                    matches = same_file or candidates
+                for definition in matches:
+                    definition.references += 1
+                continue
 
             if ref.startswith("~."):
                 # Property access (`x.foo`): dynamic dispatch can reach any
@@ -3747,6 +3835,18 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
+                    elif str(definition.filename).endswith(_CSHARP_SOURCE_EXTS):
+                        if definition.type == "class":
+                            # Partial declarations share one C# type identity.
+                            key = f"csharp:type:{definition.name}"
+                        else:
+                            signature = getattr(definition, "csharp_signature", None)
+                            key = (
+                                f"csharp:{definition.filename}:{definition.name}:"
+                                f"{definition.type}:{signature or ''}"
+                            )
+                            if key in self.defs:
+                                key = f"{key}:{definition.line}:{len(self.defs)}"
                     elif str(definition.filename).endswith(
                         _TS_JS_SOURCE_EXTS + _CPP_SOURCE_EXTS
                     ):
@@ -4949,6 +5049,19 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
+
+        from skylos.visitors.languages.csharp.reachability import (
+            demote_application_public_symbols,
+        )
+
+        demote_application_public_symbols(
+            self.defs.values(),
+            project_root,
+            files,
+            analysis_scope=self._analysis_scope,
+            analysis_errors=analysis_errors,
+            exclude_folders=exclude_folders,
+        )
 
         self._demote_unconsumed_ts_exports(
             files, exclude_folders, workspace_inventory=workspace_inventory
