@@ -1,8 +1,94 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 import logging
 
 
 logger = logging.getLogger("Skylos")
+
+
+WORKER_CRASH_MESSAGE = "parser crashed on this file; skipped"
+
+
+class WorkerCrash:
+    """Parent-side marker for a file whose analysis killed a worker process."""
+
+    __slots__ = ("file",)
+
+    def __init__(self, file):
+        self.file = file
+
+    def __repr__(self):
+        return f"WorkerCrash({self.file!r})"
+
+
+def _run_pool(files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progress):
+    """Run files in a fresh process pool.
+
+    Returns (results, broken): results maps str(path) -> proc_file output for
+    every file that finished (or whose ordinary Python exception was retried
+    in the parent); broken lists files whose futures failed because the pool
+    died, in submission order. Those must not be re-run in the parent.
+    """
+    results = {}
+    broken = []
+    with ProcessPoolExecutor(max_workers=jobs) as ex:
+        fut_to_file = {}
+        for f in files:
+            full_scan = changed_files is None or str(f) in changed_files
+            try:
+                fut = ex.submit(
+                    worker_fn,
+                    f,
+                    modmap[f],
+                    proc_kwargs["extra_visitors"],
+                    full_scan,
+                    proc_kwargs["collect_clone_fragments"],
+                    proc_kwargs["clone_cfg"],
+                    proc_kwargs["collect_architecture_metrics"],
+                    proc_kwargs["enable_quality_rules"],
+                    proc_kwargs["enable_danger_rules"],
+                    proc_kwargs["config_file"],
+                    proc_kwargs["project_root"],
+                )
+            except BrokenProcessPool:
+                broken.append(f)
+                continue
+            fut_to_file[fut] = f
+
+        for fut in as_completed(fut_to_file):
+            f = fut_to_file[fut]
+            file_str = str(f)
+            try:
+                file_str, out = fut.result()
+            except BrokenProcessPool:
+                broken.append(f)
+                continue
+            except Exception:
+                logger.warning(
+                    "Parallel static worker failed for %s; retrying in parent process",
+                    file_str,
+                    exc_info=True,
+                )
+                out = _retry_in_parent(f, modmap, changed_files, proc_kwargs)
+            results[file_str] = out
+            progress(f)
+
+    order = {id(f): i for i, f in enumerate(files)}
+    broken.sort(key=lambda f: order.get(id(f), 0))
+    return results, broken
+
+
+def _retry_in_parent(f, modmap, changed_files, proc_kwargs):
+    try:
+        from skylos.analyzer import proc_file
+
+        full_scan = changed_files is None or str(f) in changed_files
+        return proc_file(f, modmap[f], full_scan=full_scan, **proc_kwargs)
+    except Exception:
+        logger.error(
+            "Parent-process static retry failed for %s", str(f), exc_info=True
+        )
+        return None
 
 
 def _worker(
@@ -51,10 +137,11 @@ def run_proc_file_parallel(
     enable_danger_rules=True,
     config_file=None,
     project_root=None,
+    _worker_fn=None,
 ):
     import os
 
-    if os.getenv("PYTEST_CURRENT_TEST"):
+    if os.getenv("PYTEST_CURRENT_TEST") and _worker_fn is None:
         jobs = 1
 
     if jobs <= 0:
@@ -94,79 +181,56 @@ def run_proc_file_parallel(
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
             project_root=project_root,
+            _worker_fn=_worker_fn,
         )
 
-    pending = []
-    for f in files:
-        pending.append((f, modmap[f]))
+    proc_kwargs = {
+        "extra_visitors": extra_visitors,
+        "collect_clone_fragments": collect_clone_fragments,
+        "clone_cfg": clone_cfg,
+        "collect_architecture_metrics": collect_architecture_metrics,
+        "enable_quality_rules": enable_quality_rules,
+        "enable_danger_rules": enable_danger_rules,
+        "config_file": config_file,
+        "project_root": project_root,
+    }
+    worker_fn = _worker_fn or _worker
+    total = len(files)
+    done = 0
 
-    results = {}
+    def _progress(f):
+        nonlocal done
+        done += 1
+        if progress_callback:
+            progress_callback(done, total, f)
 
-    with ProcessPoolExecutor(max_workers=jobs) as ex:
-        fut_to_file = {}
-        for f, mod in pending:
-            full_scan = changed_files is None or str(f) in changed_files
-            fut = ex.submit(
-                _worker,
-                f,
-                mod,
-                extra_visitors,
-                full_scan,
-                collect_clone_fragments,
-                clone_cfg,
-                collect_architecture_metrics,
-                enable_quality_rules,
-                enable_danger_rules,
-                config_file,
-                project_root,
+    results, suspects = _run_pool(
+        files, modmap, changed_files, jobs, worker_fn, proc_kwargs, _progress
+    )
+
+    # A native crash (e.g. SIGSEGV in a tree-sitter grammar) kills a worker and
+    # breaks the whole pool: every unfinished future fails with
+    # BrokenProcessPool, so the culprit cannot be identified from the parent.
+    # Never retry those files in the parent process (the crash would take the
+    # whole scan down). Re-run them in fresh pools, in chunks of `jobs`, and
+    # isolate any chunk that breaks again file-by-file in single-worker pools.
+    while suspects:
+        chunk, suspects = suspects[:jobs], suspects[jobs:]
+        chunk_results, broken = _run_pool(
+            chunk, modmap, changed_files, jobs, worker_fn, proc_kwargs, _progress
+        )
+        results.update(chunk_results)
+        for f in broken:
+            solo_results, solo_broken = _run_pool(
+                [f], modmap, changed_files, 1, worker_fn, proc_kwargs, _progress
             )
-            fut_to_file[fut] = f
-
-        total = len(pending)
-        done = 0
-
-        for fut in as_completed(fut_to_file):
-            f = fut_to_file[fut]
-
-            try:
-                file_str, out = fut.result()
-            except Exception:
-                file_str = str(f)
-                logger.warning(
-                    "Parallel static worker failed for %s; retrying in parent process",
-                    file_str,
-                    exc_info=True,
+            results.update(solo_results)
+            if solo_broken:
+                logger.error(
+                    "Static analysis worker crashed on %s; file skipped", str(f)
                 )
-                try:
-                    from skylos.analyzer import proc_file
-
-                    full_scan = changed_files is None or str(f) in changed_files
-                    out = proc_file(
-                        f,
-                        modmap[f],
-                        extra_visitors=extra_visitors,
-                        full_scan=full_scan,
-                        collect_clone_fragments=collect_clone_fragments,
-                        clone_cfg=clone_cfg,
-                        collect_architecture_metrics=collect_architecture_metrics,
-                        enable_quality_rules=enable_quality_rules,
-                        enable_danger_rules=enable_danger_rules,
-                        config_file=config_file,
-                        project_root=project_root,
-                    )
-                except Exception:
-                    logger.error(
-                        "Parent-process static retry failed for %s",
-                        file_str,
-                        exc_info=True,
-                    )
-                    out = None
-
-            results[file_str] = out
-
-            done += 1
-            if progress_callback:
-                progress_callback(done, total, f)
+                results[str(f)] = WorkerCrash(str(f))
+                _progress(f)
 
     ordered = []
     for f in files:
@@ -190,6 +254,7 @@ def _run_mixed_files_with_serial_go(
     enable_danger_rules=True,
     config_file=None,
     project_root=None,
+    _worker_fn=None,
 ):
     go_files = []
     other_files = []
@@ -225,6 +290,7 @@ def _run_mixed_files_with_serial_go(
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
             project_root=project_root,
+            _worker_fn=_worker_fn,
         )
         for f, out in zip(other_files, other_outs):
             results[str(f)] = out

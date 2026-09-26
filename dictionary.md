@@ -66,6 +66,8 @@ Rule IDs use a stable public prefix:
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerability findings. |
+| SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
+| License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -149,6 +151,29 @@ itself. Explicit authentication-qualified names (such as `authSessionId`) and
 direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
+For Python D211, a query executed on a chained connection or cursor call
+(`sqlite3.connect(...).execute(q)`, `conn.cursor().execute(q)`,
+`engine.connect().execute(q)`, `get_db().executescript(q)`) is reported only
+when `q` carries data from a real untrusted source: a web-route, CLI or MCP
+tool parameter, `request.*`, `input()`, `sys.argv`, `sys.stdin` or the
+environment. Bound parameters, `text("... :id")` over a constant, and
+SQLAlchemy/SQLModel `select`/`insert`/`update`/`delete` constructs are not
+findings.
+
+For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
+`send_file` are path sinks. `send_from_directory` is a sink only for its
+`directory` argument, because it joins `path` with `safe_join`. These
+file-serving sinks also require a real untrusted source. Accepted guards: a
+resolved path (`resolve()`, `realpath`, `abspath`, `normpath`) checked with
+`is_relative_to`, `relative_to`, `startswith` or `commonpath` before a
+rejecting branch; a membership check against a constant allowlist;
+`safe_join`; and `basename`. A prefix check on an unnormalized path does not
+count as a guard.
+
+Python D211, D215 and D217 findings reached by such a source carry
+`metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
+renders as `codeFlows`.
+
 ### AI Supply Chain Security
 
 | ID | Severity | Name | File Types | Details |
@@ -228,6 +253,7 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D346 | HIGH | Flask debug mode enabled | Python |
 | D347 | MEDIUM | Unsafe logging config listener | Python |
 | D348 | HIGH | Insecure temporary filename | Python |
+| D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source) | Python |
 
 ### Config And Deployment Security
 
@@ -434,8 +460,18 @@ across different operating-system/CPU platforms.
 | S101 | CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
-`SKY-S102` preserves `CRITICAL` severity when it reclassifies a concrete
-hardcoded credential from `SKY-S101`; environment-reference exposure is `HIGH`.
+`SKY-S101` is `CRITICAL` for provider tokens and high-entropy values. Two
+lower-certainty shapes are `HIGH`: a password embedded in a connection URL
+(`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
+non-placeholder literal under a password/secret/token/api-key field in YAML,
+JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
+template references (`${DB_PASSWORD}`, `{{ .Values.x }}`), placeholders
+(`changeme`, `<password>`, `your_password_here`) and secret *names*
+(`existingSecret`, `secretName`, `password_file`) are not reported, and
+previews are always fully masked.
+
+`SKY-S102` preserves the `SKY-S101` severity when it reclassifies a concrete
+hardcoded credential; environment-reference exposure is `HIGH`.
 
 ## Security Contracts (SKY-SC)
 
@@ -489,9 +525,11 @@ use the `SKY-A` prefix.
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
-SKY-D224 rejects explicit keyword arguments when the installed API has a known
-signature that takes no parameters. Keyword checks are skipped when the
-signature is unavailable. APIs accepting `**kwargs` remain supported, and
+SKY-D224 rejects explicit keyword arguments that are not parameters of the
+installed API's known signature (for example `jwt.encode(..., expires_in=...)`
+with PyJWT). The inspected packages default to `requests`, `pandas`, `boto3`,
+`openai` and `jwt`. Keyword checks are skipped when the signature is
+unavailable. APIs accepting `**kwargs` remain supported, and
 dynamic `**payload` contents are not inferred.
 
 SKY-A106 warns when a dependency version change exactly matches the project's
@@ -636,6 +674,11 @@ suppression, integrations, and public references.
 | ID | Severity | Name | Scope |
 |:---|:---|:---|:---|
 | SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
+| SKY-SCA-LIC001 | HIGH (configurable via `license_severity`) | Dependency license policy violation | Declared dependency license (offline lockfile / installed metadata) cannot be satisfied without a license in `license_deny`, or outside `license_allow`; `NOASSERTION` never fires |
+
+`SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
+Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
+`GPLv3`) are `NOASSERTION`, never guessed.
 
 ## Aggregate, Alias, and Workflow IDs
 

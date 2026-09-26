@@ -16,6 +16,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
+from skylos.rules.ai_defect.installed_modules_cache import installed_module_mapping
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
     read_project_text_no_symlink,
@@ -1070,14 +1071,31 @@ def _has_dependency_manifest_context(repo_root):
     return False
 
 
+MAX_REQUIREMENTS_FILES_PER_DIRECTORY = 32
+
+
+def _requirements_files(directory):
+    """``requirements.txt`` plus variants such as ``requirements-dev.txt`` or
+    ``requirements-mlx.txt`` in one directory (bounded, sorted)."""
+    try:
+        found = sorted(
+            path
+            for path in directory.glob("requirements*.txt")
+            if path.name == "requirements.txt"
+            or path.name[len("requirements")] in "-_."
+        )
+    except OSError:
+        return []
+    return found[:MAX_REQUIREMENTS_FILES_PER_DIRECTORY]
+
+
 def _collect_declared_deps(repo_root):
     deps = set()
     project_name = None
 
     current = repo_root
     for _ in range(5):
-        req_path = current / "requirements.txt"
-        if req_path.exists():
+        for req_path in _requirements_files(current):
             deps |= _parse_requirements_txt(req_path)
 
         pyproj_path = current / "pyproject.toml"
@@ -1114,17 +1132,24 @@ def _collect_declared_deps(repo_root):
 
 
 def _nested_pyproject_metadata(repo_root, directory):
+    deps = set()
+    has_manifest = False
+    for req_path in _requirements_files(directory):
+        deps |= _parse_requirements_txt(req_path)
+        has_manifest = True
+
     pyproject = directory / "pyproject.toml"
     try:
         if not pyproject.exists():
-            return frozenset(), False
+            return frozenset(deps), has_manifest
     except OSError:
-        return frozenset(), False
+        return frozenset(deps), has_manifest
 
-    deps, project_name = _parse_pyproject_toml(
+    pyproject_deps, project_name = _parse_pyproject_toml(
         pyproject,
         project_root=repo_root,
     )
+    deps |= pyproject_deps
     if project_name:
         deps.add(_normalize_name(project_name))
     return frozenset(deps), True
@@ -1392,7 +1417,9 @@ def _build_dependency_context(repo_root, py_files=None):
         "manifest_context": bool(declared_deps)
         or _has_dependency_manifest_context(repo_root),
         "private_allow": _load_private_allowlist(),
-        "installed_mapping": _build_installed_module_mapping(),
+        "installed_mapping": installed_module_mapping(
+            lambda: _build_installed_module_mapping()
+        ),
         "import_to_dist": _load_import_to_dist_mapping(),
         "cache_path": cache_path,
         "pypi_cache": _load_pypi_cache(repo_root, cache_path),
@@ -1559,6 +1586,43 @@ def _classify_registry_import(mod, ctx, manifest_context):
     return None
 
 
+_SYS_PATH_EDIT_RE = re.compile(
+    r"\bsys\.path\.(?:insert|append|extend)\s*\(|\bsys\.path\s*(?:\+=|=)|\bsite\.addsitedir\s*\("
+)
+
+
+def _repository_module_inventory(root, py_files):
+    """Module names defined anywhere in the analyzed files, and root-level
+    directories that hold Python files (implicit namespace packages such as
+    ``examples/``). Built from the analyzer's own file list; nothing is walked."""
+    modules = set()
+    namespace_roots = set()
+    for file_path in py_files:
+        relative = _contained_importer_path(root, file_path)
+        if relative is None:
+            continue
+        parts = relative.parts
+        if relative.name != "__init__.py" and relative.stem.isidentifier():
+            modules.add(relative.stem)
+        for directory in parts[:-1]:
+            if directory.isidentifier():
+                modules.add(directory)
+        if len(parts) > 1 and parts[0].isidentifier():
+            namespace_roots.add(parts[0])
+    return modules, namespace_roots
+
+
+def _is_repository_module_import(template, mod, ctx, src):
+    """A local module reached through ``sys.path`` edits, a test runner's
+    rootdir or a namespace package is not a dependency."""
+    if mod not in ctx.get("repo_modules", ()):
+        return False
+    if template.get("rule_id") == RULE_ID_HALLUCINATION:
+        # "Does not exist on PyPI" but a module of that name exists here.
+        return True
+    return bool(_SYS_PATH_EDIT_RE.search(src))
+
+
 def scan_python_dependency_hallucinations(repo_root, py_files):
     findings = []
 
@@ -1568,6 +1632,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     root = Path(os.path.abspath(repo_root))
     py_files = list(py_files)
     ctx = _build_dependency_context(root, py_files)
+    repo_modules, namespace_roots = _repository_module_inventory(root, py_files)
+    ctx["repo_modules"] = repo_modules
+    ctx["local_modules"] = set(ctx["local_modules"]) | namespace_roots
     scope_cache = {root: (frozenset(ctx["declared_deps"]), ctx["manifest_context"])}
 
     for file_path in py_files:
@@ -1587,6 +1654,8 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 mod, ctx, file_path, direct_script=direct_script
             )
             if template is None:
+                continue
+            if _is_repository_module_import(template, mod, ctx, src):
                 continue
 
             finding = dict(template)

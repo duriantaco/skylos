@@ -1,0 +1,1093 @@
+{
+ "environment": {
+  "bandit": "bandit 1.9.4",
+  "bandit_flags": "-f json -q <changed .py files> (default profile: all tests, all severities)",
+  "cpu_count": 8,
+  "date_utc": "2026-09-25T15:20:29Z",
+  "platform": "Darwin 22.6.0 arm64",
+  "python_for_skylos": "Python 3.14.4",
+  "semgrep": "1.178.0",
+  "semgrep_rules": {
+   "p/javascript": {
+    "fetched_utc": "2026-09-25T13:01:00Z",
+    "file": "p_javascript.yaml",
+    "rules": 74,
+    "sha256": "e65e8449157ef5d587f2c2a0c17ed388910ca90336e514d27941ccd25543cf4e"
+   },
+   "p/python": {
+    "fetched_utc": "2026-09-25T13:01:00Z",
+    "file": "p_python.yaml",
+    "rules": 151,
+    "sha256": "31c1dfa46e8ddd97f9ac98c607ddd77b20a2c3356d7ec987359961d47ec27035"
+   },
+   "p/secrets": {
+    "fetched_utc": "2026-09-25T13:01:01Z",
+    "file": "p_secrets.yaml",
+    "rules": 52,
+    "sha256": "139b35ad3442bc83d1f0864db82fa4fdc7e1f1ee4b5ac872bfbeb604c82c6518"
+   },
+   "p/security-audit": {
+    "fetched_utc": "2026-09-25T13:01:01Z",
+    "file": "p_security-audit.yaml",
+    "rules": 225,
+    "sha256": "b109a039df712f30c6d3e25e1e8358053fd0f1c91b92d0e8d2871cd141fe602f"
+   },
+   "p/typescript": {
+    "fetched_utc": "2026-09-25T13:01:00Z",
+    "file": "p_typescript.yaml",
+    "rules": 74,
+    "sha256": "63fbcca1826e787ca43282bf139ccec16745ad6551c87850b9ccee9ca9f98c0b"
+   }
+  },
+  "skylos": "skylos 4.39.1 (run from source @ 0c95b002424453983d5c96708cf7865939745d98 + uncommitted changes; skylos/ tree sha256 76f6632e70a8bc6f)",
+  "skylos_flags": "--danger --secrets --quality --ai-defects --diff-base <base> --format json --no-upload",
+  "sonarqube": "not run: not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner"
+ },
+ "incomplete": {
+  "bandit": {
+   "run_status": {
+    "not_applicable": 36,
+    "ok": 59
+   },
+   "unparseable_cases": {
+    "ex-16-unparseable": {
+     "outcome": "not applicable (language not supported)",
+     "reported_errors": []
+    },
+    "mb-20-unparseable": {
+     "outcome": "reported the file as not analyzed (parse error surfaced)",
+     "reported_errors": [
+      {
+       "file": "app/main/admin_tools.py",
+       "message": "syntax error while parsing AST from file"
+      }
+     ]
+    }
+   },
+   "workspaces_with_tool_reported_errors": [
+    "mb-20-unparseable"
+   ]
+  },
+  "semgrep": {
+   "run_status": {
+    "ok": 95
+   },
+   "unparseable_cases": {
+    "ex-16-unparseable": {
+     "outcome": "defect reported despite syntax error",
+     "reported_errors": []
+    },
+    "mb-20-unparseable": {
+     "outcome": "defect reported despite syntax error",
+     "reported_errors": [
+      {
+       "file": "app/main/admin_tools.py",
+       "level": "warn",
+       "message": "Syntax error at line app/main/admin_tools.py:11:\n `return {'result': result\n\n\n@bp.route('/admin/ping')\ndef admin_ping():` was unexpected",
+       "type": "[\"PartialParsing\", [{\"path\": \"app/main/admin_tools.py\", \"start\": {\"line\": 11, \"col\": 5, \"offset\": 0}, \"end\": {\"line\": 15"
+      }
+     ]
+    }
+   },
+   "workspaces_with_tool_reported_errors": [
+    "mb-20-unparseable",
+    "real-11",
+    "real-31",
+    "real-34"
+   ]
+  },
+  "skylos": {
+   "run_status": {
+    "error": 1,
+    "ok": 94
+   },
+   "unparseable_cases": {
+    "ex-16-unparseable": {
+     "outcome": "silent: no finding and no parse error for the broken file",
+     "reported_errors": []
+    },
+    "mb-20-unparseable": {
+     "outcome": "reported the file as not analyzed (parse error surfaced)",
+     "reported_errors": [
+      {
+       "file": "app/main/admin_tools.py",
+       "message": "'{' was never closed"
+      }
+     ]
+    }
+   },
+   "workspaces_with_tool_reported_errors": [
+    "mb-20-unparseable",
+    "real-17",
+    "real-21",
+    "real-36"
+   ]
+  }
+ },
+ "labels": {
+  "labeled": 451,
+  "scoped_findings": 451,
+  "unlabeled": 0
+ },
+ "real": {
+  "added_source_lines": 6453,
+  "by_agent": {
+   "claude": 14,
+   "codex": 3,
+   "copilot": 5,
+   "cursor": 13,
+   "devin": 1
+  },
+  "by_language": {
+   "python": 20,
+   "typescript": 16
+  },
+  "commit_count": 36,
+  "density": {
+   "bandit": {
+    "by_category": {
+     "ai_defect": 0,
+     "dead_code": 0,
+     "dependency": 0,
+     "quality": 0,
+     "secret": 0,
+     "security": 146
+    },
+    "commits_with_findings": 14,
+    "findings": 146,
+    "per_changed_kloc": 22.63,
+    "tp_per_changed_kloc": 0.62
+   },
+   "semgrep": {
+    "by_category": {
+     "ai_defect": 0,
+     "dead_code": 0,
+     "dependency": 0,
+     "quality": 0,
+     "secret": 0,
+     "security": 4
+    },
+    "commits_with_findings": 3,
+    "findings": 4,
+    "per_changed_kloc": 0.62,
+    "tp_per_changed_kloc": 0.0
+   },
+   "skylos": {
+    "by_category": {
+     "ai_defect": 16,
+     "dead_code": 12,
+     "dependency": 0,
+     "quality": 120,
+     "secret": 0,
+     "security": 34
+    },
+    "commits_with_findings": 21,
+    "findings": 182,
+    "per_changed_kloc": 28.2,
+    "tp_per_changed_kloc": 2.94
+   }
+  },
+  "precision": {
+   "bandit": {
+    "ALL": {
+     "ci95": [
+      0.011,
+      0.068
+     ],
+     "k": 4,
+     "n": 146,
+     "total": 146,
+     "unlabeled": 0,
+     "value": 0.0273972602739726
+    },
+    "ai_defect": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dead_code": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "secret": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "security": {
+     "ci95": [
+      0.011,
+      0.068
+     ],
+     "k": 4,
+     "n": 146,
+     "total": 146,
+     "unlabeled": 0,
+     "value": 0.0273972602739726
+    }
+   },
+   "semgrep": {
+    "ALL": {
+     "ci95": [
+      0.0,
+      0.49
+     ],
+     "k": 0,
+     "n": 4,
+     "total": 4,
+     "unlabeled": 0,
+     "value": 0.0
+    },
+    "ai_defect": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dead_code": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "secret": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "security": {
+     "ci95": [
+      0.0,
+      0.49
+     ],
+     "k": 0,
+     "n": 4,
+     "total": 4,
+     "unlabeled": 0,
+     "value": 0.0
+    }
+   },
+   "skylos": {
+    "ALL": {
+     "ci95": [
+      0.068,
+      0.157
+     ],
+     "k": 19,
+     "n": 182,
+     "total": 182,
+     "unlabeled": 0,
+     "value": 0.1043956043956044
+    },
+    "ai_defect": {
+     "ci95": [
+      0.102,
+      0.495
+     ],
+     "k": 4,
+     "n": 16,
+     "total": 16,
+     "unlabeled": 0,
+     "value": 0.25
+    },
+    "dead_code": {
+     "ci95": [
+      0.015,
+      0.354
+     ],
+     "k": 1,
+     "n": 12,
+     "total": 12,
+     "unlabeled": 0,
+     "value": 0.08333333333333333
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": [
+      0.046,
+      0.147
+     ],
+     "k": 10,
+     "n": 120,
+     "total": 120,
+     "unlabeled": 0,
+     "value": 0.08333333333333333
+    },
+    "secret": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "security": {
+     "ci95": [
+      0.047,
+      0.266
+     ],
+     "k": 4,
+     "n": 34,
+     "total": 34,
+     "unlabeled": 0,
+     "value": 0.11764705882352941
+    }
+   }
+  }
+ },
+ "seeded": {
+  "case_count": 59,
+  "clean_case_count": 7,
+  "clean_case_findings": {
+   "bandit": 6,
+   "semgrep": 0,
+   "skylos": 3
+  },
+  "defect_counts": {
+   "auth_removed": 6,
+   "dead_code": 6,
+   "hallucinated_api": 2,
+   "hallucinated_import": 4,
+   "hallucinated_package": 3,
+   "injection": 17,
+   "insecure_config": 8,
+   "secret": 6,
+   "weakened_test": 6
+  },
+  "precision": {
+   "bandit": {
+    "ALL": {
+     "ci95": [
+      0.473,
+      0.836
+     ],
+     "k": 15,
+     "n": 22,
+     "total": 22,
+     "unlabeled": 0,
+     "value": 0.6818181818181818
+    },
+    "ai_defect": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dead_code": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "secret": {
+     "ci95": [
+      0.207,
+      1.0
+     ],
+     "k": 1,
+     "n": 1,
+     "total": 1,
+     "unlabeled": 0,
+     "value": 1.0
+    },
+    "security": {
+     "ci95": [
+      0.454,
+      0.828
+     ],
+     "k": 14,
+     "n": 21,
+     "total": 21,
+     "unlabeled": 0,
+     "value": 0.6666666666666666
+    }
+   },
+   "semgrep": {
+    "ALL": {
+     "ci95": [
+      0.787,
+      0.982
+     ],
+     "k": 28,
+     "n": 30,
+     "total": 30,
+     "unlabeled": 0,
+     "value": 0.9333333333333333
+    },
+    "ai_defect": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dead_code": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "secret": {
+     "ci95": [
+      0.207,
+      1.0
+     ],
+     "k": 1,
+     "n": 1,
+     "total": 1,
+     "unlabeled": 0,
+     "value": 1.0
+    },
+    "security": {
+     "ci95": [
+      0.78,
+      0.981
+     ],
+     "k": 27,
+     "n": 29,
+     "total": 29,
+     "unlabeled": 0,
+     "value": 0.9310344827586207
+    }
+   },
+   "skylos": {
+    "ALL": {
+     "ci95": [
+      0.647,
+      0.847
+     ],
+     "k": 51,
+     "n": 67,
+     "total": 67,
+     "unlabeled": 0,
+     "value": 0.7611940298507462
+    },
+    "ai_defect": {
+     "ci95": [
+      0.565,
+      0.98
+     ],
+     "k": 8,
+     "n": 9,
+     "total": 9,
+     "unlabeled": 0,
+     "value": 0.8888888888888888
+    },
+    "dead_code": {
+     "ci95": [
+      0.685,
+      0.987
+     ],
+     "k": 13,
+     "n": 14,
+     "total": 14,
+     "unlabeled": 0,
+     "value": 0.9285714285714286
+    },
+    "dependency": {
+     "ci95": null,
+     "k": 0,
+     "n": 0,
+     "total": 0,
+     "unlabeled": 0,
+     "value": null
+    },
+    "quality": {
+     "ci95": [
+      0.246,
+      0.663
+     ],
+     "k": 8,
+     "n": 18,
+     "total": 18,
+     "unlabeled": 0,
+     "value": 0.4444444444444444
+    },
+    "secret": {
+     "ci95": [
+      0.51,
+      1.0
+     ],
+     "k": 4,
+     "n": 4,
+     "total": 4,
+     "unlabeled": 0,
+     "value": 1.0
+    },
+    "security": {
+     "ci95": [
+      0.615,
+      0.927
+     ],
+     "k": 18,
+     "n": 22,
+     "total": 22,
+     "unlabeled": 0,
+     "value": 0.8181818181818182
+    }
+   }
+  },
+  "recall": {
+   "bandit": {
+    "by_category": {
+     "ALL": {
+      "ci95": [
+       0.096,
+       0.289
+      ],
+      "k": 10,
+      "n": 58,
+      "value": 0.1724137931034483
+     },
+     "auth_removed": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     },
+     "dead_code": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     },
+     "hallucinated_api": {
+      "ci95": [
+       0.0,
+       0.658
+      ],
+      "k": 0,
+      "n": 2,
+      "value": 0.0
+     },
+     "hallucinated_import": {
+      "ci95": [
+       0.0,
+       0.49
+      ],
+      "k": 0,
+      "n": 4,
+      "value": 0.0
+     },
+     "hallucinated_package": {
+      "ci95": [
+       0.0,
+       0.562
+      ],
+      "k": 0,
+      "n": 3,
+      "value": 0.0
+     },
+     "injection": {
+      "ci95": [
+       0.133,
+       0.531
+      ],
+      "k": 5,
+      "n": 17,
+      "value": 0.29411764705882354
+     },
+     "insecure_config": {
+      "ci95": [
+       0.215,
+       0.785
+      ],
+      "k": 4,
+      "n": 8,
+      "value": 0.5
+     },
+     "secret": {
+      "ci95": [
+       0.03,
+       0.564
+      ],
+      "k": 1,
+      "n": 6,
+      "value": 0.16666666666666666
+     },
+     "weakened_test": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     }
+    },
+    "by_language": {
+     "python": {
+      "ci95": [
+       0.15,
+       0.42
+      ],
+      "k": 10,
+      "n": 38,
+      "value": 0.2631578947368421
+     },
+     "typescript": {
+      "ci95": [
+       0.0,
+       0.161
+      ],
+      "k": 0,
+      "n": 20,
+      "value": 0.0
+     }
+    },
+    "detected": [
+     "fa-08-sqli/d1",
+     "fa-11-cmdi/d1",
+     "fa-14-weak-hash/d1",
+     "mb-06-sqli/d1",
+     "mb-07-cmdi/d1",
+     "mb-11-pickle/d1",
+     "mb-14-secret-token/d1",
+     "mb-15-tls-disabled/d1",
+     "mb-16-insecure-random/d1",
+     "mb-17-debug-mode/d1"
+    ],
+    "workspaces_run": 59
+   },
+   "semgrep": {
+    "by_category": {
+     "ALL": {
+      "ci95": [
+       0.206,
+       0.438
+      ],
+      "k": 18,
+      "n": 58,
+      "value": 0.3103448275862069
+     },
+     "auth_removed": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     },
+     "dead_code": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     },
+     "hallucinated_api": {
+      "ci95": [
+       0.0,
+       0.658
+      ],
+      "k": 0,
+      "n": 2,
+      "value": 0.0
+     },
+     "hallucinated_import": {
+      "ci95": [
+       0.0,
+       0.49
+      ],
+      "k": 0,
+      "n": 4,
+      "value": 0.0
+     },
+     "hallucinated_package": {
+      "ci95": [
+       0.0,
+       0.562
+      ],
+      "k": 0,
+      "n": 3,
+      "value": 0.0
+     },
+     "injection": {
+      "ci95": [
+       0.527,
+       0.904
+      ],
+      "k": 13,
+      "n": 17,
+      "value": 0.7647058823529411
+     },
+     "insecure_config": {
+      "ci95": [
+       0.215,
+       0.785
+      ],
+      "k": 4,
+      "n": 8,
+      "value": 0.5
+     },
+     "secret": {
+      "ci95": [
+       0.03,
+       0.564
+      ],
+      "k": 1,
+      "n": 6,
+      "value": 0.16666666666666666
+     },
+     "weakened_test": {
+      "ci95": [
+       0.0,
+       0.39
+      ],
+      "k": 0,
+      "n": 6,
+      "value": 0.0
+     }
+    },
+    "by_language": {
+     "python": {
+      "ci95": [
+       0.191,
+       0.475
+      ],
+      "k": 12,
+      "n": 38,
+      "value": 0.3157894736842105
+     },
+     "typescript": {
+      "ci95": [
+       0.145,
+       0.519
+      ],
+      "k": 6,
+      "n": 20,
+      "value": 0.3
+     }
+    },
+    "detected": [
+     "ex-07-cmdi/d1",
+     "ex-08-eval/d1",
+     "ex-10-secret-aws/d1",
+     "ex-11-xss/d1",
+     "ex-13-path-traversal/d1",
+     "ex-16-unparseable/d1",
+     "fa-03-jwt-unverified/d1",
+     "fa-08-sqli/d1",
+     "fa-11-cmdi/d1",
+     "fa-13-cors/d1",
+     "fa-14-weak-hash/d1",
+     "mb-06-sqli/d1",
+     "mb-07-cmdi/d1",
+     "mb-08-ssrf/d1",
+     "mb-10-ssti/d1",
+     "mb-11-pickle/d1",
+     "mb-17-debug-mode/d1",
+     "mb-20-unparseable/d1"
+    ],
+    "workspaces_run": 59
+   },
+   "skylos": {
+    "by_category": {
+     "ALL": {
+      "ci95": [
+       0.408,
+       0.657
+      ],
+      "k": 31,
+      "n": 58,
+      "value": 0.5344827586206896
+     },
+     "auth_removed": {
+      "ci95": [
+       0.03,
+       0.564
+      ],
+      "k": 1,
+      "n": 6,
+      "value": 0.16666666666666666
+     },
+     "dead_code": {
+      "ci95": [
+       0.61,
+       1.0
+      ],
+      "k": 6,
+      "n": 6,
+      "value": 1.0
+     },
+     "hallucinated_api": {
+      "ci95": [
+       0.0,
+       0.658
+      ],
+      "k": 0,
+      "n": 2,
+      "value": 0.0
+     },
+     "hallucinated_import": {
+      "ci95": [
+       0.046,
+       0.699
+      ],
+      "k": 1,
+      "n": 4,
+      "value": 0.25
+     },
+     "hallucinated_package": {
+      "ci95": [
+       0.438,
+       1.0
+      ],
+      "k": 3,
+      "n": 3,
+      "value": 1.0
+     },
+     "injection": {
+      "ci95": [
+       0.36,
+       0.784
+      ],
+      "k": 10,
+      "n": 17,
+      "value": 0.5882352941176471
+     },
+     "insecure_config": {
+      "ci95": [
+       0.306,
+       0.863
+      ],
+      "k": 5,
+      "n": 8,
+      "value": 0.625
+     },
+     "secret": {
+      "ci95": [
+       0.188,
+       0.812
+      ],
+      "k": 3,
+      "n": 6,
+      "value": 0.5
+     },
+     "weakened_test": {
+      "ci95": [
+       0.097,
+       0.7
+      ],
+      "k": 2,
+      "n": 6,
+      "value": 0.3333333333333333
+     }
+    },
+    "by_language": {
+     "python": {
+      "ci95": [
+       0.397,
+       0.699
+      ],
+      "k": 21,
+      "n": 38,
+      "value": 0.5526315789473685
+     },
+     "typescript": {
+      "ci95": [
+       0.299,
+       0.701
+      ],
+      "k": 10,
+      "n": 20,
+      "value": 0.5
+     }
+    },
+    "detected": [
+     "ex-04-phantom-local-export/d1",
+     "ex-05-hallucinated-package/d1",
+     "ex-08-eval/d1",
+     "ex-09-secret-jwt/d1",
+     "ex-10-secret-aws/d1",
+     "ex-12-open-redirect/d1",
+     "ex-14-weakened-tests/d2",
+     "ex-15-dead-code/d1",
+     "ex-15-dead-code/d2",
+     "ex-18-insecure-random/d1",
+     "fa-03-jwt-unverified/d1",
+     "fa-06-hallucinated-package/d1",
+     "fa-08-sqli/d1",
+     "fa-09-weakened-tests/d2",
+     "fa-10-dead-code/d1",
+     "fa-10-dead-code/d2",
+     "fa-11-cmdi/d1",
+     "fa-12-xss/d1",
+     "fa-14-weak-hash/d1",
+     "mb-03-hallucinated-package/d1",
+     "mb-05-authn-removed/d1",
+     "mb-06-sqli/d1",
+     "mb-07-cmdi/d1",
+     "mb-08-ssrf/d1",
+     "mb-09-path-traversal/d1",
+     "mb-11-pickle/d1",
+     "mb-14-secret-token/d1",
+     "mb-15-tls-disabled/d1",
+     "mb-16-insecure-random/d1",
+     "mb-19-dead-code/d1",
+     "mb-19-dead-code/d2"
+    ],
+    "workspaces_run": 59
+   }
+  }
+ },
+ "timing": {
+  "bandit": {
+   "real": {
+    "max_s": 1.34,
+    "median_s": 0.41,
+    "p90_s": 0.96,
+    "runs": 20,
+    "total_s": 10.5
+   },
+   "seeded": {
+    "max_s": 0.51,
+    "median_s": 0.23,
+    "p90_s": 0.4,
+    "runs": 39,
+    "total_s": 9.3
+   }
+  },
+  "semgrep": {
+   "real": {
+    "max_s": 31.52,
+    "median_s": 10.15,
+    "p90_s": 22.21,
+    "runs": 36,
+    "total_s": 427.7
+   },
+   "seeded": {
+    "max_s": 34.1,
+    "median_s": 7.46,
+    "p90_s": 18.01,
+    "runs": 59,
+    "total_s": 607.4
+   }
+  },
+  "skylos": {
+   "real": {
+    "max_s": 399.65,
+    "median_s": 30.51,
+    "p90_s": 153.01,
+    "runs": 35,
+    "total_s": 2379.2
+   },
+   "seeded": {
+    "max_s": 29.99,
+    "median_s": 8.81,
+    "p90_s": 20.69,
+    "runs": 59,
+    "total_s": 642.3
+   }
+  }
+ },
+ "tools": [
+  "skylos",
+  "semgrep",
+  "bandit"
+ ]
+}

@@ -48,6 +48,7 @@ from skylos.visitors.languages.typescript.analysis import (
 from skylos.analysis.ast_cache import (
     MODE_IGNORE,
     load_python_module,
+    run_memo,
     releases_python_ast_cache,
 )
 from skylos.visitors.languages.go import clear_go_cache
@@ -89,7 +90,11 @@ from skylos.rules.quality.clones import (
 from skylos.analysis.penalties import apply_penalties
 from skylos.analysis.file_worker import process_file
 
-from skylos.scale.parallel_static import run_proc_file_parallel
+from skylos.scale.parallel_static import (
+    WORKER_CRASH_MESSAGE,
+    WorkerCrash,
+    run_proc_file_parallel,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -205,6 +210,25 @@ def _python_verification_surface_root(surface_root):
     ):
         return root.parent
     return root
+
+
+def _license_policy_findings(
+    project_root, project_cfg, project_ignore, suppressed=None
+):
+    """SKY-SCA-LIC001 findings from the configured license policy (offline)."""
+    try:
+        from skylos.rules.sca.licenses import scan_license_policy
+
+        return scan_license_policy(
+            project_root,
+            project_cfg,
+            project_ignore=project_ignore,
+            suppressed=suppressed,
+        )
+    except Exception:
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error(traceback.format_exc())
+        return []
 
 
 def _extend_unsuppressed_danger_findings(
@@ -361,9 +385,40 @@ def _diff_result_has_text(diff_result):
 
 
 def _git_diff_for_changed_file(root, rel_file, diff_base):
+    # Assertion-weakening, test-impact and diff-signal passes each ask for
+    # the same diff; compute it once per analyzer run.
+    return run_memo(
+        ("git-diff-for-changed-file", str(root), str(rel_file), diff_base),
+        lambda: _compute_git_diff_for_changed_file(root, rel_file, diff_base),
+    )
+
+
+def _working_tree_diff_start(context, diff_base):
+    """Merge base of ``diff_base`` and HEAD for base-to-working-tree diffs.
+
+    ``--diff-base REF`` covers committed, staged and unstaged edits, so
+    per-file diffs compare the merge base with the working tree instead of
+    ``REF...HEAD`` (which misses uncommitted work).
+    """
+    if not diff_base:
+        return None
+
+    def compute():
+        result = context.run("merge-base", diff_base, "HEAD")
+        if result.returncode != 0:
+            return None
+        return (result.stdout or "").strip() or None
+
+    return run_memo(("git-merge-base", str(context.root), diff_base), compute)
+
+
+def _compute_git_diff_for_changed_file(root, rel_file, diff_base):
     context = GitContext.from_path(root)
     pathspec = f":(literal){rel_file}"
-    if diff_base:
+    merge_base = _working_tree_diff_start(context, diff_base)
+    if merge_base:
+        diff_cmd = ["diff", merge_base, "--", pathspec]
+    elif diff_base:
         diff_cmd = ["diff", f"{diff_base}...HEAD", "--", pathspec]
     else:
         diff_cmd = ["diff", "HEAD", "--", pathspec]
@@ -3559,6 +3614,17 @@ class Skylos:
                         }
                         if os.getenv("SKYLOS_DEBUG"):
                             logger.error(traceback.format_exc())
+                    license_findings = _license_policy_findings(
+                        project_root, project_cfg, project_ignore
+                    )
+                    if license_findings:
+                        result["dependency_vulnerabilities"] = [
+                            *(result.get("dependency_vulnerabilities") or []),
+                            *license_findings,
+                        ]
+                        result["analysis_summary"]["sca_count"] = len(
+                            result["dependency_vulnerabilities"]
+                        )
                 result["analysis_summary"]["sca_coverage"] = dict(self._sca_coverage)
             if enable_ai_defects:
                 from skylos.core.verification_coverage import (
@@ -3725,6 +3791,15 @@ class Skylos:
                 )
 
             for file, out in zip(files, outs):
+                if isinstance(out, WorkerCrash):
+                    analysis_errors.append(
+                        _analysis_error_payload(
+                            file,
+                            RuntimeError(WORKER_CRASH_MESSAGE),
+                            kind="worker_crash",
+                        )
+                    )
+                    continue
                 if out is None:
                     analysis_errors.append(
                         _analysis_error_payload(
@@ -4091,11 +4166,13 @@ class Skylos:
                     rel_cf = git_context.relative_path(cf)
                     if rel_cf is None:
                         continue
-                    diff_cmd = (
-                        ["diff", f"{diff_base}...HEAD"]
-                        if diff_base
-                        else ["diff", "HEAD"]
-                    )
+                    merge_base = _working_tree_diff_start(git_context, diff_base)
+                    if merge_base:
+                        diff_cmd = ["diff", merge_base]
+                    elif diff_base:
+                        diff_cmd = ["diff", f"{diff_base}...HEAD"]
+                    else:
+                        diff_cmd = ["diff", "HEAD"]
                     diff_options = [
                         "--no-relative",
                         "--no-ext-diff",
@@ -4147,8 +4224,12 @@ class Skylos:
         self._global_protocol_implementers = {}
         self._global_protocol_method_names = {}
         self._global_django_path_converter_classes = set()
+        self._global_dependency_alias_names = set()
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
+            self._global_dependency_alias_names.update(
+                getattr(framework_flags, "dependency_alias_names", set())
+            )
             self._global_abc_classes.update(
                 getattr(framework_flags, "abc_classes", set())
             )
@@ -4919,6 +5000,14 @@ class Skylos:
                 }
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
+            all_sca.extend(
+                _license_policy_findings(
+                    project_root,
+                    project_cfg,
+                    project_ignore,
+                    suppressed=all_suppressed,
+                )
+            )
 
         from skylos.visitors.languages.typescript.resolve import MonorepoResolver
 
@@ -5141,6 +5230,9 @@ class Skylos:
 
         self._review_file_configs = effective_file_configs
         refresh_review_context(changed_files)
+        analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
+            analysis_errors, changed_files
+        )
         result = self._build_result(
             files,
             thr,
@@ -5173,8 +5265,50 @@ class Skylos:
             include_review_proofs=include_review_proofs,
             review_config=project_cfg,
         )
+        if outside_diff_warnings:
+            result["analysis_warnings"] = outside_diff_warnings
+            result["analysis_summary"]["analysis_warning_count"] = len(
+                outside_diff_warnings
+            )
 
         return json.dumps(result, indent=2)
+
+
+def _split_outside_diff_analysis_errors(analysis_errors, changed_files):
+    """With a diff scope, only files in the diff may make the scan incomplete.
+
+    A per-file analysis error (syntax error, parser crash, unreadable file) in
+    a file outside the diff is downgraded to a warning: it is reported, but it
+    does not block the verdict for the changed files. Errors that are not tied
+    to one existing file (engine/tool failures) stay blocking.
+    """
+    if changed_files is None:
+        return analysis_errors, []
+    changed = set()
+    for changed_file in changed_files:
+        try:
+            changed.add(str(Path(changed_file).resolve()))
+        except (OSError, RuntimeError, ValueError):
+            changed.add(str(changed_file))
+    errors, warnings = [], []
+    for error in analysis_errors:
+        file_value = error.get("file") if isinstance(error, dict) else None
+        resolved = None
+        if file_value:
+            try:
+                candidate = Path(str(file_value)).resolve()
+                if candidate.is_file():
+                    resolved = str(candidate)
+            except (OSError, RuntimeError, ValueError):
+                resolved = None
+        if resolved is None or resolved in changed:
+            errors.append(error)
+            continue
+        warning = dict(error)
+        warning["severity"] = "LOW"
+        warning["outside_diff"] = True
+        warnings.append(warning)
+    return errors, warnings
 
 
 def proc_file(

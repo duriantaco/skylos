@@ -7,7 +7,11 @@ from typing import Any, Sequence
 
 from skylos.constants import parse_exclude_folders
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.verify_change import verify_change_path, verify_change_stdin_payload
+from skylos.verify_change import (
+    verify_change_diff,
+    verify_change_path,
+    verify_change_stdin_payload,
+)
 
 
 def run_verify_command(
@@ -16,6 +20,7 @@ def run_verify_command(
     verify_change_path_func=verify_change_path,
     verify_change_stdin_payload_func=verify_change_stdin_payload,
     parse_exclude_folders_func=parse_exclude_folders,
+    verify_change_diff_func=verify_change_diff,
 ) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv))
@@ -28,8 +33,14 @@ def run_verify_command(
             exclude_folders,
             verify_change_path_func,
             verify_change_stdin_payload_func,
+            verify_change_diff_func,
         )
-        _write_payload(payload, args.output, machine_output=args.stdin)
+        _write_payload(
+            payload,
+            args.output,
+            machine_output=args.stdin,
+            output_format=args.output_format,
+        )
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -47,9 +58,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "By default, PATH is scanned as a whole source target; the Git behavior "
             "model is a separate Python-only result. Path targets enable dependency "
             "hallucination checks, which may query public package registries; use "
-            "--no-dependency-hallucinations to disable those lookups.\n\n"
+            "--no-dependency-hallucinations to disable those lookups. Security "
+            "(SKY-D, high/critical) and secret (SKY-S) findings in the selected "
+            "file/range fail verification; use --no-security to skip them.\n\n"
+            "--diff [REF] verifies every line changed since REF (default HEAD): "
+            "commits after REF, staged and unstaged edits, and untracked files.\n\n"
             "Output: a human report on a terminal; JSON when redirected, when using "
-            "--stdin, or in the file selected by --output.\n"
+            "--stdin, or in the file selected by --output. --format short prints "
+            "one line per finding plus a verdict (for agents and scripts).\n"
             "Exit codes: 0 pass, 1 fail, 2 incomplete. --no-fail always exits 0."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -87,6 +103,17 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="L1:L2",
         help="Only return findings overlapping this line range.",
+    )
+    parser.add_argument(
+        "--diff",
+        nargs="?",
+        const="HEAD",
+        default=None,
+        metavar="REF",
+        help=(
+            "Verify only lines changed since REF (default HEAD), including "
+            "staged, unstaged and untracked changes."
+        ),
     )
     parser.add_argument(
         "--project-context",
@@ -130,6 +157,26 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
         help="Skip dependency hallucination checks and their package registry lookups.",
     )
     parser.add_argument(
+        "--no-security",
+        dest="include_security_findings",
+        action="store_false",
+        default=True,
+        help=(
+            "Skip security (SKY-D) and secret (SKY-S) checks; report only "
+            "AI-code findings."
+        ),
+    )
+    parser.add_argument(
+        "--no-behavior",
+        dest="behavior_comparison",
+        action="store_false",
+        default=True,
+        help=(
+            "Skip the Git behavior comparison; the verdict then comes from "
+            "findings alone (an inconclusive comparison cannot mark it incomplete)."
+        ),
+    )
+    parser.add_argument(
         "--exclude-folder",
         action="append",
         dest="exclude_folders",
@@ -156,6 +203,16 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Write JSON output to a file.",
     )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("auto", "json", "short", "human"),
+        default="auto",
+        help=(
+            "auto (default): human report on a terminal, JSON otherwise. "
+            "short: one line per finding and a verdict line."
+        ),
+    )
 
 
 def _run_from_args(
@@ -164,8 +221,27 @@ def _run_from_args(
     exclude_folders: list[str],
     verify_change_path_func,
     verify_change_stdin_payload_func,
+    verify_change_diff_func=verify_change_diff,
 ) -> dict[str, Any]:
     _validate_contract_args(args, parser)
+    if args.diff is not None:
+        if args.stdin or args.file or args.line_range or args.project_context:
+            parser.error(
+                "--diff cannot be combined with --stdin, --file, --range or "
+                "--project-context"
+            )
+        kwargs = {
+            "ref": args.diff,
+            "confidence": args.confidence,
+            "exclude_folders": exclude_folders,
+            "include_security_findings": args.include_security_findings,
+            "contract_enabled": args.contract_enabled,
+        }
+        if args.dependency_hallucinations is not None:
+            kwargs["include_dependency_hallucinations"] = args.dependency_hallucinations
+        if args.contract_path is not None:
+            kwargs["contract_path"] = args.contract_path
+        return verify_change_diff_func(args.path, **kwargs)
     if args.stdin:
         manifest = _read_stdin_manifest(parser)
         _apply_stdin_overrides(args, manifest)
@@ -184,10 +260,14 @@ def _run_from_args(
     }
     if args.dependency_hallucinations is not None:
         kwargs["include_dependency_hallucinations"] = args.dependency_hallucinations
+    if not args.include_security_findings:
+        kwargs["include_security_findings"] = False
     if args.contract_path is not None:
         kwargs["contract_path"] = args.contract_path
     if not args.contract_enabled:
         kwargs["contract_enabled"] = False
+    if not args.behavior_comparison:
+        kwargs["behavior_comparison"] = False
     return verify_change_path_func(args.path, **kwargs)
 
 
@@ -199,6 +279,8 @@ def _apply_stdin_overrides(args: argparse.Namespace, manifest: dict[str, Any]) -
         _set_default(manifest, "range", args.line_range)
     if args.dependency_hallucinations:
         _set_default(manifest, "include_dependency_hallucinations", True)
+    if not args.include_security_findings:
+        _set_default(manifest, "include_security_findings", False)
     if args.contract_path is not None:
         _set_default(manifest, "contract_path", args.contract_path)
     if not args.contract_enabled:
@@ -233,8 +315,15 @@ def _exclude_folders(args: argparse.Namespace, parse_exclude_folders_func) -> li
 
 
 def _write_payload(
-    payload: dict[str, Any], output_path: str | None, *, machine_output: bool = False
+    payload: dict[str, Any],
+    output_path: str | None,
+    *,
+    machine_output: bool = False,
+    output_format: str = "auto",
 ) -> None:
+    if output_format == "short" and not output_path:
+        print(render_short(payload))
+        return
     output = json.dumps(payload, indent=2)
     if output_path:
         if not write_text_no_symlink(output_path, output + "\n", encoding="utf-8"):
@@ -245,12 +334,38 @@ def _write_payload(
             )
         return
 
-    if not machine_output and sys.stdout.isatty():
+    if output_format == "human" or (
+        output_format == "auto" and not machine_output and sys.stdout.isatty()
+    ):
         from skylos.verification.render import render_verify_report
 
         print(render_verify_report(payload))
         return
     print(output)
+
+
+MAX_SHORT_FINDINGS = 25
+MAX_SHORT_MESSAGE = 160
+
+
+def render_short(payload: dict[str, Any]) -> str:
+    """One line per finding plus a verdict: compact enough for an agent."""
+    lines = []
+    findings = [f for f in payload.get("findings") or [] if isinstance(f, dict)]
+    for finding in findings[:MAX_SHORT_FINDINGS]:
+        rng = finding.get("range") or {}
+        message = " ".join(str(finding.get("message") or "").split())
+        if len(message) > MAX_SHORT_MESSAGE:
+            message = message[: MAX_SHORT_MESSAGE - 1] + "…"
+        lines.append(
+            f"{rng.get('file', '?')}:{rng.get('start_line', '?')} "
+            f"{finding.get('rule_id')} [{finding.get('severity', '')}] {message}"
+        )
+    if len(findings) > MAX_SHORT_FINDINGS:
+        lines.append(f"... and {len(findings) - MAX_SHORT_FINDINGS} more")
+    status = str(payload.get("status") or "unknown")
+    lines.append(f"{status.upper()}: {payload.get('summary', '')}")
+    return "\n".join(lines)
 
 
 def _exit_code(payload: dict[str, Any], *, no_fail: bool) -> int:

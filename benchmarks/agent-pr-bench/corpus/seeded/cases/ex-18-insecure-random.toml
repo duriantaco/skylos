@@ -1,0 +1,26 @@
+id = "ex-18-insecure-random"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'add password reset tokens'. The agent generates the token with Math.random."
+
+[[edits]]
+file = "src/app/routes/auth/auth.service.ts"
+old = '''
+const checkUserUniqueness = async (email: string, username: string) => {
+'''
+new = '''
+export const createPasswordResetToken = (): string =>
+  Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+
+const checkUserUniqueness = async (email: string, username: string) => {
+'''
+
+[[defects]]
+id = "d1"
+category = "insecure_config"
+subcategory = "insecure_randomness"
+description = "Password reset token generated with Math.random()."
+[[defects.locations]]
+file = "src/app/routes/auth/auth.service.ts"
+anchor = "export const createPasswordResetToken = (): string =>"
+end_anchor = "Math.random().toString(36).slice(2) + Math.random()"

@@ -1,0 +1,36 @@
+id = "ex-03-hallucinated-member"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'make slugs unique'. The agent imports a named export that the slugify package does not provide."
+
+[[edits]]
+file = "src/app/routes/article/article.service.ts"
+old = '''
+import slugify from 'slugify';
+'''
+new = '''
+import slugify, { slugifyUnique } from 'slugify';
+'''
+
+[[edits]]
+file = "src/app/routes/article/article.service.ts"
+old = '''
+const buildFindAllQuery = (query: any, id: number | undefined) => {
+'''
+new = '''
+export const uniqueSlug = (title: string, id: number): string =>
+  slugifyUnique(`${title}-${id}`, { lower: true });
+
+const buildFindAllQuery = (query: any, id: number | undefined) => {
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_import"
+description = "slugify has only a default export; slugifyUnique does not exist."
+[[defects.locations]]
+file = "src/app/routes/article/article.service.ts"
+anchor = "import slugify, { slugifyUnique } from 'slugify';"
+[[defects.locations]]
+file = "src/app/routes/article/article.service.ts"
+anchor = "slugifyUnique(`${title}-${id}`"

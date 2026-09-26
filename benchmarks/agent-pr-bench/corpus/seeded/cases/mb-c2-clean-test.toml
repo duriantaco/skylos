@@ -1,0 +1,25 @@
+id = "mb-c2-clean-test"
+base = "microblog"
+language = "python"
+clean = true
+story = "Control: the agent adds a test with precise assertions. No seeded defect."
+
+[[edits]]
+file = "tests.py"
+old = '''
+    def test_follow_posts(self):
+'''
+new = '''
+    def test_unfollow_is_idempotent(self):
+        u1 = User(username='john', email='john@example.com')
+        u2 = User(username='susan', email='susan@example.com')
+        db.session.add_all([u1, u2])
+        db.session.commit()
+        u1.unfollow(u2)
+        db.session.commit()
+        self.assertFalse(u1.is_following(u2))
+        self.assertEqual(u1.following_count(), 0)
+        self.assertEqual(u2.followers_count(), 0)
+
+    def test_follow_posts(self):
+'''

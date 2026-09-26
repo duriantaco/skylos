@@ -73,6 +73,19 @@ def run_pr_review(
     if grade and previous_grade is None:
         previous_grade = _fetch_previous_grade(diff_base)
 
+    if isinstance(results, dict) and diff_base:
+        # Metrics the PR did not introduce or worsen are not review comments.
+        from skylos.rules.quality.code_health import (
+            partition_code_health,
+            resolve_merge_base,
+        )
+
+        results = partition_code_health(
+            dict(results),
+            git_root=Path(review_root),
+            base_commit=resolve_merge_base(diff_base, Path(review_root)),
+        )
+
     all_findings = _flatten_findings(results)
 
     if llm_findings:
@@ -196,16 +209,76 @@ def _resolve_review_provenance(
         return None
 
 
+_UNTRACKED_WHOLE_FILE_END = 2**31 - 1
+
+
+def _merge_base(base_ref: str, cwd) -> str | None:
+    result = subprocess.run(
+        ["git", "merge-base", base_ref, "HEAD"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def get_untracked_files(cwd=None) -> list[str]:
+    """Repository-relative paths of untracked, non-ignored files."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "--full-name", "-z"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return []
+    if result.returncode != 0:
+        return []
+    return [path for path in result.stdout.split("\0") if path]
+
+
 def get_changed_line_ranges(
     base_ref: str = "origin/main",
     *,
     cwd: str | os.PathLike[str] | None = None,
     raise_on_error: bool = False,
     include_deletion_anchors: bool = True,
+    include_working_tree: bool = False,
 ) -> list[dict]:
+    """Changed line ranges since ``base_ref``.
+
+    By default this compares ``base_ref...HEAD`` (committed changes only), which
+    is what PR review comments need. With ``include_working_tree=True`` the
+    comparison is from the merge base of ``base_ref`` and ``HEAD`` to the
+    working tree, so committed, staged and unstaged edits are all included, and
+    untracked (non-ignored) files count as fully changed.
+    """
     try:
+        if include_working_tree:
+            merge_base = _merge_base(base_ref, cwd)
+            if merge_base is None:
+                if raise_on_error:
+                    raise ValueError(
+                        "Cannot compare changes: Git diff failed; check that the "
+                        "base ref exists in the scanned repository"
+                    )
+                return []
+            diff_cmd = [
+                "git",
+                "diff",
+                "--unified=0",
+                "--no-ext-diff",
+                "--no-textconv",
+                merge_base,
+            ]
+        else:
+            diff_cmd = ["git", "diff", "--unified=0", f"{base_ref}...HEAD"]
         result = subprocess.run(
-            ["git", "diff", "--unified=0", f"{base_ref}...HEAD"],
+            diff_cmd,
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -222,9 +295,15 @@ def get_changed_line_ranges(
             raise ValueError("Cannot compare changes: git is not installed") from exc
         return []
 
-    return _parse_unified_diff(
+    ranges = _parse_unified_diff(
         result.stdout, include_deletion_anchors=include_deletion_anchors
     )
+    if include_working_tree:
+        for path in get_untracked_files(cwd):
+            ranges.append(
+                {"file": path, "start": 1, "end": _UNTRACKED_WHOLE_FILE_END}
+            )
+    return ranges
 
 
 def _parse_unified_diff(

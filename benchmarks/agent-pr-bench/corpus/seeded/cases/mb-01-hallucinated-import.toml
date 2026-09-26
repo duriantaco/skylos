@@ -1,0 +1,36 @@
+id = "mb-01-hallucinated-import"
+base = "microblog"
+language = "python"
+story = "Task: 'add retries to the translation call'. The agent imports a Retry helper from a module that does not exist in requests (the real class is urllib3.util.retry.Retry)."
+
+[[edits]]
+file = "app/translate.py"
+old = '''
+import requests
+from flask import current_app
+'''
+new = '''
+import requests
+from requests.retry import RetryPolicy
+from flask import current_app
+'''
+
+[[edits]]
+file = "app/translate.py"
+old = '''
+    r = requests.post(
+'''
+new = '''
+    session = requests.Session()
+    session.mount('https://', requests.adapters.HTTPAdapter(
+        max_retries=RetryPolicy(total=3, backoff_factor=0.5)))
+    r = session.post(
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_import"
+description = "requests has no 'retry' submodule; import fails at runtime."
+[[defects.locations]]
+file = "app/translate.py"
+anchor = "from requests.retry import RetryPolicy"

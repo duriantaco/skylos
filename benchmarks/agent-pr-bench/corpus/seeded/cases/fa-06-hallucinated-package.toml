@@ -1,0 +1,47 @@
+id = "fa-06-hallucinated-package"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'add scope checks'. The agent adds a dependency that does not exist on PyPI (verified 404 on 2026-09-25) and imports it."
+
+[[edits]]
+file = "backend/pyproject.toml"
+old = '''
+    "pwdlib[argon2,bcrypt]>=0.3.1",
+'''
+new = '''
+    "pwdlib[argon2,bcrypt]>=0.3.1",
+    "fastapi-jwt-guard>=1.4.0",
+'''
+
+[[edits]]
+file = "backend/app/api/deps.py"
+old = '''
+from fastapi.security import OAuth2PasswordBearer
+'''
+new = '''
+from fastapi.security import OAuth2PasswordBearer
+from fastapi_jwt_guard import require_scopes
+'''
+
+[[edits]]
+file = "backend/app/api/deps.py"
+old = '''
+    if not current_user.is_superuser:
+        raise HTTPException(
+'''
+new = '''
+    require_scopes(current_user, ["admin"])
+    if not current_user.is_superuser:
+        raise HTTPException(
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_package"
+description = "fastapi-jwt-guard is not a published PyPI package."
+[[defects.locations]]
+file = "backend/pyproject.toml"
+anchor = "\"fastapi-jwt-guard>=1.4.0\","
+[[defects.locations]]
+file = "backend/app/api/deps.py"
+anchor = "from fastapi_jwt_guard import require_scopes"

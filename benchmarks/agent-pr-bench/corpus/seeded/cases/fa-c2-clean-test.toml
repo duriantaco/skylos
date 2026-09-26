@@ -1,0 +1,28 @@
+id = "fa-c2-clean-test"
+base = "fastapi-template"
+language = "python"
+clean = true
+story = "Control: the agent adds a precise negative authorization test. No seeded defect."
+
+[[edits]]
+file = "backend/tests/api/routes/test_items.py"
+old = '''
+def test_delete_item(
+'''
+new = '''
+def test_read_items_normal_user_sees_only_own(
+    client: TestClient, normal_user_token_headers: dict[str, str], db: Session
+) -> None:
+    create_random_item(db)
+    response = client.get(
+        f"{settings.API_V1_STR}/items/",
+        headers=normal_user_token_headers,
+    )
+    assert response.status_code == 200
+    content = response.json()
+    assert content["count"] == 0
+    assert content["data"] == []
+
+
+def test_delete_item(
+'''

@@ -76,7 +76,12 @@ def test_cli_public_entrypoint_stays_compatibility_facade():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
 
-    assert metadata["project"]["scripts"]["skylos"] == "skylos.cli:main"
+    # The console script is a thin shim: agent hooks skip the full CLI
+    # import, everything else is delegated to the cli.main facade.
+    assert metadata["project"]["scripts"]["skylos"] == "skylos.entry:main"
+    import skylos.entry as entry
+
+    assert callable(entry.main)
     assert callable(cli.main)
     assert cli.EARLY_COMMAND_HANDLERS is EARLY_COMMAND_HANDLERS
     assert build_main_parser.__module__ == "skylos.cli_core.main_parser"
@@ -317,6 +322,7 @@ def test_cli_guardrail_badge_dispatch_exits_zero(monkeypatch):
     with (
         patch("skylos.commands.badge_cmd.Console", return_value=console),
         patch.dict(sys.modules, {"pyperclip": fake_pyperclip}),
+        patch("skylos.ui.clipboard.clipboard_copy_allowed", return_value=True),
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()

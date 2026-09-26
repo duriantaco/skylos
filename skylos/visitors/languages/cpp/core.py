@@ -68,12 +68,16 @@ def scan_symbols(
     root = tree.root_node
     if root.has_error:
         error_node = _first_error_node(root)
+        # py-tree-sitter 0.26.0's Point.row/.column getters return a borrowed
+        # reference without INCREF; the int is later freed twice, corrupting
+        # CPython's freelists and segfaulting at the next GC. Tuple indexing
+        # is refcount-correct, so never use the named attributes.
         point = error_node.start_point if error_node is not None else root.start_point
         raise CppScanError(
             "C++ parse error; dead-code analysis skipped",
             kind="cpp_parse_error",
-            line=point.row + 1,
-            column=point.column + 1,
+            line=point[0] + 1,
+            column=point[1] + 1,
         )
 
     nodes = list(_walk(root))
@@ -110,7 +114,7 @@ def scan_symbols(
             name,
             "function",
             file_path,
-            name_node.start_point.row + 1,
+            name_node.start_point[0] + 1,
         )
 
         candidate = _is_file_local_function(node, file_path, source_bytes)

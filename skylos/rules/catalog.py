@@ -36,6 +36,9 @@ _RULES = (
     RuleCatalogEntry(
         "SKY-A106", "Suspicious dependency version bump", "ai_defect", "LOW"
     ),
+    RuleCatalogEntry(
+        "SKY-SCA-LIC001", "Dependency license policy violation", "dependency", "HIGH"
+    ),
     RuleCatalogEntry("SKY-C401", "Duplicated code clone", "quality"),
     RuleCatalogEntry("SKY-CIRC", "Circular dependency", "quality"),
     RuleCatalogEntry("SKY-Q301", "Cyclomatic complexity", "quality"),
@@ -491,6 +494,13 @@ _RULES = (
         "SKY-D347", "Unsafe logging config listener", "security", "MEDIUM"
     ),
     RuleCatalogEntry("SKY-D348", "Insecure temporary filename", "security", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-D349",
+        "Server-side template injection",
+        "security",
+        "CRITICAL",
+        aliases=("ssti", "template injection"),
+    ),
     RuleCatalogEntry(
         "SKY-DEP001",
         "Externally deployed route is missing a required auth guard",

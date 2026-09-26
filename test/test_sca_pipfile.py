@@ -178,7 +178,7 @@ def test_offline_sbom_retains_public_components_when_private_gap_exists(
     tmp_path, capsys
 ):
     _lock(tmp_path, private=True)
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     output = json.loads(capsys.readouterr().out)
     assert {component["purl"] for component in output["components"]} == {
         "pkg:pypi/example@1.2.3",

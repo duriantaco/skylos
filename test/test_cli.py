@@ -569,6 +569,24 @@ def _progress_ctx():
     return cm
 
 
+_FAKE_MERGE_BASE = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _fake_git(diff_stdout="", untracked=(), merge_base=_FAKE_MERGE_BASE):
+    """subprocess.run stand-in answering merge-base, diff and ls-files."""
+
+    def run(cmd, *args, **kwargs):
+        if cmd[:2] == ["git", "merge-base"]:
+            return Mock(returncode=0, stdout=f"{merge_base}\n", stderr="")
+        if cmd[:2] == ["git", "ls-files"]:
+            return Mock(
+                returncode=0, stdout="".join(f"{p}\0" for p in untracked), stderr=""
+            )
+        return Mock(returncode=0, stdout=diff_stdout, stderr="")
+
+    return run
+
+
 def test_shorten_path_non_pathlike_returns_str():
     assert cli._shorten_path(123) == "123"
 
@@ -3336,8 +3354,14 @@ class TestDiffFlag:
             patch("skylos.cicd.review.subprocess.run") as mock_git,
             patch("skylos.api.get_project_token", return_value=None),
         ):
-            mock_git.return_value = Mock(returncode=0, stdout="")
+            mock_git.side_effect = _fake_git()
             cli.main()
+            base_calls = [
+                c
+                for c in mock_git.call_args_list
+                if c.args[0][:2] == ["git", "merge-base"]
+            ]
+            assert base_calls[0].args[0][2] == "origin/develop"
             diff_calls = [
                 c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
             ]
@@ -3346,7 +3370,9 @@ class TestDiffFlag:
                 "git",
                 "diff",
                 "--unified=0",
-                "origin/develop...HEAD",
+                "--no-ext-diff",
+                "--no-textconv",
+                _FAKE_MERGE_BASE,
             ]
 
     def test_diff_flag_without_value_defaults_to_auto(self, monkeypatch):
@@ -3379,8 +3405,14 @@ class TestDiffFlag:
             patch("skylos.cicd.review.subprocess.run") as mock_git,
             patch("skylos.api.get_project_token", return_value=None),
         ):
-            mock_git.return_value = Mock(returncode=0, stdout="")
+            mock_git.side_effect = _fake_git()
             cli.main()
+            base_calls = [
+                c
+                for c in mock_git.call_args_list
+                if c.args[0][:2] == ["git", "merge-base"]
+            ]
+            assert base_calls[0].args[0][2] == "origin/main"
             diff_calls = [
                 c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
             ]
@@ -3389,7 +3421,9 @@ class TestDiffFlag:
                 "git",
                 "diff",
                 "--unified=0",
-                "origin/main...HEAD",
+                "--no-ext-diff",
+                "--no-textconv",
+                _FAKE_MERGE_BASE,
             ]
 
     def test_diff_auto_uses_github_base_ref(self, monkeypatch):
@@ -3422,8 +3456,14 @@ class TestDiffFlag:
             patch("skylos.cicd.review.subprocess.run") as mock_git,
             patch("skylos.api.get_project_token", return_value=None),
         ):
-            mock_git.return_value = Mock(returncode=0, stdout="")
+            mock_git.side_effect = _fake_git()
             cli.main()
+            base_calls = [
+                c
+                for c in mock_git.call_args_list
+                if c.args[0][:2] == ["git", "merge-base"]
+            ]
+            assert base_calls[0].args[0][2] == "origin/develop"
             diff_calls = [
                 c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
             ]
@@ -3432,7 +3472,9 @@ class TestDiffFlag:
                 "git",
                 "diff",
                 "--unified=0",
-                "origin/develop...HEAD",
+                "--no-ext-diff",
+                "--no-textconv",
+                _FAKE_MERGE_BASE,
             ]
 
     def test_diff_filters_findings_to_changed_lines(self, monkeypatch):
@@ -3525,7 +3567,7 @@ class TestDiffFlag:
             patch("skylos.cicd.review.subprocess.run") as git_diff,
             patch("builtins.print", side_effect=lambda value: printed.append(value)),
         ):
-            git_diff.return_value = Mock(returncode=0, stdout="")
+            git_diff.side_effect = _fake_git()
             cli.main()
 
         output = json.loads(printed[0])
@@ -3551,7 +3593,7 @@ class TestDiffFlag:
             patch("skylos.cli.print_badge") as badge,
             patch("skylos.cli._is_tty", return_value=True),
         ):
-            git_diff.return_value = Mock(returncode=0, stdout="")
+            git_diff.side_effect = _fake_git()
             cli.main()
 
         badge.assert_not_called()
@@ -3588,7 +3630,7 @@ class TestDiffFlag:
             patch("skylos.cli.render_results"),
             patch("skylos.cli._is_tty", return_value=True),
         ):
-            git_diff.return_value = Mock(returncode=0, stdout="")
+            git_diff.side_effect = _fake_git()
             cli.main()
 
         output = capsys.readouterr().out
@@ -3753,7 +3795,7 @@ class TestDiffFlag:
             patch("skylos.cli.print_badge") as badge,
             patch("builtins.print", side_effect=lambda value: printed.append(value)),
         ):
-            git_diff.return_value = Mock(returncode=0, stdout="")
+            git_diff.side_effect = _fake_git()
             cli.main()
 
         output = json.loads(printed[0])
@@ -3813,7 +3855,7 @@ class TestDiffFlag:
             patch("skylos.cli.subprocess.run") as git_diff,
             patch("builtins.print", side_effect=lambda value: printed.append(value)),
         ):
-            git_diff.return_value = Mock(returncode=0, stdout="src/dead.py\n")
+            git_diff.side_effect = _fake_git("src/dead.py\n")
             cli.main()
 
         diff_calls = [

@@ -52,8 +52,16 @@ FINDING_SECTIONS = (
     ("ai_defects", "ai_defect"),
     ("quality", "quality"),
     ("danger", "security"),
+    ("secrets", "secret"),
     ("custom_rules", "custom"),
 )
+
+# Categories gated by ``include_security_findings``. They are not AI-specific
+# defects, so they get their own vibe labels rather than an AI rule default.
+SECURITY_VIBE_BY_CATEGORY = {
+    "security": "security_vulnerability",
+    "secret": "leaked_secret",
+}
 
 SUGGESTED_FIX_BY_VIBE = {
     "hallucinated_reference": (
@@ -97,6 +105,13 @@ SUGGESTED_FIX_BY_VIBE = {
     "mirrored_dependency_bump": (
         "Review whether the dependency change was intentional; restore its previous "
         "version only if the change was accidental."
+    ),
+    "security_vulnerability": (
+        "Remove the unsafe sink or validate, escape, or parameterize the untrusted input."
+    ),
+    "leaked_secret": (
+        "Remove the hard-coded credential, load it from the environment or a secret "
+        "manager, and rotate it if it was ever committed or shared."
     ),
 }
 
@@ -179,6 +194,7 @@ def build_verify_change_response(
         },
         "findings": findings,
         "summary": _summary(findings, status, coverage),
+        "security_checks_enabled": bool(include_security_findings),
     }
     if coverage is not None:
         response["coverage"] = coverage
@@ -192,10 +208,11 @@ def _iter_ai_findings(
 ) -> Iterator[tuple[dict[str, Any], str]]:
     for section, category in FINDING_SECTIONS:
         for finding in _section_findings(analysis_result, section):
-            if _is_ai_finding(finding) or (
-                include_security_findings
-                and category == "security"
-                and _is_security_finding(finding)
+            if _is_ai_finding(finding):
+                yield finding, category
+            elif include_security_findings and (
+                (category == "security" and _is_security_finding(finding))
+                or (category == "secret" and _is_secret_finding(finding))
             ):
                 yield finding, category
 
@@ -217,6 +234,11 @@ def _is_security_finding(finding: dict[str, Any]) -> bool:
     return severity in {"HIGH", "CRITICAL"}
 
 
+def _is_secret_finding(finding: dict[str, Any]) -> bool:
+    rule_id = str(_finding_value(finding, ("rule_id", "rule"), "")).strip()
+    return rule_id.startswith("SKY-S")
+
+
 def _normalize_finding(
     finding: dict[str, Any],
     category: str,
@@ -227,10 +249,23 @@ def _normalize_finding(
 ) -> dict[str, Any]:
     rule_id = str(_finding_value(finding, ("rule_id", "rule"), "UNKNOWN"))
     default_vibe, default_likelihood = _rule_defaults(rule_id)
+    if not default_vibe:
+        default_vibe = SECURITY_VIBE_BY_CATEGORY.get(category, "")
     vibe_category = str(_finding_value(finding, ("vibe_category",), default_vibe))
     ai_likelihood = str(_finding_value(finding, ("ai_likelihood",), default_likelihood))
     confidence = _confidence(finding.get("confidence"), ai_likelihood)
     severity = str(_finding_value(finding, ("severity",), "MEDIUM")).upper()
+
+    if category == "secret":
+        return _normalize_secret_finding(
+            finding,
+            rule_id=rule_id,
+            vibe_category=vibe_category,
+            ai_likelihood=ai_likelihood,
+            confidence=confidence,
+            severity=severity,
+            root=root,
+        )
 
     normalized = {
         "rule_id": rule_id,
@@ -253,6 +288,48 @@ def _normalize_finding(
     if evidence_contract is not None:
         normalized["evidence_contract"] = evidence_contract
     normalized.update(contract_finding_metadata(contract, finding))
+    return normalized
+
+
+def _normalize_secret_finding(
+    finding: dict[str, Any],
+    *,
+    rule_id: str,
+    vibe_category: str,
+    ai_likelihood: str,
+    confidence: int,
+    severity: str,
+    root: Path,
+) -> dict[str, Any]:
+    """Build a secret finding from an allowlist of fields.
+
+    The secrets scanner already emits a masked ``preview``; nothing else from
+    the raw finding (metadata, snippets, evidence) is copied, so the response
+    can never carry the full secret value.
+    """
+    provider = str(_finding_value(finding, ("provider",), "")).strip()
+    preview = str(_finding_value(finding, ("preview",), "")).strip()
+    message = _message(finding)
+    if preview:
+        message = f"{message} (redacted: {preview})"
+    normalized = {
+        "rule_id": rule_id,
+        "vibe_category": vibe_category,
+        "ai_likelihood": ai_likelihood,
+        "range": _finding_range(finding, root),
+        "message": message,
+        "suggested_fix": _suggested_fix(finding, vibe_category),
+        "confidence": confidence,
+        "severity": severity,
+        "category": "secret",
+    }
+    secret = {}
+    if provider:
+        secret["provider"] = provider
+    if preview:
+        secret["preview"] = preview
+    if secret:
+        normalized["secret"] = secret
     return normalized
 
 
@@ -439,7 +516,19 @@ def _summary(
         issue_word = "issue"
     else:
         issue_word = "issues"
-    return f"{count} AI-code {issue_word} found"
+    security = sum(1 for item in findings if item.get("category") == "security")
+    secrets = sum(1 for item in findings if item.get("category") == "secret")
+    if not security and not secrets:
+        return f"{count} AI-code {issue_word} found"
+    parts = []
+    ai_code = count - security - secrets
+    if ai_code:
+        parts.append(f"{ai_code} AI-code")
+    if security:
+        parts.append(f"{security} security")
+    if secrets:
+        parts.append(f"{secrets} secret")
+    return f"{count} {issue_word} found: {', '.join(parts)}"
 
 
 def _message(finding: dict[str, Any]) -> str:

@@ -1,0 +1,21 @@
+id = "mb-c1-clean-endpoint"
+base = "microblog"
+language = "python"
+clean = true
+story = "Control: the agent adds a JSON endpoint using parameterized SQLAlchemy selects and a bounded limit. No seeded defect."
+
+[[edits]]
+file = "app/main/routes.py"
+mode = "append"
+new = '''
+
+
+@bp.route('/api/posts/recent')
+@login_required
+def recent_posts():
+    limit = min(request.args.get('limit', 10, type=int), 50)
+    query = sa.select(Post).order_by(Post.timestamp.desc()).limit(limit)
+    posts = db.session.scalars(query).all()
+    return [{'id': p.id, 'body': p.body, 'author': p.author.username,
+             'timestamp': p.timestamp.isoformat()} for p in posts]
+'''

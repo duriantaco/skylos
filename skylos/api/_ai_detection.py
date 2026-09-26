@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 from collections.abc import Callable
 
@@ -10,32 +9,13 @@ from skylos.core.git_safety import (
     read_only_git_command,
     read_only_git_environment,
 )
+from skylos.reporting.provenance import (
+    ATTRIBUTION_AI,
+    GIT_LOG_FORMAT,
+    classify_commit,
+)
 
 logger = logging.getLogger(__name__)
-
-_AI_COAUTHOR_PATTERNS = [
-    re.compile(r"copilot", re.IGNORECASE),
-    re.compile(r"claude", re.IGNORECASE),
-    re.compile(r"cursor", re.IGNORECASE),
-    re.compile(r"codewhisperer", re.IGNORECASE),
-    re.compile(r"tabnine", re.IGNORECASE),
-    re.compile(r"github-actions\[bot\]", re.IGNORECASE),
-    re.compile(r"devin", re.IGNORECASE),
-]
-
-_AI_EMAIL_PATTERNS = [
-    re.compile(r"\[bot\]@", re.IGNORECASE),
-    re.compile(r"copilot", re.IGNORECASE),
-    re.compile(r"cursor", re.IGNORECASE),
-    re.compile(r"claude", re.IGNORECASE),
-]
-
-_AI_MESSAGE_PATTERNS = [
-    re.compile(r"generated\s+by\s+(copilot|claude|cursor|ai)", re.IGNORECASE),
-    re.compile(r"ai[- ]generated", re.IGNORECASE),
-    re.compile(r"co-authored-by.*copilot", re.IGNORECASE),
-    re.compile(r"co-authored-by.*claude", re.IGNORECASE),
-]
 
 
 def _empty_ai_detection() -> dict:
@@ -65,7 +45,7 @@ def detect_ai_code(
             read_only_git_command(
                 [
                     "log",
-                    "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
+                    f"--format={GIT_LOG_FORMAT}",
                     "-50",
                 ]
             ),
@@ -119,40 +99,19 @@ def _append_ai_indicator(
     subject: str,
     trailers: str,
 ) -> bool:
-    for pattern in _AI_COAUTHOR_PATTERNS:
-        if pattern.search(trailers):
-            indicators.append(
-                {
-                    "type": "co-author",
-                    "commit": commit_sha[:7],
-                    "detail": trailers.strip()[:100],
-                }
-            )
-            return True
-
-    for pattern in _AI_EMAIL_PATTERNS:
-        if pattern.search(author_email):
-            indicators.append(
-                {
-                    "type": "author-email",
-                    "commit": commit_sha[:7],
-                    "detail": f"{author_name} <{author_email}>",
-                }
-            )
-            return True
-
-    for pattern in _AI_MESSAGE_PATTERNS:
-        if pattern.search(subject):
-            indicators.append(
-                {
-                    "type": "commit-message",
-                    "commit": commit_sha[:7],
-                    "detail": subject[:100],
-                }
-            )
-            return True
-
-    return False
+    # Only explicit agent signals count; dependency/CI bots and humans whose
+    # name happens to contain an agent keyword are not AI.
+    attribution = classify_commit(author_name, author_email, subject, trailers)
+    if attribution is None or attribution["category"] != ATTRIBUTION_AI:
+        return False
+    indicators.append(
+        {
+            "type": attribution["type"],
+            "commit": commit_sha[:7],
+            "detail": attribution["detail"],
+        }
+    )
+    return True
 
 
 def _collect_ai_commit_files(

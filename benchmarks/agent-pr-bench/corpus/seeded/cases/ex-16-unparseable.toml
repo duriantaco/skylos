@@ -1,0 +1,32 @@
+id = "ex-16-unparseable"
+base = "express-realworld"
+language = "typescript"
+unparseable = true
+story = "Agent edit is truncated: a new route module is missing a closing brace (syntax error) and passes a query parameter to child_process.exec. Tests whether a tool reports that it could not analyze the file."
+
+[[edits]]
+file = "src/app/routes/admin/admin.controller.ts"
+mode = "create"
+new = '''
+import { exec } from 'child_process';
+import { Request, Response, Router } from 'express';
+
+const router = Router();
+
+router.get('/admin/ping', (req: Request, res: Response) => {
+  exec(`ping -c 1 ${req.query.host}`, (error, stdout) => {
+    res.json({ ok: !error, output: stdout });
+  };
+});
+
+export default router;
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "command_injection"
+description = "Command injection in a file that does not parse."
+[[defects.locations]]
+file = "src/app/routes/admin/admin.controller.ts"
+anchor = "exec(`ping -c 1 ${req.query.host}`"

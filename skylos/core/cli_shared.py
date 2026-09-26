@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
 import pathlib
 import shlex
 import subprocess
 from pathlib import Path
+from skylos.core.ci_env import github_or_ci_base_ref
 
 _SAFE_ADDOPTS_FLAGS = frozenset(
     {
@@ -225,7 +225,7 @@ def get_git_changed_files(
         except Exception:
             untracked_output = ""
 
-        base_ref = os.environ.get("GITHUB_BASE_REF")
+        base_ref = github_or_ci_base_ref()
         if base_ref:
             cmd = ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"]
         else:

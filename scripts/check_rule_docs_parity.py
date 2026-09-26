@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-RULE_ID_RE = re.compile(r"SKY-CIRC|SKY-[A-Z]+[0-9]{3}")
+RULE_ID_RE = re.compile(r"SKY-CIRC|SKY-SCA-[A-Z]+[0-9]{3}|SKY-[A-Z]+[0-9]{3}")
 
 
 def main() -> int:

@@ -179,7 +179,7 @@ def test_cli_writes_requested_file(tmp_path, capsys):
 def test_incomplete_lockfile_retains_available_components(tmp_path, capsys, filename):
     _npm(tmp_path)
     _write(tmp_path, filename, "invalid input\n")
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     captured = capsys.readouterr()
     document = json.loads(captured.out)
     assert len(document["components"]) == 3
@@ -192,7 +192,7 @@ def test_incomplete_lockfile_retains_available_components(tmp_path, capsys, file
 def test_invalid_pipfile_lock_is_explicit_export_gap(tmp_path, capsys):
     _npm(tmp_path)
     _write(tmp_path, "Pipfile.lock", "{}")
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     receipt = _receipt(json.loads(capsys.readouterr().out))
     assert receipt["lockfile_candidate_count"] == 2
     assert receipt["parse_error_count"] == 1
@@ -203,7 +203,7 @@ def test_invalid_pipfile_lock_is_explicit_export_gap(tmp_path, capsys):
 def test_range_only_inventory_is_not_a_successful_empty_sbom(tmp_path, capsys):
     _write(tmp_path, "package.json", '{"dependencies":{"example":"^1.0.0"}}')
     assert sca.collect_dependencies(tmp_path).receipt["complete"] is True
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     document = json.loads(capsys.readouterr().out)
     assert document["components"] == []
     assert _receipt(document)["unresolved_dependency_count"] == 1
@@ -219,7 +219,7 @@ def test_range_with_lock_preserves_freshness_limitations(tmp_path, capsys):
 
 
 def test_no_supported_inputs_is_incomplete(tmp_path, capsys):
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     assert json.loads(capsys.readouterr().out)["components"] == []
 
 
@@ -257,7 +257,7 @@ def test_missing_output_directory_is_error_not_stdout_fallback(tmp_path, capsys)
 
 def test_invalid_identity_is_a_gap_not_exported_text(tmp_path, capsys):
     _write(tmp_path, "go.mod", "require invalid:module v1.2.3\n")
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     document = json.loads(capsys.readouterr().out)
     assert document["components"] == []
     assert _receipt(document)["invalid_identity_count"] == 1
@@ -320,3 +320,26 @@ def test_context_does_not_include_source_transport_or_absolute_location(tmp_path
     assert "https://example.invalid/source" not in serialized
     assert "/outside" not in serialized
     assert "redacted:source:" in serialized
+
+
+def test_unlocked_requirements_warns_but_exits_zero_by_default(tmp_path, capsys):
+    _write(tmp_path, "requirements.txt", "requests>=2.0\nflask==3.0.0\n")
+    assert run_sbom_command([str(tmp_path)]) == 0
+    captured = capsys.readouterr()
+    document = json.loads(captured.out)
+    assert _receipt(document)["complete"] is False
+    assert "SBOM incomplete" in captured.err
+
+
+def test_unlocked_requirements_strict_exits_two(tmp_path, capsys):
+    _write(tmp_path, "requirements.txt", "requests>=2.0\nflask==3.0.0\n")
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["bomFormat"] == "CycloneDX"
+    assert "SBOM incomplete" in captured.err
+
+
+def test_complete_inventory_strict_exits_zero(tmp_path, capsys):
+    _npm(tmp_path)
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 0
+    assert "incomplete" not in capsys.readouterr().err

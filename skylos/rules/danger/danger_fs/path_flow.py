@@ -3,6 +3,7 @@ import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 
 
 SYMLINK_WRITE_RULE = "SKY-D324"
@@ -24,6 +25,133 @@ FIRST_PATH_PARAMETERS = {
     "shutil.move": "src",
     "shutil.rmtree": "path",
 }
+
+
+# Framework helpers that serve a file from a caller-supplied filesystem path.
+# Value: (keyword name, position) of the argument that must not be tainted.
+# Flask/Werkzeug ``send_from_directory`` joins its ``path`` argument with
+# ``safe_join``, so only a tainted ``directory`` is a traversal there.
+FILE_RESPONSE_SINKS = {
+    "starlette.responses.FileResponse": ("path", 0),
+    "fastapi.responses.FileResponse": ("path", 0),
+    "flask.send_file": ("path_or_file", 0),
+    "flask.helpers.send_file": ("path_or_file", 0),
+    "werkzeug.utils.send_file": ("path_or_file", 0),
+    "flask.send_from_directory": ("directory", 0),
+    "flask.helpers.send_from_directory": ("directory", 0),
+    "werkzeug.utils.send_from_directory": ("directory", 0),
+}
+# Calls whose result is a path, not an open file / buffer.
+_PATH_PRODUCING_CALLS = frozenset(
+    {
+        "os.path.join",
+        "os.path.abspath",
+        "os.path.realpath",
+        "os.path.normpath",
+        "os.path.expanduser",
+        "os.fspath",
+        "str",
+        "Path",
+        "PurePath",
+        "PosixPath",
+        "pathlib.Path",
+        "pathlib.PurePath",
+        "pathlib.PosixPath",
+    }
+)
+_PATH_PRODUCING_METHODS = frozenset(
+    {"joinpath", "resolve", "absolute", "expanduser", "with_name", "with_suffix",
+     "format"}
+)  # fmt: skip
+# Calls that produce file objects / buffers rather than paths.
+_FILE_OBJECT_CALLEES = frozenset(
+    {"BytesIO", "StringIO", "open", "TemporaryFile", "NamedTemporaryFile",
+     "SpooledTemporaryFile", "urlopen", "fdopen"}
+)  # fmt: skip
+# A containment check only means something on a normalized path: without it
+# ``/base/../etc`` still "starts with" / "is relative to" ``/base``.
+_NORMALIZER_CALLEES = frozenset({"resolve", "realpath", "abspath", "normpath"})
+_TERMINATING_CALLEES = frozenset({"abort", "exit", "_exit"})
+
+
+def _callee_last(node):
+    if not isinstance(node, ast.Call):
+        return None
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return None
+
+
+def _names_in(node):
+    return {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
+
+
+def _is_constant_collection(node):
+    if isinstance(node, ast.Name):
+        return node.id.isupper()
+    if isinstance(node, (ast.Set, ast.List, ast.Tuple)):
+        return all(isinstance(elt, ast.Constant) for elt in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(isinstance(key, ast.Constant) for key in node.keys)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "keys"
+        and not node.args
+    ):
+        return _is_constant_collection(node.func.value)
+    return False
+
+
+_CONTAINMENT_METHODS = frozenset({"is_relative_to", "relative_to", "startswith"})
+
+
+def _unwrap_str_call(node):
+    if isinstance(node, ast.Call) and _callee_last(node) == "str" and node.args:
+        return node.args[0]
+    return node
+
+
+def _commonpath_elements(call):
+    if call.args and isinstance(call.args[0], (ast.List, ast.Tuple)):
+        return list(call.args[0].elts)
+    return []
+
+
+def _allowlist_names(compare):
+    """``name in ALLOWED`` / ``name not in {"a", "b"}`` vouches for ``name``."""
+    if (
+        len(compare.ops) == 1
+        and isinstance(compare.ops[0], (ast.In, ast.NotIn))
+        and isinstance(compare.left, ast.Name)
+        and _is_constant_collection(compare.comparators[0])
+    ):
+        return {compare.left.id}
+    return set()
+
+
+def _test_is_negative(test):
+    """True when the branch body runs if the check *failed*."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return True
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        return isinstance(test.ops[0], (ast.NotEq, ast.NotIn, ast.IsNot))
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
+        return all(_test_is_negative(value) for value in test.values)
+    return False
+
+
+def _body_terminates(body):
+    if not body:
+        return False
+    last = body[-1]
+    if isinstance(last, (ast.Raise, ast.Return, ast.Continue, ast.Break)):
+        return True
+    if isinstance(last, ast.Expr) and isinstance(last.value, ast.Call):
+        return _callee_last(last.value) in _TERMINATING_CALLEES
+    return False
 
 
 def _qualified_name(node):
@@ -193,14 +321,53 @@ class _PathFlowChecker(TaintVisitor):
         ]
         self._emitted = set()
         self._literal_pytest_paths = {}
+        self.import_aliases = {}
+        self.untrusted_sources = UntrustedSourceIndex(None)
+        self.normalized_stack = [set()]
+        self.validated_stack = [set()]
+        self.file_object_stack = [set()]
+        self.branch_validated = []
 
     def visit_Module(self, node):
+        self.untrusted_sources = UntrustedSourceIndex(node)
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
         self.generic_visit(node)
 
+    def visit_Import(self, node):
+        for alias in node.names:
+            if alias.asname:
+                self.import_aliases[alias.asname] = alias.name
+            else:
+                top = alias.name.split(".", 1)[0]
+                self.import_aliases[top] = top
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node.module and not node.level:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                self.import_aliases[alias.asname or alias.name] = (
+                    f"{node.module}.{alias.name}"
+                )
+        self.generic_visit(node)
+
+    def _canonical_call_name(self, node):
+        qn = _qualified_name(node)
+        if not qn:
+            return None
+        head, _, rest = qn.partition(".")
+        base = self.import_aliases.get(head)
+        if base is None:
+            return None
+        return f"{base}.{rest}" if rest else base
+
     def _push(self):
         super()._push()
+        self.normalized_stack.append(set())
+        self.validated_stack.append(set())
+        self.file_object_stack.append(set())
         self.path_like_stack.append({})
         self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
@@ -218,6 +385,13 @@ class _PathFlowChecker(TaintVisitor):
 
     def _pop(self):
         super()._pop()
+        for stack in (
+            self.normalized_stack,
+            self.validated_stack,
+            self.file_object_stack,
+        ):
+            if len(stack) > 1:
+                stack.pop()
         if self.path_like_stack:
             self.path_like_stack.pop()
         if self.basename_sanitized_stack:
@@ -408,6 +582,8 @@ class _PathFlowChecker(TaintVisitor):
                     tgt.id, _node_mentions(node.value, OS_OPEN_WRITE_FLAGS)
                 )
         self.generic_visit(node)
+        for tgt in node.targets:
+            self._track_serving_facts(tgt, node.value)
 
     def visit_AnnAssign(self, node):
         self._record_safety_tokens(node)
@@ -427,6 +603,8 @@ class _PathFlowChecker(TaintVisitor):
                     node.target.id, _node_mentions(node.value, OS_OPEN_WRITE_FLAGS)
                 )
         self.generic_visit(node)
+        if node.value is not None:
+            self._track_serving_facts(node.target, node.value)
 
     def visit_AugAssign(self, node):
         self._record_safety_tokens(node)
@@ -434,7 +612,161 @@ class _PathFlowChecker(TaintVisitor):
 
     def visit_If(self, node):
         self._record_safety_tokens(node.test)
+        names = self._validation_names(node.test)
+        if not names:
+            self.generic_visit(node)
+            return
+        self.visit(node.test)
+        if _test_is_negative(node.test):
+            self._visit_block(node.body)
+            self._visit_block(node.orelse, names)
+            if _body_terminates(node.body):
+                self._current_validated().update(names)
+        else:
+            self._visit_block(node.body, names)
+            self._visit_block(node.orelse)
+
+    def visit_Assert(self, node):
+        names = self._validation_names(node.test)
         self.generic_visit(node)
+        if names and not _test_is_negative(node.test):
+            self._current_validated().update(names)
+
+    def _visit_block(self, statements, validated=None):
+        if validated:
+            self.branch_validated.append(set(validated))
+        try:
+            for statement in statements:
+                self.visit(statement)
+        finally:
+            if validated:
+                self.branch_validated.pop()
+
+    # -- containment / allowlist facts for file-serving sinks ---------------
+
+    def _current_validated(self):
+        return self.validated_stack[-1]
+
+    def _is_validated_name(self, name):
+        if name in self._current_validated():
+            return True
+        return any(name in names for names in self.branch_validated)
+
+    def _is_normalized_expr(self, node):
+        """The whole value is a normalized path, not just one part of it."""
+        node = _unwrap_str_call(node)
+        if isinstance(node, ast.Call):
+            return _callee_last(node) in _NORMALIZER_CALLEES
+        if isinstance(node, ast.Name):
+            return node.id in self.normalized_stack[-1]
+        return False
+
+    def _track_serving_facts(self, target, value):
+        if not isinstance(target, ast.Name):
+            return
+        name = target.id
+        self._current_validated().discard(name)
+        for names in self.branch_validated:
+            names.discard(name)
+        if self._is_normalized_expr(value):
+            self.normalized_stack[-1].add(name)
+        else:
+            self.normalized_stack[-1].discard(name)
+        if _callee_last(value) in _FILE_OBJECT_CALLEES:
+            self.file_object_stack[-1].add(name)
+        else:
+            self.file_object_stack[-1].discard(name)
+
+    def _validation_names(self, test):
+        """Names a containment or allowlist check in ``test`` vouches for."""
+        names = set()
+        for sub in ast.walk(test):
+            if isinstance(sub, ast.Call):
+                names |= self._containment_call_names(sub)
+            elif isinstance(sub, ast.Compare):
+                names |= _allowlist_names(sub)
+        return names
+
+    def _containment_call_names(self, call):
+        if _callee_last(call) == "commonpath":
+            elements = _commonpath_elements(call)
+            return {
+                name
+                for element in elements
+                if self._is_normalized_expr(element)
+                for name in _names_in(element)
+            }
+        if not isinstance(call.func, ast.Attribute):
+            return set()
+        if call.func.attr not in _CONTAINMENT_METHODS:
+            return set()
+        receiver = _unwrap_str_call(call.func.value)
+        if not self._is_normalized_expr(receiver):
+            return set()
+        return _names_in(receiver)
+
+    def _is_path_argument(self, node):
+        if isinstance(node, ast.Name):
+            return node.id not in self.file_object_stack[-1]
+        if isinstance(node, (ast.Attribute, ast.Subscript, ast.JoinedStr)):
+            return True
+        if isinstance(node, ast.BinOp):
+            return isinstance(node.op, (ast.Div, ast.Add, ast.Mod))
+        if isinstance(node, ast.Call):
+            if _qualified_name(node) in _PATH_PRODUCING_CALLS:
+                return True
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _PATH_PRODUCING_METHODS
+            ):
+                return True
+            qn = _qualified_name(node) or ""
+            if qn in PATH_SANITIZERS:
+                return True
+            # request.args.get("p"), os.environ.get("P"), os.getenv("P"), input()
+            head = qn.split(".", 1)[0]
+            return head in {"request", "req"} or qn in {
+                "os.getenv",
+                "os.environ.get",
+                "input",
+            }
+        return False
+
+    def _path_is_contained(self, node):
+        tainted_names = [
+            name
+            for name in sorted(_names_in(node))
+            if self._get(name) and not self._get_basename_sanitized(name)
+        ]
+        if not tainted_names:
+            return False
+        return all(self._is_validated_name(name) for name in tainted_names)
+
+    def _flag_file_response(self, node, canonical):
+        keyword, position = FILE_RESPONSE_SINKS[canonical]
+        path_expr = _bound_argument(node, position, keyword)
+        if path_expr is None or not self._is_path_argument(path_expr):
+            return
+        if not self.is_tainted(path_expr):
+            return
+        if self._path_is_contained(path_expr):
+            return
+        sink_name = canonical.rsplit(".", 1)[-1]
+        sink = f"filesystem path served by {sink_name}()"
+        # File-serving helpers are only reported with a real untrusted source
+        # (entry-point parameter, request.*, input(), argv, environment); a
+        # wrapper that forwards its own parameter is not a finding.
+        evidence = self._source_evidence(node, path_expr, sink)
+        if evidence is None:
+            return
+        self._emit_path_traversal(
+            node,
+            path_expr,
+            f"Possible path traversal: untrusted path served by {sink_name}(); "
+            "resolve it and check it stays under the base directory.",
+            sink,
+            evidence,
+        )
 
     def _current_safety(self):
         if not self.safety_stack:
@@ -525,21 +857,41 @@ class _PathFlowChecker(TaintVisitor):
             }
         )
 
+    def _source_evidence(self, node, path_expr, sink):
+        return self.untrusted_sources.evidence(
+            self._current_function(),
+            path_expr,
+            sink=sink,
+            missing_guard="resolved-path containment check against a fixed base",
+            evidence_kind="python_path_taint",
+        )
+
+    def _emit_path_traversal(self, node, path_expr, message, sink, evidence=None):
+        finding = {
+            "rule_id": "SKY-D215",
+            "severity": "HIGH",
+            "message": message,
+            "file": str(self.file_path),
+            "line": node.lineno,
+            "col": node.col_offset,
+            "symbol": self._current_symbol(),
+        }
+        if evidence is None:
+            evidence = self._source_evidence(node, path_expr, sink)
+        if evidence is not None:
+            finding["metadata"] = {"security_evidence": evidence}
+        self.findings.append(finding)
+
     def _flag_if_tainted_path(self, node, path_expr):
         is_interp = _is_interpolated_string(path_expr)
         is_tainted = self.is_tainted(path_expr)
 
         if is_interp or is_tainted:
-            self.findings.append(
-                {
-                    "rule_id": "SKY-D215",
-                    "severity": "HIGH",
-                    "message": "Possible path traversal: tainted filesystem path",
-                    "file": str(self.file_path),
-                    "line": node.lineno,
-                    "col": node.col_offset,
-                    "symbol": self._current_symbol(),
-                }
+            self._emit_path_traversal(
+                node,
+                path_expr,
+                "Possible path traversal: tainted filesystem path",
+                "filesystem path operation",
             )
 
     def _flag_symlink_write_if_unsafe(self, node, path_expr):
@@ -598,6 +950,10 @@ class _PathFlowChecker(TaintVisitor):
         if first_path is not None:
             self._flag_if_tainted_path(node, first_path)
 
+        canonical = self._canonical_call_name(node)
+        if canonical in FILE_RESPONSE_SINKS:
+            self._flag_file_response(node, canonical)
+
         if isinstance(node.func, ast.Attribute):
             if node.func.attr in self.PATHLIB_WRITE_METHODS:
                 self._flag_symlink_write_if_unsafe(node, node.func.value)
@@ -626,6 +982,14 @@ class _PathFlowChecker(TaintVisitor):
                     self._flag_symlink_write_if_unsafe(node, first_path)
                 else:
                     self._flag_symlink_read_if_unsafe(node, first_path)
+
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "relative_to"
+            and self._is_normalized_expr(node.func.value)
+        ):
+            # Path.relative_to raises ValueError outside the base.
+            self._current_validated().update(_names_in(node.func.value))
 
         self._record_safety_tokens(node)
         self.generic_visit(node)

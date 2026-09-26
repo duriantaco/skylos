@@ -5,6 +5,7 @@ from skylos.rules.danger.taint import TaintVisitor
 from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
 )
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 
 
 DB_MODULES = frozenset(
@@ -41,6 +42,42 @@ DB_RECEIVER_NAMES = frozenset(
         "transaction",
     }
 )
+
+
+# Calls whose result is a DB-API connection/cursor or SQLAlchemy connection:
+# ``sqlite3.connect(...).execute(...)``, ``conn.cursor().execute(...)``,
+# ``engine.connect().execute(...)``, ``engine.begin().execute(...)``.
+DB_CHAIN_METHODS = frozenset(
+    {
+        "connect",
+        "cursor",
+        "begin",
+        "begin_nested",
+        "execution_options",
+        "raw_connection",
+        "get_connection",
+        "get_session",
+    }
+)
+DB_RECEIVER_HINTS = ("cursor", "conn", "session", "engine", "db")
+SQL_EXECUTE_METHODS = frozenset({"execute", "executemany", "executescript"})
+# SQLAlchemy / SQLModel Core constructs compile to bound-parameter SQL.
+SQL_CONSTRUCT_MODULES = ("sqlalchemy", "sqlmodel")
+SQL_CONSTRUCT_NAMES = frozenset(
+    {"select", "delete", "insert", "update", "union", "union_all", "exists"}
+)
+_PROCESS_INPUT_ATTRS = frozenset({"sys.argv", "os.environ", "sys.stdin"})
+_PROCESS_INPUT_CALLS = frozenset(
+    {"os.getenv", "os.environ.get", "sys.stdin.read", "sys.stdin.readline"}
+)
+
+
+def _callee_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return None
 
 
 def _qualified_name_from_call(node):
@@ -196,6 +233,9 @@ class _SQLFlowChecker(TaintVisitor):
 
     def __init__(self, tree: ast.AST, file_path, findings):
         super().__init__(file_path, findings)
+        self.untrusted_sources = UntrustedSourceIndex(tree)
+        self.sql_construct_names: set[str] = set()
+        self.sql_construct_modules: set[str] = set()
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
         self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
@@ -230,7 +270,51 @@ class _SQLFlowChecker(TaintVisitor):
             return True
         if isinstance(node, ast.Name):
             return self._is_static_string_name(node.id)
+        if self._is_sql_construct(node):
+            return True
+        # sqlalchemy.text("... :id") over a constant is a static statement;
+        # values travel as bound parameters.
+        if (
+            isinstance(node, ast.Call)
+            and self.sqlalchemy_text.is_text_call(node)
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return self._is_static_query_expr(node.args[0])
         return False
+
+    def _is_sql_construct(self, node: ast.AST) -> bool:
+        """``select(User).where(...)``, ``sa.delete(Item)``: bound-parameter SQL."""
+        current = node
+        while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
+            inner = current.func.value
+            if not isinstance(inner, ast.Call):
+                break
+            current = inner
+        if not isinstance(current, ast.Call):
+            return False
+        func = current.func
+        if isinstance(func, ast.Name):
+            return func.id in self.sql_construct_names
+        if isinstance(func, ast.Attribute) and func.attr in SQL_CONSTRUCT_NAMES:
+            root = _qualified_name_from_expr(func.value)
+            return bool(root) and root.split(".")[0] in self.sql_construct_modules
+        return False
+
+    def is_tainted(self, node):
+        # Untrusted process input also reaches SQL text: sys.argv, sys.stdin,
+        # os.environ / os.getenv (the same sources the hook policy accepts).
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            base = node
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                if _qualified_name_from_expr(base) in _PROCESS_INPUT_ATTRS:
+                    return True
+                base = base.value
+        if isinstance(node, ast.Call):
+            name = _qualified_name_from_call(node)
+            if name in _PROCESS_INPUT_CALLS:
+                return True
+        return super().is_tainted(node)
 
     def _mark_db_receiver_alias(self, name: str) -> None:
         if not self.db_receiver_alias_stack:
@@ -271,13 +355,26 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_Import(self, node):
         self.sqlalchemy_text.record_import(node)
         for alias in node.names:
+            if alias.name.split(".")[0] in SQL_CONSTRUCT_MODULES:
+                self.sql_construct_modules.add(alias.asname or alias.name.split(".")[0])
+        for alias in node.names:
             top_level = alias.name.split(".")[0]
             if top_level in DB_MODULES or alias.name in DB_MODULES:
                 self.db_names.add(alias.asname or alias.name.split(".")[0])
         self.generic_visit(node)
 
+    def _record_sql_construct_imports(self, node: ast.ImportFrom) -> None:
+        if not node.module or node.level:
+            return
+        if node.module.split(".")[0] not in SQL_CONSTRUCT_MODULES:
+            return
+        for alias in node.names:
+            if alias.name in SQL_CONSTRUCT_NAMES:
+                self.sql_construct_names.add(alias.asname or alias.name)
+
     def visit_ImportFrom(self, node):
         self.sqlalchemy_text.record_import(node)
+        self._record_sql_construct_imports(node)
         if node.module:
             top_level = node.module.split(".")[0]
             if top_level in DB_MODULES or node.module in DB_MODULES:
@@ -297,10 +394,84 @@ class _SQLFlowChecker(TaintVisitor):
             return True
 
         lower = name.lower()
-        if any(hint in lower for hint in ("cursor", "conn", "session", "engine", "db")):
+        if any(hint in lower for hint in DB_RECEIVER_HINTS):
             return True
 
         return False
+
+    def _is_chained_db_receiver(self, node: ast.Call) -> bool:
+        """``<db call>().execute(...)``: the receiver is itself a call result."""
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        inner = node.func.value
+        if isinstance(inner, ast.Await):
+            inner = inner.value
+        if not isinstance(inner, ast.Call):
+            return False
+        if self._is_db_reference(inner):
+            return True
+        callee = (_callee_name(inner) or "").lower()
+        if callee in DB_CHAIN_METHODS:
+            return True
+        if any(hint in callee for hint in DB_RECEIVER_HINTS):
+            return True
+        return self._is_likely_db_receiver(inner)
+
+    def _source_evidence(self, node, query_expr, sink):
+        return self.untrusted_sources.evidence(
+            self._current_function(),
+            query_expr,
+            sink=sink,
+            missing_guard="parameterized SQL binding",
+            evidence_kind="python_sql_taint",
+        )
+
+    def _sqli_finding(self, node, severity, message, query_expr, sink, evidence=None):
+        finding = {
+            "rule_id": self.RULE_ID_SQLI,
+            "severity": severity,
+            "message": message,
+            "file": str(self.file_path),
+            "line": node.lineno,
+            "col": node.col_offset,
+            "symbol": self._current_symbol(),
+        }
+        if evidence is None:
+            evidence = self._source_evidence(node, query_expr, sink)
+        if evidence is not None:
+            finding["metadata"] = {"security_evidence": evidence}
+        self.findings.append(finding)
+
+    def _check_chained_execute(self, node: ast.Call) -> None:
+        """``sqlite3.connect(...).execute(q)`` and friends.
+
+        Stricter than the named-receiver check: the query must carry data
+        from a real untrusted source (entry-point parameter, ``request.*``,
+        ``input()``, ``sys.argv``, environment), so a constant-built query or
+        a plain helper parameter is never reported here.
+        """
+        query_expr = get_query_expression(node, names=("statement", "sql", "query"))
+        if query_expr is None or not self.is_tainted(query_expr):
+            return
+        if self._is_sql_construct(query_expr):
+            return
+        if isinstance(query_expr, ast.Call) and self.sqlalchemy_text.is_text_call(
+            query_expr
+        ):
+            return  # reported on the text() call itself
+        sink = f"SQL text passed to .{node.func.attr}()"
+        evidence = self._source_evidence(node, query_expr, sink)
+        if evidence is None:
+            return
+        self._sqli_finding(
+            node,
+            self.SEVERITY_CRITICAL,
+            "Possible SQL injection: untrusted input reaches a query executed "
+            "on a chained connection/cursor call.",
+            query_expr,
+            sink,
+            evidence,
+        )
 
     def _record_passthrough_function(self, node):
         param_names = {a.arg for a in node.args.args}
@@ -423,32 +594,25 @@ class _SQLFlowChecker(TaintVisitor):
 
             query_expr = get_query_expression(node, names=("sql", "query", "statement"))
 
-            if query_expr is not None:
+            if query_expr is not None and not self._is_sql_construct(query_expr):
+                sink = f"SQL text passed to .{node.func.attr}()"
                 if _is_interpolated_string(query_expr) or self.is_tainted(query_expr):
-                    self.findings.append(
-                        {
-                            "rule_id": self.RULE_ID_SQLI,
-                            "severity": self.SEVERITY_CRITICAL,
-                            "message": "Possible SQL injection: tainted or string-built query.",
-                            "file": str(self.file_path),
-                            "line": node.lineno,
-                            "col": node.col_offset,
-                            "symbol": self._current_symbol(),
-                        }
+                    self._sqli_finding(
+                        node,
+                        self.SEVERITY_CRITICAL,
+                        "Possible SQL injection: tainted or string-built query.",
+                        query_expr,
+                        sink,
                     )
                 else:
                     is_literal = self._is_static_query_expr(query_expr)
                     if not is_literal and not is_parameterized_query(node, query_expr):
-                        self.findings.append(
-                            {
-                                "rule_id": self.RULE_ID_SQLI,
-                                "severity": self.SEVERITY_HIGH,
-                                "message": "Likely unparameterized SQL execution.",
-                                "file": str(self.file_path),
-                                "line": node.lineno,
-                                "col": node.col_offset,
-                                "symbol": self._current_symbol(),
-                            }
+                        self._sqli_finding(
+                            node,
+                            self.SEVERITY_HIGH,
+                            "Likely unparameterized SQL execution.",
+                            query_expr,
+                            sink,
                         )
 
             self.generic_visit(node)
@@ -463,17 +627,22 @@ class _SQLFlowChecker(TaintVisitor):
             if query_expr is not None and (
                 _is_interpolated_string(query_expr) or self.is_tainted(query_expr)
             ):
-                self.findings.append(
-                    {
-                        "rule_id": self.RULE_ID_SQLI,
-                        "severity": self.SEVERITY_CRITICAL,
-                        "message": "Possible SQL injection in read_sql.",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                self._sqli_finding(
+                    node,
+                    self.SEVERITY_CRITICAL,
+                    "Possible SQL injection in read_sql.",
+                    query_expr,
+                    "SQL text passed to read_sql()",
                 )
+            self.generic_visit(node)
+            return
+
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in SQL_EXECUTE_METHODS
+            and self._is_chained_db_receiver(node)
+        ):
+            self._check_chained_execute(node)
             self.generic_visit(node)
             return
 
@@ -485,20 +654,18 @@ class _SQLFlowChecker(TaintVisitor):
             statement_expression = get_query_expression(
                 node, names=("statement", "sql", "query")
             )
-            if statement_expression is not None:
+            if statement_expression is not None and not self._is_sql_construct(
+                statement_expression
+            ):
                 if _is_interpolated_string(statement_expression) or self.is_tainted(
                     statement_expression
                 ):
-                    self.findings.append(
-                        {
-                            "rule_id": self.RULE_ID_SQLI,
-                            "severity": self.SEVERITY_CRITICAL,
-                            "message": "Possible SQL injection: tainted statement passed to execute().",
-                            "file": str(self.file_path),
-                            "line": node.lineno,
-                            "col": node.col_offset,
-                            "symbol": self._current_symbol(),
-                        }
+                    self._sqli_finding(
+                        node,
+                        self.SEVERITY_CRITICAL,
+                        "Possible SQL injection: tainted statement passed to execute().",
+                        statement_expression,
+                        "SQL statement passed to .execute()",
                     )
 
             self.generic_visit(node)
@@ -507,16 +674,12 @@ class _SQLFlowChecker(TaintVisitor):
         if self.sqlalchemy_text.is_text_call(node):
             for argument in node.args:
                 if _is_interpolated_string(argument) or self.is_tainted(argument):
-                    self.findings.append(
-                        {
-                            "rule_id": self.RULE_ID_SQLI,
-                            "severity": self.SEVERITY_CRITICAL,
-                            "message": "Possible SQL injection: tainted string used in sqlalchemy.text().",
-                            "file": str(self.file_path),
-                            "line": node.lineno,
-                            "col": node.col_offset,
-                            "symbol": self._current_symbol(),
-                        }
+                    self._sqli_finding(
+                        node,
+                        self.SEVERITY_CRITICAL,
+                        "Possible SQL injection: tainted string used in sqlalchemy.text().",
+                        argument,
+                        "SQL text passed to sqlalchemy.text()",
                     )
                     break
 

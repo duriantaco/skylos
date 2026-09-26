@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import inspect
 import logging
 import os
 import re
@@ -11,6 +12,8 @@ from typing import Any
 
 from skylos.analysis.errors import analysis_result_incomplete
 from skylos_mcp.auth import (
+    UNAUTH_DAILY_LIMIT,
+    UNAUTHENTICATED_TOOLS,
     build_mcp_network_auth,
     check_mcp_client_context,
     initialize_auth,
@@ -352,6 +355,7 @@ def _verify_change_impl(
     exclude_folders: str | None = None,
     contract_path: str | None = None,
     contract_enabled: bool = True,
+    include_security_findings: bool = True,
 ) -> dict:
     """Core logic for verify_change, extracted for testability."""
     from skylos.verify_change import verify_change_path
@@ -372,6 +376,7 @@ def _verify_change_impl(
         exclude_folders=excl,
         project_context=project_context,
         include_dependency_hallucinations=include_dependency_hallucinations,
+        include_security_findings=include_security_findings,
         contract_path=contract_path,
         contract_enabled=contract_enabled,
     )
@@ -932,17 +937,49 @@ def _gate(tool_name: str) -> str | None:
     return None
 
 
+GATED_TOOL_AUTH_NOTE = (
+    "Requires SKYLOS_API_KEY: this tool returns an authentication error unless "
+    "the MCP server is started with SKYLOS_API_KEY set. Without a key only "
+    f"`analyze` works ({UNAUTH_DAILY_LIMIT} calls/day). The local CLI needs no "
+    "key: `skylos verify <file>` and `skylos agent install-hooks`."
+)
+UNGATED_TOOL_AUTH_NOTE = (
+    f"Works without SKYLOS_API_KEY ({UNAUTH_DAILY_LIMIT} calls/day); "
+    "higher limits with a key."
+)
+
+
+def tool_description(fn) -> str:
+    """Tool description shown to MCP clients, with an honest auth note."""
+    doc = inspect.cleandoc(fn.__doc__ or "")
+    note = (
+        UNGATED_TOOL_AUTH_NOTE
+        if fn.__name__ in UNAUTHENTICATED_TOOLS
+        else GATED_TOOL_AUTH_NOTE
+    )
+    return f"{doc}\n\n{note}" if doc else note
+
+
 def _register_tools(mcp):
     """Register all MCP tools and resources. Called inside main() after FastMCP is created."""
 
+    def _tool():
+        def decorate(fn):
+            # FastMCP publishes the docstring as the tool description.
+            fn.__doc__ = tool_description(fn)
+            return mcp.tool()(fn)
+
+        return decorate
+
     ## all of these look like dead but they're all registered inside `_register_tools()` which is
     ## called from main() .. please ignore the "unused function" warnings for these --- IGNORE ---
-    @mcp.tool()
+    @_tool()
     def analyze(
         path: str,
         confidence: int = 60,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Find dead code (unused functions, classes, imports, variables) in a path."""
         gate_err = _gate("analyze")
         if gate_err:
             return gate_err
@@ -960,12 +997,13 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def security_scan(
         path: str,
         confidence: int = 60,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Scan a path for dangerous code patterns (injection, eval, unsafe deserialization, etc.)."""
         gate_err = _gate("security_scan")
         if gate_err:
             return gate_err
@@ -981,12 +1019,13 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def quality_check(
         path: str,
         confidence: int = 60,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Scan a path for code-quality issues (complexity, nesting, maintainability)."""
         gate_err = _gate("quality_check")
         if gate_err:
             return gate_err
@@ -1002,12 +1041,13 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def architecture_check(
         path: str,
         confidence: int = 60,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Report architecture findings (coupling, cohesion, circular dependencies) for a path."""
         gate_err = _gate("architecture_check")
         if gate_err:
             return gate_err
@@ -1023,7 +1063,7 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def health_score(
         path: str,
         confidence: int = 60,
@@ -1032,6 +1072,7 @@ def _register_tools(mcp):
         include_quality: bool = True,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Compute an overall codebase health grade across dead code, security, secrets and quality."""
         gate_err = _gate("health_score")
         if gate_err:
             return gate_err
@@ -1049,12 +1090,13 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def secrets_scan(
         path: str,
         confidence: int = 60,
         exclude_folders: list[str] | None = None,
     ) -> str:
+        """Scan a path for hard-coded secrets and credentials (values are redacted)."""
         gate_err = _gate("secrets_scan")
         if gate_err:
             return gate_err
@@ -1070,7 +1112,7 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @mcp.tool()
+    @_tool()
     def remediate(
         path: str,
         max_fixes: int = 5,
@@ -1079,6 +1121,7 @@ def _register_tools(mcp):
         test_cmd: str | None = None,
         severity: str | None = None,
     ) -> str:
+        """Plan (dry_run=True, default) or apply LLM-generated fixes for findings; needs an LLM provider key."""
         gate_err = _gate("remediate")
         if gate_err:
             return gate_err
@@ -1113,7 +1156,7 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def verify_dead_code(
         path: str,
         confidence: int = 60,
@@ -1122,6 +1165,7 @@ def _register_tools(mcp):
         max_challenge: int = 10,
         exclude_folders: str | None = None,
     ) -> str:
+        """Run LLM-assisted verification of dead-code findings to remove false positives; needs an LLM provider key."""
         gate_err = _gate("verify_dead_code")
         if gate_err:
             return gate_err
@@ -1187,18 +1231,19 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def provenance_scan(path: str, diff_base: str | None = None) -> str:
+        """Attribute changed files to AI agents, automation bots or humans from git history."""
         gate_err = _gate("provenance_scan")
         if gate_err:
             return gate_err
 
         try:
-            from skylos.provenance import analyze_provenance
-            from skylos.api import get_git_root
+            from skylos.core.file_discovery import find_git_root
+            from skylos.reporting.provenance import analyze_provenance
 
             target = os.path.abspath(path)
-            git_root = get_git_root() or target
+            git_root = str(find_git_root(target) or target)
             report = analyze_provenance(git_root, base_ref=diff_base)
             result = report.to_dict()
             _store_result(result, "provenance_scan", path)
@@ -1206,13 +1251,14 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def generate_fix(
         path: str,
         mode: str = "delete",
         min_safety: float = 0.0,
         apply: bool = False,
     ) -> str:
+        """Generate (and optionally apply) a removal patch for verified dead code."""
         gate_err = _gate("generate_fix")
         if gate_err:
             return gate_err
@@ -1320,18 +1366,19 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def learn_triage(
         path: str,
         action_id: str,
         action: str,
     ) -> str:
+        """Record a triage action for a finding (action_id is its fingerprint) so future suggestions learn from it."""
         gate_err = _gate("learn_triage")
         if gate_err:
             return gate_err
 
         try:
-            from skylos.agent_service import AgentServiceController
+            from skylos.agents.service import AgentServiceController
 
             controller = AgentServiceController(os.path.abspath(path))
             result = controller.learn_triage(action_id, action)
@@ -1340,17 +1387,17 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def get_triage_suggestions(
         path: str,
     ) -> str:
-
+        """Suggest triage decisions for current findings based on recorded history."""
         gate_err = _gate("get_triage_suggestions")
         if gate_err:
             return gate_err
 
         try:
-            from skylos.agent_service import AgentServiceController
+            from skylos.agents.service import AgentServiceController
 
             controller = AgentServiceController(os.path.abspath(path))
             result = controller.get_suggestions()
@@ -1359,7 +1406,7 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def validate_code_change(
         diff: str,
         path: str = ".",
@@ -1392,7 +1439,7 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def verify_change(
         path: str = ".",
         file: str | None = None,
@@ -1403,14 +1450,18 @@ def _register_tools(mcp):
         exclude_folders: str | None = None,
         contract_path: str | None = None,
         contract_enabled: bool = True,
+        include_security_findings: bool = True,
     ) -> str:
-        """Verify a changed file/range for AI-code defects.
+        """Verify a changed file/range for AI-code defects and security bugs.
 
-        Returns a narrow, versioned JSON verdict containing only AI-code trust
+        Returns a narrow, versioned JSON verdict containing AI-code trust
         findings such as hallucinated references, unfinished generated code,
         stale references, disabled controls, and dependency hallucinations
         (checked by default; pass include_dependency_hallucinations=False to
-        skip the registry lookups).
+        skip the registry lookups), plus high/critical security findings
+        (category "security") and hard-coded secrets (category "secret",
+        values redacted) in the selected file/range. Pass
+        include_security_findings=False to skip the security and secret checks.
         """
         gate_err = _gate("verify_change")
         if gate_err:
@@ -1427,13 +1478,14 @@ def _register_tools(mcp):
                 exclude_folders=exclude_folders,
                 contract_path=contract_path,
                 contract_enabled=contract_enabled,
+                include_security_findings=include_security_findings,
             )
             _store_result(result, "verify_change", path)
             return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def verify_agent(
         path: str = ".",
         fail_on: str | None = None,
@@ -1472,10 +1524,11 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @mcp.tool()
+    @_tool()
     def get_security_context(
         path: str,
     ) -> str:
+        """Summarize a project's security context (frameworks, auth, headers, rate limiting, input validation, policy)."""
         gate_err = _gate("get_security_context")
         if gate_err:
             return gate_err

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from skylos.core.verify_change_schema import (
 __all__ = [
     "build_verify_change_response",
     "parse_line_range",
+    "verify_change_diff",
     "verify_change_path",
     "verify_change_stdin_payload",
 ]
@@ -35,10 +38,11 @@ def verify_change_path(
     exclude_folders: list[str] | None = None,
     project_context: bool = False,
     include_dependency_hallucinations: bool = True,
-    include_security_findings: bool = False,
+    include_security_findings: bool = True,
     contract_path: str | Path | None = None,
     contract_enabled: bool = True,
     analyze_func=None,
+    behavior_comparison: bool = True,
 ) -> dict[str, Any]:
     target = Path(path).expanduser()
     target_file = _optional_path(file)
@@ -63,6 +67,7 @@ def verify_change_path(
         or contract_enables_dependency_hallucinations(contract)
     )
     changed_files = _changed_files_for_verify(
+        target,
         scan_target,
         target_file,
     )
@@ -81,6 +86,7 @@ def verify_change_path(
     )
     raw_result = analyze_func(str(scan_target), **analysis_options)
     analysis_result = _analysis_result_dict(raw_result)
+    _absolutize_secret_paths(analysis_result, scan_target)
     _add_contract_route_findings(
         analysis_result,
         contract=contract,
@@ -98,6 +104,11 @@ def verify_change_path(
         include_security_findings=include_security_findings,
         analyzer_owned=analyzer_owned,
     )
+    _rebase_display_paths(response, root)
+    if not behavior_comparison:
+        # Callers that only act on ``fail`` (agent hooks) skip the Git
+        # behavior model: it can only downgrade ``pass`` to ``incomplete``.
+        return response
     from skylos.verification.changes import compare_working_changes
 
     behavior = compare_working_changes(
@@ -113,6 +124,254 @@ def verify_change_path(
             else "; behavior comparison incomplete"
         )
     return response
+
+
+def _rebase_display_paths(response: dict[str, Any], root: Path) -> None:
+    """Report ``range.file`` relative to the Git root, not the target's folder.
+
+    A single-file target uses its parent directory as the analysis root, so
+    without this every finding would name only the file's basename.
+    """
+    display_root = _git_root(root)
+    if display_root is None or display_root == root:
+        return
+
+    def rebase(value: Any) -> Any:
+        if not isinstance(value, str) or not value or value == "unknown":
+            return value
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            return candidate.resolve().relative_to(display_root).as_posix()
+        except (OSError, ValueError):
+            return value
+
+    for finding in _result_findings(response):
+        rng = finding.get("range")
+        if isinstance(rng, dict):
+            rng["file"] = rebase(rng.get("file"))
+    target = response.get("target")
+    if isinstance(target, dict) and target.get("file"):
+        target["file"] = rebase(target["file"])
+
+
+def _git_root(start: Path) -> Path | None:
+    try:
+        resolved = start.resolve()
+    except OSError:
+        return None
+    for parent in (resolved, *resolved.parents):
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+# --------------------------------------------------------------------------
+# verify --diff REF: every line changed since REF (committed, staged,
+# unstaged) plus untracked files.
+# --------------------------------------------------------------------------
+
+MAX_DIFF_FILES = 200
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_SAFE_REF_RE = re.compile(r"^[A-Za-z0-9_./@{}~^:+-]{1,200}$")
+
+
+def verify_change_diff(
+    path: str | Path = ".",
+    *,
+    ref: str = "HEAD",
+    confidence: int = 60,
+    exclude_folders: list[str] | None = None,
+    include_dependency_hallucinations: bool = True,
+    include_security_findings: bool = True,
+    contract_path: str | Path | None = None,
+    contract_enabled: bool = True,
+    analyze_func=None,
+    git_runner=None,
+) -> dict[str, Any]:
+    """Verify the lines changed since ``ref`` (default ``HEAD``).
+
+    Covers commits after ``ref``, staged and unstaged edits, and untracked
+    files. Findings outside the changed lines are dropped. The behavior model
+    is not run: it only compares against ``HEAD``.
+    """
+    run = git_runner or _run_git
+    target = Path(path).expanduser()
+    base = target if target.is_dir() else target.parent
+    if not ref or ref.startswith("-") or not _SAFE_REF_RE.match(ref):
+        raise ValueError(f"invalid --diff ref: {ref!r}")
+    top = run(base, ["rev-parse", "--show-toplevel"])
+    if top is None:
+        raise ValueError(f"--diff needs a Git repository: {base.absolute()}")
+    root = Path(top.strip()).resolve()
+    if run(root, ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]) is None:
+        raise ValueError(f"--diff ref not found: {ref}")
+    diff = run(
+        root,
+        ["diff", "--no-color", "--no-ext-diff", "-U0", "--diff-filter=AMRC", ref, "--"],
+    )
+    untracked = run(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    if diff is None or untracked is None:
+        raise ValueError("git diff failed")
+    changed = parse_added_lines(diff)
+    for rel in untracked.split("\0"):
+        if rel:
+            changed[rel] = None
+    scope = target.resolve()
+    selected = {
+        rel: ranges
+        for rel, ranges in sorted(changed.items())
+        if _within(root / rel, scope) and (root / rel).is_file()
+    }
+
+    findings: list[dict[str, Any]] = []
+    incomplete: list[str] = []
+    skipped = max(0, len(selected) - MAX_DIFF_FILES)
+    with _facts_session(root, enabled=analyze_func is None):
+        for rel, ranges in list(selected.items())[:MAX_DIFF_FILES]:
+            if ranges == []:
+                continue  # only deletions
+            _verify_diff_file(
+                root,
+                rel,
+                ranges,
+                findings,
+                incomplete,
+                confidence=confidence,
+                exclude_folders=exclude_folders,
+                include_dependency_hallucinations=include_dependency_hallucinations,
+                include_security_findings=include_security_findings,
+                contract_path=contract_path,
+                contract_enabled=contract_enabled,
+                analyze_func=analyze_func,
+            )
+
+    if findings:
+        status = "fail"
+    elif incomplete or skipped:
+        status = "incomplete"
+    else:
+        status = "pass"
+    summary = (
+        f"{len(findings)} issue(s) on lines changed since {ref}"
+        if findings
+        else f"No issues on lines changed since {ref}"
+    )
+    if incomplete:
+        summary += f"; verification incomplete for {len(incomplete)} file(s)"
+    if skipped:
+        summary += f"; {skipped} changed file(s) not checked (limit {MAX_DIFF_FILES})"
+    return {
+        "schema_version": 2,
+        "tool": "verify_change",
+        "status": status,
+        "target": {
+            "path": str(root),
+            "file": None,
+            "range": None,
+            "diff": {"ref": ref, "files": list(selected)},
+        },
+        "findings": findings,
+        "summary": summary,
+        "security_checks_enabled": bool(include_security_findings),
+    }
+
+
+def _verify_diff_file(root, rel, ranges, findings, incomplete, **kwargs) -> None:
+    result = verify_change_path(root / rel, behavior_comparison=False, **kwargs)
+    if result.get("status") == "incomplete":
+        incomplete.append(rel)
+    for finding in _result_findings(result):
+        rng = finding.get("range") or {}
+        if not _range_overlaps(rng, ranges):
+            continue
+        rng["file"] = rel
+        findings.append(finding)
+
+
+def _facts_session(root: Path, *, enabled: bool):
+    """Reuse the project module-facts cache across the per-file checks."""
+    import contextlib
+
+    if not enabled:
+        return contextlib.nullcontext()
+    try:
+        from skylos.rules.ai_defect.module_facts_index import (
+            module_facts_index_session,
+        )
+    except ImportError:
+        return contextlib.nullcontext()
+    return module_facts_index_session(root)
+
+
+def parse_added_lines(diff: str) -> dict[str, list[tuple[int, int]] | None]:
+    """Map each file in a ``git diff -U0`` to the line ranges it adds."""
+    changed: dict[str, list[tuple[int, int]] | None] = {}
+    current: str | None = None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            name = line[4:].strip()
+            if name == "/dev/null":
+                current = None
+                continue
+            if name.startswith('"'):
+                try:
+                    name = json.loads(name)
+                except ValueError:
+                    current = None
+                    continue
+            current = name[2:] if name.startswith("b/") else name
+            changed.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        match = _HUNK_RE.match(line)
+        if match:
+            start = int(match.group(1))
+            count = int(match.group(2)) if match.group(2) is not None else 1
+            if count > 0:
+                ranges = changed[current]
+                assert ranges is not None
+                ranges.append((start, start + count - 1))
+    return changed
+
+
+def _range_overlaps(rng: dict[str, Any], ranges: list[tuple[int, int]] | None) -> bool:
+    if ranges is None:
+        return True
+    try:
+        start = int(rng.get("start_line") or 1)
+        end = int(rng.get("end_line") or start)
+    except (TypeError, ValueError):
+        return False
+    return any(not (end < lo or start > hi) for lo, hi in ranges)
+
+
+def _within(path: Path, scope: Path) -> bool:
+    try:
+        path.resolve().relative_to(scope)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _run_git(cwd: Path, args: list[str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args],
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
 
 
 def verify_change_stdin_payload(
@@ -137,6 +396,7 @@ def verify_change_stdin_payload(
     # project-local imports cannot resolve and would be misreported as
     # hallucinated dependencies.
     include_deps = bool(payload.get("include_dependency_hallucinations", False))
+    include_security = _manifest_bool(payload, "include_security_findings", True)
     contract_path = _manifest_value(payload, ("contract_path", "contract"), None)
     contract_enabled = _manifest_contract_enabled(payload)
     contract_path = _manifest_contract_path(
@@ -155,6 +415,7 @@ def verify_change_stdin_payload(
             confidence=confidence,
             exclude_folders=exclude_folders,
             include_dependency_hallucinations=include_deps,
+            include_security_findings=include_security,
             contract_path=contract_path,
             contract_enabled=contract_enabled,
             analyze_func=analyze_func,
@@ -183,7 +444,7 @@ def _analysis_options(
         "enable_danger": include_security_findings,
         "enable_ai_defects": True,
         "enable_dependency_hallucinations": include_dependency_hallucinations,
-        "enable_secrets": False,
+        "enable_secrets": include_security_findings,
         "grep_verify": False,
         "trace_file": False,
     }
@@ -285,16 +546,48 @@ def _contract_scan_root(contract, default_root: Path) -> Path:
 
 
 def _changed_files_for_verify(
+    target: Path,
     scan_target: Path,
     target_file: Path | None,
 ) -> list[str] | None:
+    # The analyzer resolves relative changed files against its own analysis
+    # root, not against the verify target or the caller's cwd, so a relative
+    # path can match nothing and silently drop changed-file-scoped findings
+    # (security findings in particular). Always hand it an absolute path.
     if target_file is not None:
-        if target_file.is_absolute():
-            return [str(target_file)]
-        return [str(target_file).replace("\\", "/")]
+        selected = _scan_target(target, target_file, project_context=False)
+        return [os.path.abspath(selected)]
     if scan_target.is_file():
-        return [str(scan_target)]
+        return [os.path.abspath(scan_target)]
     return None
+
+
+def _absolutize_secret_paths(
+    analysis_result: dict[str, Any],
+    scan_target: Path,
+) -> None:
+    """Secrets report files relative to the analyzer's discovery root.
+
+    That root is the scanned directory, or the parent of a scanned file, which
+    is not necessarily the verify project root used to match findings.
+    """
+    secrets = analysis_result.get("secrets")
+    if not isinstance(secrets, list):
+        return
+    try:
+        resolved = scan_target.resolve()
+    except OSError:
+        return
+    base = resolved if resolved.is_dir() else resolved.parent
+    for finding in secrets:
+        if not isinstance(finding, dict):
+            continue
+        file_value = finding.get("file")
+        if not isinstance(file_value, str) or not file_value:
+            continue
+        if Path(file_value).is_absolute():
+            continue
+        finding["file"] = str(base / file_value)
 
 
 def _write_manifest_code(root: Path, manifest_file: Path, code: str) -> Path:
@@ -429,10 +722,14 @@ def _manifest_value(
 
 
 def _manifest_contract_enabled(payload: dict[str, Any]) -> bool:
-    value = payload.get("contract_enabled", True)
+    return _manifest_bool(payload, "contract_enabled", True)
+
+
+def _manifest_bool(payload: dict[str, Any], key: str, default: bool) -> bool:
+    value = payload.get(key, default)
     if isinstance(value, bool):
         return value
-    raise ValueError("stdin manifest contract_enabled must be true or false")
+    raise ValueError(f"stdin manifest {key} must be true or false")
 
 
 def _manifest_contract_path(

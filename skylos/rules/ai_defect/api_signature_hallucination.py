@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,8 +19,12 @@ from skylos.analysis.ast_cache import (
 from skylos.core.python_api_surface import PythonApiSurfaceCacheSession
 
 RULE_ID_API_SIGNATURE = "SKY-D224"
+RULE_ID_PHANTOM_REFERENCE = "SKY-L012"
 SEV_HIGH = "HIGH"
-DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3", "openai")
+DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3", "openai", "jwt")
+_IMPORT_ERROR_NAMES = frozenset(
+    {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+)
 VIBE_CATEGORY = "api_signature_hallucination"
 AI_LIKELIHOOD = "high"
 # Source-size cap enforced by ast_cache's MODE_SAFE_IGNORE_1MB read mode.
@@ -26,6 +32,9 @@ MAX_PYTHON_API_SIGNATURE_SOURCE_BYTES = mode_max_bytes(MODE_SAFE_IGNORE_1MB)
 _MAX_API_SIGNATURE_PREFILTER_ROOTS = 64
 
 SurfaceLoader = Callable[[str | Path, str], dict[str, Any] | None]
+# Returns True when the dotted module exists, False when it provably does not,
+# and None when existence cannot be decided.
+SubmoduleResolver = Callable[[str], bool | None]
 
 
 @dataclass(frozen=True)
@@ -46,7 +55,10 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         surfaces: dict[str, dict[str, Any] | None],
         surface_loader: SurfaceLoader,
         findings: list[dict[str, Any]],
+        submodule_resolver: SubmoduleResolver | None = None,
     ) -> None:
+        self.submodule_resolver = submodule_resolver
+        self.import_guard_depth = 0
         self.project_root = project_root
         self.file_path = file_path
         self.allowed_roots = allowed_roots
@@ -71,6 +83,7 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             if not self._allowed_module(module_name):
                 continue
 
+            self._check_submodule_path(node, module_name)
             local_name = _import_alias_name(alias, module_name)
             self.module_aliases[local_name] = module_name
         self.generic_visit(node)
@@ -81,6 +94,9 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             self.generic_visit(node)
             return
         if not self._allowed_module(module_name):
+            self.generic_visit(node)
+            return
+        if node.level == 0 and self._check_submodule_path(node, module_name):
             self.generic_visit(node)
             return
 
@@ -98,6 +114,78 @@ class _ApiSignatureChecker(ast.NodeVisitor):
                 self.function_aliases[local_name] = (module_name, imported_name)
 
         self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        guarded = _handlers_catch_import_error(node.handlers)
+        if guarded:
+            self.import_guard_depth += 1
+        for statement in node.body:
+            self.visit(statement)
+        if guarded:
+            self.import_guard_depth -= 1
+        for part in (*node.handlers, *node.orelse, *node.finalbody):
+            self.visit(part)
+
+    visit_TryStar = visit_Try
+
+    def _check_submodule_path(self, node: ast.AST, module_name: str) -> bool:
+        """Report the first dotted segment of an installed package that does
+        not exist (``from requests.retry import X``). Returns True if reported.
+
+        Evidence requires the package root to have been inspected successfully
+        and the import system to answer "no such module" for the submodule;
+        any uncertainty (import errors, dynamic ``sys.modules`` aliases,
+        guarded imports) stays silent.
+        """
+        if self.submodule_resolver is None or self.import_guard_depth:
+            return False
+        parts = module_name.split(".")
+        if len(parts) < 2:
+            return False
+        root_surface = self._surface(parts[0])
+        if root_surface is None or not isinstance(root_surface.get("members"), dict):
+            return False
+        for index in range(1, len(parts)):
+            prefix = ".".join(parts[: index + 1])
+            exists = self.submodule_resolver(prefix)
+            if exists is None:
+                return False
+            if exists:
+                continue
+            parent = ".".join(parts[:index])
+            members = self._surface_members(parent)
+            if members is None or parts[index] in members:
+                return False
+            message = (
+                f"Installed package '{parts[0]}' has no module '{prefix}'; "
+                f"'{parent}' neither contains that submodule nor exports "
+                f"'{parts[index]}'."
+            )
+            finding = _finding(self.file_path, node, prefix, message)
+            finding.update(
+                {
+                    "rule_id": RULE_ID_PHANTOM_REFERENCE,
+                    "severity": "CRITICAL",
+                    "type": "import",
+                    "name": prefix,
+                    "simple_name": parts[index],
+                    "value": "phantom",
+                    "defect_type": "hallucinated_reference",
+                    "vibe_category": "hallucinated_reference",
+                }
+            )
+            self.findings.append(finding)
+            return True
+        return False
+
+    def _surface_members(self, module_name: str) -> dict[str, Any] | None:
+        surface = self._surface(module_name)
+        if surface is None or surface.get("members_truncated") is True:
+            return None
+        members = surface.get("members")
+        if not isinstance(members, dict):
+            return None
+        return members
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.instance_stack.append({})
@@ -347,6 +435,7 @@ def scan_python_api_signature_hallucinations(
     *,
     allowed_modules: tuple[str, ...] | None = None,
     surface_loader: SurfaceLoader | None = None,
+    submodule_resolver: SubmoduleResolver | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     root = _repo_root(repo_root)
@@ -359,9 +448,12 @@ def scan_python_api_signature_hallucinations(
 
     cache_session = None
     loader = surface_loader
+    resolver = submodule_resolver
     if loader is None:
         cache_session = PythonApiSurfaceCacheSession(root)
         loader = cache_session.load_surface
+        if resolver is None:
+            resolver = installed_submodule_exists
     local_modules = _local_module_roots(root, py_files)
     surfaces: dict[str, dict[str, Any] | None] = {}
 
@@ -379,6 +471,7 @@ def scan_python_api_signature_hallucinations(
                 surfaces,
                 loader,
                 findings,
+                resolver,
             )
             checker.visit(tree)
     finally:
@@ -386,6 +479,52 @@ def scan_python_api_signature_hallucinations(
             cache_session.flush()
 
     return findings
+
+
+def installed_submodule_exists(module_name: str) -> bool | None:
+    """Whether an installed dotted module exists, without importing it.
+
+    ``find_spec`` imports the parent packages only (the package root was
+    already imported to capture its API surface). A parent attribute that is
+    itself a module (``os.path``-style aliases, ``six.moves``) counts as
+    existing; any error means "unknown".
+    """
+    parent_name, _, leaf = module_name.rpartition(".")
+    try:
+        if importlib.util.find_spec(module_name) is not None:
+            return True
+    except Exception:
+        return None
+    parent = sys.modules.get(parent_name)
+    if parent is None:
+        return None
+    try:
+        value = getattr(parent, leaf, None)
+    except Exception:
+        return None
+    if value is not None:
+        return True
+    parent_getattr = getattr(parent, "__getattr__", None)
+    if callable(parent_getattr):
+        # Lazy module ``__getattr__`` can materialize names on demand.
+        return None
+    return False
+
+
+def _handlers_catch_import_error(handlers: list[ast.ExceptHandler]) -> bool:
+    for handler in handlers:
+        if handler.type is None:
+            return True
+        candidates = (
+            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        )
+        for candidate in candidates:
+            name = candidate.attr if isinstance(candidate, ast.Attribute) else None
+            if isinstance(candidate, ast.Name):
+                name = candidate.id
+            if name in _IMPORT_ERROR_NAMES:
+                return True
+    return False
 
 
 def _repo_root(value: str | Path | None) -> Path | None:

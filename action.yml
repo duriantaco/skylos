@@ -46,6 +46,14 @@ inputs:
     description: "Maximum inline PR review comments (default: 15)"
     required: false
     default: "15"
+  upload-sarif:
+    description: "Also write skylos.sarif and upload it to GitHub code scanning (source scans only; needs permissions: security-events: write)"
+    required: false
+    default: "false"
+  sarif-category:
+    description: "Code scanning category for the uploaded SARIF (distinguishes multiple Skylos runs in one repo)"
+    required: false
+    default: "skylos"
 
 outputs:
   findings-count:
@@ -203,10 +211,16 @@ runs:
         SKYLOS_ANALYSIS: ${{ inputs.analysis }}
         SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
         SKYLOS_TOKEN: ${{ inputs.token }}
+        SKYLOS_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
         SKYLOS_GO_BIN: ${{ format('{0}/skylos-go-engine/skylos-go{1}', runner.temp, runner.os == 'Windows' && '.exe' || '') }}
       run: |
         REPORT="skylos-report.json"
         echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+        SARIF_ARGS=()
+        if [ "$SKYLOS_UPLOAD_SARIF" = "true" ]; then
+          SARIF_ARGS=(--sarif skylos.sarif)
+          echo "sarif=skylos.sarif" >> "$GITHUB_OUTPUT"
+        fi
 
         # Build flags from analysis types
         FLAGS=""
@@ -231,6 +245,7 @@ runs:
         python -m skylos.cli "$SKYLOS_PATH" \
           --confidence "$SKYLOS_CONFIDENCE" \
           $FLAGS \
+          "${SARIF_ARGS[@]}" \
           --json > "$REPORT"
         SCAN_STATUS=$?
         set -e
@@ -255,6 +270,13 @@ runs:
           echo "::error::Skylos analysis was incomplete; refusing a clean result"
           exit 2
         fi
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: ${{ !cancelled() && inputs.image == '' && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif != '' && hashFiles('skylos.sarif') != '' }}
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      with:
+        sarif_file: skylos.sarif
+        category: ${{ inputs.sarif-category }}
 
     - name: Upload to Skylos Dashboard
       if: inputs.image == ''

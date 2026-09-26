@@ -29,16 +29,14 @@ def run_badge_command() -> int:
     )
     console.print()
 
-    try:
-        import pyperclip
+    from skylos.ui.clipboard import copy_to_clipboard
 
-        pyperclip.copy(BADGE_MARKDOWN)
+    status = copy_to_clipboard(BADGE_MARKDOWN, console)
+    if status == "copied":
         console.print("[good]✅ Badge markdown copied to clipboard![/good]")
-    except ImportError:
+    elif status == "missing":
         console.print(
             "[muted]💡 Install pyperclip for auto-copy: pip install pyperclip[/muted]"
         )
-    except Exception:
-        pass
 
     return 0

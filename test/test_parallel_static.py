@@ -167,3 +167,76 @@ def test_parallel_path_retries_parent_process_when_worker_result_fails(
     out = ps.run_proc_file_parallel([file_path], modmap, jobs=2)
 
     assert out == [("retry-ok", str(file_path), "app")]
+
+
+def _crashing_worker(file_path, mod, *args):
+    """Real-process worker: dies natively on the sentinel file."""
+    import os
+    import signal
+
+    if str(file_path).endswith("crash_me.py"):
+        os.kill(os.getpid(), signal.SIGSEGV)
+    return str(file_path), ("ok", str(file_path), mod)
+
+
+def test_worker_segfault_is_isolated_and_never_retried_in_parent(
+    monkeypatch, tmp_path
+):
+    import skylos.analyzer
+
+    def parent_proc_file(*args, **kwargs):
+        raise AssertionError("crashed file must not be re-run in the parent")
+
+    monkeypatch.setattr(skylos.analyzer, "proc_file", parent_proc_file)
+
+    files = [tmp_path / f"f{i}.py" for i in range(6)]
+    files.insert(3, tmp_path / "crash_me.py")
+    modmap = {f: f.stem for f in files}
+    progress = []
+
+    out = ps.run_proc_file_parallel(
+        files,
+        modmap,
+        jobs=2,
+        progress_callback=lambda done, total, path: progress.append((done, total)),
+        _worker_fn=_crashing_worker,
+    )
+
+    assert len(out) == len(files)
+    for f, result in zip(files, out):
+        if f.name == "crash_me.py":
+            assert isinstance(result, ps.WorkerCrash)
+            assert result.file == str(f)
+        else:
+            assert result == ("ok", str(f), f.stem)
+    assert progress[-1] == (len(files), len(files))
+
+
+def test_analyzer_reports_worker_crash_as_analysis_error(monkeypatch, tmp_path):
+    import skylos.analyzer as analyzer_mod
+
+    good = tmp_path / "good.py"
+    good.write_text("def used():\n    return 1\n\nused()\n", encoding="utf-8")
+    bad = tmp_path / "crash_me.py"
+    bad.write_text("x = 1\n", encoding="utf-8")
+    real_parallel = analyzer_mod.run_proc_file_parallel
+
+    def fake_parallel(files, modmap, **kwargs):
+        outs = real_parallel(
+            [f for f in files if f.name != "crash_me.py"], modmap, **kwargs
+        )
+        by_name = dict(zip([f for f in files if f.name != "crash_me.py"], outs))
+        return [
+            ps.WorkerCrash(str(f)) if f.name == "crash_me.py" else by_name[f]
+            for f in files
+        ]
+
+    monkeypatch.setattr(analyzer_mod, "run_proc_file_parallel", fake_parallel)
+    import json
+
+    result = json.loads(analyzer_mod.analyze(str(tmp_path)))
+    errors = [e for e in result["analysis_errors"] if e["kind"] == "worker_crash"]
+    assert len(errors) == 1
+    assert errors[0]["file"].endswith("crash_me.py")
+    assert errors[0]["message"] == ps.WORKER_CRASH_MESSAGE
+    assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"

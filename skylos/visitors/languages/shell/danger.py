@@ -94,10 +94,86 @@ _SSRF_FINDING = (
 )
 
 
+_FUNCTION_HEADER_RE = re.compile(
+    r"^(?:function\s+(?P<kw>[A-Za-z_][\w:-]*)\s*(?:\(\s*\))?|(?P<name>[A-Za-z_][\w:-]*)\s*\(\s*\))\s*\{?$"
+)
+
+
 @dataclass
 class _ShellState:
     tainted_vars: set[str] = field(default_factory=set)
     path_sanitized_vars: set[str] = field(default_factory=set)
+    # Whether ``$1``/``$@`` are untrusted at the current statement: always at
+    # script level (command-line arguments); inside a function only when some
+    # call site passes untrusted data (``download "$CONST_URL"`` is not).
+    positional_tainted: bool = True
+
+
+def _function_scopes(statements: list[tuple[int, str]]) -> list[str | None]:
+    """Enclosing shell function name for every statement (None at top level)."""
+    scopes: list[str | None] = []
+    stack: list[tuple[str | None, int]] = []  # (function name, brace depth)
+    depth = 0
+    pending_function: str | None = None
+    for _line_no, statement in statements:
+        text = statement.strip()
+        header = _FUNCTION_HEADER_RE.match(text)
+        current = next((name for name, _ in reversed(stack) if name), None)
+        if header:
+            name = header.group("kw") or header.group("name")
+            scopes.append(current)
+            if text.endswith("{"):
+                depth += 1
+                stack.append((name, depth))
+            else:
+                pending_function = name
+            continue
+        if pending_function is not None and text == "{":
+            depth += 1
+            stack.append((pending_function, depth))
+            pending_function = None
+            scopes.append(current)
+            continue
+        pending_function = None
+        scopes.append(current)
+        if text.endswith("{") and not text.endswith("${"):
+            depth += 1
+            stack.append((None, depth))
+        elif text.startswith("}"):
+            if stack and stack[-1][1] == depth:
+                stack.pop()
+            depth = max(depth - 1, 0)
+    return scopes
+
+
+def _tainted_functions(
+    statements: list[tuple[int, str]], scopes: list[str | None]
+) -> set[str]:
+    """Functions whose positional parameters can carry untrusted data."""
+    functions = {scope for scope in scopes if scope}
+    called: set[str] = set()
+    tainted: set[str] = set()
+    for _ in range(4):
+        state = _ShellState()
+        before = set(tainted)
+        for (_line_no, statement), scope in zip(statements, scopes):
+            text = statement.strip()
+            state.positional_tainted = scope is None or scope in tainted
+            _handle_read(text, state)
+            _handle_assignment(text, state)
+            tokens = _shell_tokens(text)
+            idx = _command_index(tokens)
+            if idx is None or tokens[idx] not in functions:
+                continue
+            name = tokens[idx]
+            called.add(name)
+            if any(_is_tainted(arg, state) for arg in tokens[idx + 1 :]):
+                tainted.add(name)
+        if tainted == before:
+            break
+    # A function that is never called here is a library entry point: its
+    # arguments come from whoever sources the script.
+    return tainted | (functions - called)
 
 
 def scan_danger(file_path: str, source: str) -> list[dict]:
@@ -105,11 +181,16 @@ def scan_danger(file_path: str, source: str) -> list[dict]:
     seen: set[tuple[str, int, str]] = set()
     state = _ShellState()
 
-    for line_no, statement in _iter_statements(source):
+    statements = _iter_statements(source)
+    scopes = _function_scopes(statements)
+    tainted_functions = _tainted_functions(statements, scopes)
+
+    for (line_no, statement), scope in zip(statements, scopes):
         text = statement.strip()
         if not text:
             continue
 
+        state.positional_tainted = scope is None or scope in tainted_functions
         _handle_read(text, state)
         _handle_assignment(text, state)
 
@@ -441,7 +522,7 @@ def _basename_call_is_tainted(expr: str, state: _ShellState) -> bool:
 def _is_tainted(expr: str, state: _ShellState) -> bool:
     if not expr:
         return False
-    if _POSITIONAL_RE.search(expr):
+    if state.positional_tainted and _POSITIONAL_RE.search(expr):
         return True
     return bool(_tainted_refs(expr, state))
 

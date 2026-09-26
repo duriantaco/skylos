@@ -310,3 +310,37 @@ export function Button() {
 
     assert "invoke" in import_names
     assert "invoke" in ref_names
+
+
+def test_typescript_syntax_errors_are_reported_as_analysis_errors(tmp_path):
+    import json
+
+    from skylos.analyzer import analyze
+
+    (tmp_path / "good.ts").write_text(
+        "export const ok = (v?: { a?: number }) => v?.a ?? 1 satisfies number;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "view.tsx").write_text(
+        "export function View<T,>(p: { items: T[] }) {\n"
+        "  return <ul>{p.items.map((i, n) => <li key={n}>{String(i)}</li>)}</ul>;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "bad.ts").write_text(
+        "export function ok() { return 1 }\n\nconst x = ;\n", encoding="utf-8"
+    )
+    (tmp_path / "bad.js").write_text("function f( {\n", encoding="utf-8")
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    errors = {
+        error["file"].rsplit("/", 1)[-1]: error for error in result["analysis_errors"]
+    }
+    assert set(errors) == {"bad.ts", "bad.js"}
+    assert errors["bad.ts"]["kind"] == "syntax_error"
+    assert errors["bad.ts"]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+    assert errors["bad.ts"]["line"] == 3
+    assert "parse error" in errors["bad.ts"]["message"]
+    assert "suggestion" not in errors["bad.ts"]  # no Python-runtime advice
+    assert result["analysis_summary"]["analysis_error_count"] == 2

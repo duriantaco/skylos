@@ -1,0 +1,20 @@
+id = "ex-c1-clean-validation"
+base = "express-realworld"
+language = "typescript"
+clean = true
+story = "Control: the agent clamps pagination parameters on the feed route. No seeded defect."
+
+[[edits]]
+file = "src/app/routes/article/article.controller.ts"
+old = '''
+      const result = await getFeed(
+        Number(req.query.offset),
+        Number(req.query.limit),
+        req.auth?.user?.id,
+      );
+'''
+new = '''
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
+      const result = await getFeed(offset, limit, req.auth?.user?.id);
+'''

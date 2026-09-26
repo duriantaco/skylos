@@ -167,9 +167,13 @@ skylos sbom . --output sbom.cdx.json
 ```
 
 The default output is CycloneDX 1.6 JSON. Omit `--output` or use `--output -`
-to write JSON to stdout. `--format cyclonedx-json` is also accepted. This is a
+to write JSON to stdout. `--format cyclonedx-json` is also accepted, and
+`--format spdx-json` writes SPDX 2.3 JSON instead. This is a
 separate offline inventory command: it does not contact OSV, run a vulnerability
-scan, execute project code, or require Cloud changes.
+scan, execute project code, or require Cloud changes. Declared licenses are read
+from lockfiles and installed package metadata; `--license-lookup` is the only
+option that makes network requests. See
+[License compliance](./license-compliance.md).
 
 The artifact includes every supported exact public package identity, not just
 vulnerable packages. It preserves multiple versions, deduplicated package URLs,
@@ -180,26 +184,35 @@ dependency-free. Incomplete inventories omit the graph entirely.
 
 `metadata.properties` contains `skylos:inventory:receipt`, a JSON-encoded record
 of counts and gaps. No source snippets, absolute checkout paths, or transport
-URLs are included. Output is deterministic for identical inputs and Skylos
-versions; there is no generated timestamp or random serial number.
+URLs are included. CycloneDX output is deterministic for identical inputs,
+installed package metadata, and Skylos versions; there is no generated timestamp
+or random serial number. SPDX requires a `created` timestamp, which honours
+`SOURCE_DATE_EPOCH`.
 
-- Exit **0** means the supported inventory was exported. With a matching lock
+- Exit **0** means the available inventory was exported. With a matching lock
   in the same project/workspace and ecosystem, manifest ranges remain recorded
   limitations; lock freshness and range satisfaction are not verified.
-- Exit **2** means incomplete input coverage or a read/write error. Examples:
-  malformed locks, unsupported locks, unknown schemas, limits, unresolved
-  sources, manifest ranges without a corresponding recorded lock inventory,
-  or no supported inputs. Available components are still written when possible.
+- Incomplete input coverage (malformed locks, unsupported locks, unknown
+  schemas, limits, unresolved sources, manifest ranges without a corresponding
+  recorded lock inventory such as an unpinned `requirements.txt` with no
+  lockfile, or no supported inputs) prints an `SBOM incomplete` warning on
+  stderr and records the gaps in the receipt, but still exits **0**. Add
+  `--strict` to exit **2** on an incomplete inventory, for example in a release
+  pipeline that must not publish a partial SBOM.
+- Exit **2** always means a usage, read or write error (bad path, refused
+  output file).
 - Existing input manifests and lockfiles cannot be selected as output files.
   Output parents must exist; unsafe linked output paths are rejected.
 
-This is a **pre-build, partial inventory**, not an installed-environment or
-licence attestation. Local workspace packages are counted but not exported as
+This is a **pre-build, partial inventory**, not an installed-environment
+attestation. Local workspace packages are counted but not exported as
 public third-party components. Private/unresolved sources, unsupported package
-managers, licences, artifact hashes, and production environment selection are
-not filled in. CycloneDX `compositions` therefore remains `incomplete`, even
-when the supported inventory export succeeds. SBOM import, SPDX output and
-licence policy are not included in this first version.
+managers, artifact hashes, and production environment selection are
+not filled in. Licenses are declared licenses only, and unknown values stay
+`NOASSERTION` (no CycloneDX `licenses` entry). CycloneDX `compositions`
+therefore remains `incomplete`, even when the supported inventory export
+succeeds. SBOM import is not supported. License policy (`SKY-SCA-LIC001`) is
+described in [License compliance](./license-compliance.md).
 
 ## Results and failures
 

@@ -158,6 +158,29 @@ def _render_analysis_errors(
     console.print()
 
 
+def _render_analysis_warnings(console: Console, result, *, root_path=None, limit=None):
+    warnings = [
+        w for w in (result.get("analysis_warnings") or []) if isinstance(w, dict)
+    ]
+    if not warnings:
+        return
+    visible, overflow = _display_cap(warnings, limit)
+    console.print(
+        f"[warn]Analysis warnings: {len(warnings)} file(s) outside the diff could "
+        "not be analyzed (not blocking):[/warn]"
+    )
+    for warning in visible:
+        path = escape(_shorten_path(warning.get("file"), root_path))
+        kind = str(warning.get("kind") or "analysis error").replace("_", " ")
+        message = escape(str(warning.get("message") or ""))
+        console.print(
+            f"  [muted]{path}:{warning.get('line') or 1} {kind}: {message}[/muted]"
+        )
+    if overflow:
+        console.print(f"  [muted]... and {overflow} more[/muted]")
+    console.print()
+
+
 def _score_style(score):
     if score >= 90:
         return "good"
@@ -234,17 +257,15 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
     )
 
     if copy_badge:
-        try:
-            import pyperclip
+        from skylos.ui.clipboard import copy_to_clipboard
 
-            pyperclip.copy(badge_markdown)
+        status = copy_to_clipboard(badge_markdown, console)
+        if status == "copied":
             console.print("[good]Copied to clipboard![/good]")
-        except ImportError:
+        elif status == "missing":
             console.print(
                 "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
             )
-        except (pyperclip.PyperclipException, OSError) as exc:
-            logger.debug("Failed to copy badge markdown to clipboard: %s", exc)
 
     console.print()
 
@@ -916,6 +937,7 @@ def render_results(
         root_path=root_path,
         limit=limit,
     )
+    _render_analysis_warnings(console, result, root_path=root_path, limit=limit)
 
     grade_data = result.get("grade")
     if grade_data:

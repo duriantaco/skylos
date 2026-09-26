@@ -26,6 +26,7 @@ from skylos.security.command_guard import (
 from .calls import (
     DANGEROUS_CALLS,
     _matches_rule,
+    _declares_non_security_use,
     _kw_equals,
     _qualified_name_from_call as qualified_name_from_call,
     _weak_random_has_security_context,
@@ -161,6 +162,10 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     if not _weak_random_has_security_context(
                         node, self._current_symbol()
                     ):
+                        continue
+
+                if opts and opts.get("security_optout"):
+                    if _declares_non_security_use(node):
                         continue
 
                 self.findings.append(
@@ -305,6 +310,7 @@ _PATH_TOKENS = (
     "write_bytes",
     "send_file",
     "send_from_directory",
+    "fileresponse",
     "extract(",
     "extractall",
     "tarfile",
@@ -314,6 +320,7 @@ _XSS_TOKENS = (
     "markup",
     "mark_safe",
     "render_template_string",
+    "from_string",
     "|safe",
     "autoescape false",
     "<",

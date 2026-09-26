@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from skylos.api._ai_detection import detect_ai_code as _detect_ai_code
+from skylos.core import ci_env as _ci_env
 from skylos.api._artifacts import (
     UPLOAD_PROTOCOL_VERSION as UPLOAD_PROTOCOL_VERSION,
     PreparedReportUpload,
@@ -180,6 +181,14 @@ def _detect_ci():
             "sha": os.getenv("GITHUB_SHA"),
         }
 
+    # Checked before Jenkins: its BUILD_NUMBER marker is generic enough to be
+    # set by hand in other CIs, while these markers are provider-specific.
+    if _ci_env.is_bitbucket_pipelines():
+        return _ci_env.BITBUCKET_PIPELINES, _ci_env.bitbucket_pipelines_metadata()
+
+    if _ci_env.is_azure_pipelines():
+        return _ci_env.AZURE_PIPELINES, _ci_env.azure_pipelines_metadata()
+
     if os.getenv("JENKINS_URL") or os.getenv("BUILD_NUMBER"):
         return "jenkins", {
             "build_number": os.getenv("BUILD_NUMBER"),
@@ -281,6 +290,11 @@ def _extract_pr_number(provider, meta):
 
     if provider == "gitlab":
         pr_number = _parse_optional_int(meta.get("merge_request_iid"))
+        if pr_number is not None:
+            return pr_number
+
+    if provider in (_ci_env.BITBUCKET_PIPELINES, _ci_env.AZURE_PIPELINES):
+        pr_number = _parse_optional_int(_ci_env.pr_number_env(provider))
         if pr_number is not None:
             return pr_number
 

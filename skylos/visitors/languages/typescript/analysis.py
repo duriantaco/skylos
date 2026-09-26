@@ -393,6 +393,8 @@ _TEST_SUFFIXES = (
     ".spec.cjs",
 )
 
+_STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
+
 _CONFIG_FILES = frozenset(
     {
         "vitest.config.ts",
@@ -472,6 +474,9 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
     sf = sf.replace(os.sep, "/")
     if f"/{sf}".endswith(_VITEPRESS_CONFIG_SUFFIXES):
         return True
+    if _STORYBOOK_FILE_RE.search(sf):
+        # Storybook's loader imports story files (Component Story Format).
+        return True
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True
     if "/test/" in sf or "/tests/" in sf or "/testdata/" in sf:
@@ -503,6 +508,9 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
 def _is_ts_dev_or_test_root(sf: str) -> bool:
     sf = sf.replace(os.sep, "/")
     if f"/{sf}".endswith(_VITEPRESS_CONFIG_SUFFIXES):
+        return True
+    if _STORYBOOK_FILE_RE.search(sf):
+        # Storybook's loader imports story files (Component Story Format).
         return True
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True

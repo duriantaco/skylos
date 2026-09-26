@@ -13,6 +13,7 @@ from difflib import SequenceMatcher
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit
 
+from skylos.core.fast_paths import ParentResolver, relative_parts
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
     read_text_no_symlink,
@@ -277,9 +278,10 @@ def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
         "pubspec.yaml": _parse_pubspec_yaml,
     }
 
+    resolver = ParentResolver()
     for dirpath, dirnames, filenames in os.walk(root):
         _filter_manifest_dirs(dirnames)
-        if _manifest_depth(root, dirpath) > 3:
+        if _manifest_depth(root, dirpath, resolver) > 3:
             dirnames.clear()
             continue
 
@@ -503,9 +505,10 @@ def _npm_name_matches_private_scope(name: str, private_scopes: set[str]) -> bool
 
 def _collect_install_surface_dependencies(root: Path) -> list[dict[str, Any]]:
     dependencies: list[dict[str, Any]] = []
+    resolver = ParentResolver()
     for dirpath, dirnames, filenames in os.walk(root):
         _filter_manifest_dirs(dirnames)
-        if _manifest_depth(root, dirpath) > INSTALL_SURFACE_MAX_DEPTH:
+        if _manifest_depth(root, dirpath, resolver) > INSTALL_SURFACE_MAX_DEPTH:
             dirnames.clear()
             continue
 
@@ -1639,14 +1642,17 @@ def _filter_manifest_dirs(dirnames: list[str]) -> None:
     dirnames[:] = kept
 
 
-def _manifest_depth(root: Path, dirpath: str) -> int:
+def _manifest_depth(
+    root: Path,
+    dirpath: str,
+    resolver: ParentResolver | None = None,
+) -> int:
     try:
-        relative = Path(dirpath).resolve().relative_to(root)
+        path = Path(dirpath)
+        resolved = path.resolve() if resolver is None else resolver.resolve(path)
+        return len(relative_parts(resolved, root))
     except (OSError, ValueError):
         return 0
-    if not relative.parts:
-        return 0
-    return len(relative.parts)
 
 
 def _unique_dependencies(dependencies: list[dict[str, Any]]) -> list[dict[str, Any]]:

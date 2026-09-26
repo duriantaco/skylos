@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skylos.core.git_context import GitContext
+from skylos.core.ci_env import github_or_ci_base_ref
 
 RULE_ID = "SKY-SC001"
 _VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
@@ -104,7 +105,7 @@ def resolve_diff_base_ref(project_root: str | os.PathLike[str]) -> str | None:
     if env_base:
         return env_base
 
-    github_base = str(os.getenv("GITHUB_BASE_REF") or "").strip()
+    github_base = str(github_or_ci_base_ref() or "").strip()
     if github_base:
         candidate = f"origin/{github_base}"
         if _git_ref_exists(project_root, candidate):

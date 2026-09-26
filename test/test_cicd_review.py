@@ -119,7 +119,7 @@ def test_pr_review_ignores_old_finding_after_deletion_only_hunk():
     diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +0,0 @@\n-# note\n"
     results = {
         "quality": [
-            {"file": "a.py", "line": 1, "rule_id": "SKY-Q301", "message": "Old issue"}
+            {"file": "a.py", "line": 1, "rule_id": "SKY-L007", "message": "Old issue"}
         ]
     }
 
@@ -272,7 +272,7 @@ def test_pr_review_uses_report_repository_instead_of_current_directory(
             {
                 "file": str(report_repo / "report.py"),
                 "line": 1,
-                "rule_id": "SKY-Q301",
+                "rule_id": "SKY-L007",
                 "message": "Issue in report repository",
             }
         ],

@@ -169,11 +169,50 @@ def _decorator_has_response_contract(decorator: ast.AST) -> bool:
     )
 
 
-def _route_has_auth_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _has_dependency_call(node: ast.AST | None) -> bool:
+    """``[Depends(guard)]`` / ``[Security(guard, scopes=...)]``."""
+    if node is None:
+        return False
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call) and _last_name_part(
+            _dotted_name(sub.func)
+        ) in {"depends", "security"}:
+            return True
+    return False
+
+
+def _guarded_router_names(module: ast.AST) -> set[str]:
+    """``router = APIRouter(dependencies=[Depends(guard)])``: every route on
+    the router runs the guard."""
+    names: set[str] = set()
+    for stmt in ast.walk(module):
+        if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Call):
+            continue
+        if _last_name_part(_dotted_name(stmt.value.func)) not in {
+            "apirouter",
+            "fastapi",
+        }:
+            continue
+        if any(
+            kw.arg == "dependencies" and _has_dependency_call(kw.value)
+            for kw in stmt.value.keywords
+        ):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+    return names
+
+
+def _route_has_auth_guard(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    guarded_routers: set[str] | None = None,
+) -> bool:
     for decorator in node.decorator_list:
         name = _decorator_name(decorator)
         method_name = _last_name_part(name)
         if method_name not in ROUTE_METHOD_NAMES and _has_auth_marker(name):
+            return True
+        if guarded_routers and name.rsplit(".", 1)[0] in guarded_routers:
             return True
 
         call = _decorator_call(decorator)
@@ -181,6 +220,13 @@ def _route_has_auth_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
             for keyword in call.keywords:
                 if keyword.arg in {"dependencies", "dependency_overrides"}:
                     if _call_uses_auth(keyword.value):
+                        return True
+                    # Path-operation dependencies run only for their side
+                    # effects (FastAPI discards the return value), so a
+                    # Depends() there is a guard whatever the callable is named.
+                    if keyword.arg == "dependencies" and _has_dependency_call(
+                        keyword.value
+                    ):
                         return True
 
     args = [
@@ -333,6 +379,7 @@ class FrameworkPracticeRule(SkylosRule):
             return None
 
         findings = []
+        guarded_routers = _guarded_router_names(node)
         for function in ast.walk(node):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -377,7 +424,9 @@ class FrameworkPracticeRule(SkylosRule):
                 _, decorator_methods = _route_methods(decorator)
                 methods.update(decorator_methods)
 
-            if methods & MUTATING_HTTP_METHODS and not _route_has_auth_guard(function):
+            if methods & MUTATING_HTTP_METHODS and not _route_has_auth_guard(
+                function, guarded_routers
+            ):
                 findings.append(
                     {
                         "rule_id": "SKY-F102",

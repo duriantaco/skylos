@@ -1,0 +1,43 @@
+id = "fa-10-dead-code"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'add magic-link login'. The agent adds a helper and an import that nothing uses; the route was never written."
+
+[[edits]]
+file = "backend/app/utils.py"
+old = '''
+from pathlib import Path
+'''
+new = '''
+from pathlib import Path
+from urllib.parse import urlencode
+'''
+
+[[edits]]
+file = "backend/app/utils.py"
+mode = "append"
+new = '''
+
+
+def build_magic_link(email: str, *, expires_minutes: int = 15) -> str:
+    """Return a one-time login link for the given email address."""
+    delta = timedelta(minutes=expires_minutes)
+    token = security.create_access_token(email, expires_delta=delta)
+    return f"{settings.FRONTEND_HOST}/magic-login?token={token}"
+'''
+
+[[defects]]
+id = "d1"
+category = "dead_code"
+description = "Unused import urlencode."
+[[defects.locations]]
+file = "backend/app/utils.py"
+anchor = "from urllib.parse import urlencode"
+
+[[defects]]
+id = "d2"
+category = "dead_code"
+description = "build_magic_link is never referenced."
+[[defects.locations]]
+file = "backend/app/utils.py"
+anchor = "def build_magic_link("

@@ -57,6 +57,7 @@ _trees: dict[str, dict[str, ast.Module | None]] = {}
 _source_pool: dict[str, dict[str, str]] = {}
 _path_tokens: dict[str, tuple | None] = {}
 _dependent_clears: list[Callable[[], None]] = []
+_run_memo: dict[tuple, object] = {}
 _session_depth = 0
 
 
@@ -161,6 +162,24 @@ def load_python_module(path: Path, mode: str) -> tuple[str | None, ast.Module | 
     return source, tree
 
 
+def run_memo(key: tuple, compute: Callable[[], object]) -> object:
+    """Compute ``compute()`` once per cache session for ``key``.
+
+    For results that are fixed for the duration of one analyzer run but
+    expensive to recompute (``git ls-files``, ``git diff`` of a file),
+    which several passes of the same run ask for. Outside a session this
+    just calls ``compute`` -- there is no run to scope the value to.
+    Callers must not mutate the returned value.
+    """
+    if _session_depth == 0:
+        return compute()
+    value = _run_memo.get(key, _MISSING)
+    if value is _MISSING:
+        value = compute()
+        _run_memo[key] = value
+    return value
+
+
 def register_dependent_clear(callback: Callable[[], None]) -> None:
     """Register a callback run whenever this cache is cleared.
 
@@ -210,3 +229,4 @@ def clear_python_ast_cache() -> None:
     _trees.clear()
     _source_pool.clear()
     _path_tokens.clear()
+    _run_memo.clear()

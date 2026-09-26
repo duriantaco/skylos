@@ -1,0 +1,2282 @@
+{
+ "bandit|ex-01-auth-removed": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-02-unauth-admin-route": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-03-hallucinated-member": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-04-phantom-local-export": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-05-hallucinated-package": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-06-sqli": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-07-cmdi": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-08-eval": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-09-secret-jwt": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-10-secret-aws": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-11-xss": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-12-open-redirect": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-13-path-traversal": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-14-weakened-tests": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-15-dead-code": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-16-unparseable": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-17-tls-disabled": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-18-insecure-random": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-c1-clean-validation": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|ex-c2-clean-test": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|fa-01-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1275919999970938
+ },
+ "bandit|fa-02-admin-guard-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.15138087500235997
+ },
+ "bandit|fa-03-jwt-unverified": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1253776250014198
+ },
+ "bandit|fa-04-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2788066249995609
+ },
+ "bandit|fa-05-hallucinated-kwarg": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.12806804099818692
+ },
+ "bandit|fa-06-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.19463712500146357
+ },
+ "bandit|fa-07-secret-key": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1583348339991062
+ },
+ "bandit|fa-08-sqli": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.20640091599489097
+ },
+ "bandit|fa-09-weakened-tests": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.16713491599512054
+ },
+ "bandit|fa-10-dead-code": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.15086175000033109
+ },
+ "bandit|fa-11-cmdi": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.15027662500506267
+ },
+ "bandit|fa-12-xss": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1679703330009943
+ },
+ "bandit|fa-13-cors": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.16509391699946718
+ },
+ "bandit|fa-14-weak-hash": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.15481612499570474
+ },
+ "bandit|fa-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1607776249948074
+ },
+ "bandit|fa-c2-clean-test": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.17103700000006938
+ },
+ "bandit|mb-01-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.23388287499983562
+ },
+ "bandit|mb-02-hallucinated-api": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.1409616669989191
+ },
+ "bandit|mb-03-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.137127292000514
+ },
+ "bandit|mb-04-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.13304812499700347
+ },
+ "bandit|mb-05-authn-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.365267875000427
+ },
+ "bandit|mb-06-sqli": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.23020087500481168
+ },
+ "bandit|mb-07-cmdi": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.24406716599332867
+ },
+ "bandit|mb-08-ssrf": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.24702741699729813
+ },
+ "bandit|mb-09-path-traversal": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.3951527079989319
+ },
+ "bandit|mb-10-ssti": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.36029183399659814
+ },
+ "bandit|mb-11-pickle": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.507733708996966
+ },
+ "bandit|mb-12-secret-password": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.25524958399910247
+ },
+ "bandit|mb-13-secret-apikey": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2607739580053021
+ },
+ "bandit|mb-14-secret-token": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.3119831250005518
+ },
+ "bandit|mb-15-tls-disabled": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.41966949999914505
+ },
+ "bandit|mb-16-insecure-random": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2928917919998639
+ },
+ "bandit|mb-17-debug-mode": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.5124880000003031
+ },
+ "bandit|mb-18-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2783445829991251
+ },
+ "bandit|mb-19-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.3409914580042823
+ },
+ "bandit|mb-20-unparseable": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.20014404100220418
+ },
+ "bandit|mb-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2410388749995036
+ },
+ "bandit|mb-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.24665491700579878
+ },
+ "bandit|mb-c3-clean-subprocess": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2983131670043804
+ },
+ "bandit|real-01": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.9318822080022073
+ },
+ "bandit|real-02": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.41012879199843155
+ },
+ "bandit|real-03": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.25203233399952296
+ },
+ "bandit|real-04": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.21146412500092993
+ },
+ "bandit|real-05": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.26886183400347363
+ },
+ "bandit|real-06": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.3953084579989081
+ },
+ "bandit|real-07": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2621989159961231
+ },
+ "bandit|real-08": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.18465020800067578
+ },
+ "bandit|real-09": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.5234946249984205
+ },
+ "bandit|real-10": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.48351083300076425
+ },
+ "bandit|real-11": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.9628464580018772
+ },
+ "bandit|real-12": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.6663746660051402
+ },
+ "bandit|real-13": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.29089512500650017
+ },
+ "bandit|real-14": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.5062321660007001
+ },
+ "bandit|real-15": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.7572507500008214
+ },
+ "bandit|real-16": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2959177090015146
+ },
+ "bandit|real-17": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 1.1050389160009217
+ },
+ "bandit|real-18": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.4028323329985142
+ },
+ "bandit|real-19": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 0.2695625830019708
+ },
+ "bandit|real-20": {
+  "exit_code": 1,
+  "note": "",
+  "status": "ok",
+  "wall_s": 1.34106375000556
+ },
+ "bandit|real-21": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-22": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-23": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-24": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-25": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-26": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-27": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-28": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-29": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-30": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-31": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-32": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-33": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-34": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-35": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "bandit|real-36": {
+  "exit_code": null,
+  "note": "no changed Python files",
+  "status": "not_applicable",
+  "wall_s": null
+ },
+ "semgrep|ex-01-auth-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.6665042499953415
+ },
+ "semgrep|ex-02-unauth-admin-route": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.14629862500442
+ },
+ "semgrep|ex-03-hallucinated-member": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.268210709000414
+ },
+ "semgrep|ex-04-phantom-local-export": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.077547875000164
+ },
+ "semgrep|ex-05-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.956081707998237
+ },
+ "semgrep|ex-06-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.397296874994936
+ },
+ "semgrep|ex-07-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.01034079099918
+ },
+ "semgrep|ex-08-eval": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.481138667004416
+ },
+ "semgrep|ex-09-secret-jwt": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.570258083003864
+ },
+ "semgrep|ex-10-secret-aws": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.722194874993875
+ },
+ "semgrep|ex-11-xss": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.189851249997446
+ },
+ "semgrep|ex-12-open-redirect": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.1619803339999635
+ },
+ "semgrep|ex-13-path-traversal": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.190044916998886
+ },
+ "semgrep|ex-14-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.218661083003099
+ },
+ "semgrep|ex-15-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.1660658749970025
+ },
+ "semgrep|ex-16-unparseable": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.91284912500123
+ },
+ "semgrep|ex-17-tls-disabled": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.130768041999545
+ },
+ "semgrep|ex-18-insecure-random": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.922033208000357
+ },
+ "semgrep|ex-c1-clean-validation": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.359845541999675
+ },
+ "semgrep|ex-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.749288916005753
+ },
+ "semgrep|fa-01-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.0450487499983865
+ },
+ "semgrep|fa-02-admin-guard-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.636282792002021
+ },
+ "semgrep|fa-03-jwt-unverified": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.650219541996194
+ },
+ "semgrep|fa-04-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.954252959003497
+ },
+ "semgrep|fa-05-hallucinated-kwarg": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.67679429200507
+ },
+ "semgrep|fa-06-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.784316958001
+ },
+ "semgrep|fa-07-secret-key": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.281488583001192
+ },
+ "semgrep|fa-08-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.739933832999668
+ },
+ "semgrep|fa-09-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.616145833999326
+ },
+ "semgrep|fa-10-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.6061237920002895
+ },
+ "semgrep|fa-11-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.3462471250022645
+ },
+ "semgrep|fa-12-xss": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.925739290993079
+ },
+ "semgrep|fa-13-cors": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.4599425829946995
+ },
+ "semgrep|fa-14-weak-hash": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.77435400000104
+ },
+ "semgrep|fa-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.862465042002441
+ },
+ "semgrep|fa-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.148389292000502
+ },
+ "semgrep|mb-01-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.231010999996215
+ },
+ "semgrep|mb-02-hallucinated-api": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.009552207993693
+ },
+ "semgrep|mb-03-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.863808165995579
+ },
+ "semgrep|mb-04-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.5882108340010745
+ },
+ "semgrep|mb-05-authn-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.317806915998517
+ },
+ "semgrep|mb-06-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.876521250000224
+ },
+ "semgrep|mb-07-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 16.742859040998155
+ },
+ "semgrep|mb-08-ssrf": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.693092084002274
+ },
+ "semgrep|mb-09-path-traversal": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 13.898029333999148
+ },
+ "semgrep|mb-10-ssti": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 21.854145500001323
+ },
+ "semgrep|mb-11-pickle": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 15.356069374996878
+ },
+ "semgrep|mb-12-secret-password": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.744436125001812
+ },
+ "semgrep|mb-13-secret-apikey": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 34.09719825000502
+ },
+ "semgrep|mb-14-secret-token": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.383148707995133
+ },
+ "semgrep|mb-15-tls-disabled": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 15.343271042002016
+ },
+ "semgrep|mb-16-insecure-random": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 15.07550700000138
+ },
+ "semgrep|mb-17-debug-mode": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.927874000000884
+ },
+ "semgrep|mb-18-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.010373333003372
+ },
+ "semgrep|mb-19-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 12.061138958997617
+ },
+ "semgrep|mb-20-unparseable": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.3707325830037
+ },
+ "semgrep|mb-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 14.91128783300519
+ },
+ "semgrep|mb-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.208611500005645
+ },
+ "semgrep|mb-c3-clean-subprocess": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 19.03681074999622
+ },
+ "semgrep|real-01": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 31.518099207998603
+ },
+ "semgrep|real-02": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.74896387499757
+ },
+ "semgrep|real-03": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.781739167003252
+ },
+ "semgrep|real-04": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.465795000003709
+ },
+ "semgrep|real-05": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.122629000004963
+ },
+ "semgrep|real-06": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 15.156515583003056
+ },
+ "semgrep|real-07": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.59261166700162
+ },
+ "semgrep|real-08": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.370622499998717
+ },
+ "semgrep|real-09": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 12.685412208003982
+ },
+ "semgrep|real-10": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 13.738799833001394
+ },
+ "semgrep|real-11": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 25.412369083998783
+ },
+ "semgrep|real-12": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.188962166001147
+ },
+ "semgrep|real-13": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.595854833998601
+ },
+ "semgrep|real-14": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 12.093202916999871
+ },
+ "semgrep|real-15": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.03751079200447
+ },
+ "semgrep|real-16": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.175781499994628
+ },
+ "semgrep|real-17": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 25.898174707996077
+ },
+ "semgrep|real-18": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.372383500005526
+ },
+ "semgrep|real-19": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.905179249995854
+ },
+ "semgrep|real-20": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 22.21080279200396
+ },
+ "semgrep|real-21": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.180219750000106
+ },
+ "semgrep|real-22": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.224966750000021
+ },
+ "semgrep|real-23": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.422850832997938
+ },
+ "semgrep|real-24": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.1906231670000125
+ },
+ "semgrep|real-25": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.4372311670013
+ },
+ "semgrep|real-26": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.386582291997911
+ },
+ "semgrep|real-27": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.611806749999232
+ },
+ "semgrep|real-28": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.271661708000465
+ },
+ "semgrep|real-29": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.794061083004635
+ },
+ "semgrep|real-30": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.433331542000815
+ },
+ "semgrep|real-31": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.56514866699581
+ },
+ "semgrep|real-32": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.596990540994739
+ },
+ "semgrep|real-33": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.63476058300148
+ },
+ "semgrep|real-34": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.309954917000141
+ },
+ "semgrep|real-35": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.340206790999218
+ },
+ "semgrep|real-36": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.239124624997203
+ },
+ "skylos|ex-01-auth-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.92672400000447
+ },
+ "skylos|ex-02-unauth-admin-route": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.356057459001022
+ },
+ "skylos|ex-03-hallucinated-member": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.105985500005772
+ },
+ "skylos|ex-04-phantom-local-export": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.383213749999413
+ },
+ "skylos|ex-05-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.604454916996474
+ },
+ "skylos|ex-06-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.113843333005207
+ },
+ "skylos|ex-07-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.806665042000532
+ },
+ "skylos|ex-08-eval": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.940215165996051
+ },
+ "skylos|ex-09-secret-jwt": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.085190625002724
+ },
+ "skylos|ex-10-secret-aws": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 15.9191644159946
+ },
+ "skylos|ex-11-xss": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.856242750000092
+ },
+ "skylos|ex-12-open-redirect": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.695502750000742
+ },
+ "skylos|ex-13-path-traversal": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.948612542000774
+ },
+ "skylos|ex-14-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.234614166001847
+ },
+ "skylos|ex-15-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.821305124998617
+ },
+ "skylos|ex-16-unparseable": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.70026629199856
+ },
+ "skylos|ex-17-tls-disabled": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.445939332996204
+ },
+ "skylos|ex-18-insecure-random": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.974016375002975
+ },
+ "skylos|ex-c1-clean-validation": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.661174624998239
+ },
+ "skylos|ex-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.48728666700481
+ },
+ "skylos|fa-01-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.448209707996284
+ },
+ "skylos|fa-02-admin-guard-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.836432167001476
+ },
+ "skylos|fa-03-jwt-unverified": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 19.1536113330003
+ },
+ "skylos|fa-04-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 29.987464334000833
+ },
+ "skylos|fa-05-hallucinated-kwarg": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.686382416002743
+ },
+ "skylos|fa-06-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 19.461250583000947
+ },
+ "skylos|fa-07-secret-key": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.25525745900086
+ },
+ "skylos|fa-08-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.778305708998232
+ },
+ "skylos|fa-09-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.587416665999626
+ },
+ "skylos|fa-10-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.981985334001365
+ },
+ "skylos|fa-11-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.75266466699395
+ },
+ "skylos|fa-12-xss": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 18.282411915999546
+ },
+ "skylos|fa-13-cors": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 19.18037179199746
+ },
+ "skylos|fa-14-weak-hash": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 21.0176850840071
+ },
+ "skylos|fa-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 21.582639957996435
+ },
+ "skylos|fa-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.73653262500011
+ },
+ "skylos|mb-01-hallucinated-import": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 3.548009042002377
+ },
+ "skylos|mb-02-hallucinated-api": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 3.9335810000047786
+ },
+ "skylos|mb-03-hallucinated-package": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 4.9383092089992715
+ },
+ "skylos|mb-04-authz-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 3.646379874997365
+ },
+ "skylos|mb-05-authn-removed": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 3.1891020420007408
+ },
+ "skylos|mb-06-sqli": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.10783466599969
+ },
+ "skylos|mb-07-cmdi": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.322958042001119
+ },
+ "skylos|mb-08-ssrf": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 4.683877415998722
+ },
+ "skylos|mb-09-path-traversal": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 4.854925542000274
+ },
+ "skylos|mb-10-ssti": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.038916750003409
+ },
+ "skylos|mb-11-pickle": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 4.417146750005486
+ },
+ "skylos|mb-12-secret-password": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.876740959000017
+ },
+ "skylos|mb-13-secret-apikey": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.304451584001072
+ },
+ "skylos|mb-14-secret-token": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.053499374997045
+ },
+ "skylos|mb-15-tls-disabled": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.202171666998765
+ },
+ "skylos|mb-16-insecure-random": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.5225970829997095
+ },
+ "skylos|mb-17-debug-mode": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.0967889159946935
+ },
+ "skylos|mb-18-weakened-tests": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.183957749999536
+ },
+ "skylos|mb-19-dead-code": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 6.717134458005603
+ },
+ "skylos|mb-20-unparseable": {
+  "exit_code": 2,
+  "note": "exit 2: analysis incomplete",
+  "status": "ok",
+  "wall_s": 6.668223125001532
+ },
+ "skylos|mb-c1-clean-endpoint": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.22052729200368
+ },
+ "skylos|mb-c2-clean-test": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 4.888369790998695
+ },
+ "skylos|mb-c3-clean-subprocess": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 5.081070459003968
+ },
+ "skylos|real-01": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 153.0135053749982
+ },
+ "skylos|real-02": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 9.450421499997901
+ },
+ "skylos|real-03": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 14.841647084002034
+ },
+ "skylos|real-04": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 97.99297945800208
+ },
+ "skylos|real-05": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 37.11903275000077
+ },
+ "skylos|real-06": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 242.59975187500095
+ },
+ "skylos|real-07": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 8.29478604200267
+ },
+ "skylos|real-08": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 11.616621290995681
+ },
+ "skylos|real-09": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 90.69539833300223
+ },
+ "skylos|real-10": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.000630583999737
+ },
+ "skylos|real-11": {
+  "exit_code": -11,
+  "note": "",
+  "status": "error",
+  "wall_s": 2.043816124998557
+ },
+ "skylos|real-12": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 30.51346325000486
+ },
+ "skylos|real-13": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 14.82409508300043
+ },
+ "skylos|real-14": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.38088237500051
+ },
+ "skylos|real-15": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 14.521078749996377
+ },
+ "skylos|real-16": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 7.810386124998331
+ },
+ "skylos|real-17": {
+  "exit_code": 2,
+  "note": "exit 2: analysis incomplete",
+  "status": "ok",
+  "wall_s": 75.00404520800657
+ },
+ "skylos|real-18": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 13.162119542001165
+ },
+ "skylos|real-19": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.99766429200099
+ },
+ "skylos|real-20": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 32.15305745800288
+ },
+ "skylos|real-21": {
+  "exit_code": 2,
+  "note": "exit 2: analysis incomplete",
+  "status": "ok",
+  "wall_s": 235.20729854199453
+ },
+ "skylos|real-22": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 109.43188445799751
+ },
+ "skylos|real-23": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 123.95110387500608
+ },
+ "skylos|real-24": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 45.0462411250046
+ },
+ "skylos|real-25": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 17.513981500000227
+ },
+ "skylos|real-26": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 83.57673979199899
+ },
+ "skylos|real-27": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 21.649893417001294
+ },
+ "skylos|real-28": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 26.969143833004637
+ },
+ "skylos|real-29": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 98.30525274999673
+ },
+ "skylos|real-30": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 97.55023145899759
+ },
+ "skylos|real-31": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 20.85253629199724
+ },
+ "skylos|real-32": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 399.65040441699966
+ },
+ "skylos|real-33": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 118.9914942079995
+ },
+ "skylos|real-34": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 10.923235957998259
+ },
+ "skylos|real-35": {
+  "exit_code": 0,
+  "note": "",
+  "status": "ok",
+  "wall_s": 50.940762958998675
+ },
+ "skylos|real-36": {
+  "exit_code": 2,
+  "note": "exit 2: analysis incomplete",
+  "status": "ok",
+  "wall_s": 23.612068124995858
+ },
+ "sonarqube|ex-01-auth-removed": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-02-unauth-admin-route": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-03-hallucinated-member": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-04-phantom-local-export": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-05-hallucinated-package": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-06-sqli": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-07-cmdi": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-08-eval": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-09-secret-jwt": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-10-secret-aws": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-11-xss": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-12-open-redirect": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-13-path-traversal": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-14-weakened-tests": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-15-dead-code": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-16-unparseable": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-17-tls-disabled": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-18-insecure-random": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-c1-clean-validation": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|ex-c2-clean-test": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-01-authz-removed": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-02-admin-guard-removed": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-03-jwt-unverified": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-04-hallucinated-import": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-05-hallucinated-kwarg": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-06-hallucinated-package": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-07-secret-key": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-08-sqli": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-09-weakened-tests": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-10-dead-code": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-11-cmdi": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-12-xss": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-13-cors": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-14-weak-hash": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-c1-clean-endpoint": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|fa-c2-clean-test": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-01-hallucinated-import": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-02-hallucinated-api": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-03-hallucinated-package": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-04-authz-removed": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-05-authn-removed": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-06-sqli": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-07-cmdi": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-08-ssrf": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-09-path-traversal": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-10-ssti": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-11-pickle": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-12-secret-password": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-13-secret-apikey": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-14-secret-token": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-15-tls-disabled": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-16-insecure-random": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-17-debug-mode": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-18-weakened-tests": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-19-dead-code": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-20-unparseable": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-c1-clean-endpoint": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-c2-clean-test": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|mb-c3-clean-subprocess": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-01": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-02": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-03": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-04": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-05": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-06": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-07": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-08": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-09": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-10": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-11": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-12": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-13": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-14": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-15": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-16": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-17": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-18": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-19": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-20": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-21": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-22": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-23": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-24": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-25": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-26": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-27": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-28": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-29": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-30": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-31": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-32": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-33": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-34": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-35": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ },
+ "sonarqube|real-36": {
+  "exit_code": null,
+  "note": "not configured: missing SONAR_HOST_URL, SONAR_TOKEN, sonar-scanner",
+  "status": "not_run",
+  "wall_s": null
+ }
+}

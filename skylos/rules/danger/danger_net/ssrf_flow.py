@@ -1,7 +1,14 @@
 from __future__ import annotations
 import ast
+import re
 import sys
 from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+
+# ``scheme://host`` followed by a path/query/fragment delimiter: once a literal
+# prefix reaches this point, interpolation afterwards cannot change the host.
+_CONSTANT_HOST_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#{}%\s]+[/?#]")
+_CONSTANT_URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#{}%\s]+$")
 
 
 HTTP_MODULES = frozenset(
@@ -192,6 +199,125 @@ def _is_fixed_host_urljoin(node):
     return _urljoin_target_is_host_constrained(node.args[1])
 
 
+def _literal_url_prefix(node):
+    """Literal text that starts the URL, cut at the first interpolation."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value, True
+    if isinstance(node, ast.JoinedStr):
+        prefix = ""
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                prefix += value.value
+            else:
+                return prefix, False
+        return prefix, True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, complete = _literal_url_prefix(node.left)
+        if not complete:
+            return left, False
+        right, right_complete = _literal_url_prefix(node.right)
+        return left + right, right_complete
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        base, _ = _literal_url_prefix(node.left)
+        return base.split("%", 1)[0], False
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+    ):
+        base, _ = _literal_url_prefix(node.func.value)
+        return base.split("{", 1)[0], False
+    return "", False
+
+
+def _has_constant_host(node):
+    """True when the URL's scheme and host are fixed by a string literal."""
+    if _is_fixed_host_urljoin(node):
+        return True
+    prefix, complete = _literal_url_prefix(node)
+    if not prefix:
+        return False
+    if _CONSTANT_HOST_PREFIX_RE.match(prefix):
+        return True
+    return complete and bool(_CONSTANT_URL_RE.match(prefix))
+
+
+def _function_ref_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"self", "cls"}
+    ):
+        return node.attr
+    return None
+
+
+def _dispatched_functions(tree) -> set[str]:
+    """Functions reachable from a string-keyed command table
+    (``handlers = {"import_asset": self.import_asset}; handlers[cmd](**params)``).
+
+    Their arguments come from whoever sends the command (an MCP client, an
+    RPC or socket peer), so they are untrusted like route parameters. Functions
+    they forward their own parameters to are included too."""
+    if tree is None:
+        return set()
+    functions = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, node)
+    dispatched = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict) or len(node.keys) < 2:
+            continue
+        if not all(
+            isinstance(key, ast.Constant) and isinstance(key.value, str)
+            for key in node.keys
+        ):
+            continue
+        names = [_function_ref_name(value) for value in node.values]
+        if names and all(name in functions for name in names):
+            dispatched.update(names)
+    for _ in range(4):
+        grown = False
+        for name in list(dispatched):
+            func = functions.get(name)
+            if func is None:
+                continue
+            params = {a.arg for a in func.args.args + func.args.kwonlyargs}
+            for extra in (func.args.vararg, func.args.kwarg):
+                if extra is not None:
+                    params.add(extra.arg)
+            params.discard("self")
+            params.discard("cls")
+            for call in ast.walk(func):
+                if not isinstance(call, ast.Call):
+                    continue
+                target = _function_ref_name(call.func)
+                if target not in functions or target in dispatched:
+                    continue
+                passed = [*call.args, *(kw.value for kw in call.keywords)]
+                if any(
+                    isinstance(sub, ast.Name) and sub.id in params
+                    for arg in passed
+                    for sub in ast.walk(arg)
+                ):
+                    dispatched.add(target)
+                    grown = True
+        if not grown:
+            break
+    return dispatched
+
+
+def _only_operator_sources(evidence):
+    # Environment variables are deployment configuration, not attacker input.
+    return all(
+        "os.environ" in label or "os.getenv" in label
+        for label in evidence.get("sources", [])
+    )
+
+
 def _tainted_url_is_ssrf_relevant(checker, node):
     if isinstance(node, ast.JoinedStr) and _has_safe_base_url(node):
         return False
@@ -292,19 +418,40 @@ def _ssrf_security_evidence(
 class _SSRFFlowChecker(TaintVisitor):
     HTTP_METHODS = {"get", "post", "put", "delete", "head", "options", "request"}
 
-    def __init__(self, file_path, findings, sanitizers=None):
+    def __init__(self, file_path, findings, sanitizers=None, tree=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.http_names: set[str] = set()
         self.http_receiver_alias_stack: list[set[str]] = [set()]
+        self.untrusted_sources = UntrustedSourceIndex(tree)
+        self.assigned_values: list[dict[str, ast.AST]] = [{}]
+        self.dispatched_functions = _dispatched_functions(tree)
 
     def _push(self):
         super()._push()
         self.http_receiver_alias_stack.append(set())
+        self.assigned_values.append({})
 
     def _pop(self):
         if len(self.http_receiver_alias_stack) > 1:
             self.http_receiver_alias_stack.pop()
+        if len(self.assigned_values) > 1:
+            self.assigned_values.pop()
         super()._pop()
+
+    def _resolve_url_expr(self, node: ast.AST) -> ast.AST:
+        # One hop through a local ``url = f"https://api.example.com/{x}"``.
+        if isinstance(node, ast.Name):
+            for scope in reversed(self.assigned_values):
+                if node.id in scope:
+                    return scope[node.id]
+        return node
+
+    def _record_assignment(self, targets, value) -> None:
+        if value is None:
+            return
+        for target in targets:
+            if isinstance(target, ast.Name):
+                self.assigned_values[-1][target.id] = value
 
     def _mark_http_receiver_alias(self, name: str) -> None:
         if not self.http_receiver_alias_stack:
@@ -366,10 +513,12 @@ class _SSRFFlowChecker(TaintVisitor):
 
     def visit_Assign(self, node):
         self._track_http_receiver_aliases(node.targets, node.value)
+        self._record_assignment(node.targets, node.value)
         super().visit_Assign(node)
 
     def visit_AnnAssign(self, node):
         self._track_http_receiver_aliases([node.target], node.value)
+        self._record_assignment([node.target], node.value)
         super().visit_AnnAssign(node)
 
     def _is_likely_http_receiver(self, node: ast.Call) -> bool:
@@ -392,7 +541,37 @@ class _SSRFFlowChecker(TaintVisitor):
 
         return False
 
+    def _untrusted_evidence(self, url_arg: ast.AST, sink: str):
+        """Evidence that attacker-reachable input can pick the request host.
+
+        A parameter of an arbitrary helper, a constant-host URL, a test client
+        call or a deployment setting is not SSRF on its own; require a real
+        untrusted source (route/CLI/MCP-tool argument, request data, input(),
+        argv, stdin) and a host that the literal prefix does not pin."""
+        if _has_constant_host(url_arg) or _has_constant_host(
+            self._resolve_url_expr(url_arg)
+        ):
+            return None
+        func = self._current_function()
+        evidence = self.untrusted_sources.evidence(
+            func,
+            url_arg,
+            sink=f"`{sink}()` request URL",
+            missing_guard="URL host allowlist",
+            evidence_kind="python_ssrf_taint",
+        )
+        if evidence is not None and not _only_operator_sources(evidence):
+            return evidence
+        name = getattr(func, "name", None)
+        if name in self.dispatched_functions and super().is_tainted(url_arg):
+            source = f"command-dispatch argument of `{name}`"
+            return {"source": source, "sources": [source]}
+        return None
+
     def _append_finding(self, node: ast.Call, url_arg: ast.AST, sink: str) -> None:
+        source_evidence = self._untrusted_evidence(url_arg, sink)
+        if source_evidence is None:
+            return
         interpolated = _is_interpolated_string(url_arg)
         symbol = self._current_symbol()
         self.findings.append(
@@ -410,7 +589,8 @@ class _SSRFFlowChecker(TaintVisitor):
                         sink=sink,
                         url_arg=url_arg,
                         interpolated=interpolated,
-                    )
+                    ),
+                    "untrusted_source": source_evidence["source"],
                 },
             }
         )
@@ -441,7 +621,9 @@ class _SSRFFlowChecker(TaintVisitor):
 
 def scan(tree, file_path, findings):
     try:
-        checker = _SSRFFlowChecker(file_path, findings, sanitizers=URL_SANITIZERS)
+        checker = _SSRFFlowChecker(
+            file_path, findings, sanitizers=URL_SANITIZERS, tree=tree
+        )
         checker.visit(tree)
     except Exception as e:
         print(f"SSRF flow analysis failed for {file_path}: {e}", file=sys.stderr)

@@ -14,6 +14,15 @@ from skylos.analysis.ast_cache import (
     releases_python_ast_cache,
 )
 from skylos.analysis.control_flow import _parse_requires_python
+from skylos.core.fast_paths import ParentResolver, is_within, relative_parts
+from skylos.rules.ai_defect.module_facts_index import (
+    STATUS_OK,
+    STATUS_PARSE_ERROR,
+    STATUS_UNREADABLE,
+    RecordingModules,
+    active_module_facts_index,
+    file_token,
+)
 from skylos.rules.quality._protocols import (
     type_checking_context,
     type_checking_guard_branches,
@@ -102,11 +111,14 @@ def scan_repo_phantom_security_references(
     vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     root = Path(project_root).resolve()
     module_dunder_attributes = _module_dunder_attributes(root)
+    resolver = ParentResolver()
     files = [
-        Path(f).resolve() for f in py_files if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
+        resolver.resolve(Path(f))
+        for f in py_files
+        if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
     ]
     target_paths = {
-        Path(f).resolve()
+        resolver.resolve(Path(f))
         for f in (target_files or files)
         if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
     }
@@ -123,9 +135,7 @@ def scan_repo_phantom_security_references(
     parse_failures = set()
 
     for file_path in files:
-        try:
-            file_path.relative_to(root)
-        except ValueError:
+        if not is_within(file_path, root):
             continue
         module_name = _module_name(root, file_path)
         if not module_name:
@@ -150,14 +160,16 @@ def scan_repo_phantom_security_references(
         *,
         source_has_type_checking=None,
         include_reference_context=False,
+        facts=None,
     ):
-        facts = _collect_module_facts(
-            tree,
-            module_name,
-            local_modules,
-            source_has_type_checking=source_has_type_checking,
-            include_reference_context=include_reference_context,
-        )
+        if facts is None:
+            facts = _collect_module_facts(
+                tree,
+                module_name,
+                local_modules,
+                source_has_type_checking=source_has_type_checking,
+                include_reference_context=include_reference_context,
+            )
         module_members[module_name] = facts.members
         module_type_checking_members[module_name] = facts.type_checking_members
         module_alias_exports[module_name] = {
@@ -189,17 +201,49 @@ def scan_repo_phantom_security_references(
             parse_failures.add(module_name)
             return False
 
-        source, tree = load_python_module(file_path, MODE_REPLACE)
-        if tree is None:
+        status, facts, _ = plain_module_facts(file_path, module_name, local_modules)
+        if facts is None:
             parse_failures.add(module_name)
             return False
 
-        _store_module_facts(
-            module_name,
-            tree,
-            source_has_type_checking="TYPE_CHECKING" in source,
-        )
+        _store_module_facts(module_name, None, facts=facts)
         return True
+
+    star_export_cache = {}
+
+    def _star_export_names(module_name, seen=()):
+        """Names ``from module_name import *`` may bind, or None if unknown.
+
+        Uses may-bind semantics (imports inside ``try:``/``if`` count): the
+        question is whether a bare name *could* come from the star import."""
+        if module_name in star_export_cache:
+            return star_export_cache[module_name]
+        if module_name not in local_modules or module_name in seen:
+            return None
+        module_file = module_to_file.get(module_name)
+        if not module_file:
+            return None
+        _source, module_tree = load_python_module(module_file, MODE_REPLACE)
+        if module_tree is None:
+            star_export_cache[module_name] = None
+            return None
+        names, nested_star_bases, explicit_all = _may_bound_module_names(
+            module_tree, module_name
+        )
+        if explicit_all is not None:
+            result = set(explicit_all)
+        else:
+            result = {name for name in names if not name.startswith("_")}
+            for nested in nested_star_bases:
+                nested_names = _star_export_names(nested, (*seen, module_name))
+                if nested_names is None:
+                    result = None
+                    break
+                result.update(nested_names)
+        if result is not None and "__getattr__" in names:
+            result = None
+        star_export_cache[module_name] = result
+        return result
 
     findings = []
 
@@ -227,6 +271,24 @@ def scan_repo_phantom_security_references(
         type_checking_node_ids = module_type_checking_node_ids.get(
             current_module, set()
         )
+
+        # ``from pkg import *`` binds names the call-site scan cannot see.
+        # Resolve local, statically known modules; any other star source
+        # (installed package, dynamic __getattr__, nested wildcard re-export)
+        # makes unbound bare names unknown rather than phantom.
+        star_names = set()
+        star_unknown = False
+        for import_node in ast_index.import_nodes:
+            if not isinstance(import_node, ast.ImportFrom) or not any(
+                alias.name == "*" for alias in import_node.names
+            ):
+                continue
+            star_base = _resolve_import_from_base(current_module, import_node)
+            exported = _star_export_names(star_base)
+            if exported is None:
+                star_unknown = True
+            else:
+                star_names.update(exported)
 
         def _active_module_surface(
             node,
@@ -307,6 +369,8 @@ def scan_repo_phantom_security_references(
 
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
+                    if star_unknown or node.func.id in star_names:
+                        continue
                     bare_finding = _bare_call_finding(
                         file_path=file_path,
                         node=node.func,
@@ -474,6 +538,57 @@ def _direct_local_import_findings(
     return findings
 
 
+def _may_bound_module_names(tree, module_name):
+    """Module-level names bound on any path (not only on every path)."""
+    names = set()
+    star_bases = []
+    explicit_all = None
+    stack = list(getattr(tree, "body", []))
+    while stack:
+        stmt = stack.pop()
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(stmt.name)
+            continue
+        if isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                names.add(alias.asname or alias.name.split(".", 1)[0])
+            continue
+        if isinstance(stmt, ast.ImportFrom):
+            for alias in stmt.names:
+                if alias.name == "*":
+                    star_bases.append(_resolve_import_from_base(module_name, stmt))
+                else:
+                    names.add(alias.asname or alias.name)
+            continue
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                names.update(_extract_target_names(target))
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "__all__"
+                    and isinstance(stmt.value, (ast.List, ast.Tuple))
+                    and all(
+                        isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                        for elt in stmt.value.elts
+                    )
+                ):
+                    explicit_all = [elt.value for elt in stmt.value.elts]
+            continue
+        if isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+            names.update(_extract_target_names(stmt.target))
+            if isinstance(stmt, ast.AugAssign) and getattr(stmt.target, "id", None) == "__all__":
+                explicit_all = None
+            continue
+        for child in ast.iter_child_nodes(stmt):
+            if isinstance(child, ast.stmt):
+                stack.append(child)
+            elif isinstance(child, ast.excepthandler):
+                if child.name:
+                    names.add(child.name)
+                stack.extend(child.body)
+    return names, star_bases, explicit_all
+
+
 def _is_package_module_file(file_path):
     return file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
 
@@ -596,7 +711,7 @@ def _decorator_target(decorator):
 
 
 def _module_name(root: Path, file_path: Path) -> str:
-    parts = list(file_path.relative_to(root).parts)
+    parts = list(relative_parts(file_path, root))
 
     if "src" in parts:
         src_idx = parts.index("src")
@@ -614,6 +729,118 @@ def _module_name(root: Path, file_path: Path) -> str:
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
+
+
+def plain_module_facts(file_path, module_name, local_modules):
+    """Non-reference-context facts for one project module.
+
+    Returns ``(status, facts, token)`` where ``status`` is ``"ok"``,
+    ``"unreadable"`` or ``"parse_error"`` and ``facts`` is None unless the
+    module parsed. Reads with ``MODE_REPLACE``. When a persistent
+    :mod:`module_facts_index` session is active, unchanged files are served
+    from it instead of being parsed; otherwise this is exactly
+    ``load_python_module`` + ``_collect_module_facts``.
+    """
+    index = active_module_facts_index()
+    if index is None:
+        source, tree = load_python_module(file_path, MODE_REPLACE)
+        if source is None:
+            return STATUS_UNREADABLE, None, None
+        if tree is None:
+            return STATUS_PARSE_ERROR, None, None
+        facts = _collect_module_facts(
+            tree,
+            module_name,
+            local_modules,
+            source_has_type_checking="TYPE_CHECKING" in source,
+        )
+        return STATUS_OK, facts, None
+
+    # Identity before reading: an edit racing the read leaves a stale token,
+    # which the next run rebuilds.
+    token = file_token(file_path)
+    entry = index.lookup(file_path, token, module_name, local_modules)
+    if entry is not None:
+        status = entry.get("status")
+        if status != STATUS_OK:
+            return status, None, token
+        facts = _facts_from_payload(entry.get("facts"))
+        if facts is not None:
+            return STATUS_OK, facts, token
+
+    source, tree = load_python_module(file_path, MODE_REPLACE)
+    if source is None:
+        index.store(file_path, token, module_name, status=STATUS_UNREADABLE)
+        return STATUS_UNREADABLE, None, token
+    if tree is None:
+        index.store(file_path, token, module_name, status=STATUS_PARSE_ERROR)
+        return STATUS_PARSE_ERROR, None, token
+    recording = RecordingModules(local_modules)
+    facts = _build_module_facts(
+        tree,
+        module_name,
+        recording,
+        source_has_type_checking="TYPE_CHECKING" in source,
+    )
+    payload = _facts_to_payload(facts)
+    if payload is not None:
+        index.store(
+            file_path,
+            token,
+            module_name,
+            status=STATUS_OK,
+            facts=payload,
+            deps=recording.queries,
+        )
+    return STATUS_OK, facts, token
+
+
+def _facts_to_payload(facts):
+    if facts.type_checking_node_ids:
+        return None  # id()-keyed; only reference-context facts carry these
+    type_checking_members = (
+        None
+        if facts.type_checking_members == facts.members
+        else sorted(facts.type_checking_members)
+    )
+    type_checking_exports = (
+        None
+        if facts.type_checking_exported_modules == facts.exported_modules
+        else facts.type_checking_exported_modules
+    )
+    return {
+        "m": sorted(facts.members),
+        "tm": type_checking_members,
+        "e": facts.exported_modules,
+        "te": type_checking_exports,
+        "d": facts.has_dynamic_getattr,
+        "td": facts.has_type_checking_dynamic_getattr,
+    }
+
+
+def _facts_from_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    try:
+        members = set(payload["m"])
+        tc_members = payload.get("tm")
+        exported = dict(payload["e"])
+        tc_exported = payload.get("te")
+        return _ModuleFacts(
+            members=members,
+            type_checking_members=(
+                set(members) if tc_members is None else set(tc_members)
+            ),
+            exported_modules=exported,
+            type_checking_exported_modules=(
+                dict(exported) if tc_exported is None else dict(tc_exported)
+            ),
+            has_dynamic_getattr=bool(payload["d"]),
+            has_type_checking_dynamic_getattr=bool(payload["td"]),
+            type_checking_node_ids=set(),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 _MODULE_FACTS_CACHE: dict[tuple, tuple[frozenset, "_ModuleFacts"]] = {}

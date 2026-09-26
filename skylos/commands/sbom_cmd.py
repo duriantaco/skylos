@@ -9,13 +9,19 @@ from pathlib import Path
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.sbom import cyclonedx_bom
+from skylos.reporting.spdx import spdx_document
+from skylos.rules.sca.licenses import collect_licenses
 from skylos.rules.sca.vulnerability_scanner import collect_dependencies
 
 
 def run_sbom_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="skylos sbom",
-        description="Export supported dependencies as CycloneDX JSON, entirely offline.",
+        description=(
+            "Export supported dependencies as CycloneDX or SPDX 2.3 JSON, "
+            "offline by default. Declared licenses come from lockfiles and "
+            "installed package metadata; unknown licenses are NOASSERTION."
+        ),
     )
     parser.add_argument("path", nargs="?", default=".", help="Project directory")
     parser.add_argument(
@@ -25,7 +31,27 @@ def run_sbom_command(argv: list[str]) -> int:
         help="Output file; '-' writes JSON to stdout (default)",
     )
     parser.add_argument(
-        "--format", choices=["cyclonedx-json"], default="cyclonedx-json"
+        "--format",
+        choices=["cyclonedx-json", "spdx-json"],
+        default="cyclonedx-json",
+        help="Output format (default: cyclonedx-json)",
+    )
+    parser.add_argument(
+        "--license-lookup",
+        action="store_true",
+        help=(
+            "Also query deps.dev over the network for licenses missing from "
+            "local metadata (off by default; 5s timeout per package)"
+        ),
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit 2 when the inventory is incomplete (for example unpinned "
+            "requirements.txt without a lockfile). By default the SBOM is still "
+            "written, a warning is printed and the exit code is 0."
+        ),
     )
     args = parser.parse_args(argv)
     try:
@@ -61,7 +87,11 @@ def run_sbom_command(argv: list[str]) -> int:
         return 2
 
     inventory = collect_dependencies(root)
-    document = cyclonedx_bom(inventory, root)
+    licenses = collect_licenses(inventory, root, lookup=args.license_lookup)
+    if args.format == "spdx-json":
+        document = spdx_document(inventory, root, licenses)
+    else:
+        document = cyclonedx_bom(inventory, root, licenses)
     text = json.dumps(document, indent=2, ensure_ascii=True) + "\n"
     if args.output == "-":
         sys.stdout.write(text)
@@ -70,10 +100,16 @@ def run_sbom_command(argv: list[str]) -> int:
         return 2
 
     if not document.receipt["complete"]:
+        where = (
+            "creationInfo.comment"
+            if args.format == "spdx-json"
+            else "metadata.properties skylos:inventory:receipt"
+        )
         print(
             "SBOM incomplete: available packages were exported; see "
-            "metadata.properties skylos:inventory:receipt for input gaps.",
+            f"{where} for input gaps.",
             file=sys.stderr,
         )
-        return 2
+        if args.strict:
+            return 2
     return 0

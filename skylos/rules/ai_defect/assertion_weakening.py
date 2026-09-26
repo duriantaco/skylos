@@ -203,8 +203,128 @@ def _finding_for_hunk(hunk: _Hunk, file_path: str) -> dict | None:
         or _broadened_mock_assertion_finding(evidence, file_path)
         or _broadened_mock_contract_finding(evidence, file_path)
         or _expected_value_broadened_finding(evidence, file_path)
+        or _widened_membership_finding(hunk, file_path)
+        or _length_only_finding(hunk, file_path)
+        or _behavior_to_existence_finding(hunk, file_path)
         or _specific_to_broad_finding(evidence, file_path)
     )
+
+
+# --- Weakened (not removed) assertions ---------------------------------------
+
+_PY_EQ_VALUE_RE = re.compile(r"^\s*assert\s+(.+?)\s*==\s*(.+?)\s*(?:#.*)?$")
+_PY_IN_TUPLE_RE = re.compile(
+    r"^\s*assert\s+(.+?)\s+in\s+[\(\[\{](.+)[\)\]\}]\s*(?:,.*)?(?:#.*)?$"
+)
+_LEN_TARGET_RE = re.compile(r"^len\((.+)\)$")
+_JS_LENGTH_TARGET_RE = re.compile(r"^(.+)\.length$")
+_BEHAVIOR_ASSERT_RE = re.compile(
+    r"\bself\.assert(?:True|False)\s*\(\s*[\w.\[\]'\"]+\s*\((?!\s*\))"
+    r"|^\s*assert\s+(?:not\s+)?[\w.\[\]'\"]+\s*\((?!\s*\))[^=<>!]*$"
+)
+_EXISTENCE_ASSERT_RE = re.compile(
+    r"\bself\.assertIsNotNone\s*\(|\bself\.assertIsNone\s*\("
+    r"|^\s*assert\s+[^=<>!]+\s+is\s+not\s+None\s*(?:#.*)?$"
+    r"|\.(?:toBeDefined|not\.toBeUndefined|not\.toBeNull)\s*\(\s*\)"
+)
+
+
+def _normalize_expr(value: str) -> str:
+    return re.sub(r"\s+", "", value.strip().rstrip(",;"))
+
+
+def _widened_membership_finding(hunk: _Hunk, file_path: str) -> dict | None:
+    """``assert status == 403`` became ``assert status in (200, 403)``."""
+    removed = {}
+    for line in hunk.removed:
+        m = _PY_EQ_VALUE_RE.match(line.text)
+        if m:
+            removed[_normalize_expr(m.group(1))] = (line, _normalize_expr(m.group(2)))
+    if not removed:
+        return None
+    for line in hunk.added:
+        m = _PY_IN_TUPLE_RE.match(line.text)
+        if not m:
+            continue
+        target = _normalize_expr(m.group(1))
+        if target not in removed:
+            continue
+        old_line, expected = removed[target]
+        options = [_normalize_expr(v) for v in _split_top_level_args(m.group(2))]
+        options = [v for v in options if v]
+        if expected in options and len(options) > 1:
+            return _make_finding(
+                file_path,
+                line.line_no,
+                "Exact assertion was widened to accept additional values",
+                evidence_removed=old_line.text.strip(),
+                evidence_added=line.text.strip(),
+                weakening_type="assertion_widened_membership",
+                severity="MEDIUM",
+            )
+    return None
+
+
+def _length_target(target: str) -> str | None:
+    target = _normalize_expr(target)
+    m = _LEN_TARGET_RE.match(target) or _JS_LENGTH_TARGET_RE.match(target)
+    return m.group(1) if m else None
+
+
+def _length_only_finding(hunk: _Hunk, file_path: str) -> dict | None:
+    """``assertEqual(feed, [a, b, c])`` became ``assertEqual(len(feed), 3)``."""
+    removed = {}
+    for line in hunk.removed:
+        evidence = _expected_assertion(line)
+        if evidence is None:
+            continue
+        target = _normalize_expr(evidence.target)
+        expected = _normalize_expr(evidence.expected)
+        if _length_target(target) is None and not re.fullmatch(r"-?\d+", expected):
+            removed[target] = evidence
+    if not removed:
+        return None
+    for line in hunk.added:
+        evidence = _expected_assertion(line)
+        if evidence is None:
+            continue
+        inner = _length_target(evidence.target)
+        if inner is None or inner not in removed:
+            continue
+        return _make_finding(
+            file_path,
+            line.line_no,
+            "Value/order assertion was replaced with a length-only check",
+            evidence_removed=removed[inner].text,
+            evidence_added=line.text.strip(),
+            weakening_type="value_to_length_assertion",
+            severity="MEDIUM",
+        )
+    return None
+
+
+def _behavior_to_existence_finding(hunk: _Hunk, file_path: str) -> dict | None:
+    """Behavior checks (``assertTrue(u.check_password('cat'))``) were replaced
+    by an existence check (``assertIsNotNone(u.password_hash)``)."""
+    removed = [line for line in hunk.removed if _BEHAVIOR_ASSERT_RE.search(line.text)]
+    if not removed:
+        return None
+    if any(_BEHAVIOR_ASSERT_RE.search(line.text) for line in hunk.added):
+        return None
+    if any(_is_strong_assertion(line.text) for line in hunk.added):
+        return None
+    for line in hunk.added:
+        if _EXISTENCE_ASSERT_RE.search(line.text):
+            return _make_finding(
+                file_path,
+                line.line_no,
+                "Behavior assertion was replaced with an existence (not-None) check",
+                evidence_removed=_preview(removed),
+                evidence_added=line.text.strip(),
+                weakening_type="behavior_to_existence_assertion",
+                severity="MEDIUM",
+            )
+    return None
 
 
 def _collect_assertion_evidence(hunk: _Hunk) -> _AssertionEvidence:
@@ -479,6 +599,7 @@ def _is_test_file(file_path: str) -> bool:
         or "__snapshots__" in normalized.split("/")
         or _is_snapshot_file(normalized)
         or basename.startswith("test_")
+        or basename in {"tests.py", "test.py"}
         or basename.endswith(
             ("_test.py", ".test.js", ".test.ts", ".spec.js", ".spec.ts")
         )

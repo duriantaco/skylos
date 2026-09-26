@@ -29,6 +29,20 @@ def process(f):
         self.assertEqual(findings[0]["rule_id"], "SKY-P401")
         self.assertEqual(findings[1]["rule_id"], "SKY-P401")
 
+    def test_chunked_read_is_not_memory_risk(self):
+        # agent-pr-bench real-02/real-13: hashing a file in 1 MiB chunks.
+        code = """
+def digest(path, h):
+    with open(path, "rb") as f:
+        while chunk := f.read(1024 * 1024):
+            h.update(chunk)
+        f.read(size=4096)
+        f.read(-1)
+        f.read(None)
+"""
+        findings = [f for f in self._analyze(code) if f["rule_id"] == "SKY-P401"]
+        self.assertEqual([f["line"] for f in findings], [7, 8])
+
     def test_detect_pandas_no_chunk(self):
         code = """
 import pandas as pd

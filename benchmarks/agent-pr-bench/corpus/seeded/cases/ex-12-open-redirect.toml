@@ -1,0 +1,33 @@
+id = "ex-12-open-redirect"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'redirect back after login'. The agent redirects to an unvalidated query parameter."
+
+[[edits]]
+file = "src/app/routes/auth/auth.controller.ts"
+old = '''
+export default router;
+'''
+new = '''
+/**
+ * Redirect after login
+ * @auth none
+ * @route {GET} /users/login/return
+ */
+router.get('/users/login/return', (req: Request, res: Response) => {
+  const next = (req.query.next as string) || '/';
+  res.redirect(next);
+});
+
+export default router;
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "open_redirect"
+description = "Open redirect to a user-controlled URL."
+[[defects.locations]]
+file = "src/app/routes/auth/auth.controller.ts"
+anchor = "const next = (req.query.next as string)"
+end_anchor = "res.redirect(next);"

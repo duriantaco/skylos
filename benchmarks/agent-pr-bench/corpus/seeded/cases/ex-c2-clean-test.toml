@@ -1,0 +1,21 @@
+id = "ex-c2-clean-test"
+base = "express-realworld"
+language = "typescript"
+clean = true
+story = "Control: the agent adds a precise tag-service test. No seeded defect."
+
+[[edits]]
+file = "src/tests/services/tag.service.test.ts"
+mode = "overwrite"
+new = '''
+import getTags from '../../app/routes/tag/tag.service';
+import prismaMock from '../prisma-mock';
+
+describe('TagService', () => {
+  test('returns tag names in the order prisma returns them', async () => {
+    // @ts-ignore
+    prismaMock.tag.findMany.mockResolvedValue([{ name: 'a' }, { name: 'b' }]);
+    await expect(getTags()).resolves.toEqual(['a', 'b']);
+  });
+});
+'''

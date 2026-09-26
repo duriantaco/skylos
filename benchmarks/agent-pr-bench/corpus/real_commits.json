@@ -1,0 +1,1521 @@
+{
+  "schema": "agent-pr-bench/real-commits@1",
+  "generated_at": "2026-09-25T12:58:15+00:00",
+  "selection": {
+    "since": "2026-06-01",
+    "until": "2026-09-20",
+    "stars": "300..60000",
+    "languages": "Python,TypeScript",
+    "repo_pages": 3,
+    "commit_pages": 2,
+    "max_repo_kb": 150000,
+    "min_add": 15,
+    "max_add": 1200,
+    "max_files": 40,
+    "target": 36,
+    "repository_frame_size": 399,
+    "agent_attributed_commits": 3502,
+    "eligible_pool_one_per_repo": 168,
+    "pool_by_bucket": {
+      "claude/python": 68,
+      "claude/typescript": 75,
+      "codex/python": 2,
+      "codex/typescript": 1,
+      "copilot/python": 3,
+      "copilot/typescript": 2,
+      "cursor/python": 7,
+      "cursor/typescript": 9,
+      "devin/python": 1
+    },
+    "signatures": [
+      {
+        "agent": "claude",
+        "kind": "trailer",
+        "pattern": "^co-authored-by:\\s*claude\\b.*$"
+      },
+      {
+        "agent": "claude",
+        "kind": "trailer",
+        "pattern": "^.*generated with \\[?claude code.*$"
+      },
+      {
+        "agent": "copilot",
+        "kind": "author",
+        "pattern": "copilot-swe-agent[bot]"
+      },
+      {
+        "agent": "copilot",
+        "kind": "trailer",
+        "pattern": "^co-authored-by:\\s*copilot\\s*<.*$"
+      },
+      {
+        "agent": "cursor",
+        "kind": "trailer",
+        "pattern": "^co-authored-by:.*cursoragent@cursor\\.com.*$"
+      },
+      {
+        "agent": "devin",
+        "kind": "author",
+        "pattern": "devin-ai-integration[bot]"
+      },
+      {
+        "agent": "devin",
+        "kind": "trailer",
+        "pattern": "^co-authored-by:.*devin-ai-integration.*$"
+      },
+      {
+        "agent": "codex",
+        "kind": "trailer",
+        "pattern": "^co-authored-by:\\s*codex\\b.*$"
+      }
+    ]
+  },
+  "commits": [
+    {
+      "repo": "HKUDS/LightRAG",
+      "sha": "ebff65342f50ff431ba5164882ba426e4eabee28",
+      "parent": "280f1bb5a3fb68911a40c7a1f0f5ad18eb318eb3",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 39853,
+      "commit_date": "2026-09-15T04:01:44Z",
+      "subject": "fix(llm): accept a CRLF closing fence",
+      "url": "https://github.com/HKUDS/LightRAG/commit/ebff65342f50ff431ba5164882ba426e4eabee28",
+      "code_files": [
+        {
+          "path": "lightrag/utils.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 2
+        },
+        {
+          "path": "tests/llm/test_vlm_json_escape_repair.py",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 20,
+      "code_deletions": 2,
+      "rank": "036fb70f7b4ce2947b6c8e6f5670a77ef10b28627ad2568621a97b16bb445934",
+      "id": "real-01"
+    },
+    {
+      "repo": "HKUDS/RAG-Anything",
+      "sha": "0fd61f3ee4fe19b7f18dfae9485316b9731f16d8",
+      "parent": "47608e89a400289b60bda331256add488c0da8e7",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 23418,
+      "commit_date": "2026-07-09T16:25:53Z",
+      "subject": "Add incremental batch folder scans (#303)",
+      "url": "https://github.com/HKUDS/RAG-Anything/commit/0fd61f3ee4fe19b7f18dfae9485316b9731f16d8",
+      "code_files": [
+        {
+          "path": "raganything/batch.py",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "path": "raganything/batch_parser.py",
+          "status": "modified",
+          "additions": 208,
+          "deletions": 18
+        },
+        {
+          "path": "tests/testbatch_incremental.py",
+          "status": "added",
+          "additions": 221,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 438,
+      "code_deletions": 18,
+      "rank": "02be9455cf2ebd4d2bae933822954a8f32001d75ba68139837b4c9093594a939",
+      "id": "real-02"
+    },
+    {
+      "repo": "MadsLorentzen/ai-job-search",
+      "sha": "8c81edc330b98db0473dcb016e34db835c2fd378",
+      "parent": "ccf786bdf27a1fab5de1039d1592e7667b2b0321",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 43928,
+      "commit_date": "2026-09-08T14:25:15Z",
+      "subject": "fix(scrape): make seen_jobs.json keys a pure function of the posting (#441)",
+      "url": "https://github.com/MadsLorentzen/ai-job-search/commit/8c81edc330b98db0473dcb016e34db835c2fd378",
+      "code_files": [
+        {
+          "path": "tests/test_job_key.py",
+          "status": "added",
+          "additions": 137,
+          "deletions": 0
+        },
+        {
+          "path": "tests/test_scrape_contract.py",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        },
+        {
+          "path": "tools/job_key.py",
+          "status": "added",
+          "additions": 179,
+          "deletions": 0
+        },
+        {
+          "path": "tools/security_guards.py",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 334,
+      "code_deletions": 0,
+      "rank": "02a5e32129a314dbe88307bf02e15365958efce3ca306c0991c58f7fb6188a92",
+      "id": "real-03"
+    },
+    {
+      "repo": "hugohe3/ppt-master",
+      "sha": "92be041470473c0300f753c4ce1ffcfb240b1238",
+      "parent": "a32818da7d08b79d90d804a18f4081ab3fc5f1d0",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 56357,
+      "commit_date": "2026-09-05T11:46:48Z",
+      "subject": "chore(config): resync the skill copy of .env.example with the repository copy",
+      "url": "https://github.com/hugohe3/ppt-master/commit/92be041470473c0300f753c4ce1ffcfb240b1238",
+      "code_files": [
+        {
+          "path": "skills/ppt-master/scripts/tests/test_env_example.py",
+          "status": "added",
+          "additions": 22,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 22,
+      "code_deletions": 0,
+      "rank": "00e3af298132e1c45d870a7330a56afa676336f65b0ceeac38f6561bc45da436",
+      "id": "real-04"
+    },
+    {
+      "repo": "jamiepine/voicebox",
+      "sha": "f750596364d12a732c5aa626db67e2ca7a1af1ef",
+      "parent": "91cd6df108f39e23bd84a937d9b70f855b1b6831",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 55661,
+      "commit_date": "2026-07-21T05:26:46Z",
+      "subject": "fix(setup): install mlx-lm and mlx-audio in setup-python on Apple Silicon (#892)",
+      "url": "https://github.com/jamiepine/voicebox/commit/f750596364d12a732c5aa626db67e2ca7a1af1ef",
+      "code_files": [
+        {
+          "path": "backend/tests/test_mlx_smoke.py",
+          "status": "added",
+          "additions": 55,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 55,
+      "code_deletions": 0,
+      "rank": "00014cb66d01306b0a0ccd47ddaf4b1e356cb5c35166761ec35a82d4a7a1c5f7",
+      "id": "real-05"
+    },
+    {
+      "repo": "teng-lin/notebooklm-py",
+      "sha": "1b8d325d929a59dced59866eea3fa6a06362ffff",
+      "parent": "66f1d37ad2aabd68eb6990daec204c74cad52d36",
+      "agent": "claude",
+      "attribution_evidence": "Co-authored-by: Claude <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 19465,
+      "commit_date": "2026-09-05T18:02:38Z",
+      "subject": "fix(auth): keep OAuth cookie capture alive after login tab closes (#2360)",
+      "url": "https://github.com/teng-lin/notebooklm-py/commit/1b8d325d929a59dced59866eea3fa6a06362ffff",
+      "code_files": [
+        {
+          "path": "src/notebooklm/_browser/oauth_token.py",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 3
+        },
+        {
+          "path": "tests/unit/test_browser_oauth_token.py",
+          "status": "modified",
+          "additions": 114,
+          "deletions": 4
+        }
+      ],
+      "code_additions": 121,
+      "code_deletions": 7,
+      "rank": "01ced28e0be60f840db6192290e93cb0895b64eb7c8654b4d43d42dd901201b2",
+      "id": "real-06"
+    },
+    {
+      "repo": "virgiliojr94/book-to-skill",
+      "sha": "7bcfcd5262329f8d57a385903f18a98bc6705e4e",
+      "parent": "560dca6367122983c72d6f76114b6c817508c064",
+      "agent": "claude",
+      "attribution_evidence": "Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+      "language": "python",
+      "repo_stars_at_selection": 32364,
+      "commit_date": "2026-08-23T23:06:10Z",
+      "subject": "fix(config): give each run its own workdir so concurrent extractions cannot clobber each other (#184)",
+      "url": "https://github.com/virgiliojr94/book-to-skill/commit/7bcfcd5262329f8d57a385903f18a98bc6705e4e",
+      "code_files": [
+        {
+          "path": "book_to_skill/config.py",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 6
+        },
+        {
+          "path": "book_to_skill/utils.py",
+          "status": "modified",
+          "additions": 6,
+          "deletions": 2
+        },
+        {
+          "path": "tests/test_per_run_workdir.py",
+          "status": "added",
+          "additions": 99,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 128,
+      "code_deletions": 8,
+      "rank": "007bb6c281ced7f6afacc036c586a1c20ee9c0a33db73a3a13620afdc5f6d00a",
+      "id": "real-07"
+    },
+    {
+      "repo": "tanweai/pua",
+      "sha": "e6e6cd237ad17750d179674bff52f8184abea8fd",
+      "parent": "4a7793859bb9ddc4054dc339cc5fef8b70e47d63",
+      "agent": "codex",
+      "attribution_evidence": "Co-authored-by: Codex <codex@openai.com>",
+      "language": "python",
+      "repo_stars_at_selection": 19701,
+      "commit_date": "2026-09-09T10:27:33Z",
+      "subject": "ci: publish versioned PUA release notes and skill packages",
+      "url": "https://github.com/tanweai/pua/commit/e6e6cd237ad17750d179674bff52f8184abea8fd",
+      "code_files": [
+        {
+          "path": "evals/test-release-preparation.py",
+          "status": "added",
+          "additions": 73,
+          "deletions": 0
+        },
+        {
+          "path": "scripts/prepare-release.py",
+          "status": "added",
+          "additions": 60,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 133,
+      "code_deletions": 0,
+      "rank": "f996db1e91fcd7bcffa29e2a461c691a0a91ba7cddfc836c58330d1d458acd01",
+      "id": "real-08"
+    },
+    {
+      "repo": "verl-project/verl",
+      "sha": "5cfb74fa04c7f6e5d98260b8f05157c6a9402695",
+      "parent": "04f25bb4326fb0215bb4fb4908123e025166d6a1",
+      "agent": "codex",
+      "attribution_evidence": "Co-authored-by: Codex <noreply@openai.com>",
+      "language": "python",
+      "repo_stars_at_selection": 23607,
+      "commit_date": "2026-08-11T15:10:19Z",
+      "subject": "[megatron] feat: bucket packed sequence lengths (#7358)",
+      "url": "https://github.com/verl-project/verl/commit/5cfb74fa04c7f6e5d98260b8f05157c6a9402695",
+      "code_files": [
+        {
+          "path": "tests/models/test_model_forward_fused.py",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "tests/utils/test_dynamic_cp_scheduler.py",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "tests/utils/test_megatron_bshd_preprocess.py",
+          "status": "modified",
+          "additions": 9,
+          "deletions": 0
+        },
+        {
+          "path": "tests/workers/test_megatron_value_head_cp_layout_on_cpu.py",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "path": "verl/models/mcore/model_forward.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "verl/models/mcore/model_forward_fused.py",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 0
+        },
+        {
+          "path": "verl/models/mcore/util.py",
+          "status": "modified",
+          "additions": 11,
+          "deletions": 0
+        },
+        {
+          "path": "verl/workers/config/engine.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "verl/workers/engine/megatron/transformer_impl.py",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 54,
+      "code_deletions": 1,
+      "rank": "14a5fdfe0db88d35802faf060180d460ebbb6a67b84654e8022640d570ce14a1",
+      "id": "real-09"
+    },
+    {
+      "repo": "microsoft/agent-lightning",
+      "sha": "ee707b662617d52fc46be2a04d2a716a3eb0a521",
+      "parent": "0b44d5d5d3a03a12ab1697c0b2cbfb33f6d8caf7",
+      "agent": "copilot",
+      "attribution_evidence": "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+      "language": "python",
+      "repo_stars_at_selection": 18468,
+      "commit_date": "2026-06-04T03:49:48Z",
+      "subject": "feat: add search_r1 example (#30)",
+      "url": "https://github.com/microsoft/agent-lightning/commit/ee707b662617d52fc46be2a04d2a716a3eb0a521",
+      "code_files": [
+        {
+          "path": "agl_lite/verl/rollout_bridge.py",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        },
+        {
+          "path": "examples/search_r1/__init__.py",
+          "status": "added",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "examples/search_r1/agents/__init__.py",
+          "status": "added",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "examples/search_r1/agents/qa_em.py",
+          "status": "added",
+          "additions": 120,
+          "deletions": 0
+        },
+        {
+          "path": "examples/search_r1/agents/search_r1_agent.py",
+          "status": "added",
+          "additions": 235,
+          "deletions": 0
+        },
+        {
+          "path": "examples/search_r1/retrieval_server.py",
+          "status": "added",
+          "additions": 198,
+          "deletions": 0
+        },
+        {
+          "path": "examples/search_r1/train_search_r1_agent.py",
+          "status": "added",
+          "additions": 270,
+          "deletions": 0
+        },
+        {
+          "path": "tests/examples/test_search_r1_agent.py",
+          "status": "added",
+          "additions": 106,
+          "deletions": 0
+        },
+        {
+          "path": "tests/examples/test_search_r1_training_config.py",
+          "status": "added",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "tests/verl/test_rollout_bridge.py",
+          "status": "modified",
+          "additions": 62,
+          "deletions": 3
+        }
+      ],
+      "code_additions": 1039,
+      "code_deletions": 5,
+      "rank": "33287a3e5c54990c0a506de8742921971596bfc2c17eadfe97898451ab9218ad",
+      "id": "real-10"
+    },
+    {
+      "repo": "onnx/onnx",
+      "sha": "b0236817953cbb06a13a0fb2cd2c457b79e2ec85",
+      "parent": "6a13925ad6f0f335a9c4af50fe7bdde40e5b94c8",
+      "agent": "copilot",
+      "attribution_evidence": "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+      "language": "python",
+      "repo_stars_at_selection": 21524,
+      "commit_date": "2026-08-28T00:09:43Z",
+      "subject": "Runtime checks of shape annotations in reference evaluator (#8307)",
+      "url": "https://github.com/onnx/onnx/commit/b0236817953cbb06a13a0fb2cd2c457b79e2ec85",
+      "code_files": [
+        {
+          "path": "onnx/reference/op_run.py",
+          "status": "modified",
+          "additions": 30,
+          "deletions": 6
+        },
+        {
+          "path": "onnx/reference/ops/op_if.py",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 2
+        },
+        {
+          "path": "onnx/reference/ops/op_loop.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 2
+        },
+        {
+          "path": "onnx/reference/ops/op_scan.py",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        },
+        {
+          "path": "onnx/reference/reference_evaluator.py",
+          "status": "modified",
+          "additions": 106,
+          "deletions": 5
+        },
+        {
+          "path": "onnx/reference/shape_annotation_checker.py",
+          "status": "added",
+          "additions": 191,
+          "deletions": 0
+        },
+        {
+          "path": "tests/python/reference_evaluator_test.py",
+          "status": "modified",
+          "additions": 362,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 702,
+      "code_deletions": 16,
+      "rank": "33dc1c93c0a4fe53e725b0516aade813e61368abb893040a17870f425bb2844e",
+      "id": "real-11"
+    },
+    {
+      "repo": "python-poetry/poetry",
+      "sha": "9be6dd6e75906312c5dc477907e6901fa81ae024",
+      "parent": "d57090395b14ba260a24a97ab704819667bf6cf1",
+      "agent": "copilot",
+      "attribution_evidence": "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+      "language": "python",
+      "repo_stars_at_selection": 34303,
+      "commit_date": "2026-06-13T04:59:27Z",
+      "subject": "avoid spurious empty-constraint conflict with duplicates across extras (#10943)",
+      "url": "https://github.com/python-poetry/poetry/commit/9be6dd6e75906312c5dc477907e6901fa81ae024",
+      "code_files": [
+        {
+          "path": "src/poetry/puzzle/provider.py",
+          "status": "modified",
+          "additions": 17,
+          "deletions": 2
+        },
+        {
+          "path": "tests/puzzle/test_solver.py",
+          "status": "modified",
+          "additions": 36,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 53,
+      "code_deletions": 2,
+      "rank": "6fe5b8fc15895d2de9245809560a5eb8f252058c008b22e1f4746be66b5fde5b",
+      "id": "real-12"
+    },
+    {
+      "repo": "Huanshere/VideoLingo",
+      "sha": "043aa7a7fd1bb36fce9ce405d9d8d7bc499c7178",
+      "parent": "62187d681b15133904eade7ffa3dc2be62a1db50",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 18523,
+      "commit_date": "2026-09-14T11:18:39Z",
+      "subject": "feat: reuse transcription by media content and ASR settings (#607)",
+      "url": "https://github.com/Huanshere/VideoLingo/commit/043aa7a7fd1bb36fce9ce405d9d8d7bc499c7178",
+      "code_files": [
+        {
+          "path": "core/_2_asr.py",
+          "status": "modified",
+          "additions": 33,
+          "deletions": 2
+        },
+        {
+          "path": "core/asr_backend/elevenlabs_asr.py",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 7
+        },
+        {
+          "path": "core/asr_backend/transcription_cache.py",
+          "status": "added",
+          "additions": 93,
+          "deletions": 0
+        },
+        {
+          "path": "core/asr_backend/whisperX_302.py",
+          "status": "modified",
+          "additions": 0,
+          "deletions": 7
+        },
+        {
+          "path": "core/asr_backend/whisperX_local.py",
+          "status": "modified",
+          "additions": 3,
+          "deletions": 1
+        },
+        {
+          "path": "tests/test_transcription_cache.py",
+          "status": "added",
+          "additions": 111,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 241,
+      "code_deletions": 17,
+      "rank": "52b45071d2ec9294b376c7b0c3731574b3b19df80165aae72e40576d89a50476",
+      "id": "real-13"
+    },
+    {
+      "repo": "NVIDIA/SkillSpector",
+      "sha": "76f4beb589d9028e630b3105ca8fcbb595fb883e",
+      "parent": "1dbfef031e8d505b7e2e2f961c09696c2e4a86ff",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 18269,
+      "commit_date": "2026-08-12T05:02:00Z",
+      "subject": "fix(analyzers): HIGH SC8 when skill ships __pycache__ or .pyc (#357)",
+      "url": "https://github.com/NVIDIA/SkillSpector/commit/76f4beb589d9028e630b3105ca8fcbb595fb883e",
+      "code_files": [
+        {
+          "path": "src/skillspector/nodes/analyzers/pattern_defaults.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+          "status": "modified",
+          "additions": 94,
+          "deletions": 3
+        },
+        {
+          "path": "src/skillspector/nodes/report.py",
+          "status": "modified",
+          "additions": 14,
+          "deletions": 1
+        },
+        {
+          "path": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+          "status": "added",
+          "additions": 66,
+          "deletions": 0
+        },
+        {
+          "path": "tests/nodes/test_report.py",
+          "status": "modified",
+          "additions": 7,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 185,
+      "code_deletions": 4,
+      "rank": "0ca7a4b835d7727cc4ef501f3277aa0da95a188d33927ec5e810e6584a07b4c4",
+      "id": "real-14"
+    },
+    {
+      "repo": "ahujasid/mcp-for-blender",
+      "sha": "fd95e6509d2b2c0812b2d83b75f53443da44c325",
+      "parent": "dea9ec3e4b35b1e508226d74623bc84f1099db7e",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 29322,
+      "commit_date": "2026-08-16T16:07:24Z",
+      "subject": "fix: sync bundled Hunyuan addon and harden zip import (#322)",
+      "url": "https://github.com/ahujasid/mcp-for-blender/commit/fd95e6509d2b2c0812b2d83b75f53443da44c325",
+      "code_files": [
+        {
+          "path": "addon.py",
+          "status": "modified",
+          "additions": 23,
+          "deletions": 14
+        },
+        {
+          "path": "src/blender_mcp/bundled/addon.py",
+          "status": "modified",
+          "additions": 69,
+          "deletions": 44
+        },
+        {
+          "path": "src/blender_mcp/server.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 4
+        },
+        {
+          "path": "test_hunyuan_import_security.py",
+          "status": "added",
+          "additions": 151,
+          "deletions": 0
+        },
+        {
+          "path": "test_sketchfab_status.py",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 267,
+      "code_deletions": 62,
+      "rank": "743094e1cfbd16b6151f0ad41d21f42b2b922570ab3f22b580c8ac112b106bc7",
+      "id": "real-15"
+    },
+    {
+      "repo": "danielgatis/rembg",
+      "sha": "b60806e9e7025c7fe2f8edad8bdc6a2d216ba54f",
+      "parent": "930708c40cf38d776e91a913d6fa5acf6edc1bff",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 24876,
+      "commit_date": "2026-08-06T13:55:16Z",
+      "subject": "Feat/withoutbg session (#836)",
+      "url": "https://github.com/danielgatis/rembg/commit/b60806e9e7025c7fe2f8edad8bdc6a2d216ba54f",
+      "code_files": [
+        {
+          "path": "rembg/sessions/__init__.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 0
+        },
+        {
+          "path": "rembg/sessions/withoutbg.py",
+          "status": "added",
+          "additions": 151,
+          "deletions": 0
+        },
+        {
+          "path": "tests/test_withoutbg.py",
+          "status": "added",
+          "additions": 115,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 270,
+      "code_deletions": 0,
+      "rank": "facd499872e5284101dce5f7875d08ef40a7599b1f50963bc84a80a31c344a03",
+      "id": "real-16"
+    },
+    {
+      "repo": "huggingface/peft",
+      "sha": "78bce7cb48f800a7ad0d352b68a46302e13e1687",
+      "parent": "2659fcb52e23d0f8c526067bdb64025ce71c71ba",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 21726,
+      "commit_date": "2026-09-10T13:49:59Z",
+      "subject": "Fail loud on save_pretrained() for unsharded LoRA tensors (#3251)",
+      "url": "https://github.com/huggingface/peft/commit/78bce7cb48f800a7ad0d352b68a46302e13e1687",
+      "code_files": [
+        {
+          "path": "src/peft/peft_model.py",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        },
+        {
+          "path": "src/peft/utils/save_and_load.py",
+          "status": "modified",
+          "additions": 57,
+          "deletions": 0
+        },
+        {
+          "path": "tests/test_gpu_examples.py",
+          "status": "modified",
+          "additions": 49,
+          "deletions": 0
+        },
+        {
+          "path": "tests/test_low_level_api.py",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 128,
+      "code_deletions": 0,
+      "rank": "7d1f117dd4e0fbca9e67b7adb1eab283cac00fd7809801d362fa90e7ec3a4ec9",
+      "id": "real-17"
+    },
+    {
+      "repo": "muratcankoylan/Agent-Skills-for-Context-Engineering",
+      "sha": "9749e5cbda17b03725ef366a40bacc5db7bcac8e",
+      "parent": "25e1fa79a33f0985793bcab3c64dde8d020c5132",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 18030,
+      "commit_date": "2026-06-29T20:52:07Z",
+      "subject": "fix: certify production Agent Skills compatibility across Cursor, Claude Code, and Codex (#96)",
+      "url": "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering/commit/9749e5cbda17b03725ef366a40bacc5db7bcac8e",
+      "code_files": [
+        {
+          "path": "researcher/scripts/check_activation_cases.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 12
+        },
+        {
+          "path": "researcher/scripts/compare_skill_revisions.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 11
+        },
+        {
+          "path": "researcher/scripts/skill_frontmatter.py",
+          "status": "added",
+          "additions": 147,
+          "deletions": 0
+        },
+        {
+          "path": "researcher/scripts/skill_health.py",
+          "status": "modified",
+          "additions": 4,
+          "deletions": 15
+        },
+        {
+          "path": "researcher/scripts/tests/__init__.py",
+          "status": "added",
+          "additions": 0,
+          "deletions": 0
+        },
+        {
+          "path": "researcher/scripts/tests/test_skill_frontmatter.py",
+          "status": "added",
+          "additions": 161,
+          "deletions": 0
+        },
+        {
+          "path": "researcher/scripts/validate_platform_compat.py",
+          "status": "added",
+          "additions": 207,
+          "deletions": 0
+        },
+        {
+          "path": "researcher/scripts/validate_repo.py",
+          "status": "modified",
+          "additions": 65,
+          "deletions": 16
+        }
+      ],
+      "code_additions": 592,
+      "code_deletions": 54,
+      "rank": "00efc6c7576d359bf07a2c0d216e8b72c0ab380c70dfd999cfb1f81996de38cc",
+      "id": "real-18"
+    },
+    {
+      "repo": "titanwings/distilly",
+      "sha": "63044e3393ce5f1da7d202323e7aca5bac416c4f",
+      "parent": "22d96a76e05b91939493f604a0a46198d0d7f978",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "python",
+      "repo_stars_at_selection": 25023,
+      "commit_date": "2026-08-17T05:56:48Z",
+      "subject": "fix: keep work-only skills from referring to Persona",
+      "url": "https://github.com/titanwings/distilly/commit/63044e3393ce5f1da7d202323e7aca5bac416c4f",
+      "code_files": [
+        {
+          "path": "tests/test_skill_writer.py",
+          "status": "modified",
+          "additions": 56,
+          "deletions": 0
+        },
+        {
+          "path": "tools/skill_writer.py",
+          "status": "modified",
+          "additions": 35,
+          "deletions": 2
+        }
+      ],
+      "code_additions": 91,
+      "code_deletions": 2,
+      "rank": "7db0712a35059fd4c98e3a80c974b8bad446eb86166524b66f435504e71bed5a",
+      "id": "real-19"
+    },
+    {
+      "repo": "locustio/locust",
+      "sha": "3c324d8ff9668e792bd239ed8a87e4d96dc15b2f",
+      "parent": "ea630e817e18b7bc7ffc89b2da5523b38d1e9b7f",
+      "agent": "devin",
+      "attribution_evidence": "Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>",
+      "language": "python",
+      "repo_stars_at_selection": 28183,
+      "commit_date": "2026-08-21T19:50:28Z",
+      "subject": "Fix master stopping test prematurely when a missing worker quits",
+      "url": "https://github.com/locustio/locust/commit/3c324d8ff9668e792bd239ed8a87e4d96dc15b2f",
+      "code_files": [
+        {
+          "path": "locust/runners.py",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1
+        },
+        {
+          "path": "locust/test/test_runners.py",
+          "status": "modified",
+          "additions": 28,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 29,
+      "code_deletions": 1,
+      "rank": "2b89a302b34e684a04f2cc9ad67d785a7180713d8d94b019fde8cd68a427e9ff",
+      "id": "real-20"
+    },
+    {
+      "repo": "abhigyanpatwari/GitNexus",
+      "sha": "376ed3bb4abda80f7a57cf963822002b5304f2f9",
+      "parent": "18cbeb907c87c50d548b5c62102080750baac972",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 47569,
+      "commit_date": "2026-09-08T18:06:03Z",
+      "subject": "perf(lock): probe this process's own start time once (#3222)",
+      "url": "https://github.com/abhigyanpatwari/GitNexus/commit/376ed3bb4abda80f7a57cf963822002b5304f2f9",
+      "code_files": [
+        {
+          "path": "gitnexus/src/core/auto-sync/starter.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 2
+        },
+        {
+          "path": "gitnexus/src/storage/file-lock.ts",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 3
+        },
+        {
+          "path": "gitnexus/src/utils/process-identity.ts",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 0
+        },
+        {
+          "path": "gitnexus/test/unit/process-identity.test.ts",
+          "status": "modified",
+          "additions": 45,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 71,
+      "code_deletions": 5,
+      "rank": "01434443f71931c2f42f7874018f9a33249a2524e54c4fc10a0ce909bed4203e",
+      "id": "real-21"
+    },
+    {
+      "repo": "coleam00/Archon",
+      "sha": "908a6dc35bf41b754252c37e2bc1559ddc6fc277",
+      "parent": "3596d54d372654aafdc1b5b072c244e198432dc6",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 23554,
+      "commit_date": "2026-09-11T09:13:58Z",
+      "subject": "fix(workflows): resolve a bundled default command by its flat path",
+      "url": "https://github.com/coleam00/Archon/commit/908a6dc35bf41b754252c37e2bc1559ddc6fc277",
+      "code_files": [
+        {
+          "path": "packages/workflows/src/bundle-live-selection.test.ts",
+          "status": "modified",
+          "additions": 41,
+          "deletions": 1
+        },
+        {
+          "path": "packages/workflows/src/defaults/bundle-inventory.ts",
+          "status": "modified",
+          "additions": 57,
+          "deletions": 6
+        },
+        {
+          "path": "packages/workflows/src/executor-shared.ts",
+          "status": "modified",
+          "additions": 15,
+          "deletions": 14
+        },
+        {
+          "path": "packages/workflows/src/validator.ts",
+          "status": "modified",
+          "additions": 25,
+          "deletions": 16
+        },
+        {
+          "path": "packages/workflows/src/workflow-discovery.ts",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 21
+        }
+      ],
+      "code_additions": 160,
+      "code_deletions": 58,
+      "rank": "020e835cc5e07fb18058d58f181b0a7eddac5856c715353b79eb980cafff39b4",
+      "id": "real-22"
+    },
+    {
+      "repo": "emberjs/ember.js",
+      "sha": "14f95cea45a0e666939b718490b571f8faddd4a1",
+      "parent": "46b9b1ebbefc947d8f9eefb38b2f6d3d0395604d",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 22565,
+      "commit_date": "2026-09-04T18:56:47Z",
+      "subject": "[BUGFIX beta] Add failing tests for dynamic modifier teardown",
+      "url": "https://github.com/emberjs/ember.js/commit/14f95cea45a0e666939b718490b571f8faddd4a1",
+      "code_files": [
+        {
+          "path": "packages/@ember/-internals/glimmer/tests/integration/custom-modifier-manager-test.js",
+          "status": "modified",
+          "additions": 29,
+          "deletions": 0
+        },
+        {
+          "path": "packages/@glimmer-workspace/integration-tests/test/modifiers/dynamic-modifiers-test.ts",
+          "status": "modified",
+          "additions": 50,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 79,
+      "code_deletions": 0,
+      "rank": "02db3e22c3eb38c5fec9d9607b39ea3a1ce4fbbd5dc085f7e455ffa29bebec48",
+      "id": "real-23"
+    },
+    {
+      "repo": "ether/etherpad",
+      "sha": "4d95a12845d42ce4cbc1f5cda5460a44269c2574",
+      "parent": "87a8b2a5c26041ede3692e84fab33f2094459861",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 18556,
+      "commit_date": "2026-07-27T18:18:36Z",
+      "subject": "security(collab): apply queued USER_CHANGES to the enqueue-time pad (cross-pad write TOCTOU) (#8075)",
+      "url": "https://github.com/ether/etherpad/commit/4d95a12845d42ce4cbc1f5cda5460a44269c2574",
+      "code_files": [
+        {
+          "path": "src/node/handler/PadMessageHandler.ts",
+          "status": "modified",
+          "additions": 33,
+          "deletions": 9
+        },
+        {
+          "path": "src/tests/backend/specs/crossPadWriteToctou.ts",
+          "status": "added",
+          "additions": 92,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 125,
+      "code_deletions": 9,
+      "rank": "00c09ae9d14b4af16501dde35c75416c12d9f5cab2098cc65e3b39e998fd2ef1",
+      "id": "real-24"
+    },
+    {
+      "repo": "homebridge/homebridge",
+      "sha": "18c0a9128af4b8b860a31870b2f81e51857602b1",
+      "parent": "b27281ab919b7420da19676d59066a4e5a765339",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 25501,
+      "commit_date": "2026-06-04T10:02:11Z",
+      "subject": "fix(matter): drop BehaviorRegistry handlers when accessories unregister",
+      "url": "https://github.com/homebridge/homebridge/commit/18c0a9128af4b8b860a31870b2f81e51857602b1",
+      "code_files": [
+        {
+          "path": "src/matter/behaviors/BehaviorRegistry.spec.ts",
+          "status": "modified",
+          "additions": 65,
+          "deletions": 0
+        },
+        {
+          "path": "src/matter/behaviors/BehaviorRegistry.ts",
+          "status": "modified",
+          "additions": 29,
+          "deletions": 1
+        },
+        {
+          "path": "src/matter/server/AccessoryManager.spec.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "src/matter/server/AccessoryManager.ts",
+          "status": "modified",
+          "additions": 10,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 106,
+      "code_deletions": 1,
+      "rank": "001968f250482c2512a7cedce5cdc497331d7bf3aa12a1399de430384f5bb9e7",
+      "id": "real-25"
+    },
+    {
+      "repo": "trpc/trpc",
+      "sha": "3d21d2c1364139938f1d7924802af67b506ca544",
+      "parent": "19a0f58c648effba0cb6a8d4c49c43c035576ea5",
+      "agent": "claude",
+      "attribution_evidence": "Co-authored-by: Claude Sonnet 4.6 <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 40658,
+      "commit_date": "2026-09-12T10:58:51Z",
+      "subject": "fix(server): correct assertIsRequestId boolean logic \u2014 non-NaN invalid types passed silently (#7477)",
+      "url": "https://github.com/trpc/trpc/commit/3d21d2c1364139938f1d7924802af67b506ca544",
+      "code_files": [
+        {
+          "path": "packages/server/src/unstable-core-do-not-import/rpc/parseTRPCMessage.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 3
+        },
+        {
+          "path": "packages/tests/server/parseTRPCMessage.test.ts",
+          "status": "added",
+          "additions": 91,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 93,
+      "code_deletions": 3,
+      "rank": "0019e81a1440dde416ee1c6da43434bdb3d60e2a7103c555c39e820841316e96",
+      "id": "real-26"
+    },
+    {
+      "repo": "usablica/intro.js",
+      "sha": "97b87acefcc22372a0d99cf8aea99685a42dd2dd",
+      "parent": "1ecfd3e0b0286ee03254810c5fc6be63cdb5effe",
+      "agent": "claude",
+      "attribution_evidence": "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 23461,
+      "commit_date": "2026-09-18T11:16:13Z",
+      "subject": "test: verify RTL + last-step interaction between PR #2198 and #2199",
+      "url": "https://github.com/usablica/intro.js/commit/97b87acefcc22372a0d99cf8aea99685a42dd2dd",
+      "code_files": [
+        {
+          "path": "src/packages/tour/onKeyDown.test.ts",
+          "status": "modified",
+          "additions": 20,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 20,
+      "code_deletions": 0,
+      "rank": "0323a66203292245fff7603e31e70439d58aeeb614802a6a13eb4c833b3f8260",
+      "id": "real-27"
+    },
+    {
+      "repo": "neoclide/coc.nvim",
+      "sha": "cf1e7ea283e6627d7c4d90d6b14f0d4094ae67f6",
+      "parent": "78a63c1e20bd53d551a037f0ee2a84c54ffc7097",
+      "agent": "codex",
+      "attribution_evidence": "Co-authored-by: Codex <noreply@openai.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 25156,
+      "commit_date": "2026-09-02T10:05:48Z",
+      "subject": "fix(extension): escape installer buffer name (#5748)",
+      "url": "https://github.com/neoclide/coc.nvim/commit/cf1e7ea283e6627d7c4d90d6b14f0d4094ae67f6",
+      "code_files": [
+        {
+          "path": "src/__tests__/modules/extensionModules.test.ts",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        },
+        {
+          "path": "src/extension/ui.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 7
+        }
+      ],
+      "code_additions": 18,
+      "code_deletions": 7,
+      "rank": "cb7c7dcaf4b910c737e8ecbbeb8e4861346742a1f0c4d75186ecfee070af8b42",
+      "id": "real-28"
+    },
+    {
+      "repo": "TanStack/query",
+      "sha": "b4368c43792349f6c29d1fb41f7ee1ef3a8bdd2c",
+      "parent": "5ca904d0688ca6c21600ed67a4c3a90c516bae76",
+      "agent": "copilot",
+      "attribution_evidence": "Co-authored-by: Copilot <copilot@github.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 50357,
+      "commit_date": "2026-08-22T09:13:51Z",
+      "subject": "perf(query-core): skip no-op hydration callbacks and export dehydrateQuery (#11253)",
+      "url": "https://github.com/TanStack/query/commit/b4368c43792349f6c29d1fb41f7ee1ef3a8bdd2c",
+      "code_files": [
+        {
+          "path": "packages/query-core/src/__tests__/hydration.test.tsx",
+          "status": "modified",
+          "additions": 66,
+          "deletions": 1
+        },
+        {
+          "path": "packages/query-core/src/hydration.ts",
+          "status": "modified",
+          "additions": 44,
+          "deletions": 44
+        },
+        {
+          "path": "packages/query-core/src/index.ts",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 111,
+      "code_deletions": 45,
+      "rank": "01d6a3f5cde46c1a2018c3c37cf2a20c6bc636abdf59d7e606bf21bc33022644",
+      "id": "real-29"
+    },
+    {
+      "repo": "desktop/desktop",
+      "sha": "00fe682ee9a77dc098b051108b76adaab42ecf04",
+      "parent": "65e6199b2c3a11a7271754a2487bbb3964113e08",
+      "agent": "copilot",
+      "attribution_evidence": "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 21902,
+      "commit_date": "2026-09-17T14:36:30Z",
+      "subject": "Match selected repositories by ID during indicator refresh",
+      "url": "https://github.com/desktop/desktop/commit/00fe682ee9a77dc098b051108b76adaab42ecf04",
+      "code_files": [
+        {
+          "path": "app/src/lib/stores/app-store.ts",
+          "status": "modified",
+          "additions": 5,
+          "deletions": 1
+        },
+        {
+          "path": "app/test/unit/stores/app-store-indicators-test.ts",
+          "status": "added",
+          "additions": 150,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 155,
+      "code_deletions": 1,
+      "rank": "081ce7c59866be0e0bfa3787d4f8492a6a82784b2c7ff872021e33ad09be4cf8",
+      "id": "real-30"
+    },
+    {
+      "repo": "KaTeX/KaTeX",
+      "sha": "87a2b304aff601ad1c3d930d47d6833d123ad210",
+      "parent": "2318066babab2b1729bba87c983b4fdbdb206eb4",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 20403,
+      "commit_date": "2026-07-19T08:37:49Z",
+      "subject": "fix(htmlData): allow escaped commas in \\htmlData (#4236)",
+      "url": "https://github.com/KaTeX/KaTeX/commit/87a2b304aff601ad1c3d930d47d6833d123ad210",
+      "code_files": [
+        {
+          "path": "src/functions/html.ts",
+          "status": "modified",
+          "additions": 18,
+          "deletions": 1
+        },
+        {
+          "path": "test/katex-spec.ts",
+          "status": "modified",
+          "additions": 19,
+          "deletions": 0
+        }
+      ],
+      "code_additions": 37,
+      "code_deletions": 1,
+      "rank": "610ac1ef3dc86964ff1808d606c0cb1921f95cee98e36694d46c42b31912ed36",
+      "id": "real-31"
+    },
+    {
+      "repo": "dubinc/dub",
+      "sha": "a3f695b1493220fc5da3bdfa81d43fe4fccae2e8",
+      "parent": "cae764ae39205d013808beb3fa78ff403c0a7220",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 24819,
+      "commit_date": "2026-09-04T18:29:31Z",
+      "subject": "Replace bounty submission approve/reject server actions with APIs (#4456)",
+      "url": "https://github.com/dubinc/dub/commit/a3f695b1493220fc5da3bdfa81d43fe4fccae2e8",
+      "code_files": [
+        {
+          "path": "apps/web/ui/modals/confirm-approve-bounty-submission-modal.tsx",
+          "status": "modified",
+          "additions": 22,
+          "deletions": 29
+        },
+        {
+          "path": "apps/web/ui/partners/bounties/reject-bounty-submission-modal.tsx",
+          "status": "modified",
+          "additions": 33,
+          "deletions": 33
+        }
+      ],
+      "code_additions": 55,
+      "code_deletions": 62,
+      "rank": "2a4be4a0ad8e044ff5f554f4f81732344e30c016759e7453e98d48b3da74a4a8",
+      "id": "real-32"
+    },
+    {
+      "repo": "heroui-inc/heroui",
+      "sha": "646597e87f2107a6f90fb13917c6802a6ae911b6",
+      "parent": "0124391e9cf38c0914d96b09af87cf0256ccf1e8",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 30813,
+      "commit_date": "2026-06-05T12:13:51Z",
+      "subject": "docs(calendar): add RAC 1.18 demos and API for calendar props",
+      "url": "https://github.com/heroui-inc/heroui/commit/646597e87f2107a6f90fb13917c6802a6ae911b6",
+      "code_files": [
+        {
+          "path": "apps/docs/src/demos/cn/calendar/index.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/calendar/multiple-selection.tsx",
+          "status": "added",
+          "additions": 31,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/calendar/weeks-in-month.tsx",
+          "status": "added",
+          "additions": 24,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/index.ts",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/range-calendar/anchor-unavailable-dates.tsx",
+          "status": "added",
+          "additions": 35,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/range-calendar/index.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/cn/range-calendar/weeks-in-month.tsx",
+          "status": "added",
+          "additions": 26,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/calendar/index.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/calendar/multiple-selection.tsx",
+          "status": "added",
+          "additions": 31,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/calendar/weeks-in-month.tsx",
+          "status": "added",
+          "additions": 26,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/index.ts",
+          "status": "modified",
+          "additions": 16,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/range-calendar/anchor-unavailable-dates.tsx",
+          "status": "added",
+          "additions": 37,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/range-calendar/index.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "path": "apps/docs/src/demos/en/range-calendar/weeks-in-month.tsx",
+          "status": "added",
+          "additions": 28,
+          "deletions": 0
+        },
+        {
+          "path": "packages/react/src/components/calendar/calendar.stories.tsx",
+          "status": "modified",
+          "additions": 39,
+          "deletions": 0
+        },
+        {
+          "path": "packages/react/src/components/range-calendar/range-calendar.stories.tsx",
+          "status": "modified",
+          "additions": 39,
+          "deletions": 1
+        }
+      ],
+      "code_additions": 356,
+      "code_deletions": 1,
+      "rank": "15a076dcbd53f899007d56cf83fde07e9beafb16103e5ba1fad0f4a8af6cd60b",
+      "id": "real-33"
+    },
+    {
+      "repo": "solidjs/solid",
+      "sha": "5086b27e6a8e03750d987854247d87647cfc195e",
+      "parent": "c257b9eedc24ba1d5861ae789806a4baa59812c2",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 36073,
+      "commit_date": "2026-08-17T18:44:19Z",
+      "subject": "fix(reactive): make createSelector transition-aware",
+      "url": "https://github.com/solidjs/solid/commit/5086b27e6a8e03750d987854247d87647cfc195e",
+      "code_files": [
+        {
+          "path": "packages/solid/src/reactive/signal.ts",
+          "status": "modified",
+          "additions": 2,
+          "deletions": 1
+        },
+        {
+          "path": "packages/solid/test/signals.spec.ts",
+          "status": "modified",
+          "additions": 33,
+          "deletions": 1
+        }
+      ],
+      "code_additions": 35,
+      "code_deletions": 2,
+      "rank": "18a22d1402dc2293fbcabcd221080904c8f2e3533a7e5210bc11bf503636b984",
+      "id": "real-34"
+    },
+    {
+      "repo": "unocss/unocss",
+      "sha": "e74667e8c4f003664f7d7a1820b7eb86f6d4cdd9",
+      "parent": "f564ff1a065f45c1db0f0efdf7a42e62a6cd30d0",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 18968,
+      "commit_date": "2026-09-07T07:08:49Z",
+      "subject": "fix(eslint-plugin): sort `unoVariables` class strings wrapped in `satisfies` (#5316)",
+      "url": "https://github.com/unocss/unocss/commit/e74667e8c4f003664f7d7a1820b7eb86f6d4cdd9",
+      "code_files": [
+        {
+          "path": "packages-integrations/eslint-plugin/src/rules/order.test.ts",
+          "status": "modified",
+          "additions": 97,
+          "deletions": 0
+        },
+        {
+          "path": "packages-integrations/eslint-plugin/src/rules/order.ts",
+          "status": "modified",
+          "additions": 12,
+          "deletions": 10
+        }
+      ],
+      "code_additions": 109,
+      "code_deletions": 10,
+      "rank": "0dd52bdd09a262a6e64d3c17306c0bd95891de6ad4807844a0625890acd587db",
+      "id": "real-35"
+    },
+    {
+      "repo": "xtermjs/xterm.js",
+      "sha": "2fe3fd13a164f956d0c6a2365fa89feaf4366074",
+      "parent": "f33f502267455f40e64a89a6a554b8d6beae6284",
+      "agent": "cursor",
+      "attribution_evidence": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "language": "typescript",
+      "repo_stars_at_selection": 21224,
+      "commit_date": "2026-06-06T16:15:09Z",
+      "subject": "fix(addon-webgl): skip missing buffer lines in _updateModel (#5991)",
+      "url": "https://github.com/xtermjs/xterm.js/commit/2fe3fd13a164f956d0c6a2365fa89feaf4366074",
+      "code_files": [
+        {
+          "path": "addons/addon-webgl/src/WebglRenderer.ts",
+          "status": "modified",
+          "additions": 21,
+          "deletions": 6
+        }
+      ],
+      "code_additions": 21,
+      "code_deletions": 6,
+      "rank": "13dc4faed70b5f7036bbc041dc2842f563fa577457c5acd0d1bfc324b4d47b5a",
+      "id": "real-36"
+    }
+  ]
+}

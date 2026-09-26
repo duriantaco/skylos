@@ -166,3 +166,61 @@ def test_cpp_unreadable_path_reports_incomplete_scan(tmp_path: Path) -> None:
     result = scan_cpp_file(str(missing))
     assert result[0] == []
     assert result[25]["kind"] == "source_read_error"
+
+
+# Regression: onnx@b023681795 onnx/defs/parser.cc (Apache-2.0) segfaulted the
+# scanner. py-tree-sitter 0.26.0's Point.row/.column getters return borrowed
+# references; reading them for a line > 256 (not a cached small int) freed the
+# int twice and crashed CPython at the next GC. Reduced to a synthetic snippet.
+_CPP_POINT_REFCOUNT_PROBE = r"""
+import gc, sys
+from skylos.visitors.languages.cpp.core import CppScanError, scan_symbols
+
+padding = "\n" * 2000
+ok_source = padding + "static int helper() { return 1; }\nint main() { return 0; }\n"
+bad_source = padding + "int broken( {\n"
+for _ in range(50):
+    definitions, _refs, _ = scan_symbols("probe.cc", ok_source)
+    assert definitions[0].line == 2001, definitions[0].line
+    try:
+        scan_symbols("probe.cc", bad_source)
+    except CppScanError as exc:
+        assert exc.lineno > 256
+    else:
+        raise AssertionError("expected CppScanError")
+gc.collect()
+print("ok")
+"""
+
+
+def test_cpp_scan_line_numbers_do_not_corrupt_interpreter() -> None:
+    import subprocess
+    import sys
+
+    if core.CPP_LANG is None:
+        pytest.skip("tree-sitter-cpp unavailable")
+    repo_root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(  # skylos: ignore[SKY-D212] fixed argv, test probe
+        [sys.executable, "-c", _CPP_POINT_REFCOUNT_PROBE],
+        cwd=repo_root,
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, (completed.returncode, completed.stderr[-2000:])
+    assert completed.stdout.strip() == "ok"
+
+
+def test_tree_sitter_scanners_never_use_point_named_attributes() -> None:
+    import re
+
+    languages_dir = Path(core.__file__).resolve().parents[1]
+    pattern = re.compile(r"(?:_point|\bpoint)\s*\)?\.(?:row|column)\b")
+    offenders = [
+        f"{path}:{lineno}"
+        for path in sorted(languages_dir.rglob("*.py"))
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if pattern.search(line) and not line.lstrip().startswith("#")
+    ]
+    assert offenders == []

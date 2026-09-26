@@ -270,7 +270,7 @@ def test_private_poetry_source_is_gap_and_never_serialized(tmp_path, capsys):
         'groups = ["dev"]\nsource = {type = "legacy", url = "https://private.example/simple", reference = "private-source"}',
     )
     _write(tmp_path, "poetry.lock", text)
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     captured = capsys.readouterr()
     document = json.loads(captured.out)
     assert set(_components(document)) == {"pkg:pypi/parent@1.0.0"}
@@ -291,7 +291,7 @@ def test_unrelated_yarn_lock_does_not_cover_python_manifest_ranges(
         else '[project]\ndependencies = ["python-only>=1.0"]\n'
     )
     _write(tmp_path, manifest, text)
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     captured = capsys.readouterr()
     assert len(json.loads(captured.out)["components"]) == 2
     assert "incomplete" in captured.err
@@ -302,7 +302,7 @@ def test_lock_in_other_project_does_not_cover_root_manifest_ranges(tmp_path, cap
     nested = tmp_path / "other-project"
     nested.mkdir()
     _write(nested, "yarn.lock", CLASSIC)
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
     captured = capsys.readouterr()
     assert len(json.loads(captured.out)["components"]) == 2
 

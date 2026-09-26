@@ -1,7 +1,9 @@
 """Offline CycloneDX 1.6 export of Skylos's supported dependency inventory.
 
 Schema: https://cyclonedx.org/schema/bom-1.6.schema.json
-This is pre-build evidence, not an installed-environment or licence attestation.
+This is pre-build evidence, not an installed-environment attestation. Declared
+licenses come from offline package metadata (see skylos.rules.sca.licenses);
+anything not provable stays unknown rather than guessed.
 """
 
 from __future__ import annotations
@@ -15,6 +17,12 @@ from urllib.parse import quote
 
 import skylos
 
+from skylos.rules.sca.licenses import (
+    _CANONICAL_IDS,
+    NOASSERTION,
+    LicenseInventory,
+    collect_licenses,
+)
 from skylos.rules.sca.npm_lockfile import _exact_version, _name as _npm_name
 from skylos.rules.sca.poetry_lockfile import _version as _pypi_version
 from skylos.rules.sca.uv_lockfile import _name as _pypi_name
@@ -153,9 +161,28 @@ def _graph(components: dict[str, list[dict]]) -> list[dict]:
     return graph
 
 
-def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport:
+_SPDX_ID_VALUES = frozenset(_CANONICAL_IDS.values())
+
+
+def cyclonedx_licenses(expression: str) -> list[dict] | None:
+    """CycloneDX ``licenses`` for a normalized SPDX expression; None if unknown."""
+    if not expression or expression == NOASSERTION:
+        return None
+    if expression in _SPDX_ID_VALUES:
+        return [{"license": {"id": expression}}]
+    return [{"expression": expression}]
+
+
+def cyclonedx_bom(
+    inventory: DependencyInventory,
+    root: Path,
+    licenses: LicenseInventory | None = None,
+) -> CycloneDXExport:
     """Build deterministic JSON-compatible CycloneDX, including healthy packages."""
     root = Path(root).resolve()
+    if licenses is None:
+        licenses = collect_licenses(inventory, root)
+    license_by_ref: dict[str, dict] = {}
     identities = {}
     invalid_identity_count = 0
     occurrences: dict[str, list[dict]] = defaultdict(list)
@@ -166,6 +193,12 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
             continue
         ref, name, version = identity
         identities[ref] = (name, version, dependency["ecosystem"])
+        record = licenses.get_record(dependency)
+        if ref not in license_by_ref or (
+            license_by_ref[ref]["license"] == NOASSERTION
+            and record["license"] != NOASSERTION
+        ):
+            license_by_ref[ref] = record
         for item in dependency.get("dependency_occurrences", [dependency]):
             occurrences[ref].append(_occurrence(item, root))
 
@@ -199,6 +232,13 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
                 ]
             },
         }
+        record = license_by_ref.get(ref)
+        declared = cyclonedx_licenses(record["license"]) if record else None
+        if declared:
+            component["licenses"] = declared
+            component["properties"].append(
+                {"name": "skylos:license:source", "value": record["source"]}
+            )
         if ecosystem == "npm" and name.startswith("@") and "/" in name:
             component["group"], component["name"] = name.split("/", 1)
         components.append(component)
@@ -272,7 +312,7 @@ def cyclonedx_bom(inventory: DependencyInventory, root: Path) -> CycloneDXExport
                     "name": "skylos:dependency_graph",
                     "value": "recorded_resolved_edges_only",
                 },
-                {"name": "skylos:licenses", "value": "not_collected"},
+                {"name": "skylos:licenses", "value": _json(licenses.receipt)},
             ],
         },
         "components": components,

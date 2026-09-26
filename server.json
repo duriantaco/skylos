@@ -17,7 +17,7 @@
       },
       "environmentVariables": [
         {
-          "description": "Skylos API key for cloud features and MCP authentication",
+          "description": "Skylos API key. Required for every MCP tool except `analyze` (which works without a key, 5 calls/day). The local CLI (`skylos verify`, hooks) needs no key.",
           "isRequired": false,
           "format": "string",
           "isSecret": true,

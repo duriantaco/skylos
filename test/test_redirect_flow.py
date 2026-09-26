@@ -149,3 +149,31 @@ def test_redirect_tainted_variable_still_flagged():
     )
     findings = _scan_code(code)
     assert "SKY-D230" in _rule_ids(findings)
+
+
+def test_redirect_url_for_with_user_value_is_internal():
+    # agent-pr-bench mb-07: url_for builds an application-internal path; the
+    # user value only fills a path parameter.
+    code = (
+        "from flask import redirect, url_for, request\n"
+        "def follow(username):\n"
+        "    return redirect(url_for('main.user', username=username))\n"
+        "def search():\n"
+        "    q = request.args.get('q')\n"
+        "    target = url_for('main.search') + '?q=' + q\n"
+        "    return redirect(target)\n"
+        "def detail(request, pk):\n"
+        "    return redirect(reverse('detail', args=[pk]))\n"
+    )
+    assert "SKY-D230" not in _rule_ids(_scan_code(code))
+
+
+def test_redirect_user_url_next_to_url_for_still_flags():
+    code = (
+        "from flask import redirect, url_for, request\n"
+        "def login(next_url):\n"
+        "    if not next_url:\n"
+        "        return redirect(url_for('main.index'))\n"
+        "    return redirect(next_url)\n"
+    )
+    assert "SKY-D230" in _rule_ids(_scan_code(code))

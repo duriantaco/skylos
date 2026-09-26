@@ -335,7 +335,7 @@ diff --git a/fix.py b/fix.py
 
 
 def test_analyze_provenance_message_detection():
-    log = "abc1234full|Dev|dev@co.com|AI-generated code for module|\n"
+    log = "abc1234full|Dev|dev@co.com|Generated with Claude Code: module|\n"
     diff_tree = """\
 diff --git a/gen.py b/gen.py
 --- a/gen.py

@@ -208,3 +208,19 @@ def test_rule_sky_d228_format_base_in_variable_not_detected_current_limitation()
         "def f(user):\n    tmpl = '<b>{}</b>'\n    return tmpl.format(user)\n"
     )
     assert _has_rule(findings, "SKY-D228") is False
+
+
+def test_llm_protocol_tags_are_not_html():
+    # agent-pr-bench real-10: '</search>' delimits a model action, not markup.
+    src = (
+        "def postprocess_response(response: str) -> str:\n"
+        "    if '</search>' in response:\n"
+        "        return response.split('</search>')[0] + '</search>'\n"
+        "    return '<answer>' + response + '</answer>'\n"
+    )
+    assert not [f for f in _scan_src(src) if f["rule_id"] == "SKY-D228"]
+
+
+def test_html_tag_concatenation_still_flags():
+    src = "def page(name):\n    return '<h1>' + name + '</h1>'\n"
+    assert [f for f in _scan_src(src) if f["rule_id"] == "SKY-D228"]
