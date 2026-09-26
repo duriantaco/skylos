@@ -872,7 +872,8 @@ def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):
     assert payload["findings"][0]["vibe_category"] == "incomplete_generation"
     assert seen["kwargs"]["enable_ai_defects"] is True
     assert seen["kwargs"]["enable_dependency_hallucinations"] is True
-    assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["enable_danger"] is True
+    assert seen["kwargs"]["enable_secrets"] is True
     assert seen["kwargs"]["changed_files"] == [str(app)]
 
 
@@ -926,7 +927,8 @@ def test_verify_change_path_can_include_dependency_hallucinations(tmp_path):
     assert payload["status"] == "pass"
     assert seen["kwargs"]["enable_ai_defects"] is True
     assert seen["kwargs"]["enable_dependency_hallucinations"] is True
-    assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["enable_danger"] is True
+    assert seen["kwargs"]["enable_secrets"] is True
     assert seen["kwargs"]["changed_files"] == [str(app)]
 
 
@@ -1252,7 +1254,7 @@ def test_verify_change_path_uses_target_file_for_changed_files(tmp_path):
     )
 
     assert payload["status"] == "pass"
-    assert seen["kwargs"]["changed_files"] == ["src/app.py"]
+    assert seen["kwargs"]["changed_files"] == [str(app)]
 
 
 def test_verify_change_stdin_payload_uses_manifest_file_for_schema():
@@ -1305,3 +1307,246 @@ def test_verify_change_stdin_payload_discovers_contract_from_manifest_path(tmp_p
 def test_verify_change_stdin_payload_rejects_absolute_manifest_file():
     with pytest.raises(ValueError):
         verify_change_stdin_payload({"file": "/tmp/app.py", "code": "pass\n"})
+
+
+# --- security and secret findings are on by default (in-loop verify) ---
+
+_FAKE_AWS_KEY_ID = "AKIA" + "QWERTYUIOPASDFGH"
+_FAKE_AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYzEXAMPLEKQ"
+
+_INJECTION_SOURCE = (
+    "import os\n"
+    "import sys\n"
+    "\n"
+    "\n"
+    "def run(cmd):\n"
+    "    os.system(cmd)\n"
+    "\n"
+    "\n"
+    "if __name__ == '__main__':\n"
+    "    run(sys.argv[1])\n"
+)
+
+_CLEAN_SOURCE = (
+    "import os\n"
+    "\n"
+    "\n"
+    "def region():\n"
+    "    return os.environ.get('AWS_REGION', 'us-east-1')\n"
+    "\n"
+    "\n"
+    "print(region())\n"
+)
+
+
+def _secret_source() -> str:
+    return (
+        "import os\n"
+        "\n"
+        f'AWS_ACCESS_KEY_ID = "{_FAKE_AWS_KEY_ID}"\n'
+        f'AWS_SECRET_ACCESS_KEY = "{_FAKE_AWS_SECRET}"\n'
+        "\n"
+        "print(os.getcwd(), AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)\n"
+    )
+
+
+def _verify(path, **kwargs):
+    kwargs.setdefault("include_dependency_hallucinations", False)
+    return verify_change_path(path, **kwargs)
+
+
+def test_verify_change_fails_on_command_injection_by_default(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(_INJECTION_SOURCE, encoding="utf-8")
+
+    payload = _verify(app)
+
+    assert payload["status"] == "fail"
+    assert payload["security_checks_enabled"] is True
+    security = [f for f in payload["findings"] if f["category"] == "security"]
+    assert {f["rule_id"] for f in security} >= {"SKY-D212"}
+    injection = next(f for f in security if f["rule_id"] == "SKY-D212")
+    assert injection["range"]["start_line"] == 6
+    assert injection["vibe_category"] == "security_vulnerability"
+    assert injection["suggested_fix"]
+    assert "security" in payload["summary"]
+
+
+def test_verify_change_fails_on_leaked_aws_key_with_redacted_output(tmp_path):
+    app = tmp_path / "settings.py"
+    app.write_text(_secret_source(), encoding="utf-8")
+
+    payload = _verify(app)
+
+    assert payload["status"] == "fail"
+    secrets = [f for f in payload["findings"] if f["category"] == "secret"]
+    assert {f["secret"]["provider"] for f in secrets} >= {
+        "aws_access_key_id",
+        "aws_secret_access_key",
+    }
+    for finding in secrets:
+        assert finding["rule_id"].startswith("SKY-S")
+        assert finding["vibe_category"] == "leaked_secret"
+        assert "…" in finding["secret"]["preview"]
+        assert finding["secret"]["preview"] in finding["message"]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert _FAKE_AWS_KEY_ID not in serialized
+    assert _FAKE_AWS_SECRET not in serialized
+
+
+def test_verify_change_clean_change_passes_with_security_enabled(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(_CLEAN_SOURCE, encoding="utf-8")
+
+    payload = _verify(app)
+
+    assert payload["status"] == "pass"
+    assert payload["findings"] == []
+    assert payload["security_checks_enabled"] is True
+
+
+def test_verify_change_security_opt_out_restores_previous_behavior(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(_INJECTION_SOURCE + _secret_source(), encoding="utf-8")
+    seen = {}
+
+    from skylos.analyzer import analyze
+
+    def recording_analyze(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        return analyze(*args, **kwargs)
+
+    payload = _verify(
+        app,
+        include_security_findings=False,
+        analyze_func=recording_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert payload["findings"] == []
+    assert payload["security_checks_enabled"] is False
+    assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["enable_secrets"] is False
+
+
+def test_verify_change_ignores_security_findings_outside_changed_range(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(_INJECTION_SOURCE + _secret_source(), encoding="utf-8")
+
+    outside = _verify(app, line_range="8:10")
+    injection_only = _verify(app, line_range="5:6")
+    secret_only = _verify(app, line_range="13:13")
+
+    assert outside["status"] == "pass"
+    assert outside["findings"] == []
+    assert injection_only["status"] == "fail"
+    assert {f["category"] for f in injection_only["findings"]} == {"security"}
+    assert secret_only["status"] == "fail"
+    assert {f["category"] for f in secret_only["findings"]} == {"secret"}
+
+
+def test_verify_change_finds_security_for_relative_targets(tmp_path, monkeypatch):
+    sub = tmp_path / "pkg"
+    sub.mkdir()
+    (sub / "app.py").write_text(_INJECTION_SOURCE + _secret_source(), "utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    for kwargs in (
+        {"path": "pkg/app.py"},
+        {"path": ".", "file": "pkg/app.py"},
+        {"path": ".", "file": "pkg/app.py", "project_context": True},
+    ):
+        path = kwargs.pop("path")
+        payload = _verify(path, **kwargs)
+        categories = {f["category"] for f in payload["findings"]}
+        assert categories == {"security", "secret"}, kwargs
+        assert {f["range"]["file"] for f in payload["findings"]} <= {
+            "pkg/app.py",
+            "app.py",
+        }
+
+
+def test_verify_change_stdin_payload_checks_security_by_default():
+    payload = verify_change_stdin_payload(
+        {"file": "src/app.py", "code": _INJECTION_SOURCE + _secret_source()}
+    )
+
+    assert payload["status"] == "fail"
+    assert {f["category"] for f in payload["findings"]} == {"security", "secret"}
+    assert {f["range"]["file"] for f in payload["findings"]} == {"src/app.py"}
+    assert _FAKE_AWS_KEY_ID not in json.dumps(payload, ensure_ascii=False)
+
+    opted_out = verify_change_stdin_payload(
+        {
+            "file": "src/app.py",
+            "code": _INJECTION_SOURCE + _secret_source(),
+            "include_security_findings": False,
+        }
+    )
+    assert opted_out["status"] == "pass"
+    assert opted_out["security_checks_enabled"] is False
+
+
+def test_verify_change_stdin_payload_rejects_non_bool_security_flag():
+    with pytest.raises(ValueError, match="include_security_findings"):
+        verify_change_stdin_payload(
+            {"code": "pass\n", "include_security_findings": "no"}
+        )
+
+
+def test_secret_findings_only_copy_redacted_fields(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("x = 1\n", encoding="utf-8")
+    raw = _FAKE_AWS_KEY_ID
+    result = {
+        "secrets": [
+            {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "provider": "aws_access_key_id",
+                "message": "Potential aws_access_key_id secret detected",
+                "file": str(app),
+                "line": 1,
+                "preview": "AKIA…ASDF",
+                "value": raw,
+                "line_content": f'KEY = "{raw}"',
+                "metadata": {"raw": raw},
+                "evidence": {"snippet": raw},
+            }
+        ]
+    }
+
+    payload = build_verify_change_response(
+        result, project_root=tmp_path, include_security_findings=True
+    )
+
+    assert payload["status"] == "fail"
+    finding = payload["findings"][0]
+    assert finding["category"] == "secret"
+    assert finding["secret"] == {
+        "provider": "aws_access_key_id",
+        "preview": "AKIA…ASDF",
+    }
+    assert raw not in json.dumps(payload, ensure_ascii=False)
+    assert payload["summary"] == "1 issue found: 1 secret"
+
+
+def test_secret_findings_are_excluded_when_security_is_disabled(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("x = 1\n", encoding="utf-8")
+    result = {
+        "secrets": [
+            {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "file": str(app),
+                "line": 1,
+                "preview": "AKIA…ASDF",
+            }
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["status"] == "pass"
+    assert payload["security_checks_enabled"] is False

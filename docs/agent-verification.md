@@ -206,7 +206,11 @@ Inside GitHub Actions, `skylos defend` automatically appends a score summary
 ## MCP: agents verifying agents
 
 The Skylos MCP server exposes `verify_agent`, so Claude Code, Cursor, and
-other MCP clients can verify an agent codebase they just wrote or modified:
+other MCP clients can verify an agent codebase they just wrote or modified.
+Like every MCP tool except `analyze`, `verify_agent` requires the MCP server to
+be started with `SKYLOS_API_KEY` set (create a key in the Skylos Cloud
+dashboard settings); without it the tool returns an authentication error. The
+equivalent CLI, `skylos defend .`, runs locally with no key.
 
 ```
 verify_agent(path=".", fail_on="critical", owasp_framework="agentic")

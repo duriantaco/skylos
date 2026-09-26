@@ -31,6 +31,41 @@ change was intentional. See [Python behavior comparison](behavior-preservation.m
 for the supported model and its limits. Stdin verification retains its existing
 checks; it does not compare the provided source with Git.
 
+## Security and secret findings
+
+`skylos verify` and MCP `verify_change` also run the security (`danger`) and
+secrets scanners on the selected file and range, for path and `--stdin`
+targets alike. A finding only counts when it overlaps the selected
+file/`--range`:
+
+| Category | Rules | Included |
+|:---|:---|:---|
+| `security` | `SKY-D*` | `HIGH` and `CRITICAL` severities, e.g. command injection, SQL injection, unsafe deserialization |
+| `secret` | `SKY-S*` | Hard-coded credentials such as AWS keys, tokens, and private keys |
+
+Either category fails verification (exit `1`), the same as an AI-code finding.
+Security findings use `vibe_category: "security_vulnerability"`; secret
+findings use `vibe_category: "leaked_secret"`. Secret findings never carry the
+secret value. The `message` ends with a masked preview, and a `secret` object
+holds only the provider and that preview:
+
+```json
+{
+  "rule_id": "SKY-S101",
+  "category": "secret",
+  "vibe_category": "leaked_secret",
+  "severity": "CRITICAL",
+  "message": "Potential aws_access_key_id secret detected (redacted: AKIA…DFGH)",
+  "secret": {"provider": "aws_access_key_id", "preview": "AKIA…DFGH"}
+}
+```
+
+Every response includes `security_checks_enabled`. To get the earlier
+AI-code-only verdict, pass `--no-security` on the CLI,
+`"include_security_findings": false` in a `--stdin` manifest, or
+`include_security_findings=false` to the MCP tool. The response then reports
+`security_checks_enabled: false`.
+
 ## Status and exit codes
 
 Schema-version-2 responses use three statuses:
@@ -38,11 +73,41 @@ Schema-version-2 responses use three statuses:
 | Status | Exit | Meaning |
 |:---|:---:|:---|
 | `pass` | `0` | No verified findings, every applicable expected check completed, and no behavior comparison requires review |
-| `fail` | `1` | At least one verified AI-code finding exists |
+| `fail` | `1` | At least one verified AI-code, security, or secret finding exists |
 | `incomplete` | `2` | No finding exists, but a check was unsupported, skipped, uncertain, or missing, or a modeled behavior change needs review |
 
 Findings take precedence over incomplete coverage. `--no-fail` changes the
 process exit code to `0`, but does not change the JSON status.
+
+`--no-behavior` skips the Git behavior comparison, so the verdict comes from
+findings and check coverage alone; a comparison that cannot model a change
+(for example module-level assignments) can then never turn `pass` into
+`incomplete`.
+
+## Changed lines since a ref: `--diff`
+
+```bash
+skylos verify --diff              # everything changed since HEAD
+skylos verify --diff origin/main  # commits after origin/main + staged + unstaged
+skylos verify src --diff HEAD~3   # limit to a subdirectory
+```
+
+`--diff [REF]` (default `HEAD`) verifies every line changed since `REF`:
+commits after it, staged and unstaged edits, and untracked (not ignored)
+files. Findings outside the changed lines are dropped, `range.file` is the
+repo-relative path, and `target.diff` lists the files checked. The behavior
+comparison is not run in this mode. It cannot be combined with `--stdin`,
+`--file`, `--range` or `--project-context`. At most 200 files are checked;
+more makes the result `incomplete`.
+
+## Output formats
+
+`--format auto` (default) prints the human report on a terminal and JSON
+otherwise. `--format json` / `--format human` force one. `--format short`
+prints one line per finding (`file:line RULE [SEVERITY] message`, at most 25)
+and a final `PASS|FAIL|INCOMPLETE: summary` line, which suits agents and
+scripts better than the full JSON. `range.file` is always relative to the Git
+root of the target (or to the target directory outside Git).
 
 Behavior comparison reports `unavailable` when no Git HEAD can be read, and
 `unchanged` when no relevant Python change needs comparison. These do not alter

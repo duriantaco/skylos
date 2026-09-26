@@ -258,8 +258,12 @@ def check_tool_access(tool_name: str) -> tuple[bool, str]:
             return (
                 False,
                 f"Tool '{tool_name}' requires authentication. "
-                f"Set SKYLOS_API_KEY environment variable. "
-                f"Get your key at {CLOUD_BASE_URL}/dashboard/settings",
+                f"Set the SKYLOS_API_KEY environment variable for this MCP server "
+                f"(create a key at {CLOUD_BASE_URL}/dashboard/settings). "
+                f"Without a key only 'analyze' is available "
+                f"({UNAUTH_DAILY_LIMIT} calls/day). No key is needed for the local "
+                f"CLI: `skylos verify <file>` and `skylos agent install-hooks` "
+                f"run fully locally.",
             )
         if not session.check_unauth_limit():
             return (

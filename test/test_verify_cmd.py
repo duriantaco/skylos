@@ -397,3 +397,247 @@ def test_run_verify_command_sets_stdin_contract_opt_out(monkeypatch, capsys):
     _ = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert seen["payload"]["contract_enabled"] is False
+
+
+def _pass_payload(path):
+    return {
+        "schema_version": 2,
+        "tool": "verify_change",
+        "status": "pass",
+        "target": {"path": path, "file": None, "range": None},
+        "findings": [],
+        "summary": "No AI-code issues found",
+    }
+
+
+def test_run_verify_command_leaves_security_checks_on_by_default(capsys):
+    seen = {}
+
+    def fake_verify(path, **kwargs):
+        seen["kwargs"] = kwargs
+        return _pass_payload(path)
+
+    run_verify_command(
+        ["repo"],
+        verify_change_path_func=fake_verify,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    _ = json.loads(capsys.readouterr().out)
+    assert "include_security_findings" not in seen["kwargs"]
+
+
+def test_run_verify_command_no_security_opts_out(capsys):
+    seen = {}
+
+    def fake_verify(path, **kwargs):
+        seen["kwargs"] = kwargs
+        return _pass_payload(path)
+
+    run_verify_command(
+        ["repo", "--no-security"],
+        verify_change_path_func=fake_verify,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    _ = json.loads(capsys.readouterr().out)
+    assert seen["kwargs"]["include_security_findings"] is False
+
+
+def test_run_verify_command_no_security_sets_stdin_opt_out(monkeypatch, capsys):
+    seen = {}
+
+    def fake_stdin(payload, **kwargs):
+        seen["payload"] = payload
+        return _pass_payload(payload["path"])
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"code": "pass\n"})))
+
+    run_verify_command(
+        ["repo", "--stdin", "--no-security"],
+        verify_change_stdin_payload_func=fake_stdin,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    _ = json.loads(capsys.readouterr().out)
+    assert seen["payload"]["include_security_findings"] is False
+
+
+def test_run_verify_command_fails_on_real_command_injection(tmp_path, capsys):
+    app = tmp_path / "app.py"
+    app.write_text(
+        "import os\nimport sys\n\n\ndef run(cmd):\n    os.system(cmd)\n\n\n"
+        "run(sys.argv[1])\n",
+        encoding="utf-8",
+    )
+
+    exit_code = run_verify_command(
+        [str(app), "--no-dependency-hallucinations"],
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["status"] == "fail"
+    assert any(f["category"] == "security" for f in payload["findings"])
+
+    exit_code = run_verify_command(
+        [str(app), "--no-dependency-hallucinations", "--no-security"],
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "pass"
+
+
+# --------------------------------------------------------------------------
+# --diff, --format short, --no-behavior, repo-relative range.file
+# --------------------------------------------------------------------------
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from skylos.verify_change import parse_added_lines, verify_change_diff  # noqa: E402
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git missing")
+
+
+def _git(root, *args):
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+
+def _findings_on_every_line(target, **_kwargs):
+    """Fake analyzer: one quality-free AI finding on every line of each file."""
+    path = Path(target)
+    files = [path] if path.is_file() else sorted(path.rglob("*.py"))
+    return {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "file": str(f),
+                "line": n,
+                "message": f"line {n}",
+                "severity": "HIGH",
+            }
+            for f in files
+            for n in range(1, len(f.read_text().splitlines()) + 1)
+        ]
+    }
+
+
+def test_parse_added_lines():
+    diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+        "@@ -1,0 +2,2 @@\n+x\n+y\n@@ -5 +7 @@\n-a\n+b\n"
+        "diff --git a/gone.py b/gone.py\n--- a/gone.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-z\n"
+        "diff --git a/d.py b/d.py\n--- a/d.py\n+++ b/d.py\n@@ -3 +2,0 @@\n-q\n"
+    )
+    assert parse_added_lines(diff) == {"a.py": [(2, 3), (7, 7)], "d.py": []}
+
+
+@needs_git
+def test_verify_diff_covers_committed_staged_unstaged_and_untracked(tmp_path):
+    _git(tmp_path, "init", "-q")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("one = 1\ntwo = 2\nthree = 3\n")
+    (src / "b.py").write_text("b = 1\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "base")
+    _git(tmp_path, "tag", "base")
+    (src / "a.py").write_text("one = 1\ntwo = 22\nthree = 3\n")  # committed after base
+    _git(tmp_path, "commit", "-qam", "c2")
+    (src / "b.py").write_text("b = 1\nstaged = 2\n")
+    _git(tmp_path, "add", "src/b.py")
+    (src / "a.py").write_text("one = 1\ntwo = 22\nthree = 33\n")  # unstaged
+    (src / "new.py").write_text("n = 1\n")  # untracked
+
+    result = verify_change_diff(
+        tmp_path, ref="base", analyze_func=_findings_on_every_line
+    )
+    got = sorted((f["range"]["file"], f["range"]["start_line"]) for f in result["findings"])
+    assert got == [("src/a.py", 2), ("src/a.py", 3), ("src/b.py", 2), ("src/new.py", 1)]
+    assert result["status"] == "fail"
+    assert result["target"]["diff"]["ref"] == "base"
+
+    head = verify_change_diff(tmp_path, analyze_func=_findings_on_every_line)
+    got = sorted((f["range"]["file"], f["range"]["start_line"]) for f in head["findings"])
+    assert got == [("src/a.py", 3), ("src/b.py", 2), ("src/new.py", 1)]
+
+    with pytest.raises(ValueError):
+        verify_change_diff(tmp_path, ref="--output=/tmp/x")
+    with pytest.raises(ValueError):
+        verify_change_diff(tmp_path, ref="does-not-exist")
+
+
+@needs_git
+def test_single_file_range_file_is_repo_relative(tmp_path):
+    _git(tmp_path, "init", "-q")
+    app = tmp_path / "pkg" / "app.py"
+    app.parent.mkdir()
+    app.write_text("x = 1\n")
+    result = verify_change_path(
+        app, analyze_func=_findings_on_every_line, behavior_comparison=False
+    )
+    assert result["findings"][0]["range"]["file"] == "pkg/app.py"
+
+
+def test_cli_diff_short_and_no_behavior_options(capsys, tmp_path):
+    calls = {}
+
+    def fake_diff(path, **kwargs):
+        calls["diff"] = (path, kwargs)
+        return {
+            "status": "fail",
+            "summary": "1 issue(s) on lines changed since HEAD~1",
+            "findings": [
+                {
+                    "rule_id": "SKY-D212",
+                    "severity": "CRITICAL",
+                    "message": "Possible command injection",
+                    "range": {"file": "src/app.py", "start_line": 4},
+                }
+            ],
+        }
+
+    def fake_path(path, **kwargs):
+        calls["path"] = kwargs
+        return {"status": "pass", "summary": "No AI-code issues found", "findings": []}
+
+    code = run_verify_command(
+        [str(tmp_path), "--diff", "HEAD~1", "--format", "short"],
+        verify_change_diff_func=fake_diff,
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert calls["diff"][1]["ref"] == "HEAD~1"
+    assert out.splitlines() == [
+        "src/app.py:4 SKY-D212 [CRITICAL] Possible command injection",
+        "FAIL: 1 issue(s) on lines changed since HEAD~1",
+    ]
+
+    run_verify_command([str(tmp_path), "--diff"], verify_change_diff_func=fake_diff)
+    assert calls["diff"][1]["ref"] == "HEAD"
+    capsys.readouterr()
+
+    app = tmp_path / "app.py"
+    app.write_text("x = 1\n")
+    code = run_verify_command(
+        [str(app), "--no-behavior", "--format", "short"],
+        verify_change_path_func=fake_path,
+    )
+    assert code == 0
+    assert calls["path"]["behavior_comparison"] is False
+    assert capsys.readouterr().out.strip() == "PASS: No AI-code issues found"
+
+    with pytest.raises(SystemExit):
+        run_verify_command(
+            [str(tmp_path), "--diff", "--range", "1:2"],
+            verify_change_diff_func=fake_diff,
+        )

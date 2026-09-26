@@ -559,3 +559,53 @@ def test_mcp_verify_agent_rejects_missing_path(monkeypatch):
     result = json.loads(fake.tools["verify_agent"](path="/nonexistent/nowhere"))
 
     assert "error" in result
+
+
+def test_mcp_verify_change_reports_security_findings_by_default(
+    monkeypatch, tmp_path
+):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    app = tmp_path / "app.py"
+    app.write_text(
+        "import os\nimport sys\n\n\ndef run(cmd):\n    os.system(cmd)\n\n\n"
+        "run(sys.argv[1])\n",
+        encoding="utf-8",
+    )
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(mcp_server, "_store_result", lambda *_args: None)
+
+    result = json.loads(
+        fake.tools["verify_change"](
+            path=str(app), include_dependency_hallucinations=False
+        )
+    )
+    assert result["status"] == "fail"
+    assert result["security_checks_enabled"] is True
+    assert any(f["category"] == "security" for f in result["findings"])
+
+    opted_out = json.loads(
+        fake.tools["verify_change"](
+            path=str(app),
+            include_dependency_hallucinations=False,
+            include_security_findings=False,
+        )
+    )
+    assert opted_out["status"] == "pass"
