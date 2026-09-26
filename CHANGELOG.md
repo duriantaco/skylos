@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.40.0](https://github.com/duriantaco/skylos/compare/v4.39.2...v4.40.0) (2026-09-26)
+
+
+### Features
+
+* **agent:** make skylos safer and less noisy for agents ([#892](https://github.com/duriantaco/skylos/issues/892)) ([979b71d](https://github.com/duriantaco/skylos/commit/979b71d0f382e51fd62f09fc5b26cb78eb105941))
+
 ## [4.39.2](https://github.com/duriantaco/skylos/compare/v4.39.1...v4.39.2) (2026-09-25)
 
 
