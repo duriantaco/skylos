@@ -115,6 +115,9 @@ separate `behavior` result models supported Python working-tree changes against
 Git HEAD; it is not the scope selector for the AI-defect scan. Dependency
 hallucination checks are enabled for path targets and can query package
 registries; use `--no-dependency-hallucinations` to disable those lookups.
+High/critical security findings (`category: "security"`) and hard-coded
+secrets (`category: "secret"`, value redacted) in the selected file/range also
+fail verification; use `--no-security` for the AI-code-only verdict.
 Interactive terminals get a human report. Redirected stdout and `-o` produce
 the versioned JSON result.
 
@@ -254,6 +257,7 @@ facts through `skylos.preflight.run_preflight(...)`.
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
+| SPDX SBOM + license policy | `skylos sbom . --format spdx-json` / `license_deny = ["GPL-*"]` | SPDX 2.3 JSON with declared licenses; `SKY-SCA-LIC001` flags denied licenses in `-a` scans | [License compliance](./docs/license-compliance.md) |
 | Container-image scan | `skylos image scan IMAGE@sha256:<digest> --platform linux/amd64 --fail-on high` | Uses separately installed Trivy, registry network/auth, and an explicit severity gate for a pinned remote image | [Container-image scanning](./docs/container-image-reports.md) |
 | Built GPU artifact preflight | `skylos preflight build/app` | Verifies the exact local artifact identity, selected CUDA architectures, packaged runtime route, and declared fleet compatibility; returns `PASS`, `FAIL`, or `UNKNOWN` | [Release reliability](https://docs.skylos.dev/release-reliability) |
 | Container-image report import | `skylos ingest trivy --input trivy.json --sarif image.sarif` | Converts an existing Trivy image vulnerability report to Skylos JSON/SARIF; optional digest-bound severity check | [Container-image scanning](./docs/container-image-reports.md#import-an-existing-trivy-report) |
@@ -275,11 +279,12 @@ facts through `skylos.preflight.run_preflight(...)`.
 | Agent harness replay | `skylos agent replay .skylos/runs/<run-id>` | Validates and summarizes saved agent verification phases, tool calls, decisions, and budgets | [Agent harness artifacts](#agent-harness-artifacts) |
 | Runtime agent behavior test | `skylos agent init && skylos agent test --allow-contract-endpoint` | Checks final responses, tool selection, explicit refusals, and source IDs against a versioned contract | [Agent Behavior Testing](./docs/agent-behavior-testing.md) |
 | Verification-backed remediation | `skylos agent remediate .` | Scans and fixes supported findings, then re-scans them and records proof-test metadata when available | [AI features](https://docs.skylos.dev/ai-features) |
-| MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify` | [MCP server](https://docs.skylos.dev/mcp-server) |
+| Agent-loop hooks | `skylos agent install-hooks [--codex\|--cursor]` | Verifies every agent edit, blocks secret reads and hallucinated package installs, and holds "done" while new issues are open | [Agent-loop hooks](./docs/agent-hooks.md) |
+| MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires `SKYLOS_API_KEY`; `skylos verify` and agent-loop hooks need no key | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps recognized LLM calls, agent tools, prompt sites, and input sources in Python and TypeScript/JavaScript | [Agent verification](./docs/agent-verification.md) |
 | Pre-deployment agent verification | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
 | Agent verification CI gate | `skylos defend . --fail-on critical` | Blocks deploys with unguarded LLM integrations; SARIF for code scanning via `--format sarif` | [Agent verification](./docs/agent-verification.md) |
-| MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest | [MCP server](https://docs.skylos.dev/mcp-server) |
+| MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest. Requires `SKYLOS_API_KEY`; `skylos defend` needs no key | [MCP server](https://docs.skylos.dev/mcp-server) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
 
 ## What Skylos Catches
@@ -298,6 +303,44 @@ facts through `skylos.preflight.run_preflight(...)`.
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
 
 See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
+
+### Dependency licenses
+
+`skylos sbom .` writes declared dependency licenses into CycloneDX, and
+`skylos sbom . --format spdx-json` writes an SPDX 2.3 SBOM. Licenses come from
+lockfiles and installed package metadata, offline. Unknown or ambiguous values
+(such as `BSD`) stay `NOASSERTION` rather than being guessed. `--license-lookup`
+opts in to a deps.dev query. To block licenses in `-a` scans, set a policy:
+
+```toml
+[tool.skylos]
+license_deny = ["GPL-*", "AGPL-3.0-only"]
+license_severity = "HIGH"
+```
+
+Violations are reported as `SKY-SCA-LIC001`. See
+[License compliance](./docs/license-compliance.md).
+
+## Check Every Agent Edit (Claude Code, Codex, Cursor)
+
+Install local hooks so the agent is checked while it works, not after:
+
+```bash
+skylos agent install-hooks            # Claude Code (.claude/settings.json)
+skylos agent install-hooks --codex    # Codex (.codex/hooks.json)
+skylos agent install-hooks --cursor   # Cursor (.cursor/hooks.json)
+```
+
+- **After each edit:** verifies only the changed lines (security, secrets,
+  AI-code mistakes) and tells the agent what to fix.
+- **Before a file read:** blocks files that contain hard-coded secrets.
+- **Before a package install:** blocks hallucinated or typosquatted packages.
+- **At stop:** blocks "done" while issues the agent added are still open.
+
+Hooks fail open, log to `.skylos/hook.log`, and merge with your existing hooks.
+`--uninstall` removes only the Skylos entries. See
+[Agent-loop hooks](./docs/agent-hooks.md) for the contract, latency, and
+limits.
 
 ## Verify AI Agents Before They Ship
 
@@ -413,9 +456,10 @@ repo and PR checker that puts several common review checks behind one CLI.
   CSRF, rate limiting, timeouts, real-package API hallucinations, and other
   guardrails in generated or edited code.
 - **Agent-loop verification:** `skylos verify` and MCP `verify_change` use a
-  versioned result schema for AI-code trust findings, so coding agents can
-  self-correct before a human sees the change. The CLI renders a human report
-  on a terminal and JSON when redirected or written with `-o`.
+  versioned result schema for AI-code trust, security, and secret findings, so
+  coding agents can self-correct before a human sees the change. The CLI
+  renders a human report on a terminal and JSON when redirected or written
+  with `-o`.
 - **Evidence-backed AI defects:** `--ai-defects` and full scans put strict
   AI-code failure checks under `ai_defects`, including phantom references, fake
   package APIs, nonexistent packages, impossible dependency versions, and
@@ -784,7 +828,9 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 |:---|:---|:---|
 | GitHub Action | [GitHub Action](./action.yml) | Repository PR gates or optional digest-pinned container-image gates |
 | GitLab Code Quality | [GitLab setup](./docs/gitlab-code-quality.md) | merge request report artifacts; no comment-posting bot or API token |
+| Bitbucket Pipelines / Azure Pipelines | [Pipeline setup](./docs/bitbucket-azure-pipelines.md) | detects pull request context for Skylos Cloud checks; `--diff` uses the PR target branch |
 | VS Code extension | [VS Code extension](./editors/vscode/README.md) | in-editor findings and AI-assisted fixes |
+| Claude Code / Codex / Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) | check each agent edit, file read, and package install locally |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | expose Skylos scans to AI agents and coding assistants |
 | Ruff | [Python linting](./docs/python-linting.md) | optional Python linting through `skylos lint` |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
@@ -818,14 +864,17 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | Optional Ruff linting through the Skylos CLI | [Python Linting](./docs/python-linting.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | GitLab merge request reports and CI example | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
+| Bitbucket Pipelines and Azure Pipelines pull request checks | [Bitbucket and Azure Pipelines](./docs/bitbucket-azure-pipelines.md) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
 | Dependency CVEs, uv/npm/pnpm/Poetry/Yarn lockfiles, offline SBOM, and SCA in CI | [Dependency Scanning](./docs/dependency-scanning.md) |
+| Dependency licenses, SPDX 2.3 SBOM, and license deny/allow policy | [License Compliance](./docs/license-compliance.md) |
 | Digest-pinned container-image scanning and GitHub Action setup | [Container-image scanning](./docs/container-image-reports.md) |
 | Source GPU contracts and built-artifact preflight | [Release Reliability](https://docs.skylos.dev/release-reliability) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](./dictionary.md) |
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
+| Claude Code, Codex, and Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) |
 | MCP server setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | Real-world merged cleanup PRs | [Real-World Results](./REAL_WORLD_RESULTS.md) |
 | Baselines, filtering, suppressions, and whitelists | [Configuration](https://docs.skylos.dev/configuration) |
@@ -851,6 +900,16 @@ dead code, security, secrets, quality, and AI-defect checks.
 
 No. Core static analysis runs locally without API keys. LLM features are
 optional through `skylos[llm]` and agent commands.
+
+**Does the MCP server need an account?**
+
+Without `SKYLOS_API_KEY` the MCP server only exposes `analyze` (dead code,
+5 calls/day). Every other MCP tool (`verify_change`, `verify_agent`,
+`security_scan`, `secrets_scan`, and so on) returns an authentication error
+until the server is started with `SKYLOS_API_KEY` set; create a key in the
+Skylos Cloud dashboard settings. The CLI equivalents (`skylos verify`,
+`skylos defend`, `skylos . -a`) and `skylos agent install-hooks` run fully
+locally with no account or key.
 
 **Does Skylos replace Ruff?**
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.constants import parse_exclude_folders
-from skylos.core.file_discovery import should_exclude_path
+from skylos.core.file_discovery import exclusion_matcher
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -70,6 +70,7 @@ def _finding(
 def _iter_repo_files(
     root: Path, exclude_folders: tuple[str, ...], filename: str | None = None
 ):
+    excluded = exclusion_matcher(root, exclude_folders)
     for current_root, dirnames, filenames in os.walk(root):
         base = Path(current_root)
         # Repo policy concerns project code, even when a scan also inspects
@@ -80,13 +81,11 @@ def _iter_repo_files(
             for name in dirnames
             if name != ".ruff_cache"
             and not (base / name / "pyvenv.cfg").is_file()
-            and not should_exclude_path(base / name, root, exclude_folders)
+            and not excluded(base / name)
         ]
         for item in filenames:
             path = base / item
-            if (filename is None or item == filename) and not should_exclude_path(
-                path, root, exclude_folders
-            ):
+            if (filename is None or item == filename) and not excluded(path):
                 yield path
 
 

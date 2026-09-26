@@ -9,6 +9,7 @@ import os
 import secrets as secrets_lib
 import tempfile
 from types import SimpleNamespace
+from skylos.core.ci_env import auto_diff_base_ref
 from skylos.cli_core.dispatch import (
     EARLY_COMMAND_HANDLERS as EARLY_COMMAND_HANDLERS,
     dispatch_early_command,
@@ -2254,6 +2255,12 @@ def _run_verify_command(argv):
     return run_verify_command(argv)
 
 
+def _run_hook_command(argv):
+    from skylos.commands.hook_cmd import run_hook_command
+
+    return run_hook_command(argv)
+
+
 def _run_preflight_command(argv):
     from skylos.commands.preflight_cmd import run_preflight_command
 
@@ -2987,15 +2994,35 @@ def _run_pre_analysis_steps(args, project_root, console):
 
             diff_root = find_git_root(project_root) or project_root
             os.environ["SKYLOS_DIFF_BASE"] = args.diff_base
-            diff_result = subprocess.run(
-                ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
+            # Compare the merge base with the working tree so committed,
+            # staged and unstaged edits all count, plus untracked files.
+            merge_base_result = subprocess.run(
+                ["git", "merge-base", args.diff_base, "HEAD"],
                 cwd=diff_root,
                 capture_output=True,
                 text=True,
             )
-            if diff_result.returncode == 0:
+            merge_base = (
+                merge_base_result.stdout.strip()
+                if merge_base_result.returncode == 0
+                else ""
+            )
+            if merge_base:
+                diff_result = subprocess.run(
+                    ["git", "diff", "--name-only", merge_base],
+                    cwd=diff_root,
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                diff_result = merge_base_result
+            if merge_base and diff_result.returncode == 0:
+                from skylos.cicd.review import get_untracked_files
+
                 changed_files = set()
                 for line in diff_result.stdout.strip().splitlines():
+                    changed_files.add(str((diff_root / line).resolve()))
+                for line in get_untracked_files(diff_root):
                     changed_files.add(str((diff_root / line).resolve()))
                 if not quiet_output:
                     console.print(
@@ -3026,9 +3053,7 @@ def _dependency_bump_cli_diff_base(args):
     # Do not change other detectors' existing --diff/--diff-base semantics.
     base = getattr(args, "diff_base", None) or getattr(args, "diff", None)
     if base == "auto":
-        base = os.environ.get("GITHUB_BASE_REF", "origin/main")
-        if base and not base.startswith("origin/"):
-            base = f"origin/{base}"
+        base = auto_diff_base_ref()
     return base
 
 
@@ -3590,6 +3615,14 @@ def _build_agent_parser():
 
     add_agent_replay_parser(agent_sub)
 
+    from skylos.commands.install_hooks_cmd import add_install_hooks_parser
+
+    add_install_hooks_parser(agent_sub)
+
+    from skylos.commands.warm_cache_cmd import add_warm_cache_parser
+
+    add_warm_cache_parser(agent_sub)
+
     from skylos.commands.agent_test_cmd import add_agent_test_parsers
 
     add_agent_test_parsers(agent_sub)
@@ -3812,6 +3845,16 @@ def main() -> None:
         review_error = _configure_agent_dead_code_review(agent_args, cmd, console)
         if review_error is not None:
             sys.exit(review_error)
+
+        if cmd == "install-hooks":
+            from skylos.commands.install_hooks_cmd import run_install_hooks_command
+
+            sys.exit(run_install_hooks_command(agent_args))
+
+        if cmd == "warm-cache":
+            from skylos.commands.warm_cache_cmd import run_warm_cache_command
+
+            sys.exit(run_warm_cache_command(agent_args))
 
         if cmd == "replay":
             from skylos.commands.agent_replay_cmd import run_agent_replay_command

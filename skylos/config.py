@@ -85,6 +85,10 @@ DEFAULTS = {
     "quality_enabled": False,
     "ai_defects_enabled": False,
     "api_signature_modules": [],
+    "license_deny": [],
+    "license_allow": [],
+    "license_exceptions": [],
+    "license_severity": "HIGH",
     "vibe": {
         "extra_phantom_names": [],
         "extra_phantom_decorators": [],
@@ -117,7 +121,17 @@ _STRING_LIST_CONFIG_KEYS = {
     "whitelist",
     "lower_confidence",
     "api_signature_modules",
+    "license_deny",
+    "license_allow",
+    "license_exceptions",
 }
+_LICENSE_POLICY_KEYS = {
+    "license_deny",
+    "license_allow",
+    "license_exceptions",
+    "license_severity",
+}
+_LICENSE_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
 _DICT_CONFIG_KEYS = {
     "non_library_dirs",
 }
@@ -236,6 +250,11 @@ def _restore_synced_policy_precedence(final_cfg: dict, synced_cfg: dict) -> dict
         for key in (_SYNCED_POLICY_OVERRIDE_KEYS | _REPO_POLICY_WEAKENING_KEYS)
         if key in synced_cfg
     }
+    synced_license_policy = any(key in synced_cfg for key in _LICENSE_POLICY_KEYS)
+    if synced_license_policy:
+        # A synced license policy is operator-owned: the repository may not
+        # widen exceptions, change severity, or ignore the license rule.
+        protected.update(_LICENSE_POLICY_KEYS)
     synced_security_policy = _has_synced_security_policy(synced_cfg)
     if synced_security_policy:
         protected.update(_REPO_SECURITY_POLICY_WEAKENING_KEYS)
@@ -250,6 +269,12 @@ def _restore_synced_policy_precedence(final_cfg: dict, synced_cfg: dict) -> dict
     if synced_security_policy:
         restored["ignore"] = [
             rule_id for rule_id in restored.get("ignore", []) if rule_id != "SKY-SC001"
+        ]
+    if synced_license_policy:
+        restored["ignore"] = [
+            rule_id
+            for rule_id in restored.get("ignore", [])
+            if str(rule_id).upper() != "SKY-SCA-LIC001"
         ]
     return _sanitize_config(restored)
 
@@ -460,6 +485,13 @@ def _sanitize_config(cfg: dict) -> dict:
 
     for key in _BOOL_CONFIG_KEYS:
         safe[key] = _safe_bool(safe.get(key), DEFAULTS[key])
+
+    severity = safe.get("license_severity")
+    safe["license_severity"] = (
+        severity.strip().upper()
+        if isinstance(severity, str) and severity.strip().upper() in _LICENSE_SEVERITIES
+        else DEFAULTS["license_severity"]
+    )
 
     safe["security_contracts"] = _safe_dict_list(
         safe.get("security_contracts"), DEFAULTS["security_contracts"]

@@ -43,7 +43,8 @@ Use `--no-contract` when a verify run should ignore auto-discovered contracts:
 skylos verify . --no-contract
 ```
 
-MCP clients get the same default discovery through the `verify_change` tool.
+MCP clients get the same default discovery through the `verify_change` tool
+(which requires `SKYLOS_API_KEY` on the MCP server; `skylos verify` does not).
 They can pass `contract_path` for a non-default path, or set
 `contract_enabled` to `false` to opt out.
 

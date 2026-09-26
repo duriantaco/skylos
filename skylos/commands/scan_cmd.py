@@ -115,7 +115,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     interactive_selection = cli_module.interactive_selection
     json = cli_module.json
     logging = cli_module.logging
-    os = cli_module.os
     pathlib = cli_module.pathlib
     print_badge = cli_module.print_badge
     remove_unused_function = cli_module.remove_unused_function
@@ -278,9 +277,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
             base_ref = args.diff
             if base_ref == "auto":
-                base_ref = os.environ.get("GITHUB_BASE_REF", "origin/main")
-                if base_ref and not base_ref.startswith("origin/"):
-                    base_ref = f"origin/{base_ref}"
+                from skylos.core.ci_env import auto_diff_base_ref
+
+                base_ref = auto_diff_base_ref()
 
             diff_root = find_git_root(project_root) or project_root
             try:
@@ -289,6 +288,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     cwd=diff_root,
                     raise_on_error=True,
                     include_deletion_anchors=False,
+                    # Local runs must see uncommitted work: compare the merge
+                    # base with the working tree (committed + staged + unstaged)
+                    # and treat untracked files as fully changed.
+                    include_working_tree=True,
                 )
             except ValueError as exc:
                 print(f"Skylos diff unavailable: {exc}", file=sys.stderr)
@@ -358,6 +361,45 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             result_json = json.dumps(result)
 
         if getattr(args, "diff", None):
+            from skylos.analyzer import _split_outside_diff_analysis_errors
+
+            def _diff_scope(ranges):
+                return {
+                    str((pathlib.Path(diff_root) / r["file"]).resolve())
+                    for r in ranges
+                    if isinstance(r, dict) and r.get("file")
+                }
+
+            all_errors = list(result.get("analysis_errors") or [])
+            kept_errors, outside_warnings = _split_outside_diff_analysis_errors(
+                all_errors, _diff_scope(changed_ranges)
+            )
+            if outside_warnings:
+                # Only now pay for a second diff: deletion anchors keep
+                # delete-only files (a removed brace can break parsing) in the
+                # scope that decides whether the scan is incomplete.
+                try:
+                    anchored = get_changed_line_ranges(
+                        base_ref,
+                        cwd=diff_root,
+                        raise_on_error=True,
+                        include_deletion_anchors=True,
+                        include_working_tree=True,
+                    )
+                except ValueError as exc:
+                    print(f"Skylos diff unavailable: {exc}", file=sys.stderr)
+                    raise SystemExit(2) from None
+                kept_errors, outside_warnings = _split_outside_diff_analysis_errors(
+                    all_errors, _diff_scope(changed_ranges) | _diff_scope(anchored)
+                )
+            if outside_warnings:
+                result["analysis_errors"] = kept_errors
+                result["analysis_warnings"] = (
+                    list(result.get("analysis_warnings") or []) + outside_warnings
+                )
+                summary = result.setdefault("analysis_summary", {})
+                summary["analysis_error_count"] = len(kept_errors)
+                summary["analysis_warning_count"] = len(result["analysis_warnings"])
             for category in _DIFF_FINDING_CATEGORIES:
                 items = result.get(category, [])
                 if items:
@@ -393,6 +435,29 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     f"[brand]--diff:[/brand] filtered to {len(changed_ranges)} "
                     f"changed line ranges from {base_ref}"
                 )
+
+        code_health_base = getattr(args, "diff_base", None) or (
+            base_ref if getattr(args, "diff", None) else None
+        )
+        if code_health_base and (
+            changed_files is not None or getattr(args, "diff", None)
+        ):
+            # Diff/PR scope: size, complexity and style metrics are code health,
+            # not findings. Only ones the change introduced or worsened are
+            # listed (in ``code_health``), and they never count toward the gate.
+            from skylos.core.file_discovery import find_git_root
+            from skylos.rules.quality.code_health import (
+                partition_code_health,
+                resolve_merge_base,
+            )
+
+            health_root = pathlib.Path(find_git_root(project_root) or project_root)
+            result = partition_code_health(
+                result,
+                git_root=health_root,
+                base_commit=resolve_merge_base(code_health_base, health_root),
+            )
+            result_json = json.dumps(result)
 
         if getattr(args, "select", None):
             result = _apply_rule_selection(result, args.select)
@@ -868,6 +933,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 tree=args.tree,
                 root_path=project_root,
                 limit=getattr(args, "limit", None),
+                copy_badge=not getattr(args, "no_clipboard", False),
             )
             raise SystemExit(incomplete_exit_code)
 
@@ -919,6 +985,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             tree=args.tree,
             root_path=project_root,
             limit=getattr(args, "limit", None),
+            copy_badge=not getattr(args, "no_clipboard", False),
         )
         raise SystemExit(2)
 
@@ -1028,6 +1095,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 tree=args.tree,
                 root_path=project_root,
                 limit=_cli_limit,
+                copy_badge=not getattr(args, "no_clipboard", False),
             )
             if args.output:
                 _write_rich_report_output(

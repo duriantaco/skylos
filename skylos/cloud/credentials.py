@@ -1,11 +1,7 @@
 import os
 
-try:
-    import keyring
-
-    KEYRING_AVAILABLE = True
-except ImportError:
-    KEYRING_AVAILABLE = False
+# keyring is imported on first use: it costs ~0.1s and most commands (and
+# every agent hook) never touch stored credentials.
 
 SERVICE_NAME = "skylos"
 
@@ -21,8 +17,17 @@ PROVIDERS = {
 }
 
 
+def _keyring():
+    try:
+        import keyring
+    except ImportError:
+        return None
+    return keyring
+
+
 def save_key(provider, key):
-    if not KEYRING_AVAILABLE:
+    keyring = _keyring()
+    if keyring is None:
         print("[warn] 'keyring' not found. Cannot save credentials securely.")
         return False
 
@@ -41,7 +46,8 @@ def get_key(provider):
         if key:
             return key
 
-    if KEYRING_AVAILABLE:
+    keyring = _keyring()
+    if keyring is not None:
         try:
             return keyring.get_password(SERVICE_NAME, provider)
         except Exception:
