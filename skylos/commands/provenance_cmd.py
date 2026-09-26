@@ -96,6 +96,8 @@ def run_provenance_command(
     table.add_row("Total files changed", str(summary.get("total_files", 0)))
     table.add_row("[red]AI-authored[/red]", str(summary.get("agent_count", 0)))
     table.add_row("[green]Human-only[/green]", str(summary.get("human_count", 0)))
+    if summary.get("automation_count"):
+        table.add_row("Automation (bots)", str(summary.get("automation_count", 0)))
     console.print(table)
 
     agents = summary.get("agents_seen", [])

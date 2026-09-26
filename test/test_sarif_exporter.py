@@ -663,3 +663,250 @@ def test_untrusted_review_fields_cannot_self_suppress_sarif():
 
     assert "suppressions" not in result
     assert "skylos_review_decision" not in result["properties"]
+
+
+# --- partialFingerprints / relatedLocations / codeFlows / security-severity ---
+
+
+def _fp(result):
+    return result["partialFingerprints"]["skylosFindingHash/v1"]
+
+
+def _one_result(finding, **kwargs):
+    return SarifExporter([finding], **kwargs).generate()["runs"][0]["results"][0]
+
+
+def test_fingerprint_stable_when_lines_shift():
+    base = {
+        "rule_id": "SKY-D211",
+        "severity": "CRITICAL",
+        "message": "Possible SQL injection",
+        "file": "app/db.py",
+        "line": 10,
+        "category": "SECURITY",
+        "symbol": "load_user",
+        "snippet": "cur.execute('SELECT ' + name)",
+    }
+    shifted = {**base, "line": 42, "snippet": "    cur.execute('SELECT '  +  name)"}
+    assert _fp(_one_result(base)) == _fp(_one_result(shifted))
+
+
+def test_fingerprint_stable_on_line_shift_using_source_file(tmp_path):
+    src = tmp_path / "app.py"
+    src.write_text("import os\n\ndef run(x):\n    os.system(x)\n")
+    finding = {
+        "rule_id": "SKY-D212",
+        "severity": "CRITICAL",
+        "message": "Possible command injection at line 4",
+        "file": str(src),
+        "line": 4,
+        "category": "SECURITY",
+    }
+    before = _fp(_one_result(finding, analyzer_owned=True))
+    src.write_text("import os\n\n\n\n# comment\ndef run(x):\n    os.system(x)\n")
+    after = _fp(
+        _one_result(
+            {**finding, "line": 7, "message": "Possible command injection at line 7"},
+            analyzer_owned=True,
+        )
+    )
+    assert before == after
+
+
+def test_fingerprint_differs_for_different_findings():
+    a = {
+        "rule_id": "SKY-D211",
+        "message": "m",
+        "file": "app.py",
+        "line": 3,
+        "symbol": "f",
+        "snippet": "execute(a)",
+    }
+    variants = [
+        {**a, "rule_id": "SKY-D212"},
+        {**a, "file": "other.py"},
+        {**a, "symbol": "g"},
+        {**a, "snippet": "execute(b)"},
+    ]
+    fps = {_fp(_one_result(a))} | {_fp(_one_result(v)) for v in variants}
+    assert len(fps) == 1 + len(variants)
+
+
+def test_duplicate_findings_get_distinct_fingerprints():
+    f = {"rule_id": "SKY-D201", "message": "eval", "file": "a.py", "line": 1}
+    results = SarifExporter([f, {**f, "line": 9}]).generate()["runs"][0]["results"]
+    fps = [_fp(r) for r in results]
+    assert len(set(fps)) == 2
+    assert fps[0].endswith(":1") and fps[1].endswith(":2")
+
+
+def test_fingerprint_does_not_read_files_for_untrusted_findings(tmp_path):
+    src = tmp_path / "app.py"
+    src.write_text("secret_line = 1\n")
+    exporter = SarifExporter(
+        [{"rule_id": "X", "message": "m", "file": str(src), "line": 1}]
+    )
+    exporter.generate()
+    assert exporter._source_cache == {}
+
+
+def test_related_locations_emitted_from_finding():
+    finding = {
+        "rule_id": "SKY-K8S-EXPOSE",
+        "message": "exposed",
+        "file": "deploy/ingress.yaml",
+        "line": 3,
+        "category": "SECURITY",
+        "severity": "HIGH",
+        "related_locations": [
+            {"file": "deploy/service.yaml", "start_line": 1, "end_line": 12},
+            {"file": "deploy/app.yaml", "start_line": 20, "end_line": 20},
+            "junk",
+            {"start_line": 5},
+        ],
+    }
+    related = _one_result(finding)["relatedLocations"]
+    assert [r["id"] for r in related] == [1, 2]
+    assert related[0]["physicalLocation"]["artifactLocation"]["uri"] == (
+        "deploy/service.yaml"
+    )
+    assert related[0]["physicalLocation"]["region"] == {"startLine": 1, "endLine": 12}
+    assert related[1]["physicalLocation"]["region"] == {"startLine": 20}
+
+
+def test_no_related_locations_or_code_flows_without_data():
+    result = _one_result(
+        {
+            "rule_id": "SKY-D201",
+            "message": "eval",
+            "file": "a.py",
+            "line": 1,
+            "category": "SECURITY",
+        }
+    )
+    assert "relatedLocations" not in result
+    assert "codeFlows" not in result
+
+
+def test_code_flows_from_security_evidence_path():
+    finding = {
+        "rule_id": "SKY-D216",
+        "severity": "CRITICAL",
+        "message": "Possible SSRF",
+        "file": "svc.py",
+        "line": 14,
+        "category": "SECURITY",
+        "metadata": {
+            "security_evidence": {
+                "source": "request-derived URL value",
+                "sink": "requests.get",
+                "path": [
+                    {"message": "request.args['u']", "file": "svc.py", "line": 11},
+                    "url expression `u`",
+                    "HTTP sink `requests.get`",
+                ],
+            }
+        },
+    }
+    flows = _one_result(finding)["codeFlows"]
+    assert len(flows) == 1
+    steps = flows[0]["threadFlows"][0]["locations"]
+    assert len(steps) == 3
+    assert steps[0]["location"]["physicalLocation"]["region"]["startLine"] == 11
+    # Textual steps are anchored at the finding (sink) location.
+    assert steps[1]["location"]["physicalLocation"]["region"]["startLine"] == 14
+    # Step text is sanitized like result messages (backticks neutralized).
+    assert steps[1]["location"]["message"]["text"].startswith("url expression")
+    sink = steps[2]["location"]["physicalLocation"]
+    assert sink["artifactLocation"]["uri"] == "svc.py"
+    assert sink["region"]["startLine"] == 14
+    assert flows[0]["message"]["text"] == (
+        "Flow from request-derived URL value to requests.get"
+    )
+
+
+def test_security_severity_on_security_rules_only():
+    findings = [
+        {
+            "rule_id": "SKY-D212",
+            "severity": "CRITICAL",
+            "message": "cmd",
+            "file": "a.py",
+            "line": 1,
+            "category": "SECURITY",
+        },
+        {
+            "rule_id": "SKY-S101",
+            "severity": "HIGH",
+            "message": "secret",
+            "file": "a.py",
+            "line": 2,
+            "category": "SECRET",
+        },
+        {
+            "rule_id": "SKY-SCA",
+            "severity": "MEDIUM",
+            "message": "dep",
+            "file": "requirements.txt",
+            "line": 1,
+            "category": "DEPENDENCY",
+            "metadata": {"cvss_score": 7.3, "vuln_id": "GHSA-x"},
+        },
+        {
+            "rule_id": "SKY-Q301",
+            "severity": "MEDIUM",
+            "message": "complex",
+            "file": "a.py",
+            "line": 3,
+            "category": "QUALITY",
+        },
+    ]
+    rules = {
+        r["id"]: r
+        for r in SarifExporter(findings).generate()["runs"][0]["tool"]["driver"][
+            "rules"
+        ]
+    }
+    assert rules["SKY-D212"]["properties"]["security-severity"] == "9.5"
+    assert rules["SKY-S101"]["properties"]["security-severity"] == "8.0"
+    assert rules["SKY-SCA"]["properties"]["security-severity"] == "7.3"
+    assert "security" in rules["SKY-S101"]["properties"]["tags"]
+    assert "security-severity" not in rules["SKY-Q301"]["properties"]
+    assert rules["SKY-Q301"]["helpUri"].startswith("https://docs.skylos.dev/rules/")
+
+
+def test_security_severity_uses_highest_finding_for_rule():
+    findings = [
+        {
+            "rule_id": "R",
+            "severity": "LOW",
+            "message": "m",
+            "file": "a.py",
+            "line": 1,
+            "category": "SECURITY",
+        },
+        {
+            "rule_id": "R",
+            "severity": "CRITICAL",
+            "message": "m",
+            "file": "b.py",
+            "line": 1,
+            "category": "SECURITY",
+        },
+    ]
+    rule = SarifExporter(findings).generate()["runs"][0]["tool"]["driver"]["rules"][0]
+    assert rule["properties"]["security-severity"] == "9.5"
+
+
+def test_cwe_tags_use_github_external_convention():
+    finding = {
+        "rule_id": "SKY-D211",
+        "severity": "HIGH",
+        "message": "sqli",
+        "file": "a.py",
+        "line": 1,
+        "category": "SECURITY",
+        "cwe": [{"id": "CWE-89"}],
+    }
+    rule = SarifExporter([finding]).generate()["runs"][0]["tool"]["driver"]["rules"][0]
+    assert "external/cwe/cwe-89" in rule["properties"]["tags"]
