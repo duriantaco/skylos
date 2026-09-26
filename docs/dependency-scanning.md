@@ -229,7 +229,11 @@ quality gate. Selecting this rule with `--select SKY-SCA-NPM-PUB001` also
 enables the publisher check.
 
 The review requires a pinned direct npm dependency in a supported package
-lockfile. Registry history can lack publisher data for older releases, so a
+lockfile. Skylos checks at most 25 eligible packages in deterministic path/name
+order and reports partial coverage when the limit is reached.
+`npm-shrinkwrap.json` is not supported; when present, it takes precedence over
+`package-lock.json` and the check reports the skipped project. Registry history
+can lack publisher data for older releases, so a
 "first observed" publisher may not be the first publisher ever. A trusted
 publisher identity or an established publisher with another widely used npm
 package is exempt. A failed publisher reputation search keeps a review
