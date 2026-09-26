@@ -1069,6 +1069,26 @@ def _check_event_methods(def_obj):
     return None
 
 
+def _check_dependency_injected_parameter(def_obj, analyzer, framework):
+    """FastAPI runs ``Depends()``/``Security()`` dependencies for the parameter
+    even when the body never reads it (authentication, rate limits, DB
+    sessions). Reporting it as unused invites deleting the guard."""
+    if def_obj.type != "parameter":
+        return None
+    key = (def_obj.line, def_obj.simple_name)
+    if key in getattr(framework, "dependency_injected_params", set()):
+        return _suppress(def_obj, "FastAPI dependency parameter (Depends/Security)")
+    alias = getattr(framework, "param_annotation_aliases", {}).get(key)
+    if alias and (
+        alias in getattr(analyzer, "_global_dependency_alias_names", set())
+        or alias in getattr(framework, "dependency_alias_names", set())
+    ):
+        return _suppress(
+            def_obj, f"FastAPI dependency parameter (annotated with {alias})"
+        )
+    return None
+
+
 def _check_base_class_parameters(def_obj):
     if def_obj.type != "parameter" or "." not in def_obj.name:
         return None
@@ -1417,6 +1437,9 @@ def apply_penalties(
         confidence += result
 
     if _check_base_class_parameters(def_obj) is True:
+        return
+
+    if _check_dependency_injected_parameter(def_obj, analyzer, framework) is True:
         return
 
     if _check_settings_config(def_obj) is True:

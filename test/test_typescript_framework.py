@@ -493,3 +493,36 @@ def test_no_framework_plain_ts(tmp_path):
     code = "export function add(a: number, b: number) { return a + b; }\n"
     _, fw = _scan(tmp_path, "math.ts", code)
     assert len(fw.detected_frameworks) == 0
+
+
+STORY_CODE = """\
+import type {Meta, StoryObj} from "@storybook/react";
+import {Calendar} from "./index";
+
+const meta: Meta<typeof Calendar> = {component: Calendar};
+export default meta;
+type Story = StoryObj<typeof Calendar>;
+
+export const WeeksInMonth: Story = {
+  render: (args) => <Calendar {...args} />,
+};
+
+export function Disabled() {
+  return <Calendar isDisabled />;
+}
+
+const helper = 1;
+"""
+
+
+def test_storybook_csf_exports_are_framework_used(tmp_path):
+    # agent-pr-bench real-33: Storybook imports every named story export.
+    defs, fw = _scan(tmp_path, "calendar.stories.tsx", STORY_CODE)
+    names = _decorated_names(defs, fw)
+    assert {"WeeksInMonth", "Disabled"} <= names
+    assert "helper" not in names
+
+
+def test_same_exports_outside_story_file_are_not_marked(tmp_path):
+    defs, fw = _scan(tmp_path, "calendar.tsx", STORY_CODE)
+    assert "WeeksInMonth" not in _decorated_names(defs, fw)

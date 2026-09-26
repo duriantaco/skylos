@@ -121,6 +121,27 @@ def _is_unbounded_orm_all(node: ast.Call) -> bool:
     return _looks_like_orm_query(receiver) and not _call_chain_has_limiter(receiver)
 
 
+def _is_bounded_read(node: ast.Call) -> bool:
+    """``f.read(1024 * 1024)`` / ``f.readlines(hint)`` read a bounded chunk
+    (usually in a ``while chunk := f.read(n)`` loop); only ``read()``,
+    ``read(-1)`` and ``read(None)`` load the whole file."""
+    size = node.args[0] if node.args else None
+    if size is None:
+        for kw in node.keywords:
+            if kw.arg in {"size", "n", "hint"}:
+                size = kw.value
+                break
+    if size is None:
+        return False
+    if isinstance(size, ast.Constant):
+        return size.value is not None and not (
+            isinstance(size.value, (int, float)) and size.value < 0
+        )
+    if isinstance(size, ast.UnaryOp) and isinstance(size.op, ast.USub):
+        return False
+    return True
+
+
 class PerformanceRule(SkylosRule):
     rule_id = "SKY-P401"
     name = "Performance Checks"
@@ -166,7 +187,7 @@ class PerformanceRule(SkylosRule):
                 "readlines",
             ):
                 if "SKY-P401" not in self.ignore_list:
-                    if _is_file_read_context(node):
+                    if _is_file_read_context(node) and not _is_bounded_read(node):
                         findings.append(
                             {
                                 "rule_id": "SKY-P401",

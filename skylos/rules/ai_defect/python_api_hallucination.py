@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from skylos.analysis.ast_cache import (
     MODE_SAFE_REPLACE_2MB,
     load_python_module,
+    mode_max_bytes,
     register_dependent_clear,
     releases_python_ast_cache,
 )
@@ -21,8 +22,14 @@ from skylos.rules.ai_defect.phantom_refs import (
     _module_name,
     _resolve_local_module_member,
     _resolve_import_from_base,
+    plain_module_facts,
     scan_repo_phantom_security_references,
 )
+from skylos.rules.ai_defect.module_facts_index import (
+    active_module_facts_index,
+    token_size,
+)
+from skylos.core.fast_paths import ParentResolver, is_within
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
@@ -459,19 +466,31 @@ def _load_module_facts(
     type_checking_dynamic: set[str] = set()
     type_checking_node_ids: dict[str, set[int]] = {}
     reasons: dict[str, str] = {}
+    use_index = active_module_facts_index() is not None
     for module_name, file_path in modules.items():
-        tree, reason, source_has_type_checking = _parse_python_file(file_path)
-        if tree is None:
-            reasons[module_name] = reason or "target_surface_unavailable"
-            continue
-        trees[module_name] = tree
-        facts = _collect_module_facts(
-            tree,
-            module_name,
-            local_modules,
-            source_has_type_checking=source_has_type_checking,
-            include_reference_context=module_name in reference_modules,
-        )
+        if use_index and module_name not in reference_modules:
+            # Only reference modules need a tree; for the rest, membership in
+            # ``trees`` plus their facts is all the coverage pass reads.
+            facts, reason = _indexed_module_facts(
+                file_path, module_name, local_modules
+            )
+            if facts is None:
+                reasons[module_name] = reason or "target_surface_unavailable"
+                continue
+            trees[module_name] = _INDEXED_SURFACE
+        else:
+            tree, reason, source_has_type_checking = _parse_python_file(file_path)
+            if tree is None:
+                reasons[module_name] = reason or "target_surface_unavailable"
+                continue
+            trees[module_name] = tree
+            facts = _collect_module_facts(
+                tree,
+                module_name,
+                local_modules,
+                source_has_type_checking=source_has_type_checking,
+                include_reference_context=module_name in reference_modules,
+            )
         members[module_name] = facts.members
         type_checking_members[module_name] = facts.type_checking_members
         aliases[module_name] = {
@@ -502,6 +521,30 @@ def _load_module_facts(
     )
 
 
+# Stand-in for a module whose facts came from the persistent index: callers
+# test ``module in trees`` for such modules and never read the tree itself.
+_INDEXED_SURFACE = ast.Module(body=[], type_ignores=[])
+
+
+def _indexed_module_facts(file_path: Path, module_name: str, local_modules):
+    """Facts for a non-reference module via the persistent index.
+
+    Mirrors ``_parse_python_file`` read semantics: that path reads with the
+    no-symlink 2 MiB cap, so a larger file is unreadable here even though
+    the phantom pass (uncapped) could parse it.
+    """
+    status, facts, token = plain_module_facts(file_path, module_name, local_modules)
+    if status == "unreadable":
+        return None, "source_unreadable"
+    if token is not None and token_size(token) > mode_max_bytes(
+        MODE_SAFE_REPLACE_2MB
+    ):
+        return None, "source_unreadable"
+    if facts is None:
+        return None, "parse_error"
+    return facts, None
+
+
 def _parse_python_file(path: Path) -> tuple[ast.AST | None, str | None, bool]:
     source, tree = load_python_module(path, MODE_SAFE_REPLACE_2MB)
     if source is None:
@@ -524,6 +567,7 @@ def _safe_python_files(
     files: Iterable[str | Path],
 ) -> list[Path]:
     selected: set[Path] = set()
+    resolver = ParentResolver()
     for value in files:
         candidate = Path(value)
         if not candidate.is_absolute():
@@ -531,9 +575,10 @@ def _safe_python_files(
         try:
             if candidate.is_symlink():
                 continue
-            resolved = candidate.resolve(strict=True)
-            resolved.relative_to(root)
-        except (OSError, ValueError):
+            resolved = resolver.resolve(candidate, strict=True)
+        except OSError:
+            continue
+        if not is_within(resolved, root):
             continue
         if resolved.is_file() and resolved.suffix in PYTHON_API_SUFFIXES:
             selected.add(resolved)

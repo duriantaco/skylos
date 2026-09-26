@@ -183,6 +183,14 @@ class FrameworkAwareVisitor:
         self._type_refs_in_routes = set()
         self._fastapi_dependency_aliases = defaultdict(set)
         self._fastapi_dependency_alias_refs = set()
+        # (line, name) of parameters FastAPI injects via Depends()/Security(),
+        # either as a default or inside Annotated[...]. The framework consumes
+        # them (running auth/validation), so they are never "unused".
+        self.dependency_injected_params = set()
+        # (line, name) -> simple annotation name, resolved against dependency
+        # aliases (``CurrentUser = Annotated[User, Depends(...)]``) project-wide.
+        self.param_annotation_aliases = {}
+        self.dependency_alias_names = set()
         self.objects_with_routes = defaultdict(list)
         self.objects_passed_as_args = set()
         self.objects_created_by_call = set()
@@ -307,6 +315,12 @@ class FrameworkAwareVisitor:
 
             if alias_name:
                 self._fastapi_dependency_alias_refs.add(alias_name)
+                self.param_annotation_aliases[(arg.lineno, arg.arg)] = alias_name
+
+            if self._has_dependency_marker(default) or self._has_dependency_marker(
+                arg.annotation
+            ):
+                self.dependency_injected_params.add((arg.lineno, arg.arg))
 
         if node.returns:
             self._scan_for_depends(node.returns)
@@ -391,6 +405,13 @@ class FrameworkAwareVisitor:
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self._record_fastapi_dependency_alias(node.target, node.value)
+        self.generic_visit(node)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        # ``type CurrentUser = Annotated[User, Depends(get_current_user)]``
+        self._record_fastapi_dependency_alias(
+            getattr(node, "name", None), getattr(node, "value", None)
+        )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -846,6 +867,14 @@ class FrameworkAwareVisitor:
 
         return names
 
+    def _has_dependency_marker(self, node: ast.AST | None) -> bool:
+        if node is None:
+            return False
+        return any(
+            isinstance(sub, ast.Call) and self._is_fastapi_dependency_call(sub)
+            for sub in ast.walk(node)
+        )
+
     def _is_fastapi_dependency_call(self, node: ast.Call) -> bool:
         if isinstance(node.func, ast.Name):
             return node.func.id in self._fastapi_dependency_call_names
@@ -884,6 +913,8 @@ class FrameworkAwareVisitor:
             value
         ):
             return
+        if self._has_dependency_marker(value):
+            self.dependency_alias_names.add(target.id)
         alias_deps = self._dependency_names_from_node(value)
         if alias_deps:
             self._fastapi_dependency_aliases[target.id].update(alias_deps)

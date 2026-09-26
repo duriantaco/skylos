@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from pathlib import Path
 from tree_sitter import Language, Query, QueryCursor
 
@@ -8,6 +9,7 @@ from .nextjs import (
     is_nextjs_default_export_file,
 )
 
+_STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
 
 # Host-invoked methods for the VS Code contracts exercised by the pinned
@@ -130,6 +132,7 @@ class TSFrameworkVisitor:
 
         self._detect_frameworks()
         self._scan_file_conventions()
+        self._scan_storybook_exports()
         self._scan_nextjs_named_exports()
         self._scan_react_patterns()
         self._scan_custom_hooks()
@@ -154,6 +157,20 @@ class TSFrameworkVisitor:
     def _scan_file_conventions(self) -> None:
         if is_nextjs_default_export_file(self._file_path):
             self._mark_default_export()
+
+    def _scan_storybook_exports(self) -> None:
+        """Component Story Format: Storybook's loader imports every named
+        export of ``*.stories.*`` / ``*.story.*`` as a story and the default
+        export as its meta, so none of them is referenced by application code."""
+        if not _STORYBOOK_FILE_RE.search(self._basename):
+            return
+        self._mark_default_export()
+        names = {
+            self._get_text(node)
+            for key in ("export_func_name", "export_var_name", "export_spec_name")
+            for node in self._captures.get(key, [])
+        }
+        self._mark_named_exports(names)
 
     def _mark_default_export(self) -> None:
         for node in self._captures.get("export_func_name", []):

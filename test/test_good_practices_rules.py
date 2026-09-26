@@ -163,6 +163,33 @@ def test_mutating_fastapi_route_accepts_depends_guard():
     assert findings == []
 
 
+def test_mutating_fastapi_route_accepts_route_level_dependencies():
+    # agent-pr-bench fa-11: the guard is declared on the path operation.
+    findings = _run_rule(
+        FrameworkPracticeRule(),
+        """
+        from fastapi import APIRouter, Depends
+
+        router = APIRouter()
+        admin_router = APIRouter(dependencies=[Depends(get_current_active_superuser)])
+
+        @router.post("/backup/", dependencies=[Depends(get_current_active_superuser)])
+        def backup_database(label: str) -> dict:
+            return {}
+
+        @admin_router.delete("/users/{user_id}")
+        def delete_user(user_id: int) -> dict:
+            return {}
+
+        @router.put("/open")
+        def open_route(db=Depends(get_db)) -> dict:
+            return {}
+        """,
+    )
+
+    assert [(f["rule_id"], f["name"]) for f in findings] == [("SKY-F102", "open_route")]
+
+
 def test_mutating_flask_route_accepts_login_required_guard():
     findings = _run_rule(
         FrameworkPracticeRule(),
