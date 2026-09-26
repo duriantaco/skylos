@@ -25,6 +25,7 @@ _DIFF_FINDING_CATEGORIES = (
     "custom_rules",
     "circular_dependencies",
     "dependency_vulnerabilities",
+    "publisher_change_findings",
 )
 
 
@@ -129,6 +130,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = _build_main_parser()
     args = _parse_main_cli_args(parser, argv)
+    if getattr(args, "scan_publisher_changes", False):
+        args.sca = True
     if args.upload and (args.diff or args.diff_base):
         parser.error(
             "diff-scoped results cannot be uploaded as a full scan; "
@@ -267,6 +270,29 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             except Exception as e:
                 if args.verbose:
                     console.print(f"[warn]SCA scan error: {e}[/warn]")
+
+        if getattr(args, "scan_publisher_changes", False):
+            try:
+                from skylos.rules.sca.publisher_changes import scan_publisher_changes
+
+                publisher_scan = scan_publisher_changes(project_root, enabled=True)
+                result["publisher_change_findings"] = list(publisher_scan.findings)
+                summary = result.setdefault("analysis_summary", {})
+                summary["publisher_change_count"] = len(publisher_scan.findings)
+                receipt = dict(publisher_scan.receipt)
+                receipt["warnings"] = list(publisher_scan.warnings)
+                summary["publisher_change_scan"] = receipt
+            except Exception as exc:
+                result["publisher_change_findings"] = []
+                summary = result.setdefault("analysis_summary", {})
+                summary["publisher_change_count"] = 0
+                summary["publisher_change_scan"] = {
+                    "status": "incomplete",
+                    "complete": False,
+                    "reason": "scanner_exception",
+                    "error_type": type(exc).__name__,
+                }
+                logger.debug("npm publisher scan failed", exc_info=True)
 
         if getattr(args, "diff", None):
             from skylos.cicd.review import (
@@ -523,6 +549,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     "unused_parameters",
                     "unused_files",
                     "dependency_vulnerabilities",
+                    "publisher_change_findings",
                 ]
                 all_annotatable = []
                 for cat in _finding_categories:
@@ -722,6 +749,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             _add(output_result.get("secrets", []), "SECRET", None)
             _add(
                 output_result.get("dependency_vulnerabilities", []), "DEPENDENCY", None
+            )
+            _add(
+                output_result.get("publisher_change_findings", []),
+                "PUBLISHER_CHANGE",
+                "SKY-SCA-NPM-PUB001",
             )
             _add(output_result.get("custom_rules", []), "CUSTOM", None)
             _add(
