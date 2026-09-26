@@ -220,6 +220,7 @@ def test_symlink_following_write_flags_attacker_controlled_output(tmp_path):
         """
 from pathlib import Path
 
+@app.post("/save")
 def save(raw_path, data):
     out = Path(raw_path)
     out.write_text(data, encoding="utf-8")
@@ -233,12 +234,30 @@ def test_symlink_following_read_flags_attacker_controlled_history(tmp_path):
         tmp_path,
         "a_symlink_read.py",
         """
+@mcp.tool()
 def show_history(project_root):
     path = project_root / ".skylos" / "debt_history.jsonl"
     return path.read_text(encoding="utf-8")
 """,
     )
     assert "SKY-D325" in _rule_ids(out)
+
+
+def test_symlink_rules_require_untrusted_source(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_symlink_helper.py",
+        """
+from pathlib import Path
+
+def save(raw_path, data):
+    Path(raw_path).write_text(data, encoding="utf-8")
+
+def show_history(project_root):
+    return (project_root / ".skylos" / "debt_history.jsonl").read_text()
+""",
+    )
+    assert not (_rule_ids(out) & {"SKY-D215", "SKY-D324", "SKY-D325"})
 
 
 def test_basename_only_sidecar_still_flags_symlink_read(tmp_path):
@@ -248,6 +267,7 @@ def test_basename_only_sidecar_still_flags_symlink_read(tmp_path):
         """
 from pathlib import Path
 
+@app.get("/sidecar")
 def load_sidecar(raw_path):
     safe_name = Path(raw_path).name
     return Path(safe_name).read_text(encoding="utf-8")
@@ -351,6 +371,7 @@ def test_non_test_tmp_path_parameter_still_flags_path_finding(tmp_path):
         """
 from pathlib import Path
 
+@app.post("/save")
 def save(tmp_path):
     module = Path(tmp_path) / "app.py"
     module.write_text("x = 1", encoding="utf-8")

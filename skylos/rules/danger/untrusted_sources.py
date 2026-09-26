@@ -141,6 +141,83 @@ def _module_level_nodes(tree: ast.AST):
         stack.extend(ast.iter_child_nodes(node))
 
 
+def _immediate_nested_functions(func: ast.AST):
+    stack = list(getattr(func, "body", []) or [])
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node
+            continue
+        if isinstance(node, ast.ClassDef):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _safe_literal_allowlists(module: ast.AST | None) -> set[str]:
+    """Module dictionaries that can only select fixed, relative filenames."""
+    if module is None:
+        return set()
+    candidates: dict[str, ast.Assign] = {}
+    for statement in getattr(module, "body", []):
+        if not (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and isinstance(statement.value, ast.Dict)
+        ):
+            continue
+        values = statement.value.values
+        if values and all(
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and value.value not in {"", ".", ".."}
+            and not any(char in value.value for char in "/\\\x00")
+            for value in values
+        ):
+            candidates[statement.targets[0].id] = statement
+
+    # A later write, mutation, or alias makes the values unknown.
+    invalid: set[str] = set()
+    parents = {
+        id(child): parent
+        for parent in ast.walk(module)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id in candidates:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                if node is not candidates[node.id].targets[0]:
+                    invalid.add(node.id)
+            elif isinstance(node.ctx, ast.Load):
+                parent = parents.get(id(node))
+                lookup = isinstance(parent, ast.Subscript) and parent.value is node
+                membership = (
+                    isinstance(parent, ast.Compare)
+                    and node in parent.comparators
+                    and any(isinstance(op, (ast.In, ast.NotIn)) for op in parent.ops)
+                )
+                if not (lookup or membership):
+                    invalid.add(node.id)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+            targets = (
+                node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            )
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    if node is not candidates.get(target.id):
+                        invalid.add(target.id)
+                elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                    invalid.add(target.value.id)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.attr in {"clear", "pop", "popitem", "setdefault", "update", "__setitem__"}
+        ):
+            invalid.add(node.func.value.id)
+    return set(candidates) - invalid
+
+
 def _attribute_source(node: ast.Attribute, request_names: set[str]) -> str | None:
     dotted = _dotted(node)
     segments = dotted.split(".") if dotted else []
@@ -162,32 +239,45 @@ def _call_source(node: ast.Call) -> str | None:
     return None
 
 
-def _node_source(
-    node: ast.AST, origins: dict[str, str], request_names: set[str]
-) -> str | None:
+def _node_sources(
+    node: ast.AST, origins: dict[str, list[str]], request_names: set[str]
+) -> list[str]:
     if isinstance(node, ast.Name):
-        return origins.get(node.id)
+        return origins.get(node.id, [])
     if isinstance(node, ast.Attribute):
-        return _attribute_source(node, request_names)
+        label = _attribute_source(node, request_names)
+        return [label] if label else []
     if isinstance(node, ast.Call):
-        return _call_source(node)
-    return None
+        label = _call_source(node)
+        return [label] if label else []
+    return []
 
 
 def _direct_sources(
-    node: ast.AST, origins: dict[str, str], request_names: set[str]
+    node: ast.AST,
+    origins: dict[str, list[str]],
+    request_names: set[str],
+    bounded_lookups: set[str] | None = None,
 ) -> list[str]:
     """Source labels referenced anywhere inside ``node``, in source order."""
     found: list[str] = []
     stack = [node]
     while stack:
         sub = stack.pop()
-        label = _node_source(sub, origins, request_names)
-        if label is None:
+        if (
+            bounded_lookups
+            and isinstance(sub, ast.Subscript)
+            and isinstance(sub.value, ast.Name)
+            and sub.value.id in bounded_lookups
+        ):
+            continue
+        labels = _node_sources(sub, origins, request_names)
+        if not labels:
             stack.extend(reversed(list(ast.iter_child_nodes(sub))))
             continue
-        if label not in found:
-            found.append(label)
+        for label in labels:
+            if label not in found:
+                found.append(label)
         if isinstance(sub, ast.Call):
             # input(prompt) / os.getenv(name): arguments may name more sources.
             stack.extend(reversed([*sub.args, *(k.value for k in sub.keywords)]))
@@ -198,11 +288,20 @@ def _direct_sources(
 class _FunctionSources:
     """Untrusted names in one function (or the module) and where they came from."""
 
-    def __init__(self, func: ast.AST | None, module: ast.AST | None):
+    def __init__(
+        self,
+        func: ast.AST | None,
+        module: ast.AST | None,
+        incoming: dict[str, list[str]] | None = None,
+        traversal_incoming: dict[str, list[str]] | None = None,
+        safe_allowlists: set[str] | None = None,
+    ):
         self.func = func
         self.request_names: set[str] = set(REQUEST_NAMES)
         # name -> human label of the original untrusted source
-        self.origins: dict[str, str] = {}
+        self.origins: dict[str, list[str]] = {}
+        self.traversal_origins: dict[str, list[str]] = {}
+        self.safe_allowlists = set(safe_allowlists or ())
         body: list[ast.AST] = []
         if func is not None:
             decorator = entrypoint_decorator(func)
@@ -212,13 +311,33 @@ class _FunctionSources:
                     self.request_names.add(param.arg)
                 if decorator and param.arg not in {"self", "cls"}:
                     kind = _entrypoint_kind(decorator)
-                    self.origins[param.arg] = (
+                    self.origins[param.arg] = [
                         f"{kind} `{param.arg}` of `{fname}` (@{decorator})"
-                    )
-            body = list(ast.walk(func))
+                    ]
+                    self.traversal_origins[param.arg] = list(self.origins[param.arg])
+            body = list(_module_level_nodes(func))
+            local_bindings = {arg.arg for arg in _params(func)}
+            for node in body:
+                local_bindings.update(_assign_parts(node)[1])
+            self.safe_allowlists.difference_update(local_bindings)
         elif module is not None:
             body = list(_module_level_nodes(module))
+        for name, labels in (incoming or {}).items():
+            self._merge_origin(self.origins, name, labels)
+        for name, labels in (traversal_incoming or {}).items():
+            self._merge_origin(self.traversal_origins, name, labels)
         self._propagate(body)
+
+    @staticmethod
+    def _merge_origin(origins: dict[str, list[str]], name: str, labels: list[str]) -> bool:
+        if not labels:
+            return False
+        current = origins.setdefault(name, [])
+        fresh = [label for label in labels if label not in current]
+        if not fresh:
+            return False
+        current.extend(fresh)
+        return True
 
     def _propagate(self, body: list[ast.AST]) -> None:
         assigns = [
@@ -227,22 +346,48 @@ class _FunctionSources:
             if parts[0] is not None
         ]
         for _ in range(_MAX_PROPAGATION_ROUNDS):
-            if not any(self._propagate_one(*parts) for parts in assigns):
+            changed = False
+            for parts in assigns:
+                changed = self._propagate_one(*parts) or changed
+            if not changed:
                 break
 
     def _propagate_one(self, value: ast.AST, targets: list[str]) -> bool:
-        fresh = [name for name in targets if name not in self.origins]
-        if not fresh:
-            return False
         labels = _direct_sources(value, self.origins, self.request_names)
-        if not labels:
-            return False
-        for name in fresh:
-            self.origins[name] = labels[0]
-        return True
+        traversal_labels = self.traversal_sources_in(value)
+        changed = False
+        for name in targets:
+            changed = self._merge_origin(self.origins, name, labels) or changed
+            changed = (
+                self._merge_origin(self.traversal_origins, name, traversal_labels)
+                or changed
+            )
+        return changed
 
     def sources_in(self, expr: ast.AST) -> list[str]:
         return _direct_sources(expr, self.origins, self.request_names)
+
+    def traversal_sources_in(self, expr: ast.AST) -> list[str]:
+        return _direct_sources(
+            expr,
+            self.traversal_origins,
+            self.request_names,
+            self.safe_allowlists,
+        )
+
+    def direct_sources_in(self, expr: ast.AST) -> list[str]:
+        """Sources written directly in an expression, excluding derived names."""
+        labels: list[str] = []
+        for node in ast.walk(expr):
+            if isinstance(node, ast.Attribute):
+                label = _attribute_source(node, self.request_names)
+            elif isinstance(node, ast.Call):
+                label = _call_source(node)
+            else:
+                label = None
+            if label and label not in labels:
+                labels.append(label)
+        return labels
 
     def derived_names_in(self, expr: ast.AST) -> list[str]:
         names = []
@@ -256,15 +401,200 @@ class _FunctionSources:
 class UntrustedSourceIndex:
     """Caches per-function source facts for one file."""
 
-    def __init__(self, module: ast.AST | None = None):
+    def __init__(
+        self, module: ast.AST | None = None, *, follow_local_calls: bool = False
+    ):
         self.module = module
+        self.follow_local_calls = follow_local_calls
+        self.safe_allowlists = _safe_literal_allowlists(module) if follow_local_calls else set()
         self._cache: dict[int, _FunctionSources] = {}
+        self._calls_indexed = False
+
+    def _index_local_calls(self) -> None:
+        """Carry entry-point sources through direct calls in the same module."""
+        if self._calls_indexed or self.module is None or not self.follow_local_calls:
+            return
+        self._calls_indexed = True
+        functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        globals_by_name: dict[str, ast.FunctionDef | ast.AsyncFunctionDef | None] = {}
+        methods: dict[tuple[str, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        owners: dict[int, str | None] = {}
+        parents: dict[int, int | None] = {}
+        local_defs: dict[int, dict[str, ast.FunctionDef | ast.AsyncFunctionDef | None]] = {}
+        local_bindings: dict[int, set[str]] = {}
+
+        def register(func, owner, parent):
+            fid = id(func)
+            functions.append(func)
+            owners[fid] = owner
+            parents[fid] = id(parent) if parent is not None else None
+            children = list(_immediate_nested_functions(func))
+            definitions = {}
+            for child in children:
+                definitions[child.name] = (
+                    child if child.name not in definitions else None
+                )
+            local_defs[fid] = definitions
+            bindings = {arg.arg for arg in _params(func)} | set(definitions)
+            for node in _module_level_nodes(func):
+                bindings.update(_assign_parts(node)[1])
+            local_bindings[fid] = bindings
+            for child in children:
+                register(child, owner, func)
+
+        for statement in getattr(self.module, "body", []):
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                register(statement, None, None)
+                globals_by_name[statement.name] = (
+                    statement if statement.name not in globals_by_name else None
+                )
+            elif isinstance(statement, ast.ClassDef):
+                for method in statement.body:
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        register(method, statement.name, None)
+                        methods[(statement.name, method.name)] = method
+
+        class CallCollector(ast.NodeVisitor):
+            def __init__(self):
+                self.calls: list[ast.Call] = []
+
+            def visit_Call(self, node: ast.Call) -> None:
+                self.calls.append(node)
+                self.generic_visit(node)
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                pass
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                pass
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
+                pass
+
+        def resolve_local(caller_id, name):
+            scope_id = caller_id
+            while scope_id is not None:
+                definitions = local_defs[scope_id]
+                if name in definitions:
+                    return definitions[name]
+                if name in local_bindings[scope_id]:
+                    return None
+                scope_id = parents[scope_id]
+            return globals_by_name.get(name)
+
+        edges: list[tuple[int, int, str, ast.AST]] = []
+        direct_calls: set[tuple[int, int]] = set()
+        for caller in functions:
+            collector = CallCollector()
+            for statement in caller.body:
+                collector.visit(statement)
+            owner = owners[id(caller)]
+            for call in collector.calls:
+                callee = None
+                bound = False
+                if isinstance(call.func, ast.Name):
+                    callee = resolve_local(id(caller), call.func.id)
+                elif isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+                    receiver = call.func.value.id
+                    if owner and receiver in {"self", "cls", owner}:
+                        callee = methods.get((owner, call.func.attr))
+                        bound = receiver in {"self", "cls"}
+                if callee is None:
+                    continue
+                direct_calls.add((id(caller), id(callee)))
+                params = _params(callee)
+                if bound and params and params[0].arg in {"self", "cls"}:
+                    params = params[1:]
+                for param, argument in zip(params, call.args):
+                    edges.append((id(caller), id(callee), param.arg, argument))
+                param_names = {param.arg for param in params}
+                for keyword in call.keywords:
+                    if keyword.arg in param_names:
+                        edges.append((id(caller), id(callee), keyword.arg, keyword.value))
+
+        facts = {
+            id(func): _FunctionSources(
+                func, None, safe_allowlists=self.safe_allowlists
+            )
+            for func in functions
+        }
+        incoming: dict[int, dict[str, list[str]]] = {id(func): {} for func in functions}
+        traversal_incoming: dict[int, dict[str, list[str]]] = {
+            id(func): {} for func in functions
+        }
+
+        def add_labels(targets, name, labels):
+            current = targets.setdefault(name, [])
+            fresh = [label for label in labels if label not in current]
+            current.extend(fresh)
+            return bool(fresh)
+
+        captures = []
+        for func in functions:
+            fid = id(func)
+            parent_id = parents[fid]
+            if parent_id is None or (parent_id, fid) not in direct_calls:
+                continue
+            loaded = {
+                node.id
+                for node in _module_level_nodes(func)
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+            }
+            captures.extend(
+                (parent_id, fid, name)
+                for name in loaded - local_bindings[fid]
+            )
+
+        for _ in range(max(1, len(functions) * _MAX_SOURCES)):
+            changed: set[int] = set()
+            for caller_id, callee_id, param, argument in edges:
+                caller_facts = facts[caller_id]
+                if add_labels(
+                    incoming[callee_id], param, caller_facts.sources_in(argument)
+                ):
+                    changed.add(callee_id)
+                if add_labels(
+                    traversal_incoming[callee_id],
+                    param,
+                    caller_facts.traversal_sources_in(argument),
+                ):
+                    changed.add(callee_id)
+            for parent_id, child_id, name in captures:
+                parent_facts = facts[parent_id]
+                if add_labels(
+                    incoming[child_id], name, parent_facts.origins.get(name, [])
+                ):
+                    changed.add(child_id)
+                if add_labels(
+                    traversal_incoming[child_id],
+                    name,
+                    parent_facts.traversal_origins.get(name, []),
+                ):
+                    changed.add(child_id)
+            if not changed:
+                break
+            for func in functions:
+                if id(func) in changed:
+                    fid = id(func)
+                    facts[fid] = _FunctionSources(
+                        func,
+                        None,
+                        incoming[fid],
+                        traversal_incoming[fid],
+                        self.safe_allowlists,
+                    )
+        self._cache.update(facts)
 
     def for_function(self, func: ast.AST | None) -> _FunctionSources:
+        self._index_local_calls()
         key = id(func)
         facts = self._cache.get(key)
         if facts is None:
-            facts = _FunctionSources(func, self.module if func is None else None)
+            facts = _FunctionSources(
+                func,
+                self.module if func is None else None,
+                safe_allowlists=self.safe_allowlists,
+            )
             self._cache[key] = facts
         return facts
 
@@ -292,7 +622,7 @@ class UntrustedSourceIndex:
             return None
         labels = labels[:_MAX_SOURCES]
         path = [
-            f"untrusted `{name}` from {facts.origins[name]}"
+            f"untrusted `{name}` from {facts.origins[name][0]}"
             for name in facts.derived_names_in(expr)[:_MAX_SOURCES]
         ]
         if not path:
