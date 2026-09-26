@@ -2390,7 +2390,7 @@ wheels = [
 
 [[package]]
 name = "skylos"
-version = "4.39.2"
+version = "4.40.0"
 source = { editable = "." }
 dependencies = [
     { name = "ca9" },
