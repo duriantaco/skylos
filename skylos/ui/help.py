@@ -137,6 +137,34 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
+        "name": "skylos agent install-hooks [--claude|--codex|--cursor]",
+        "desc": "Install agent-loop hooks: verify every edit, block secret reads and hallucinated installs",
+        "details": [
+            "--project (default) writes .claude/settings.json, .codex/hooks.json or .cursor/hooks.json",
+            "--user writes the same file under your home directory",
+            "Existing hooks are kept; re-running is a no-op; --uninstall removes only Skylos hooks",
+        ],
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos agent warm-cache [path]",
+        "desc": "Prebuild the project index so the first agent edit check is fast",
+        "details": [
+            "Writes .skylos/cache/module-facts.json; later hooks re-parse only changed files",
+            "Optional: without it the first post-edit hook builds the index",
+        ],
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos hook <post-edit|pre-read|pre-bash|stop>",
+        "desc": "Agent hook entry point (reads hook JSON on stdin; installed by agent install-hooks)",
+        "details": [
+            "Fails open on internal errors and logs to .skylos/hook.log",
+            "Disable one hook with SKYLOS_HOOKS_DISABLE=pre-read (comma list or 'all')",
+        ],
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos agent remediate [path]",
         "desc": "Scan and fix issues; optionally test or create a PR",
         "group": "AI Agent",

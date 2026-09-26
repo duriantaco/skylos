@@ -428,6 +428,39 @@ def _project_cache_path(
     return path
 
 
+# (project dir, cache dir) pairs: while active, project caches for anything
+# at or under the project dir are stored in the cache dir instead. Agent hooks
+# use it so a user-level install never writes ``.skylos/`` into a directory
+# that is not a Git repo.
+_CACHE_ROOT_REDIRECTS: list[tuple[Path, Path]] = []
+
+
+@contextmanager
+def redirect_project_caches(project_dir: str | Path, cache_dir: str | Path):
+    try:
+        source = Path(project_dir).resolve(strict=True)
+        target = Path(cache_dir).resolve(strict=True)
+    except OSError:
+        yield
+        return
+    if source == target:
+        yield
+        return
+    pair = (source, target)
+    _CACHE_ROOT_REDIRECTS.append(pair)
+    try:
+        yield
+    finally:
+        _CACHE_ROOT_REDIRECTS.remove(pair)
+
+
+def _redirected_root(root: Path) -> Path:
+    for source, target in reversed(_CACHE_ROOT_REDIRECTS):
+        if root == source or source in root.parents:
+            return target
+    return root
+
+
 def _resolve_project_cache_path(
     project_root: str | Path,
     cache_path: str | Path,
@@ -438,6 +471,14 @@ def _resolve_project_cache_path(
         return None
 
     path = Path(cache_path)
+    redirected = _redirected_root(root) if _CACHE_ROOT_REDIRECTS else root
+    if redirected != root:
+        if path.is_absolute():
+            try:
+                path = path.relative_to(root)
+            except ValueError:
+                return None
+        root = redirected
     if not path.is_absolute():
         path = root / path
 
@@ -646,6 +687,8 @@ def save_project_json_cache(
     project_root: str | Path,
     cache_path: str | Path,
     payload: dict[str, Any],
+    *,
+    indent: int | None = 2,
 ) -> bool:
     path = _project_cache_path(project_root, cache_path, create=True)
     if path is None:
@@ -663,7 +706,10 @@ def save_project_json_cache(
         )
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = None
-            json.dump(payload, handle, indent=2)
+            if indent is None:
+                json.dump(payload, handle, separators=(",", ":"))
+            else:
+                json.dump(payload, handle, indent=indent)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

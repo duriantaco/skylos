@@ -115,7 +115,7 @@ all = [
 ]
 
 [project.scripts]
-skylos = "skylos.cli:main"
+skylos = "skylos.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

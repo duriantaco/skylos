@@ -275,7 +275,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         type=str,
         default=None,
         metavar="REF",
-        help="Only report findings in files changed since REF (e.g. origin/main). "
+        help="Only report findings in files changed since REF (e.g. origin/main), "
+        "including staged, unstaged and untracked files. "
         "Unchanged files are still parsed for cross-file dead code accuracy, "
         "but quality/danger/secrets rules are skipped on them.",
     )
@@ -286,8 +287,10 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         nargs="?",
         const="auto",
         metavar="BASE_REF",
-        help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main). "
-        "Use --diff without a value to auto-detect (GITHUB_BASE_REF or origin/main).",
+        help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main), "
+        "including staged, unstaged and untracked changes (--diff HEAD = uncommitted work). "
+        "Use --diff without a value to auto-detect the PR target branch "
+        "(GITHUB_BASE_REF, Bitbucket or Azure Pipelines PR target) or origin/main.",
     )
     parser.add_argument(
         "--github",
@@ -351,6 +354,12 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         action="store_true",
         help="(Deprecated - provenance is now automatic in git repos.) "
         "Kept for backwards compatibility; has no effect.",
+    )
+    parser.add_argument(
+        "--no-clipboard",
+        action="store_true",
+        help="Never copy the score badge to the clipboard (also: SKYLOS_NO_CLIPBOARD=1). "
+        "Copying already only happens in an interactive terminal outside CI.",
     )
     parser.add_argument(
         "--no-provenance",
