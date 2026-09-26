@@ -1092,7 +1092,7 @@ def _mutate_session(root: Path, session_id: str, mutate) -> None:
             return
         state = _load_session_state(root)
         sessions = state["sessions"]
-        session = sessions.get(session_id)
+        session = sessions.get(session_id)  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
         if not isinstance(session, dict):
             session = {"files": {}}
         session.setdefault("files", {})
@@ -1380,7 +1380,7 @@ def _log(root: Path | None, record: dict[str, Any]) -> None:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **record}
-        fd = os.open(path, flags, 0o600)
+        fd = os.open(path, flags, 0o600)  # skylos: ignore[SKY-D215] fixed log path under selected project root; no-follow open
         try:
             os.write(fd, (json.dumps(entry, sort_keys=True) + "\n").encode())
         finally:
