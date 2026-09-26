@@ -559,6 +559,61 @@ class TestMainFunction:
             assert mock_analyze.call_args.kwargs["enable_quality"] is True
             assert mock_analyze.call_args.kwargs["enable_ai_defects"] is True
 
+    @pytest.mark.parametrize(
+        "policy",
+        [
+            {"secrets_enabled": True},
+            {"gate": {"enabled": True, "block_secrets": True}},
+        ],
+    )
+    def test_main_gate_scans_secrets_when_policy_requires_them_with_danger_flag(
+        self, mock_skylos_result, policy
+    ):
+        test_args = [
+            "cli.py", "test_path", "--danger", "--gate", "--json", "--no-provenance"
+        ]
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger") as mock_setup_logger,
+            patch("skylos.cli.load_config", return_value={"exclude": [], **policy}),
+            patch("skylos.cli._formatted_output_gate_exit_code", return_value=0),
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_logger = Mock()
+            mock_logger.console = Mock()
+            mock_setup_logger.return_value = mock_logger
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+        assert mock_analyze.call_args.kwargs["enable_danger"] is True
+        assert mock_analyze.call_args.kwargs["enable_secrets"] is True
+
+    def test_main_explicit_danger_keeps_secrets_off_without_secret_policy(
+        self, mock_skylos_result
+    ):
+        test_args = ["cli.py", "test_path", "--danger", "--json", "--no-provenance"]
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger") as mock_setup_logger,
+            patch("skylos.cli.load_config", return_value={"exclude": []}),
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_logger = Mock()
+            mock_logger.console = Mock()
+            mock_setup_logger.return_value = mock_logger
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+        assert mock_analyze.call_args.kwargs["enable_secrets"] is False
+
 
 def _progress_ctx():
     cm = Mock()
