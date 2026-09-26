@@ -46,7 +46,9 @@ def _history():
 
 def _write_lock(directory, data=None):
     path = directory / "package-lock.json"
-    path.write_text(json.dumps(data if data is not None else _lock()))
+    path.write_text(  # skylos: ignore[SKY-D324] all callers pass pytest tmp_path; filename is fixed
+        json.dumps(data if data is not None else _lock())
+    )
     return path
 
 
