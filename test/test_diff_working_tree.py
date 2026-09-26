@@ -186,7 +186,9 @@ def test_unparseable_files_outside_diff_are_warnings(monkeypatch, broken_repo, f
 
 @pytest.mark.parametrize("flag", ["--diff-base", "--diff"])
 def test_unparseable_file_inside_diff_still_blocks(monkeypatch, broken_repo, flag):
-    (broken_repo / "broken.ts").write_text("function g( {\n\n")
+    (broken_repo / "broken.ts").write_text(  # skylos: ignore[SKY-D324] fixed file in pytest tmp_path fixture
+        "function g( {\n\n"
+    )
     code, data = _run_cli_exit(
         monkeypatch, broken_repo, [flag, "HEAD", "--format", "json", "--no-provenance"]
     )
@@ -202,7 +204,9 @@ def test_split_keeps_non_file_errors_blocking(tmp_path):
     from skylos.analyzer import _split_outside_diff_analysis_errors
 
     outside = tmp_path / "outside.py"
-    outside.write_text("x = (\n")
+    outside.write_text(  # skylos: ignore[SKY-D324] fixed filename under pytest tmp_path
+        "x = (\n"
+    )
     errors = [
         {"file": str(outside), "kind": "syntax_error"},
         {"file": str(tmp_path), "kind": "go_engine_error"},  # a directory
@@ -218,10 +222,14 @@ def test_split_keeps_non_file_errors_blocking(tmp_path):
 def test_delete_only_edit_that_breaks_parsing_still_blocks(
     monkeypatch, broken_repo, flag
 ):
-    (broken_repo / "valid.ts").write_text("export function g() {\n  return 1;\n}\n")
+    (broken_repo / "valid.ts").write_text(  # skylos: ignore[SKY-D324] fixed file in pytest tmp_path fixture
+        "export function g() {\n  return 1;\n}\n"
+    )
     _git(broken_repo, "add", "valid.ts")
     _git(broken_repo, "commit", "-q", "-m", "valid")
-    (broken_repo / "valid.ts").write_text("export function g() {\n  return 1;\n")
+    (broken_repo / "valid.ts").write_text(  # skylos: ignore[SKY-D324] same pytest fixture file created above
+        "export function g() {\n  return 1;\n"
+    )
     code, data = _run_cli_exit(
         monkeypatch, broken_repo, [flag, "HEAD", "--format", "json", "--no-provenance"]
     )

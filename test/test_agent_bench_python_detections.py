@@ -20,7 +20,9 @@ from skylos.rules.quality.logic_security import HardcodedCredentialRule
 def _danger(tmp_path: Path, code: str, name: str = "app_mod.py") -> list[dict]:
     path = tmp_path / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(code), encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] callers use the default fixture filename under pytest tmp_path
+        textwrap.dedent(code), encoding="utf-8"
+    )
     return scan_ctx(tmp_path, [path])
 
 

@@ -70,7 +70,9 @@ def _run(tmp_path, event, payload, *, client=None, deps=None, raw=None):
 
 def _write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] callers supply fixture paths under pytest tmp_path
+        text, encoding="utf-8"
+    )
     return path
 
 

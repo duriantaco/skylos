@@ -285,7 +285,9 @@ def test_real_git_trailer_parsing(tmp_path):
     }
 
     def commit(path, msg, name, email):
-        (tmp_path / path).write_text(msg + "\n")
+        (tmp_path / path).write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal filenames in fresh pytest tmp_path
+            msg + "\n"
+        )
         env = {
             **base_env,
             "GIT_AUTHOR_NAME": name,

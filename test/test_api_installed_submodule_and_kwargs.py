@@ -20,7 +20,9 @@ from skylos.rules.ai_defect.api_signature_hallucination import (
 
 def _scan_fake(tmp_path, source, *, surfaces, existing, allowed=("pkg",)):
     path = tmp_path / "app.py"
-    path.write_text(textwrap.dedent(source), encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] fixed app.py fixture under pytest tmp_path
+        textwrap.dedent(source), encoding="utf-8"
+    )
 
     def loader(_root, module_name):
         return surfaces.get(module_name)

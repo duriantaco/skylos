@@ -23,7 +23,9 @@ from skylos.rules.danger.danger import scan_ctx
 
 def _scan(tmp_path: Path, code: str, name: str = "app.py") -> list[dict]:
     path = tmp_path / name
-    path.write_text(textwrap.dedent(code).lstrip("\n"), encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] callers use the default fixture filename under pytest tmp_path
+        textwrap.dedent(code).lstrip("\n"), encoding="utf-8"
+    )
     return scan_ctx(tmp_path, [path])
 
 
@@ -420,7 +422,9 @@ def read_file_safe(name: str):
 def _analyze_danger(tmp_path: Path) -> list[dict]:
     project = tmp_path / "svc"
     project.mkdir()
-    (project / "main.py").write_text(FASTAPI_APP.lstrip("\n"), encoding="utf-8")
+    (project / "main.py").write_text(  # skylos: ignore[SKY-D324] fixed fixture file under pytest tmp_path
+        FASTAPI_APP.lstrip("\n"), encoding="utf-8"
+    )
     result = json.loads(
         analyze(
             str(project),
