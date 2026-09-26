@@ -20,6 +20,10 @@ from skylos.rules.secrets import (
 from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.typescript.security_flow import build_security_flow
+from skylos.visitors.languages.typescript.express_taint import (
+    merge_express_taint_findings,
+    scan_express_taint_sinks,
+)
 from skylos.visitors.languages.typescript.security_proofs import (
     check_cookie_security,
     check_nextjs_missing_auth,
@@ -2007,6 +2011,15 @@ def scan_danger(
         check_unverified_webhooks(security_flow, findings)
     _check_archive_extraction_path_traversal(
         root_node, source_bytes, file_path, findings
+    )
+    merge_express_taint_findings(
+        findings,
+        scan_express_taint_sinks(
+            root_node,
+            source_bytes,
+            str(file_path),
+            is_test_file=is_test_file,
+        ),
     )
 
     # D281 is the framework-specific taint proof for this exact SQL sink. Keep

@@ -3358,6 +3358,372 @@ def _append_secret_context_incomplete(findings, *, rel_path: str, line: int) -> 
     )
 
 
+# --- Credentials embedded in URLs and keyed config literals -----------------
+
+# scheme://[user]:password@host  (password may itself contain '@'; the greedy
+# class backtracks to the last '@' that is followed by a host character).
+URL_CREDENTIAL_RE = re.compile(
+    r"(?P<scheme>\b[A-Za-z][A-Za-z0-9+.-]{1,30})://"
+    r"(?P<user>[^\s:/@'\"`<>(){}\[\]]{0,128})"
+    r":(?P<pw>[^\s/'\"`<>]{1,256})"
+    r"@(?P<host>[A-Za-z0-9\[_][^\s/:'\"`<>?#]{0,253})"
+)
+
+_CREDENTIAL_PLACEHOLDER_VALUES = frozenset(
+    {
+        "",
+        "password",
+        "passwd",
+        "pass",
+        "pwd",
+        "secret",
+        "token",
+        "changeme",
+        "change_me",
+        "change-me",
+        "changeit",
+        "example",
+        "placeholder",
+        "redacted",
+        "hidden",
+        "masked",
+        "dummy",
+        "none",
+        "null",
+        "nil",
+        "undefined",
+        "true",
+        "false",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "todo",
+        "tbd",
+        "fixme",
+        "default",
+        "user",
+        "username",
+        "pw",
+        "xxx",
+        "test",
+        "testing",
+        "foo",
+        "bar",
+        "baz",
+        "qux",
+        "foobar",
+        "hunter2",
+        "secret123",
+        "password123",
+        "password1",
+    }
+)
+
+_CREDENTIAL_PLACEHOLDER_HINTS = (
+    "example",
+    "changeme",
+    "change_me",
+    "change-me",
+    "placeholder",
+    "your_",
+    "your-",
+    "yourpass",
+    "yoursecret",
+    "yourtoken",
+    "replace",
+    "dummy",
+    "sample",
+    "redacted",
+    "fake",
+    "insert",
+    "not_a_real",
+    "notreal",
+    "do_not_use",
+    "xxxx",
+    "****",
+    "....",
+)
+
+# Template / env-var / secret-manager indirections: the value is a reference,
+# not the credential itself.
+_CREDENTIAL_REFERENCE_MARKERS = (
+    "${",
+    "{{",
+    "}}",
+    "$(",
+    "%(",
+    "<%",
+    "#{",
+    "ENC[",
+    "vault:",
+    "secretref",
+    "secretkeyref",
+    "valuefrom",
+    "arn:aws:secretsmanager",
+    "projects/",
+)
+
+_PLACEHOLDER_HOSTS = frozenset(
+    {"host", "hostname", "server", "your-host", "yourhost", "your_host", "domain"}
+)
+
+_CONFIG_CREDENTIAL_SUFFIXES = (
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+)
+
+_CONFIG_KEYED_LITERAL_RE = re.compile(
+    r"""(?x)
+    (?<![A-Za-z0-9_.-])
+    (?P<kq>["']?)
+    (?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})
+    (?P=kq)
+    [ \t]*(?P<sep>[:=])[ \t]*
+    (?P<val>
+        "(?:[^"\\\n]|\\.){0,512}"
+      | '[^'\n]{0,512}'
+      | [^\s"'{}\[\],;|>&*!][^\s,;]{0,511}
+    )
+    """
+)
+
+_CREDENTIAL_KEY_SUFFIXES = (
+    "password",
+    "passwd",
+    "passphrase",
+    "pwd",
+    "secret",
+    "secretkey",
+    "clientsecret",
+    "token",
+    "apikey",
+    "accesskey",
+    "privatekey",
+    "authkey",
+)
+
+# Keys that end with a credential word but name, point to, or describe the
+# credential rather than holding it.
+_CREDENTIAL_KEY_EXCLUDED_PREFIXES = (
+    "existing",
+    "use",
+    "enable",
+    "require",
+    "min",
+    "max",
+    "no",
+    "skip",
+    "generate",
+    "auto",
+    "random",
+    "has",
+    "is",
+)
+
+
+def _normalized_credential_key(key: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", key.lower())
+
+
+def _is_credential_key(key: str) -> bool:
+    # Only the last dotted segment names the field (a.b.password -> password).
+    last = key.rsplit(".", 1)[-1]
+    normalized = _normalized_credential_key(last)
+    if not normalized.endswith(_CREDENTIAL_KEY_SUFFIXES):
+        return False
+    return not normalized.startswith(_CREDENTIAL_KEY_EXCLUDED_PREFIXES)
+
+
+# Names ending in a bare "key" (ACME_BILLING_KEY, STRIPE_KEY) usually hold an
+# API key, but the word also names non-secrets (PRIMARY_KEY, SORT_KEY,
+# PUBLIC_KEY, NEXT_PUBLIC_*). Such names are only flagged when the value has
+# the shape of a random token; see ``_looks_like_generic_key_value``.
+_GENERIC_KEY_NONSECRET_SUFFIXES = (
+    "publickey",
+    "publishablekey",
+    "pubkey",
+    "primarykey",
+    "foreignkey",
+    "sortkey",
+    "partitionkey",
+    "rangekey",
+    "hashkey",
+    "cachekey",
+    "lookupkey",
+    "idempotencykey",
+    "routingkey",
+    "hotkey",
+    "shortcutkey",
+    "keyboardkey",
+    "sitekey",
+    "recaptchakey",
+    "licensekey",
+    "translationkey",
+    "i18nkey",
+    "storagekey",
+    "querykey",
+    "groupkey",
+    "dedupkey",
+    "dedupekey",
+    "objectkey",
+    "s3key",
+    "bucketkey",
+)
+
+
+def _is_generic_key_name(key: str) -> bool:
+    last = key.rsplit(".", 1)[-1]
+    normalized = _normalized_credential_key(last)
+    if not normalized.endswith("key") or _is_credential_key(key):
+        return False
+    if normalized.startswith(_CREDENTIAL_KEY_EXCLUDED_PREFIXES):
+        return False
+    if normalized.endswith(_GENERIC_KEY_NONSECRET_SUFFIXES):
+        return False
+    # Client-exposed env vars (NEXT_PUBLIC_*, PUBLIC_*) are publishable by
+    # design; a bare *_KEY there is a publishable key, not a secret.
+    segments = {seg for seg in re.split(r"[^a-z0-9]+", last.lower()) if seg}
+    return not (segments & {"public", "publishable", "pub"})
+
+
+def _looks_like_generic_key_value(value: str) -> bool:
+    return (
+        len(value) >= 20
+        and not any(c.isspace() for c in value)
+        and "://" not in value
+        and re.fullmatch(r"[A-Za-z0-9._~+/=-]+", value) is not None
+        and any(c.isalpha() for c in value)
+        and any(c.isdigit() for c in value)
+        and _entropy(value) >= 3.5
+    )
+
+
+def _is_placeholder_credential(value: str, *, user: str | None = None) -> bool:
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in _CREDENTIAL_PLACEHOLDER_VALUES:
+        return True
+    if user is not None and lowered == user.strip().lower():
+        return True
+    if stripped[:1] in {"$", "%", "<", "{", "!", "@", "&"}:
+        return True
+    if stripped.startswith(("/", "./", "../", "~/", "file:")):
+        return True
+    if len(set(stripped)) <= 2:
+        return True
+    if any(marker.lower() in lowered for marker in _CREDENTIAL_REFERENCE_MARKERS):
+        return True
+    return any(hint in lowered for hint in _CREDENTIAL_PLACEHOLDER_HINTS)
+
+
+def _char_class_count(value: str) -> int:
+    return sum(
+        (
+            any(c.islower() for c in value),
+            any(c.isupper() for c in value),
+            any(c.isdigit() for c in value),
+            any(not c.isalnum() for c in value),
+        )
+    )
+
+
+def _looks_like_config_credential(value: str, *, key: str = "") -> bool:
+    if len(value) < 8 or any(c.isspace() for c in value):
+        return False
+    if _normalized_credential_key(key.rsplit(".", 1)[-1]).endswith("token"):
+        # "token" is also a lexer/parser term; real API/auth tokens are long
+        # and random, so require that shape instead of mere character mix.
+        return (
+            len(value) >= 16
+            and _entropy(value) >= 3.5
+            and re.fullmatch(r"[A-Za-z0-9._~+/=-]+", value) is not None
+        )
+    if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value):
+        return False
+    if "://" in value:
+        # URLs are handled by the URL-credential detector.
+        return False
+    has_letter = any(c.isalpha() for c in value)
+    has_digit = any(c.isdigit() for c in value)
+    if _char_class_count(value) >= 3 and has_letter:
+        return True
+    return has_letter and has_digit and len(value) >= 12 and _entropy(value) >= 3.3
+
+
+def _unquote_config_value(raw: str) -> str:
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+        return raw[1:-1]
+    return raw
+
+
+def _is_config_credential_file(rel_name: str) -> bool:
+    lowered = rel_name.lower()
+    if lowered.endswith(".lock") or lowered in JSON_LOCKFILE_NAMES:
+        return False
+    return lowered.endswith(_CONFIG_CREDENTIAL_SUFFIXES) or _is_dotenv_name(lowered)
+
+
+def _mask_credential(value: str) -> str:
+    # Passwords are short; the 4+4 generic preview would reveal most of one.
+    return "*" * 8
+
+
+def _url_credential_candidates(line_content: str):
+    for match in URL_CREDENTIAL_RE.finditer(line_content):
+        user = match.group("user")
+        password = match.group("pw")
+        host = match.group("host").lower()
+        if _is_placeholder_credential(password, user=user):
+            continue
+        if host in _PLACEHOLDER_HOSTS or "example" in host:
+            continue
+        yield match.group("scheme"), match.start("pw"), match.end("pw"), password
+
+
+def _config_credential_candidates(line_content: str):
+    stripped = line_content.lstrip()
+    if stripped.startswith(("#", ";", "//")):
+        return
+    for match in _CONFIG_KEYED_LITERAL_RE.finditer(line_content):
+        key = match.group("key")
+        generic_key = False
+        if not _is_credential_key(key):
+            if not _is_generic_key_name(key):
+                continue
+            generic_key = True
+        raw_value = match.group("val")
+        value = _unquote_config_value(raw_value)
+        if _is_placeholder_credential(value):
+            continue
+        if generic_key:
+            if not _looks_like_generic_key_value(value):
+                continue
+        elif not _looks_like_config_credential(value, key=key):
+            continue
+        start = match.start("val")
+        if raw_value != value:
+            start += 1
+        yield match.group("key"), start, start + len(value), value
+
+
+def _spans_overlap(findings, line_number: int, start: int, end: int) -> bool:
+    for existing in findings:
+        if existing.get("line") != line_number:
+            continue
+        existing_start = existing.get("col", 0)
+        existing_end = existing.get("end_col", existing_start + 1)
+        if start < existing_end and existing_start < end:
+            return True
+    return False
+
+
 def scan_ctx(
     ctx,
     *,
@@ -3425,6 +3791,8 @@ def scan_ctx(
         docstring_lines = set()
     else:
         docstring_lines = _docstring_lines(syntax_tree)
+
+    config_credential_file = _is_config_credential_file(rel_name)
 
     findings = []
     if context_incomplete_line is not None:
@@ -3645,6 +4013,50 @@ def scan_ctx(
                 "entropy": round(tok_entropy, 2),
             }
             findings.append(generic_finding)
+
+        if not in_tests:
+            for scheme, start, end, _password in _url_credential_candidates(
+                line_content
+            ):
+                if _spans_overlap(findings, line_number, start, end):
+                    continue
+                findings.append(
+                    {
+                        "rule_id": "SKY-S101",
+                        "severity": "HIGH",
+                        "provider": "url_credentials",
+                        "message": (
+                            f"Hard-coded password in {scheme}:// connection URL"
+                        ),
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": start,
+                        "end_col": max(start + 1, end),
+                        "preview": _mask_credential(_password),
+                    }
+                )
+            if config_credential_file:
+                for key, start, end, _value in _config_credential_candidates(
+                    line_content
+                ):
+                    if _spans_overlap(findings, line_number, start, end):
+                        continue
+                    findings.append(
+                        {
+                            "rule_id": "SKY-S101",
+                            "severity": "HIGH",
+                            "provider": "config_credential",
+                            "message": (
+                                f"Hard-coded credential literal for '{key}' "
+                                "in config file"
+                            ),
+                            "file": rel_path,
+                            "line": line_number,
+                            "col": start,
+                            "end_col": max(start + 1, end),
+                            "preview": _mask_credential(_value),
+                        }
+                    )
 
     # A neutral source file can still be a client boundary when its directive
     # prologue exceeded the parse budget. Preserve a blocking result whenever

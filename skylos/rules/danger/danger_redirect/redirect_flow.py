@@ -8,6 +8,36 @@ REDIRECT_FUNCS = {"redirect", "HttpResponseRedirect", "HttpResponsePermanentRedi
 
 REQUEST_ARGS_ATTRS = {"args", "params", "query", "GET"}
 
+# Route builders return a path (or an absolute URL) on the application's own
+# host. User values passed to them only fill path/query parameters, so the
+# redirect target cannot leave the site.
+INTERNAL_URL_BUILDERS = {"url_for", "reverse", "reverse_lazy", "url_path_for"}
+
+
+def _is_internal_url_builder(node):
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id in INTERNAL_URL_BUILDERS
+    if isinstance(func, ast.Attribute):
+        return func.attr in INTERNAL_URL_BUILDERS
+    return False
+
+
+def _starts_with_internal_url(node):
+    """``url_for(...)``, or a string that begins with one (``url_for(...) + '?q=' + x``)."""
+    if _is_internal_url_builder(node):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return _starts_with_internal_url(node.left)
+    if isinstance(node, ast.JoinedStr) and node.values:
+        first = node.values[0]
+        return isinstance(first, ast.FormattedValue) and _is_internal_url_builder(
+            first.value
+        )
+    return False
+
 
 def _is_request_args_get(node):
     if not isinstance(node, ast.Call):
@@ -68,6 +98,13 @@ class _RedirectFlowChecker(TaintVisitor):
         super().visit_AsyncFunctionDef(node)
         self._func_node_stack.pop()
 
+    def visit_Assign(self, node):
+        super().visit_Assign(node)
+        if _starts_with_internal_url(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._set(target.id, False)
+
     def visit_Call(self, node):
         func = node.func
         func_name = None
@@ -98,6 +135,8 @@ class _RedirectFlowChecker(TaintVisitor):
                             "symbol": self._current_symbol(),
                         }
                     )
+            elif _starts_with_internal_url(url_arg):
+                pass
             elif self.is_tainted(url_arg):
                 self.findings.append(
                     {

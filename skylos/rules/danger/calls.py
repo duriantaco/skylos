@@ -17,8 +17,18 @@ DANGEROUS_CALLS = {
         "Untrusted deserialization via pickle.loads",
     ),
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-    "hashlib.md5": ("SKY-D207", "MEDIUM", "Weak hash (MD5)"),
-    "hashlib.sha1": ("SKY-D208", "MEDIUM", "Weak hash (SHA1)"),
+    "hashlib.md5": (
+        "SKY-D207",
+        "MEDIUM",
+        "Weak hash (MD5)",
+        {"security_optout": True},
+    ),
+    "hashlib.sha1": (
+        "SKY-D208",
+        "MEDIUM",
+        "Weak hash (SHA1)",
+        {"security_optout": True},
+    ),
     "random.random": (
         "SKY-D250",
         "MEDIUM",
@@ -175,6 +185,20 @@ def _matches_rule(name, rule_key):
     return name == rule_key
 
 
+def _declares_non_security_use(node: ast.Call) -> bool:
+    """``hashlib.md5(data, usedforsecurity=False)``: the caller states the hash
+    is a cache key / checksum, and FIPS builds enforce that it is not used for
+    security. There is nothing for a reviewer to change."""
+    for kw in node.keywords:
+        if (
+            kw.arg == "usedforsecurity"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is False
+        ):
+            return True
+    return False
+
+
 def _kw_equals(node: ast.Call, requirements):
     if not requirements:
         return True
@@ -320,6 +344,61 @@ def _weak_random_has_security_context(
         return False
 
 
+# App factories / constructors whose ``.run(debug=True)`` starts the Werkzeug
+# development server with the interactive debugger enabled.
+_FLASK_APP_FACTORIES = frozenset(
+    {"Flask", "create_app", "make_app", "build_app", "get_app", "Dash", "APIFlask"}
+)
+_FLASK_APP_RECEIVER_NAMES = frozenset({"app", "application", "flask_app"})
+
+
+def _is_test_module(filename) -> bool:
+    normalized = str(filename or "").replace("\\", "/")
+    base = normalized.rsplit("/", 1)[-1]
+    if base.startswith("test_") or base.endswith("_test.py") or base == "conftest.py":
+        return True
+    return "/tests/" in f"/{normalized}" or "/test/" in f"/{normalized}"
+
+
+def _is_flask_style_debug_run(node: ast.Call, name: str | None, filename) -> bool:
+    """``app.run(debug=True)`` when ``app`` is not resolvable to ``flask.Flask``.
+
+    Agents typically write ``app = create_app()`` (application factory) or
+    import ``app`` from the package; the receiver then does not resolve to
+    ``flask.Flask`` and the table rule above misses it. Also covers
+    ``socketio.run(app, debug=True)`` (Flask-SocketIO runs Werkzeug too).
+    """
+    if not name or not _kw_equals(node, {"debug": True}):
+        return False
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "run":
+        return False
+    if _is_test_module(filename):
+        return False
+    segments = name.split(".")
+    receiver = segments[-2] if len(segments) >= 2 else ""
+    if receiver in _FLASK_APP_FACTORIES:
+        return True
+    if receiver == "socketio" or name.endswith("SocketIO.run"):
+        return True
+    receiver_node = node.func.value
+    if isinstance(receiver_node, ast.Name):
+        if receiver_node.id in _FLASK_APP_RECEIVER_NAMES and receiver not in {
+            "uvicorn",
+            "hypercorn",
+        }:
+            return True
+        return False
+    if isinstance(receiver_node, ast.Call):
+        callee = receiver_node.func
+        callee_name = (
+            callee.attr
+            if isinstance(callee, ast.Attribute)
+            else callee.id if isinstance(callee, ast.Name) else ""
+        )
+        return callee_name in _FLASK_APP_FACTORIES
+    return False
+
+
 class DangerousCallsRule(SkylosRule):
     rule_id = "SKY-D200"
     name = "Dangerous Function Calls"
@@ -425,6 +504,10 @@ class DangerousCallsRule(SkylosRule):
                 if not _weak_random_has_security_context(node):
                     continue
 
+            if opts and opts.get("security_optout"):
+                if _declares_non_security_use(node):
+                    continue
+
             findings.append(
                 {
                     "rule_id": rule_id,
@@ -436,5 +519,22 @@ class DangerousCallsRule(SkylosRule):
                 }
             )
             break
+
+        if not findings and _is_flask_style_debug_run(
+            node, name, context.get("filename")
+        ):
+            findings.append(
+                {
+                    "rule_id": "SKY-D346",
+                    "severity": "HIGH",
+                    "message": (
+                        "Flask debug mode enabled: run(debug=True) exposes the "
+                        "interactive Werkzeug debugger (remote code execution)"
+                    ),
+                    "file": context.get("filename"),
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                }
+            )
 
         return findings if findings else None

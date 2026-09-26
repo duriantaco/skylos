@@ -141,3 +141,27 @@ model = joblib.load("classifier.joblib")
 """
     out = _scan_one(tmp_path, "model_joblib_load.py", code)
     assert "SKY-D265" in _rule_ids(out)
+
+
+def test_load_dataset_packaged_builder_with_local_files_is_not_d345(tmp_path):
+    # agent-pr-bench real-10: the json builder parses a local corpus file.
+    code = """
+import datasets
+
+corpus = datasets.load_dataset("json", data_files=corpus_path, split="train")
+local = datasets.load_dataset("./data/my_dataset")
+"""
+    out = _scan_one(tmp_path, "dataset_local.py", code)
+    assert "SKY-D345" not in _rule_ids(out)
+
+
+def test_load_dataset_hub_repo_or_remote_files_flags_d345(tmp_path):
+    code = """
+from datasets import load_dataset
+
+hub = load_dataset("owner/dataset")
+remote = load_dataset("json", data_files="https://example.com/train.jsonl")
+"""
+    out = _scan_one(tmp_path, "dataset_hub.py", code)
+    lines = sorted(f["line"] for f in out if f["rule_id"] == "SKY-D345")
+    assert lines == [4, 5]

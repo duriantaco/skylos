@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
 )
@@ -75,6 +76,28 @@ class _SQLRawFlowChecker(TaintVisitor):
     def __init__(self, tree: ast.AST, file_path, findings):
         super().__init__(file_path, findings)
         self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
+        self.untrusted_sources = UntrustedSourceIndex(tree)
+
+    def _raw_sql_finding(self, node: ast.Call, sql: ast.AST, message: str, sink: str):
+        finding = {
+            "rule_id": "SKY-D217",
+            "severity": "CRITICAL",
+            "message": message,
+            "file": str(self.file_path),
+            "line": node.lineno,
+            "col": node.col_offset,
+            "symbol": self._current_symbol(),
+        }
+        evidence = self.untrusted_sources.evidence(
+            self._current_function(),
+            sql,
+            sink=sink,
+            missing_guard="parameterized SQL binding",
+            evidence_kind="python_sql_taint",
+        )
+        if evidence is not None:
+            finding["metadata"] = {"security_evidence": evidence}
+        self.findings.append(finding)
 
     def visit_Import(self, node: ast.Import) -> None:
         self.sqlalchemy_text.record_import(node)
@@ -162,46 +185,31 @@ class _SQLRawFlowChecker(TaintVisitor):
         if self.sqlalchemy_text.is_text_call(node) and node.args:
             sql = node.args[0]
             if _is_interpolated_string(sql) or self.is_tainted(sql):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D217",
-                        "severity": "CRITICAL",
-                        "message": "Possible SQL injection: tainted SQL passed to sqlalchemy.text().",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                self._raw_sql_finding(
+                    node,
+                    sql,
+                    "Possible SQL injection: tainted SQL passed to sqlalchemy.text().",
+                    "SQL text passed to sqlalchemy.text()",
                 )
 
         if (qn.endswith(".read_sql") or qn.endswith(".read_sql_query")) and node.args:
             sql = node.args[0]
             if _is_interpolated_string(sql) or self.is_tainted(sql):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D217",
-                        "severity": "CRITICAL",
-                        "message": "Possible SQL injection: tainted SQL passed to pandas.read_sql().",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                self._raw_sql_finding(
+                    node,
+                    sql,
+                    "Possible SQL injection: tainted SQL passed to pandas.read_sql().",
+                    "SQL text passed to pandas.read_sql()",
                 )
 
         if qn.endswith(".objects.raw") and node.args:
             sql = node.args[0]
             if _is_interpolated_string(sql) or self.is_tainted(sql):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D217",
-                        "severity": "CRITICAL",
-                        "message": "Possible SQL injection: tainted SQL passed to Django .raw().",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
+                self._raw_sql_finding(
+                    node,
+                    sql,
+                    "Possible SQL injection: tainted SQL passed to Django .raw().",
+                    "SQL text passed to Django .raw()",
                 )
 
         self.generic_visit(node)

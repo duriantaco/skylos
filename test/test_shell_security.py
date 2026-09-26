@@ -5,6 +5,7 @@ from pathlib import Path
 
 from skylos.analyzer import analyze
 from skylos.visitors.languages.shell import scan_shell_file
+from skylos.visitors.languages.shell.danger import scan_danger
 
 
 def _scan_shell_findings(
@@ -383,3 +384,39 @@ eval "$cmd"
 
     assert result["analysis_summary"]["languages"] == {"Shell": 1}
     assert "SKY-D212" in _rule_ids(result["danger"])
+
+
+def test_function_positional_args_from_constant_call_sites_are_not_ssrf():
+    # agent-pr-bench real-10: download() is only called with URLs the script
+    # itself defines, so its "$1" is not user input.
+    source = (
+        '#!/usr/bin/env bash\n'
+        'WIKI_URL="https://huggingface.co/datasets/x/resolve/main/wiki.jsonl.gz"\n'
+        'download() {\n'
+        '    local url="$1"\n'
+        '    local output="$2"\n'
+        '    curl -L --fail -o "$output" "$url"\n'
+        '    wget -O "$output" "$url"\n'
+        '}\n'
+        'download "$WIKI_URL" wiki.jsonl.gz\n'
+    )
+    assert [f for f in scan_danger("data.sh", source) if f["rule_id"] == "SKY-D216"] == []
+
+
+def test_function_positional_args_from_script_arguments_stay_tainted():
+    source = (
+        '#!/usr/bin/env bash\n'
+        'fetch() {\n'
+        '    curl "$1"\n'
+        '}\n'
+        'fetch "$1"\n'
+    )
+    lines = [f["line"] for f in scan_danger("fetch.sh", source) if f["rule_id"] == "SKY-D216"]
+    assert lines == [3]
+
+
+def test_uncalled_function_positional_args_stay_tainted():
+    # Library scripts are sourced by other code: callers are unknown.
+    source = 'fetch() {\n    curl "$1"\n}\n'
+    lines = [f["line"] for f in scan_danger("lib.sh", source) if f["rule_id"] == "SKY-D216"]
+    assert lines == [2]

@@ -67,6 +67,20 @@ def test_md5_sha1(tmp_path):
     assert "SKY-D208" in ids
 
 
+def test_md5_sha1_declared_non_security_use_ok(tmp_path):
+    # agent-pr-bench real-13: cache key hashing that opts out of security use.
+    out = _scan_one(
+        tmp_path,
+        "a_hashes_optout.py",
+        "import hashlib\n"
+        "hashlib.md5(b'd', usedforsecurity=False)\n"
+        "hashlib.sha1(usedforsecurity=False)\n"
+        "hashlib.md5(b'd', usedforsecurity=True)\n",
+    )
+    lines = [f["line"] for f in out if f["rule_id"] in {"SKY-D207", "SKY-D208"}]
+    assert lines == [4]
+
+
 def test_subprocess_shell_true(tmp_path):
     out = _scan_one(
         tmp_path,

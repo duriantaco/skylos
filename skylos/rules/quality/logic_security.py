@@ -1183,6 +1183,144 @@ def _is_env_lookup(node):
     return False
 
 
+_SECRET_PLACEHOLDER_HINTS = (
+    "example",
+    "changeme",
+    "change_me",
+    "change-me",
+    "changethis",
+    "change_this",
+    "placeholder",
+    "your",
+    "replace",
+    "dummy",
+    "sample",
+    "fake",
+    "xxx",
+    "todo",
+    "test",
+    "dev",
+    "local",
+    "insecure",
+    "default",
+    "notsecret",
+    "not-secret",
+    "not_secret",
+    "secret-key",
+    "secret_key",
+    "redacted",
+    "${",
+    "{{",
+)
+_HEX_SECRET_RE = re.compile(r"[0-9a-fA-F]{24,}")
+_TOKEN_SECRET_RE = re.compile(r"[A-Za-z0-9._~+/=-]{20,}")
+_LOOKUP_METHODS = frozenset({"get", "getenv", "environ", "getattr", "get_secret"})
+
+
+def _shannon_entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    counts = {}
+    for char in value:
+        counts[char] = counts.get(char, 0) + 1
+    length = len(value)
+    import math
+
+    return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+
+def _looks_like_real_secret(value: str, vibe_dictionary=None) -> bool:
+    """A literal that has the shape of a real credential, not a placeholder."""
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+    stripped = value.strip()
+    lower = stripped.lower()
+    if len(stripped) < 10 or any(c.isspace() for c in stripped):
+        return False
+    if "://" in stripped or stripped.startswith(("/", "./", "~")):
+        return False
+    if lower in vibe_dictionary.placeholder_values or _TEST_CREDENTIAL_RE.match(
+        stripped
+    ):
+        return False
+    if any(hint in lower for hint in _SECRET_PLACEHOLDER_HINTS):
+        return False
+    if len(set(stripped)) <= 4:
+        return False
+    has_alpha = any(c.isalpha() for c in stripped)
+    has_digit = any(c.isdigit() for c in stripped)
+    if _HEX_SECRET_RE.fullmatch(stripped):
+        return has_alpha and has_digit and _shannon_entropy(stripped) >= 3.0
+    classes = sum(
+        (
+            any(c.islower() for c in stripped),
+            any(c.isupper() for c in stripped),
+            has_digit,
+            any(not c.isalnum() for c in stripped),
+        )
+    )
+    if classes >= 3 and has_alpha and len(stripped) >= 12:
+        return _shannon_entropy(stripped) >= 3.0
+    return bool(
+        _TOKEN_SECRET_RE.fullmatch(stripped)
+        and has_alpha
+        and has_digit
+        and _shannon_entropy(stripped) >= 3.5
+    )
+
+
+def _lookup_key_name(node) -> str | None:
+    """``os.getenv("X")`` / ``config.get("X")`` / ``os.environ["X"]`` -> "X"."""
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = (
+            func.attr
+            if isinstance(func, ast.Attribute)
+            else func.id if isinstance(func, ast.Name) else ""
+        )
+        if name not in _LOOKUP_METHODS:
+            return None
+        if node.args and isinstance(node.args[0], ast.Constant):
+            key = node.args[0].value
+            return key if isinstance(key, str) else None
+        return ""
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+        return ""
+    return None
+
+
+def _secret_fallback_literals(value):
+    """Yield (literal_node, lookup_key) for credential literals used as the
+    fallback of a config/env lookup:
+
+    ``os.environ.get("X") or "<lit>"``, ``os.getenv("X", "<lit>")``,
+    ``config.get("X", default="<lit>")``.
+    """
+    if isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+        lookups = [_lookup_key_name(item) for item in value.values[:-1]]
+        last = value.values[-1]
+        if (
+            any(key is not None for key in lookups)
+            and isinstance(last, ast.Constant)
+            and isinstance(last.value, str)
+        ):
+            key = next((k for k in lookups if k), "")
+            yield last, key
+        return
+    if isinstance(value, ast.Call):
+        key = _lookup_key_name(value)
+        if key is None:
+            return
+        default = value.args[1] if len(value.args) >= 2 else None
+        for kw in value.keywords:
+            if kw.arg == "default":
+                default = kw.value
+        if isinstance(default, ast.Constant) and isinstance(default.value, str):
+            yield default, key
+
+
 class HardcodedCredentialRule(SkylosRule):
     rule_id = "SKY-L014"
     name = "Hardcoded Credential"
@@ -1190,8 +1328,71 @@ class HardcodedCredentialRule(SkylosRule):
     def __init__(self, vibe_dictionary=None):
         self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
 
+    def _fallback_findings(self, node, filename, basename):
+        """Real-looking secret literals in annotated defaults and env fallbacks.
+
+        These forms were previously skipped; they only report literals that
+        look like real credentials (hex keys, high-entropy tokens, mixed-class
+        passwords), never placeholders like ``changethis``.
+        """
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        else:
+            return []
+        var_name = (
+            target.id
+            if isinstance(target, ast.Name)
+            else target.attr if isinstance(target, ast.Attribute) else None
+        )
+        value = node.value
+        if var_name is None or value is None:
+            return []
+        candidates = []
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and _is_credential_var(var_name, self.vibe_dictionary)
+        ):
+            candidates.append((value, "annotated default"))
+        for literal, key in _secret_fallback_literals(value):
+            if _is_credential_var(var_name, self.vibe_dictionary) or (
+                key and _is_credential_var(key, self.vibe_dictionary)
+            ):
+                candidates.append((literal, "fallback for a config/env lookup"))
+        findings = []
+        for literal, kind in candidates:
+            if not _looks_like_real_secret(literal.value, self.vibe_dictionary):
+                continue
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "logic",
+                    "severity": "HIGH",
+                    "type": "assignment",
+                    "name": var_name,
+                    "simple_name": var_name,
+                    "value": "hardcoded_fallback",
+                    "threshold": 0,
+                    "message": (
+                        f"Hardcoded credential in '{var_name}' ({kind}). "
+                        "The literal is shipped in source and used whenever the "
+                        "setting is missing; remove it and fail when unset."
+                    ),
+                    "file": filename,
+                    "basename": basename,
+                    "line": literal.lineno,
+                    "col": literal.col_offset,
+                }
+            )
+        return findings
+
     def visit_node(self, node, context):
-        if not isinstance(node, (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(
+            node, (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
             return None
 
         filename = context.get("filename", "")
@@ -1200,6 +1401,10 @@ class HardcodedCredentialRule(SkylosRule):
 
         findings = []
         basename = _basename(filename)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            findings.extend(self._fallback_findings(node, filename, basename))
+            if isinstance(node, ast.AnnAssign):
+                return findings or None
 
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]

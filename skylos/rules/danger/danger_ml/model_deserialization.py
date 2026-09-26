@@ -140,7 +140,9 @@ class _ModelDeserializationChecker(TaintVisitor):
         self.generic_visit(node)
 
     def _check_model_load_call(self, node: ast.Call, name: str) -> None:
-        if _is_huggingface_artifact_call(name):
+        if _is_huggingface_artifact_call(name) and not _is_local_dataset_load(
+            node, name
+        ):
             if _call_uses_missing_or_mutable_revision(node):
                 self._append_huggingface_revision_finding(node, name)
 
@@ -284,6 +286,40 @@ def _is_huggingface_artifact_call(name: str) -> bool:
     if receiver.startswith(HUGGINGFACE_PRETRAINED_PREFIXES):
         return True
     return receiver.rsplit(".", 1)[-1] in HUGGINGFACE_PRETRAINED_CLASSES
+
+
+# Builders packaged inside ``datasets``: ``load_dataset("json", data_files=...)``
+# parses the given files with library code; nothing is fetched from the Hub.
+PACKAGED_DATASET_BUILDERS = frozenset(
+    {
+        "arrow", "audiofolder", "csv", "generator", "imagefolder", "json",
+        "pandas", "parquet", "sql", "text", "videofolder", "webdataset", "xml",
+    }
+)  # fmt: skip
+
+
+def _is_local_dataset_load(node: ast.Call, name: str) -> bool:
+    if name.rsplit(".", 1)[-1] != "load_dataset":
+        return False
+    path = node.args[0] if node.args else _keyword_value(node, "path")
+    if not (isinstance(path, ast.Constant) and isinstance(path.value, str)):
+        return False
+    value = path.value.strip()
+    if value.startswith(("./", "../", "/", "~")):
+        return True
+    if value not in PACKAGED_DATASET_BUILDERS:
+        return False
+    # Remote data files are still mutable downloads.
+    data_files = _keyword_value(node, "data_files")
+    if data_files is not None:
+        for sub in ast.walk(data_files):
+            if (
+                isinstance(sub, ast.Constant)
+                and isinstance(sub.value, str)
+                and sub.value.startswith(("http://", "https://", "hf://"))
+            ):
+                return False
+    return True
 
 
 def _call_uses_missing_or_mutable_revision(node: ast.Call) -> bool:

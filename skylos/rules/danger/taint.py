@@ -28,6 +28,10 @@ URL_SANITIZERS = {
 PATH_SANITIZERS = {
     "os.path.basename",
     "pathlib.PurePath.name",
+    "safe_join",
+    "werkzeug.utils.safe_join",
+    "werkzeug.security.safe_join",
+    "flask.helpers.safe_join",
     "_resolve_analysis_target",
     "_resolve_policy_path",
     "_resolve_repo_link_path",
@@ -58,6 +62,7 @@ class TaintVisitor(ast.NodeVisitor):
         self.sources = {"input", "request"}
         self.request_obj = "request"
         self._symbol_stack = ["<module>"]
+        self._function_stack: list[ast.AST] = []
         self.sanitizers = sanitizers or set()
 
     def _current_symbol(self):
@@ -65,6 +70,10 @@ class TaintVisitor(ast.NodeVisitor):
             return self._symbol_stack[-1]
         else:
             return "<module>"
+
+    def _current_function(self):
+        stack = getattr(self, "_function_stack", None)
+        return stack[-1] if stack else None
 
     def _push(self):
         self.env_stack.append({})
@@ -107,6 +116,9 @@ class TaintVisitor(ast.NodeVisitor):
     def is_tainted(self, node):
         if node is None:
             return False
+
+        if isinstance(node, ast.Await):
+            return self.is_tainted(node.value)
 
         if isinstance(node, ast.JoinedStr):
             return any(
@@ -174,16 +186,20 @@ class TaintVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node):
         self._push()
         self._symbol_stack.append(node.name)
+        self._function_stack.append(node)
         self._taint_params(node)
         self.generic_visit(node)
+        self._function_stack.pop()
         self._symbol_stack.pop()
         self._pop()
 
     def visit_AsyncFunctionDef(self, node):
         self._push()
         self._symbol_stack.append(node.name)
+        self._function_stack.append(node)
         self._taint_params(node)
         self.generic_visit(node)
+        self._function_stack.pop()
         self._symbol_stack.pop()
         self._pop()
 
