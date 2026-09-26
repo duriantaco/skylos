@@ -200,7 +200,7 @@ def test_failed_shrinkwrap_retains_unrelated_components_without_fallback(
     else:
         _write(tmp_path, "npm-shrinkwrap.json", "{invalid")
 
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)
@@ -228,7 +228,7 @@ def test_private_shrinkwrap_source_is_not_exported_as_public_registry_package(
     _write(tmp_path, "package.json", {"dependencies": {"example": "1.0.0"}})
     _write(tmp_path, "requirements.txt", "urllib3==1.26.4\n")
 
-    assert run_sbom_command([str(tmp_path)]) == 2
+    assert run_sbom_command([str(tmp_path), "--strict"]) == 2
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)

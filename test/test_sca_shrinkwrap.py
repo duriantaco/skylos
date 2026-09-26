@@ -558,7 +558,7 @@ def test_sbom_cli_preserves_components_and_returns_incomplete_exit(
     _write(tmp_path, "npm-shrinkwrap.json", "{invalid" if invalid_selected else _lock())
     _write(tmp_path, "package-lock.json", _lock(name="ignored"))
     _write(tmp_path, "requirements.txt", "fixture-package==1.0.0\n")
-    exit_code = run_sbom_command([str(tmp_path)])
+    exit_code = run_sbom_command([str(tmp_path), "--strict"])
     captured = capsys.readouterr()
     document = json.loads(captured.out)
     receipt = json.loads(
