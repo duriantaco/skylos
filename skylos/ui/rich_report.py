@@ -181,6 +181,22 @@ def _render_analysis_warnings(console: Console, result, *, root_path=None, limit
     console.print()
 
 
+def _render_publisher_review_status(console: Console, result):
+    receipt = (result.get("analysis_summary") or {}).get("publisher_change_scan")
+    if not isinstance(receipt, dict):
+        return
+    status = receipt.get("status")
+    if status == "no_inputs":
+        console.print(
+            "[muted]npm publisher review: no supported package lockfile.[/muted]"
+        )
+    elif status not in {"complete", "disabled"}:
+        warnings = receipt.get("warnings")
+        detail = warnings[0] if isinstance(warnings, list) and warnings else status
+        safe_detail = escape(str(detail or "check incomplete")[:200])
+        console.print(f"[warn]npm publisher review incomplete: {safe_detail}[/warn]")
+
+
 def _score_style(score):
     if score >= 90:
         return "good"
@@ -613,6 +629,11 @@ def _render_result_tree(console: Console, result, root_path=None):
         "vulnerability",
         default_sev="high",
     )
+    _add_findings(
+        result.get("publisher_change_findings"),
+        "npm publisher review",
+        default_sev="warn",
+    )
 
     if not by_file:
         console.print("[good]No findings to display.[/good]")
@@ -628,7 +649,7 @@ def _render_result_tree(console: Console, result, root_path=None):
         for line, sev, msg in sorted(by_file[file], key=lambda t: t[0]):
             if sev == "high" or sev == "critical":
                 style = "bad"
-            elif sev == "medium":
+            elif sev in {"medium", "warn", "warning"}:
                 style = "warn"
             else:
                 style = "muted"
@@ -872,6 +893,54 @@ def _render_sca(console: Console, limit, items):
     )
 
 
+def _render_publisher_changes(console: Console, limit, items):
+    if not items:
+        return
+
+    console.rule("[bold yellow]npm Publisher Changes (review only)")
+    table = Table(expand=True)
+    table.add_column("#", style="muted", width=3)
+    table.add_column("Package", style="yellow", width=22)
+    table.add_column("Publisher", width=24, overflow="fold")
+    table.add_column("Release gap", width=12)
+    table.add_column("Location", overflow="fold")
+
+    show, overflow = _display_cap(items, limit)
+    for i, finding in enumerate(show, 1):
+        meta = finding.get("metadata")
+        if not isinstance(meta, dict):
+            meta = {}
+        name = str(meta.get("package_name") or "?")
+        version = str(meta.get("package_version") or "?")
+        publisher = (
+            f"{meta.get('previous_publisher') or '?'} → "
+            f"{meta.get('new_publisher') or '?'}"
+        )
+        days = meta.get("dormancy_days")
+        gap = f"{days} days" if isinstance(days, int) and days >= 0 else "?"
+        file_path = _shorten_path(finding.get("file") or finding.get("file_path"))
+        line = finding.get("line") or finding.get("line_number") or 1
+        location = f"{file_path}:{line}"
+        table.add_row(
+            str(i),
+            escape(f"{name}@{version}"),
+            escape(publisher),
+            gap,
+            escape(location),
+        )
+
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+        )
+    console.print(
+        "[muted]Review the publisher and release provenance. This signal does "
+        "not establish compromise or a known vulnerability and does not fail "
+        "the quality gate.[/muted]\n"
+    )
+
+
 def render_results(
     console: Console,
     result,
@@ -917,6 +986,15 @@ def render_results(
                     len(result.get("custom_rules", []) or []),
                     bad_style="warn",
                 ),
+                (
+                    _results_pill(
+                        "Publisher review",
+                        len(result.get("publisher_change_findings") or []),
+                        bad_style="warn",
+                    )
+                    if result.get("publisher_change_findings")
+                    else None
+                ),
                 _results_pill(
                     "Suppressed",
                     len(result.get("suppressed", []) or []),
@@ -938,6 +1016,7 @@ def render_results(
         limit=limit,
     )
     _render_analysis_warnings(console, result, root_path=root_path, limit=limit)
+    _render_publisher_review_status(console, result)
 
     grade_data = result.get("grade")
     if grade_data:
@@ -1016,3 +1095,6 @@ def render_results(
             console, root_path, limit, result.get("custom_rules", []) or []
         )
         _render_sca(console, limit, result.get("dependency_vulnerabilities", []) or [])
+        _render_publisher_changes(
+            console, limit, result.get("publisher_change_findings", []) or []
+        )
