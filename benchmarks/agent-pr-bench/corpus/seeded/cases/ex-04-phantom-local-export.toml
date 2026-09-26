@@ -1,0 +1,24 @@
+id = "ex-04-phantom-local-export"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'reuse the profile mapper for comment authors'. The agent imports a named export that the local module does not define (it only has a default export)."
+
+[[edits]]
+file = "src/app/routes/article/author.mapper.ts"
+old = '''
+import { User } from '../auth/user.model';
+'''
+new = '''
+import { User } from '../auth/user.model';
+import { toProfileDTO } from '../profile/profile.utils';
+
+export const commentAuthor = (author: any, id?: number) => toProfileDTO(author, id);
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_import"
+description = "profile.utils has no named export toProfileDTO."
+[[defects.locations]]
+file = "src/app/routes/article/author.mapper.ts"
+anchor = "import { toProfileDTO } from '../profile/profile.utils';"

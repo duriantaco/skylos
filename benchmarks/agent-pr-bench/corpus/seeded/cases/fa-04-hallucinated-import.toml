@@ -1,0 +1,40 @@
+id = "fa-04-hallucinated-import"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'use a pagination helper'. The agent imports paginate from sqlmodel, which does not export one."
+
+[[edits]]
+file = "backend/app/api/routes/items.py"
+old = '''
+from sqlmodel import col, func, select
+'''
+new = '''
+from sqlmodel import col, func, paginate, select
+'''
+
+[[edits]]
+file = "backend/app/api/routes/items.py"
+old = '''
+        statement = (
+            select(Item).order_by(col(Item.created_at).desc()).offset(skip).limit(limit)
+        )
+        items = session.exec(statement).all()
+    else:
+'''
+new = '''
+        items = paginate(
+            session, select(Item).order_by(col(Item.created_at).desc()), skip, limit
+        )
+    else:
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_import"
+description = "sqlmodel has no 'paginate' export; ImportError at startup."
+[[defects.locations]]
+file = "backend/app/api/routes/items.py"
+anchor = "from sqlmodel import col, func, paginate, select"
+[[defects.locations]]
+file = "backend/app/api/routes/items.py"
+anchor = "items = paginate("

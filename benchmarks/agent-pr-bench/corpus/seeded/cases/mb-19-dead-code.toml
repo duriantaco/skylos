@@ -1,0 +1,52 @@
+id = "mb-19-dead-code"
+base = "microblog"
+language = "python"
+story = "Task: 'show last-seen in a friendlier format'. The agent adds a helper and an import but never wires them up (the template still uses moment.js)."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+from datetime import datetime, timezone
+'''
+new = '''
+import json
+from datetime import datetime, timezone
+'''
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+@bp.before_app_request
+'''
+new = '''
+def _format_last_seen(user):
+    """Return a human-friendly 'last seen' string for a user."""
+    if user.last_seen is None:
+        return _('never')
+    last_seen = user.last_seen.replace(tzinfo=timezone.utc)
+    minutes = int((datetime.now(timezone.utc) - last_seen).total_seconds() // 60)
+    if minutes < 1:
+        return _('just now')
+    if minutes < 60:
+        return _('%(n)d minutes ago', n=minutes)
+    return last_seen.strftime('%Y-%m-%d %H:%M')
+
+
+@bp.before_app_request
+'''
+
+[[defects]]
+id = "d1"
+category = "dead_code"
+description = "Unused import json added."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "import json"
+
+[[defects]]
+id = "d2"
+category = "dead_code"
+description = "Helper _format_last_seen is never called."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "def _format_last_seen(user):"

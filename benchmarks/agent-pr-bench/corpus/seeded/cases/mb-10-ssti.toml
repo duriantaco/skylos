@@ -1,0 +1,39 @@
+id = "mb-10-ssti"
+base = "microblog"
+language = "python"
+story = "Task: 'add a dismissible banner endpoint'. The agent concatenates a query parameter into a Jinja template string (server-side template injection / XSS)."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app
+'''
+new = '''
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app, render_template_string
+'''
+
+[[edits]]
+file = "app/main/routes.py"
+mode = "append"
+new = '''
+
+
+@bp.route('/banner')
+@login_required
+def banner():
+    message = request.args.get('message', _('Welcome back!'))
+    return render_template_string(
+        '<div class="alert alert-info">' + message + '</div>')
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "ssti_xss"
+description = "User input concatenated into render_template_string source (SSTI, XSS)."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "return render_template_string("
+end_anchor = "'<div class=\"alert alert-info\">' + message"

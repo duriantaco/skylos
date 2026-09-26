@@ -1,0 +1,36 @@
+id = "ex-13-path-traversal"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'serve uploaded images by name'. The agent path.joins a route parameter and calls sendFile without a root option."
+
+[[edits]]
+file = "src/main.ts"
+old = '''
+import express from 'express';
+'''
+new = '''
+import express from 'express';
+import * as path from 'path';
+'''
+
+[[edits]]
+file = "src/main.ts"
+old = '''
+app.get('/', (req: express.Request, res: express.Response) => {
+'''
+new = '''
+app.get('/images/:name', (req: express.Request, res: express.Response) => {
+  res.sendFile(path.join(__dirname, 'assets', 'images', req.params.name));
+});
+
+app.get('/', (req: express.Request, res: express.Response) => {
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "path_traversal"
+description = "Path traversal: request parameter joined into a sendFile path without a root option."
+[[defects.locations]]
+file = "src/main.ts"
+anchor = "res.sendFile(path.join(__dirname, 'assets', 'images', req.params.name));"

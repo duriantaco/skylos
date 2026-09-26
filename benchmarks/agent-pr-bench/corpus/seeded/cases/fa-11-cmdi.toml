@@ -1,0 +1,39 @@
+id = "fa-11-cmdi"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'admin endpoint to trigger a DB backup'. The agent builds a shell command from a query parameter."
+
+[[edits]]
+file = "backend/app/api/routes/utils.py"
+old = '''
+from fastapi import APIRouter, Depends
+'''
+new = '''
+import subprocess
+
+from fastapi import APIRouter, Depends
+'''
+
+[[edits]]
+file = "backend/app/api/routes/utils.py"
+mode = "append"
+new = '''
+
+
+@router.post("/backup/", dependencies=[Depends(get_current_active_superuser)])
+def backup_database(label: str) -> Message:
+    subprocess.run(
+        f'pg_dump "$DATABASE_URL" -f /backups/{label}.sql', shell=True, check=True
+    )
+    return Message(message="Backup finished")
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "command_injection"
+description = "Shell command built from a request parameter with shell=True."
+[[defects.locations]]
+file = "backend/app/api/routes/utils.py"
+anchor = "subprocess.run("
+end_anchor = "shell=True, check=True"

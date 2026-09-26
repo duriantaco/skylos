@@ -1,0 +1,23 @@
+id = "mb-02-hallucinated-api"
+base = "microblog"
+language = "python"
+story = "Task: 'return 400 on malformed translate requests'. The agent calls a Flask request method that does not exist."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+    data = request.get_json()
+    return {'text': translate(data['text'],
+'''
+new = '''
+    data = request.get_json_or_400()
+    return {'text': translate(data['text'],
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_api"
+description = "flask.Request has no get_json_or_400(); AttributeError at runtime."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "request.get_json_or_400()"

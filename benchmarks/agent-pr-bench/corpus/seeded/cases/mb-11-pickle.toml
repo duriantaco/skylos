@@ -1,0 +1,45 @@
+id = "mb-11-pickle"
+base = "microblog"
+language = "python"
+story = "Task: 'remember UI preferences in a cookie'. The agent round-trips the cookie through pickle."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+from datetime import datetime, timezone
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app
+'''
+new = '''
+import base64
+import pickle
+from datetime import datetime, timezone
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app, make_response
+'''
+
+[[edits]]
+file = "app/main/routes.py"
+mode = "append"
+new = '''
+
+
+@bp.route('/preferences', methods=['POST'])
+@login_required
+def save_preferences():
+    raw = request.cookies.get('prefs')
+    prefs = pickle.loads(base64.b64decode(raw)) if raw else {}
+    prefs.update(request.get_json() or {})
+    resp = make_response({'status': 'ok'})
+    resp.set_cookie('prefs', base64.b64encode(pickle.dumps(prefs)).decode())
+    return resp
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "deserialization"
+description = "Untrusted cookie deserialized with pickle.loads (remote code execution)."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "prefs = pickle.loads(base64.b64decode(raw))"

@@ -1,0 +1,25 @@
+id = "fa-c1-clean-endpoint"
+base = "fastapi-template"
+language = "python"
+clean = true
+story = "Control: the agent adds an authenticated item-count endpoint scoped to the current user. No seeded defect."
+
+[[edits]]
+file = "backend/app/api/routes/items.py"
+old = '''
+@router.get("/{id}", response_model=ItemPublic)
+'''
+new = '''
+@router.get("/count", response_model=int)
+def count_my_items(session: SessionDep, current_user: CurrentUser) -> Any:
+    """
+    Count items owned by the current user.
+    """
+    statement = (
+        select(func.count()).select_from(Item).where(Item.owner_id == current_user.id)
+    )
+    return session.exec(statement).one()
+
+
+@router.get("/{id}", response_model=ItemPublic)
+'''

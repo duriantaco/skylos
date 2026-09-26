@@ -1,0 +1,40 @@
+id = "mb-09-path-traversal"
+base = "microblog"
+language = "python"
+story = "Task: 'serve finished post exports'. The agent joins a URL path parameter onto the export directory and sends the file."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+from datetime import datetime, timezone
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app
+'''
+new = '''
+import os
+from datetime import datetime, timezone
+from flask import render_template, flash, redirect, url_for, request, g, \
+    current_app, send_file
+'''
+
+[[edits]]
+file = "app/main/routes.py"
+mode = "append"
+new = '''
+
+
+@bp.route('/exports/<path:filename>')
+@login_required
+def download_export(filename):
+    export_dir = current_app.config.get('EXPORT_DIR', '/tmp/exports')
+    return send_file(os.path.join(export_dir, filename), as_attachment=True)
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "path_traversal"
+description = "Path traversal: <path:filename> joined with os.path.join and passed to send_file (send_from_directory is the safe API)."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "return send_file(os.path.join(export_dir, filename)"

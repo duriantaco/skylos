@@ -1,0 +1,36 @@
+id = "ex-11-xss"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'add a shareable HTML profile card'. The agent sends HTML with the route parameter interpolated unescaped."
+
+[[edits]]
+file = "src/app/routes/profile/profile.controller.ts"
+old = '''
+export default router;
+'''
+new = '''
+/**
+ * Profile card (HTML)
+ * @auth optional
+ * @route {GET} /profiles/:username/card
+ */
+router.get('/profiles/:username/card', auth.optional, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const profile = await getProfile(req.params.username, req.auth?.user?.id);
+    res.send(`<div class="card"><h1>${req.params.username}</h1><p>${profile.bio ?? ''}</p></div>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "xss"
+description = "Reflected/stored XSS: username and bio interpolated into res.send HTML."
+[[defects.locations]]
+file = "src/app/routes/profile/profile.controller.ts"
+anchor = "res.send(`<div class=\"card\"><h1>${req.params.username}"

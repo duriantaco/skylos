@@ -1,0 +1,36 @@
+id = "mb-06-sqli"
+base = "microblog"
+language = "python"
+story = "Task: 'search should work without Elasticsearch'. The agent adds a LIKE fallback that interpolates the query string into raw SQL."
+
+[[edits]]
+file = "app/main/routes.py"
+old = '''
+    posts, total = Post.search(g.search_form.q.data, page,
+                               current_app.config['POSTS_PER_PAGE'])
+'''
+new = '''
+    if current_app.elasticsearch:
+        posts, total = Post.search(g.search_form.q.data, page,
+                                   current_app.config['POSTS_PER_PAGE'])
+    else:
+        # Fallback when Elasticsearch is not configured: simple LIKE search
+        q = g.search_form.q.data
+        rows = db.session.execute(sa.text(
+            f"SELECT id FROM post WHERE body LIKE '%{q}%' "
+            f"ORDER BY timestamp DESC"))
+        ids = [row[0] for row in rows]
+        posts = db.session.scalars(
+            sa.select(Post).where(Post.id.in_(ids))).all()
+        total = len(ids)
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "sqli"
+description = "SQL injection: request query string interpolated into sa.text()."
+[[defects.locations]]
+file = "app/main/routes.py"
+anchor = "rows = db.session.execute(sa.text("
+end_anchor = "f\"ORDER BY timestamp DESC\"))"

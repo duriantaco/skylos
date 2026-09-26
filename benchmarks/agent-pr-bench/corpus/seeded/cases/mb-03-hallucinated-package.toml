@@ -1,0 +1,45 @@
+id = "mb-03-hallucinated-package"
+base = "microblog"
+language = "python"
+story = "Task: 'add rate limiting'. The agent pins and imports a package that does not exist on PyPI (verified 404 on 2026-09-25)."
+
+[[edits]]
+file = "requirements.txt"
+old = '''
+Flask-Moment==1.0.5
+'''
+new = '''
+Flask-Moment==1.0.5
+flask-ratelimiter-pro==2.1.0
+'''
+
+[[edits]]
+file = "app/__init__.py"
+old = '''
+from flask_babel import Babel, lazy_gettext as _l
+'''
+new = '''
+from flask_babel import Babel, lazy_gettext as _l
+from flask_ratelimiter_pro import RateLimiter
+'''
+
+[[edits]]
+file = "app/__init__.py"
+old = '''
+babel = Babel()
+'''
+new = '''
+babel = Babel()
+limiter = RateLimiter(default_limits=['200 per hour'])
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_package"
+description = "flask-ratelimiter-pro is not a published PyPI package; install fails and the name is squattable."
+[[defects.locations]]
+file = "requirements.txt"
+anchor = "flask-ratelimiter-pro==2.1.0"
+[[defects.locations]]
+file = "app/__init__.py"
+anchor = "from flask_ratelimiter_pro import RateLimiter"

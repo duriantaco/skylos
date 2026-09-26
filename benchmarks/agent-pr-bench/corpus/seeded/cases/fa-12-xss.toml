@@ -1,0 +1,34 @@
+id = "fa-12-xss"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'add a simple welcome page'. The agent returns an HTML response with a query parameter interpolated unescaped."
+
+[[edits]]
+file = "backend/app/api/routes/utils.py"
+old = '''
+from fastapi import APIRouter, Depends
+'''
+new = '''
+from fastapi import APIRouter, Depends
+from fastapi.responses import HTMLResponse
+'''
+
+[[edits]]
+file = "backend/app/api/routes/utils.py"
+mode = "append"
+new = '''
+
+
+@router.get("/welcome/", response_class=HTMLResponse)
+async def welcome(name: str = "there") -> str:
+    return f"<html><body><h1>Welcome, {name}!</h1></body></html>"
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "xss"
+description = "Reflected XSS: query parameter interpolated into an HTMLResponse."
+[[defects.locations]]
+file = "backend/app/api/routes/utils.py"
+anchor = "return f\"<html><body><h1>Welcome, {name}!"

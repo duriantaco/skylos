@@ -1,0 +1,27 @@
+id = "fa-05-hallucinated-kwarg"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'set token expiry'. The agent passes expires_in (a node jsonwebtoken option) to PyJWT's encode, which has no such parameter."
+
+[[edits]]
+file = "backend/app/core/security.py"
+old = '''
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+'''
+new = '''
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=ALGORITHM,
+        expires_in=int(expires_delta.total_seconds()),
+    )
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_api"
+description = "jwt.encode() does not accept expires_in; TypeError on every login."
+[[defects.locations]]
+file = "backend/app/core/security.py"
+anchor = "encoded_jwt = jwt.encode("
+end_anchor = "expires_in=int(expires_delta.total_seconds()),"

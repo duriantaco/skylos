@@ -1,0 +1,36 @@
+id = "mb-20-unparseable"
+base = "microblog"
+language = "python"
+unparseable = true
+story = "Agent edit is truncated: a new admin module has an unclosed dict literal (SyntaxError) and also evaluates request input. Tests whether a tool reports that it could not analyze the file."
+
+[[edits]]
+file = "app/main/admin_tools.py"
+mode = "create"
+new = '''
+from flask import request
+from flask_login import login_required
+from app.main import bp
+
+
+@bp.route('/admin/calc', methods=['POST'])
+@login_required
+def admin_calc():
+    expr = request.form.get('expr', '')
+    result = eval(expr)
+    return {'result': result
+
+
+@bp.route('/admin/ping')
+def admin_ping():
+    return {'ok': True}
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "code_injection"
+description = "eval() of form input, in a file that does not parse."
+[[defects.locations]]
+file = "app/main/admin_tools.py"
+anchor = "result = eval(expr)"

@@ -1,0 +1,48 @@
+id = "ex-07-cmdi"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'generate avatar thumbnails'. The agent shells out to ImageMagick with a request field interpolated."
+
+[[edits]]
+file = "src/app/routes/profile/profile.controller.ts"
+old = '''
+import { NextFunction, Request, Response, Router } from 'express';
+'''
+new = '''
+import { exec } from 'child_process';
+import { NextFunction, Request, Response, Router } from 'express';
+'''
+
+[[edits]]
+file = "src/app/routes/profile/profile.controller.ts"
+old = '''
+export default router;
+'''
+new = '''
+/**
+ * Create avatar thumbnail
+ * @auth required
+ * @route {POST} /profiles/avatar/thumbnail
+ */
+router.post('/profiles/avatar/thumbnail', auth.required, (req: Request, res: Response) => {
+  const image = req.body.image;
+  exec(`convert uploads/${image} -resize 128x128 uploads/thumb_${image}`, (error) => {
+    if (error) {
+      res.status(500).json({ error: 'thumbnail failed' });
+      return;
+    }
+    res.json({ thumbnail: `thumb_${image}` });
+  });
+});
+
+export default router;
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "command_injection"
+description = "OS command injection: request body field interpolated into child_process.exec."
+[[defects.locations]]
+file = "src/app/routes/profile/profile.controller.ts"
+anchor = "exec(`convert uploads/${image}"

@@ -1,0 +1,35 @@
+id = "ex-15-dead-code"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'add reading-time estimates'. The agent adds a helper and an import that are never used."
+
+[[edits]]
+file = "src/app/routes/article/article.mapper.ts"
+old = '''
+import authorMapper from './author.mapper';
+'''
+new = '''
+import authorMapper from './author.mapper';
+import { Tag } from '../tag/tag.model';
+
+const readingTimeMinutes = (body: string): number => {
+  const words = body.trim().split(/\s+/).length;
+  return Math.max(1, Math.round(words / 200));
+};
+'''
+
+[[defects]]
+id = "d1"
+category = "dead_code"
+description = "Unused import Tag."
+[[defects.locations]]
+file = "src/app/routes/article/article.mapper.ts"
+anchor = "import { Tag } from '../tag/tag.model';"
+
+[[defects]]
+id = "d2"
+category = "dead_code"
+description = "Module-private helper readingTimeMinutes is never called."
+[[defects.locations]]
+file = "src/app/routes/article/article.mapper.ts"
+anchor = "const readingTimeMinutes = (body: string): number => {"

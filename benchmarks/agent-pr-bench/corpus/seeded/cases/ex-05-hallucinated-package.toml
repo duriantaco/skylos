@@ -1,0 +1,45 @@
+id = "ex-05-hallucinated-package"
+base = "express-realworld"
+language = "typescript"
+story = "Task: 'add security headers'. The agent adds and imports an npm package that does not exist (verified 404 on 2026-09-25)."
+
+[[edits]]
+file = "package.json"
+old = '''
+    "express-jwt": "^8.4.1",
+'''
+new = '''
+    "express-jwt": "^8.4.1",
+    "express-secure-headers-plus": "^2.3.1",
+'''
+
+[[edits]]
+file = "src/main.ts"
+old = '''
+import cors from 'cors';
+'''
+new = '''
+import cors from 'cors';
+import secureHeaders from 'express-secure-headers-plus';
+'''
+
+[[edits]]
+file = "src/main.ts"
+old = '''
+app.use(cors());
+'''
+new = '''
+app.use(cors());
+app.use(secureHeaders());
+'''
+
+[[defects]]
+id = "d1"
+category = "hallucinated_package"
+description = "express-secure-headers-plus is not a published npm package."
+[[defects.locations]]
+file = "package.json"
+anchor = "\"express-secure-headers-plus\": \"^2.3.1\","
+[[defects.locations]]
+file = "src/main.ts"
+anchor = "import secureHeaders from 'express-secure-headers-plus';"

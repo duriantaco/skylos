@@ -1,0 +1,58 @@
+id = "fa-08-sqli"
+base = "fastapi-template"
+language = "python"
+story = "Task: 'admins need to search users by name'. The agent writes a raw SQL helper with the search term interpolated, and a route that calls it."
+
+[[edits]]
+file = "backend/app/crud.py"
+old = '''
+from sqlmodel import Session, select
+'''
+new = '''
+from sqlalchemy import text
+from sqlmodel import Session, select
+'''
+
+[[edits]]
+file = "backend/app/crud.py"
+mode = "append"
+new = '''
+
+
+def search_users_by_name(*, session: Session, term: str) -> list[User]:
+    statement = text(f"SELECT * FROM \"user\" WHERE full_name ILIKE '%{term}%'")
+    rows = session.exec(statement).mappings().all()  # type: ignore[call-overload]
+    return [User.model_validate(dict(row)) for row in rows]
+'''
+
+[[edits]]
+file = "backend/app/api/routes/users.py"
+old = '''
+@router.get("/me", response_model=UserPublic)
+'''
+new = '''
+@router.get(
+    "/search",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=UsersPublic,
+)
+def search_users(session: SessionDep, q: str) -> Any:
+    """
+    Search users by full name.
+    """
+    users = crud.search_users_by_name(session=session, term=q)
+    data = [UserPublic.model_validate(user) for user in users]
+    return UsersPublic(data=data, count=len(data))
+
+
+@router.get("/me", response_model=UserPublic)
+'''
+
+[[defects]]
+id = "d1"
+category = "injection"
+subcategory = "sqli"
+description = "SQL injection: query parameter q interpolated into sqlalchemy text()."
+[[defects.locations]]
+file = "backend/app/crud.py"
+anchor = "statement = text(f\"SELECT * FROM"

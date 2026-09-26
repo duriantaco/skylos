@@ -1,0 +1,4271 @@
+{
+ "labeling_rules": "docs/benchmark-agent-code.md#labeling-rules",
+ "labels": {
+  "dbf1176de683904c": {
+   "workspace": "ex-03-hallucinated-member",
+   "rule": "SKY-U001",
+   "file": "src/app/routes/article/article.service.ts",
+   "line": 8,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "uniqueSlug is exported but referenced nowhere in the repository; the new helper is dead."
+  },
+  "65d7672d449c853e": {
+   "workspace": "ex-03-hallucinated-member",
+   "rule": "SKY-C304",
+   "file": "src/app/routes/article/article.service.ts",
+   "line": 11,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Pre-existing code/metric not introduced by this change; in scope only via the defect location window, not actionable for this review."
+  },
+  "be2e32b2a7b60989": {
+   "workspace": "ex-04-phantom-local-export",
+   "rule": "SKY-A102",
+   "file": "src/app/routes/article/author.mapper.ts",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Advisory that code changed without tests; the change adds a one-line mapper alias, not a high-risk change, so the 'high-risk' premise does not hold."
+  },
+  "0ac055c8ca951f28": {
+   "workspace": "ex-04-phantom-local-export",
+   "rule": "SKY-L012",
+   "file": "src/app/routes/article/author.mapper.ts",
+   "line": 2,
+   "verdict": "tp",
+   "detects": "ex-04-phantom-local-export/d1",
+   "reason": "Correctly states profile.utils does not export toProfileDTO (the seeded phantom import)."
+  },
+  "8800316469709bcf": {
+   "workspace": "ex-04-phantom-local-export",
+   "rule": "SKY-T106",
+   "file": "src/app/routes/article/author.mapper.ts",
+   "line": 4,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "New exported function takes 'any'; claim is correct and applies to new code."
+  },
+  "4292f5fcba045620": {
+   "workspace": "ex-04-phantom-local-export",
+   "rule": "SKY-U001",
+   "file": "src/app/routes/article/author.mapper.ts",
+   "line": 4,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "commentAuthor is never imported or called; new dead export."
+  },
+  "7e32df2bca50aa7f": {
+   "workspace": "ex-05-hallucinated-package",
+   "rule": "SKY-D222",
+   "file": "package.json",
+   "line": 24,
+   "verdict": "tp",
+   "detects": "ex-05-hallucinated-package/d1",
+   "reason": "Names the non-existent npm package added to package.json."
+  },
+  "543626d12ad88c7d": {
+   "workspace": "ex-07-cmdi",
+   "rule": "javascript.lang.security.detect-child-process.detect-child-process",
+   "file": "src/app/routes/profile/profile.controller.ts",
+   "line": 75,
+   "verdict": "tp",
+   "detects": "ex-07-cmdi/d1",
+   "reason": "Flags exec() with request-derived input: the seeded command injection."
+  },
+  "f859c53c95416b0c": {
+   "workspace": "ex-08-eval",
+   "rule": "SKY-D201",
+   "file": "src/app/routes/tag/tag.controller.ts",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "ex-08-eval/d1",
+   "reason": "eval() on the seeded line; the argument is req.query.filter."
+  },
+  "4596012670a6f2b5": {
+   "workspace": "ex-08-eval",
+   "rule": "javascript.lang.security.audit.code-string-concat.code-string-concat",
+   "file": "src/app/routes/tag/tag.controller.ts",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "ex-08-eval/d1",
+   "reason": "Request data flowing to eval: the seeded code injection."
+  },
+  "a0f284676fe12236": {
+   "workspace": "ex-09-secret-jwt",
+   "rule": "SKY-Q802",
+   "file": "src/app/config.ts",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Main-sequence distance metric on a 3-line constants module; not meaningful review feedback for this change."
+  },
+  "3173889a7a1b6c88": {
+   "workspace": "ex-09-secret-jwt",
+   "rule": "SKY-Q803",
+   "file": "src/app/config.ts",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Zone-of-pain metric on a 3-line constants module; not meaningful review feedback for this change."
+  },
+  "19cee97fbf5b96bc": {
+   "workspace": "ex-09-secret-jwt",
+   "rule": "SKY-S101",
+   "file": "src/app/config.ts",
+   "line": 1,
+   "verdict": "tp",
+   "detects": "ex-09-secret-jwt/d1",
+   "reason": "High-entropy literal assigned to JWT_SECRET: the seeded hardcoded secret."
+  },
+  "07d9e0656fccdcc5": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-E004",
+   "file": "src/app/storage/s3.ts",
+   "line": 3,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "s3Config is exported but only used inside the module; claim is correct for new code."
+  },
+  "43ef90a78e23c205": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-S101",
+   "file": "src/app/storage/s3.ts",
+   "line": 6,
+   "verdict": "tp",
+   "detects": "ex-10-secret-aws/d1",
+   "reason": "Flags the hardcoded AWS access key id."
+  },
+  "13229098b21bc007": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "generic.secrets.security.detected-aws-access-key-id-value.detected-aws-access-key-id-value",
+   "file": "src/app/storage/s3.ts",
+   "line": 6,
+   "verdict": "tp",
+   "detects": "ex-10-secret-aws/d1",
+   "reason": "Flags the hardcoded AWS access key id."
+  },
+  "5aba377899cb837d": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-S101",
+   "file": "src/app/storage/s3.ts",
+   "line": 7,
+   "verdict": "tp",
+   "detects": "ex-10-secret-aws/d1",
+   "reason": "Flags the hardcoded AWS secret access key."
+  },
+  "f3131d492582853f": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-U001",
+   "file": "src/app/storage/s3.ts",
+   "line": 10,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "avatarUrl is only referenced from avatarExists, which is itself unreferenced; transitively dead new code."
+  },
+  "bc6c6c0b9d01ef47": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-U001",
+   "file": "src/app/storage/s3.ts",
+   "line": 13,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "avatarExists is referenced nowhere; new dead export."
+  },
+  "4aae74d711b49c2c": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-D216",
+   "file": "src/app/storage/s3.ts",
+   "line": 14,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "SSRF claim: the URL host is fixed (bucket + region constants); only the object key varies and it is a function parameter with no request source in the repo."
+  },
+  "28ed1ac0db490a30": {
+   "workspace": "ex-11-xss",
+   "rule": "javascript.express.security.audit.xss.direct-response-write.direct-response-write",
+   "file": "src/app/routes/profile/profile.controller.ts",
+   "line": 75,
+   "verdict": "tp",
+   "detects": "ex-11-xss/d1",
+   "reason": "Request parameter written into res.send HTML: the seeded XSS."
+  },
+  "4b541077258ad0e8": {
+   "workspace": "ex-11-xss",
+   "rule": "javascript.express.security.injection.raw-html-format.raw-html-format",
+   "file": "src/app/routes/profile/profile.controller.ts",
+   "line": 75,
+   "verdict": "tp",
+   "detects": "ex-11-xss/d1",
+   "reason": "Request data in manually built HTML: the seeded XSS."
+  },
+  "3b70a6d22ce6a73b": {
+   "workspace": "ex-12-open-redirect",
+   "rule": "SKY-D230",
+   "file": "src/app/routes/auth/auth.controller.ts",
+   "line": 77,
+   "verdict": "tp",
+   "detects": "ex-12-open-redirect/d1",
+   "reason": "res.redirect with the unvalidated ?next value: the seeded open redirect."
+  },
+  "02f5dff7bed69ca6": {
+   "workspace": "ex-13-path-traversal",
+   "rule": "javascript.express.security.audit.express-path-join-resolve-traversal.express-path-join-resolve-traversal",
+   "file": "src/main.ts",
+   "line": 23,
+   "verdict": "tp",
+   "detects": "ex-13-path-traversal/d1",
+   "reason": "path.join with req.params.name: the seeded traversal (message mentions writing, but the flagged flow is the traversal)."
+  },
+  "6fc0e1ceffe8fc50": {
+   "workspace": "ex-13-path-traversal",
+   "rule": "javascript.express.security.audit.express-res-sendfile.express-res-sendfile",
+   "file": "src/main.ts",
+   "line": 23,
+   "verdict": "tp",
+   "detects": "ex-13-path-traversal/d1",
+   "reason": "User input passed to res.sendFile: the seeded traversal."
+  },
+  "724939713894c3de": {
+   "workspace": "ex-14-weakened-tests",
+   "rule": "SKY-A101",
+   "file": "src/tests/services/auth.service.test.ts",
+   "line": 48,
+   "verdict": "tp",
+   "detects": "ex-14-weakened-tests/d2",
+   "reason": "Reports the test.skip added in this diff (d2). Does not address the toBeDefined weakening (d1)."
+  },
+  "691b694daa7f3db1": {
+   "workspace": "ex-15-dead-code",
+   "rule": "SKY-U002",
+   "file": "src/app/routes/article/article.mapper.ts",
+   "line": 2,
+   "verdict": "tp",
+   "detects": "ex-15-dead-code/d1",
+   "reason": "Unused import Tag: seeded d1."
+  },
+  "81d4dea403fdcc31": {
+   "workspace": "ex-15-dead-code",
+   "rule": "SKY-U001",
+   "file": "src/app/routes/article/article.mapper.ts",
+   "line": 4,
+   "verdict": "tp",
+   "detects": "ex-15-dead-code/d2",
+   "reason": "readingTimeMinutes never called: seeded d2."
+  },
+  "22188a7361840e6f": {
+   "workspace": "ex-16-unparseable",
+   "rule": "javascript.lang.security.detect-child-process.detect-child-process",
+   "file": "src/app/routes/admin/admin.controller.ts",
+   "line": 7,
+   "verdict": "tp",
+   "detects": "ex-16-unparseable/d1",
+   "reason": "exec() with req.query.host reported despite the syntax error (tree-sitter error recovery)."
+  },
+  "8b88583ad66b2f95": {
+   "workspace": "ex-18-insecure-random",
+   "rule": "SKY-U001",
+   "file": "src/app/routes/auth/auth.service.ts",
+   "line": 9,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "createPasswordResetToken is never called; new dead export."
+  },
+  "e101807b1966bf73": {
+   "workspace": "ex-18-insecure-random",
+   "rule": "SKY-D250",
+   "file": "src/app/routes/auth/auth.service.ts",
+   "line": 10,
+   "verdict": "tp",
+   "detects": "ex-18-insecure-random/d1",
+   "reason": "Math.random() used for a reset token: the seeded weak randomness."
+  },
+  "a8568ee5a80a7f39": {
+   "workspace": "ex-c2-clean-test",
+   "rule": "SKY-T104",
+   "file": "src/tests/services/tag.service.test.ts",
+   "line": 6,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "The new test adds a // @ts-ignore; the claim is correct for new code (the base tests use the same pattern)."
+  },
+  "1db4f88b3bb50b3e": {
+   "workspace": "fa-01-authz-removed",
+   "rule": "SKY-U006",
+   "file": "backend/app/api/routes/items.py",
+   "line": 79,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "current_user is a FastAPI Depends() parameter: declaring it enforces authentication even if the body no longer reads it. Removing it as suggested would drop authentication. Does not identify the removed ownership check."
+  },
+  "da0ee958073c877f": {
+   "workspace": "fa-03-jwt-unverified",
+   "rule": "SKY-D232",
+   "file": "backend/app/api/deps.py",
+   "line": 32,
+   "verdict": "tp",
+   "detects": "fa-03-jwt-unverified/d1",
+   "reason": "verify_signature=False in jwt.decode: the seeded defect."
+  },
+  "feb11be03c6f2554": {
+   "workspace": "fa-03-jwt-unverified",
+   "rule": "python.jwt.security.unverified-jwt-decode.unverified-jwt-decode",
+   "file": "backend/app/api/deps.py",
+   "line": 36,
+   "verdict": "tp",
+   "detects": "fa-03-jwt-unverified/d1",
+   "reason": "verify_signature=False in jwt.decode: the seeded defect."
+  },
+  "7754d040b4d98c57": {
+   "workspace": "fa-06-hallucinated-package",
+   "rule": "SKY-D222",
+   "file": "backend/pyproject.toml",
+   "line": 21,
+   "verdict": "tp",
+   "detects": "fa-06-hallucinated-package/d1",
+   "reason": "Names the non-existent PyPI package added to pyproject.toml."
+  },
+  "cac39515e816571d": {
+   "workspace": "fa-08-sqli",
+   "rule": "SKY-D223",
+   "file": "backend/app/crud.py",
+   "line": 4,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "sqlalchemy is imported directly but only available transitively through sqlmodel; claim (not declared in pyproject) is correct."
+  },
+  "d8e450913b9381c8": {
+   "workspace": "fa-08-sqli",
+   "rule": "B608:hardcoded_sql_expressions",
+   "file": "backend/app/crud.py",
+   "line": 73,
+   "verdict": "tp",
+   "detects": "fa-08-sqli/d1",
+   "reason": "f-string SQL with the search term: the seeded SQL injection."
+  },
+  "26c544d5fde91459": {
+   "workspace": "fa-08-sqli",
+   "rule": "SKY-D211",
+   "file": "backend/app/crud.py",
+   "line": 73,
+   "verdict": "tp",
+   "detects": "fa-08-sqli/d1",
+   "reason": "Tainted string in sqlalchemy text(): the seeded SQL injection."
+  },
+  "4636cdd4570b454c": {
+   "workspace": "fa-08-sqli",
+   "rule": "SKY-D217",
+   "file": "backend/app/crud.py",
+   "line": 73,
+   "verdict": "tp",
+   "detects": "fa-08-sqli/d1",
+   "reason": "Tainted SQL in text(): the seeded SQL injection."
+  },
+  "a6695228d1dd978b": {
+   "workspace": "fa-08-sqli",
+   "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+   "file": "backend/app/crud.py",
+   "line": 73,
+   "verdict": "tp",
+   "detects": "fa-08-sqli/d1",
+   "reason": "text() with a constructed statement: the seeded SQL injection."
+  },
+  "80d1f118357d7156": {
+   "workspace": "fa-09-weakened-tests",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 126,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a pytest test is the idiomatic assertion mechanism; the finding does not identify the widened status assertion."
+  },
+  "4ff3101542a23507": {
+   "workspace": "fa-09-weakened-tests",
+   "rule": "SKY-A101",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 129,
+   "verdict": "tp",
+   "detects": "fa-09-weakened-tests/d2",
+   "reason": "Reports the pytest.mark.skip added in this diff (d2). The widened 'in (200, 403)' assertion (d1) is not reported."
+  },
+  "4fbae9332926f253": {
+   "workspace": "fa-10-dead-code",
+   "rule": "SKY-U002",
+   "file": "backend/app/utils.py",
+   "line": 5,
+   "verdict": "tp",
+   "detects": "fa-10-dead-code/d1",
+   "reason": "Unused import urlencode: seeded d1."
+  },
+  "341339fbe3bea9a6": {
+   "workspace": "fa-10-dead-code",
+   "rule": "SKY-U001",
+   "file": "backend/app/utils.py",
+   "line": 129,
+   "verdict": "tp",
+   "detects": "fa-10-dead-code/d2",
+   "reason": "build_magic_link never referenced: seeded d2."
+  },
+  "a5a3955283c2dab2": {
+   "workspace": "fa-11-cmdi",
+   "rule": "B404:blacklist",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 1,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "subprocess import in a module that runs a shell=True command built from request input; the advisory applies."
+  },
+  "8b404e853a73b217": {
+   "workspace": "fa-11-cmdi",
+   "rule": "SKY-F102",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Claims the route has no auth guard, but the decorator declares dependencies=[Depends(get_current_active_superuser)]."
+  },
+  "ef71ce149c059f22": {
+   "workspace": "fa-11-cmdi",
+   "rule": "SKY-D209",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 38,
+   "verdict": "tp",
+   "detects": "fa-11-cmdi/d1",
+   "reason": "shell=True with an interpolated request parameter: the seeded command injection."
+  },
+  "655a9f60b20161d0": {
+   "workspace": "fa-11-cmdi",
+   "rule": "SKY-D212",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 38,
+   "verdict": "tp",
+   "detects": "fa-11-cmdi/d1",
+   "reason": "Tainted input to subprocess shell=True: the seeded command injection."
+  },
+  "b84cbe28f47a7096": {
+   "workspace": "fa-11-cmdi",
+   "rule": "B602:subprocess_popen_with_shell_equals_true",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 39,
+   "verdict": "tp",
+   "detects": "fa-11-cmdi/d1",
+   "reason": "shell=True with interpolated input: the seeded command injection."
+  },
+  "64af05768d460255": {
+   "workspace": "fa-11-cmdi",
+   "rule": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 39,
+   "verdict": "tp",
+   "detects": "fa-11-cmdi/d1",
+   "reason": "shell=True with interpolated input: the seeded command injection."
+  },
+  "7f4f17bab206548b": {
+   "workspace": "fa-12-xss",
+   "rule": "SKY-D228",
+   "file": "backend/app/api/routes/utils.py",
+   "line": 37,
+   "verdict": "tp",
+   "detects": "fa-12-xss/d1",
+   "reason": "Query parameter interpolated into returned HTML: the seeded XSS."
+  },
+  "e9ccec2d49de5e91": {
+   "workspace": "fa-13-cors",
+   "rule": "python.fastapi.security.wildcard-cors.wildcard-cors",
+   "file": "backend/app/main.py",
+   "line": 29,
+   "verdict": "tp",
+   "detects": "fa-13-cors/d1",
+   "reason": "Wildcard CORS origin with credentials enabled: the seeded defect."
+  },
+  "1c6bb449282d3313": {
+   "workspace": "fa-14-weak-hash",
+   "rule": "SKY-A102",
+   "file": "backend/app/core/security.py",
+   "line": 1,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Password verification logic changed with no test change; the change is security-relevant, so the advisory applies."
+  },
+  "1a19620d7ac15ce5": {
+   "workspace": "fa-14-weak-hash",
+   "rule": "B324:hashlib",
+   "file": "backend/app/core/security.py",
+   "line": 34,
+   "verdict": "tp",
+   "detects": "fa-14-weak-hash/d1",
+   "reason": "MD5 used for password verification: the seeded weak hash."
+  },
+  "7a227ad2f03f7e01": {
+   "workspace": "fa-14-weak-hash",
+   "rule": "SKY-D207",
+   "file": "backend/app/core/security.py",
+   "line": 34,
+   "verdict": "tp",
+   "detects": "fa-14-weak-hash/d1",
+   "reason": "MD5 used for password verification: the seeded weak hash."
+  },
+  "f266bcb7d06d5d4b": {
+   "workspace": "fa-14-weak-hash",
+   "rule": "python.lang.security.audit.md5-used-as-password.md5-used-as-password",
+   "file": "backend/app/core/security.py",
+   "line": 34,
+   "verdict": "tp",
+   "detects": "fa-14-weak-hash/d1",
+   "reason": "MD5 used as a password hash: the seeded weak hash."
+  },
+  "2bda286908fb3fd3": {
+   "workspace": "fa-14-weak-hash",
+   "rule": "python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5",
+   "file": "backend/app/core/security.py",
+   "line": 34,
+   "verdict": "tp",
+   "detects": "fa-14-weak-hash/d1",
+   "reason": "MD5 used for password verification: the seeded weak hash."
+  },
+  "3ad7e02b889320f9": {
+   "workspace": "fa-c2-clean-test",
+   "rule": "SKY-D216",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 133,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "SSRF claim on a FastAPI TestClient call in a test with a constant settings-derived path; no attacker-controlled URL."
+  },
+  "3e1033d83d6843e8": {
+   "workspace": "fa-c2-clean-test",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 137,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a pytest test is the intended assertion mechanism."
+  },
+  "5fef734fea004f11": {
+   "workspace": "fa-c2-clean-test",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 139,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a pytest test is the intended assertion mechanism."
+  },
+  "8b17e184ac95a68b": {
+   "workspace": "fa-c2-clean-test",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/api/routes/test_items.py",
+   "line": 140,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a pytest test is the intended assertion mechanism."
+  },
+  "d2d017c6cadfea8f": {
+   "workspace": "mb-01-hallucinated-import",
+   "rule": "SKY-Q802",
+   "file": "app/translate.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Main-sequence metric on a 25-line module; not review feedback on this change."
+  },
+  "6c7a74aed0edc69c": {
+   "workspace": "mb-01-hallucinated-import",
+   "rule": "SKY-Q803",
+   "file": "app/translate.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Zone-of-pain metric on a 25-line module; not review feedback on this change."
+  },
+  "23c7494fafcaf764": {
+   "workspace": "mb-01-hallucinated-import",
+   "rule": "SKY-L008",
+   "file": "app/translate.py",
+   "line": 15,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.Session() created per call and never closed; correct and introduced by this change."
+  },
+  "195003873c588124": {
+   "workspace": "mb-01-hallucinated-import",
+   "rule": "SKY-D216",
+   "file": "app/translate.py",
+   "line": 18,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "SSRF claim: the host is the constant Microsoft Translator endpoint; only language codes vary in the query string."
+  },
+  "66cb7d815d32545f": {
+   "workspace": "mb-03-hallucinated-package",
+   "rule": "SKY-D222",
+   "file": "requirements.txt",
+   "line": 22,
+   "verdict": "tp",
+   "detects": "mb-03-hallucinated-package/d1",
+   "reason": "Names the non-existent PyPI package added to requirements.txt."
+  },
+  "de1c7fb8163f9d7b": {
+   "workspace": "mb-05-authn-removed",
+   "rule": "SKY-L021",
+   "file": "app/api/users.py",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "mb-05-authn-removed/d1",
+   "reason": "Reports that @token_auth.login_required was removed: the seeded authentication removal."
+  },
+  "cbdcf106c4f35307": {
+   "workspace": "mb-05-authn-removed",
+   "rule": "SKY-L027",
+   "file": "app/api/users.py",
+   "line": 19,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Pre-existing code/metric not introduced by this change; in scope only via the defect location window, not actionable for this review."
+  },
+  "3898e081ab025719": {
+   "workspace": "mb-06-sqli",
+   "rule": "SKY-D211",
+   "file": "app/main/routes.py",
+   "line": 177,
+   "verdict": "tp",
+   "detects": "mb-06-sqli/d1",
+   "reason": "Unparameterized SQL built from the search query: the seeded SQL injection."
+  },
+  "ee248a854a7efbf2": {
+   "workspace": "mb-06-sqli",
+   "rule": "SKY-D217",
+   "file": "app/main/routes.py",
+   "line": 177,
+   "verdict": "tp",
+   "detects": "mb-06-sqli/d1",
+   "reason": "Tainted SQL in sa.text(): the seeded SQL injection."
+  },
+  "dc8a5872a4522691": {
+   "workspace": "mb-06-sqli",
+   "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+   "file": "app/main/routes.py",
+   "line": 177,
+   "verdict": "tp",
+   "detects": "mb-06-sqli/d1",
+   "reason": "text() with a constructed statement: the seeded SQL injection."
+  },
+  "ead36abbf0501bd6": {
+   "workspace": "mb-06-sqli",
+   "rule": "B608:hardcoded_sql_expressions",
+   "file": "app/main/routes.py",
+   "line": 178,
+   "verdict": "tp",
+   "detects": "mb-06-sqli/d1",
+   "reason": "f-string SQL construction: the seeded SQL injection."
+  },
+  "6bddf519e6a40069": {
+   "workspace": "mb-07-cmdi",
+   "rule": "B108:hardcoded_tmp_directory",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Predictable shared /tmp/exports default path for per-user archives; correct and introduced by this change."
+  },
+  "9d44601956f0730d": {
+   "workspace": "mb-07-cmdi",
+   "rule": "B605:start_process_with_a_shell",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-07-cmdi/d1",
+   "reason": "os.system with a shell and interpolated username: the seeded command injection."
+  },
+  "57ed9c02d2352ee8": {
+   "workspace": "mb-07-cmdi",
+   "rule": "SKY-D203",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-07-cmdi/d1",
+   "reason": "os.system call on the seeded injection line."
+  },
+  "d524a69dc28d715a": {
+   "workspace": "mb-07-cmdi",
+   "rule": "SKY-D212",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-07-cmdi/d1",
+   "reason": "Tainted input to os.system: the seeded command injection."
+  },
+  "524541076bfd713f": {
+   "workspace": "mb-07-cmdi",
+   "rule": "python.flask.security.injection.os-system-injection.os-system-injection",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-07-cmdi/d1",
+   "reason": "User data in os.system: the seeded command injection."
+  },
+  "f6d8a0da59672b38": {
+   "workspace": "mb-07-cmdi",
+   "rule": "python.lang.security.dangerous-system-call.dangerous-system-call",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-07-cmdi/d1",
+   "reason": "User data in a system call: the seeded command injection."
+  },
+  "9c4416d986d1de78": {
+   "workspace": "mb-07-cmdi",
+   "rule": "SKY-D230",
+   "file": "app/main/routes.py",
+   "line": 251,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Open-redirect claim on redirect(url_for('main.user', ...)); url_for builds an application-internal path, the user value is only a path parameter."
+  },
+  "4492f1847059a6fc": {
+   "workspace": "mb-08-ssrf",
+   "rule": "python.django.security.injection.ssrf.ssrf-injection-requests.ssrf-injection-requests",
+   "file": "app/main/routes.py",
+   "line": 248,
+   "verdict": "tp",
+   "detects": "mb-08-ssrf/d1",
+   "reason": "Request parameter used as the outbound request URL: the seeded SSRF (Django-named rule, but the flow is correct)."
+  },
+  "e905c61501c1a0b1": {
+   "workspace": "mb-08-ssrf",
+   "rule": "B113:request_without_timeout",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout; correct, not the seeded SSRF."
+  },
+  "3fd2d37afeaf683c": {
+   "workspace": "mb-08-ssrf",
+   "rule": "SKY-D216",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": "mb-08-ssrf/d1",
+   "reason": "Tainted URL passed to requests.get: the seeded SSRF."
+  },
+  "537713771632499c": {
+   "workspace": "mb-08-ssrf",
+   "rule": "SKY-L031",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout; correct, not the seeded SSRF."
+  },
+  "e07e4320d0e24147": {
+   "workspace": "mb-08-ssrf",
+   "rule": "python.flask.security.injection.ssrf-requests.ssrf-requests",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": "mb-08-ssrf/d1",
+   "reason": "Request data passed to requests.get: the seeded SSRF."
+  },
+  "059bac714674d872": {
+   "workspace": "mb-09-path-traversal",
+   "rule": "B108:hardcoded_tmp_directory",
+   "file": "app/main/routes.py",
+   "line": 248,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Predictable /tmp/exports default path; correct and introduced by this change."
+  },
+  "9049e0a2ae13c741": {
+   "workspace": "mb-09-path-traversal",
+   "rule": "SKY-D215",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": "mb-09-path-traversal/d1",
+   "reason": "Untrusted path to send_file: the seeded traversal."
+  },
+  "966fcf04dfeb19ce": {
+   "workspace": "mb-10-ssti",
+   "rule": "python.flask.security.audit.render-template-string.render-template-string",
+   "file": "app/main/routes.py",
+   "line": 248,
+   "verdict": "tp",
+   "detects": "mb-10-ssti/d1",
+   "reason": "Template built by string concatenation in render_template_string: the seeded SSTI."
+  },
+  "4982a24e603db8ed": {
+   "workspace": "mb-10-ssti",
+   "rule": "python.django.security.injection.raw-html-format.raw-html-format",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": "mb-10-ssti/d1",
+   "reason": "Request data concatenated into HTML: the seeded injection (XSS aspect)."
+  },
+  "82dda84578d14166": {
+   "workspace": "mb-10-ssti",
+   "rule": "python.flask.security.injection.raw-html-concat.raw-html-format",
+   "file": "app/main/routes.py",
+   "line": 249,
+   "verdict": "tp",
+   "detects": "mb-10-ssti/d1",
+   "reason": "Request data concatenated into HTML: the seeded injection (XSS aspect)."
+  },
+  "cc3d6343f9718fe6": {
+   "workspace": "mb-11-pickle",
+   "rule": "B403:blacklist",
+   "file": "app/main/routes.py",
+   "line": 2,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "pickle import in a module that unpickles a cookie; the advisory applies."
+  },
+  "e7528a61cb4990f7": {
+   "workspace": "mb-11-pickle",
+   "rule": "B301:blacklist",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-11-pickle/d1",
+   "reason": "pickle.loads on the cookie value: the seeded deserialization."
+  },
+  "157618d5c958b680": {
+   "workspace": "mb-11-pickle",
+   "rule": "SKY-D205",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-11-pickle/d1",
+   "reason": "pickle.loads of untrusted data: the seeded deserialization."
+  },
+  "2f5d848d473cc7c9": {
+   "workspace": "mb-11-pickle",
+   "rule": "python.lang.security.deserialization.pickle.avoid-pickle",
+   "file": "app/main/routes.py",
+   "line": 250,
+   "verdict": "tp",
+   "detects": "mb-11-pickle/d1",
+   "reason": "pickle.loads on the cookie value: the seeded deserialization."
+  },
+  "75aef37668b1aaaf": {
+   "workspace": "mb-11-pickle",
+   "rule": "python.flask.security.audit.secure-set-cookie.secure-set-cookie",
+   "file": "app/main/routes.py",
+   "line": 253,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "set_cookie without secure/httponly/samesite; correct and introduced by this change."
+  },
+  "2075ab1ed3137407": {
+   "workspace": "mb-11-pickle",
+   "rule": "python.lang.security.deserialization.pickle.avoid-pickle",
+   "file": "app/main/routes.py",
+   "line": 253,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Flags pickle.dumps of server-side data; serializing does not execute code. The dangerous loads is already reported on line 250."
+  },
+  "d9c769a211841d3a": {
+   "workspace": "mb-14-secret-token",
+   "rule": "B105:hardcoded_password_string",
+   "file": "app/gist.py",
+   "line": 3,
+   "verdict": "tp",
+   "detects": "mb-14-secret-token/d1",
+   "reason": "Hardcoded GitHub token literal: the seeded secret."
+  },
+  "02c3a77b6afdd5cb": {
+   "workspace": "mb-14-secret-token",
+   "rule": "SKY-L014",
+   "file": "app/gist.py",
+   "line": 3,
+   "verdict": "tp",
+   "detects": "mb-14-secret-token/d1",
+   "reason": "Hardcoded credential in GITHUB_TOKEN: the seeded secret."
+  },
+  "e172d0c4a43c135b": {
+   "workspace": "mb-14-secret-token",
+   "rule": "SKY-S101",
+   "file": "app/gist.py",
+   "line": 3,
+   "verdict": "tp",
+   "detects": "mb-14-secret-token/d1",
+   "reason": "GitHub token pattern: the seeded secret."
+  },
+  "35439cde8c52fe14": {
+   "workspace": "mb-14-secret-token",
+   "rule": "SKY-U001",
+   "file": "app/gist.py",
+   "line": 6,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "publish_gist is referenced nowhere; new dead code."
+  },
+  "bb7a0c66be93f9eb": {
+   "workspace": "mb-15-tls-disabled",
+   "rule": "B501:request_with_no_cert_validation",
+   "file": "app/translate.py",
+   "line": 18,
+   "verdict": "tp",
+   "detects": "mb-15-tls-disabled/d1",
+   "reason": "verify=False: the seeded TLS bypass."
+  },
+  "992f91868c8496e4": {
+   "workspace": "mb-15-tls-disabled",
+   "rule": "SKY-L011",
+   "file": "app/translate.py",
+   "line": 18,
+   "verdict": "tp",
+   "detects": "mb-15-tls-disabled/d1",
+   "reason": "verify=False: the seeded TLS bypass."
+  },
+  "08f2bcb938469492": {
+   "workspace": "mb-15-tls-disabled",
+   "rule": "SKY-L021",
+   "file": "app/translate.py",
+   "line": 18,
+   "verdict": "tp",
+   "detects": "mb-15-tls-disabled/d1",
+   "reason": "Security-control regression verify=False: the seeded TLS bypass."
+  },
+  "0a72c46fef0b4ee9": {
+   "workspace": "mb-16-insecure-random",
+   "rule": "B311:blacklist",
+   "file": "app/models.py",
+   "line": 264,
+   "verdict": "tp",
+   "detects": "mb-16-insecure-random/d1",
+   "reason": "random used for API tokens: the seeded weak randomness."
+  },
+  "8c5ea0d6382bb218": {
+   "workspace": "mb-16-insecure-random",
+   "rule": "SKY-D250",
+   "file": "app/models.py",
+   "line": 264,
+   "verdict": "tp",
+   "detects": "mb-16-insecure-random/d1",
+   "reason": "Weak random source for the token: the seeded weak randomness."
+  },
+  "8b7098b66c1f1121": {
+   "workspace": "mb-17-debug-mode",
+   "rule": "B104:hardcoded_bind_all_interfaces",
+   "file": "microblog.py",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "mb-17-debug-mode/d1",
+   "reason": "Flags binding to 0.0.0.0 on the seeded line (part of the seeded defect; debug=True itself is not named)."
+  },
+  "efc8e7bfdc06531e": {
+   "workspace": "mb-17-debug-mode",
+   "rule": "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+   "file": "microblog.py",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "mb-17-debug-mode/d1",
+   "reason": "Flags app.run with host 0.0.0.0 on the seeded line (part of the seeded defect; debug=True itself is not named)."
+  },
+  "267406301df59a25": {
+   "workspace": "mb-18-weakened-tests",
+   "rule": "SKY-L027",
+   "file": "tests.py",
+   "line": 28,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Repeated email literal in unit-test fixtures (3 occurrences, pre-existing pattern); not actionable."
+  },
+  "22dc8b42c212b988": {
+   "workspace": "mb-18-weakened-tests",
+   "rule": "python.django.security.audit.unvalidated-password.unvalidated-password",
+   "file": "tests.py",
+   "line": 29,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Django password-validation rule on a Flask test fixture; not applicable."
+  },
+  "83bb9cebaa2607bb": {
+   "workspace": "mb-18-weakened-tests",
+   "rule": "SKY-L027",
+   "file": "tests.py",
+   "line": 33,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Repeated email literal in unit-test fixtures (pre-existing pattern); not actionable."
+  },
+  "556149ec6e36edc6": {
+   "workspace": "mb-19-dead-code",
+   "rule": "SKY-U002",
+   "file": "app/main/routes.py",
+   "line": 1,
+   "verdict": "tp",
+   "detects": "mb-19-dead-code/d1",
+   "reason": "Unused import json: seeded d1."
+  },
+  "c2b87dacf1f7cead": {
+   "workspace": "mb-19-dead-code",
+   "rule": "SKY-U001",
+   "file": "app/main/routes.py",
+   "line": 17,
+   "verdict": "tp",
+   "detects": "mb-19-dead-code/d2",
+   "reason": "_format_last_seen never called: seeded d2."
+  },
+  "bb7094b80d923bb9": {
+   "workspace": "mb-20-unparseable",
+   "rule": "python.django.security.injection.code.user-eval.user-eval",
+   "file": "app/main/admin_tools.py",
+   "line": 9,
+   "verdict": "tp",
+   "detects": "mb-20-unparseable/d1",
+   "reason": "Form input reaching eval, reported from the partially parsed file."
+  },
+  "7c1b3a1bac041c48": {
+   "workspace": "mb-20-unparseable",
+   "rule": "python.flask.security.injection.user-eval.eval-injection",
+   "file": "app/main/admin_tools.py",
+   "line": 10,
+   "verdict": "tp",
+   "detects": "mb-20-unparseable/d1",
+   "reason": "Form input reaching eval, reported from the partially parsed file."
+  },
+  "3de4c259e6040761": {
+   "workspace": "mb-20-unparseable",
+   "rule": "python.lang.security.audit.eval-detected.eval-detected",
+   "file": "app/main/admin_tools.py",
+   "line": 10,
+   "verdict": "tp",
+   "detects": "mb-20-unparseable/d1",
+   "reason": "eval() of dynamic content, reported from the partially parsed file."
+  },
+  "296334b3c6e93176": {
+   "workspace": "mb-c3-clean-subprocess",
+   "rule": "B404:blacklist",
+   "file": "app/cli.py",
+   "line": 2,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "subprocess import; the only call uses a fixed argument list without a shell."
+  },
+  "cc3a9e5a1b6bce6b": {
+   "workspace": "mb-c3-clean-subprocess",
+   "rule": "B603:subprocess_without_shell_equals_true",
+   "file": "app/cli.py",
+   "line": 8,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Argument-list subprocess call without shell; executable is fixed and 'lang' is passed as a single argv element."
+  },
+  "e1bf4fa5e93241bd": {
+   "workspace": "mb-c3-clean-subprocess",
+   "rule": "B607:start_process_with_partial_path",
+   "file": "app/cli.py",
+   "line": 8,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Partial executable path 'pybabel' for a developer CLI tool resolved from PATH, same as the os.system code it replaced; not actionable."
+  },
+  "29098982a57acfdf": {
+   "workspace": "mb-c3-clean-subprocess",
+   "rule": "SKY-L027",
+   "file": "app/cli.py",
+   "line": 24,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "'messages.pot' repeated in CLI commands (repetition pre-dates the change); not actionable."
+  },
+  "dcdddfb5deca7b78": {
+   "workspace": "real-01",
+   "rule": "B101:assert_used",
+   "file": "tests/llm/test_vlm_json_escape_repair.py",
+   "line": 234,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "78c6d12c78c49cc9": {
+   "workspace": "real-01",
+   "rule": "B101:assert_used",
+   "file": "tests/llm/test_vlm_json_escape_repair.py",
+   "line": 239,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a20bb4f8830cbdaf": {
+   "workspace": "real-02",
+   "rule": "SKY-L029",
+   "file": "raganything/batch.py",
+   "line": 185,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "0742c91801e98aca": {
+   "workspace": "real-02",
+   "rule": "SKY-L029",
+   "file": "raganything/batch.py",
+   "line": 240,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "56657007116c6992": {
+   "workspace": "real-02",
+   "rule": "SKY-L029",
+   "file": "raganything/batch.py",
+   "line": 323,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "00a3d9e704ac35a3": {
+   "workspace": "real-02",
+   "rule": "SKY-D325",
+   "file": "raganything/batch_parser.py",
+   "line": 226,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "7f0260f8c9290b22": {
+   "workspace": "real-02",
+   "rule": "B324:hashlib",
+   "file": "raganything/batch_parser.py",
+   "line": 284,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "7929600ee41e3de7": {
+   "workspace": "real-02",
+   "rule": "SKY-D207",
+   "file": "raganything/batch_parser.py",
+   "line": 284,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "8fb59aedf2710c31": {
+   "workspace": "real-02",
+   "rule": "python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5",
+   "file": "raganything/batch_parser.py",
+   "line": 284,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "93503e578df47252": {
+   "workspace": "real-02",
+   "rule": "SKY-D215",
+   "file": "raganything/batch_parser.py",
+   "line": 285,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "1bee1856df1b70dc": {
+   "workspace": "real-02",
+   "rule": "SKY-D325",
+   "file": "raganything/batch_parser.py",
+   "line": 285,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "80eb147b42b52a48": {
+   "workspace": "real-02",
+   "rule": "SKY-P401",
+   "file": "raganything/batch_parser.py",
+   "line": 286,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "read(1024*1024) reads fixed-size chunks; the 'loads entire file into RAM' claim is wrong."
+  },
+  "9db217ae88f1ca2c": {
+   "workspace": "real-02",
+   "rule": "SKY-U001",
+   "file": "raganything/batch_parser.py",
+   "line": 291,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "BatchParser._file_signature is added by this commit and referenced nowhere in the repository (git grep at the commit finds only its definition)."
+  },
+  "713a9ba20724c2fb": {
+   "workspace": "real-02",
+   "rule": "SKY-C304",
+   "file": "raganything/batch_parser.py",
+   "line": 297,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "435e6fdcdc14adb7": {
+   "workspace": "real-02",
+   "rule": "SKY-L029",
+   "file": "raganything/batch_parser.py",
+   "line": 360,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "9f5788f056adf99a": {
+   "workspace": "real-02",
+   "rule": "SKY-D215",
+   "file": "raganything/batch_parser.py",
+   "line": 400,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "8d52be26df71934a": {
+   "workspace": "real-02",
+   "rule": "SKY-L029",
+   "file": "raganything/batch_parser.py",
+   "line": 523,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "d1758922c80b4293": {
+   "workspace": "real-02",
+   "rule": "SKY-L009",
+   "file": "raganything/batch_parser.py",
+   "line": 644,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "d53b6a65374526b3": {
+   "workspace": "real-02",
+   "rule": "SKY-L009",
+   "file": "raganything/batch_parser.py",
+   "line": 646,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "803d8d4bebf7f3c3": {
+   "workspace": "real-02",
+   "rule": "SKY-D215",
+   "file": "tests/testbatch_incremental.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Finding in test code on a test fixture/helper; the flagged pattern (temp files, fixture paths, subprocess of sys.executable, long test functions) is intended there."
+  },
+  "b8f1916ad3d1540e": {
+   "workspace": "real-02",
+   "rule": "SKY-D215",
+   "file": "tests/testbatch_incremental.py",
+   "line": 21,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Finding in test code on a test fixture/helper; the flagged pattern (temp files, fixture paths, subprocess of sys.executable, long test functions) is intended there."
+  },
+  "92e7820ab40bbed6": {
+   "workspace": "real-02",
+   "rule": "SKY-D325",
+   "file": "tests/testbatch_incremental.py",
+   "line": 21,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Finding in test code on a test fixture/helper; the flagged pattern (temp files, fixture paths, subprocess of sys.executable, long test functions) is intended there."
+  },
+  "65ebd0105409defa": {
+   "workspace": "real-02",
+   "rule": "SKY-L027",
+   "file": "tests/testbatch_incremental.py",
+   "line": 28,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "e0132bfde662a097": {
+   "workspace": "real-02",
+   "rule": "SKY-L027",
+   "file": "tests/testbatch_incremental.py",
+   "line": 35,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "86e3a04259e6132c": {
+   "workspace": "real-02",
+   "rule": "SKY-L027",
+   "file": "tests/testbatch_incremental.py",
+   "line": 58,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "d74eed5232329cf9": {
+   "workspace": "real-02",
+   "rule": "SKY-L027",
+   "file": "tests/testbatch_incremental.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b540b431f9ea2f56": {
+   "workspace": "real-02",
+   "rule": "SKY-L027",
+   "file": "tests/testbatch_incremental.py",
+   "line": 60,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b41ab22121236126": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 70,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "533b734d4e7e1b7f": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 71,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "74e068444bb82eb9": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 72,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a18f7e376db092d7": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 81,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "5ea7a77c6f8ff314": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 82,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "08b077eb3a25bab1": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 83,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "544c718889814a64": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 84,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d13b4f12e40d87a9": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 93,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "959872bc922b3962": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 94,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "434f968b22ff1080": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 95,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "5b254866b71021e5": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 119,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "9561e39dd642ef45": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 120,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "af3e5644af796c6d": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 121,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "cad15999ed613aab": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 122,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "bd25014fde297824": {
+   "workspace": "real-02",
+   "rule": "SKY-D324",
+   "file": "tests/testbatch_incremental.py",
+   "line": 130,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Finding in test code on a test fixture/helper; the flagged pattern (temp files, fixture paths, subprocess of sys.executable, long test functions) is intended there."
+  },
+  "59895548ad3792d5": {
+   "workspace": "real-02",
+   "rule": "SKY-D324",
+   "file": "tests/testbatch_incremental.py",
+   "line": 131,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Finding in test code on a test fixture/helper; the flagged pattern (temp files, fixture paths, subprocess of sys.executable, long test functions) is intended there."
+  },
+  "3aa9f2db6caf6276": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 157,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "acb70bea28a887d9": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 158,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "23825f9cacc45061": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 177,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f7c28cf2284dd084": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 178,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "bbcb2675c850987b": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 207,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "eb142a476cc79424": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 208,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "99250f27768a3b43": {
+   "workspace": "real-02",
+   "rule": "B101:assert_used",
+   "file": "tests/testbatch_incremental.py",
+   "line": 221,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1b07c7fd88fe6776": {
+   "workspace": "real-03",
+   "rule": "B404:blacklist",
+   "file": "tests/test_job_key.py",
+   "line": 11,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "subprocess import in a test that runs sys.executable with a fixed argument list."
+  },
+  "5a9bec28bf0d0b04": {
+   "workspace": "real-03",
+   "rule": "SKY-D222",
+   "file": "tests/test_job_key.py",
+   "line": 17,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "The import is a repository-local module made importable via sys.path.insert; it is not a PyPI dependency."
+  },
+  "bae2043af6de88cb": {
+   "workspace": "real-03",
+   "rule": "B603:subprocess_without_shell_equals_true",
+   "file": "tests/test_job_key.py",
+   "line": 100,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Argument-list subprocess call of sys.executable and a repository script; no shell and no untrusted input."
+  },
+  "5afda1498fa80fba": {
+   "workspace": "real-03",
+   "rule": "B324:hashlib",
+   "file": "tools/job_key.py",
+   "line": 81,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "95efe32d30053851": {
+   "workspace": "real-03",
+   "rule": "SKY-D208",
+   "file": "tools/job_key.py",
+   "line": 81,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "42e87a0a150059c8": {
+   "workspace": "real-03",
+   "rule": "python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+   "file": "tools/job_key.py",
+   "line": 81,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "25cb9e027f711e1b": {
+   "workspace": "real-03",
+   "rule": "B324:hashlib",
+   "file": "tools/job_key.py",
+   "line": 97,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "1fcdaa7115ca5134": {
+   "workspace": "real-03",
+   "rule": "SKY-D208",
+   "file": "tools/job_key.py",
+   "line": 97,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "d708055a36a753be": {
+   "workspace": "real-03",
+   "rule": "python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+   "file": "tools/job_key.py",
+   "line": 97,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Hash used for change detection / identifiers, not for security."
+  },
+  "68a83c14004cf361": {
+   "workspace": "real-03",
+   "rule": "SKY-Q301",
+   "file": "tools/job_key.py",
+   "line": 126,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "9642f64ef9374d40": {
+   "workspace": "real-03",
+   "rule": "SKY-D325",
+   "file": "tools/job_key.py",
+   "line": 128,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "80d66b3571f95a60": {
+   "workspace": "real-03",
+   "rule": "SKY-L027",
+   "file": "tools/job_key.py",
+   "line": 128,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "8e8664b1a1e46ff1": {
+   "workspace": "real-05",
+   "rule": "SKY-D223",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 17,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "pytest is imported by the new test but not declared in any requirements file or pyproject dependency list of backend/."
+  },
+  "23eef27078b40e29": {
+   "workspace": "real-05",
+   "rule": "SKY-D223",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 27,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "mlx is declared in backend/requirements-mlx.txt; the rule only reads requirements.txt/pyproject.toml/setup.py, so the 'not found' claim is wrong."
+  },
+  "da914c358d03e46c": {
+   "workspace": "real-05",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 29,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "0aa33091b62ad402": {
+   "workspace": "real-05",
+   "rule": "SKY-D223",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 34,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "mlx-audio is intentionally left out of the requirement files and installed with --no-deps, as documented in backend/requirements-mlx.txt; not actionable."
+  },
+  "ec5ffdeadf8907c9": {
+   "workspace": "real-05",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 36,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a9ccf49ac3f3f827": {
+   "workspace": "real-05",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 47,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "3c43551e5b754ce0": {
+   "workspace": "real-05",
+   "rule": "SKY-D223",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 52,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "mlx_lm is imported by the new smoke test and is not declared in any requirement file at this commit."
+  },
+  "f0bf2459219c1fde": {
+   "workspace": "real-05",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 54,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "ae89c7c4475cacc7": {
+   "workspace": "real-05",
+   "rule": "B101:assert_used",
+   "file": "backend/tests/test_mlx_smoke.py",
+   "line": 55,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "c0292078c14d445a": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 297,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "b818cf87071e21d8": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 329,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "84eed79ec38eaf6b": {
+   "workspace": "real-06",
+   "rule": "SKY-C304",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 337,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "9477a423f377c7bb": {
+   "workspace": "real-06",
+   "rule": "SKY-L004",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 341,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "6b9aa55fbcc64b69": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 385,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a4d301e277b7b713": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 391,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a3a30137252be34a": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 392,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "18894e9c325c6e6c": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 393,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1bc87e6c2a86f8b3": {
+   "workspace": "real-06",
+   "rule": "B101:assert_used",
+   "file": "tests/unit/test_browser_oauth_token.py",
+   "line": 395,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "354b995adb431af7": {
+   "workspace": "real-07",
+   "rule": "SKY-L009",
+   "file": "book_to_skill/utils.py",
+   "line": 1133,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "d441bcbe7d60fa83": {
+   "workspace": "real-07",
+   "rule": "SKY-L009",
+   "file": "book_to_skill/utils.py",
+   "line": 1134,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "05fb4770702899e3": {
+   "workspace": "real-07",
+   "rule": "SKY-L009",
+   "file": "book_to_skill/utils.py",
+   "line": 1135,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "07b2fc474ac8936b": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 45,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "5f74ab5b0ded9c06": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 46,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "0c77feb05b5f2307": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 47,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "270feb7b7951b823": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 60,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "55560dba86624dc6": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 66,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "38480b8ac133994e": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 73,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "8a8262924cd229d7": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 74,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "c3e1429636f97b25": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 75,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "fe8d8619c9e74021": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 82,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f6a0bf6ade6e97e9": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 83,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "e1010bc4b2e2453e": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 84,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d504467d99c28972": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 90,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "32977df00e6a2147": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 91,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "e37af23150d8840c": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 98,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "93d1b9b8fd856425": {
+   "workspace": "real-07",
+   "rule": "B101:assert_used",
+   "file": "tests/test_per_run_workdir.py",
+   "line": 99,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "80a16de0c654a8d7": {
+   "workspace": "real-08",
+   "rule": "SKY-D325",
+   "file": "scripts/prepare-release.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "cf43eb168088a6c7": {
+   "workspace": "real-08",
+   "rule": "SKY-D325",
+   "file": "scripts/prepare-release.py",
+   "line": 23,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "1076e47f3546229d": {
+   "workspace": "real-08",
+   "rule": "SKY-L027",
+   "file": "scripts/prepare-release.py",
+   "line": 23,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "cefbcaaf32af5eca": {
+   "workspace": "real-09",
+   "rule": "B101:assert_used",
+   "file": "tests/utils/test_megatron_bshd_preprocess.py",
+   "line": 134,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "76ebc897aa08dcfd": {
+   "workspace": "real-10",
+   "rule": "SKY-L027",
+   "file": "agl_lite/verl/rollout_bridge.py",
+   "line": 817,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "7eae555faf1c0c6f": {
+   "workspace": "real-10",
+   "rule": "SKY-Q802",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "e500395cdfd28378": {
+   "workspace": "real-10",
+   "rule": "SKY-Q803",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b424b39ec1fc286f": {
+   "workspace": "real-10",
+   "rule": "B311:blacklist",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 83,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "random.randint decides whether to sample a debug print; not a security use of randomness."
+  },
+  "174b98a47e3eb81f": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 86,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() of golden answers and model output inside a reward function in library code."
+  },
+  "354dd8ec01383125": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 87,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "d3938b2cab368680": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 88,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "c9c1149d4ca16f5b": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 89,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "73099e783ab04e5d": {
+   "workspace": "real-10",
+   "rule": "B311:blacklist",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 108,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "random.randint decides whether to sample a debug print; not a security use of randomness."
+  },
+  "5379cbe652960a46": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 111,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "664a8461a6d12e6a": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 112,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "d00e5c705b090c1b": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 113,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "fca463a825c2cf6a": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/agents/qa_em.py",
+   "line": 114,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "Sampled debug print() inside a reward function in library code."
+  },
+  "7085e928ff8b6a23": {
+   "workspace": "real-10",
+   "rule": "SKY-D223",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 17,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "'examples' is the repository's own examples package, not the tweepy distribution; the undeclared-dependency claim is wrong."
+  },
+  "55189b8d26941ff4": {
+   "workspace": "real-10",
+   "rule": "SKY-D228",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 73,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "String split on '</search>' tags in model output returned to the agent loop; no HTML is rendered, not XSS."
+  },
+  "ad762a1c1eb00ce3": {
+   "workspace": "real-10",
+   "rule": "SKY-D228",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 75,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "String split on '</answer>' tags in model output returned to the agent loop; no HTML is rendered, not XSS."
+  },
+  "3c5222c61519fae2": {
+   "workspace": "real-10",
+   "rule": "SKY-D216",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 112,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "retrieval_url is operator configuration (environment/CLI) for a local retrieval server, not attacker input."
+  },
+  "7952292de01fdedc": {
+   "workspace": "real-10",
+   "rule": "SKY-D216",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 158,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "event_url is operator configuration for the local agl server, not attacker input."
+  },
+  "6b79b5df6cae7abd": {
+   "workspace": "real-10",
+   "rule": "SKY-C304",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 172,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "ffadbc2a088850aa": {
+   "workspace": "real-10",
+   "rule": "SKY-D223",
+   "file": "examples/search_r1/agents/search_r1_agent.py",
+   "line": 187,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "openai is imported directly but only available transitively via autogen-ext[openai]; not declared directly."
+  },
+  "975dbf34e625b698": {
+   "workspace": "real-10",
+   "rule": "SKY-D216",
+   "file": "examples/search_r1/data_process.sh",
+   "line": 25,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "curl/wget URLs are constants defined in the same script, not user input."
+  },
+  "5a7c64a2740c236a": {
+   "workspace": "real-10",
+   "rule": "SKY-D216",
+   "file": "examples/search_r1/data_process.sh",
+   "line": 27,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "curl/wget URLs are constants defined in the same script, not user input."
+  },
+  "149c807472540407": {
+   "workspace": "real-10",
+   "rule": "SKY-D223",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 11,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "faiss is imported by the new example server and not declared in pyproject.toml or any requirements file."
+  },
+  "7579f9ce484f913c": {
+   "workspace": "real-10",
+   "rule": "B615:huggingface_unsafe_download",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 59,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "from_pretrained with a configurable model id and trust_remote_code=True and no pinned revision: remote code can change underneath the example."
+  },
+  "8c5f22084f2925f3": {
+   "workspace": "real-10",
+   "rule": "SKY-D345",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 59,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "from_pretrained with trust_remote_code=True and no pinned revision."
+  },
+  "6a8b61481b535965": {
+   "workspace": "real-10",
+   "rule": "B615:huggingface_unsafe_download",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 60,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "from_pretrained with trust_remote_code=True and no pinned revision."
+  },
+  "21a5f0d79c30370f": {
+   "workspace": "real-10",
+   "rule": "SKY-D345",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 60,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "from_pretrained with trust_remote_code=True and no pinned revision."
+  },
+  "a87c9ce0503a9d55": {
+   "workspace": "real-10",
+   "rule": "B615:huggingface_unsafe_download",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 85,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "load_dataset('json', data_files=<local path>) loads a local file with the built-in JSON builder; no Hub download happens."
+  },
+  "5da0ff2d6e4b3b6b": {
+   "workspace": "real-10",
+   "rule": "SKY-D345",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 85,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "load_dataset('json', data_files=<local path>) loads a local file with the built-in JSON builder; no Hub download happens."
+  },
+  "efcddfe50e3a8b2e": {
+   "workspace": "real-10",
+   "rule": "SKY-L029",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 124,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "07098fbe5f0f1ba7": {
+   "workspace": "real-10",
+   "rule": "SKY-Q302",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 124,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "204bdebd97ce386f": {
+   "workspace": "real-10",
+   "rule": "SKY-P403",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 130,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "88763ff3df1f7695": {
+   "workspace": "real-10",
+   "rule": "SKY-P403",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 132,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "a1bed587179da7e0": {
+   "workspace": "real-10",
+   "rule": "SKY-F102",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 153,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "POST /retrieve is a read-only query endpoint of a local example retrieval server; 'mutating route' premise is wrong."
+  },
+  "be869ba0b6e1ed6f": {
+   "workspace": "real-10",
+   "rule": "B104:hardcoded_bind_all_interfaces",
+   "file": "examples/search_r1/retrieval_server.py",
+   "line": 172,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "--host default 0.0.0.0 for a local example server that the training job reaches over the network; documented example behaviour, configurable by flag."
+  },
+  "a2f45bbd736d92a8": {
+   "workspace": "real-10",
+   "rule": "SKY-Q802",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "d1024eded8de1381": {
+   "workspace": "real-10",
+   "rule": "SKY-C304",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 16,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "c76625475f56ba6e": {
+   "workspace": "real-10",
+   "rule": "SKY-C304",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 107,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "8e68e4b29d870796": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 190,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "4b66a9cab0280900": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 191,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "d19f6a90458fe906": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 204,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "2cd5bde4f6b32196": {
+   "workspace": "real-10",
+   "rule": "SKY-L009",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 205,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "print() is the intended user-facing output of a CLI/script entry point, not a debug leftover."
+  },
+  "4093c37106449492": {
+   "workspace": "real-10",
+   "rule": "SKY-C304",
+   "file": "examples/search_r1/train_search_r1_agent.py",
+   "line": 210,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "16b12b65b68788ab": {
+   "workspace": "real-10",
+   "rule": "SKY-D223",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 6,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "'examples' is the repository's own examples package, not the tweepy distribution."
+  },
+  "7a5aab41e86b00a0": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "be985a6f9a23b00c": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1276c6bb57e749d2": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 24,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "09d979855f55571f": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 25,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "aa2334e743124816": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 26,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1fb3c36e5302f16f": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "8143ce3d1e7c178d": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 38,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "11804300c7a6b20e": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 43,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "c5da233025f4f146": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 44,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "cef9d7dbd8e88f7e": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 45,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f3fbc1dd1d3a8aef": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 58,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "91fded67995ea2b8": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 66,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "b836dbf9a521edcd": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 67,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f02502aea8c27829": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 95,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "023f5e653be9e1b2": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 100,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "70ad144af754c9d0": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_agent.py",
+   "line": 106,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d7bfa0a61dbe8b0d": {
+   "workspace": "real-10",
+   "rule": "SKY-D223",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 3,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "'examples' is the repository's own examples package, not the tweepy distribution."
+  },
+  "d6fc3b90d60077a8": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 15,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "7f9bf31fd5fdced0": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 16,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "9a7b6c6a358273bf": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 17,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "207330c073a892da": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 18,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "c011d7c987105229": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 19,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "fa09cf16b01e3e9b": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "b46c902a8ac0178c": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 21,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f3911fe83c55dda2": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 22,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "6edd42cd35209604": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 23,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "13af06e22aeae58f": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 24,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "0da0281ebd4f92ac": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 25,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "5f612804fa9044e1": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 26,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "9e2ba2d3b39cea99": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 27,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "71ddbd50ca1a79fd": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 28,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "73a315f0beb8aa5f": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 29,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "2793a56585d1b2d6": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 30,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "e4d703567fcdc687": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 38,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "6dd828b0578023e3": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/examples/test_search_r1_training_config.py",
+   "line": 39,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "3b9c3f13d4ec4afa": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/verl/test_rollout_bridge.py",
+   "line": 460,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "90ee40231823f652": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/verl/test_rollout_bridge.py",
+   "line": 461,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "bfc71e60089adc24": {
+   "workspace": "real-10",
+   "rule": "B101:assert_used",
+   "file": "tests/verl/test_rollout_bridge.py",
+   "line": 462,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d6e3ea5a5ac0807c": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6693,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "0c811bea74d6709a": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6724,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "42af73e78ddd01bf": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6725,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "679813cde127d295": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6773,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "66d872371571e288": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6839,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "df5a5eaeb1c60dda": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6902,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "a3c2acf9a9c56ec6": {
+   "workspace": "real-11",
+   "rule": "B101:assert_used",
+   "file": "tests/python/reference_evaluator_test.py",
+   "line": 6997,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "bf6ecb5771318968": {
+   "workspace": "real-13",
+   "rule": "SKY-L012",
+   "file": "core/_2_asr.py",
+   "line": 11,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "load_key is imported via 'from core.utils import *' (core/utils/__init__.py imports it from config_utils); the phantom-reference claim is wrong."
+  },
+  "4125484c83b18a18": {
+   "workspace": "real-13",
+   "rule": "SKY-L012",
+   "file": "core/_2_asr.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "load_key is imported via 'from core.utils import *'."
+  },
+  "e852add1bf7382aa": {
+   "workspace": "real-13",
+   "rule": "SKY-L012",
+   "file": "core/_2_asr.py",
+   "line": 31,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "update_key is imported via 'from core.utils import *'."
+  },
+  "e26d039308856cee": {
+   "workspace": "real-13",
+   "rule": "SKY-L012",
+   "file": "core/_2_asr.py",
+   "line": 69,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "update_key is imported via 'from core.utils import *'."
+  },
+  "dea4471851e6c0f0": {
+   "workspace": "real-13",
+   "rule": "SKY-Q802",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "2e991375b5687d43": {
+   "workspace": "real-13",
+   "rule": "SKY-D207",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 17,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "hashlib.md5(usedforsecurity=False) used as a content-cache key; explicitly non-security."
+  },
+  "1bf5ad474ae64ce7": {
+   "workspace": "real-13",
+   "rule": "SKY-D215",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 18,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "2b62a0017df59425": {
+   "workspace": "real-13",
+   "rule": "SKY-D325",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 18,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "d4308c59fb7ac771": {
+   "workspace": "real-13",
+   "rule": "SKY-P401",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 19,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "read(1024*1024) reads fixed-size chunks; the 'loads entire file into RAM' claim is wrong."
+  },
+  "7d1b604bbf9ba460": {
+   "workspace": "real-13",
+   "rule": "SKY-L028",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "5205cc54ceecd2e0": {
+   "workspace": "real-13",
+   "rule": "SKY-Q301",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b96bb90e697300ad": {
+   "workspace": "real-13",
+   "rule": "SKY-Q302",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b8c30d43c9b3c396": {
+   "workspace": "real-13",
+   "rule": "SKY-Q306",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "bea62b18e8950a4e": {
+   "workspace": "real-13",
+   "rule": "SKY-P403",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 50,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "22ed2a69300a3858": {
+   "workspace": "real-13",
+   "rule": "SKY-P403",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 53,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "50292df47c5e8337": {
+   "workspace": "real-13",
+   "rule": "SKY-L006",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 62,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "read_result is an Optional-returning lookup with an explicit final 'return None'; this is the intended contract, not an inconsistency."
+  },
+  "14f521d04bd5fc4e": {
+   "workspace": "real-13",
+   "rule": "SKY-D215",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 64,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "bb6ac4c419f9da9e": {
+   "workspace": "real-13",
+   "rule": "SKY-D325",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 64,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "07091520f94cebfa": {
+   "workspace": "real-13",
+   "rule": "SKY-D215",
+   "file": "core/asr_backend/transcription_cache.py",
+   "line": 80,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "f9eef791511d8127": {
+   "workspace": "real-13",
+   "rule": "SKY-Q302",
+   "file": "core/asr_backend/whisperX_302.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "312010f49be79de7": {
+   "workspace": "real-13",
+   "rule": "SKY-T102",
+   "file": "core/asr_backend/whisperX_302.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "e91c91635751be80": {
+   "workspace": "real-13",
+   "rule": "SKY-U006",
+   "file": "core/asr_backend/whisperX_302.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "711115e3077a79e2": {
+   "workspace": "real-13",
+   "rule": "SKY-L012",
+   "file": "core/asr_backend/whisperX_local.py",
+   "line": 145,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "update_key is imported via 'from core.utils import *'."
+  },
+  "1d57e611457e61ac": {
+   "workspace": "real-14",
+   "rule": "SKY-C304",
+   "file": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+   "line": 1200,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "a5cd316f30f6f9c4": {
+   "workspace": "real-14",
+   "rule": "SKY-Q301",
+   "file": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+   "line": 1200,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "7d8963a64cf8c2ef": {
+   "workspace": "real-14",
+   "rule": "SKY-Q306",
+   "file": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+   "line": 1200,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "169f06cd9d5ce329": {
+   "workspace": "real-14",
+   "rule": "SKY-P403",
+   "file": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+   "line": 1221,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "1d9b2999d138350b": {
+   "workspace": "real-14",
+   "rule": "SKY-P403",
+   "file": "src/skillspector/nodes/analyzers/static_patterns_supply_chain.py",
+   "line": 1240,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "53a769919755d8f8": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 34,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "76070329b8ec2ee2": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 36,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "329cfe3645c2160c": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f671bd3865cb4ec7": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 38,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "7bcb237807d54ffd": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 39,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1cafcb00b8e5fcc4": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 45,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "c38a491bb1a94d74": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "1e77683862b5e25a": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 61,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "e7d2a4e2b3d0aa9c": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/analyzers/test_sc8_shipped_bytecode.py",
+   "line": 66,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "cbc654e32e3eadc7": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/test_report.py",
+   "line": 90,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d3729eee6f6d9af8": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/test_report.py",
+   "line": 91,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "2ec4482e4866d8f3": {
+   "workspace": "real-14",
+   "rule": "B101:assert_used",
+   "file": "tests/nodes/test_report.py",
+   "line": 92,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "ed29fbc4062c7010": {
+   "workspace": "real-15",
+   "rule": "SKY-L007",
+   "file": "addon.py",
+   "line": 3082,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "contextlib.suppress(Exception) around best-effort temp-dir cleanup in a finally block; swallowing is intended."
+  },
+  "d27836310ee27669": {
+   "workspace": "real-15",
+   "rule": "SKY-L007",
+   "file": "addon.py",
+   "line": 3140,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "contextlib.suppress(Exception) around best-effort temp-dir cleanup in a finally block; swallowing is intended."
+  },
+  "0042026bf3184aee": {
+   "workspace": "real-15",
+   "rule": "SKY-C304",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3044,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "33c056d0e902bec3": {
+   "workspace": "real-15",
+   "rule": "SKY-L028",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3044,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "08cf0f38060798d1": {
+   "workspace": "real-15",
+   "rule": "SKY-Q301",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3044,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "ca047bdfbe6fa24d": {
+   "workspace": "real-15",
+   "rule": "SKY-Q306",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3044,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "ac9251145828c5f4": {
+   "workspace": "real-15",
+   "rule": "SKY-T102",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3044,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "55a06be7e6a06a85": {
+   "workspace": "real-15",
+   "rule": "SKY-L004",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3057,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "bb14674e530c19ae": {
+   "workspace": "real-15",
+   "rule": "B113:request_without_timeout",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3058,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout on a download in new code; can hang the Blender add-on server."
+  },
+  "b74e526573949d0f": {
+   "workspace": "real-15",
+   "rule": "SKY-D216",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3058,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "zip_file_url is an MCP tool argument (caller/LLM-controlled); only the scheme is checked, so the add-on fetches arbitrary hosts."
+  },
+  "872b4c10f8bb4023": {
+   "workspace": "real-15",
+   "rule": "SKY-L031",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3058,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout in new code."
+  },
+  "860d0b24d149176b": {
+   "workspace": "real-15",
+   "rule": "SKY-L017",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3080,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Error string is returned to the local MCP client over the add-on's socket, not to an untrusted HTTP client."
+  },
+  "b8a6e8b539a25c9b": {
+   "workspace": "real-15",
+   "rule": "SKY-L007",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3082,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "contextlib.suppress(Exception) around best-effort temp-dir cleanup in a finally block; swallowing is intended."
+  },
+  "da25e4eb22808b92": {
+   "workspace": "real-15",
+   "rule": "SKY-L004",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3089,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "625db6dbda8ca1f4": {
+   "workspace": "real-15",
+   "rule": "B113:request_without_timeout",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3090,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout in new code."
+  },
+  "87a4bf9905612c05": {
+   "workspace": "real-15",
+   "rule": "SKY-D216",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3090,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "zip_file_url is an MCP tool argument (caller/LLM-controlled); only the scheme is checked."
+  },
+  "c37d2af444a4bf48": {
+   "workspace": "real-15",
+   "rule": "SKY-L031",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3090,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "requests.get without timeout in new code."
+  },
+  "2aaa15147e76d55a": {
+   "workspace": "real-15",
+   "rule": "SKY-L007",
+   "file": "src/blender_mcp/bundled/addon.py",
+   "line": 3140,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "contextlib.suppress(Exception) around best-effort temp-dir cleanup in a finally block; swallowing is intended."
+  },
+  "203b500b8525f110": {
+   "workspace": "real-15",
+   "rule": "SKY-C304",
+   "file": "test_hunyuan_import_security.py",
+   "line": 12,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "74001e5a778a84ce": {
+   "workspace": "real-15",
+   "rule": "B101:assert_used",
+   "file": "test_hunyuan_import_security.py",
+   "line": 123,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "6e4070d8b5cc17c8": {
+   "workspace": "real-15",
+   "rule": "B101:assert_used",
+   "file": "test_hunyuan_import_security.py",
+   "line": 124,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "64a5c2820ce0c0cb": {
+   "workspace": "real-15",
+   "rule": "B101:assert_used",
+   "file": "test_hunyuan_import_security.py",
+   "line": 125,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "fd39f10de17c6766": {
+   "workspace": "real-15",
+   "rule": "B101:assert_used",
+   "file": "test_hunyuan_import_security.py",
+   "line": 150,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "6af2f549b858f04d": {
+   "workspace": "real-15",
+   "rule": "B101:assert_used",
+   "file": "test_hunyuan_import_security.py",
+   "line": 151,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "062ddd646875190e": {
+   "workspace": "real-16",
+   "rule": "SKY-Q802",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "2adac01849a2a916": {
+   "workspace": "real-16",
+   "rule": "SKY-Q702",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 30,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "440fbd2715d0017c": {
+   "workspace": "real-16",
+   "rule": "SKY-C304",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "18b69dbfa82b22ac": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "f44338ec9229778a": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "1a35735084855056": {
+   "workspace": "real-16",
+   "rule": "SKY-L027",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 94,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "0683a618e63705b8": {
+   "workspace": "real-16",
+   "rule": "B310:blacklist",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 110,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "urlopen target is the constant https API_URL; no user-controlled scheme."
+  },
+  "f4f3a9c55ea11886": {
+   "workspace": "real-16",
+   "rule": "python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 110,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "urlopen target is the constant https API_URL; no user-controlled scheme."
+  },
+  "9bb3b00a7083899c": {
+   "workspace": "real-16",
+   "rule": "SKY-P401",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 113,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Reads an HTTP error body from the fixed API endpoint; not a file and not attacker-sized in practice."
+  },
+  "0fd55997c2cd654b": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 129,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "f97b8b7130e55e3b": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 129,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "3ec86258308da7c7": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 134,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "f0c6ae729697fbdc": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 134,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "17de5f8e3e4d8d7f": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 139,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "df270c2271bab043": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 139,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "03d74cd0ddf82bf6": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 144,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "d854203b8410ef40": {
+   "workspace": "real-16",
+   "rule": "SKY-T102",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 144,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "b8f0d4553656298f": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 144,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "e4b810570cf8d55e": {
+   "workspace": "real-16",
+   "rule": "SKY-L026",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 146,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "download_models intentionally returns '' because the cloud session has no local model (docstring says so); not an unfinished stub."
+  },
+  "ce7f45f512f3dce5": {
+   "workspace": "real-16",
+   "rule": "SKY-T101",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 149,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "dda2b09d110ab161": {
+   "workspace": "real-16",
+   "rule": "SKY-T102",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 149,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "a5a82af1df8aa2ab": {
+   "workspace": "real-16",
+   "rule": "SKY-U006",
+   "file": "rembg/sessions/withoutbg.py",
+   "line": 149,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "*args/**kwargs or unused parameters are required to match the overridden base-class / sibling-backend interface."
+  },
+  "81cead7345092bcf": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 27,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "cfc0a6bf9992215b": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 33,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "bf0d41319fb24654": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 37,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "ec987e5f84111074": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 38,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "670825a750c37d4a": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 42,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "fcb4920251d34ae5": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 43,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "f2711bf599dc5883": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 44,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "223bd8783997d325": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 83,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "ffe853cbcf4846a1": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 84,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "3bf4bf927786523d": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 85,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "4490c51be146bc14": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 88,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "dddcefa00eb82c80": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 89,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "2520df32747b3ee2": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 90,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d7a94c45e9836309": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 114,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "84a2f60bbe50d8ba": {
+   "workspace": "real-16",
+   "rule": "B101:assert_used",
+   "file": "tests/test_withoutbg.py",
+   "line": 115,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "430bb98c25190bd8": {
+   "workspace": "real-17",
+   "rule": "SKY-Q301",
+   "file": "src/peft/utils/save_and_load.py",
+   "line": 48,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "d157cf7ea592bbe7": {
+   "workspace": "real-17",
+   "rule": "SKY-L027",
+   "file": "src/peft/utils/save_and_load.py",
+   "line": 50,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "52f86c90b46df56c": {
+   "workspace": "real-17",
+   "rule": "SKY-Q301",
+   "file": "tests/test_gpu_examples.py",
+   "line": 5112,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "ceb81235ab2db382": {
+   "workspace": "real-17",
+   "rule": "SKY-L004",
+   "file": "tests/test_gpu_examples.py",
+   "line": 5124,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "bb6f8e6e12522df2": {
+   "workspace": "real-17",
+   "rule": "B101:assert_used",
+   "file": "tests/test_gpu_examples.py",
+   "line": 5140,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "d8e686fa5e8dc8b3": {
+   "workspace": "real-17",
+   "rule": "B101:assert_used",
+   "file": "tests/test_low_level_api.py",
+   "line": 903,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "37c71e446b289631": {
+   "workspace": "real-17",
+   "rule": "B101:assert_used",
+   "file": "tests/test_low_level_api.py",
+   "line": 908,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "assert in a test file is the intended assertion mechanism (pytest/unittest)."
+  },
+  "30860b7318717d9a": {
+   "workspace": "real-18",
+   "rule": "SKY-L028",
+   "file": "researcher/scripts/skill_frontmatter.py",
+   "line": 44,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "262ca3394dab07f2": {
+   "workspace": "real-18",
+   "rule": "SKY-Q301",
+   "file": "researcher/scripts/skill_frontmatter.py",
+   "line": 77,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "cdf3b18bc67d29da": {
+   "workspace": "real-18",
+   "rule": "SKY-Q302",
+   "file": "researcher/scripts/skill_frontmatter.py",
+   "line": 77,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "cd9a91f9b846abbd": {
+   "workspace": "real-18",
+   "rule": "SKY-Q306",
+   "file": "researcher/scripts/skill_frontmatter.py",
+   "line": 77,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "22768776e84cd944": {
+   "workspace": "real-18",
+   "rule": "SKY-D222",
+   "file": "researcher/scripts/tests/test_skill_frontmatter.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "The import is a repository-local module made importable via sys.path.insert; it is not a PyPI dependency."
+  },
+  "88886dafee619e28": {
+   "workspace": "real-18",
+   "rule": "B404:blacklist",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 20,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "subprocess import for an argument-list call of a resolved executable; no shell and no untrusted input."
+  },
+  "6663d3a7e2269926": {
+   "workspace": "real-18",
+   "rule": "SKY-D325",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 44,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "936e54a0659ee185": {
+   "workspace": "real-18",
+   "rule": "SKY-L027",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 59,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "df44af4cd093eedc": {
+   "workspace": "real-18",
+   "rule": "SKY-D325",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 63,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Path comes from the program's own configuration, CLI arguments, a directory listing, or a content hash, not from an untrusted request; no traversal/symlink attack surface is introduced."
+  },
+  "17e590c204f8e83a": {
+   "workspace": "real-18",
+   "rule": "SKY-C304",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 71,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "067807b65e57382d": {
+   "workspace": "real-18",
+   "rule": "SKY-Q301",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 71,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "e6261ed843658313": {
+   "workspace": "real-18",
+   "rule": "SKY-Q306",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 71,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "9abd1880bd19b913": {
+   "workspace": "real-18",
+   "rule": "SKY-L027",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 79,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "21ddf491b2c33bbf": {
+   "workspace": "real-18",
+   "rule": "SKY-P403",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 147,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "f7d2f0781093665a": {
+   "workspace": "real-18",
+   "rule": "SKY-L029",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 153,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "bb47a1658ea6a4c6": {
+   "workspace": "real-18",
+   "rule": "B603:subprocess_without_shell_equals_true",
+   "file": "researcher/scripts/validate_platform_compat.py",
+   "line": 161,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Argument-list subprocess call of shutil.which('agentskills') with repository paths; no shell and no untrusted input."
+  },
+  "c163e3cb4e4dc0fa": {
+   "workspace": "real-18",
+   "rule": "SKY-Q301",
+   "file": "researcher/scripts/validate_repo.py",
+   "line": 233,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "cbb27f27b32e4c90": {
+   "workspace": "real-18",
+   "rule": "SKY-Q306",
+   "file": "researcher/scripts/validate_repo.py",
+   "line": 233,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "f80927f8e8d7cfe9": {
+   "workspace": "real-19",
+   "rule": "SKY-C304",
+   "file": "tests/test_skill_writer.py",
+   "line": 150,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "859cc9f3c78d2b35": {
+   "workspace": "real-22",
+   "rule": "SKY-Q402",
+   "file": "packages/workflows/src/defaults/bundle-inventory.ts",
+   "line": 158,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "87c01b1135d7b84b": {
+   "workspace": "real-22",
+   "rule": "SKY-Q402",
+   "file": "packages/workflows/src/defaults/bundle-inventory.ts",
+   "line": 159,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "b9c7d4f5cd4cb458": {
+   "workspace": "real-22",
+   "rule": "SKY-Q402",
+   "file": "packages/workflows/src/defaults/bundle-inventory.ts",
+   "line": 232,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "8c3190758c93fec6": {
+   "workspace": "real-22",
+   "rule": "SKY-Q402",
+   "file": "packages/workflows/src/validator.ts",
+   "line": 187,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Performance heuristic whose premise does not hold: the loops/awaits iterate inherent, bounded collections and no quadratic or unbounded cost is introduced."
+  },
+  "6f03d519b87a340f": {
+   "workspace": "real-25",
+   "rule": "SKY-C304",
+   "file": "src/matter/behaviors/BehaviorRegistry.spec.ts",
+   "line": 349,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "a4a4714b67199eba": {
+   "workspace": "real-26",
+   "rule": "SKY-C304",
+   "file": "packages/tests/server/parseTRPCMessage.test.ts",
+   "line": 25,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "fb4064ca83591e0f": {
+   "workspace": "real-29",
+   "rule": "SKY-C304",
+   "file": "packages/query-core/src/__tests__/hydration.test.tsx",
+   "line": 19,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "53100a249517d20e": {
+   "workspace": "real-30",
+   "rule": "SKY-C304",
+   "file": "app/test/unit/stores/app-store-indicators-test.ts",
+   "line": 8,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "e9845c0cfecfe992": {
+   "workspace": "real-30",
+   "rule": "SKY-C304",
+   "file": "app/test/unit/stores/app-store-indicators-test.ts",
+   "line": 17,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "9f424f3df74672ed": {
+   "workspace": "real-33",
+   "rule": "SKY-U003",
+   "file": "packages/react/src/components/calendar/calendar.stories.tsx",
+   "line": 272,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Storybook CSF named export; stories are consumed by Storybook's loader, not imported by application code."
+  },
+  "eea15e2d23317a3a": {
+   "workspace": "real-33",
+   "rule": "SKY-U003",
+   "file": "packages/react/src/components/calendar/calendar.stories.tsx",
+   "line": 283,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Storybook CSF named export consumed by Storybook's loader."
+  },
+  "c3bd9d263ae7e674": {
+   "workspace": "real-33",
+   "rule": "SKY-U003",
+   "file": "packages/react/src/components/range-calendar/range-calendar.stories.tsx",
+   "line": 305,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Storybook CSF named export consumed by Storybook's loader."
+  },
+  "dec97edf334f019c": {
+   "workspace": "real-33",
+   "rule": "SKY-U003",
+   "file": "packages/react/src/components/range-calendar/range-calendar.stories.tsx",
+   "line": 316,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Storybook CSF named export consumed by Storybook's loader."
+  },
+  "4a9263435b4b5b4f": {
+   "workspace": "real-36",
+   "rule": "SKY-C303",
+   "file": "addons/addon-webgl/src/WebglRenderer.ts",
+   "line": 617,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Size/complexity/style metric (length, complexity, nesting, return count, parameter count, cohesion, main-sequence, duplicate literals, boolean positional parameters, missing annotations); not a defect. See labeling rules."
+  },
+  "717b2ffd127eb08a": {
+   "workspace": "ex-10-secret-aws",
+   "rule": "SKY-E003",
+   "file": "src/app/storage/s3.ts",
+   "line": 1,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "The file added by this change is imported by no other file; the unused-file claim is correct for the new module. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "8902cfd2bffa9ad0": {
+   "workspace": "ex-16-unparseable",
+   "rule": "SKY-E003",
+   "file": "src/app/routes/admin/admin.controller.ts",
+   "line": 1,
+   "verdict": "tp",
+   "detects": null,
+   "reason": "The file added by this change is imported by no other file; the unused-file claim is correct for the new module. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "ea1f3442d64794da": {
+   "workspace": "fa-13-cors",
+   "rule": "SKY-D231",
+   "file": "backend/app/main.py",
+   "line": 29,
+   "verdict": "tp",
+   "detects": "fa-13-cors/d1",
+   "reason": "Correctly identifies CORSMiddleware(allow_origins=['*'], allow_credentials=True): the seeded CORS defect. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "1ad0a70608144d6c": {
+   "workspace": "mb-01-hallucinated-import",
+   "rule": "SKY-L012",
+   "file": "app/translate.py",
+   "line": 2,
+   "verdict": "tp",
+   "detects": "mb-01-hallucinated-import/d1",
+   "reason": "Correctly states requests has no requests.retry module: the seeded hallucinated import. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "c3233ea51e2092eb": {
+   "workspace": "mb-04-authz-removed",
+   "rule": "SKY-L021",
+   "file": "app/api/users.py",
+   "line": 67,
+   "verdict": "tp",
+   "detects": "mb-04-authz-removed/d1",
+   "reason": "Names the removed authorization/authentication control at the seeded location: the seeded auth removal. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "a6e3dcbdec04cb1f": {
+   "workspace": "mb-10-ssti",
+   "rule": "SKY-D349",
+   "file": "app/main/routes.py",
+   "line": 248,
+   "verdict": "tp",
+   "detects": "mb-10-ssti/d1",
+   "reason": "Request input is compiled as template source by render_template_string: the seeded SSTI. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "212ede8e360d7208": {
+   "workspace": "mb-17-debug-mode",
+   "rule": "SKY-D346",
+   "file": "microblog.py",
+   "line": 16,
+   "verdict": "tp",
+   "detects": "mb-17-debug-mode/d1",
+   "reason": "Flags app.run(debug=True): the seeded debug-mode defect. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "0cb884377c3854cf": {
+   "workspace": "ex-01-auth-removed",
+   "rule": "SKY-L021",
+   "file": "src/app/routes/article/article.controller.ts",
+   "line": 110,
+   "verdict": "tp",
+   "detects": "ex-01-auth-removed/d1",
+   "reason": "Names the removed authorization/authentication control at the seeded location: the seeded auth removal. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "d941c5f2c971d0c0": {
+   "workspace": "ex-06-sqli",
+   "rule": "SKY-D211",
+   "file": "src/app/routes/article/article.controller.ts",
+   "line": 252,
+   "verdict": "tp",
+   "detects": "ex-06-sqli/d1",
+   "reason": "Request data interpolated into prisma.$queryRawUnsafe: the seeded SQL injection. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "c6bb2f64cbd8fdc7": {
+   "workspace": "ex-07-cmdi",
+   "rule": "SKY-D212",
+   "file": "src/app/routes/profile/profile.controller.ts",
+   "line": 75,
+   "verdict": "tp",
+   "detects": "ex-07-cmdi/d1",
+   "reason": "Request data reaches child_process.exec command text: the seeded command injection. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "78daf0dfe57d69fe": {
+   "workspace": "ex-11-xss",
+   "rule": "SKY-D228",
+   "file": "src/app/routes/profile/profile.controller.ts",
+   "line": 75,
+   "verdict": "tp",
+   "detects": "ex-11-xss/d1",
+   "reason": "Request parameter interpolated into HTML sent with res.send: the seeded XSS. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "9973b725a69e5055": {
+   "workspace": "ex-13-path-traversal",
+   "rule": "SKY-D215",
+   "file": "src/main.ts",
+   "line": 23,
+   "verdict": "tp",
+   "detects": "ex-13-path-traversal/d1",
+   "reason": "Request parameter reaches res.sendFile(path.join(...)) without containment: the seeded path traversal. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "cf48d53b4fb2fea8": {
+   "workspace": "ex-16-unparseable",
+   "rule": "SKY-D212",
+   "file": "src/app/routes/admin/admin.controller.ts",
+   "line": 7,
+   "verdict": "tp",
+   "detects": "ex-16-unparseable/d1",
+   "reason": "Request data reaches child_process.exec command text: the seeded command injection. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "b612d322676e8365": {
+   "workspace": "ex-17-tls-disabled",
+   "rule": "SKY-D210",
+   "file": "src/main.ts",
+   "line": 7,
+   "verdict": "tp",
+   "detects": "ex-17-tls-disabled/d1",
+   "reason": "Flags NODE_TLS_REJECT_UNAUTHORIZED='0': the seeded TLS-verification defect. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "8c63e115e9055b89": {
+   "workspace": "fa-01-authz-removed",
+   "rule": "SKY-L021",
+   "file": "backend/app/api/routes/items.py",
+   "line": 89,
+   "verdict": "tp",
+   "detects": "fa-01-authz-removed/d1",
+   "reason": "Names the removed authorization/authentication control at the seeded location: the seeded auth removal. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "0664b3bc4481cb2d": {
+   "workspace": "fa-02-admin-guard-removed",
+   "rule": "SKY-L021",
+   "file": "backend/app/api/routes/users.py",
+   "line": 34,
+   "verdict": "tp",
+   "detects": "fa-02-admin-guard-removed/d1",
+   "reason": "Names the removed authorization/authentication control at the seeded location: the seeded auth removal. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "f5a86e2d91b6fe5f": {
+   "workspace": "fa-05-hallucinated-kwarg",
+   "rule": "SKY-D224",
+   "file": "backend/app/core/security.py",
+   "line": 25,
+   "verdict": "tp",
+   "detects": "fa-05-hallucinated-kwarg/d1",
+   "reason": "jwt.encode does not accept expires_in: the seeded hallucinated keyword argument. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "90df0067ad253293": {
+   "workspace": "fa-07-secret-key",
+   "rule": "SKY-L014",
+   "file": "backend/app/core/config.py",
+   "line": 23,
+   "verdict": "tp",
+   "detects": "fa-07-secret-key/d1",
+   "reason": "Names the hardcoded credential literal at the seeded location: the seeded secret. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "e13bbb67c926a40e": {
+   "workspace": "mb-12-secret-password",
+   "rule": "SKY-L014",
+   "file": "config.py",
+   "line": 19,
+   "verdict": "tp",
+   "detects": "mb-12-secret-password/d1",
+   "reason": "Names the hardcoded credential literal at the seeded location: the seeded secret. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "4beef26610878418": {
+   "workspace": "mb-13-secret-apikey",
+   "rule": "SKY-L014",
+   "file": "app/translate.py",
+   "line": 8,
+   "verdict": "tp",
+   "detects": "mb-13-secret-apikey/d1",
+   "reason": "Names the hardcoded credential literal at the seeded location: the seeded secret. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "48ba5dbbbc1b00d3": {
+   "workspace": "mb-18-weakened-tests",
+   "rule": "SKY-A101",
+   "file": "tests.py",
+   "line": 30,
+   "verdict": "tp",
+   "detects": "mb-18-weakened-tests/d1",
+   "reason": "Names the weakened assertion at the seeded location: the seeded weakened test. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "141ce2cfcbdc961a": {
+   "workspace": "mb-18-weakened-tests",
+   "rule": "SKY-A101",
+   "file": "tests.py",
+   "line": 98,
+   "verdict": "tp",
+   "detects": "mb-18-weakened-tests/d2",
+   "reason": "Names the weakened assertion at the seeded location: the seeded weakened test. (Labeled in plan 3.8b; finding first produced by the 3.8a/3.8b/3.8c rule changes.)"
+  },
+  "dce718bb4c221493": {
+   "workspace": "real-33",
+   "rule": "SKY-E003",
+   "file": "packages/react/src/components/range-calendar/range-calendar.stories.tsx",
+   "line": 1,
+   "verdict": "fp",
+   "detects": null,
+   "reason": "Storybook story files are loaded by Storybook's CSF loader (stories glob), not imported by application code; 'unused file' is wrong. (Labeled in plan 3.8b.)"
+  }
+ }
+}

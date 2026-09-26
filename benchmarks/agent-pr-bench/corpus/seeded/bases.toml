@@ -1,0 +1,23 @@
+# Pinned upstream repositories that seeded cases are applied to.
+# Each case applies its edits to a fresh checkout of `sha` (never to a moving branch).
+
+[microblog]
+repo = "https://github.com/miguelgrinberg/microblog"
+sha = "a975ef64864354867c88e0ed3a17ba7d17dca752"
+language = "python"
+license = "MIT"
+notes = "Flask application (tutorial code base, ~1.4k LOC Python)."
+
+[fastapi-template]
+repo = "https://github.com/fastapi/full-stack-fastapi-template"
+sha = "cb740b656d7a0a6c5e12c7bf8e50343ec94ee9c7"
+language = "python"
+license = "MIT"
+notes = "FastAPI + SQLModel backend under backend/ (~2.3k LOC Python, targets Python 3.14 syntax)."
+
+[express-realworld]
+repo = "https://github.com/gothinkster/node-express-realworld-example-app"
+sha = "30b68e1e881462b2f4164ea09ab4c4f5699c7b0b"
+language = "typescript"
+license = "MIT"
+notes = "Express + Prisma TypeScript API (~2.4k LOC)."
