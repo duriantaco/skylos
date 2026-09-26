@@ -6,6 +6,7 @@ from fnmatch import fnmatchcase
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from skylos.core.fast_paths import ParentResolver, is_within, relative_parts
 from skylos.core.git_safety import (
     read_only_git_command,
     read_only_git_environment,
@@ -135,21 +136,69 @@ def should_exclude_path(
 ) -> bool:
     if not exclude_folders:
         return False
+    return _matches_candidates(
+        file_path,
+        root_path,
+        [
+            candidate
+            for exclude_folder in exclude_folders
+            for candidate in _exclude_candidates(exclude_folder, root_path)
+        ],
+    )
+
+
+def _matches_candidates(
+    file_path: Path,
+    root_path: Path,
+    candidates: Sequence[str],
+) -> bool:
+    if not candidates:
+        return False
 
     try:
-        rel_path = file_path.relative_to(root_path)
+        path_parts = relative_parts(file_path, root_path)
     except ValueError:
         return False
 
-    path_parts = rel_path.parts
-    rel_path_str = str(rel_path).replace("\\", "/")
+    # Same text as str(file_path.relative_to(root_path)) with "/" separators.
+    rel_path_str = "/".join(path_parts) if path_parts else "."
 
-    for exclude_folder in exclude_folders:
-        for exclude_normalized in _exclude_candidates(exclude_folder, root_path):
-            if _path_matches_exclude(rel_path_str, path_parts, exclude_normalized):
-                return True
+    for exclude_normalized in candidates:
+        if _path_matches_exclude(rel_path_str, path_parts, exclude_normalized):
+            return True
 
     return False
+
+
+class _PathMatcher:
+    """``should_exclude_path`` for one root with the candidates built once.
+
+    Candidate expansion resolves paths, so doing it per file dominated
+    discovery on large trees; the result depends only on the patterns and
+    the root.
+    """
+
+    __slots__ = ("root", "candidates")
+
+    def __init__(self, root_path: Path, patterns: Sequence[str] | None) -> None:
+        self.root = root_path
+        self.candidates = [
+            candidate
+            for pattern in patterns or ()
+            for candidate in _exclude_candidates(pattern, root_path)
+        ]
+
+    def __call__(self, file_path: Path) -> bool:
+        return _matches_candidates(file_path, self.root, self.candidates)
+
+
+def exclusion_matcher(
+    root_path: Path,
+    exclude_folders: Sequence[str] | None,
+):
+    """``lambda path: should_exclude_path(path, root_path, exclude_folders)``
+    with the pattern expansion done once, for callers that test many paths."""
+    return _PathMatcher(root_path, exclude_folders)
 
 
 def should_include_path(
@@ -179,6 +228,17 @@ def find_git_root(path: str | Path) -> Path | None:
 
 
 def list_git_visible_files(path: str | Path) -> list[Path] | None:
+    from skylos.analysis.ast_cache import run_memo
+
+    try:
+        key = ("git-visible-files", str(Path(path).resolve()))
+    except OSError:
+        return _list_git_visible_files(path)
+    files = run_memo(key, lambda: _list_git_visible_files(path))
+    return None if files is None else list(files)
+
+
+def _list_git_visible_files(path: str | Path) -> list[Path] | None:
     root = find_git_root(path)
     if root is None:
         return None
@@ -233,13 +293,21 @@ def list_git_visible_files(path: str | Path) -> list[Path] | None:
     return files
 
 
-def _resolve_contained_source_file(file_path: Path, root_path: Path) -> Path | None:
+def _resolve_contained_source_file(
+    file_path: Path,
+    root_path: Path,
+    resolver: ParentResolver | None = None,
+) -> Path | None:
     if file_path.is_symlink():
         return None
     try:
-        resolved = file_path.resolve(strict=True)
-        resolved.relative_to(root_path)
-    except (OSError, ValueError):
+        if resolver is None:
+            resolved = file_path.resolve(strict=True)
+        else:
+            resolved = resolver.resolve(file_path, strict=True)
+    except OSError:
+        return None
+    if not is_within(resolved, root_path):
         return None
     if not resolved.is_file():
         return None
@@ -270,6 +338,10 @@ def discover_source_files(
             return [contained] if contained is not None else []
         return []
 
+    exclude_matcher = _PathMatcher(target, exclude_folders)
+    include_matcher = _PathMatcher(target, include_folders)
+    resolver = ParentResolver()
+
     if respect_gitignore:
         git_files = list_git_visible_files(target)
         if git_files is not None:
@@ -281,16 +353,18 @@ def discover_source_files(
             for file_path in [*git_files, *forced_includes]:
                 if file_path.suffix.lower() not in ext_set:
                     continue
-                resolved = _resolve_contained_source_file(file_path, target)
+                resolved = _resolve_contained_source_file(
+                    file_path, target, resolver
+                )
                 if resolved is None:
                     continue
                 if resolved in seen:
                     continue
                 seen.add(resolved)
-                if should_include_path(file_path, target, include_folders):
+                if include_matcher(file_path):
                     files.append(resolved)
                     continue
-                if should_exclude_path(file_path, target, exclude_folders):
+                if exclude_matcher(file_path):
                     continue
                 files.append(resolved)
             files.sort()
@@ -303,7 +377,7 @@ def discover_source_files(
             pruned = []
             for dirname in list(dirnames):
                 dir_path = base / dirname
-                if should_exclude_path(dir_path, target, exclude_folders):
+                if exclude_matcher(dir_path):
                     pruned.append(dirname)
             for dirname in pruned:
                 try:
@@ -315,7 +389,7 @@ def discover_source_files(
                 keep = []
                 for dirname in list(dirnames):
                     dir_path = base / dirname
-                    if should_include_path(dir_path, target, include_folders):
+                    if include_matcher(dir_path):
                         keep.append(dirname)
                 for dirname in keep:
                     if dirname in pruned:
@@ -328,13 +402,15 @@ def discover_source_files(
                 file_path = base / filename
                 if file_path.suffix.lower() not in ext_set:
                     continue
-                resolved = _resolve_contained_source_file(file_path, target)
+                resolved = _resolve_contained_source_file(
+                    file_path, target, resolver
+                )
                 if resolved is None:
                     continue
-                if should_include_path(file_path, target, include_folders):
+                if include_matcher(file_path):
                     files.append(resolved)
                     continue
-                if should_exclude_path(file_path, target, exclude_folders):
+                if exclude_matcher(file_path):
                     continue
                 files.append(resolved)
     except (OSError, PermissionError, TypeError):

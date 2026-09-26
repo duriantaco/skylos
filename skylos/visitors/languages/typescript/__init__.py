@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from skylos.analysis.errors import analysis_error_payload
 from skylos.analysis.finding_filter import partition_inline_ignored_findings
 
 from .core import TypeScriptCore
@@ -55,6 +56,48 @@ def _iter_nodes(root_node):
         node = stack.pop()
         yield node
         stack.extend(reversed(node.named_children))
+
+
+class TypeScriptParseError(ValueError):
+    """Tree-sitter could not parse a TS/JS file without error recovery."""
+
+    def __init__(self, message: str, *, line: int = 1, column: int = 1) -> None:
+        super().__init__(message)
+        self.lineno = line
+        self.offset = column
+
+
+def _first_parse_error_node(root_node):
+    """Return the first ERROR/MISSING node, descending only into error subtrees."""
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR" or node.is_missing:
+            return node
+        stack.extend(
+            reversed([child for child in node.children if child.has_error])
+        )
+    return None
+
+
+def _typescript_parse_error(file_path: str, root_node) -> dict | None:
+    if root_node is None or not root_node.has_error:
+        return None
+    error_node = _first_parse_error_node(root_node) or root_node
+    # Index the Point tuple; py-tree-sitter 0.26.0's .row/.column getters
+    # have a refcount bug (see skylos/visitors/languages/cpp/core.py).
+    point = error_node.start_point
+    kind = "missing" if error_node.is_missing else "unexpected syntax"
+    return analysis_error_payload(
+        file_path,
+        TypeScriptParseError(
+            f"TypeScript/JavaScript parse error ({kind}); "
+            "findings for this file may be incomplete",
+            line=point[0] + 1,
+            column=point[1] + 1,
+        ),
+        kind="syntax_error",
+    )
 
 
 def _comment_body(comment_text: str) -> str | None:
@@ -157,6 +200,7 @@ def _analysis_scan_result(
     ignore_lines: set[int],
     ignore_rules_by_line: dict[int, set[str]],
     suppressed: list[dict],
+    analysis_error: dict | None = None,
 ) -> tuple:
     return (
         *base_result,
@@ -172,7 +216,7 @@ def _analysis_scan_result(
         [],
         None,
         set(),
-        None,
+        analysis_error,
         ignore_rules_by_line,
         False,
     )
@@ -317,4 +361,5 @@ def scan_typescript_file(
         ignore_lines,
         ignore_rules_by_line,
         suppressed_quality + suppressed_danger,
+        _typescript_parse_error(str(file_path), core.root_node),
     )

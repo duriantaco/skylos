@@ -118,7 +118,12 @@ LINTER_RULE_NODE_TYPES = {
     SecurityTodoRule: (ast.Module,),
     DisabledSecurityRule: (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign),
     InsecureRandomRule: (ast.Assign,),
-    HardcodedCredentialRule: (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef),
+    HardcodedCredentialRule: (
+        ast.Assign,
+        ast.AnnAssign,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+    ),
     ErrorDisclosureRule: (ast.ExceptHandler,),
     BroadFilePermissionsRule: (ast.Call,),
     UndefinedConfigRule: (ast.Module, ast.Call),
