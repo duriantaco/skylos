@@ -10,7 +10,7 @@ Rule IDs use a stable public prefix:
 |:---|:---|
 | `SKY-D` | Security and danger findings |
 | `SKY-S` | Secrets findings |
-| `SKY-SCA` | Software composition / dependency vulnerability findings |
+| `SKY-SCA` | Software composition findings, including dependency vulnerabilities and publisher review signals |
 | `SKY-SC` | Security contract regression findings |
 | `SKY-A` | AI-defect verification findings |
 | `SKY-L` | Logic, AI-code mistake, and resilience findings |
@@ -65,7 +65,8 @@ Rule IDs use a stable public prefix:
 | Structured output | `--format json`, `--format llm`, or `--format github` for machines, LLM consumers, and GitHub annotations. |
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
 | MCP server | Integration surface for AI agents and coding assistants. |
-| SCA | Software composition analysis for dependency vulnerability findings. |
+| SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
+| npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
@@ -669,14 +670,16 @@ Pretty output and the TUI use short display labels such as
 are UI grouping text, not stable rule IDs; use the `SKY-*` IDs above for
 suppression, integrations, and public references.
 
-## Dependency Vulnerabilities
+## Dependency Vulnerabilities and Publisher Review
 
 | ID | Severity | Name | Scope |
 |:---|:---|:---|:---|
 | SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
 | SKY-SCA-LIC001 | HIGH (configurable via `license_severity`) | Dependency license policy violation | Declared dependency license (offline lockfile / installed metadata) cannot be satisfied without a license in `license_deny`, or outside `license_allow`; `NOASSERTION` never fires |
+| SKY-SCA-NPM-PUB001 | WARN (review only) | npm publisher change after release dormancy | Direct npm dependency pinned in a package lockfile; verify the publisher and release provenance before upgrading or deploying |
 
 `SKY-SCA-LIC*` IDs are reserved for license policy and are not OSV advisory IDs.
+`SKY-SCA-NPM-PUB001` is a publisher history review signal, not an OSV advisory ID.
 Declared licenses are normalized to SPDX; ambiguous values (for example `BSD`,
 `GPLv3`) are `NOASSERTION`, never guessed.
 

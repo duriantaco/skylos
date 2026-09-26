@@ -42,13 +42,13 @@ def test_runtime_dependency_compatibility_bands(package, supported, next_breakin
     ("package", "published_minimum", "missing_version"),
     [
         ("inquirer", "3.1.0", "3.0.3"),
-        ("ca9", "0.1.1", "0.1.0"),
+        ("ca9", "0.6.0", "0.1.0"),
     ],
 )
 def test_runtime_dependency_minimums_use_published_releases(
     package, published_minimum, missing_version
 ):
-    # First published releases satisfying the old ranges, verified on PyPI:
+    # Required minimums are published releases; older versions are excluded:
     # https://pypi.org/project/inquirer/#history
     # https://pypi.org/project/ca9/#history
     requirement = _runtime_requirements()[package]

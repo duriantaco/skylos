@@ -29,6 +29,7 @@ SEVERITY_COLORS = {
     "CRITICAL": "#ffffff on #8232b4 bold",
     "HIGH": "#ffffff on #b43128 bold",
     "MEDIUM": "#1f170f on #d6b86f bold",
+    "WARN": "#1f170f on #d6b86f bold",
     "LOW": "#ffffff on #346aa8 bold",
 }
 
@@ -36,6 +37,7 @@ SEVERITY_FG = {
     "CRITICAL": "#b47de0",
     "HIGH": "#e07162",
     "MEDIUM": "#d6b86f",
+    "WARN": "#d6b86f",
     "LOW": "#7ba5d6",
 }
 
@@ -48,6 +50,7 @@ CATEGORIES = [
     ("secrets", "Secrets"),
     ("quality", "Quality"),
     ("dependencies", "Dependencies"),
+    ("publisher_review", "Publisher Review"),
     ("suppressed", "Suppressed"),
 ]
 
@@ -217,6 +220,23 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         )
         dep_raw.append(item)
     data["dependencies"] = (dep_cols, dep_rows, dep_raw)
+
+    publisher_cols = ["Package", "Publisher", "Release gap", "File:Line"]
+    publisher_rows, publisher_raw = [], []
+    for item in result.get("publisher_change_findings") or []:
+        meta = item.get("metadata") or {}
+        days = meta.get("dormancy_days")
+        gap = f"{days} days" if isinstance(days, int) and days >= 0 else "?"
+        publisher_rows.append(
+            (
+                f"{meta.get('package_name', '?')}@{meta.get('package_version', '?')}",
+                f"{meta.get('previous_publisher', '?')} → {meta.get('new_publisher', '?')}",
+                gap,
+                _loc(item, root_path),
+            )
+        )
+        publisher_raw.append(item)
+    data["publisher_review"] = (publisher_cols, publisher_rows, publisher_raw)
 
     sup_cols = ["Category", "Name / Rule", "Reason", "File:Line"]
     sup_rows, sup_raw = [], []
@@ -408,6 +428,7 @@ class OverviewPanel(VerticalScroll):
             "secrets",
             "quality",
             "dependencies",
+            "publisher_review",
         ):
             _, _, raw = self.category_data.get(cat_key, ([], [], []))
             for item in raw:
@@ -486,6 +507,22 @@ class DetailPanel(Static):
             refs = meta.get("references") or []
             if refs:
                 lines.append(f"  [bold]Refs:[/bold]  {', '.join(refs[:3])}")
+
+        elif category == "publisher_review":
+            meta = item.get("metadata") or {}
+            name = escape(str(meta.get("package_name") or "?"))
+            version = escape(str(meta.get("package_version") or "?"))
+            previous = escape(str(meta.get("previous_publisher") or "?"))
+            current = escape(str(meta.get("new_publisher") or "?"))
+            gap = meta.get("dormancy_days")
+            lines.append(
+                "  [bold]Review signal:[/bold]  publisher change after dormancy"
+            )
+            lines.append(f"  [bold]Package:[/bold]  {name}@{version}")
+            lines.append(f"  [bold]Publisher:[/bold]  {previous} → {current}")
+            if isinstance(gap, int) and gap >= 0:
+                lines.append(f"  [bold]Release gap:[/bold]  {gap} days")
+            lines.append("  Review the publisher and release provenance.")
 
         elif category == "quality":
             kind = item.get("kind") or item.get("_type_label") or "?"
