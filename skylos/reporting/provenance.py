@@ -291,6 +291,14 @@ class ProvenanceReport:
     summary: dict = field(default_factory=dict)
     confidence: str = "low"
     automation_files: list = field(default_factory=list)
+    # How complete the analysis was, so a consumer (Skylos Cloud) can tell
+    # "no agent commits" apart from "could not look": ran, reason (when it
+    # did not run or was partial), base_ref, base_sha (the merge base the
+    # range starts at), fallback_range (True when no merge base was found and
+    # only HEAD~10 was read), shallow (shallow clone), commits_analyzed.
+    status: dict = field(
+        default_factory=lambda: {"ran": False, "reason": "not analyzed"}
+    )
 
     def to_dict(self):
         file_entries = {}
@@ -311,6 +319,7 @@ class ProvenanceReport:
             "automation_files": self.automation_files,
             "summary": self.summary,
             "confidence": self.confidence,
+            "status": dict(self.status),
         }
 
 
@@ -322,24 +331,108 @@ def _detect_agent_name(text):
     return None
 
 
+_DIFF_GIT_RE = re.compile(
+    r'^diff --git (?P<a>"(?:[^"\\]|\\.)*"|\S+) (?P<b>"(?:[^"\\]|\\.)*"|\S+)$'
+)
+_BINARY_RE = re.compile(r"^Binary files (?P<a>.+) and (?P<b>.+) differ$")
+_C_ESCAPES = {
+    "a": 7,
+    "b": 8,
+    "t": 9,
+    "n": 10,
+    "v": 11,
+    "f": 12,
+    "r": 13,
+    '"': 34,
+    "\\": 92,
+}
+
+
+def _unquote_git_path(value):
+    """Undo git's C-style quoting of unusual paths ("a/sp\\303\\251.py")."""
+    value = (value or "").strip()
+    if len(value) < 2 or not (value.startswith('"') and value.endswith('"')):
+        return value
+    body = value[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt in "01234567":
+                octal = body[i + 1 : i + 4]
+                if len(octal) == 3 and all(c in "01234567" for c in octal):
+                    out.append(int(octal, 8))
+                    i += 4
+                    continue
+            if nxt in _C_ESCAPES:
+                out.append(_C_ESCAPES[nxt])
+                i += 2
+                continue
+        out.extend(ch.encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", errors="replace")
+
+
+def _strip_side_prefix(path, prefix):
+    # Git appends a tab to ---/+++ names that contain spaces.
+    path = _unquote_git_path((path or "").rstrip("\t"))
+    if path == "/dev/null":
+        return None
+    return path[len(prefix) :] if path.startswith(prefix) else path
+
+
 def _parse_diff_hunks(diff_text):
+    """Changed line ranges per file of one commit's patch.
+
+    Every file the commit touches is recorded, including ones without added
+    lines: a deleted file (under its old path), both sides of a rename,
+    binary files and mode-only changes get an empty range list, meaning
+    "touched, lines unknown". Quoted paths are unquoted.
+    """
     file_ranges = {}
     current_file = None
 
+    def touch(path):
+        if path:
+            file_ranges.setdefault(path, [])
+
     for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
-            current_file = line[6:]
-        elif line.startswith("+++ /dev/null"):
+        if line.startswith("diff --git "):
             current_file = None
+            m = _DIFF_GIT_RE.match(line)
+            if m:
+                old = _strip_side_prefix(m.group("a"), "a/")
+                new = _strip_side_prefix(m.group("b"), "b/")
+                touch(new or old)
+                current_file = new or old
+        elif line.startswith("rename from "):
+            touch(_unquote_git_path(line[len("rename from ") :]))
+        elif line.startswith("rename to "):
+            current_file = _unquote_git_path(line[len("rename to ") :])
+            touch(current_file)
+        elif line.startswith("--- "):
+            old = _strip_side_prefix(line[4:], "a/")
+            touch(old)
+        elif line.startswith("+++ "):
+            new = _strip_side_prefix(line[4:], "b/")
+            # A deletion keeps the old path as the touched file; its
+            # hunks only remove lines, so no range is recorded.
+            current_file = new
+            touch(new)
+        elif line.startswith("Binary files ") and line.endswith(" differ"):
+            m = _BINARY_RE.match(line)
+            if m:
+                touch(_strip_side_prefix(m.group("a"), "a/"))
+                touch(_strip_side_prefix(m.group("b"), "b/"))
         elif line.startswith("@@") and current_file is not None:
             m = HUNK_HEADER_RE.match(line)
             if m:
-                start = int(m.group(1))
+                start_line = int(m.group(1))
                 count = int(m.group(2)) if m.group(2) else 1
-                end = start + max(count - 1, 0)
-                if current_file not in file_ranges:
-                    file_ranges[current_file] = []
-                file_ranges[current_file].append((start, end))
+                end_line = start_line + max(count - 1, 0)
+                file_ranges.setdefault(current_file, []).append((start_line, end_line))
 
     return file_ranges
 
@@ -372,20 +465,52 @@ def _git_merge_base(git_root, base_ref):
         return None
 
 
+def _git_is_shallow(git_root):
+    try:
+        out = subprocess.check_output(
+            read_only_git_command(["rev-parse", "--is-shallow-repository"]),
+            cwd=git_root,
+            env=read_only_git_environment(),
+            stderr=subprocess.DEVNULL,
+            timeout=NETWORK_TIMEOUT_SHORT,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return out.decode("utf-8", errors="ignore").strip().lower() == "true"
+
+
 def analyze_provenance(git_root, base_ref=None):
     if not git_root:
-        return ProvenanceReport()
+        return ProvenanceReport(status={"ran": False, "reason": "not a git repository"})
 
     base_ref = _resolve_base_ref(base_ref)
+    shallow = _git_is_shallow(git_root)
     merge_base = _git_merge_base(git_root, base_ref)
+    status = {
+        "ran": True,
+        "reason": None,
+        "base_ref": base_ref,
+        "base_sha": merge_base or None,
+        "fallback_range": not merge_base,
+        "shallow": shallow,
+        "commits_analyzed": 0,
+    }
 
     if not merge_base:
         logger.debug(
             "Could not find merge base for %s, falling back to HEAD~10", base_ref
         )
         range_spec = "HEAD~10..HEAD"
+        status["reason"] = (
+            f"no merge base with {base_ref}; only the last 10 commits were read"
+            + (" (shallow clone)" if shallow else "")
+        )
     else:
         range_spec = f"{merge_base}..HEAD"
+        if shallow:
+            status["reason"] = (
+                "shallow clone; commits before the fetched depth are unknown"
+            )
 
     indicators_by_commit = {}
     ai_commits = set()
@@ -409,7 +534,14 @@ def analyze_provenance(git_root, base_ref=None):
         ).decode("utf-8", errors="ignore")
     except (subprocess.SubprocessError, OSError):
         logger.debug("Failed to get git log for provenance", exc_info=True)
-        return ProvenanceReport()
+        return ProvenanceReport(
+            status={
+                **status,
+                "ran": False,
+                "reason": f"git log {range_spec} failed"
+                + (" (shallow clone)" if shallow else ""),
+            }
+        )
 
     for line in log_output.strip().splitlines():
         if not line.strip():
@@ -423,6 +555,7 @@ def analyze_provenance(git_root, base_ref=None):
         author_email = parts[2]
         subject = parts[3]
         trailers = parts[4] if len(parts) > 4 else ""
+        status["commits_analyzed"] += 1
 
         attribution = classify_commit(author_name, author_email, subject, trailers)
         if attribution is None:
@@ -448,6 +581,11 @@ def analyze_provenance(git_root, base_ref=None):
     for commit_sha in ai_commits:
         file_ranges = _commit_file_ranges(git_root, commit_sha)
         if file_ranges is None:
+            status["reason"] = (
+                status["reason"]
+                or f"could not read the changes of commit {commit_sha[:7]}"
+            )
+            status["incomplete_commits"] = status.get("incomplete_commits", 0) + 1
             continue
         indicator = indicators_by_commit.get(commit_sha, {})
 
@@ -554,6 +692,7 @@ def analyze_provenance(git_root, base_ref=None):
             "automation_seen": sorted(automation_seen),
         },
         confidence=confidence,
+        status=status,
     )
 
 
@@ -567,6 +706,7 @@ def _commit_file_ranges(git_root, commit_sha):
                     "--no-textconv",
                     "-p",
                     "-r",
+                    "-M",
                     "--no-commit-id",
                     commit_sha,
                 ]

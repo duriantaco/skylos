@@ -1053,7 +1053,18 @@ class TestSkylosApi(unittest.TestCase):
 
         finding = mock_exporter.call_args[0][0][0]
         self.assertNotIn("metadata", finding)
-        self.assertIsNone(prepared.metadata["provenance"])
+        # A failure is reported as "could not check", never as no provenance.
+        self.assertEqual(
+            prepared.metadata["provenance"],
+            {
+                "files": {},
+                "agent_files": [],
+                "status": {
+                    "ran": False,
+                    "reason": "provenance detection failed (SubprocessError)",
+                },
+            },
+        )
 
     @patch("skylos.api._detect_report_provenance_data")
     @patch("skylos.api._load_repo_link", return_value={})
@@ -1091,7 +1102,27 @@ class TestSkylosApi(unittest.TestCase):
         )
 
         mock_detect_provenance.assert_not_called()
-        self.assertIsNone(prepared.metadata["provenance"])
+        self.assertEqual(
+            prepared.metadata["provenance"]["status"],
+            {"ran": False, "reason": "provenance was not run for this scan"},
+        )
+
+        skipped = api._prepare_report_upload(
+            {
+                "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                "provenance": None,
+                "provenance_status": {
+                    "ran": False,
+                    "reason": "skipped with --no-provenance",
+                },
+            },
+            analysis_mode="static",
+        )
+        mock_detect_provenance.assert_not_called()
+        self.assertEqual(
+            skipped.metadata["provenance"]["status"],
+            {"ran": False, "reason": "skipped with --no-provenance"},
+        )
 
     @patch("skylos.reporting.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={})
@@ -2367,3 +2398,78 @@ class TestVerifyReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProvenanceUploadStatus(unittest.TestCase):
+    """The upload always says whether provenance ran, and why not."""
+
+    def test_skip_reason_from_scan_is_uploaded(self):
+        self.assertEqual(
+            api._provenance_skip_reason(
+                {"ran": False, "reason": "skipped with --no-provenance"}
+            ),
+            "skipped with --no-provenance",
+        )
+        self.assertEqual(
+            api._provenance_skip_reason(None), "provenance was not run for this scan"
+        )
+        self.assertEqual(
+            api._provenance_not_run("skipped with --concise"),
+            {
+                "files": {},
+                "agent_files": [],
+                "status": {"ran": False, "reason": "skipped with --concise"},
+            },
+        )
+
+    @patch("skylos.reporting.provenance.analyze_provenance")
+    def test_no_agent_files_still_sends_status_without_human_file_list(
+        self, mock_analyze
+    ):
+        from skylos.reporting.provenance import ProvenanceReport
+
+        status = {
+            "ran": True,
+            "reason": None,
+            "base_ref": "origin/main",
+            "base_sha": "a" * 40,
+            "fallback_range": False,
+            "shallow": False,
+            "commits_analyzed": 4,
+        }
+        mock_analyze.return_value = ProvenanceReport(
+            human_files=["a.py", "b.py"],
+            summary={"agent_count": 0},
+            status=status,
+        )
+        data = api._detect_report_provenance_data("/repo")
+        self.assertEqual(data["status"], status)
+        self.assertEqual(data["files"], {})
+        self.assertEqual(data["agent_files"], [])
+        self.assertEqual(data["human_files"], [])
+        self.assertEqual(data["summary"], {"agent_count": 0})
+
+    @patch("skylos.reporting.provenance.analyze_provenance")
+    def test_agent_files_send_full_report_with_status(self, mock_analyze):
+        from skylos.reporting.provenance import FileProvenance, ProvenanceReport
+
+        mock_analyze.return_value = ProvenanceReport(
+            files={"x.py": FileProvenance(file_path="x.py", agent_authored=True)},
+            agent_files=["x.py"],
+            status={"ran": True, "reason": None, "shallow": True},
+        )
+        data = api._detect_report_provenance_data("/repo")
+        self.assertEqual(data["agent_files"], ["x.py"])
+        self.assertEqual(data["status"]["shallow"], True)
+
+    @patch("skylos.reporting.provenance.analyze_provenance")
+    def test_not_a_git_repository_reason_is_sent(self, mock_analyze):
+        from skylos.reporting.provenance import ProvenanceReport
+
+        mock_analyze.return_value = ProvenanceReport(
+            status={"ran": False, "reason": "not a git repository"}
+        )
+        data = api._detect_report_provenance_data(None)
+        self.assertEqual(
+            data["status"], {"ran": False, "reason": "not a git repository"}
+        )

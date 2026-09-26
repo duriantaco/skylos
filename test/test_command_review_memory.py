@@ -270,7 +270,14 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
 
     def fake_apply(result, project_root, **kwargs):
         events.append("project")
-        assert result == {**raw, "provenance": None}
+        assert result == {
+            **raw,
+            "provenance": None,
+            "provenance_status": {
+                "ran": False,
+                "reason": "skipped with --no-provenance",
+            },
+        }
         assert project_root == project.resolve()
         assert kwargs == {"include_identities": True}
         return projected

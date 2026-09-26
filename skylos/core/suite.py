@@ -286,7 +286,12 @@ def run_suite(
         "ai_security_stats": None,
     }
     static_result["provenance"] = None
-    if not no_provenance:
+    if no_provenance:
+        static_result["provenance_status"] = {
+            "ran": False,
+            "reason": "skipped with --no-provenance",
+        }
+    else:
         try:
             from skylos.core.file_discovery import find_git_root
             from skylos.reporting.provenance import (
@@ -325,6 +330,10 @@ def run_suite(
             )
         except Exception as exc:
             provenance_section["error"] = str(exc)
+            static_result["provenance_status"] = {
+                "ran": False,
+                "reason": f"provenance analysis failed ({type(exc).__name__})",
+            }
 
     policy = None
 

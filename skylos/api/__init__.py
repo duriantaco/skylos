@@ -821,7 +821,15 @@ def _prepare_report_upload(
     ai_code = detect_ai_code(git_root)
     if isinstance(result_json, dict) and "provenance" in result_json:
         raw_provenance = result_json.get("provenance")
-        provenance_data = raw_provenance if isinstance(raw_provenance, dict) else None
+        if isinstance(raw_provenance, dict):
+            provenance_data = raw_provenance
+        else:
+            # The scan chose not to (or could not) analyze provenance. Say so,
+            # with the real reason, so Skylos Cloud never reads a missing
+            # provenance section as "no agent-written code".
+            provenance_data = _provenance_not_run(
+                _provenance_skip_reason(result_json.get("provenance_status"))
+            )
     else:
         provenance_data = _detect_report_provenance_data(git_root)
 
@@ -1070,17 +1078,62 @@ def _annotate_findings_with_blame(all_findings: list[dict], git_root) -> None:
             finding["metadata"] = metadata
 
 
+_PROVENANCE_NOT_RUN_REASON = "provenance was not run for this scan"
+
+
+def _provenance_skip_reason(status) -> str:
+    if isinstance(status, dict):
+        reason = status.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return reason.strip()[:200]
+    return _PROVENANCE_NOT_RUN_REASON
+
+
+def _provenance_not_run(reason: str) -> dict[str, Any]:
+    """Upload shape for a scan whose provenance was not analyzed."""
+    return {
+        "files": {},
+        "agent_files": [],
+        "status": {"ran": False, "reason": reason},
+    }
+
+
+def _provenance_status(prov_report) -> dict[str, Any]:
+    status = getattr(prov_report, "status", None)
+    if isinstance(status, dict):
+        return dict(status)
+    return {"ran": False, "reason": "provenance status unavailable"}
+
+
 def _detect_report_provenance_data(git_root):
-    provenance_data = None
+    """Provenance for the upload, always with its status.
+
+    With agent-written files the full report is sent. Without them only the
+    summary and status are sent (not every human file), which still tells
+    Skylos Cloud "checked, no agent code" apart from "could not check".
+    """
     try:
         from skylos.reporting.provenance import analyze_provenance
 
         prov_report = analyze_provenance(git_root)
-        if prov_report.agent_files:
-            provenance_data = prov_report.to_dict()
-    except (ImportError, subprocess.SubprocessError, OSError):
+    except (ImportError, subprocess.SubprocessError, OSError) as exc:
         logger.debug("Provenance detection failed", exc_info=True)
-    return provenance_data
+        return _provenance_not_run(
+            f"provenance detection failed ({type(exc).__name__})"
+        )
+    if prov_report.agent_files:
+        return prov_report.to_dict()
+    summary = getattr(prov_report, "summary", None)
+    confidence = getattr(prov_report, "confidence", None)
+    return {
+        "files": {},
+        "agent_files": [],
+        "human_files": [],
+        "automation_files": [],
+        "summary": summary if isinstance(summary, dict) else {},
+        "confidence": confidence if isinstance(confidence, str) else "low",
+        "status": _provenance_status(prov_report),
+    }
 
 
 def _build_report_metadata(
