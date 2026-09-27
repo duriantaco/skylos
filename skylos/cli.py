@@ -2621,6 +2621,10 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
         getattr(args, name, False)
         for name in ("danger", "secrets", "quality", "ai_defects")
     )
+    gate = project_cfg.get("gate")
+    secrets_required_by_policy = bool(project_cfg.get("secrets_enabled", False)) or (
+        isinstance(gate, dict) and gate.get("block_secrets") is True
+    )
 
     enabled_from_policy = []
     if not explicit_category_flags:
@@ -2630,7 +2634,7 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
         ):
             args.danger = True
             enabled_from_policy.append("danger")
-        if bool(project_cfg.get("secrets_enabled", False)):
+        if secrets_required_by_policy:
             args.secrets = True
             enabled_from_policy.append("secrets")
         if bool(project_cfg.get("quality_enabled", False)):
@@ -2647,6 +2651,16 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
                 + " analysis."
             )
         return
+
+    # Explicit category selection cannot bypass an enabled secret scan or a
+    # gate that always blocks exposed secrets. The gate only sees categories
+    # that the analysis actually ran.
+    if secrets_required_by_policy and not getattr(args, "secrets", False):
+        args.secrets = True
+        if not _is_main_machine_output(args):
+            console.print(
+                "[brand]Secret policy configured:[/brand] enabling secrets analysis automatically."
+            )
 
     # Security contracts are explicit security policy. If they are configured,
     # always run danger analysis so the contracts cannot be silently skipped.

@@ -161,6 +161,23 @@ def test_explicit_config_cannot_override_synced_marker(project):
     assert config["gate"]["enabled"] is True
 
 
+def test_synced_secret_gate_cannot_be_disabled_by_repository(project):
+    _sync(
+        project,
+        "secrets_enabled: true\ngate:\n  enabled: true\n  block_secrets: true\n",
+    )
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
+        "[tool.skylos]\nsecrets_enabled = false\n"
+        "[tool.skylos.gate]\nblock_secrets = false\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(project)
+
+    assert config["secrets_enabled"] is True
+    assert config["gate"]["block_secrets"] is True
+
+
 @pytest.mark.parametrize("bad_yaml", ["- not-a-config\n", "[broken", "null\n"])
 def test_invalid_synced_data_does_not_create_false_policy_provenance(project, bad_yaml):
     _sync(project, bad_yaml)

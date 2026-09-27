@@ -509,6 +509,22 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         _skip_provenance = getattr(args, "no_provenance", False) or getattr(
             args, "concise", False
         )
+        if _skip_provenance:
+            # Upload-only metadata: the cloud reports this reason instead of
+            # reading the missing provenance as "no agent-written code".
+            result["provenance_status"] = {
+                "ran": False,
+                "reason": "skipped with --no-provenance"
+                if getattr(args, "no_provenance", False)
+                else "skipped with --concise",
+            }
+        if _skip_provenance and getattr(args, "upload", False) and not machine_output:
+            # The upload then carries no provenance, and Skylos Cloud agent
+            # rules treat "which code did agents write" as unknown.
+            console.print(
+                "[warn]Agent provenance skipped (--no-provenance/--concise): "
+                "Skylos Cloud cannot tell which code agents wrote for this upload.[/warn]"
+            )
         if not _skip_provenance:
             try:
                 from skylos.reporting.provenance import (
@@ -585,6 +601,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                                 f"  [muted]Agents: {', '.join(agent_parts)}[/muted]"
                             )
             except Exception as e:
+                result["provenance_status"] = {
+                    "ran": False,
+                    "reason": f"provenance analysis failed ({type(e).__name__})",
+                }
                 if args.verbose:
                     console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
 
@@ -651,6 +671,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result = filter_new_findings(result, baseline)
 
         json_result = dict(result)
+        json_result.pop("provenance_status", None)
         if _skip_provenance and json_result.get("provenance") is None:
             json_result.pop("provenance", None)
         result_json = json.dumps(json_result)

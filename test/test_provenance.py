@@ -147,7 +147,79 @@ diff --git a/old.py b/old.py
 -line2
 """
     result = _parse_diff_hunks(diff)
-    assert "old.py" not in result
+    # A deleted file is touched (lines unknown), so a deletion by an agent
+    # still counts as an agent change to that path.
+    assert result["old.py"] == []
+
+
+def test_parse_diff_hunks_rename_binary_and_quoted_paths():
+    diff = """\
+diff --git a/billing/charge.py b/moved/charge.py
+similarity index 100%
+rename from billing/charge.py
+rename to moved/charge.py
+diff --git a/logo.png b/logo.png
+index 1..2 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git "a/sp\\303\\251cial file.py" "b/sp\\303\\251cial file.py"
+--- "a/sp\\303\\251cial file.py"
++++ "b/sp\\303\\251cial file.py"
+@@ -1,2 +1,3 @@
+ a
++b
+diff --git a/gone.py b/gone.py
+deleted file mode 100644
+--- a/gone.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-x
+-y
+"""
+    result = _parse_diff_hunks(diff)
+    assert result["billing/charge.py"] == []
+    assert result["moved/charge.py"] == []
+    assert result["logo.png"] == []
+    assert result["sp\u00e9cial file.py"] == [(1, 3)]
+    assert result["gone.py"] == []
+
+
+def test_analyze_provenance_reports_status(monkeypatch):
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    with patch("subprocess.check_output", side_effect=_mock_check_output):
+        report = analyze_provenance("/fake/repo", base_ref="origin/main")
+    assert report.status == {
+        "ran": True,
+        "reason": None,
+        "base_ref": "origin/main",
+        "base_sha": "merge_base_sha",
+        "fallback_range": False,
+        "shallow": False,
+        "commits_analyzed": 2,
+    }
+    assert report.to_dict()["status"]["ran"] is True
+
+
+def test_analyze_provenance_status_marks_shallow_and_fallback():
+    def mock_output(cmd, **kwargs):
+        cmd_str = " ".join(cmd)
+        if "is-shallow-repository" in cmd_str:
+            return b"true\n"
+        if "merge-base" in cmd_str:
+            raise subprocess.CalledProcessError(1, cmd)
+        if " log " in cmd_str:
+            raise subprocess.CalledProcessError(128, cmd)
+        return b""
+
+    with patch("subprocess.check_output", side_effect=mock_output):
+        report = analyze_provenance("/fake/repo", base_ref="origin/main")
+    assert report.status["ran"] is False
+    assert report.status["shallow"] is True
+    assert report.status["fallback_range"] is True
+    assert "shallow clone" in report.status["reason"]
+    assert analyze_provenance(None).status == {
+        "ran": False,
+        "reason": "not a git repository",
+    }
 
 
 def test_parse_diff_hunks_single_line_hunk():

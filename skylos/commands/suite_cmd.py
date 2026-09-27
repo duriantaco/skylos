@@ -62,6 +62,8 @@ def _build_static_upload_result(
     }
     if "provenance" in static_result:
         payload["provenance"] = static_result.get("provenance")
+    if isinstance(static_result.get("provenance_status"), dict):
+        payload["provenance_status"] = static_result["provenance_status"]
     if static_result.get("provenance_summary") is not None:
         payload["provenance_summary"] = static_result.get("provenance_summary")
     if static_result.get("ai_security_stats") is not None:
