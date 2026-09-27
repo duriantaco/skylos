@@ -216,6 +216,36 @@ described in [License compliance](./license-compliance.md).
 
 ## Results and failures
 
+### npm publisher review
+
+`skylos . --sca --scan-publisher-changes --format json` adds an opt-in review
+of direct npm dependencies recorded in `package-lock.json`. It queries the
+public npm registry for publisher history and reports a newly observed
+publisher after a long release gap as `SKY-SCA-NPM-PUB001` in the separate
+`publisher_change_findings` field. This is a `WARN` review signal: verify the
+publisher and release provenance. It is not proof of compromise, is not an OSV
+vulnerability, and does not count toward `dependency_vulnerabilities` or the
+quality gate. Selecting this rule with `--select SKY-SCA-NPM-PUB001` also
+enables the publisher check.
+
+The review requires a pinned direct npm dependency in a supported package
+lockfile. Skylos checks at most 25 eligible packages in deterministic path/name
+order and reports partial coverage when the limit is reached.
+`npm-shrinkwrap.json` is not supported; when present, it takes precedence over
+`package-lock.json` and the check reports the skipped project. Registry history
+can lack publisher data for older releases, so a
+"first observed" publisher may not be the first publisher ever. A trusted
+publisher identity or an established publisher with another widely used npm
+package is exempt. A failed publisher reputation search keeps a review
+finding and records a warning; a failed registry history lookup records a
+warning without inventing a finding. Lockfiles remain data; Skylos never runs
+npm package scripts for this check. JSON records check coverage and warnings in
+`analysis_summary.publisher_change_scan`; terminal reports show incomplete
+checks in rich and pretty formats. In concise output, use JSON to inspect
+coverage when the finding list is empty.
+
+### Known vulnerabilities
+
 Findings use the existing `SKY-SCA-*` rule IDs and
 `dependency_vulnerabilities` result field. Metadata includes package identity,
 lockfile location, dependency context, and `dependency_occurrences`. The same

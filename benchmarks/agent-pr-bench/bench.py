@@ -49,7 +49,7 @@ def tool_objects(args) -> dict:
         "sonarqube": tools.Sonar(),
     }
     for name in ("semgrep", "bandit"):
-        if not getattr(objs[name], "binary"):
+        if name in args.tools and not getattr(objs[name], "binary"):
             raise SystemExit(f"{name} not found; pass --{name} or run run.sh (creates a pinned venv)")
     return {k: v for k, v in objs.items() if k in args.tools}
 

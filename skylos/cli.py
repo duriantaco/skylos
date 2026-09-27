@@ -505,6 +505,7 @@ def _remap_precommit_result_files(
         "secrets",
         "custom_rules",
         "dependency_vulnerabilities",
+        "publisher_change_findings",
         "reviewed_findings",
     ]:
         items = result.get(category, [])
@@ -1554,7 +1555,14 @@ def print_badge(
     console.print("```")
 
 
-_DISPLAY_FILTER_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_DISPLAY_FILTER_SEVERITY_RANK = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "warn": 2,
+    "warning": 2,
+    "low": 1,
+}
 _DISPLAY_FILTER_CATEGORY_MAP = {
     "unused_functions": "dead_code",
     "unused_imports": "dead_code",
@@ -1573,6 +1581,7 @@ _DISPLAY_FILTER_CATEGORY_MAP = {
     "circular_dependencies": "quality",
     "custom_rules": "quality",
     "dependency_vulnerabilities": "dependency",
+    "publisher_change_findings": "publisher_change",
 }
 
 _RULE_SELECTION_DEFAULT_IDS = {
@@ -1593,6 +1602,7 @@ _RULE_SELECTION_DEFAULT_IDS = {
     "custom_rules": "CUSTOM",
     "circular_dependencies": "SKY-CIRC",
     "dependency_vulnerabilities": "SKY-SCA-000",
+    "publisher_change_findings": "SKY-SCA-NPM-PUB001",
 }
 
 _RULE_SELECTION_FINDING_CATEGORIES = (
@@ -1613,6 +1623,7 @@ _RULE_SELECTION_FINDING_CATEGORIES = (
     "custom_rules",
     "circular_dependencies",
     "dependency_vulnerabilities",
+    "publisher_change_findings",
 )
 
 _RULE_SELECTION_SUMMARY_COUNTS = {
@@ -1632,6 +1643,7 @@ _RULE_SELECTION_SUMMARY_COUNTS = {
     "custom_rules": "custom_rules_count",
     "circular_dependencies": "circular_dependencies_count",
     "dependency_vulnerabilities": "sca_count",
+    "publisher_change_findings": "publisher_change_count",
 }
 
 _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES = {
@@ -1885,6 +1897,10 @@ def _apply_selected_rule_analysis_flags(args) -> None:
             "Run 'skylos rules list' to discover valid IDs."
         )
     for rule_id in selected_rules:
+        if rule_id == "SKY-SCA-NPM-PUB001":
+            args.sca = True
+            args.scan_publisher_changes = True
+            continue
         category = _RULE_SELECTION_ANALYSIS_CATEGORY_OVERRIDES.get(
             rule_id,
             categories_by_rule.get(rule_id),
@@ -2514,11 +2530,14 @@ CONCISE_FINDING_CATEGORIES = (
     ("secrets", "secret"),
     ("custom_rules", "custom rule"),
     ("dependency_vulnerabilities", "dependency vulnerability"),
+    ("publisher_change_findings", "npm publisher review"),
 )
 
 
 def _has_concise_findings(result: dict) -> bool:
     for category, _label in CONCISE_FINDING_CATEGORIES:
+        if category == "publisher_change_findings":
+            continue
         if result.get(category):
             return True
     return False

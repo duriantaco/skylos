@@ -250,14 +250,15 @@ wheels = [
 
 [[package]]
 name = "ca9"
-version = "0.1.4"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/4d/6f4ce1b445dcd6022d349615129fdcaf60b3c3cbfdd8c442344861da1a33/ca9-0.1.4.tar.gz", hash = "sha256:220426f151d1b202714af3808f32049cb9f228bbaa0539af96537756d2cf0015", size = 1685872, upload-time = "2026-03-08T09:20:45.416Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/16/9c306c2b2bd12e55ab4dc3c8af87c832b86462e4dab425773cc073c27d4b/ca9-0.6.0.tar.gz", hash = "sha256:85ea91c67ccc924c5af5fe79e6f760b41e0feeddfd76aaa888e6593a6cef9202", size = 2075932, upload-time = "2026-09-26T13:25:54.367Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/67/3f4e312102fcf2efbb119ad780ad5ab8e4ce75db26257d9b56a84e51b5a0/ca9-0.1.4-py3-none-any.whl", hash = "sha256:81932b0d33717e76b19c954cd80d4b7a56a15eb0062c6af1831e7ceaa28fa186", size = 49976, upload-time = "2026-03-08T09:20:42.649Z" },
+    { url = "https://files.pythonhosted.org/packages/db/d3/7d061e5b0d67f5182aa535c931fad20f942a88a5d51d29a290112b0fdbc3/ca9-0.6.0-py3-none-any.whl", hash = "sha256:5aa17fea39b968a2b7f00b96b5b2f25d3cc91ae59ed291e2821bbf5e33cc24e2", size = 286503, upload-time = "2026-09-26T13:25:52.691Z" },
 ]
 
 [[package]]
@@ -2440,7 +2441,7 @@ test = [
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.0" },
     { name = "aiohttp", marker = "extra == 'llm'", specifier = ">=3.14.0" },
-    { name = "ca9", specifier = ">=0.1.1" },
+    { name = "ca9", specifier = ">=0.6.0" },
     { name = "inquirer", specifier = ">=3.1.0" },
     { name = "keyring", specifier = "!=3.4.2,>=25.6.0" },
     { name = "libcst", specifier = ">=1.8.2" },

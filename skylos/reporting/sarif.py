@@ -204,6 +204,10 @@ class SarifExporter:
             title_raw = (
                 finding.get("title") or finding.get("rule_name") or fallback_title
             )
+            if str(
+                finding.get("category") or ""
+            ).upper() == "PUBLISHER_CHANGE" and not finding.get("title"):
+                title_raw = "Review npm publisher change after release dormancy"
             title = sanitize_untrusted_text(
                 title_raw,
                 max_length=120,
@@ -319,6 +323,8 @@ class SarifExporter:
             ).upper()
 
             properties = {"category": category}
+            if category == "PUBLISHER_CHANGE":
+                properties["review_only"] = True
 
             review_decision = (
                 finding.get("review_decision")
@@ -348,7 +354,7 @@ class SarifExporter:
                 # existing total-node, depth, text or redaction safeguards.
                 metadata_items = (
                     _MAX_SARIF_DEPENDENCY_METADATA_ITEMS
-                    if category == "DEPENDENCY"
+                    if category in {"DEPENDENCY", "PUBLISHER_CHANGE"}
                     else _MAX_SARIF_METADATA_ITEMS
                 )
                 safe_metadata = _sanitize_sarif_payload(

@@ -24,6 +24,7 @@ CATEGORY_SPECS = (
     ("circular_dependencies", "Architecture", "circular dependency"),
     ("custom_rules", "Custom", "custom rule"),
     ("dependency_vulnerabilities", "Dependency", "dependency vulnerability"),
+    ("publisher_change_findings", "Publisher review", "npm publisher change"),
     ("unused_functions", "Dead Code", "unused function"),
     ("unused_imports", "Dead Code", "unused import"),
     ("unused_classes", "Dead Code", "unused class"),
@@ -48,6 +49,7 @@ SEVERITY_STYLES = {
     "HIGH": "bold white on red",
     "MEDIUM": "bold black on yellow",
     "LOW": "bold white on blue",
+    "WARN": "bold black on yellow",
     "INFO": "dim",
 }
 
@@ -56,6 +58,7 @@ SEVERITY_RANK = {
     "HIGH": 1,
     "MEDIUM": 2,
     "LOW": 3,
+    "WARN": 2,
     "INFO": 4,
 }
 
@@ -75,6 +78,7 @@ SUMMARY_CATEGORIES = (
     "reliability",
     "secrets",
     "dependency_vulnerabilities",
+    "publisher_change_findings",
 )
 
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -108,7 +112,7 @@ def render_pretty_results(
     header = Text.assemble(
         ("Skylos", "bold cyan"),
         (" static analysis", "bold"),
-        (f"  {len(findings)} issue{'s' if len(findings) != 1 else ''}", "dim"),
+        (f"  {_finding_count_label(findings)}", "dim"),
         (f"  {total_files} file{'s' if total_files != 1 else ''} analyzed", "dim"),
     )
     console.print(header)
@@ -116,6 +120,7 @@ def render_pretty_results(
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
+    _print_publisher_review_status(console, result)
     _print_directory_rollups(console, result)
     console.print()
 
@@ -133,13 +138,12 @@ def render_pretty_results(
             key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.line, f.rule),
         )
         short_path = _sanitize_terminal_text(_shorten_path(file_path, root_path))
-        count = len(file_findings)
         console.print(
             Text.assemble(
                 ("  ", ""),
                 (short_path, "bold"),
                 (" · ", "dim"),
-                (f"{count} issue{'s' if count != 1 else ''}", "dim"),
+                (f"{_finding_count_label(file_findings)}", "dim"),
             )
         )
         console.print()
@@ -149,6 +153,38 @@ def render_pretty_results(
         console.print()
 
     _print_footer(console, findings)
+
+
+def _print_publisher_review_status(console: Console, result: dict) -> None:
+    receipt = (result.get("analysis_summary") or {}).get("publisher_change_scan")
+    if not isinstance(receipt, dict):
+        return
+    status = receipt.get("status")
+    if status == "no_inputs":
+        console.print(
+            Text("  npm publisher review: no supported package lockfile", style="dim")
+        )
+    elif status not in {"complete", "disabled"}:
+        warnings = receipt.get("warnings")
+        detail = warnings[0] if isinstance(warnings, list) and warnings else status
+        message = _sanitize_terminal_text(str(detail or "check incomplete"))
+        console.print(
+            Text(
+                f"  npm publisher review incomplete: {_truncate(message, 160)}",
+                style="yellow",
+            )
+        )
+
+
+def _finding_count_label(findings: list[PrettyFinding]) -> str:
+    reviews = sum(
+        finding.category == "publisher_change_findings" for finding in findings
+    )
+    issues = len(findings) - reviews
+    label = f"{issues} issue{'s' if issues != 1 else ''}"
+    if reviews:
+        label += f" · {reviews} review signal{'s' if reviews != 1 else ''}"
+    return label
 
 
 def collect_pretty_findings(
@@ -260,7 +296,12 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         )
 
     if finding.fix:
-        console.print(Text.assemble(("      Fix: ", "bold green"), (finding.fix, "")))
+        label = (
+            "Review: " if finding.category == "publisher_change_findings" else "Fix: "
+        )
+        console.print(
+            Text.assemble((f"      {label}", "bold green"), (finding.fix, ""))
+        )
 
     console.print()
 
@@ -273,11 +314,11 @@ def _print_footer(console: Console, findings: list[PrettyFinding]) -> None:
     console.print(Text("  " + "─" * 52, style="dim"))
     parts: list[Text] = [
         Text(
-            f"  {len(findings)} issue{'s' if len(findings) != 1 else ''}",
+            f"  {_finding_count_label(findings)}",
             style="bold",
         )
     ]
-    for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
+    for severity in ("CRITICAL", "HIGH", "MEDIUM", "WARN", "LOW", "INFO"):
         count = counts.get(severity, 0)
         if not count:
             continue
@@ -395,6 +436,8 @@ def _severity_badge(severity: str) -> str:
         return " HIGH "
     if label == "MEDIUM":
         return " MEDIUM "
+    if label in {"WARN", "WARNING"}:
+        return " WARN "
     if label == "LOW":
         return " LOW "
     return " INFO "
@@ -407,6 +450,8 @@ def _severity_rail_style(severity: str) -> str:
     if label == "HIGH":
         return "red"
     if label == "MEDIUM":
+        return "yellow"
+    if label in {"WARN", "WARNING"}:
         return "yellow"
     if label == "LOW":
         return "blue"

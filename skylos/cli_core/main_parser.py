@@ -236,6 +236,14 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
     )
     parser.add_argument(
+        "--scan-publisher-changes",
+        action="store_true",
+        help=(
+            "Review direct npm dependencies for publisher changes after dormancy "
+            "via the npm registry (implies --sca)."
+        ),
+    )
+    parser.add_argument(
         "-a",
         "--all",
         action="store_true",
@@ -317,7 +325,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         default=None,
         metavar="CAT",
         help="Show only specific category: security, reliability, secret, quality, "
-        "ai_defects, dead_code, dependency. Comma-separated for multiple. "
+        "ai_defects, dead_code, dependency, publisher_change. Comma-separated "
+        "for multiple. "
         "Example: --category reliability,security",
     )
     parser.add_argument(
