@@ -1,10 +1,12 @@
 from __future__ import annotations
 import ast
 import sys
-from skylos.rules.danger.calls import _is_test_module
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
-from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.rules.danger.untrusted_sources import (
+    UntrustedSourceIndex,
+    entrypoint_decorator,
+)
 
 
 SYMLINK_WRITE_RULE = "SKY-D324"
@@ -318,9 +320,10 @@ class _PathFlowChecker(TaintVisitor):
     }
     PATHLIB_READ_METHODS = {"read_bytes", "read_text"}
     PATHLIB_WRITE_METHODS = {"write_bytes", "write_text"}
-    # Reporting policy for D215/D324/D325: only report a path a remote party
-    # can choose, and never in test code. The taint flow underneath is the
-    # same either way; subclasses that exercise the raw flow turn this off.
+    # Reporting policy for D215/D324/D325: suppress only proven operator paths.
+    # Unknown helper parameters may be supplied by a route in another module,
+    # even when the file lives under tests/. Fixture and literal parameter
+    # proofs live in the taint flow. Subclasses can exercise raw flow instead.
     REPORT_ONLY_UNTRUSTED_SOURCES = True
 
     def __init__(self, file_path, findings, sanitizers=None):
@@ -340,9 +343,6 @@ class _PathFlowChecker(TaintVisitor):
             }
         ]
         self._emitted = set()
-        # Test code builds paths from fixtures and temp dirs on purpose; the
-        # path rules (D215/D324/D325) are not reported there.
-        self._in_test_file = _is_test_module(file_path)
         self._literal_pytest_paths = {}
         self.import_aliases = {}
         self.untrusted_sources = UntrustedSourceIndex(None)
@@ -581,6 +581,11 @@ class _PathFlowChecker(TaintVisitor):
             return False
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             return self.is_tainted(node.left) or self.is_tainted(node.right)
+        if isinstance(node, ast.Subscript):
+            # A remote key can select a path from a mutable mapping. Even a
+            # literal module dictionary may be changed through another module
+            # or an indirect method call before this lookup.
+            return super().is_tainted(node) or self.is_tainted(node.slice)
         if isinstance(node, ast.Call):
             qn = _qualified_name(node)
             if qn in {"os.getenv", "os.environ.get", "os.environ.__getitem__"}:
@@ -894,23 +899,41 @@ class _PathFlowChecker(TaintVisitor):
             evidence_kind="python_path_taint",
         )
 
+    def _has_open_world_parameter(self, path_expr, facts):
+        """A helper's parameters may have callers outside this source file."""
+        function = self._current_function()
+        if function is None or entrypoint_decorator(function):
+            return False
+        args = getattr(function, "args", None)
+        if args is None:
+            return False
+        params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if args.vararg:
+            params.append(args.vararg)
+        if args.kwarg:
+            params.append(args.kwarg)
+        params = [param for param in params if param.arg not in {"self", "cls"}]
+        if not params:
+            return False
+        # A direct operator source is independent of unused helper parameters.
+        # A derived name cannot establish that independence with this index.
+        direct = facts.direct_sources_in(path_expr)
+        if direct and all(_is_operator_source(source) for source in direct):
+            used_params = {param.arg for param in params} & _names_in(path_expr)
+            if not used_params:
+                return False
+        return True
+
     def _untrusted_path_evidence(self, path_expr, sink, *, traversal=False):
-        """Evidence that a remote party can choose ``path_expr``, else None.
+        """Evidence for an unsafe path; None only when its source is proven safe.
 
         Every function parameter is tainted for flow tracking, but a helper
-        that opens the path it was handed, a path from configuration, a CLI
-        argument, the environment, a directory listing or a content hash is
-        not a traversal / symlink attack surface. The path rules report only
-        when a real untrusted source (web-route / MCP-tool parameter, request
-        data, uploaded file name, ``input()``, stdin) reaches the path, and
-        never in test code."""
+        that opens the path it was handed may be called from a remote entry
+        point in another module. Keep findings when the source is unknown;
+        suppress only paths proven to come from the program operator."""
         evidence = self._source_evidence(None, path_expr, sink)
         if not self.REPORT_ONLY_UNTRUSTED_SOURCES:
             return evidence if evidence is not None else {}
-        if self._in_test_file:
-            return None
-        if evidence is None:
-            return None
         facts = self.untrusted_sources.for_function(self._current_function())
         all_sources = (
             facts.traversal_sources_in(path_expr)
@@ -920,18 +943,25 @@ class _PathFlowChecker(TaintVisitor):
         remote_sources = [
             source for source in all_sources if not _is_operator_source(source)
         ]
-        if not remote_sources:
-            return None
-        evidence["sources"] = (
-            remote_sources + [source for source in all_sources if _is_operator_source(source)]
-        )[:4]
-        if evidence["source"] != remote_sources[0]:
-            evidence["source"] = remote_sources[0]
-            evidence["path"] = [
-                f"untrusted input from {remote_sources[0]}",
-                f"reaches {sink}",
-            ]
-        return evidence
+        if remote_sources:
+            if evidence is None:
+                return {}
+            evidence["sources"] = (
+                remote_sources
+                + [source for source in all_sources if _is_operator_source(source)]
+            )[:4]
+            if evidence["source"] != remote_sources[0]:
+                evidence["source"] = remote_sources[0]
+                evidence["path"] = [
+                    f"untrusted input from {remote_sources[0]}",
+                    f"reaches {sink}",
+                ]
+            return evidence
+        if self._has_open_world_parameter(path_expr, facts):
+            return {}
+        if evidence is None:
+            return {}
+        return None
 
     def _emit_path_traversal(self, node, path_expr, message, sink, evidence=None):
         finding = {

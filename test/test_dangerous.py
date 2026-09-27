@@ -1,4 +1,5 @@
 import ast
+import pytest
 from pathlib import Path
 from skylos.core.linter import LinterVisitor
 from skylos.rules.danger.danger import scan_ctx
@@ -60,11 +61,87 @@ def test_md5_sha1(tmp_path):
     out = _scan_one(
         tmp_path,
         "a_hashes.py",
-        "import hashlib\nhashlib.md5(b'd')\nhashlib.sha1(b'd')\n",
+        "import hashlib\n"
+        "password_hash = hashlib.md5(b'd')\n"
+        "api_token = hashlib.sha1(b'd').hexdigest()\n",
     )
     ids = _rule_ids(out)
     assert "SKY-D207" in ids
     assert "SKY-D208" in ids
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        # agent-pr-bench fa-14: legacy password verification
+        "import hashlib\n"
+        "def verify_password(plain_password, hashed_password):\n"
+        "    legacy = hashlib.md5(plain_password.encode()).hexdigest()\n"
+        "    return legacy == hashed_password\n",
+        # hashed data names a secret
+        "import hashlib\n"
+        "def store(user, pw):\n"
+        "    user.digest = hashlib.sha1(user.password.encode()).hexdigest()\n",
+        # constant-time comparison of the digest
+        "import hashlib, hmac\n"
+        "def check(body, header):\n"
+        "    return hmac.compare_digest(hashlib.md5(body).hexdigest(), header)\n",
+        # compared against a stored credential
+        "import hashlib\n"
+        "def check(body, row):\n"
+        "    return hashlib.md5(body).hexdigest() == row.api_key\n",
+        # value flows into a signature argument / assignment
+        "import hashlib\n"
+        "def build(payload):\n"
+        "    return send(payload, signature=hashlib.sha1(payload).hexdigest())\n",
+        "import hashlib\n"
+        "def handler(req):\n"
+        "    session_id = hashlib.md5(req.remote_addr.encode()).hexdigest()\n"
+        "    return session_id\n",
+        # subscript target names a secret
+        "import hashlib\n"
+        "def save(record, raw):\n"
+        "    record['password_digest'] = hashlib.md5(raw).hexdigest()\n",
+        # explicit security use
+        "import hashlib\nhashlib.md5(b'd', usedforsecurity=True)\n",
+    ],
+)
+def test_weak_hash_security_context_flags(tmp_path, code):
+    out = _scan_one(tmp_path, "a_hash_security.py", code)
+    assert _rule_ids(out) & {"SKY-D207", "SKY-D208"}
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        # agent-pr-bench real-02: incremental change detection
+        "import hashlib\n"
+        "from pathlib import Path\n"
+        "def _compute_md5(file_path):\n"
+        "    md5 = hashlib.md5()\n"
+        "    with Path(file_path).open('rb') as fh:\n"
+        "        md5.update(fh.read())\n"
+        "    return md5.hexdigest()\n",
+        # agent-pr-bench real-03: dedupe key / identifier suffix
+        "import hashlib\n"
+        "def _cap(slug, limit):\n"
+        "    digest = hashlib.sha1(slug.encode('utf-8')).hexdigest()[:8]\n"
+        "    return f'{slug[:limit]}-{digest}'\n"
+        "def make_key(company, title, url=''):\n"
+        "    digest = hashlib.sha1((str(title) + str(url)).encode()).hexdigest()[:8]\n"
+        "    return f'{company}_{digest}'\n",
+        # cache keys, ETags, content addressing
+        "import hashlib\n"
+        "def cache_key(data):\n"
+        "    return hashlib.md5(data).hexdigest()\n"
+        "def etag(body):\n"
+        "    return hashlib.sha1(body).hexdigest()\n"
+        "content_id = hashlib.md5(b'blob').hexdigest()\n",
+    ],
+)
+def test_weak_hash_ambiguous_use_remains_visible(tmp_path, code):
+    out = _scan_one(tmp_path, "a_hash_nonsecurity.py", code)
+    assert _rule_ids(out) & {"SKY-D207", "SKY-D208"}
 
 
 def test_md5_sha1_declared_non_security_use_ok(tmp_path):
@@ -73,8 +150,8 @@ def test_md5_sha1_declared_non_security_use_ok(tmp_path):
         tmp_path,
         "a_hashes_optout.py",
         "import hashlib\n"
-        "hashlib.md5(b'd', usedforsecurity=False)\n"
-        "hashlib.sha1(usedforsecurity=False)\n"
+        "password_hash = hashlib.md5(b'd', usedforsecurity=False)\n"
+        "token_hash = hashlib.sha1(usedforsecurity=False)\n"
         "hashlib.md5(b'd', usedforsecurity=True)\n",
     )
     lines = [f["line"] for f in out if f["rule_id"] in {"SKY-D207", "SKY-D208"}]
@@ -243,7 +320,8 @@ def show_history(project_root):
     assert "SKY-D325" in _rule_ids(out)
 
 
-def test_symlink_rules_require_untrusted_source(tmp_path):
+def test_symlink_rules_keep_unknown_helper_parameters(tmp_path):
+    # A helper's caller can be in another module and may pass remote input.
     out = _scan_one(
         tmp_path,
         "a_symlink_helper.py",
@@ -257,7 +335,7 @@ def show_history(project_root):
     return (project_root / ".skylos" / "debt_history.jsonl").read_text()
 """,
     )
-    assert not (_rule_ids(out) & {"SKY-D215", "SKY-D324", "SKY-D325"})
+    assert {"SKY-D215", "SKY-D324", "SKY-D325"} <= _rule_ids(out)
 
 
 def test_basename_only_sidecar_still_flags_symlink_read(tmp_path):
@@ -756,3 +834,18 @@ def handler(cur, question):
 """
     out = _scan_one(tmp_path, "llm_output_sql.py", code)
     assert "SKY-D262" in _rule_ids(out)
+
+
+def test_weak_hash_remains_visible_in_linter_rule():
+    security = _scan_dangerous_calls_rule(
+        "import hashlib\n"
+        "def verify_password(plain, stored):\n"
+        "    return hashlib.md5(plain.encode()).hexdigest() == stored\n"
+    )
+    cache = _scan_dangerous_calls_rule(
+        "import hashlib\n"
+        "def cache_key(data):\n"
+        "    return hashlib.md5(data).hexdigest()\n"
+    )
+    assert "SKY-D207" in {f["rule_id"] for f in security}
+    assert "SKY-D207" in {f["rule_id"] for f in cache}

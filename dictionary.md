@@ -152,6 +152,11 @@ itself. Explicit authentication-qualified names (such as `authSessionId`) and
 direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
+For Python D207/D208, `hashlib.md5` / `hashlib.sha1` remain findings when
+their purpose is unclear; names such as `cache_key` do not prove the digest
+is unrelated to security. An explicit `usedforsecurity=False` suppresses the
+finding.
+
 For Python D211, a query executed on a chained connection or cursor call
 (`sqlite3.connect(...).execute(q)`, `conn.cursor().execute(q)`,
 `engine.connect().execute(q)`, `get_db().executescript(q)`) is reported only
@@ -163,15 +168,21 @@ findings.
 
 For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
 `send_file` are path sinks. `send_from_directory` is a sink only for its
-`directory` argument, because it joins `path` with `safe_join`. These
-file-serving sinks also require a real untrusted source. Accepted guards: a
+`directory` argument, because it joins `path` with `safe_join`. Accepted guards: a
 resolved path (`resolve()`, `realpath`, `abspath`, `normpath`) checked with
 `is_relative_to`, `relative_to`, `startswith` or `commonpath` before a
 rejecting branch; a membership check against a constant allowlist;
 `safe_join`; and `basename`. A prefix check on an unnormalized path does not
 count as a guard.
 
-Python D211, D215 and D217 findings reached by such a source carry
+Python D215, D324 and D325 check tainted paths from web routes, MCP/agent
+tools, request data, standard input, and helper parameters. A helper may
+receive untrusted data from a caller in another module, so an unknown caller
+does not suppress a finding. A path whose only proven source is the program
+operator (a CLI argument or environment variable) is suppressed. Test files
+are scanned too; the literal pytest parameter proof below still applies.
+
+Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
 

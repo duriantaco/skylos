@@ -197,9 +197,9 @@ def _path_rules(findings):
     }
 
 
-def test_helper_parameter_path_is_not_reported(tmp_path):
-    # Incremental manifest helper: the directory comes from the caller /
-    # program configuration, not from a request.
+def test_helper_parameter_path_without_known_caller_remains_reported(tmp_path):
+    # A helper can also be called by a route in another module. Its bare
+    # parameter does not prove that the caller is the program operator.
     code = """
 import json
 from pathlib import Path
@@ -223,10 +223,10 @@ class BatchParser:
             return fh.read()
 """
     out = _scan_one(tmp_path, "batch_parser.py", code)
-    assert _path_rules(out) == set()
+    assert {"SKY-D215", "SKY-D325"} <= _path_rules(out)
 
 
-def test_content_hash_cache_path_is_not_reported(tmp_path):
+def test_unproven_cache_path_parameters_remain_reported(tmp_path):
     code = """
 import json
 from pathlib import Path
@@ -246,10 +246,10 @@ def write_result(key, part, data):
     (directory / f"{part}.json").write_text(data)
 """
     out = _scan_one(tmp_path, "transcription_cache.py", code)
-    assert _path_rules(out) == set()
+    assert {"SKY-D215", "SKY-D324", "SKY-D325"} <= _path_rules(out)
 
 
-def test_cli_and_repo_root_paths_are_not_reported(tmp_path):
+def test_direct_cli_and_repo_root_paths_are_not_reported(tmp_path):
     code = """
 import argparse
 import json
@@ -283,7 +283,14 @@ def main():
         (ROOT / name).read_text()
 """
     out = _scan_one(tmp_path, "prepare_release.py", code)
-    assert _path_rules(out) == set()
+    # Direct argv/environment and directory-listing paths are operator owned.
+    assert not {
+        f["symbol"] for f in out if f["rule_id"] in {"SKY-D215", "SKY-D324", "SKY-D325"}
+    } & {"main", "published_dirs"}
+    # These generic helpers have no proof about other modules' callers.
+    assert {"render_notes", "load_json", "audit"} <= {
+        f["symbol"] for f in out if f["rule_id"] == "SKY-D325"
+    }
 
 
 def test_click_cli_parameter_path_is_not_reported(tmp_path):
@@ -300,10 +307,28 @@ def cli(src):
     assert _path_rules(out) == set()
 
 
+def test_remote_bot_command_path_is_reported(tmp_path):
+    code = """
+from pathlib import Path
+
+BASE = Path("/srv/uploads")
+
+@bot.command()
+async def save(name):
+    (BASE / name).write_text("x")
+"""
+    out = _scan_one(tmp_path, "bot.py", code)
+    assert {"SKY-D215", "SKY-D324"} <= _path_rules(out)
+    traversal = next(f for f in out if f["rule_id"] == "SKY-D215")
+    assert traversal["metadata"]["security_evidence"]["source"].startswith(
+        "route parameter"
+    )
+
+
 @pytest.mark.parametrize(
     "name", ["tests/test_batch.py", "tests/helpers.py", "conftest.py", "x_test.py"]
 )
-def test_path_rules_suppressed_in_test_files(tmp_path, name):
+def test_remote_route_in_test_named_file_remains_reported(tmp_path, name):
     code = """
 from pathlib import Path
 
@@ -317,26 +342,37 @@ def handler(p):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
     out = scan_ctx(tmp_path, [target])
-    assert _path_rules(out) == set()
+    assert {"SKY-D215", "SKY-D324", "SKY-D325"} <= _path_rules(out)
 
 
-def test_fixture_helper_in_tests_dir_is_not_reported(tmp_path):
+def test_proven_pytest_fixture_path_in_tests_dir_is_not_reported(tmp_path):
     code = """
 from pathlib import Path
+import pytest
 
 class FakeParser:
     def parse_document(self, file_path, output_dir):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         return Path(file_path).read_text()
 
-def _seed(tmp_path):
+@pytest.fixture
+def seeded(tmp_path):
     doc = tmp_path / "a.txt"
     doc.write_text("alpha")
 """
     target = tmp_path / "tests" / "testbatch_incremental.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
-    assert _path_rules(scan_ctx(tmp_path, [target])) == set()
+    out = scan_ctx(tmp_path, [target])
+    assert not [
+        f
+        for f in out
+        if f["symbol"] == "seeded"
+        and f["rule_id"] in {"SKY-D215", "SKY-D324", "SKY-D325"}
+    ]
+    assert {"SKY-D215", "SKY-D325"} <= {
+        f["rule_id"] for f in out if f["symbol"] == "parse_document"
+    }
 
 
 # --- recall: untrusted sources still reach the path rules -------------------
@@ -451,6 +487,61 @@ def upload(name, data):
             assert "route parameter" in finding["metadata"]["security_evidence"]["source"]
 
 
+@pytest.mark.parametrize("local_cli_caller", [False, True])
+def test_cross_module_route_to_path_helper_remains_reported(tmp_path, local_cli_caller):
+    # The path checker sees storage.py independently. A same-file CLI call to
+    # the helper must not hide its separate use by a remote web route.
+    cli_caller = (
+        """
+def cli():
+    read_file(sys.argv[1])
+    write_file(sys.argv[1], b"data")
+"""
+        if local_cli_caller
+        else ""
+    )
+    storage = _write(
+        tmp_path,
+        "storage.py",
+        """import sys
+from pathlib import Path
+
+BASE = Path("/srv/uploads")
+
+def read_file(name):
+    return (BASE / name).read_text()
+
+def write_file(name, body):
+    (BASE / name).write_bytes(body)
+"""
+        + cli_caller,
+    )
+    service = _write(
+        tmp_path,
+        "service.py",
+        """from flask import Flask
+from storage import read_file, write_file
+
+app = Flask(__name__)
+
+@app.get("/download/<name>")
+def download(name):
+    return read_file(name)
+
+@app.post("/upload/<name>")
+def upload(name):
+    write_file(name, b"data")
+""",
+    )
+    out = scan_ctx(tmp_path, [service, storage])
+    by_symbol = {
+        symbol: {f["rule_id"] for f in out if f.get("symbol") == symbol}
+        for symbol in ("read_file", "write_file")
+    }
+    assert {"SKY-D215", "SKY-D325"} <= by_symbol["read_file"]
+    assert {"SKY-D215", "SKY-D324"} <= by_symbol["write_file"]
+
+
 def test_nested_route_helpers_keep_parameter_and_closure_sources(tmp_path):
     code = """
 from pathlib import Path
@@ -478,7 +569,7 @@ def upload(name, data):
     assert {"SKY-D215", "SKY-D324"} <= by_symbol["save"]
 
 
-def test_safe_literal_allowlist_forwarded_to_helper_is_not_traversal(tmp_path):
+def test_safe_literal_allowlist_forwarded_to_open_world_helper_is_reported(tmp_path):
     code = """
 from pathlib import Path
 
@@ -494,7 +585,8 @@ def download(name):
 """
     out = _scan_one(tmp_path, "service.py", code)
     helper_rules = {f["rule_id"] for f in out if f.get("symbol") == "load"}
-    assert "SKY-D215" not in helper_rules
+    # A caller in another module may bypass the local allowlist.
+    assert "SKY-D215" in helper_rules
     assert "SKY-D325" in helper_rules
 
 
@@ -520,7 +612,10 @@ def unsafe(name):
     finding = next(
         f for f in out if f["rule_id"] == "SKY-D215" and f.get("symbol") == "load"
     )
-    assert "`unsafe`" in finding["metadata"]["security_evidence"]["source"]
+    assert any(
+        "`unsafe`" in source
+        for source in finding["metadata"]["security_evidence"]["sources"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -545,6 +640,47 @@ def download(name):
     out = _scan_one(tmp_path, "service.py", code)
     assert "SKY-D215" in {
         f["rule_id"] for f in out if f.get("symbol") == "load"
+    }
+
+
+def test_indirect_mutation_of_literal_map_does_not_hide_traversal(tmp_path):
+    code = """
+from pathlib import Path
+
+BASE = Path("/srv/files")
+ALLOWED = {"a": "a.txt"}
+dict.__setitem__(ALLOWED, "a", "../secret")
+
+@app.get("/{name}")
+def download(name):
+    return (BASE / ALLOWED[name]).read_text()
+"""
+    out = _scan_one(tmp_path, "service.py", code)
+    assert {"SKY-D215", "SKY-D325"} <= _path_rules(out)
+
+
+def test_imported_mutable_path_map_does_not_hide_traversal(tmp_path):
+    mapping = _write(
+        tmp_path,
+        "mapping.py",
+        "ALLOWED = {'a': 'a.txt'}\n",
+    )
+    service = _write(
+        tmp_path,
+        "service.py",
+        """from pathlib import Path
+from mapping import ALLOWED
+
+BASE = Path("/srv/files")
+
+@app.get("/{name}")
+def download(name):
+    return (BASE / ALLOWED[name]).read_text()
+""",
+    )
+    out = scan_ctx(tmp_path, [mapping, service])
+    assert {"SKY-D215", "SKY-D325"} <= {
+        f["rule_id"] for f in out if Path(f["file"]).name == "service.py"
     }
 
 

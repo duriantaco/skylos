@@ -30,6 +30,7 @@ ROUTE_DECORATOR_NAMES = frozenset(
     }
 )  # fmt: skip
 _CLI_DECORATORS = frozenset({"command", "group", "callback", "argument", "option"})
+_KNOWN_CLI_DECORATOR_ROOTS = frozenset({"click", "typer"})
 _TOOL_DECORATORS = frozenset({"tool", "resource", "prompt"})
 REQUEST_ANNOTATIONS = frozenset(
     {"Request", "HttpRequest", "WebSocket", "UploadFile", "HTTPConnection"}
@@ -68,6 +69,7 @@ def _params(func: ast.AST) -> list[ast.arg]:
 
 def entrypoint_decorator(func: ast.AST) -> str | None:
     """Return the dotted decorator that makes ``func`` an entry point."""
+    cli_decorator = None
     for decorator in getattr(func, "decorator_list", []) or []:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
         if isinstance(target, ast.Attribute):
@@ -77,13 +79,19 @@ def entrypoint_decorator(func: ast.AST) -> str | None:
         else:
             continue
         if name in ROUTE_DECORATOR_NAMES:
-            return _dotted(target) or name
-    return None
+            dotted = _dotted(target) or name
+            if _entrypoint_kind(dotted) != "CLI parameter":
+                return dotted
+            cli_decorator = dotted
+    return cli_decorator
 
 
 def _entrypoint_kind(decorator: str) -> str:
     last = decorator.rsplit(".", 1)[-1]
-    if last in _CLI_DECORATORS:
+    root = decorator.split(".", 1)[0]
+    # A bare `.command()` can also expose a Discord/chat bot to remote users.
+    # Only known Click/Typer decorators prove operator-owned CLI input.
+    if last in _CLI_DECORATORS and root in _KNOWN_CLI_DECORATOR_ROOTS:
         return "CLI parameter"
     if last in _TOOL_DECORATORS:
         return "MCP/agent tool argument"
@@ -153,71 +161,6 @@ def _immediate_nested_functions(func: ast.AST):
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _safe_literal_allowlists(module: ast.AST | None) -> set[str]:
-    """Module dictionaries that can only select fixed, relative filenames."""
-    if module is None:
-        return set()
-    candidates: dict[str, ast.Assign] = {}
-    for statement in getattr(module, "body", []):
-        if not (
-            isinstance(statement, ast.Assign)
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name)
-            and isinstance(statement.value, ast.Dict)
-        ):
-            continue
-        values = statement.value.values
-        if values and all(
-            isinstance(value, ast.Constant)
-            and isinstance(value.value, str)
-            and value.value not in {"", ".", ".."}
-            and not any(char in value.value for char in "/\\\x00")
-            for value in values
-        ):
-            candidates[statement.targets[0].id] = statement
-
-    # A later write, mutation, or alias makes the values unknown.
-    invalid: set[str] = set()
-    parents = {
-        id(child): parent
-        for parent in ast.walk(module)
-        for child in ast.iter_child_nodes(parent)
-    }
-    for node in ast.walk(module):
-        if isinstance(node, ast.Name) and node.id in candidates:
-            if isinstance(node.ctx, (ast.Store, ast.Del)):
-                if node is not candidates[node.id].targets[0]:
-                    invalid.add(node.id)
-            elif isinstance(node.ctx, ast.Load):
-                parent = parents.get(id(node))
-                lookup = isinstance(parent, ast.Subscript) and parent.value is node
-                membership = (
-                    isinstance(parent, ast.Compare)
-                    and node in parent.comparators
-                    and any(isinstance(op, (ast.In, ast.NotIn)) for op in parent.ops)
-                )
-                if not (lookup or membership):
-                    invalid.add(node.id)
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
-            targets = (
-                node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
-            )
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    if node is not candidates.get(target.id):
-                        invalid.add(target.id)
-                elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
-                    invalid.add(target.value.id)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.attr in {"clear", "pop", "popitem", "setdefault", "update", "__setitem__"}
-        ):
-            invalid.add(node.func.value.id)
-    return set(candidates) - invalid
-
-
 def _attribute_source(node: ast.Attribute, request_names: set[str]) -> str | None:
     dotted = _dotted(node)
     segments = dotted.split(".") if dotted else []
@@ -257,20 +200,12 @@ def _direct_sources(
     node: ast.AST,
     origins: dict[str, list[str]],
     request_names: set[str],
-    bounded_lookups: set[str] | None = None,
 ) -> list[str]:
     """Source labels referenced anywhere inside ``node``, in source order."""
     found: list[str] = []
     stack = [node]
     while stack:
         sub = stack.pop()
-        if (
-            bounded_lookups
-            and isinstance(sub, ast.Subscript)
-            and isinstance(sub.value, ast.Name)
-            and sub.value.id in bounded_lookups
-        ):
-            continue
         labels = _node_sources(sub, origins, request_names)
         if not labels:
             stack.extend(reversed(list(ast.iter_child_nodes(sub))))
@@ -294,14 +229,12 @@ class _FunctionSources:
         module: ast.AST | None,
         incoming: dict[str, list[str]] | None = None,
         traversal_incoming: dict[str, list[str]] | None = None,
-        safe_allowlists: set[str] | None = None,
     ):
         self.func = func
         self.request_names: set[str] = set(REQUEST_NAMES)
         # name -> human label of the original untrusted source
         self.origins: dict[str, list[str]] = {}
         self.traversal_origins: dict[str, list[str]] = {}
-        self.safe_allowlists = set(safe_allowlists or ())
         body: list[ast.AST] = []
         if func is not None:
             decorator = entrypoint_decorator(func)
@@ -316,10 +249,6 @@ class _FunctionSources:
                     ]
                     self.traversal_origins[param.arg] = list(self.origins[param.arg])
             body = list(_module_level_nodes(func))
-            local_bindings = {arg.arg for arg in _params(func)}
-            for node in body:
-                local_bindings.update(_assign_parts(node)[1])
-            self.safe_allowlists.difference_update(local_bindings)
         elif module is not None:
             body = list(_module_level_nodes(module))
         for name, labels in (incoming or {}).items():
@@ -368,12 +297,7 @@ class _FunctionSources:
         return _direct_sources(expr, self.origins, self.request_names)
 
     def traversal_sources_in(self, expr: ast.AST) -> list[str]:
-        return _direct_sources(
-            expr,
-            self.traversal_origins,
-            self.request_names,
-            self.safe_allowlists,
-        )
+        return _direct_sources(expr, self.traversal_origins, self.request_names)
 
     def direct_sources_in(self, expr: ast.AST) -> list[str]:
         """Sources written directly in an expression, excluding derived names."""
@@ -406,7 +330,6 @@ class UntrustedSourceIndex:
     ):
         self.module = module
         self.follow_local_calls = follow_local_calls
-        self.safe_allowlists = _safe_literal_allowlists(module) if follow_local_calls else set()
         self._cache: dict[int, _FunctionSources] = {}
         self._calls_indexed = False
 
@@ -512,12 +435,7 @@ class UntrustedSourceIndex:
                     if keyword.arg in param_names:
                         edges.append((id(caller), id(callee), keyword.arg, keyword.value))
 
-        facts = {
-            id(func): _FunctionSources(
-                func, None, safe_allowlists=self.safe_allowlists
-            )
-            for func in functions
-        }
+        facts = {id(func): _FunctionSources(func, None) for func in functions}
         incoming: dict[int, dict[str, list[str]]] = {id(func): {} for func in functions}
         traversal_incoming: dict[int, dict[str, list[str]]] = {
             id(func): {} for func in functions
@@ -581,7 +499,6 @@ class UntrustedSourceIndex:
                         None,
                         incoming[fid],
                         traversal_incoming[fid],
-                        self.safe_allowlists,
                     )
         self._cache.update(facts)
 
@@ -593,7 +510,6 @@ class UntrustedSourceIndex:
             facts = _FunctionSources(
                 func,
                 self.module if func is None else None,
-                safe_allowlists=self.safe_allowlists,
             )
             self._cache[key] = facts
         return facts
