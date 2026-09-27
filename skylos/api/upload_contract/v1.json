@@ -5,7 +5,7 @@
   "finding": {
     "file_path": {
       "normalize": [
-        "trim surrounding whitespace",
+        "trim surrounding ASCII whitespace only (space, tab, CR, LF, vertical tab, form feed); no other characters are trimmed",
         "percent-decode once (leave the value unchanged if it is not valid percent-encoding)",
         "replace backslashes with forward slashes",
         "strip a leading file: scheme and its slashes",
@@ -45,12 +45,14 @@
           "undefined"
         ],
         "description": "Case-insensitive. Treated exactly like an invalid path: stored without a location, with a warning."
-      }
+      },
+      "max_length_unit": "Unicode code points"
     },
     "line_number": {
       "type": "integer",
       "min": 0,
-      "on_invalid": "store_as_0"
+      "on_invalid": "store_as_0",
+      "accept": "a JSON integer, or a string of decimal digits (converted to an integer)"
     },
     "rule_id": {
       "min_length": 1,
@@ -124,10 +126,14 @@
     },
     "idempotency_retention_days": 8,
     "client_resend_window_days": 7,
-    "client_resend_rule": "A client resends the exact bytes it originally sent (never a re-serialised body) with the same Idempotency-Key, and only within client_resend_window_days."
+    "client_resend_rule": "A client resends the exact bytes it originally sent (never a re-serialised body) with the same Idempotency-Key, and only within client_resend_window_days.",
+    "retryable_conflict": "A 409 whose body has retryable: true (e.g. UPLOAD_IN_PROGRESS) is retried after Retry-After, within a total retry budget of at least 300 seconds.",
+    "client_read_timeout_seconds": 270
   },
   "pull_request_scans": {
     "location_less_findings": "fail_closed",
-    "rule": "On a pull-request scan, a finding without a file location counts as new unless the baseline scan has a finding with the same rule_id and no location. If there is no baseline, it counts as new. The check summary says how many findings were compared with the baseline instead of the diff."
+    "rule": "On a pull-request scan, a finding without a file location counts as new unless the baseline scan has a finding with the same rule_id and no location. If there is no baseline, it counts as new. The check summary says how many findings were compared with the baseline instead of the diff.",
+    "repository_scope_findings": "Repository-level findings ('.') are compared with the baseline by rule_id, like location-less findings: new unless the baseline has the same rule at '.'.",
+    "line_zero_in_changed_file": "A finding on line 0 (or with a line_number warning) in a file the pull request changed counts as new."
   }
 }

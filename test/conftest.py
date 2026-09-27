@@ -199,6 +199,8 @@ def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     override these variables.
     """
     monkeypatch.setenv("SKYLOS_UPLOAD_RETRY_BASE_SECONDS", "0")
+    # A retryable 409 is otherwise waited out for up to 300s of real time.
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "0")
     monkeypatch.setenv("SKYLOS_UPLOAD_CONTRACT_CHECK", "0")
     monkeypatch.setenv(
         "SKYLOS_PENDING_UPLOAD_DIR",

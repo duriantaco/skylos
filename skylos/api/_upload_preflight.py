@@ -17,6 +17,7 @@ from skylos.api._upload_contract import (
     repository_scope_rule_ids,
 )
 from skylos.api._upload_paths import (
+    ASCII_WHITESPACE,
     encode_upload_path,
     normalize_contract_file_path,
     resolve_upload_location,
@@ -39,9 +40,9 @@ def _project_root_path(project_root: Any) -> str | None:
 
 def _is_base_directory(finding: dict[str, Any], base: str | None) -> bool:
     raw = finding.get("file_path") or finding.get("file")
-    if not isinstance(raw, str) or not raw.strip():
+    if not isinstance(raw, str) or not raw.strip(ASCII_WHITESPACE):
         return False
-    if raw.strip() in (".", "./"):
+    if raw.strip(ASCII_WHITESPACE) in (".", "./"):
         return True
     if base is None or not os.path.isabs(raw):
         return False
@@ -51,21 +52,46 @@ def _is_base_directory(finding: dict[str, Any], base: str | None) -> bool:
         return False
 
 
+# What the server's surrounding-whitespace check for rule_id treats as
+# whitespace (JavaScript String.prototype.trim): Unicode spaces and line
+# terminators plus U+FEFF, but not U+001C-U+001F or U+0085.
+_JS_TRIM_CHARACTERS = (
+    "".join(
+        ch
+        for ch in map(chr, range(0x3001))
+        if ch.isspace() and ch not in "\x1c\x1d\x1e\x1f\x85"
+    )
+    + "\ufeff"
+)
+_DIGITS_RE = re.compile(r"[0-9]+")
+
+
 def _normalize_rule_id(value: Any, max_length: int) -> str:
-    if isinstance(value, str) and len(value) <= max_length and value.strip() == value:
-        if value and not _CONTROL_CHARACTER_RE.search(value):
-            return value
+    """A rule id the server accepts as is (lengths are Unicode code points)."""
+    if (
+        isinstance(value, str)
+        and value
+        and len(value) <= max_length
+        and value.strip(_JS_TRIM_CHARACTERS) == value
+        and not _CONTROL_CHARACTER_RE.search(value)
+    ):
+        return value
     text = _CONTROL_CHARACTER_RE.sub("", str(value if value is not None else ""))
-    text = text.strip()[:max_length].strip()
+    text = text.strip(_JS_TRIM_CHARACTERS)[:max_length].strip(_JS_TRIM_CHARACTERS)
     return text or "UNKNOWN"
 
 
 def _normalize_line(value: Any) -> int:
-    try:
-        line = int(value)
-    except (TypeError, ValueError, OverflowError):
+    """A JSON integer, or a string of decimal digits, as the contract accepts."""
+    if isinstance(value, bool):
         return 0
-    return max(line, 0)
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float) and value.is_integer():
+        return max(int(value), 0)
+    if isinstance(value, str) and _DIGITS_RE.fullmatch(value):
+        return int(value)
+    return 0
 
 
 @dataclass(frozen=True)

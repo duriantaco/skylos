@@ -27,6 +27,8 @@ from skylos.api._upload_contract import (
 
 __all__ = [
     "RetryPolicy",
+    "conflict_delay",
+    "is_retryable_conflict",
     "UploadFailure",
     "UploadSession",
     "backoff_delay",
@@ -43,9 +45,14 @@ __all__ = [
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_BASE_SECONDS = 1.0
 DEFAULT_MAX_SECONDS = 30.0
+# Contract transport.retryable_conflict: a 409 marked retryable (for example
+# UPLOAD_IN_PROGRESS) is retried after Retry-After within at least 300s.
+DEFAULT_CONFLICT_BUDGET_SECONDS = 300.0
+DEFAULT_CONFLICT_DELAY_SECONDS = 15.0
+MAX_CONFLICT_DELAY_SECONDS = 60.0
 
 _MAX_TEXT = 300
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
 
 SAVED_HINT = "The scan was saved; run 'skylos upload --retry' to send it."
 
@@ -68,13 +75,16 @@ class RetryPolicy:
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     base_seconds: float = DEFAULT_BASE_SECONDS
     max_seconds: float = DEFAULT_MAX_SECONDS
+    conflict_budget_seconds: float = DEFAULT_CONFLICT_BUDGET_SECONDS
 
     @classmethod
     def from_env(cls) -> "RetryPolicy":
         """Defaults, overridable for tests and slow networks.
 
         SKYLOS_UPLOAD_MAX_ATTEMPTS (1-10), SKYLOS_UPLOAD_RETRY_BASE_SECONDS and
-        SKYLOS_UPLOAD_RETRY_MAX_SECONDS (0-300).
+        SKYLOS_UPLOAD_RETRY_MAX_SECONDS (0-300), and
+        SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS (0-3600) for how long a
+        "still processing" answer is waited out.
         """
         attempts = int(
             _env_float(
@@ -87,7 +97,18 @@ class RetryPolicy:
         cap = _env_float(
             "SKYLOS_UPLOAD_RETRY_MAX_SECONDS", DEFAULT_MAX_SECONDS, low=0, high=300
         )
-        return cls(max_attempts=attempts, base_seconds=base, max_seconds=cap)
+        budget = _env_float(
+            "SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS",
+            DEFAULT_CONFLICT_BUDGET_SECONDS,
+            low=0,
+            high=3600,
+        )
+        return cls(
+            max_attempts=attempts,
+            base_seconds=base,
+            max_seconds=cap,
+            conflict_budget_seconds=budget,
+        )
 
 
 def backoff_delay(
@@ -455,7 +476,9 @@ def describe_http_failure(
         _header(response, "X-Request-Id"), 120
     )
     statuses = (
-        retryable_status_set if retryable_status_set is not None else retryable_statuses()
+        retryable_status_set
+        if retryable_status_set is not None
+        else retryable_statuses()
     )
     body_retryable = body.get("retryable")
     if isinstance(body_retryable, bool):
@@ -475,12 +498,27 @@ def describe_http_failure(
 
 
 def should_retry_now(failure: UploadFailure) -> bool:
-    """Retry inside this run only for transport errors and contract statuses."""
+    """Retry inside this run for transport errors and contract statuses.
+
+    A retryable 409 is handled separately (see ``is_retryable_conflict``).
+    """
     if failure.status is None:
         return failure.retryable
     if failure.status not in retryable_statuses():
         return False
     return failure.retryable
+
+
+def is_retryable_conflict(failure: UploadFailure) -> bool:
+    """A 409 the server marked retryable, e.g. the same upload still running."""
+    return failure.status == 409 and failure.retryable
+
+
+def conflict_delay(failure: UploadFailure) -> float:
+    retry_after = failure.retry_after
+    if retry_after is None:
+        retry_after = DEFAULT_CONFLICT_DELAY_SECONDS
+    return min(max(retry_after, 1.0), MAX_CONFLICT_DELAY_SECONDS)
 
 
 def describe_transport_exception(exc: BaseException, url: str) -> UploadFailure:

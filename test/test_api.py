@@ -402,7 +402,9 @@ class TestSkylosApi(unittest.TestCase):
         self.assertIn("HTTP 500", result["error"])
         self.assertNotIn("Internal Server Error", result["error"])
         self.assertTrue(result["retryable"])
-        keys = {c.kwargs["headers"]["Idempotency-Key"] for c in mock_post.call_args_list}
+        keys = {
+            c.kwargs["headers"]["Idempotency-Key"] for c in mock_post.call_args_list
+        }
         self.assertEqual(len(keys), 1)
 
     @patch("skylos.api._should_use_legacy_inline_report_upload", return_value=False)
@@ -452,8 +454,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(result["scan_id"], "scan_compact_123")
         self.assertEqual(mock_post.call_count, 5)
         init_keys = {
-            c.kwargs["headers"]["Idempotency-Key"]
-            for c in mock_post.call_args_list[:4]
+            c.kwargs["headers"]["Idempotency-Key"] for c in mock_post.call_args_list[:4]
         }
         fallback_key = mock_post.call_args_list[4].kwargs["headers"]["Idempotency-Key"]
         # Every init retry reuses one key; the compact fallback is a different
@@ -1285,10 +1286,13 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 2)
         self.assertEqual(mock_put.call_count, 2)
         self.assertEqual(
-            mock_post.call_args_list[0].kwargs["timeout"], api.NETWORK_TIMEOUT_LONG
+            # Contract client_read_timeout_seconds for the report endpoints.
+            mock_post.call_args_list[0].kwargs["timeout"],
+            (api.NETWORK_TIMEOUT_DEFAULT, 270.0),
         )
         self.assertEqual(
-            mock_post.call_args_list[1].kwargs["timeout"], api.UPLOAD_TIMEOUT
+            mock_post.call_args_list[1].kwargs["timeout"],
+            (api.NETWORK_TIMEOUT_DEFAULT, 270.0),
         )
         for call in mock_put.call_args_list:
             self.assertIs(call.kwargs["allow_redirects"], False)

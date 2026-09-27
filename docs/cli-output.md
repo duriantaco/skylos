@@ -335,7 +335,14 @@ never dropped:
 503 and 504 are retried: at most 4 attempts, with exponential backoff and full
 jitter (1s base, 30s cap). A `Retry-After` header (seconds or HTTP date) is
 honoured; if it asks for more than 30 seconds the CLI stops and saves the scan
-instead of waiting. Other 4xx responses are never retried. Every request of one
+instead of waiting. A 409 that Cloud marks retryable (for example
+`UPLOAD_IN_PROGRESS`: the same upload is still being processed, usually after a
+slow first attempt) is retried after its `Retry-After` for up to 300 seconds in
+total, without using up the 4 attempts; the finished scan then comes back as a
+replay. Other 4xx responses are never retried. Requests to the report
+endpoints wait up to 270 seconds for an answer (the contract's
+`client_read_timeout_seconds`), so a slow but working upload is not cut off.
+Every request of one
 upload, including its retries, the large-scan `init`/`complete` calls and later
 resends, carries the same `Idempotency-Key` (a UUID v4) plus
 `X-Skylos-Upload-Contract: 1` and `X-Skylos-Cli-Version`, so Cloud can tell a
@@ -354,9 +361,13 @@ Upload failed: Skylos Cloud had a temporary problem (HTTP 503). The scan was sav
 
 **Saved uploads.** When an upload fails for a temporary reason (network,
 timeout, 5xx, 429, or Cloud still processing the same upload) or is
-interrupted with Ctrl-C or SIGTERM, the scan is saved to
-`.skylos/pending-uploads/<idempotency-key>.json.gz` in the repository (file
-mode 0600, folder 0700, git-ignored through a `.gitignore` inside the folder).
+interrupted with Ctrl-C or SIGTERM, the scan is saved outside the repository,
+in your own state folder:
+`~/.skylos/pending-uploads/<repo-id>/<idempotency-key>.json.gz` (`<repo-id>`
+is derived from the repository's path; files 0600, folders 0700). Each file is
+signed with HMAC-SHA256 using a key kept in
+`~/.skylos/pending-uploads/.record-key` (0600), so a file you did not write,
+for example one committed to a repository, is never sent under your token.
 The file holds the exact request bytes that were sent (and, for large scans,
 the exact artifact files), plus the project id, endpoint, key, time and CLI
 version. It never holds your token, and SECRET findings never carry a code
@@ -370,14 +381,19 @@ skylos upload --retry   # resend them with their original keys
 
 A resend sends the saved bytes unchanged with the original key, so Cloud
 recognises it. A resent scan that Cloud accepts, or already had, is deleted.
-One that Cloud rejects for a reason a retry cannot fix moves to
-`.skylos/pending-uploads/failed/` with a `<key>.reason.json`. A scan saved for
-a different `SKYLOS_API_URL` or linked project is not sent. Scans are only
+One that Cloud rejects for a reason a retry cannot fix moves to the queue's
+`failed/` folder with a `<key>.reason.json`. A scan is only sent to the same
+endpoint and the same linked project it was saved for. Scans are only
 resent within 7 days (the contract's `client_resend_window_days`; Cloud keeps
 keys for 8); older ones move to `failed/` with the reason
 `too old to resend safely; rerun the scan`. The folder keeps at most 20 scans
 and 200 MB, dropping the oldest first. `skylos upload --retry` exits 1 while
 any scan is still unsent.
+
+Earlier versions of this feature saved uploads inside the repository, in
+`.skylos/pending-uploads/`. Those files are never sent; `skylos upload` and
+`skylos . --upload` print one line saying where they are. Rerun the scan to
+upload, then delete that folder.
 
 **Large scans** (more than 4 MB inline, `SKYLOS_INLINE_UPLOAD_LIMIT_BYTES`) use
 the artifact path automatically: `init`, a gzip upload to storage, then
@@ -396,7 +412,8 @@ uploads and no automatic re-upload.
 | `SKYLOS_UPLOAD_MAX_ATTEMPTS` | `4` | Attempts per request (1-10). |
 | `SKYLOS_UPLOAD_RETRY_BASE_SECONDS` | `1` | Backoff base. |
 | `SKYLOS_UPLOAD_RETRY_MAX_SECONDS` | `30` | Backoff and `Retry-After` cap. |
-| `SKYLOS_PENDING_UPLOAD_DIR` | `.skylos/pending-uploads` | Where saved uploads go. |
+| `SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS` | `300` | How long a retryable 409 is waited out. |
+| `SKYLOS_PENDING_UPLOAD_DIR` | `~/.skylos/pending-uploads` | Root of the per-user saved-upload queue. |
 | `SKYLOS_UPLOAD_CONTRACT_CHECK` | `1` | `0` turns the contract-version check off. |
 
 ## Selectable Terminal UI

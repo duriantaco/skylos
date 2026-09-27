@@ -17,9 +17,10 @@ def build_upload_parser() -> argparse.ArgumentParser:
         prog="skylos upload",
         description=(
             "Resend scans whose upload to Skylos Cloud did not finish. A scan is "
-            "saved in .skylos/pending-uploads/ when an upload fails because of the "
-            "network, a timeout, a server error or rate limiting, or when the upload "
-            "is interrupted. Saved scans expire after 7 days."
+            "saved in ~/.skylos/pending-uploads/ (one signed folder per repository) "
+            "when an upload fails because of the network, a timeout, a server error "
+            "or rate limiting, or when the upload is interrupted. Saved scans are "
+            "resent for 7 days."
         ),
     )
     action = parser.add_mutually_exclusive_group()
@@ -29,7 +30,7 @@ def build_upload_parser() -> argparse.ArgumentParser:
         help=(
             "Resend every saved scan with its original idempotency key, so Skylos "
             "Cloud does not save or charge a scan twice. Sent scans are deleted; "
-            "scans Cloud rejects move to .skylos/pending-uploads/failed/."
+            "scans Cloud rejects move to the queue's failed/ folder."
         ),
     )
     action.add_argument(
@@ -51,11 +52,13 @@ def _saved_at(created_at: float) -> str:
 
 
 def _list(console: Console, as_json: bool) -> int:
-    from skylos.api import _get_repo_root_for_link
+    from skylos.api import _get_repo_root_for_link, legacy_pending_notice
     from skylos.api._pending_uploads import list_pending_uploads, pending_uploads_dir
 
-    directory = pending_uploads_dir(_get_repo_root_for_link())
+    root = _get_repo_root_for_link()
+    directory = pending_uploads_dir(root)
     pending, unreadable = list_pending_uploads(directory)
+    legacy_notice = legacy_pending_notice(root)
     if as_json:
         print(
             json.dumps(
@@ -68,18 +71,21 @@ def _list(console: Console, as_json: bool) -> int:
                             "kind": item.record.get("kind"),
                             "mode": item.record.get("mode"),
                             "finding_count": item.finding_count,
-                            "last_error_code": (item.record.get("last_error") or {}).get(
-                                "code"
-                            ),
+                            "last_error_code": (
+                                item.record.get("last_error") or {}
+                            ).get("code"),
                         }
                         for item in pending
                     ],
                     "unreadable": unreadable,
+                    "legacy_notice": legacy_notice,
                 },
                 indent=2,
             )
         )
         return 0
+    if legacy_notice:
+        console.print(f"[yellow]{escape(legacy_notice)}[/yellow]")
     if not pending:
         console.print("No saved uploads.")
         return 0
@@ -94,7 +100,9 @@ def _list(console: Console, as_json: bool) -> int:
             f"[dim]({escape(str(code))}, key {escape(item.idempotency_key[:8])})[/dim]"
         )
     if unreadable:
-        console.print(f"[dim]{unreadable} saved file(s) could not be read and were skipped.[/dim]")
+        console.print(
+            f"[dim]{unreadable} saved file(s) could not be read or verified and were skipped.[/dim]"
+        )
     console.print("Run [bold]skylos upload --retry[/bold] to send them.")
     return 0
 
@@ -111,6 +119,8 @@ def _retry(console: Console, as_json: bool) -> int:
         print(json.dumps(summary, indent=2, default=str))
         return 1 if summary.get("error") or _undelivered(summary) else 0
 
+    if summary.get("legacy_notice"):
+        console.print(f"[yellow]{escape(summary['legacy_notice'])}[/yellow]")
     if summary.get("error"):
         console.print(f"[red]Upload failed:[/red] {escape(str(summary['error']))}")
         return 1

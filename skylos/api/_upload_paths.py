@@ -16,6 +16,7 @@ from urllib.parse import unquote_to_bytes
 from skylos.api._upload_contract import field_max_length, placeholder_paths
 
 __all__ = [
+    "ASCII_WHITESPACE",
     "REASON_CONTROL_CHARACTER",
     "REASON_DOT_SEGMENT",
     "REASON_EMPTY",
@@ -44,6 +45,11 @@ REASON_TOO_LONG = "too_long"
 # CLI-side name for a placeholder such as "unknown" (the contract treats it
 # like any other invalid path). The CLI never sends one; see apply_upload_contract.
 REASON_PLACEHOLDER = "placeholder"
+
+# The contract trims surrounding ASCII whitespace only (space, tab, CR, LF,
+# vertical tab, form feed); Python's str.strip() would also remove
+# U+001C-U+001F, U+0085 and Unicode spaces.
+ASCII_WHITESPACE = " \t\r\n\x0b\x0c"
 
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:/")
@@ -76,7 +82,7 @@ def normalize_contract_file_path(value: Any) -> str | None:
     """
     if not isinstance(value, str):
         return None
-    text = value.strip()
+    text = value.strip(ASCII_WHITESPACE)
     text = _percent_decode_once(text)
     text = text.replace("\\", "/")
     text = _FILE_SCHEME_RE.sub("", text)
@@ -158,15 +164,15 @@ def _inside_base(local: str, base_dir: str | None) -> str | None:
         # A symlinked temp or home folder (/var vs /private/var) can make the
         # same file look outside the repository; compare real paths too.
         try:
-            rel = _relative_inside(
-                os.path.realpath(local), os.path.realpath(base_dir)
-            )
+            rel = _relative_inside(os.path.realpath(local), os.path.realpath(base_dir))
         except (OSError, ValueError):
             rel = None
     return rel
 
 
-def _is_directory(base_dir: str | None, path: str, cache: dict[str, bool] | None) -> bool:
+def _is_directory(
+    base_dir: str | None, path: str, cache: dict[str, bool] | None
+) -> bool:
     if not base_dir:
         return False
     if cache is not None and path in cache:
@@ -196,7 +202,7 @@ def resolve_upload_location(
     raw = finding.get("file_path")
     if not isinstance(raw, str):
         return None
-    text = raw.strip()
+    text = raw.strip(ASCII_WHITESPACE)
     if not text or text.lower() in placeholder_paths():
         return None
     if _looks_absolute(text):

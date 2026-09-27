@@ -1,8 +1,13 @@
 """Scans whose upload failed for a reason worth retrying.
 
-A failed upload is written to ``<project>/.skylos/pending-uploads/`` as
-``<idempotency-key>.json.gz`` (mode 0600, directory 0700, git-ignored) so
-``skylos upload --retry`` can send it again with the same idempotency key.
+A failed upload is saved outside the repository, in a per-user state folder:
+``~/.skylos/pending-uploads/<repo-id>/<idempotency-key>.json.gz`` (files
+0600, folders 0700), where ``<repo-id>`` is derived from the repository's
+path. ``skylos upload --retry`` sends it again with the same idempotency key.
+
+Each record is signed with HMAC-SHA256 using a per-user key kept 0600 in the
+state folder, so a file written by anyone else (for example one committed to
+a repository) is never sent under the user's token.
 
 Per the upload contract (``transport.client_resend_rule``) the record keeps
 the exact request bytes that were sent, never a body to be re-serialised, and
@@ -16,6 +21,8 @@ from __future__ import annotations
 import base64
 import contextlib
 import gzip
+import hashlib
+import hmac
 import io
 import json
 import logging
@@ -37,6 +44,7 @@ __all__ = [
     "TOO_OLD_REASON",
     "count_pending_uploads",
     "decode_request_body",
+    "legacy_pending_uploads",
     "delete_pending_upload",
     "expire_pending_uploads",
     "list_pending_uploads",
@@ -46,9 +54,15 @@ __all__ = [
 ]
 
 RECORD_FORMAT = "skylos-pending-upload"
-RECORD_VERSION = 2
+RECORD_VERSION = 3
+# Root of the per-user queue; one sub-folder per repository.
 PENDING_DIR_ENV = "SKYLOS_PENDING_UPLOAD_DIR"
-PENDING_RELATIVE_DIR = Path(".skylos") / "pending-uploads"
+# Where Skylos versions before the per-user queue saved uploads. Those files
+# are never sent; the user is told where they are.
+LEGACY_RELATIVE_DIR = Path(".skylos") / "pending-uploads"
+KEY_FILENAME = ".record-key"
+_KEY_BYTES = 32
+_MAGIC = b"SKYLOS-PENDING-UPLOAD 3 "
 FAILED_DIRNAME = "failed"
 TOO_OLD_REASON = "too old to resend safely; rerun the scan"
 
@@ -64,7 +78,6 @@ _KEY_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 _SUFFIX = ".json.gz"
-_GITIGNORE_BODY = "# Written by Skylos: scans waiting for 'skylos upload --retry'.\n*\n"
 
 
 def resend_window_seconds() -> int:
@@ -95,13 +108,47 @@ def is_valid_key(key: Any) -> bool:
     return isinstance(key, str) and bool(_KEY_RE.match(key))
 
 
-def pending_uploads_dir(project_root: str | os.PathLike | None) -> Path | None:
+def pending_root() -> Path:
+    """The per-user queue root (``SKYLOS_PENDING_UPLOAD_DIR`` overrides it)."""
     override = os.getenv(PENDING_DIR_ENV, "").strip()
     if override:
         return Path(override).expanduser()
+    return Path.home() / ".skylos" / "pending-uploads"
+
+
+def repository_queue_id(project_root: str | os.PathLike) -> str:
+    try:
+        resolved = os.path.realpath(os.fspath(project_root))
+    except (OSError, ValueError):
+        resolved = os.path.abspath(os.fspath(project_root))
+    return hashlib.sha256(resolved.encode("utf-8", "surrogatepass")).hexdigest()[:24]
+
+
+def pending_uploads_dir(project_root: str | os.PathLike | None) -> Path | None:
+    """This repository's queue folder in the per-user state folder."""
     if project_root is None:
         return None
-    return Path(project_root) / PENDING_RELATIVE_DIR
+    return pending_root() / repository_queue_id(project_root)
+
+
+def legacy_pending_uploads(
+    project_root: str | os.PathLike | None,
+) -> tuple[Path | None, int]:
+    """Uploads an older Skylos saved inside the repository; never sent."""
+    if project_root is None:
+        return None, 0
+    directory = Path(project_root) / LEGACY_RELATIVE_DIR
+    if not _is_safe_dir(directory):
+        return None, 0
+    try:
+        count = sum(
+            1
+            for path in directory.iterdir()
+            if path.name.endswith(_SUFFIX) and _file_info(path) is not None
+        )
+    except OSError:
+        return None, 0
+    return (directory, count) if count else (None, 0)
 
 
 def _is_safe_dir(path: Path) -> bool:
@@ -112,43 +159,78 @@ def _is_safe_dir(path: Path) -> bool:
     return stat.S_ISDIR(info.st_mode)
 
 
-def _ensure_dir(directory: Path) -> bool:
-    """Create the pending directory without following symlinks."""
-    if os.getenv(PENDING_DIR_ENV, "").strip():
-        try:
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        except OSError:
-            return False
-        return _is_safe_dir(directory)
-    for current in (directory.parent, directory):
-        if current.is_symlink():
-            return False
-        if not current.exists():
-            try:
-                current.mkdir(mode=0o700)  # skylos: ignore[SKY-D215] project-local upload queue
-            except FileExistsError:
-                pass
-            except OSError:
-                return False
-        if not _is_safe_dir(current):
-            return False
-    return True
-
-
-def _ensure_gitignore(directory: Path) -> None:
-    gitignore = directory / ".gitignore"
-    if gitignore.is_symlink() or gitignore.exists():
-        return
+def _private_dir(path: Path) -> bool:
+    """Create ``path`` (0700) if needed; refuse a symlink or a non-folder."""
+    if path.is_symlink():
+        return False
     try:
-        fd = os.open(  # skylos: ignore[SKY-D215] fixed name inside the no-symlink pending folder
-            gitignore,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o644,
-        )
+        path.mkdir(
+            mode=0o700, exist_ok=True
+        )  # skylos: ignore[SKY-D215] per-user upload queue
     except OSError:
-        return
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(_GITIGNORE_BODY)
+        return False
+    return _is_safe_dir(path)
+
+
+def _ensure_dir(directory: Path) -> bool:
+    """Create the queue root and this repository's folder."""
+    root = directory.parent
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError:
+        return False
+    if not root.is_dir():
+        return False
+    return _private_dir(directory)
+
+
+def _owned_private_file(info: os.stat_result) -> bool:
+    if os.name != "posix":
+        return True
+    return info.st_uid == os.getuid() and not info.st_mode & 0o077
+
+
+def _record_key(root: Path, *, create: bool) -> bytes | None:
+    """The per-user HMAC key (32 random bytes, 0600) in the queue root."""
+    path = root / KEY_FILENAME
+    info = _file_info(path)
+    if info is None:
+        if not create or path.is_symlink():
+            return None
+        key = os.urandom(_KEY_BYTES)
+        try:
+            fd = os.open(  # skylos: ignore[SKY-D215] fixed name in the per-user queue root
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except FileExistsError:
+            return _record_key(root, create=False)
+        except OSError:
+            return None
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(key)
+        return key
+    if not _owned_private_file(info) or info.st_size != _KEY_BYTES:
+        return None
+    try:
+        fd = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )  # skylos: ignore[SKY-D215] fixed name in the per-user queue root
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        key = handle.read(_KEY_BYTES + 1)
+    return key if len(key) == _KEY_BYTES else None
+
+
+def _record_mac(key: bytes, directory: Path, body: bytes) -> str:
+    # Bound to the repository folder, so a record moved to another
+    # repository's queue does not verify there.
+    message = (
+        b"skylos-pending-upload/3\n" + directory.name.encode("utf-8") + b"\n" + body
+    )
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
 def encode_request_body(body: bytes) -> dict[str, str]:
@@ -171,11 +253,13 @@ def decode_request_body(record: dict[str, Any]) -> bytes:
     return body.encode("utf-8")
 
 
-def _gzip_record(record: dict[str, Any]) -> bytes:
+def _signed_record(record: dict[str, Any], key: bytes, directory: Path) -> bytes:
+    body = json.dumps(record, separators=(",", ":")).encode("utf-8")
+    header = _MAGIC + _record_mac(key, directory, body).encode("ascii") + b"\n"
     buffer = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=buffer, mtime=0) as handle:
-        with io.TextIOWrapper(handle, encoding="utf-8") as text:
-            json.dump(record, text, separators=(",", ":"))
+        handle.write(header)
+        handle.write(body)
     return buffer.getvalue()
 
 
@@ -183,7 +267,9 @@ def _write_private_file(path: Path, data: bytes) -> bool:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(tmp, flags, 0o600)  # skylos: ignore[SKY-D215] UUID-named file, no-follow exclusive create
+        fd = os.open(
+            tmp, flags, 0o600
+        )  # skylos: ignore[SKY-D215] UUID-named file, no-follow exclusive create
     except OSError:
         return False
     try:
@@ -322,7 +408,9 @@ def save_pending_upload(
         return None
     if not _ensure_dir(directory):
         return None
-    _ensure_gitignore(directory)
+    key = _record_key(directory.parent, create=True)
+    if key is None:
+        return None
     expire_pending_uploads(directory, now=now)
 
     record = {
@@ -343,7 +431,7 @@ def save_pending_upload(
         "context": context or {},
     }
     try:
-        data = _gzip_record(record)
+        data = _signed_record(record, key, directory)
     except (TypeError, ValueError) as exc:
         logger.debug("Could not serialize pending upload: %s", exc)
         return None
@@ -359,17 +447,18 @@ def save_pending_upload(
     return path
 
 
-def _read_record(path: Path) -> dict[str, Any] | None:
-    info = _file_info(path)
-    if info is None:
+def _read_record(path: Path, key: bytes | None) -> dict[str, Any] | None:
+    """A verified record, or None for anything unreadable or not signed with
+    this user's key."""
+    if key is None:
         return None
-    if os.name == "posix":
-        # Only read files this user wrote privately; a copy planted in the
-        # repository (for example a committed file) is ignored.
-        if info.st_uid != os.getuid() or info.st_mode & 0o077:
-            return None
+    info = _file_info(path)
+    if info is None or not _owned_private_file(info):
+        return None
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))  # skylos: ignore[SKY-D215] UUID-named regular file, no-follow read
+        fd = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )  # skylos: ignore[SKY-D215] UUID-named regular file, no-follow read
     except OSError:
         return None
     try:
@@ -377,10 +466,14 @@ def _read_record(path: Path) -> dict[str, Any] | None:
             data = handle.read(MAX_DECOMPRESSED_BYTES + 1)
     except (OSError, EOFError):
         return None
-    if len(data) > MAX_DECOMPRESSED_BYTES:
+    if len(data) > MAX_DECOMPRESSED_BYTES or not data.startswith(_MAGIC):
+        return None
+    header, _, body = data.partition(b"\n")
+    mac = header[len(_MAGIC) :].decode("ascii", "replace")
+    if not hmac.compare_digest(mac, _record_mac(key, path.parent, body)):
         return None
     try:
-        record = json.loads(data.decode("utf-8"))
+        record = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         return None
     if not isinstance(record, dict):
@@ -402,17 +495,20 @@ def list_pending_uploads(directory: Path | None) -> tuple[list[PendingUpload], i
     now = time.time()
     expire_pending_uploads(directory, now=now)
     window = resend_window_seconds()
+    key = _record_key(directory.parent, create=False)
     pending = []
     skipped = 0
     for path in _entries(directory):
-        record = _read_record(path)
+        record = _read_record(path, key)
         if record is None:
             skipped += 1
             continue
         item = PendingUpload(path=path, record=record)
         if now - item.created_at > window:
             _move_to_failed(
-                path, item.idempotency_key, {"reason": TOO_OLD_REASON, "code": "TOO_OLD"}
+                path,
+                item.idempotency_key,
+                {"reason": TOO_OLD_REASON, "code": "TOO_OLD"},
             )
             continue
         pending.append(item)
@@ -434,7 +530,9 @@ def count_pending_uploads(directory: Path | None) -> int:
     return count
 
 
-def is_within_resend_window(pending: PendingUpload, *, now: float | None = None) -> bool:
+def is_within_resend_window(
+    pending: PendingUpload, *, now: float | None = None
+) -> bool:
     current = time.time() if now is None else now
     return current - pending.created_at <= resend_window_seconds()
 

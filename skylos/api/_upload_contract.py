@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CONTRACT_HEADER",
     "IDEMPOTENCY_HEADER",
+    "client_read_timeout_seconds",
     "client_resend_window_days",
     "contract_sha256",
     "contract_version",
@@ -50,7 +51,15 @@ _FALLBACK_CONTRACT: dict[str, Any] = {
                 "stored_path": ".",
             },
             "placeholder_paths": {
-                "values": ["unknown", "<unknown>", "?", "-", "none", "null", "undefined"]
+                "values": [
+                    "unknown",
+                    "<unknown>",
+                    "?",
+                    "-",
+                    "none",
+                    "null",
+                    "undefined",
+                ]
             },
         },
         "rule_id": {"max_length": 120},
@@ -66,11 +75,13 @@ _FALLBACK_CONTRACT: dict[str, Any] = {
         "retryable_statuses": [408, 425, 429, 500, 502, 503, 504],
         "retry_after_header": "Retry-After",
         "client_resend_window_days": 7,
+        "client_read_timeout_seconds": 270,
     },
 }
 
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 CONTRACT_HEADER = "X-Skylos-Upload-Contract"
+
 
 @functools.lru_cache(maxsize=1)
 def _contract_bytes() -> bytes | None:
@@ -149,6 +160,12 @@ def repository_scope_line() -> int:
 def field_max_length(field: str, default: int) -> int:
     value = _section("finding", field).get("max_length")
     return value if isinstance(value, int) and value > 0 else default
+
+
+def client_read_timeout_seconds() -> int:
+    """How long to wait for a report endpoint's response (contract transport)."""
+    value = _section("transport").get("client_read_timeout_seconds")
+    return value if isinstance(value, int) and value > 0 else 270
 
 
 def client_resend_window_days() -> int:

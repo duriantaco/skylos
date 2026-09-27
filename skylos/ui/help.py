@@ -254,7 +254,7 @@ COMMANDS = [
         "name": "skylos upload --retry",
         "desc": "Resend scans whose upload to Skylos Cloud did not finish",
         "details": [
-            "Scans are saved in .skylos/pending-uploads/ after a network error, timeout, server error, rate limit or interrupted upload",
+            "Scans are saved in ~/.skylos/pending-uploads/ (signed, outside the repository) after a network error, timeout, server error, rate limit or interrupted upload",
             "Each scan is resent with its original idempotency key, so Cloud never saves or charges it twice",
             "Use skylos upload --list to see saved scans; they expire after 7 days",
         ],
@@ -402,9 +402,7 @@ COMMANDS = [
 def print_command_overview(console):
     from rich.table import Table
 
-    console.print(
-        f"\n[bold cyan]Skylos[/bold cyan] [dim]v{skylos.__version__}[/dim]"
-    )
+    console.print(f"\n[bold cyan]Skylos[/bold cyan] [dim]v{skylos.__version__}[/dim]")
     console.print("[bold]Choose by what you need to check[/bold]\n")
 
     table = Table(show_header=True, box=None, padding=(0, 2), pad_edge=False)

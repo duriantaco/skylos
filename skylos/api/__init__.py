@@ -68,10 +68,14 @@ from skylos.api._pending_uploads import (
     decode_request_body as _decode_request_body,
     delete_pending_upload as _delete_pending_upload,
     is_within_resend_window as _pending_within_resend_window,
+    legacy_pending_uploads as _legacy_pending_uploads,
     list_pending_uploads as _list_pending_uploads,
     mark_pending_upload_failed as _mark_pending_upload_failed,
     pending_uploads_dir as _pending_uploads_dir,
     save_pending_upload as _save_pending_upload,
+)
+from skylos.api._upload_contract import (
+    client_read_timeout_seconds as _client_read_timeout_seconds,
 )
 from skylos.api._upload_paths import upload_location_uri
 from skylos.api._upload_preflight import apply_upload_contract, strip_secret_snippets
@@ -81,6 +85,8 @@ from skylos.api._upload_transport import (
     UploadFailure,
     UploadSession,
     backoff_delay as _backoff_delay,
+    conflict_delay as _conflict_delay,
+    is_retryable_conflict as _is_retryable_conflict,
     describe_http_failure as _describe_http_failure,
     describe_transport_exception as _describe_transport_exception,
     is_idempotent_replay as _is_idempotent_replay,
@@ -98,6 +104,7 @@ from skylos.api._urls import (
 )
 
 from skylos.constants import (
+    NETWORK_TIMEOUT_DEFAULT,
     NETWORK_TIMEOUT_SHORT,
     NETWORK_TIMEOUT_LONG,
     SNIPPET_CONTEXT_LINES as SNIPPET_CONTEXT_LINES,
@@ -867,9 +874,7 @@ def _prepare_report_upload(
         analyzer_owned=analyzer_owned,
         allow_empty_location=not gitlab_managed,
         location_uri=(
-            None
-            if gitlab_managed
-            else (lambda raw: upload_location_uri(raw, base_dir))
+            None if gitlab_managed else (lambda raw: upload_location_uri(raw, base_dir))
         ),
     )
     core_payload = exporter.generate()
@@ -1487,20 +1492,14 @@ def _post_json_with_retries(
     )
     policy = RetryPolicy.from_env()
     failure: UploadFailure | None = None
-    for attempt in range(1, policy.max_attempts + 1):
-        if attempt > 1:
-            delay = _retry_delay(failure, attempt - 1, policy)
-            if delay is None:
-                break
-            if not quiet:
-                print(
-                    f" retrying ({attempt}/{policy.max_attempts}) in {delay:.1f}s...",
-                    end="",
-                    flush=True,
-                )
-            _upload_sleep(delay)
-        elif not quiet and initial_message:
-            print(initial_message, end="", flush=True)
+    failed_attempts = 0  # attempts that count toward policy.max_attempts
+    requests_sent = 0
+    waited = 0.0
+    started = time.monotonic()
+    if not quiet and initial_message:
+        print(initial_message, end="", flush=True)
+    while requests_sent < _MAX_REQUESTS_PER_UPLOAD:
+        requests_sent += 1
         try:
             if raw_body is not None:
                 response = requests.post(
@@ -1520,16 +1519,62 @@ def _post_json_with_retries(
             failure = _describe_transport_exception(exc, safe_url)
             if not _is_retryable_transport_exception(exc):
                 break
+        else:
+            if response.status_code in accepted_statuses:
+                return response, None
+            failure = _describe_http_failure(response)
+
+        if failure.status is not None and _is_retryable_conflict(failure):
+            # The same upload is still being processed (for example after a
+            # read timeout). Wait as asked, within the conflict budget; a
+            # later answer is the finished scan, replayed.
+            delay = _conflict_delay(failure)
+            spent = max(time.monotonic() - started, waited)
+            if spent + delay > policy.conflict_budget_seconds:
+                break
+            if not quiet:
+                print(
+                    f" still processing; checking again in {delay:.0f}s...",
+                    end="",
+                    flush=True,
+                )
+            _upload_sleep(delay)
+            waited += delay
             continue
-        if response.status_code in accepted_statuses:
-            return response, None
-        failure = _describe_http_failure(response)
-        if not _should_retry_now(failure):
+
+        if failure.status is not None and not _should_retry_now(failure):
             break
+        failed_attempts += 1
+        if failed_attempts >= policy.max_attempts:
+            break
+        delay = _retry_delay(failure, failed_attempts, policy)
+        if delay is None:
+            break
+        if not quiet:
+            print(
+                f" retrying ({failed_attempts + 1}/{policy.max_attempts}) in {delay:.1f}s...",
+                end="",
+                flush=True,
+            )
+        _upload_sleep(delay)
+        waited += delay
 
     if not quiet:
         print(" failed.")
     return None, failure or UploadFailure("The upload did not complete.")
+
+
+# Upper bound on requests for one upload, whatever the server answers.
+_MAX_REQUESTS_PER_UPLOAD = 100
+
+
+def _report_request_timeout() -> tuple[float, float]:
+    """(connect, read) timeout for the report endpoints.
+
+    The read timeout is the contract's ``client_read_timeout_seconds``, so a
+    slow but working upload is not cut off and retried while it still runs.
+    """
+    return (NETWORK_TIMEOUT_DEFAULT, float(_client_read_timeout_seconds()))
 
 
 def _retry_delay(
@@ -1562,10 +1607,22 @@ def _post_managed_json_once(
 ):
     """Managed GitLab: one long attempt, no redirects, no automatic re-upload."""
     try:
+        destination = _validate_api_request_url(safe_url)
+        allowed_destinations = {
+            _validate_api_request_url(REPORT_URL),
+            _validate_api_request_url(REPORT_INIT_URL),
+            _validate_api_request_url(REPORT_COMPLETE_URL),
+        }
+    except ValueError:
+        return None, "Invalid managed Cloud endpoint configuration."
+    if destination not in allowed_destinations:
+        return None, "Invalid managed Cloud endpoint configuration."
+
+    try:
         if not quiet and initial_message:
             print(initial_message, end="", flush=True)
         response = requests.post(
-            safe_url,
+            destination,
             json=payload,
             headers=headers,
             timeout=300,
@@ -1624,7 +1681,7 @@ def _post_report_payload(
         payload,
         quiet=quiet,
         initial_message=initial_message,
-        timeout=UPLOAD_TIMEOUT,
+        timeout=_report_request_timeout(),
         idempotency_key=idempotency_key,
     )
 
@@ -1867,6 +1924,7 @@ def _start_report_artifact_upload(
             quiet=quiet,
             initial_message=initial_message,
             accepted_statuses=(200, 201, 400, 401, 402, 404, 405, 501),
+            timeout=_report_request_timeout(),
             idempotency_key=session.idempotency_key if session else None,
             raw_body=init_body,
         )
@@ -2108,7 +2166,7 @@ def _complete_report_artifact_upload(
         ),
         quiet=True,
         accepted_statuses=(200, 201, 401, 402),
-        timeout=UPLOAD_TIMEOUT,
+        timeout=_report_request_timeout(),
         idempotency_key=idempotency_key,
     )
     if complete_response is None:
@@ -2349,18 +2407,39 @@ def _display_path(path: Path) -> str:
 
 def _print_pending_upload_reminder() -> None:
     try:
-        count = _count_pending_uploads(_pending_uploads_dir(_get_repo_root_for_link()))
+        root = _get_repo_root_for_link()
+        count = _count_pending_uploads(_pending_uploads_dir(root))
     except OSError:
         return
-    if not count:
-        return
     if count == 1:
-        print("1 earlier upload did not finish. Run 'skylos upload --retry' to send it.")
-    else:
+        print(
+            "1 earlier upload did not finish. Run 'skylos upload --retry' to send it."
+        )
+    elif count:
         print(
             f"{count} earlier uploads did not finish. "
             "Run 'skylos upload --retry' to send them."
         )
+    notice = legacy_pending_notice(root)
+    if notice:
+        print(notice)
+
+
+def legacy_pending_notice(project_root) -> str | None:
+    """One line about uploads an older Skylos saved inside the repository.
+
+    They are never sent: anyone who can write to the repository could have
+    written them. The user can rerun the scan and delete the folder.
+    """
+    directory, count = _legacy_pending_uploads(project_root)
+    if not count:
+        return None
+    noun = "upload" if count == 1 else "uploads"
+    return (
+        f"{count} {noun} saved by an older Skylos are in {_display_path(directory)}; "
+        "they are not sent automatically. Rerun the scan to upload, then delete "
+        "that folder."
+    )
 
 
 def _exact_json_body(payload: Any) -> bytes:
@@ -2369,7 +2448,9 @@ def _exact_json_body(payload: Any) -> bytes:
     Built with requests' own request preparation, so a saved upload keeps
     exactly what the first attempt sent (the upload contract's resend rule).
     """
-    body = _RequestsRequest("POST", "http://skylos.invalid/", json=payload).prepare().body
+    body = (
+        _RequestsRequest("POST", "http://skylos.invalid/", json=payload).prepare().body
+    )
     return body if isinstance(body, bytes) else str(body).encode("utf-8")
 
 
@@ -2574,7 +2655,7 @@ def _resend_saved_request(token, pending, session, *, quiet, message) -> dict:
             None,
             quiet=quiet,
             initial_message=message,
-            timeout=UPLOAD_TIMEOUT,
+            timeout=_report_request_timeout(),
             idempotency_key=session.idempotency_key,
             raw_body=body,
         )
@@ -2622,8 +2703,9 @@ def _resend_one_pending_upload(token, pending, linked_project_id, *, quiet: bool
                 f"configured for {expected_endpoint}. Set SKYLOS_API_URL to resend it."
             ),
         }
-    saved_project = record.get("project_id")
-    if saved_project and linked_project_id and saved_project != linked_project_id:
+    # The saved scan must belong to the project this folder uploads to now
+    # (both unlinked counts as the same token-selected project).
+    if record.get("project_id") != linked_project_id:
         return {
             "status": "skipped",
             "reason": "it belongs to a different linked project than this folder.",
@@ -2642,7 +2724,9 @@ def _resend_one_pending_upload(token, pending, linked_project_id, *, quiet: bool
     session = UploadSession(idempotency_key=pending.idempotency_key, mode=mode)
     count = pending.finding_count
     count_text = f", {count:,} findings" if isinstance(count, int) else ""
-    message = f"Resending scan saved {_format_saved_time(pending.created_at)}{count_text}..."
+    message = (
+        f"Resending scan saved {_format_saved_time(pending.created_at)}{count_text}..."
+    )
     try:
         result = _resend_saved_request(
             token, pending, session, quiet=quiet, message=message
@@ -2692,6 +2776,9 @@ def resend_pending_uploads(project_root=None, *, quiet: bool = False) -> dict[st
         "skipped": 0,
         "results": [],
     }
+    legacy_notice = legacy_pending_notice(root)
+    if legacy_notice:
+        summary["legacy_notice"] = legacy_notice
     if not pending:
         return summary
 

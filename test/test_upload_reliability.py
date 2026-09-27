@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +27,7 @@ import pytest
 import requests
 
 import skylos.api as api
-from skylos.api import _contract_check, _pending_uploads
+from skylos.api import _contract_check, _pending_uploads, _upload_transport
 from skylos.api._upload_contract import (
     CONTRACT_PATH,
     contract_sha256,
@@ -50,6 +51,7 @@ from skylos.api._upload_transport import (
     RetryPolicy,
     UploadFailure,
     backoff_delay,
+    clean_text,
     describe_http_failure,
     parse_retry_after,
 )
@@ -106,12 +108,21 @@ def _quality(root, rel="src/app.py", line=1, **extra):
 
 
 def _pending_files(tmp_path):
-    return sorted((tmp_path / "pending").glob("*.json.gz"))
+    # <queue root>/<repo-id>/<key>.json.gz; failed/ is one level deeper.
+    return sorted((tmp_path / "pending").glob("*/*.json.gz"))
+
+
+def _queue(repo):
+    """This repository's folder in the (temporary) per-user queue."""
+    return _pending_uploads.pending_uploads_dir(repo)
 
 
 def _read_pending(path):
-    with gzip.open(path, "rt", encoding="utf-8") as handle:
-        return json.load(handle)
+    """The record JSON of a saved upload (after its signature line)."""
+    data = gzip.decompress(Path(path).read_bytes())
+    header, _, body = data.partition(b"\n")
+    assert header.startswith(b"SKYLOS-PENDING-UPLOAD 3 ")
+    return json.loads(body)
 
 
 class _Calls:
@@ -225,6 +236,66 @@ def test_file_path_problem_follows_contract(value, reason):
 )
 def test_normalize_contract_file_path_steps(raw, normalized):
     assert normalize_contract_file_path(raw) == normalized
+
+
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        (" \t\r\n\x0b\x0csrc/a.py \t", "src/a.py"),
+        # Not ASCII whitespace: kept, as the contract says (Python's strip()
+        # would have removed them).
+        ("\x85src/a.py", "\x85src/a.py"),
+        ("\u00a0src/a.py", "\u00a0src/a.py"),
+        ("src/a.py\u3000", "src/a.py\u3000"),
+    ],
+)
+def test_only_ascii_whitespace_is_trimmed_from_paths(raw, normalized):
+    assert normalize_contract_file_path(raw) == normalized
+
+
+def test_control_characters_at_the_edges_are_not_trimmed_away():
+    # U+001C-U+001F would vanish with str.strip(); the contract keeps them,
+    # so the path is a control-character path with no location.
+    assert file_path_problem("\x1csrc/a.py") == REASON_CONTROL_CHARACTER
+    findings = [{"rule_id": "A", "file_path": "\x1fsrc/a.py", "line_number": 1}]
+    assert apply_upload_contract(findings, "").no_location == 1
+    assert findings[0]["file_path"] == ""
+
+
+def test_path_length_is_counted_in_code_points():
+    emoji = "\U0001f600"
+    assert file_path_problem("a/" + emoji * 498) is None  # 500 code points
+    assert file_path_problem("a/" + emoji * 499) == REASON_TOO_LONG
+
+
+def test_rule_id_trim_matches_the_server_check():
+    from skylos.api._upload_preflight import _normalize_rule_id
+
+    assert _normalize_rule_id("\u00a0SKY-A\ufeff", 120) == "SKY-A"
+    assert _normalize_rule_id("SKY-B\x85", 120) == "SKY-B\x85"  # not JS whitespace
+    assert _normalize_rule_id("\x1cSKY-C", 120) == "SKY-C"  # control character removed
+    assert _normalize_rule_id("\U0001f600" * 130, 120) == "\U0001f600" * 120
+
+
+@pytest.mark.parametrize(
+    ("value", "line"),
+    [
+        (7, 7),
+        ("12", 12),
+        ("007", 7),
+        (" 12", 0),
+        ("+1", 0),
+        ("1_000", 0),
+        ("\u0661", 0),
+        (True, 0),
+        (-3, 0),
+        (None, 0),
+    ],
+)
+def test_line_number_accepts_integers_and_digit_strings_only(value, line):
+    from skylos.api._upload_preflight import _normalize_line
+
+    assert _normalize_line(value) == line
 
 
 def test_repository_scope_findings_go_to_the_project_root_on_line_one():
@@ -700,9 +771,10 @@ def test_default_policy_is_four_attempts_one_second_base_thirty_second_cap(monke
         "SKYLOS_UPLOAD_MAX_ATTEMPTS",
         "SKYLOS_UPLOAD_RETRY_BASE_SECONDS",
         "SKYLOS_UPLOAD_RETRY_MAX_SECONDS",
+        "SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS",
     ):
         monkeypatch.delenv(name, raising=False)
-    assert RetryPolicy.from_env() == RetryPolicy(4, 1.0, 30.0)
+    assert RetryPolicy.from_env() == RetryPolicy(4, 1.0, 30.0, 300.0)
 
 
 def test_retry_sleeps_follow_backoff_between_attempts(monkeypatch):
@@ -937,6 +1009,27 @@ def test_server_text_is_cleaned_for_the_terminal():
     assert len(failure.error) <= 300
 
 
+def test_server_text_invisible_characters_are_cleaned_for_the_terminal():
+    ranges = (
+        (0x00, 0x1F),
+        (0x7F, 0x9F),
+        (0x200B, 0x200F),
+        (0x202A, 0x202E),
+        (0x2066, 0x2069),
+    )
+    for start, end in ranges:
+        for codepoint in range(start, end + 1):
+            assert clean_text(f"left{chr(codepoint)}right") == "left right"
+
+
+def test_upload_transport_source_has_no_invisible_format_characters():
+    source = Path(_upload_transport.__file__).read_text(encoding="utf-8")
+    hidden = [
+        f"U+{ord(char):04X}" for char in source if unicodedata.category(char) == "Cf"
+    ]
+    assert hidden == []
+
+
 def test_render_upload_failure_escapes_markup(capsys):
     from rich.console import Console
     import skylos.cli as cli
@@ -1003,27 +1096,133 @@ def test_idempotent_replay_body_flag_is_recognised(repo, monkeypatch, capsys):
     assert "already saved by an earlier attempt" in capsys.readouterr().out
 
 
-def test_upload_in_progress_is_saved_not_retried_in_run(repo, tmp_path, monkeypatch):
+def _in_progress(retry_after="15", **extra):
+    return Resp(
+        409,
+        {
+            "code": "UPLOAD_IN_PROGRESS",
+            "error": "This upload is still being processed.",
+            "hint": "Wait a moment and retry.",
+            "retryable": True,
+            "request_id": "req_9",
+            **extra,
+        },
+        {"Retry-After": retry_after},
+    )
+
+
+def _replay(scan_id="scan-late"):
+    return Resp(
+        200,
+        {
+            "scanId": scan_id,
+            "idempotent_replay": True,
+            "quality_gate": {"passed": True},
+        },
+        {"Idempotent-Replayed": "true"},
+    )
+
+
+def test_slow_upload_timeout_then_in_progress_then_replay_is_a_success(
+    repo, tmp_path, monkeypatch, capsys
+):
+    # Attempt 1 times out while the server keeps working; the retry finds the
+    # same upload still running, waits as asked, then gets the saved scan.
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "300")
+    sleeps = []
+    monkeypatch.setattr(api, "_upload_sleep", sleeps.append)
+    post = _Calls(
+        requests.exceptions.ReadTimeout("slow"),
+        _in_progress(),
+        _in_progress(),
+        _replay(),
+    )
+    monkeypatch.setattr(api.requests, "post", post)
+    result = api.upload_report(_result(repo, quality=[_quality(repo)]))
+    assert result["success"] is True and result["replayed"] is True
+    assert result["scan_id"] == "scan-late"
+    assert len(set(post.keys)) == 1
+    assert sleeps[1:] == [15.0, 15.0]  # Retry-After honoured for the 409s
+    assert _pending_files(tmp_path) == []
+    out = capsys.readouterr().out
+    assert "still processing" in out
+    assert "already saved by an earlier attempt" in out
+
+
+def test_retryable_conflicts_do_not_use_up_normal_attempts(monkeypatch):
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "300")
+    monkeypatch.setattr(api, "_upload_sleep", lambda s: None)
+    post = _Calls(*([_in_progress("5")] * 6), _ok())
+    monkeypatch.setattr(api.requests, "post", post)
+    response, error = api._post_json_with_retries(api.REPORT_URL, {}, {}, quiet=True)
+    assert error is None and response.status_code == 200
+    assert len(post.calls) == 7
+
+
+def test_conflict_waiting_stops_at_the_budget_and_saves_the_scan(
+    repo, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "300")
+    sleeps = []
+    monkeypatch.setattr(api, "_upload_sleep", sleeps.append)
+    post = _Calls(_in_progress())
+    monkeypatch.setattr(api.requests, "post", post)
+    result = api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
+    assert sum(sleeps) <= 300 and sum(sleeps) >= 285
+    assert len(post.calls) == len(sleeps) + 1
+    assert result["code"] == "UPLOAD_IN_PROGRESS" and result["retryable"] is True
+    assert result["error"].endswith("(ref: req_9)")
+    [saved] = _pending_files(tmp_path)
+    assert _read_pending(saved)["idempotency_key"] == post.keys[0]
+
+
+def test_conflict_delay_is_bounded():
+    from skylos.api._upload_transport import conflict_delay
+
+    assert conflict_delay(describe_http_failure(_in_progress("15"))) == 15.0
+    assert conflict_delay(describe_http_failure(_in_progress("0"))) == 1.0
+    assert conflict_delay(describe_http_failure(_in_progress("900"))) == 60.0
+    missing = Resp(409, {"code": "UPLOAD_IN_PROGRESS", "retryable": True})
+    assert conflict_delay(describe_http_failure(missing)) == 15.0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"code": "IDEMPOTENCY_KEY_REUSED", "retryable": False},
+        {"code": "PR_DIFF_UNAVAILABLE", "retryable": False},
+        {"code": "SOMETHING", "error": "Conflict."},
+    ],
+)
+def test_non_retryable_conflicts_stop_at_once(body, monkeypatch):
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "300")
+    post = _Calls(Resp(409, body, {"Retry-After": "1"}))
+    monkeypatch.setattr(api.requests, "post", post)
+    response, error = api._post_json_with_retries(api.REPORT_URL, {}, {}, quiet=True)
+    assert response is None and len(post.calls) == 1
+
+
+def test_retryable_pr_diff_conflict_is_retried(monkeypatch):
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONFLICT_BUDGET_SECONDS", "300")
+    monkeypatch.setattr(api, "_upload_sleep", lambda s: None)
     post = _Calls(
         Resp(
             409,
-            {
-                "code": "UPLOAD_IN_PROGRESS",
-                "error": "This upload is still being processed.",
-                "hint": "Wait a moment and retry.",
-                "retryable": True,
-                "request_id": "req_9",
-            },
-            {"Retry-After": "15"},
-        )
+            {"code": "PR_DIFF_UNAVAILABLE", "retryable": True},
+            {"Retry-After": "10"},
+        ),
+        _ok(),
     )
     monkeypatch.setattr(api.requests, "post", post)
-    result = api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
-    assert len(post.calls) == 1  # 409 is not a contract retryable status
-    assert result["code"] == "UPLOAD_IN_PROGRESS" and result["retryable"] is True
-    [saved] = _pending_files(tmp_path)
-    assert _read_pending(saved)["idempotency_key"] == post.keys[0]
-    assert result["error"].endswith("(ref: req_9)")
+    response, error = api._post_json_with_retries(api.REPORT_URL, {}, {}, quiet=True)
+    assert error is None and len(post.calls) == 2
+
+
+def test_report_endpoints_use_the_contract_read_timeout(repo, monkeypatch):
+    post = _Calls(_ok())
+    monkeypatch.setattr(api.requests, "post", post)
+    api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
+    assert post.calls[0].timeout == (api.NETWORK_TIMEOUT_DEFAULT, 270.0)
 
 
 def test_finding_warnings_in_the_response_are_summarised(repo, monkeypatch, capsys):
@@ -1087,7 +1286,11 @@ def test_non_retryable_failure_is_not_saved(repo, tmp_path, monkeypatch):
 def test_sent_and_saved_uploads_never_contain_the_token_or_secret_snippets(
     repo, tmp_path, monkeypatch
 ):
-    (repo / "src" / "keys.py").write_text("AWS = 'AKIAIOSFODNN7EXAMPLE'\n")
+    (
+        repo / "src" / "keys.py"
+    ).write_text(  # skylos: ignore[SKY-D324] fixed file under fresh pytest tmp_path
+        "AWS = 'AKIAIOSFODNN7EXAMPLE'\n"
+    )
     post = _Calls(requests.exceptions.ConnectionError("x"))
     monkeypatch.setattr(api.requests, "post", post)
     result = _result(
@@ -1167,52 +1370,51 @@ def test_saving_never_edits_the_request_bytes(tmp_path):
     assert _pending_uploads.decode_request_body(item.record) == body
 
 
-def test_project_pending_folder_is_private_and_git_ignored(tmp_path, monkeypatch):
+def test_queue_lives_in_the_user_state_folder_not_the_checkout(
+    repo, tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("SKYLOS_PENDING_UPLOAD_DIR")
-    project = tmp_path / "project"
-    project.mkdir()
-    subprocess.run(["git", "init", "-q", str(project)], check=True)
-    directory = _pending_uploads.pending_uploads_dir(project)
-    assert directory == project / ".skylos" / "pending-uploads"
-    path = _pending_uploads.save_pending_upload(
-        directory,
-        idempotency_key="7d6f3f2a-1c2b-4d3e-8f90-123456789abc",
-        kind="report",
-        mode="inline",
-        endpoint="https://x/api/report",
-        api_base="https://x",
-        project_id="p1",
-        cli_version="1",
-        request_body=b"{}",
-    )
-    assert path is not None
-    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    ignored = subprocess.run(
-        ["git", "check-ignore", "-q", str(path.relative_to(project))],
-        cwd=project,
-        check=False,
-    )
-    assert ignored.returncode == 0
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.setattr(api.requests, "post", _Calls(Resp(503)))
+    result = api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
+
+    saved = Path(result["pending_upload"])
+    queue_root = home / ".skylos" / "pending-uploads"
+    assert saved.parent.parent == queue_root
+    assert saved.parent.name == _pending_uploads.repository_queue_id(repo)
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    assert stat.S_IMODE(saved.parent.stat().st_mode) == 0o700
+    key_file = queue_root / ".record-key"
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    assert key_file.stat().st_size == 32
+    assert not (repo / ".skylos").exists()
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=project,
+        cwd=repo,
         capture_output=True,
         text=True,
         check=True,
     )
-    assert "pending-uploads" not in status.stdout
+    assert ".skylos" not in status.stdout
 
 
-def test_pending_folder_refuses_a_symlinked_skylos_dir(tmp_path, monkeypatch):
-    monkeypatch.delenv("SKYLOS_PENDING_UPLOAD_DIR")
-    project = tmp_path / "project"
+def test_each_repository_has_its_own_queue(tmp_path):
+    first = _pending_uploads.pending_uploads_dir(tmp_path / "a")
+    second = _pending_uploads.pending_uploads_dir(tmp_path / "b")
+    assert first != second and first.parent == second.parent
+
+
+def test_pending_folder_refuses_a_symlinked_repository_queue(tmp_path):
     target = tmp_path / "elsewhere"
-    project.mkdir()
     target.mkdir()
-    (project / ".skylos").symlink_to(target)
+    queue = tmp_path / "root" / "repo-id"
+    queue.parent.mkdir()
+    queue.symlink_to(target)
     path = _pending_uploads.save_pending_upload(
-        _pending_uploads.pending_uploads_dir(project),
+        queue,
         idempotency_key="7d6f3f2a-1c2b-4d3e-8f90-123456789abc",
         kind="report",
         mode="inline",
@@ -1224,6 +1426,77 @@ def test_pending_folder_refuses_a_symlinked_skylos_dir(tmp_path, monkeypatch):
     )
     assert path is None
     assert list(target.iterdir()) == []
+
+
+def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch):
+    queue = _queue(repo)
+    good = _save(queue, KEYS[0])
+    # A record written by someone without the user's key.
+    forged = queue / f"{KEYS[1]}.json.gz"
+    record = _read_pending(good)
+    record["idempotency_key"] = KEYS[1]
+    forged.write_bytes(
+        gzip.compress(
+            b"SKYLOS-PENDING-UPLOAD 3 "
+            + b"0" * 64
+            + b"\n"
+            + json.dumps(record).encode()
+        )
+    )
+    os.chmod(forged, 0o600)
+    # A signed record with its body changed afterwards.
+    tampered = _save(queue, KEYS[2])
+    original = gzip.decompress(tampered.read_bytes())
+    raw = original.replace(b'"kind":"report"', b'"kind":"forged"')
+    assert raw != original
+    tampered.write_bytes(gzip.compress(raw))
+    # A valid record moved in from another repository's queue.
+    other = _save(_queue(tmp_path / "other-repo"), KEYS[3])
+    moved = queue / other.name
+    os.replace(other, moved)
+
+    pending, unreadable = _pending_uploads.list_pending_uploads(queue)
+    assert [item.path for item in pending] == [good]
+    assert unreadable == 3
+    post = _Calls(_ok())
+    monkeypatch.setattr(api.requests, "post", post)
+    summary = api.resend_pending_uploads(quiet=True)
+    assert summary["sent"] == 1 and len(post.calls) == 1
+    assert post.keys == [KEYS[0]]
+
+
+def test_a_readable_key_with_loose_permissions_is_not_trusted(repo, tmp_path):
+    queue = _queue(repo)
+    _save(queue, KEYS[0])
+    os.chmod(queue.parent / ".record-key", 0o644)
+    pending, unreadable = _pending_uploads.list_pending_uploads(queue)
+    assert pending == [] and unreadable == 1
+
+
+def test_uploads_saved_in_the_repository_by_older_versions_are_never_sent(
+    repo, tmp_path, monkeypatch, capsys
+):
+    legacy = repo / ".skylos" / "pending-uploads"
+    legacy.mkdir(parents=True)
+    planted = legacy / f"{KEYS[0]}.json.gz"
+    planted.write_bytes(
+        gzip.compress(b'{"format":"skylos-pending-upload","version":2}')
+    )
+    os.chmod(planted, 0o600)
+    post = _Calls(_ok())
+    monkeypatch.setattr(api.requests, "post", post)
+
+    summary = api.resend_pending_uploads(quiet=True)
+    assert post.calls == [] and summary["total"] == 0
+    assert "not sent automatically" in summary["legacy_notice"]
+    assert planted.exists()  # left for the user to inspect and delete
+
+    api.upload_report(_result(repo, quality=[_quality(repo)]))
+    out = capsys.readouterr().out
+    assert out.count("saved by an older Skylos") == 1
+    assert "not sent automatically" in out
+    # The fresh upload itself went out; the old file was not.
+    assert len(post.calls) == 1
 
 
 def _save(directory, key, *, now=None, body=None, endpoint=None, project_id=None):
@@ -1262,14 +1535,14 @@ def test_scans_older_than_the_resend_window_move_to_failed(tmp_path):
 
 def test_a_scan_past_the_window_is_never_sent(repo, tmp_path, monkeypatch):
     # Created 8 days ago even though the file itself looks new.
-    path = _save(tmp_path / "pending", KEYS[0], now=time.time() - EIGHT_DAYS)
+    path = _save(_queue(repo), KEYS[0], now=time.time() - EIGHT_DAYS)
     os.utime(path, None)
     post = _Calls(_ok())
     monkeypatch.setattr(api.requests, "post", post)
     summary = api.resend_pending_uploads(quiet=True)
     assert post.calls == []
     assert summary["total"] == 0
-    assert (tmp_path / "pending" / "failed" / f"{KEYS[0]}.json.gz").exists()
+    assert (_queue(repo) / "failed" / f"{KEYS[0]}.json.gz").exists()
 
 
 def test_resend_window_comes_from_the_contract():
@@ -1309,7 +1582,7 @@ def test_unreadable_or_planted_files_are_skipped(tmp_path):
 
 
 def test_next_upload_offers_to_resend(repo, tmp_path, monkeypatch, capsys):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(api.requests, "post", _Calls(_ok()))
     api.upload_report(_result(repo, quality=[_quality(repo)]))
     out = capsys.readouterr().out
@@ -1338,7 +1611,7 @@ def test_resend_sends_the_same_bytes_with_the_same_key(repo, tmp_path, monkeypat
 
 
 def test_resend_of_already_saved_scan_is_reported(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(
         api.requests,
         "post",
@@ -1356,7 +1629,7 @@ def test_resend_of_already_saved_scan_is_reported(repo, tmp_path, monkeypatch):
 
 
 def test_resend_keeps_scan_on_temporary_failure(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(api.requests, "post", _Calls(Resp(503)))
     summary = api.resend_pending_uploads(quiet=True)
     assert summary["kept"] == 1
@@ -1364,7 +1637,7 @@ def test_resend_keeps_scan_on_temporary_failure(repo, tmp_path, monkeypatch):
 
 
 def test_resend_moves_rejected_scan_to_failed_with_reason(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(
         api.requests,
         "post",
@@ -1382,7 +1655,7 @@ def test_resend_moves_rejected_scan_to_failed_with_reason(repo, tmp_path, monkey
     summary = api.resend_pending_uploads(quiet=True)
     assert summary["failed"] == 1
     assert _pending_files(tmp_path) == []
-    failed = tmp_path / "pending" / "failed"
+    failed = _queue(repo) / "failed"
     assert (failed / f"{KEYS[0]}.json.gz").exists()
     reason = json.loads((failed / f"{KEYS[0]}.reason.json").read_text())
     assert reason["code"] == "IDEMPOTENCY_KEY_REUSED"
@@ -1390,7 +1663,7 @@ def test_resend_moves_rejected_scan_to_failed_with_reason(repo, tmp_path, monkey
 
 
 def test_resend_never_sends_to_a_different_endpoint(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0], endpoint="https://attacker.example/api/report")
+    _save(_queue(repo), KEYS[0], endpoint="https://attacker.example/api/report")
     post = _Calls(_ok())
     monkeypatch.setattr(api.requests, "post", post)
     summary = api.resend_pending_uploads(quiet=True)
@@ -1398,8 +1671,26 @@ def test_resend_never_sends_to_a_different_endpoint(repo, tmp_path, monkeypatch)
     assert len(_pending_files(tmp_path)) == 1
 
 
+@pytest.mark.parametrize(
+    ("saved", "linked"),
+    [("project-a", "project-b"), (None, "project-b"), ("project-a", None)],
+)
+def test_resend_requires_the_same_linked_project(
+    repo, tmp_path, monkeypatch, saved, linked
+):
+    _save(_queue(repo), KEYS[0], project_id=saved)
+    monkeypatch.setattr(
+        api, "_load_repo_link", lambda root: {"project_id": linked} if linked else {}
+    )
+    post = _Calls(_ok())
+    monkeypatch.setattr(api.requests, "post", post)
+    assert api.resend_pending_uploads(quiet=True)["skipped"] == 1
+    assert post.calls == []
+    assert len(_pending_files(tmp_path)) == 1
+
+
 def test_resend_skips_scans_for_another_linked_project(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0], project_id="project-a")
+    _save(_queue(repo), KEYS[0], project_id="project-a")
     monkeypatch.setattr(
         api, "_load_repo_link", lambda root: {"project_id": "project-b"}
     )
@@ -1410,7 +1701,7 @@ def test_resend_skips_scans_for_another_linked_project(repo, tmp_path, monkeypat
 
 
 def test_resend_refuses_managed_gitlab_tokens(repo, tmp_path, monkeypatch):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(api, "get_project_token", lambda: "gitlab_oidc:jwt")
     summary = api.resend_pending_uploads(quiet=True)
     assert "never re-sent" in summary["error"]
@@ -1891,7 +2182,7 @@ def test_upload_command_is_registered_and_documented():
 
 
 def test_upload_list_shows_saved_scans(repo, tmp_path, capsys):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     from skylos.commands.upload_cmd import run_upload_command
 
     assert run_upload_command(["--list"]) == 0
@@ -1901,7 +2192,7 @@ def test_upload_list_shows_saved_scans(repo, tmp_path, capsys):
 
 
 def test_upload_retry_json_summary(repo, tmp_path, monkeypatch, capsys):
-    _save(tmp_path / "pending", KEYS[0])
+    _save(_queue(repo), KEYS[0])
     monkeypatch.setattr(api.requests, "post", _Calls(Resp(503)))
     from skylos.commands.upload_cmd import run_upload_command
 

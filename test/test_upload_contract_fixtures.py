@@ -47,7 +47,9 @@ LONG_MESSAGE = (
 
 def _write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path or explicit fixture regeneration path
+        text, encoding="utf-8"
+    )
     return path
 
 
@@ -93,7 +95,9 @@ def case_repo_policy_subproject(tmp: Path):
 def case_unused_dependency(tmp: Path):
     root = tmp / "repo"
     _write(root / "requirements.txt", "# runtime deps\nrequests>=2\npyserial==3.5\n")
-    app = _write(root / "app.py", "import requests\n\nrequests.get('https://example.com')\n")
+    app = _write(
+        root / "app.py", "import requests\n\nrequests.get('https://example.com')\n"
+    )
     return root, root, {"quality": scan_unused_dependencies(root, [app])}
 
 
@@ -103,7 +107,11 @@ def case_path_spaces_unicode(tmp: Path):
         root / "src" / "my module" / "caf\u00e9 \u00fc.py",
         "def unused_helper():\n    return 42\n",
     )
-    return root, root, {"unused_functions": [_dead_function(source, 1, "unused_helper")]}
+    return (
+        root,
+        root,
+        {"unused_functions": [_dead_function(source, 1, "unused_helper")]},
+    )
 
 
 def case_deleted_or_moved_file(tmp: Path):
@@ -138,9 +146,14 @@ def case_deleted_or_moved_file(tmp: Path):
 
 def case_symlinked_file(tmp: Path):
     root = tmp / "repo"
-    _write(root / "lib" / "real.py", "def compute(x):\n    if x:\n        return 1\n    return 0\n")
+    _write(
+        root / "lib" / "real.py",
+        "def compute(x):\n    if x:\n        return 1\n    return 0\n",
+    )
     (root / "link.py").symlink_to(Path("lib") / "real.py")
-    outside = _write(tmp / "outside" / "private.py", "TOKEN_NOTE = 'outside the repo'\n")
+    outside = _write(
+        tmp / "outside" / "private.py", "TOKEN_NOTE = 'outside the repo'\n"
+    )
     (root / "external.py").symlink_to(outside)
     return (
         root,
@@ -278,11 +291,7 @@ def case_unused_dependency_parent_manifest(tmp: Path):
     return (
         root,
         project,
-        {
-            "quality": scan_unused_dependencies(
-                project, [app], location_root=project
-            )
-        },
+        {"quality": scan_unused_dependencies(project, [app], location_root=project)},
     )
 
 
@@ -553,7 +562,9 @@ def _contract_view(payload) -> dict:
             {
                 "ruleId": r["ruleId"],
                 "uri": r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
-                "startLine": r["locations"][0]["physicalLocation"]["region"]["startLine"],
+                "startLine": r["locations"][0]["physicalLocation"]["region"][
+                    "startLine"
+                ],
                 "level": r["level"],
                 "category": (r.get("properties") or {}).get("category"),
                 "kind": (r.get("properties") or {}).get("kind"),
@@ -584,7 +595,9 @@ def test_upload_contract_fixture(name, tmp_path, monkeypatch):
         cloud_dir = os.getenv(CLOUD_DIR_ENV, "").strip()
         if cloud_dir:
             _write(Path(cloud_dir) / f"cli-{name}.payload.json", text)
-            _write(Path(cloud_dir) / f"cli-{name}.expected.json", _expected_text(expected))
+            _write(
+                Path(cloud_dir) / f"cli-{name}.expected.json", _expected_text(expected)
+            )
 
     committed = json.loads(payload_path.read_text(encoding="utf-8"))
     assert _contract_view(committed) == _contract_view(payload)
@@ -614,6 +627,10 @@ def test_moved_file_is_counted_once_as_missing_location(tmp_path, monkeypatch):
 
 
 def test_fixture_folder_has_one_expected_file_per_payload():
-    payloads = {p.name[: -len(".payload.json")] for p in FIXTURE_DIR.glob("*.payload.json")}
-    expected = {p.name[: -len(".expected.json")] for p in FIXTURE_DIR.glob("*.expected.json")}
+    payloads = {
+        p.name[: -len(".payload.json")] for p in FIXTURE_DIR.glob("*.payload.json")
+    }
+    expected = {
+        p.name[: -len(".expected.json")] for p in FIXTURE_DIR.glob("*.expected.json")
+    }
     assert payloads == expected == set(CASES)
