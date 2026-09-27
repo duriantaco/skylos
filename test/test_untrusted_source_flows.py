@@ -358,15 +358,25 @@ def flask_buffer(text):
     return send_file(io.BytesIO(text.encode()), download_name="x.txt")
 
 
-def forwarding_wrapper(directory, path):
-    # A library wrapper forwarding its own parameters has no untrusted source.
-    return send_from_directory(directory, path)
+def forwarding_wrapper(path):
+    return send_from_directory(UPLOAD, path)
 """
 
 
 def test_file_serving_negatives_stay_clean(tmp_path):
     findings = _scan(tmp_path, PATH_NEGATIVE)
     assert [f for f in findings if f["rule_id"] == "SKY-D215"] == []
+
+
+def test_file_serving_wrapper_keeps_unknown_directory_source(tmp_path):
+    code = """
+from flask import send_from_directory
+
+def forwarding_wrapper(directory, path):
+    return send_from_directory(directory, path)
+"""
+    findings = _scan(tmp_path, code)
+    assert _hits(findings, "SKY-D215") == [4]
 
 
 def test_django_file_response_is_not_treated_as_a_path_sink(tmp_path):
