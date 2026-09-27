@@ -119,7 +119,9 @@ def _queue(repo):
 
 def _read_pending(path):
     """The record JSON of a saved upload (after its signature line)."""
-    data = gzip.decompress(Path(path).read_bytes())
+    data = gzip.decompress(
+        Path(path).read_bytes()  # skylos: ignore[SKY-D215] saved pytest queue fixture
+    )
     header, _, body = data.partition(b"\n")
     assert header.startswith(b"SKYLOS-PENDING-UPLOAD 3 ")
     return json.loads(body)
@@ -1286,9 +1288,8 @@ def test_non_retryable_failure_is_not_saved(repo, tmp_path, monkeypatch):
 def test_sent_and_saved_uploads_never_contain_the_token_or_secret_snippets(
     repo, tmp_path, monkeypatch
 ):
-    (
-        repo / "src" / "keys.py"
-    ).write_text(  # skylos: ignore[SKY-D324] fixed file under fresh pytest tmp_path
+    keys_file = repo / "src" / "keys.py"
+    keys_file.write_text(  # skylos: ignore[SKY-D324] fixed file under fresh pytest tmp_path
         "AWS = 'AKIAIOSFODNN7EXAMPLE'\n"
     )
     post = _Calls(requests.exceptions.ConnectionError("x"))
@@ -1377,6 +1378,11 @@ def test_queue_lives_in_the_user_state_folder_not_the_checkout(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("SKYLOS_PENDING_UPLOAD_DIR")
+    # Use the real ~/.skylos layout, under the temporary HOME set above.
+    monkeypatch.setattr(
+        _pending_uploads, "default_pending_root", _pending_uploads.home_pending_root
+    )
+    assert _pending_uploads.pending_root() == home / ".skylos" / "pending-uploads"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     monkeypatch.setattr(api.requests, "post", _Calls(Resp(503)))
     result = api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
@@ -1399,6 +1405,13 @@ def test_queue_lives_in_the_user_state_folder_not_the_checkout(
         check=True,
     )
     assert ".skylos" not in status.stdout
+
+
+def test_tests_can_never_reach_the_real_home_queue(monkeypatch):
+    monkeypatch.delenv("SKYLOS_PENDING_UPLOAD_DIR")
+    real = Path(os.path.expanduser("~")) / ".skylos" / "pending-uploads"
+    assert _pending_uploads.pending_root() != real
+    assert "no-real-home" in str(_pending_uploads.pending_root())
 
 
 def test_each_repository_has_its_own_queue(tmp_path):
@@ -1428,6 +1441,90 @@ def test_pending_folder_refuses_a_symlinked_repository_queue(tmp_path):
     assert list(target.iterdir()) == []
 
 
+def test_pending_folder_refuses_a_symlinked_queue_root(tmp_path):
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    root = tmp_path / "pending"
+    root.symlink_to(target, target_is_directory=True)
+    queue = root / "repo-id"
+
+    path = _pending_uploads.save_pending_upload(
+        queue,
+        idempotency_key="7d6f3f2a-1c2b-4d3e-8f90-123456789abc",
+        kind="report",
+        mode="inline",
+        endpoint="e",
+        api_base="b",
+        project_id=None,
+        cli_version=None,
+        request_body=b"{}",
+    )
+
+    assert path is None
+    assert list(target.iterdir()) == []
+    assert _pending_uploads.list_pending_uploads(queue) == ([], 0)
+
+
+def test_pending_listing_refuses_a_symlinked_queue_root(tmp_path):
+    actual = tmp_path / "actual"
+    queue = actual / "repo-id"
+    saved = _save(queue, KEYS[0])
+    assert saved is not None
+    linked = tmp_path / "linked"
+    linked.symlink_to(actual, target_is_directory=True)
+
+    assert _pending_uploads.list_pending_uploads(linked / "repo-id") == ([], 0)
+    assert _pending_uploads.count_pending_uploads(linked / "repo-id") == 0
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX queue permissions")
+def test_pending_folder_refuses_a_public_queue_root(tmp_path):
+    root = tmp_path / "pending"
+    root.mkdir()
+    os.chmod(root, 0o755)
+    queue = root / "repo-id"
+
+    path = _pending_uploads.save_pending_upload(
+        queue,
+        idempotency_key="7d6f3f2a-1c2b-4d3e-8f90-123456789abc",
+        kind="report",
+        mode="inline",
+        endpoint="e",
+        api_base="b",
+        project_id=None,
+        cli_version=None,
+        request_body=b"{}",
+    )
+
+    assert path is None
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX queue permissions")
+def test_pending_folder_refuses_a_public_repository_queue(tmp_path):
+    root = tmp_path / "pending"
+    root.mkdir(mode=0o700)
+    queue = root / "repo-id"
+    queue.mkdir(mode=0o700)
+    os.chmod(queue, 0o755)
+
+    path = _pending_uploads.save_pending_upload(
+        queue,
+        idempotency_key="7d6f3f2a-1c2b-4d3e-8f90-123456789abc",
+        kind="report",
+        mode="inline",
+        endpoint="e",
+        api_base="b",
+        project_id=None,
+        cli_version=None,
+        request_body=b"{}",
+    )
+
+    assert path is None
+    assert list(queue.iterdir()) == []
+    assert _pending_uploads.list_pending_uploads(queue) == ([], 0)
+
+
 def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch):
     queue = _queue(repo)
     good = _save(queue, KEYS[0])
@@ -1435,7 +1532,7 @@ def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch
     forged = queue / f"{KEYS[1]}.json.gz"
     record = _read_pending(good)
     record["idempotency_key"] = KEYS[1]
-    forged.write_bytes(
+    forged.write_bytes(  # skylos: ignore[SKY-D324] fixed filename in pytest queue
         gzip.compress(
             b"SKYLOS-PENDING-UPLOAD 3 "
             + b"0" * 64
@@ -1449,7 +1546,9 @@ def test_unsigned_or_tampered_records_are_never_sent(repo, tmp_path, monkeypatch
     original = gzip.decompress(tampered.read_bytes())
     raw = original.replace(b'"kind":"report"', b'"kind":"forged"')
     assert raw != original
-    tampered.write_bytes(gzip.compress(raw))
+    tampered.write_bytes(  # skylos: ignore[SKY-D324] existing pytest queue fixture
+        gzip.compress(raw)
+    )
     # A valid record moved in from another repository's queue.
     other = _save(_queue(tmp_path / "other-repo"), KEYS[3])
     moved = queue / other.name
@@ -1479,7 +1578,7 @@ def test_uploads_saved_in_the_repository_by_older_versions_are_never_sent(
     legacy = repo / ".skylos" / "pending-uploads"
     legacy.mkdir(parents=True)
     planted = legacy / f"{KEYS[0]}.json.gz"
-    planted.write_bytes(
+    planted.write_bytes(  # skylos: ignore[SKY-D324] fixed filename under pytest repo
         gzip.compress(b'{"format":"skylos-pending-upload","version":2}')
     )
     os.chmod(planted, 0o600)

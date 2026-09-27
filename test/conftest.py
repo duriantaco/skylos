@@ -206,6 +206,12 @@ def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
         "SKYLOS_PENDING_UPLOAD_DIR",
         str(tmp_path_factory.mktemp("pending-uploads")),
     )
+    # Even a test that removes SKYLOS_PENDING_UPLOAD_DIR must not reach the
+    # real ~/.skylos: the default queue root is a temporary folder too.
+    from skylos.api import _pending_uploads
+
+    home_guard = tmp_path_factory.mktemp("no-real-home") / ".skylos" / "pending-uploads"
+    monkeypatch.setattr(_pending_uploads, "default_pending_root", lambda: home_guard)
     yield
 
 

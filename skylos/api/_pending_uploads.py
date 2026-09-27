@@ -108,12 +108,22 @@ def is_valid_key(key: Any) -> bool:
     return isinstance(key, str) and bool(_KEY_RE.match(key))
 
 
+def home_pending_root() -> Path:
+    """``~/.skylos/pending-uploads``: the queue root when nothing overrides it."""
+    return Path.home() / ".skylos" / "pending-uploads"
+
+
+# The default root, looked up at call time; the test suite points it at a
+# temporary folder so no test can ever write to the real home directory.
+default_pending_root = home_pending_root
+
+
 def pending_root() -> Path:
     """The per-user queue root (``SKYLOS_PENDING_UPLOAD_DIR`` overrides it)."""
     override = os.getenv(PENDING_DIR_ENV, "").strip()
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".skylos" / "pending-uploads"
+    return default_pending_root()
 
 
 def repository_queue_id(project_root: str | os.PathLike) -> str:
@@ -159,6 +169,23 @@ def _is_safe_dir(path: Path) -> bool:
     return stat.S_ISDIR(info.st_mode)
 
 
+def _is_private_dir(path: Path) -> bool:
+    """The queue must be a real directory owned and accessible only by us."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode):
+        return False
+    return os.name != "posix" or (
+        info.st_uid == os.getuid() and not info.st_mode & 0o077
+    )
+
+
+def _is_private_queue_dir(directory: Path) -> bool:
+    return _is_private_dir(directory.parent) and _is_private_dir(directory)
+
+
 def _private_dir(path: Path) -> bool:
     """Create ``path`` (0700) if needed; refuse a symlink or a non-folder."""
     if path.is_symlink():
@@ -169,7 +196,7 @@ def _private_dir(path: Path) -> bool:
         )  # skylos: ignore[SKY-D215] per-user upload queue
     except OSError:
         return False
-    return _is_safe_dir(path)
+    return _is_private_dir(path)
 
 
 def _ensure_dir(directory: Path) -> bool:
@@ -179,7 +206,7 @@ def _ensure_dir(directory: Path) -> bool:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
     except OSError:
         return False
-    if not root.is_dir():
+    if not _is_private_dir(root):
         return False
     return _private_dir(directory)
 
@@ -190,8 +217,18 @@ def _owned_private_file(info: os.stat_result) -> bool:
     return info.st_uid == os.getuid() and not info.st_mode & 0o077
 
 
+def _same_private_file(before: os.stat_result, opened: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(opened.st_mode)
+        and _owned_private_file(opened)
+        and (before.st_dev, before.st_ino) == (opened.st_dev, opened.st_ino)
+    )
+
+
 def _record_key(root: Path, *, create: bool) -> bytes | None:
     """The per-user HMAC key (32 random bytes, 0600) in the queue root."""
+    if not _is_private_dir(root):
+        return None
     path = root / KEY_FILENAME
     info = _file_info(path)
     if info is None:
@@ -214,13 +251,19 @@ def _record_key(root: Path, *, create: bool) -> bytes | None:
     if not _owned_private_file(info) or info.st_size != _KEY_BYTES:
         return None
     try:
-        fd = os.open(
+        fd = os.open(  # skylos: ignore[SKY-D215] fixed name in the private queue root
             path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        )  # skylos: ignore[SKY-D215] fixed name in the per-user queue root
+        )
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as handle:
-        key = handle.read(_KEY_BYTES + 1)
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if not _same_private_file(info, opened) or opened.st_size != _KEY_BYTES:
+                return None
+            key = handle.read(_KEY_BYTES + 1)
+    except OSError:
+        return None
     return key if len(key) == _KEY_BYTES else None
 
 
@@ -267,9 +310,9 @@ def _write_private_file(path: Path, data: bytes) -> bool:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(
+        fd = os.open(  # skylos: ignore[SKY-D215] private queue, no-follow exclusive create
             tmp, flags, 0o600
-        )  # skylos: ignore[SKY-D215] UUID-named file, no-follow exclusive create
+        )
     except OSError:
         return False
     try:
@@ -309,6 +352,8 @@ def _file_info(path: Path) -> os.stat_result | None:
 
 
 def _move_to_failed(path: Path, key: str, reason: dict[str, Any]) -> Path | None:
+    if not _is_private_queue_dir(path.parent):
+        return None
     failed_dir = path.parent / FAILED_DIRNAME
     if failed_dir.is_symlink():
         return None
@@ -316,7 +361,7 @@ def _move_to_failed(path: Path, key: str, reason: dict[str, Any]) -> Path | None
         failed_dir.mkdir(mode=0o700, exist_ok=True)
     except OSError:
         return None
-    if not _is_safe_dir(failed_dir):
+    if not _is_private_dir(failed_dir):
         return None
     target = failed_dir / path.name
     try:
@@ -330,7 +375,7 @@ def _move_to_failed(path: Path, key: str, reason: dict[str, Any]) -> Path | None
 
 def _prune_failed(directory: Path, now: float) -> None:
     failed_dir = directory / FAILED_DIRNAME
-    if not _is_safe_dir(failed_dir):
+    if not _is_private_queue_dir(directory) or not _is_private_dir(failed_dir):
         return
     try:
         entries = list(failed_dir.iterdir())
@@ -348,6 +393,8 @@ def expire_pending_uploads(directory: Path, *, now: float | None = None) -> int:
 
     The file time is when the scan was first sent (the file is written once).
     """
+    if not _is_private_queue_dir(directory):
+        return 0
     current = time.time() if now is None else now
     window = resend_window_seconds()
     moved = 0
@@ -456,14 +503,17 @@ def _read_record(path: Path, key: bytes | None) -> dict[str, Any] | None:
     if info is None or not _owned_private_file(info):
         return None
     try:
-        fd = os.open(
+        fd = os.open(  # skylos: ignore[SKY-D215] signed record in private queue, no-follow read
             path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        )  # skylos: ignore[SKY-D215] UUID-named regular file, no-follow read
+        )
     except OSError:
         return None
     try:
-        with os.fdopen(fd, "rb") as raw, gzip.GzipFile(fileobj=raw) as handle:
-            data = handle.read(MAX_DECOMPRESSED_BYTES + 1)
+        with os.fdopen(fd, "rb") as raw:
+            if not _same_private_file(info, os.fstat(raw.fileno())):
+                return None
+            with gzip.GzipFile(fileobj=raw) as handle:
+                data = handle.read(MAX_DECOMPRESSED_BYTES + 1)
     except (OSError, EOFError):
         return None
     if len(data) > MAX_DECOMPRESSED_BYTES or not data.startswith(_MAGIC):
@@ -490,7 +540,7 @@ def _read_record(path: Path, key: bytes | None) -> dict[str, Any] | None:
 def list_pending_uploads(directory: Path | None) -> tuple[list[PendingUpload], int]:
     """Saved uploads inside the resend window, oldest first, and how many
     unreadable files were skipped."""
-    if directory is None or not _is_safe_dir(directory):
+    if directory is None or not _is_private_queue_dir(directory):
         return [], 0
     now = time.time()
     expire_pending_uploads(directory, now=now)
@@ -518,7 +568,7 @@ def list_pending_uploads(directory: Path | None) -> tuple[list[PendingUpload], i
 
 def count_pending_uploads(directory: Path | None) -> int:
     """Cheap count for the reminder line; does not read the files."""
-    if directory is None or not _is_safe_dir(directory):
+    if directory is None or not _is_private_queue_dir(directory):
         return 0
     now = time.time()
     window = resend_window_seconds()
