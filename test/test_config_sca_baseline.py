@@ -166,7 +166,7 @@ def test_synced_secret_gate_cannot_be_disabled_by_repository(project):
         project,
         "secrets_enabled: true\ngate:\n  enabled: true\n  block_secrets: true\n",
     )
-    (project / "pyproject.toml").write_text(
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
         "[tool.skylos]\nsecrets_enabled = false\n"
         "[tool.skylos.gate]\nblock_secrets = false\n",
         encoding="utf-8",
