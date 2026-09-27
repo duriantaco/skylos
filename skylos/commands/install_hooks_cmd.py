@@ -23,7 +23,7 @@ AGENTS = ("claude", "codex", "cursor")
 MAX_CONFIG_BYTES = 2_000_000
 OUR_COMMAND_RE = re.compile(
     r"(?:^|[\s/\\'\"])skylos(?:\.exe|\.entry)?['\"]?\s+hook\s+"
-    r"(?:post-edit|pre-read|pre-bash|stop)\b"
+    r"(?:post-edit|pre-edit|pre-read|pre-bash|stop)\b"
 )
 PROBE_TIMEOUT_SECONDS = 30
 # Local hook state, never meant for version control. ``.skylos/`` itself also
@@ -39,8 +39,12 @@ CURSOR_PERMISSION_FALLBACK = '{"permission":"allow"}'
 Probe = Callable[[Sequence[str]], "str | None"]
 
 # (event name in the agent's config, matcher or None, skylos hook, timeout s)
+# pre-edit enforces organization-protected paths before the edit happens.
+# Codex and Cursor get the same rule after the edit (post-edit + stop), since
+# their pre-tool hooks do not cover file edits.
 CLAUDE_HOOKS = (
     ("PreToolUse", "Read", "pre-read", 15),
+    ("PreToolUse", "Edit|Write|MultiEdit", "pre-edit", 15),
     ("PreToolUse", "Bash|PowerShell", "pre-bash", 30),
     ("PostToolUse", "Edit|Write|MultiEdit", "post-edit", 120),
     ("Stop", None, "stop", 180),
@@ -58,6 +62,7 @@ CURSOR_HOOKS = (
 )
 STATUS_MESSAGES = {
     "pre-read": "Skylos: checking file for secrets",
+    "pre-edit": "Skylos: checking protected paths",
     "pre-bash": "Skylos: checking packages",
     "post-edit": "Skylos: verifying edit",
     "stop": "Skylos: checking session edits",
@@ -338,7 +343,10 @@ def resolve_skylos_command(
         script = _current_console_script()
         if script is not None:
             candidates.append([script])
-        candidates.append([sys.executable, "-m", "skylos.entry"])
+        # -P: the hook runs with the repository as its working directory;
+        # never let a repo-level ``skylos/`` shadow the installed package.
+        safe = ["-P"] if sys.version_info >= (3, 11) else []
+        candidates.append([sys.executable, *safe, "-m", "skylos.entry"])
         on_path = which("skylos")
         if on_path:
             candidates.append([on_path])
