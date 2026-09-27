@@ -64,6 +64,13 @@ Rule IDs use a stable public prefix:
 | Rule selection | `--select SKY-...`; exact, case-insensitive rule filtering across scan output formats with automatic analyzer-family enablement. |
 | Structured output | `--format json`, `--format llm`, or `--format github` for machines, LLM consumers, and GitHub annotations. |
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
+| Upload contract | `skylos/api/upload_contract/v1.json`, shared with Skylos Cloud; defines how each finding is normalized, which errors reject a whole upload, and the retry and idempotency rules. The CLI sends `X-Skylos-Upload-Contract: 1`. See [docs/cli-output.md](./docs/cli-output.md#uploading-to-skylos-cloud). |
+| Idempotency key | A UUID v4 sent as `Idempotency-Key` on every request of one upload, its retries and its resends, so Cloud never saves or charges the same scan twice. |
+| Saved upload | A scan whose upload failed for a temporary reason or was interrupted, kept in `.skylos/pending-uploads/` (0600, git-ignored, no token) as the exact bytes that were sent. It is resent unchanged within 7 days; after that it moves to `failed/` ("too old to resend safely; rerun the scan"). |
+| `skylos upload --retry` | Resends saved uploads with their original keys; `skylos upload --list` shows them. Sent scans are deleted; rejected ones move to `.skylos/pending-uploads/failed/` with the reason. |
+| "N findings have no file location; uploading them anyway." | Printed before an upload when some findings have no usable path (none, a placeholder such as `unknown`, outside the repository, or a folder). They are uploaded with an empty path and stored without a location. |
+| "Upload failed: <what went wrong> <what to do> (ref: <id>)" | The upload error format. The reference is Cloud's request id to quote to support. Raw server responses are never printed. |
+| "Scan was already saved by an earlier attempt" | Cloud recognised the idempotency key (`Idempotent-Replayed: true`); nothing was saved or charged twice. |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |

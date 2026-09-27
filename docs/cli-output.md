@@ -309,6 +309,96 @@ touched by any AI commit is AI, otherwise a file touched by a bot commit is
 automation, otherwise it is human. For "everything not AI-authored", combine
 `human_files` and `automation_files`.
 
+## Uploading To Skylos Cloud
+
+`skylos . --upload` (and `skylos debt . --upload`) sends the scan to Skylos
+Cloud. The upload follows a versioned contract shared with the server
+(`skylos/api/upload_contract/v1.json`).
+
+**Before sending**, every finding is checked against the contract. Findings are
+never dropped:
+
+- Repository-level findings (`SKY-R101`–`SKY-R104`, kind `repo_policy`) are
+  sent at the project root (`.` at the repository root, otherwise the project
+  subpath) on line 1.
+- Paths are sent relative to the repository (or, outside a Git repository,
+  to the working directory) and normalized inside it. The local checkout path
+  is never uploaded, and neither is a path that climbs out with `..`.
+- A finding without a usable location (no path, a placeholder such as
+  `unknown`, a file outside the repository, or a folder) is still sent, with
+  an empty path; Cloud stores it without a location. The CLI prints one line,
+  for example `2 findings have no file location; uploading them anyway.`
+- A `%` in a file name is sent as `%25`, because Cloud percent-decodes paths
+  once.
+
+**Retries.** Only connection errors, timeouts and HTTP 408, 425, 429, 500, 502,
+503 and 504 are retried: at most 4 attempts, with exponential backoff and full
+jitter (1s base, 30s cap). A `Retry-After` header (seconds or HTTP date) is
+honoured; if it asks for more than 30 seconds the CLI stops and saves the scan
+instead of waiting. Other 4xx responses are never retried. Every request of one
+upload, including its retries, the large-scan `init`/`complete` calls and later
+resends, carries the same `Idempotency-Key` (a UUID v4) plus
+`X-Skylos-Upload-Contract: 1` and `X-Skylos-Cli-Version`, so Cloud can tell a
+retry from a new scan and never saves or charges it twice. Falling back from
+the large-scan path to the compact inline upload is a different request and
+gets a new key. When Cloud answers `Idempotent-Replayed: true`
+the CLI prints `Scan was already saved by an earlier attempt`.
+
+**Errors** are printed as one sentence, what to do, and a reference to quote
+to support, never as a raw response body:
+
+```text
+Upload failed: No credits remaining. Buy more at skylos.dev/dashboard/billing, then upload again.
+Upload failed: Skylos Cloud had a temporary problem (HTTP 503). The scan was saved; run 'skylos upload --retry' to send it. (ref: req_8f2c)
+```
+
+**Saved uploads.** When an upload fails for a temporary reason (network,
+timeout, 5xx, 429, or Cloud still processing the same upload) or is
+interrupted with Ctrl-C or SIGTERM, the scan is saved to
+`.skylos/pending-uploads/<idempotency-key>.json.gz` in the repository (file
+mode 0600, folder 0700, git-ignored through a `.gitignore` inside the folder).
+The file holds the exact request bytes that were sent (and, for large scans,
+the exact artifact files), plus the project id, endpoint, key, time and CLI
+version. It never holds your token, and SECRET findings never carry a code
+snippet (they are removed before the first send). The next
+`skylos . --upload` reminds you, and:
+
+```bash
+skylos upload --list    # show saved scans
+skylos upload --retry   # resend them with their original keys
+```
+
+A resend sends the saved bytes unchanged with the original key, so Cloud
+recognises it. A resent scan that Cloud accepts, or already had, is deleted.
+One that Cloud rejects for a reason a retry cannot fix moves to
+`.skylos/pending-uploads/failed/` with a `<key>.reason.json`. A scan saved for
+a different `SKYLOS_API_URL` or linked project is not sent. Scans are only
+resent within 7 days (the contract's `client_resend_window_days`; Cloud keeps
+keys for 8); older ones move to `failed/` with the reason
+`too old to resend safely; rerun the scan`. The folder keeps at most 20 scans
+and 200 MB, dropping the oldest first. `skylos upload --retry` exits 1 while
+any scan is still unsent.
+
+**Large scans** (more than 4 MB inline, `SKYLOS_INLINE_UPLOAD_LIMIT_BYTES`) use
+the artifact path automatically: `init`, a gzip upload to storage, then
+`complete`.
+
+**Contract version.** While uploading, the CLI asks
+`GET /api/report/contract` (2-second timeout, once per run, silent on any
+error). If Cloud speaks a newer contract it prints one line suggesting
+`pip install -U skylos`.
+
+Managed GitLab uploads keep their own rules: one attempt, no retries, no saved
+uploads and no automatic re-upload.
+
+| Variable | Default | Effect |
+|:---|:---|:---|
+| `SKYLOS_UPLOAD_MAX_ATTEMPTS` | `4` | Attempts per request (1-10). |
+| `SKYLOS_UPLOAD_RETRY_BASE_SECONDS` | `1` | Backoff base. |
+| `SKYLOS_UPLOAD_RETRY_MAX_SECONDS` | `30` | Backoff and `Retry-After` cap. |
+| `SKYLOS_PENDING_UPLOAD_DIR` | `.skylos/pending-uploads` | Where saved uploads go. |
+| `SKYLOS_UPLOAD_CONTRACT_CHECK` | `1` | `0` turns the contract-version check off. |
+
 ## Selectable Terminal UI
 
 Use the TUI when you want keyboard-driven triage:

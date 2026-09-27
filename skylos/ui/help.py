@@ -251,6 +251,16 @@ COMMANDS = [
     },
     {"name": "skylos credits", "desc": "Check credit balance", "group": "Account"},
     {
+        "name": "skylos upload --retry",
+        "desc": "Resend scans whose upload to Skylos Cloud did not finish",
+        "details": [
+            "Scans are saved in .skylos/pending-uploads/ after a network error, timeout, server error, rate limit or interrupted upload",
+            "Each scan is resent with its original idempotency key, so Cloud never saves or charges it twice",
+            "Use skylos upload --list to see saved scans; they expire after 7 days",
+        ],
+        "group": "Account",
+    },
+    {
         "name": "skylos init",
         "desc": "Initialize config in pyproject.toml",
         "group": "Utility",

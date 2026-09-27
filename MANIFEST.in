@@ -1,3 +1,4 @@
 include README.md
 include LICENSE
 include pyproject.toml
+recursive-include skylos/api/upload_contract *.json

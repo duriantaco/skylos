@@ -1,0 +1,133 @@
+{
+  "contract": "skylos-report-upload",
+  "version": 1,
+  "owner": "skylos-cloud (the server is the authority; the CLI vendors an identical copy and CI checks they match)",
+  "finding": {
+    "file_path": {
+      "normalize": [
+        "trim surrounding whitespace",
+        "percent-decode once (leave the value unchanged if it is not valid percent-encoding)",
+        "replace backslashes with forward slashes",
+        "strip a leading file: scheme and its slashes",
+        "strip a leading Windows drive (e.g. C:/)",
+        "strip leading slashes",
+        "strip one CI workspace prefix: home/runner/work/<owner>/<repo>/, __w/<owner>/<repo>/ or github/workspace/",
+        "collapse repeated slashes"
+      ],
+      "invalid_when": [
+        "not a string",
+        "empty after normalization",
+        "any segment is empty, '.' or '..' (after normalization)",
+        "any segment contains a control character U+0000-U+001F or U+007F"
+      ],
+      "max_length": 500,
+      "repository_scope": {
+        "description": "Findings about the whole project rather than a file. Sent with file_path equal to the project root ('.' when the project is the repository root, otherwise the project subpath), line_number 1 and kind 'repo_policy'.",
+        "rule_ids": [
+          "SKY-R101",
+          "SKY-R102",
+          "SKY-R103",
+          "SKY-R104"
+        ],
+        "kind": "repo_policy",
+        "line_number": 1,
+        "stored_path": "."
+      },
+      "on_invalid": "store_without_location",
+      "placeholder_paths": {
+        "values": [
+          "unknown",
+          "<unknown>",
+          "?",
+          "-",
+          "none",
+          "null",
+          "undefined"
+        ],
+        "description": "Case-insensitive. Treated exactly like an invalid path: stored without a location, with a warning."
+      }
+    },
+    "line_number": {
+      "type": "integer",
+      "min": 0,
+      "on_invalid": "store_as_0"
+    },
+    "rule_id": {
+      "min_length": 1,
+      "max_length": 120,
+      "invalid_when": [
+        "not a string",
+        "surrounding whitespace",
+        "control characters"
+      ],
+      "on_invalid": "store_as_UNKNOWN"
+    },
+    "category": {
+      "max_length": 40,
+      "default_when_missing": "QUALITY",
+      "case": "upper",
+      "on_invalid": "store_as_default"
+    },
+    "severity": {
+      "values": [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO"
+      ],
+      "default_when_missing": "MEDIUM",
+      "case": "upper",
+      "on_invalid": "store_as_default"
+    },
+    "message": {
+      "max_length": 1000,
+      "on_too_long": "truncate"
+    },
+    "snippet": {
+      "max_length": 2000,
+      "on_too_long": "truncate"
+    }
+  },
+  "per_finding_problems": {
+    "rule": "A problem with one finding never rejects the upload. The finding is stored, still counts toward the quality gate, and is reported back in the response under 'finding_warnings' with its index, field and reason.",
+    "no_location_path": ""
+  },
+  "whole_upload_rejections": [
+    "authentication or authorization failure",
+    "no credits / plan does not allow the upload",
+    "findings belong to a different project root than the selected project (PROJECT_ROOT_FINDING_MISMATCH)",
+    "verified pull-request scan cannot be verified with GitHub",
+    "request body malformed or over the size limit"
+  ],
+  "transport": {
+    "idempotency_header": "Idempotency-Key",
+    "idempotency_key_format": "UUID v4, generated once per upload and reused for every retry and resend of that upload",
+    "idempotent_replay": "Same key and same payload hash returns the original result with 200 and does not charge credits again. Same key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.",
+    "contract_header": "X-Skylos-Upload-Contract",
+    "retryable_statuses": [
+      408,
+      425,
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "retry_after_header": "Retry-After",
+    "error_body": {
+      "code": "stable machine code, e.g. INVALID_TOKEN",
+      "error": "one plain sentence saying what went wrong",
+      "hint": "one plain sentence saying what to do",
+      "retryable": "boolean",
+      "request_id": "id to quote to support"
+    },
+    "idempotency_retention_days": 8,
+    "client_resend_window_days": 7,
+    "client_resend_rule": "A client resends the exact bytes it originally sent (never a re-serialised body) with the same Idempotency-Key, and only within client_resend_window_days."
+  },
+  "pull_request_scans": {
+    "location_less_findings": "fail_closed",
+    "rule": "On a pull-request scan, a finding without a file location counts as new unless the baseline scan has a finding with the same rule_id and no location. If there is no baseline, it counts as new. The check summary says how many findings were compared with the baseline instead of the diff."
+  }
+}

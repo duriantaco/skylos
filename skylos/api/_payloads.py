@@ -204,6 +204,14 @@ def _int_upload_value(value: Any, default: int = 0) -> int:
         return default
 
 
+def _compact_file_path(finding: dict[str, Any]) -> str:
+    # An empty file_path is the upload pre-flight's "no location"; keep it
+    # empty instead of inventing an "unknown" file.
+    if finding.get("file_path") == "":
+        return ""
+    return str(finding.get("file_path") or finding.get("file") or "unknown")
+
+
 def _compact_upload_finding(
     finding: dict[str, Any],
     *,
@@ -211,7 +219,7 @@ def _compact_upload_finding(
 ) -> dict[str, Any]:
     compact = {
         "rule_id": str(finding.get("rule_id") or "UNKNOWN")[:100],
-        "file_path": str(finding.get("file_path") or finding.get("file") or "unknown"),
+        "file_path": _compact_file_path(finding),
         "line_number": _int_upload_value(
             finding.get("line_number") or finding.get("line") or 0
         ),
