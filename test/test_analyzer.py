@@ -1357,10 +1357,12 @@ class TestAnalyze:
         source = """
 from pathlib import Path
 
+@app.post("/unsuppressed")
 def unsuppressed(destination: str, filename: str) -> None:
     destination_path = Path(destination)
     (destination_path / filename).write_text("payload", encoding="utf-8")
 
+@app.post("/ignore_path_traversal")
 def ignore_path_traversal(destination: str, filename: str) -> None:
     destination_path = Path(destination)
     (destination_path / filename).write_text(  # skylos: ignore[SKY-D215]
@@ -1368,6 +1370,7 @@ def ignore_path_traversal(destination: str, filename: str) -> None:
         encoding="utf-8",
     )
 
+@app.post("/ignore_symlink_write")
 def ignore_symlink_write(destination: str, filename: str) -> None:
     destination_path = Path(destination)
     (destination_path / filename).write_text(  # skylos: ignore[SKY-D324]

@@ -3,7 +3,10 @@ import ast
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
-from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
+from skylos.rules.danger.untrusted_sources import (
+    UntrustedSourceIndex,
+    entrypoint_decorator,
+)
 
 
 SYMLINK_WRITE_RULE = "SKY-D324"
@@ -72,6 +75,17 @@ _FILE_OBJECT_CALLEES = frozenset(
 # ``/base/../etc`` still "starts with" / "is relative to" ``/base``.
 _NORMALIZER_CALLEES = frozenset({"resolve", "realpath", "abspath", "normpath"})
 _TERMINATING_CALLEES = frozenset({"abort", "exit", "_exit"})
+# Source labels (from ``untrusted_sources``) that name the program's operator
+# rather than a remote party. Whoever runs a CLI or sets its environment
+# already controls the filesystem it reads, so a path they pass is not a
+# traversal or symlink attack surface.
+_OPERATOR_SOURCE_MARKERS = (
+    "os.environ",
+    "os.getenv",
+    "sys.argv",
+    "CLI arguments",
+    "CLI parameter",
+)
 
 
 def _callee_last(node):
@@ -279,6 +293,10 @@ def _is_probable_test_file(file_path):
     )
 
 
+def _is_operator_source(label):
+    return any(marker in label for marker in _OPERATOR_SOURCE_MARKERS)
+
+
 def _is_pytest_fixture_function(fn: ast.AST):
     for decorator in getattr(fn, "decorator_list", []) or []:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -302,6 +320,11 @@ class _PathFlowChecker(TaintVisitor):
     }
     PATHLIB_READ_METHODS = {"read_bytes", "read_text"}
     PATHLIB_WRITE_METHODS = {"write_bytes", "write_text"}
+    # Reporting policy for D215/D324/D325: suppress only proven operator paths.
+    # Unknown helper parameters may be supplied by a route in another module,
+    # even when the file lives under tests/. Fixture and literal parameter
+    # proofs live in the taint flow. Subclasses can exercise raw flow instead.
+    REPORT_ONLY_UNTRUSTED_SOURCES = True
 
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
@@ -329,7 +352,7 @@ class _PathFlowChecker(TaintVisitor):
         self.branch_validated = []
 
     def visit_Module(self, node):
-        self.untrusted_sources = UntrustedSourceIndex(node)
+        self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
         self.generic_visit(node)
@@ -558,6 +581,11 @@ class _PathFlowChecker(TaintVisitor):
             return False
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             return self.is_tainted(node.left) or self.is_tainted(node.right)
+        if isinstance(node, ast.Subscript):
+            # A remote key can select a path from a mutable mapping. Even a
+            # literal module dictionary may be changed through another module
+            # or an indirect method call before this lookup.
+            return super().is_tainted(node) or self.is_tainted(node.slice)
         if isinstance(node, ast.Call):
             qn = _qualified_name(node)
             if qn in {"os.getenv", "os.environ.get", "os.environ.__getitem__"}:
@@ -740,7 +768,14 @@ class _PathFlowChecker(TaintVisitor):
         ]
         if not tainted_names:
             return False
-        return all(self._is_validated_name(name) for name in tainted_names)
+        if not all(self._is_validated_name(name) for name in tainted_names):
+            return False
+        # A check on one path variable does not validate new request input
+        # appended at the sink, even when the variable itself is contained.
+        direct_sources = self.untrusted_sources.for_function(
+            self._current_function()
+        ).direct_sources_in(node)
+        return not any(not _is_operator_source(source) for source in direct_sources)
 
     def _flag_file_response(self, node, canonical):
         keyword, position = FILE_RESPONSE_SINKS[canonical]
@@ -753,10 +788,7 @@ class _PathFlowChecker(TaintVisitor):
             return
         sink_name = canonical.rsplit(".", 1)[-1]
         sink = f"filesystem path served by {sink_name}()"
-        # File-serving helpers are only reported with a real untrusted source
-        # (entry-point parameter, request.*, input(), argv, environment); a
-        # wrapper that forwards its own parameter is not a finding.
-        evidence = self._source_evidence(node, path_expr, sink)
+        evidence = self._untrusted_path_evidence(path_expr, sink, traversal=True)
         if evidence is None:
             return
         self._emit_path_traversal(
@@ -840,22 +872,23 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_os_open_write_flags(flags.id)
         return False
 
-    def _add_finding(self, node, rule_id, severity, message):
+    def _add_finding(self, node, rule_id, severity, message, evidence=None):
         key = (rule_id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if key in self._emitted:
             return
         self._emitted.add(key)
-        self.findings.append(
-            {
-                "rule_id": rule_id,
-                "severity": severity,
-                "message": message,
-                "file": str(self.file_path),
-                "line": node.lineno,
-                "col": node.col_offset,
-                "symbol": self._current_symbol(),
-            }
-        )
+        finding = {
+            "rule_id": rule_id,
+            "severity": severity,
+            "message": message,
+            "file": str(self.file_path),
+            "line": node.lineno,
+            "col": node.col_offset,
+            "symbol": self._current_symbol(),
+        }
+        if evidence:
+            finding["metadata"] = {"security_evidence": evidence}
+        self.findings.append(finding)
 
     def _source_evidence(self, node, path_expr, sink):
         return self.untrusted_sources.evidence(
@@ -865,6 +898,70 @@ class _PathFlowChecker(TaintVisitor):
             missing_guard="resolved-path containment check against a fixed base",
             evidence_kind="python_path_taint",
         )
+
+    def _has_open_world_parameter(self, path_expr, facts):
+        """A helper's parameters may have callers outside this source file."""
+        function = self._current_function()
+        if function is None or entrypoint_decorator(function):
+            return False
+        args = getattr(function, "args", None)
+        if args is None:
+            return False
+        params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if args.vararg:
+            params.append(args.vararg)
+        if args.kwarg:
+            params.append(args.kwarg)
+        params = [param for param in params if param.arg not in {"self", "cls"}]
+        if not params:
+            return False
+        # A direct operator source is independent of unused helper parameters.
+        # A derived name cannot establish that independence with this index.
+        direct = facts.direct_sources_in(path_expr)
+        if direct and all(_is_operator_source(source) for source in direct):
+            used_params = {param.arg for param in params} & _names_in(path_expr)
+            if not used_params:
+                return False
+        return True
+
+    def _untrusted_path_evidence(self, path_expr, sink, *, traversal=False):
+        """Evidence for an unsafe path; None only when its source is proven safe.
+
+        Every function parameter is tainted for flow tracking, but a helper
+        that opens the path it was handed may be called from a remote entry
+        point in another module. Keep findings when the source is unknown;
+        suppress only paths proven to come from the program operator."""
+        evidence = self._source_evidence(None, path_expr, sink)
+        if not self.REPORT_ONLY_UNTRUSTED_SOURCES:
+            return evidence if evidence is not None else {}
+        facts = self.untrusted_sources.for_function(self._current_function())
+        all_sources = (
+            facts.traversal_sources_in(path_expr)
+            if traversal
+            else facts.sources_in(path_expr)
+        )
+        remote_sources = [
+            source for source in all_sources if not _is_operator_source(source)
+        ]
+        if remote_sources:
+            if evidence is None:
+                return {}
+            evidence["sources"] = (
+                remote_sources
+                + [source for source in all_sources if _is_operator_source(source)]
+            )[:4]
+            if evidence["source"] != remote_sources[0]:
+                evidence["source"] = remote_sources[0]
+                evidence["path"] = [
+                    f"untrusted input from {remote_sources[0]}",
+                    f"reaches {sink}",
+                ]
+            return evidence
+        if self._has_open_world_parameter(path_expr, facts):
+            return {}
+        if evidence is None:
+            return {}
+        return None
 
     def _emit_path_traversal(self, node, path_expr, message, sink, evidence=None):
         finding = {
@@ -878,7 +975,7 @@ class _PathFlowChecker(TaintVisitor):
         }
         if evidence is None:
             evidence = self._source_evidence(node, path_expr, sink)
-        if evidence is not None:
+        if evidence:
             finding["metadata"] = {"security_evidence": evidence}
         self.findings.append(finding)
 
@@ -886,24 +983,36 @@ class _PathFlowChecker(TaintVisitor):
         is_interp = _is_interpolated_string(path_expr)
         is_tainted = self.is_tainted(path_expr)
 
-        if is_interp or is_tainted:
-            self._emit_path_traversal(
-                node,
-                path_expr,
-                "Possible path traversal: tainted filesystem path",
-                "filesystem path operation",
-            )
+        if not (is_interp or is_tainted):
+            return
+        if self._path_is_contained(path_expr):
+            return
+        sink = "filesystem path operation"
+        evidence = self._untrusted_path_evidence(path_expr, sink, traversal=True)
+        if evidence is None:
+            return
+        self._emit_path_traversal(
+            node,
+            path_expr,
+            "Possible path traversal: tainted filesystem path",
+            sink,
+            evidence,
+        )
 
     def _flag_symlink_write_if_unsafe(self, node, path_expr):
         if not self._path_needs_symlink_protection(path_expr):
             return
         if self._has_symlink_write_guard():
             return
+        evidence = self._untrusted_path_evidence(path_expr, "filesystem write")
+        if evidence is None:
+            return
         self._add_finding(
             node,
             SYMLINK_WRITE_RULE,
             "HIGH",
             "Possible symlink-following write on attacker-controlled path; reject symlinks or open with O_NOFOLLOW and containment checks.",
+            evidence,
         )
 
     def _flag_symlink_read_if_unsafe(self, node, path_expr):
@@ -913,11 +1022,15 @@ class _PathFlowChecker(TaintVisitor):
             return
         if self._has_symlink_read_guard():
             return
+        evidence = self._untrusted_path_evidence(path_expr, "filesystem read")
+        if evidence is None:
+            return
         self._add_finding(
             node,
             SYMLINK_READ_RULE,
             "MEDIUM",
             "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap.",
+            evidence,
         )
 
     def _flag_archive_extract_if_unsafe(self, node):

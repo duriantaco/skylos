@@ -24,10 +24,37 @@ def _fixture(
     return f"{imports}\n{decorator}\ndef {name}({parameters}):\n{body}\n"
 
 
+class _RawPathFlowChecker(path_flow._PathFlowChecker):
+    """Exercise the taint flow independently of source reporting policy."""
+
+    REPORT_ONLY_UNTRUSTED_SOURCES = False
+
+
 def _scan(source, filename="tests/test_paths.py"):
     findings = []
-    path_flow.scan(ast.parse(source), filename, findings)
+    checker = _RawPathFlowChecker(
+        filename, findings, sanitizers=path_flow.PATH_SANITIZERS
+    )
+    checker.visit(ast.parse(source))
     return [finding for finding in findings if finding["rule_id"] in PATH_RULES]
+
+
+def test_default_policy_keeps_request_override_in_test_file():
+    source = _fixture(
+        '@pytest.mark.parametrize("filename", [dynamic_value])',
+        body='filename = request.args["name"]\n(tmp_path / filename).write_text("x")',
+    )
+    assert _scan(source)  # the raw flow still sees the tainted write
+    findings = []
+    path_flow.scan(ast.parse(source), "tests/test_paths.py", findings)
+    assert WRITE_RULES <= {f["rule_id"] for f in findings}
+
+
+def test_default_policy_preserves_literal_pytest_path_proof():
+    source = _fixture()
+    findings = []
+    path_flow.scan(ast.parse(source), "tests/test_paths.py", findings)
+    assert not [f for f in findings if f["rule_id"] in PATH_RULES]
 
 
 def _assert_write_flagged(

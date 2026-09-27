@@ -160,6 +160,8 @@ def test_checked_in_local_api_benchmarks_assert_verification_contract(
         MANIFEST_PATH.parent / "fixtures" / fixture,
         project_context=True,
         include_dependency_hallucinations=False,
+        # This benchmark checks static Go/Java API coverage, not Python behavior.
+        behavior_comparison=False,
     )
 
     assert payload["status"] == expected_status
