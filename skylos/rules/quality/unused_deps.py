@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+from pathlib import Path
 
 try:
     import tomllib
@@ -244,7 +245,63 @@ def _collect_declared_deps(repo_root):
     return deps, project_name
 
 
-def scan_unused_dependencies(repo_root, py_files):
+_MANIFEST_NAMES = ("requirements.txt", "pyproject.toml", "setup.py", "setup.cfg")
+
+
+def _is_within(path, boundary):
+    try:
+        Path(path).resolve().relative_to(Path(boundary).resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _declared_dependency_location(repo_root, dep, boundary=None):
+    """Return (manifest_path, line) where ``dep`` is declared, or None.
+
+    Uses the same walk-up as ``_collect_declared_deps`` so the location is the
+    manifest the dependency was read from. The finding then points at a real
+    file and line instead of the repository folder. Manifests outside
+    ``boundary`` (the scanned project) are not used as a location: a path
+    outside the project cannot be stored or shown as part of it.
+    """
+    token = re.compile(
+        r"(?<![A-Za-z0-9_.-])" + r"[-_.]+".join(map(re.escape, re.split(r"[-_.]+", dep))) + r"(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    current = repo_root
+    for _ in range(5):
+        if boundary is not None and not _is_within(current, boundary):
+            break
+        for name in _MANIFEST_NAMES:
+            manifest = current / name
+            if not manifest.is_file():
+                continue
+            text = read_text_no_symlink(
+                manifest,
+                max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+                encoding="utf-8",
+            )
+            if not text:
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if token.search(stripped):
+                    return manifest, number
+        if current.parent == current:
+            break
+        current = current.parent
+    return None
+
+
+def scan_unused_dependencies(repo_root, py_files, location_root=None):
+    """Declared dependencies with no matching import.
+
+    ``location_root`` is the scanned project; a dependency declared only in a
+    manifest above it is reported at ``repo_root`` (no file location).
+    """
     findings = []
 
     if not repo_root or not py_files:
@@ -293,6 +350,10 @@ def scan_unused_dependencies(repo_root, py_files):
             if imp_norm == dep:
                 break
         else:
+            location = _declared_dependency_location(
+                repo_root, dep, location_root or repo_root
+            )
+            manifest, line = location if location else (repo_root, 0)
             findings.append(
                 {
                     "rule_id": RULE_ID,
@@ -304,9 +365,9 @@ def scan_unused_dependencies(repo_root, py_files):
                     "value": "unused",
                     "threshold": 0,
                     "message": f"Declared dependency '{dep}' appears unused. No matching import found in any Python file.",
-                    "file": str(repo_root),
-                    "basename": "",
-                    "line": 0,
+                    "file": str(manifest),
+                    "basename": manifest.name if location else "",
+                    "line": line,
                     "col": 0,
                 }
             )

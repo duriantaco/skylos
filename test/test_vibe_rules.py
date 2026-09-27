@@ -739,6 +739,68 @@ class TestUnusedDependencies:
             assert "requests" in names
             assert "flask" in names
 
+    def test_unused_dependency_points_at_declaring_manifest_line(self):
+        # Cloud uploads reject a finding whose path is the repository folder
+        # ("."), so the finding must name the manifest and line instead.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            root, files = self._make_project(
+                tmpdir,
+                "# serial port\nrequests>=2\npyserial==3.5\n",
+                "import requests\nrequests.get('x')\n",
+            )
+            findings = scan_unused_dependencies(root, files)
+            [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
+            assert finding["name"] == "pyserial"
+            assert Path(finding["file"]) == root / "requirements.txt"
+            assert finding["line"] == 3
+            assert finding["basename"] == "requirements.txt"
+
+    def test_unused_dependency_in_pyproject_points_at_its_line(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            (tmpdir / "pyproject.toml").write_text(
+                '[project]\nname = "drone"\ndependencies = [\n  "numpy",\n  "py-serial-helper",\n]\n',
+                encoding="utf-8",
+            )
+            py_file = tmpdir / "app.py"
+            py_file.write_text("import numpy\n", encoding="utf-8")
+            findings = scan_unused_dependencies(tmpdir, [py_file])
+            [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
+            assert Path(finding["file"]) == tmpdir / "pyproject.toml"
+            assert finding["line"] == 5
+
+    def test_manifest_above_the_scanned_project_is_not_used_as_location(self):
+        # A path outside the project cannot be uploaded as part of it (and
+        # would read as '../requirements.txt'); report the project folder,
+        # which uploads as "no location".
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            project = repo / "apps" / "web"
+            project.mkdir(parents=True)
+            py_file = project / "app.py"
+            py_file.write_text("import requests\n", encoding="utf-8")
+            findings = scan_unused_dependencies(project, [py_file], location_root=project)
+            [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
+            assert finding["name"] == "pyserial"
+            assert Path(finding["file"]) == project
+            assert finding["line"] == 0
+            assert ".." not in finding["file"]
+
+    def test_manifest_inside_the_project_above_the_sources_is_used(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            (project / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            src = project / "src"
+            src.mkdir()
+            py_file = src / "app.py"
+            py_file.write_text("import requests\n", encoding="utf-8")
+            findings = scan_unused_dependencies(src, [py_file], location_root=project)
+            [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
+            assert Path(finding["file"]) == project / "requirements.txt"
+            assert finding["line"] == 2
+
     def test_pyproject_toml_deps(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
