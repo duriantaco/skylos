@@ -15,7 +15,9 @@ makes it, instead of waiting for CI:
 
 Everything runs locally. It needs no account, no Docker and no API key. The
 only network calls are package-registry lookups, and only for install commands
-and new imports.
+and new imports. If you are logged in to a Skylos Cloud workspace, the hooks
+can also follow your organization's guardrail policy; see
+[Organization guardrails](#organization-guardrails).
 
 ## Install
 
@@ -87,6 +89,10 @@ export SKYLOS_HOOKS_DISABLE=pre-bash,stop
 export SKYLOS_HOOKS_DISABLE=all
 ```
 
+If your organization's guardrail policy doesn't allow loosening settings
+locally, this variable is ignored (see
+[Organization guardrails](#organization-guardrails)).
+
 To remove one hook for good, delete its entry from the config file. The
 entries are easy to find because every Skylos command contains
 `skylos hook <name>`.
@@ -96,6 +102,7 @@ entries are easy to find because every Skylos command contains
 | Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
 | `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
+| `pre-edit` | `PreToolUse` on `Edit\|Write\|MultiEdit` | not installed (see below) | not available | Denies edits to protected paths (only when guardrails set protected paths) |
 | `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell) | `beforeReadFile` | Blocks reading a file that contains secrets |
 | `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks installs of hallucinated or typosquatted packages |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
@@ -233,6 +240,145 @@ this hook and the issues are unchanged:
 - **Cursor:** Skylos sends no follow-up message. Cursor's own `loop_limit`
   also applies; the installer sets it to 3.
 
+## Organization guardrails
+
+A workspace owner or admin can set, in Skylos Cloud under **Governance →
+Agent guardrails** (paid workspaces), what these hooks block on every
+developer's machine. Nothing changes on any machine until an admin saves the
+policy; the defaults are exactly the behaviour described above.
+
+| Setting | Values | What the hooks do |
+|:---|:---|:---|
+| Hard-coded secrets an agent writes | block (default) / warn | `post-edit` and `stop`: block, or pass the finding to the agent as a note. Reading a file that contains a secret (`pre-read`) is always blocked. |
+| Package installs | block (default) / warn, separately for: package doesn't exist, pinned version doesn't exist, look-alike (typosquat) | `pre-bash`: deny the command, or let it run and show a warning (Claude Code/Codex `systemMessage`; Cursor `user_message`/`agent_message`). |
+| Security findings at or above a severity | off (default) / CRITICAL / HIGH / MEDIUM / LOW | Off: only the evidence-based blocks above. A severity: also block every security finding at or above it on the lines the agent changed. |
+| Protected paths | CODEOWNERS-style patterns (default: none) | Claude Code: `pre-edit` denies edits through its Edit/Write/MultiEdit tools before they happen. Codex and Cursor: `post-edit` flags an edit-tool change (`SKY-GUARD-PATH`) right after it happens and tells the agent to undo it. The `stop` hook compares protected repository paths with their state at the start of the session, including staged, committed and ignored file changes, and blocks until the original contents are restored. Shell writes are checked at `stop`, not when they happen. Shell writes through a protected symlink to a target outside the repository are outside this Git-based check. |
+| Developers may loosen settings locally | no (default) / yes | No: local settings can only make things stricter, and `SKYLOS_HOOKS_DISABLE` and `hooks_allow_packages` are ignored. Yes: local settings replace the organization's. |
+| Report blocked events | off (default) / on | See [What is reported](#what-is-reported). |
+
+Patterns use GitHub CODEOWNERS syntax (`*`, `?`, `**`, a leading or middle `/`
+anchors at the repository root, a trailing `/` means a directory, `docs/*` is
+direct children only; no `!`, `[ ]` or `\`), matched against the path relative
+to the repository root: case-sensitively on Linux, case-insensitively on macOS
+and Windows (where `INFRA/x.tf` is the same file as `infra/x.tf`). A pattern
+may use at most 3 `*` per file or folder name and 12 wildcards in total, and
+the hook matches with a linear-time matcher, so no pattern can make a hook
+slow. The semantics are a port of the cloud's CODEOWNERS compiler; the test
+suite checks both agree.
+
+Agents may never edit `~/.skylos` (credentials, machine id, cached policy):
+Claude Code's `pre-edit` denies it and `post-edit` blocks it for Codex and
+Cursor.
+
+`pre-edit` is new: run `skylos agent install-hooks` again after upgrading so
+Claude Code gets it. Codex's and Cursor's pre-tool hooks don't cover file
+edits, so for them a protected-path edit is caught right after it happens.
+
+### Local settings
+
+The same settings can be set per project, for example to try them before your
+organization adopts them:
+
+```toml
+[tool.skylos.guardrails]
+secrets_in_edits = "block"                 # or "warn"
+security_min_severity = "HIGH"             # CRITICAL | HIGH | MEDIUM | LOW | "off"
+protected_paths = ["infra/**", "/.github/workflows/"]
+
+[tool.skylos.guardrails.package_installs]
+missing_package = "block"                  # or "warn"
+missing_version = "block"
+typosquat = "warn"
+```
+
+Without an organization policy these apply as written. With one that forbids
+loosening, each setting is the stricter of the two (block beats warn, the
+lower severity threshold wins, protected paths are combined).
+
+### How the policy reaches the hooks
+
+- The hooks never make a network call for the policy. They read a cached copy
+  from `~/.skylos/guardrails/` (a hard 0.5 s budget; past it, or if the file
+  is unreadable, the hook uses local settings for that call).
+- The copy is fetched with the project API key `skylos login` saved (the same
+  one `skylos sync` uses; `SKYLOS_TOKEN` wins if set) by `skylos login`,
+  `skylos sync pull`, `skylos agent warm-cache` and
+  `skylos agent guardrails --refresh`. When the cached copy is older than the
+  server's refresh interval (15 minutes), a hook starts a detached
+  `python -m skylos.cloud.guardrails refresh` in the background, at most once
+  every 2 minutes, and carries on with the copy it has.
+- A policy that was fetched once stays in force until a newer fetch replaces
+  it; being offline does not loosen it. Logging out, or a key the server
+  rejects, returns the machine to local settings. A cached copy dated in the
+  future is refreshed at once.
+- The organization policy is read before `pyproject.toml`. If the local config
+  can't be read within the budget (or `pyproject.toml` is over 256 KB), it is
+  ignored for that call; if not even the cached policy can be read in time,
+  the hook uses built-in defaults and ignores `SKYLOS_HOOKS_DISABLE` and
+  `hooks_allow_packages`. A slow disk never loosens anything.
+- **Several workspaces on one machine.** The repository's `.skylos/link.json`
+  picks which saved key fetches the policy. The settings the hooks enforce are
+  the strictest of every cached organization policy on the machine (loosening
+  is allowed only if every one allows it), so a link file in a repository
+  cannot switch the hooks to a laxer workspace. With several saved keys, event
+  reporting needs an explicit `SKYLOS_TOKEN`; a repository-controlled link
+  alone cannot choose which workspace receives file paths.
+- The background process runs from `~/.skylos`, never from the repository,
+  with `python -E -P` and `PYTHONSAFEPATH=1`; it removes Python import-path
+  environment overrides, so a `skylos/` folder in the repository can't be
+  imported in place of Skylos. The hook command written by `install-hooks`
+  in its `python -m skylos.entry` form also uses `-P`.
+- Requests go only to an `https://` `SKYLOS_API_URL` (plain `http://` only to
+  localhost), and redirects are not followed, so the key is never forwarded.
+- The cached policy is not signed. Someone who can write `~/.skylos` can
+  change it; see the note below.
+- If the policy has never been fetched successfully for a paid workspace, or
+  the key is rejected, the hooks say once that they are using local settings.
+- Each fetch sends a random machine id (`~/.skylos/machine-id`, not derived
+  from hardware or your user), the agents whose hooks are installed, and the
+  CLI version, so admins can see which machines have the policy.
+
+`skylos agent guardrails` shows what is in force on this machine and why
+(`--json` for scripts, `--refresh` to fetch now).
+
+This is a guardrail for AI agents. It is not a security boundary against the
+developer who owns the machine: someone who edits files under `~/.skylos` or
+uninstalls the hooks can turn it off.
+
+### What is reported
+
+Only when an admin turned reporting on. Each time a hook blocks, or warns
+because of a guardrail setting, it queues one event with exactly these fields:
+
+| Field | Example |
+|:---|:---|
+| hook | `post-edit`, `pre-edit`, `pre-read`, `pre-bash`, `stop` |
+| agent | `claude-code`, `codex`, `cursor` |
+| category | `secret`, `secret_read`, `security_finding`, `dangerous_sink`, `untrusted_input`, `hallucination`, `contract`, `protected_path`, `package_missing`, `package_missing_version`, `package_typosquat` |
+| rule_id | `SKY-S101`, `SKY-D222`, `SKY-GUARD-PATH` |
+| decision | `block` or `warn` |
+| file | repository-relative path, e.g. `src/app.py` (none for shell commands) |
+| occurred_at | UTC time |
+
+The request also carries the CLI version, and the server identifies the
+developer by the API key. Never sent: code, snippets, finding messages,
+command lines, package names, secret values, prompts or absolute paths. Paths
+that aren't clean repository-relative paths are dropped, and every queued
+event is re-checked against this field list before sending.
+
+Before the first event is sent, the hooks show this once (and
+`skylos agent guardrails` prints it):
+
+```
+Your organization receives guardrail events: rule, file path, agent — never code.
+```
+
+Events are sent by the same detached background process with a 5 s timeout,
+in batches of up to 50. On failure they stay queued in
+`~/.skylos/guardrails/` (at most 200; the oldest are dropped first, and events
+older than 7 days are discarded). If the server says reporting is off, the
+queue is deleted.
+
 ## Hook contract used
 
 Every hook exits `0` and signals through JSON on stdout.
@@ -241,6 +387,9 @@ Every hook exits `0` and signals through JSON on stdout.
 |:---|:---|:---|
 | pre-read / pre-bash block | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` | `{"permission": "deny", "user_message": "...", "agent_message": "..."}` (`beforeReadFile`: `permission` + `user_message`) |
 | pre-read / pre-bash allow | no output, so the normal permission flow applies (Skylos never sends `"allow"`, which would skip your permission prompt) | `{"permission": "allow"}` (Cursor treats empty output from permission hooks as a deny) |
+| pre-edit block (protected path) | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...}}` | not installed |
+| pre-bash warn (guardrail setting) | `{"systemMessage": "..."}` | `{"permission": "allow", "user_message": "...", "agent_message": "..."}` |
+| one-time guardrail notice | `"systemMessage"` added to the hook's output | `"user_message"` on a `pre-read`/`pre-bash` allow |
 | post-edit fail | `{"decision": "block", "reason": "..."}` | none (`afterFileEdit` can't send feedback) |
 | post-edit, notes only | Claude: `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}`; Codex: none | none |
 | post-edit pass | no output | no output |
@@ -264,7 +413,8 @@ set by the installer are 15 s (`pre-read`), 30 s (`pre-bash`), 120 s
 non-blocking failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
-event, client, outcome, counts and duration. The log never holds file
+event, client, outcome, counts, duration and which settings were in force
+(`policy`: `default`, `local` or `org`). The log never holds file
 contents, secrets or shell commands. It rotates at 512 KB.
 
 The session file and log live in the project's `.skylos/` only when the

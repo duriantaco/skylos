@@ -69,6 +69,7 @@ Rule IDs use a stable public prefix:
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
+| Agent guardrails | What the agent hooks (`skylos hook`) block or only warn about: secrets agents write, hallucinated/typosquatted package installs, security findings at or above a severity, protected paths. Set per project in `[tool.skylos.guardrails]` or for a whole organization in Skylos Cloud; `skylos agent guardrails` shows what is in force. Optional block/warn event reporting sends rule, category, agent and repository-relative path only, never code. |
 | Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
@@ -718,6 +719,7 @@ findings.
 | SKY-DEAD | LLM dead-code verifier marker. |
 | SKY-DEAD-CHALLENGE | LLM dead-code challenge marker. |
 | SKY-DEBT | Agent command-center debt marker. |
+| SKY-GUARD-PATH | Agent hook finding: an AI agent edited a path protected by the agent guardrails (`protected_paths`); blocks until its session-start state is restored. |
 | SKY-FIX | Agent remediation / fix generation marker. |
 | SKY-L000 | Generic logic fallback ID for LLM schemas. |
 | SKY-C399 | Structure placeholder ID used in prompt examples. |
