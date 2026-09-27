@@ -189,6 +189,21 @@ def cleanup_temp_files():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolated_guardrails_home(tmp_path_factory, monkeypatch):
+    """Agent hooks read ~/.skylos (credentials, cached org guardrail policy).
+
+    Keep every test away from the developer's real login so no test uses a
+    real organization policy or starts a background fetch.
+    """
+    from skylos.cloud import guardrails
+
+    home = tmp_path_factory.mktemp("skylos-home")
+    monkeypatch.setattr(guardrails, "default_home", lambda: home)
+    monkeypatch.delenv("SKYLOS_TOKEN", raising=False)
+    yield
+
+
 pytest_plugins = []
 
 

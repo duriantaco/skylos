@@ -414,7 +414,13 @@ def test_hook_entry_skips_full_cli_import(tmp_path):
         capture_output=True,
         text=True,
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        # HOME: keep the hook away from the developer's real Skylos login.
+        env={
+            **os.environ,
+            "PYTHONPATH": str(REPO_ROOT),
+            "HOME": str(tmp_path),
+            "SKYLOS_TOKEN": "",
+        },
         timeout=60,
     )
     assert "HEAVY=" in result.stderr
