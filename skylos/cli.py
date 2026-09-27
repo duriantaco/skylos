@@ -3656,6 +3656,10 @@ def _build_agent_parser():
 
     add_warm_cache_parser(agent_sub)
 
+    from skylos.commands.guardrails_cmd import add_guardrails_parser
+
+    add_guardrails_parser(agent_sub)
+
     from skylos.commands.agent_test_cmd import add_agent_test_parsers
 
     add_agent_test_parsers(agent_sub)
@@ -3888,6 +3892,11 @@ def main() -> None:
             from skylos.commands.warm_cache_cmd import run_warm_cache_command
 
             sys.exit(run_warm_cache_command(agent_args))
+
+        if cmd == "guardrails":
+            from skylos.commands.guardrails_cmd import run_guardrails_command
+
+            sys.exit(run_guardrails_command(agent_args))
 
         if cmd == "replay":
             from skylos.commands.agent_replay_cmd import run_agent_replay_command

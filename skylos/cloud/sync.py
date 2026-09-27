@@ -797,6 +797,10 @@ def cmd_pull() -> None:
 
         print("\n✓ Sync complete!")
 
+        from skylos.commands.guardrails_cmd import refresh_quietly
+
+        refresh_quietly(repo_root)
+
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

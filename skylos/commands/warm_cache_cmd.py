@@ -52,6 +52,7 @@ def run_warm_cache_command(
     )
     if not files:
         print_func(f"No Python files under {root}; nothing to warm.")
+        _refresh_guardrails(root, print_func)
         return 0
 
     started = time.monotonic()
@@ -62,4 +63,12 @@ def run_warm_cache_command(
         f"Indexed {len(files)} Python file(s) in {elapsed:.1f}s -> "
         f"{root / CACHE_PATH}. Agent edit checks now re-parse only changed files."
     )
+    _refresh_guardrails(root, print_func)
     return 0
+
+
+def _refresh_guardrails(root: Path, print_func: Callable[[str], None]) -> None:
+    """Also fetch the organization's agent guardrail policy (if logged in)."""
+    from skylos.commands.guardrails_cmd import refresh_quietly
+
+    refresh_quietly(root, print_func=print_func)

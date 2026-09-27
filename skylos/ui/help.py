@@ -156,7 +156,17 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
-        "name": "skylos hook <post-edit|pre-read|pre-bash|stop>",
+        "name": "skylos agent guardrails [path] [--refresh] [--json]",
+        "desc": "Show the organization agent guardrail policy the hooks enforce on this machine",
+        "details": [
+            "Says whether the org policy (Skylos Cloud > Agent guardrails) or local settings are in force",
+            "--refresh fetches the policy now; login, sync pull and warm-cache also fetch it",
+            "Shows whether block/warn events are reported to your organization (never code)",
+        ],
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos hook <post-edit|pre-edit|pre-read|pre-bash|stop>",
         "desc": "Agent hook entry point (reads hook JSON on stdin; installed by agent install-hooks)",
         "details": [
             "Fails open on internal errors and logs to .skylos/hook.log",
