@@ -397,8 +397,13 @@ class TestSkylosApi(unittest.TestCase):
         result = upload_report({"danger": []})
 
         self.assertFalse(result["success"])
-        self.assertEqual(mock_post.call_count, 3)
-        self.assertIn("Server Error 500", result["error"])
+        # Four attempts in total; 500 is in the contract's retryable statuses.
+        self.assertEqual(mock_post.call_count, 4)
+        self.assertIn("HTTP 500", result["error"])
+        self.assertNotIn("Internal Server Error", result["error"])
+        self.assertTrue(result["retryable"])
+        keys = {c.kwargs["headers"]["Idempotency-Key"] for c in mock_post.call_args_list}
+        self.assertEqual(len(keys), 1)
 
     @patch("skylos.api._should_use_legacy_inline_report_upload", return_value=False)
     @patch("skylos.api.get_git_root", return_value="/mock/git/root")
@@ -426,7 +431,7 @@ class TestSkylosApi(unittest.TestCase):
         upload_ok.status_code = 200
         upload_ok.json.return_value = {"scanId": "scan_compact_123"}
 
-        mock_post.side_effect = [init_error, init_error, init_error, upload_ok]
+        mock_post.side_effect = [init_error] * 4 + [upload_ok]
 
         result = upload_report(
             {
@@ -445,7 +450,16 @@ class TestSkylosApi(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertEqual(result["scan_id"], "scan_compact_123")
-        self.assertEqual(mock_post.call_count, 4)
+        self.assertEqual(mock_post.call_count, 5)
+        init_keys = {
+            c.kwargs["headers"]["Idempotency-Key"]
+            for c in mock_post.call_args_list[:4]
+        }
+        fallback_key = mock_post.call_args_list[4].kwargs["headers"]["Idempotency-Key"]
+        # Every init retry reuses one key; the compact fallback is a different
+        # request, so it gets its own.
+        self.assertEqual(len(init_keys), 1)
+        self.assertNotIn(fallback_key, init_keys)
         fallback_payload = mock_post.call_args.kwargs["json"]
         self.assertEqual(fallback_payload["tool"], "skylos")
         self.assertEqual(fallback_payload["commit_hash"], "mock_commit_hash")
@@ -491,8 +505,9 @@ class TestSkylosApi(unittest.TestCase):
         )
 
         self.assertFalse(result["success"])
-        self.assertEqual(mock_post.call_count, 3)
-        self.assertIn("Server Error 500", result["error"])
+        self.assertEqual(mock_post.call_count, 4)
+        self.assertIn("HTTP 500", result["error"])
+        self.assertNotIn("Internal Server Error", result["error"])
         args, kwargs = mock_post.call_args
         payload = kwargs["json"]
         self.assertEqual(payload["tool"], "skylos-defend")
@@ -794,13 +809,15 @@ class TestSkylosApi(unittest.TestCase):
         r1 = MagicMock(status_code=500, text="E1")
         r2 = MagicMock(status_code=502, text="E2")
         r3 = MagicMock(status_code=503, text="E3")
-        mock_post.side_effect = [r1, r2, r3]
+        r4 = MagicMock(status_code=504, text="E4")
+        mock_post.side_effect = [r1, r2, r3, r4]
 
         result = upload_report({"danger": []})
         self.assertFalse(result["success"])
-        self.assertEqual(mock_post.call_count, 3)
-        self.assertIn("Server Error 503", result["error"])
-        self.assertIn("E3", result["error"])
+        self.assertEqual(mock_post.call_count, 4)
+        self.assertIn("HTTP 504", result["error"])
+        # Response bodies are never shown to the user.
+        self.assertNotIn("E4", result["error"])
 
     def test_base_url_api_suffix_endpoints(self):
         old = os.environ.get("SKYLOS_API_URL")
@@ -845,7 +862,8 @@ class TestSkylosApi(unittest.TestCase):
         f = all_findings[0]
         self.assertEqual(f["rule_id"], "SKY-D000")
         self.assertEqual(f["line_number"], 1)
-        self.assertEqual(f["file_path"], "unknown")
+        # No path: sent without a location, never as an "unknown" file.
+        self.assertEqual(f["file_path"], "")
         self.assertEqual(f["category"], "SECURITY")
         self.assertEqual(f["message"], "oops")
 

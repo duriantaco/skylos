@@ -189,6 +189,24 @@ def cleanup_temp_files():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
+    """Keep upload retries fast and their side effects out of the checkout.
+
+    Failed uploads are saved for ``skylos upload --retry``; tests must never
+    write them into the repository, sleep between retries, or ask the real
+    Skylos Cloud for its contract version. Tests that exercise those features
+    override these variables.
+    """
+    monkeypatch.setenv("SKYLOS_UPLOAD_RETRY_BASE_SECONDS", "0")
+    monkeypatch.setenv("SKYLOS_UPLOAD_CONTRACT_CHECK", "0")
+    monkeypatch.setenv(
+        "SKYLOS_PENDING_UPLOAD_DIR",
+        str(tmp_path_factory.mktemp("pending-uploads")),
+    )
+    yield
+
+
 pytest_plugins = []
 
 

@@ -1,0 +1,21 @@
+{
+  "stored": [
+    {
+      "index": 0,
+      "file_path": "link.py",
+      "line_number": 1,
+      "rule_id": "SKY-Q301",
+      "category": "QUALITY",
+      "severity": "MEDIUM"
+    },
+    {
+      "index": 1,
+      "file_path": "external.py",
+      "line_number": 1,
+      "rule_id": "SKY-Q302",
+      "category": "QUALITY",
+      "severity": "LOW"
+    }
+  ],
+  "warnings": []
+}

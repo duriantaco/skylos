@@ -1,0 +1,19 @@
+{
+  "stored": [
+    {
+      "index": 0,
+      "file_path": "",
+      "line_number": 1,
+      "rule_id": "SKY-U005",
+      "category": "QUALITY",
+      "severity": "MEDIUM"
+    }
+  ],
+  "warnings": [
+    {
+      "index": 0,
+      "field": "file_path",
+      "reason": "missing"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "stored": [
+    {
+      "index": 0,
+      "file_path": "src/app.py",
+      "line_number": 1,
+      "rule_id": "SKY-U001",
+      "category": "DEAD_CODE",
+      "severity": "LOW"
+    },
+    {
+      "index": 1,
+      "file_path": "",
+      "line_number": 1,
+      "rule_id": "SKY-U001",
+      "category": "DEAD_CODE",
+      "severity": "LOW"
+    }
+  ],
+  "warnings": [
+    {
+      "index": 1,
+      "field": "file_path",
+      "reason": "missing"
+    }
+  ]
+}

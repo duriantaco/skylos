@@ -415,7 +415,7 @@ def test_managed_artifact_failure_never_falls_back_to_another_upload(
     )
 
 
-def test_nonmanaged_post_retains_existing_retries_and_timeout(monkeypatch):
+def test_nonmanaged_post_uses_contract_retries_and_timeout(monkeypatch):
     calls = []
 
     def post(url, **kwargs):
@@ -426,10 +426,12 @@ def test_nonmanaged_post_retains_existing_retries_and_timeout(monkeypatch):
     response, error = api._post_json_with_retries(
         api.REPORT_URL, {"X-Skylos-Auth": "oidc"}, {}, quiet=True, timeout=17
     )
-    assert response is None and "Server Error 500" in error
-    assert len(calls) == 3
+    assert response is None and "HTTP 500" in error
+    assert "fixture" not in error
+    assert len(calls) == 4
     assert all(call["timeout"] == 17 for call in calls)
     assert all("allow_redirects" not in call for call in calls)
+    assert len({call["headers"]["Idempotency-Key"] for call in calls}) == 1
 
 
 @pytest.mark.parametrize("status", [404, 405])
