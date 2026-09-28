@@ -1,7 +1,7 @@
 import ipaddress
 import os
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 
 __all__ = [
@@ -21,6 +21,15 @@ _DEFAULT_ARTIFACT_UPLOAD_HOST_ALLOWLIST = frozenset(
         "skylos.dev",
         "*.skylos.dev",
     }
+)
+# Skylos Cloud hands out Supabase Storage signed-upload URLs for reports
+# too large to send inline. Only the signed-upload path of its artifact
+# bucket is allowed on those hosts (the project host and Supabase's direct
+# storage host for the same project), not the whole host.
+_SKYLOS_CLOUD_STORAGE_UPLOAD_PATH = "/storage/v1/object/upload/sign/scan-artifacts/"
+_SKYLOS_CLOUD_STORAGE_UPLOAD_TARGETS = (
+    ("ngdrqilbtyqklvsqpflf.supabase.co", _SKYLOS_CLOUD_STORAGE_UPLOAD_PATH),
+    ("ngdrqilbtyqklvsqpflf.storage.supabase.co", _SKYLOS_CLOUD_STORAGE_UPLOAD_PATH),
 )
 
 
@@ -85,6 +94,19 @@ def _artifact_upload_host_allowed(hostname: str | None) -> bool:
     return False
 
 
+def _is_skylos_cloud_storage_upload(hostname: str | None, path: str) -> bool:
+    if not hostname:
+        return False
+    host = hostname.rstrip(".").lower()
+    segments = unquote(path).split("/")
+    if any(segment in (".", "..") for segment in segments):
+        return False
+    return any(
+        host == storage_host and path.startswith(path_prefix)
+        for storage_host, path_prefix in _SKYLOS_CLOUD_STORAGE_UPLOAD_TARGETS
+    )
+
+
 def _host_is_private_or_metadata(hostname: str | None) -> bool:
     if not hostname:
         return True
@@ -123,8 +145,14 @@ def _validate_artifact_upload_url(url: Any) -> str:
     parsed = urlsplit(safe_url)
     if _host_is_private_or_metadata(parsed.hostname):
         raise ValueError("upload URL host is not allowed")
-    if not _artifact_upload_host_allowed(parsed.hostname):
-        raise ValueError("upload URL host is not in the artifact upload allowlist")
+    if not _artifact_upload_host_allowed(
+        parsed.hostname
+    ) and not _is_skylos_cloud_storage_upload(parsed.hostname, parsed.path):
+        raise ValueError(
+            f"upload URL host {parsed.hostname} is not in the artifact upload "
+            f"allowlist (for your own Skylos server, add it to "
+            f"{_ARTIFACT_UPLOAD_HOST_ALLOWLIST_ENV})"
+        )
     return safe_url
 
 
