@@ -98,6 +98,7 @@ jobs:
         with:
           # Prefer a dedicated token/App so release PRs can satisfy required PR checks.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' && secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
           config-file: tools/release/release-please-config.json
           manifest-file: tools/release/.release-please-manifest.json
 
