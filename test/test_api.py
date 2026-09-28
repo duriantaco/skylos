@@ -1854,6 +1854,93 @@ class TestSkylosApi(unittest.TestCase):
             "https://uploads.example.com/report",
         )
 
+    @patch("requests.put")
+    def test_upload_artifact_accepts_skylos_cloud_signed_storage_url(self, mock_put):
+        # The URL shape Skylos Cloud's /api/report/init returns (Supabase
+        # Storage createSignedUploadUrl on the scan-artifacts bucket).
+        signed_url = (
+            "https://ngdrqilbtyqklvsqpflf.supabase.co/storage/v1/object/upload/"
+            "sign/scan-artifacts/org-1/project-1/upload-1/scan-report.json.gz"
+            "?token=abc.def.ghi"
+        )
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {}
+        mock_put.return_value = resp
+
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"abc")
+            artifact_path = handle.name
+
+        artifact = api.UploadArtifact(
+            name="scan_report",
+            file_path=api.Path(artifact_path),
+            filename="scan-report.json.gz",
+            required=True,
+            content_type="application/json",
+            content_encoding="gzip",
+            size_bytes=3,
+            sha256="abc123",
+        )
+        try:
+            with patch.dict(os.environ, clear=False) as env:
+                env.pop("SKYLOS_ARTIFACT_UPLOAD_HOST_ALLOWLIST", None)
+                result = api.upload_artifact(
+                    artifact,
+                    {
+                        "method": "PUT",
+                        "url": signed_url,
+                        "headers": {"x-upsert": "true"},
+                        "accepted_statuses": [200],
+                    },
+                )
+        finally:
+            artifact.cleanup()
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_put.call_args.args[0], signed_url)
+
+    def test_artifact_upload_url_allows_only_the_skylos_cloud_storage_upload_path(
+        self,
+    ):
+        prefix = "/storage/v1/object/upload/sign/scan-artifacts/"
+        allowed = [
+            f"https://ngdrqilbtyqklvsqpflf.supabase.co{prefix}a/b/scan-report.json.gz?token=t",
+            f"https://ngdrqilbtyqklvsqpflf.storage.supabase.co{prefix}a/definitions.json.gz?token=t",
+            f"https://NGDRQILBTYQKLVSQPFLF.SUPABASE.CO{prefix}a/scan-report.json.gz?token=t",
+        ]
+        rejected = [
+            # Another Supabase project.
+            f"https://someoneelse.supabase.co{prefix}a/scan-report.json.gz?token=t",
+            # Another bucket, or not the signed-upload endpoint.
+            "https://ngdrqilbtyqklvsqpflf.supabase.co/storage/v1/object/upload/sign/avatars/a.gz",
+            "https://ngdrqilbtyqklvsqpflf.supabase.co/storage/v1/object/scan-artifacts/a.gz",
+            "https://ngdrqilbtyqklvsqpflf.supabase.co/rest/v1/scans",
+            # Path traversal out of the bucket, plain and percent-encoded.
+            f"https://ngdrqilbtyqklvsqpflf.supabase.co{prefix}../avatars/a.gz",
+            f"https://ngdrqilbtyqklvsqpflf.supabase.co{prefix}%2e%2e/avatars/a.gz",
+            # Not HTTPS.
+            f"http://ngdrqilbtyqklvsqpflf.supabase.co{prefix}a/scan-report.json.gz",
+        ]
+        with patch.dict(os.environ, clear=False) as env:
+            env.pop("SKYLOS_ARTIFACT_UPLOAD_HOST_ALLOWLIST", None)
+            for url in allowed:
+                with self.subTest(url=url):
+                    self.assertTrue(api._validate_artifact_upload_url(url))
+            for url in rejected:
+                with self.subTest(url=url):
+                    with self.assertRaises(ValueError):
+                        api._validate_artifact_upload_url(url)
+
+    def test_artifact_upload_url_error_names_the_blocked_host(self):
+        with patch.dict(os.environ, clear=False) as env:
+            env.pop("SKYLOS_ARTIFACT_UPLOAD_HOST_ALLOWLIST", None)
+            with self.assertRaises(ValueError) as caught:
+                api._validate_artifact_upload_url("https://uploads.example.com/a")
+        message = str(caught.exception)
+        self.assertIn("uploads.example.com", message)
+        self.assertIn("SKYLOS_ARTIFACT_UPLOAD_HOST_ALLOWLIST", message)
+
     @patch("requests.post")
     def test_post_json_with_retries_rejects_non_http_url(self, mock_post):
         response, error = api._post_json_with_retries(
