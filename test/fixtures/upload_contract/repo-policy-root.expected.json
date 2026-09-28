@@ -1,0 +1,37 @@
+{
+  "stored": [
+    {
+      "index": 0,
+      "file_path": ".",
+      "line_number": 1,
+      "rule_id": "SKY-R101",
+      "category": "QUALITY",
+      "severity": "MEDIUM"
+    },
+    {
+      "index": 1,
+      "file_path": ".",
+      "line_number": 1,
+      "rule_id": "SKY-R102",
+      "category": "QUALITY",
+      "severity": "LOW"
+    },
+    {
+      "index": 2,
+      "file_path": ".",
+      "line_number": 1,
+      "rule_id": "SKY-R103",
+      "category": "QUALITY",
+      "severity": "LOW"
+    },
+    {
+      "index": 3,
+      "file_path": ".",
+      "line_number": 1,
+      "rule_id": "SKY-R104",
+      "category": "QUALITY",
+      "severity": "LOW"
+    }
+  ],
+  "warnings": []
+}

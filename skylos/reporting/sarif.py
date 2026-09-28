@@ -128,11 +128,20 @@ class SarifExporter:
         version="1.0.0",
         *,
         analyzer_owned=False,
+        allow_empty_location=False,
+        location_uri=None,
     ):
         self.findings = findings
         self.tool_name = tool_name
         self.version = version
         self.analyzer_owned = analyzer_owned
+        # Skylos Cloud uploads send an empty URI for a finding without a
+        # usable location (stored as "no location"); SARIF files for other
+        # consumers keep the "unknown" placeholder.
+        self.allow_empty_location = allow_empty_location
+        # Optional mapping for related-location and code-flow paths; returns
+        # None to drop a location (uploads never send machine paths).
+        self.location_uri = location_uri
         self._source_cache = {}
 
     def generate(self):
@@ -296,9 +305,11 @@ class SarifExporter:
                 markdown=True,
             )
 
-            file_path = normalize_file_path_for_sarif(
-                finding.get("file_path") or finding.get("file")
-            )
+            raw_location = finding.get("file_path") or finding.get("file")
+            if self.allow_empty_location and not raw_location:
+                file_path = ""
+            else:
+                file_path = normalize_file_path_for_sarif(raw_location)
 
             line_number = _positive_sarif_integer(
                 finding.get("line_number") or finding.get("line") or 1
@@ -419,13 +430,15 @@ class SarifExporter:
             }
 
             related_locations = _sarif_related_locations(
-                finding.get("related_locations")
+                finding.get("related_locations"), uri_for=self._secondary_uri
             )
             if related_locations:
                 result_obj["relatedLocations"] = related_locations
 
             code_flows = _sarif_code_flows(
-                finding, result_obj["locations"][0]["physicalLocation"]
+                finding,
+                result_obj["locations"][0]["physicalLocation"],
+                uri_for=self._secondary_uri,
             )
             if code_flows:
                 result_obj["codeFlows"] = code_flows
@@ -447,6 +460,11 @@ class SarifExporter:
             results.append(result_obj)
 
         return results
+
+    def _secondary_uri(self, raw_file):
+        if self.location_uri is not None:
+            return self.location_uri(raw_file)
+        return normalize_file_path_for_sarif(raw_file)
 
     def _fingerprint_anchor(self, finding, line_number):
         parts = []
@@ -512,7 +530,7 @@ def _location_text(value, limit=_MAX_SARIF_METADATA_TEXT_LENGTH):
     return sanitize_untrusted_text(value, max_length=limit, markdown=True)
 
 
-def _sarif_related_locations(raw_locations):
+def _sarif_related_locations(raw_locations, uri_for=normalize_file_path_for_sarif):
     if not isinstance(raw_locations, list):
         return []
     related = []
@@ -524,10 +542,13 @@ def _sarif_related_locations(raw_locations):
         raw_file = raw.get("file") or raw.get("file_path")
         if not raw_file:
             continue
+        uri = uri_for(raw_file)
+        if not uri:
+            continue
         location = {
             "id": len(related) + 1,
             "physicalLocation": {
-                "artifactLocation": {"uri": normalize_file_path_for_sarif(raw_file)},
+                "artifactLocation": {"uri": uri},
                 "region": _sarif_region(
                     raw.get("start_line") or raw.get("line"),
                     raw.get("end_line"),
@@ -549,7 +570,9 @@ def _security_evidence(finding):
     return evidence if isinstance(evidence, dict) else None
 
 
-def _sarif_code_flows(finding, primary_physical_location):
+def _sarif_code_flows(
+    finding, primary_physical_location, uri_for=normalize_file_path_for_sarif
+):
     """Build codeFlows only from analyzer-recorded source-to-sink steps.
 
     Steps come from ``security_evidence.path`` / ``trace`` / ``traces``.
@@ -580,11 +603,10 @@ def _sarif_code_flows(finding, primary_physical_location):
         if isinstance(step, dict):
             text = step.get("message") or step.get("label") or step.get("step")
             step_file = step.get("file") or step.get("file_path")
-            if step_file and (step.get("line") or step.get("start_line")):
+            step_uri = uri_for(step_file) if step_file else None
+            if step_uri and (step.get("line") or step.get("start_line")):
                 location["physicalLocation"] = {
-                    "artifactLocation": {
-                        "uri": normalize_file_path_for_sarif(step_file)
-                    },
+                    "artifactLocation": {"uri": step_uri},
                     "region": _sarif_region(
                         step.get("line") or step.get("start_line"),
                         step.get("end_line"),

@@ -1,0 +1,13 @@
+{
+  "stored": [
+    {
+      "index": 0,
+      "file_path": "src/my module/café ü.py",
+      "line_number": 1,
+      "rule_id": "SKY-U001",
+      "category": "DEAD_CODE",
+      "severity": "LOW"
+    }
+  ],
+  "warnings": []
+}

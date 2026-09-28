@@ -121,6 +121,10 @@ skylos = "skylos.entry:main"
 where = ["."]
 include = ["skylos*"]
 namespaces = false
+
+[tool.setuptools.package-data]
+# The report-upload contract shared with Skylos Cloud is read at runtime.
+"skylos.api" = ["upload_contract/*.json"]
 [tool.skylos]
 complexity = 10
 nesting = 3
