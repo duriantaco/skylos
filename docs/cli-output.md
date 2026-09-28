@@ -122,7 +122,12 @@ skylos . --format github
 `json-ci` keeps the same findings, per-finding evidence, and summary counts as
 `json`. It omits only the top-level `dead_code_evidence` ledger and
 `definitions` map, which can make a full scan report large. Use `json` when
-you need those full symbol details; its output is unchanged.
+you need those full symbol details.
+
+When provenance is available, `ai_security_stats.by_category` groups the
+included findings by their top-level JSON array (`danger`, `quality`, and so
+on). A finding's own `category` field can be more specific, such as `SECURITY`
+inside `danger`; that field is preserved.
 
 Use `gitlab` to save a GitLab Code Quality JSON array:
 

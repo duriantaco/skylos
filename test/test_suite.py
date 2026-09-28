@@ -9,6 +9,7 @@ from rich.progress import Progress
 
 from skylos.commands.suite_cmd import _write_suite_output, run_suite_command
 from skylos.core.suite import _annotatable_findings, _static_summary
+from skylos.reporting.provenance import ProvenanceReport
 
 
 def _console_factory():
@@ -120,6 +121,54 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
         payload["defense"]["note"]
         == "AI defense currently scans Python and TypeScript direct SDK integrations."
     )
+
+
+def test_suite_provenance_stats_match_danger_json_section(tmp_path, capsys):
+    static_result = _static_result(str(tmp_path))
+    static_result["danger"][0]["category"] = "SECURITY"
+    static_result["danger"].append(
+        {
+            "rule_id": "SKY-D202",
+            "category": "danger",
+            "severity": "MEDIUM",
+            "file": f"{tmp_path}/app.py",
+            "line": 18,
+            "message": "Another security finding",
+        }
+    )
+    run_analyze = Mock(return_value=json.dumps(static_result))
+
+    with (
+        patch(
+            "skylos.reporting.provenance.analyze_provenance",
+            return_value=ProvenanceReport(),
+        ),
+        patch(
+            "skylos.rules.sca.vulnerability_scanner.scan_dependencies",
+            return_value=[],
+        ),
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--json"],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=run_analyze,
+            get_git_root_func=lambda: str(tmp_path),
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    danger = payload["static"]["danger"]
+    stats = payload["static"]["ai_security_stats"]
+    assert payload["provenance"]["available"] is True
+    assert stats["by_category"]["danger"]["total"] == len(danger) == 2
+    assert "security" not in stats["by_category"]
+    assert [finding["category"] for finding in danger] == ["SECURITY", "danger"]
 
 
 def test_suite_applies_review_memory_before_summary_and_debt(tmp_path, capsys):
