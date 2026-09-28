@@ -1,7 +1,13 @@
 import os  # skylos: ignore[SKY-Q502] package facade is being split incrementally
+import contextlib
 import logging
 import requests
+import signal
 import subprocess
+import threading
+import time
+from requests import Request as _RequestsRequest
+from requests import exceptions as _request_exceptions
 from skylos.cloud.credentials import get_key
 from skylos.reporting.sarif import SarifExporter
 import sys
@@ -23,7 +29,9 @@ from skylos.api._artifacts import (
     _build_report_init_payload,
     _build_uploaded_artifact_record,
     _missing_artifact_instruction_result,
+    _restore_report_artifacts,
     _sha256_file as _sha256_file,
+    _snapshot_report_artifacts,
     _write_gzip_json_artifact as _write_gzip_json_artifact,
     upload_artifact,
 )
@@ -50,6 +58,43 @@ from skylos.api._snippets import (
     extract_snippet as extract_snippet,
 )
 from skylos.api._source_revision import source_revision_state
+from skylos.api._contract_check import (
+    contract_check_url as _contract_check_url,
+    newer_contract_notice as _newer_contract_notice,
+    start_contract_version_check as _start_contract_version_check,
+)
+from skylos.api._pending_uploads import (
+    TOO_OLD_REASON as _TOO_OLD_REASON,
+    count_pending_uploads as _count_pending_uploads,
+    decode_request_body as _decode_request_body,
+    delete_pending_upload as _delete_pending_upload,
+    is_within_resend_window as _pending_within_resend_window,
+    legacy_pending_uploads as _legacy_pending_uploads,
+    list_pending_uploads as _list_pending_uploads,
+    mark_pending_upload_failed as _mark_pending_upload_failed,
+    pending_uploads_dir as _pending_uploads_dir,
+    save_pending_upload as _save_pending_upload,
+)
+from skylos.api._upload_contract import (
+    client_read_timeout_seconds as _client_read_timeout_seconds,
+)
+from skylos.api._upload_paths import upload_location_uri
+from skylos.api._upload_preflight import apply_upload_contract, strip_secret_snippets
+from skylos.api._upload_transport import (
+    SAVED_HINT as _SAVED_HINT,
+    RetryPolicy,
+    UploadFailure,
+    UploadSession,
+    backoff_delay as _backoff_delay,
+    conflict_delay as _conflict_delay,
+    is_retryable_conflict as _is_retryable_conflict,
+    describe_http_failure as _describe_http_failure,
+    describe_transport_exception as _describe_transport_exception,
+    is_idempotent_replay as _is_idempotent_replay,
+    is_retryable_transport_exception as _is_retryable_transport_exception,
+    should_retry_now as _should_retry_now,
+    upload_contract_headers as _upload_contract_headers,
+)
 from skylos.api._urls import (
     _append_query_param,
     _host_is_private_or_metadata as _host_is_private_or_metadata,
@@ -60,6 +105,7 @@ from skylos.api._urls import (
 )
 
 from skylos.constants import (
+    NETWORK_TIMEOUT_DEFAULT,
     NETWORK_TIMEOUT_SHORT,
     NETWORK_TIMEOUT_LONG,
     SNIPPET_CONTEXT_LINES as SNIPPET_CONTEXT_LINES,
@@ -162,6 +208,10 @@ __all__ = [
     "upload_report_v2",
     "upload_report",
     "upload_debt_report",
+    "resend_pending_uploads",
+    "RetryPolicy",
+    "UploadFailure",
+    "UploadSession",
     "_should_use_legacy_inline_report_upload",
     "_should_retry_with_degraded_large_upload",
     "upload_defense_report",
@@ -811,13 +861,25 @@ def _prepare_report_upload(
                 )
             )
     _annotate_findings_with_blame(all_findings, git_root)
+    # Managed GitLab uploads keep their existing, stricter path handling.
+    base_dir = git_root or os.getcwd()
+    preflight = (
+        None
+        if gitlab_managed
+        else apply_upload_contract(all_findings, project_root, base_dir=base_dir)
+    )
 
     exporter = SarifExporter(
         all_findings,
         tool_name="Skylos",
         analyzer_owned=analyzer_owned,
+        allow_empty_location=not gitlab_managed,
+        location_uri=(
+            None if gitlab_managed else (lambda raw: upload_location_uri(raw, base_dir))
+        ),
     )
     core_payload = exporter.generate()
+    strip_secret_snippets(core_payload)
 
     ai_code = detect_ai_code(git_root)
     if isinstance(result_json, dict) and "provenance" in result_json:
@@ -871,6 +933,7 @@ def _prepare_report_upload(
         result_json,
         metadata,
     )
+    strip_secret_snippets(compatibility_payload)
     scan_summary = _build_report_scan_summary(all_findings, core_payload, definitions)
 
     return PreparedReportUpload(
@@ -883,6 +946,7 @@ def _prepare_report_upload(
         grade_data=grade_data,
         legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
         compatibility_payload_size_bytes=_json_size_bytes(compatibility_payload),
+        preflight=preflight,
     )
 
 
@@ -1231,6 +1295,8 @@ def _finalize_report_upload(
         return error_result
 
     data = _safe_response_json(response) if gitlab_managed else response.json()
+    if not isinstance(data, dict):
+        data = {}
     scan_id = data.get("scanId") or data.get("scan_id")
     quality_gate = data.get("quality_gate", {})
     if gitlab_managed and (
@@ -1239,9 +1305,12 @@ def _finalize_report_upload(
         or not isinstance(quality_gate, dict)
     ):
         return _report_transport_failure(_GITLAB_DELIVERY_UNKNOWN)
+    if not isinstance(quality_gate, dict):
+        quality_gate = {}
     passed = quality_gate.get("passed", True)
     new_violations = quality_gate.get("new_violations", 0)
     plan = data.get("plan", "free")
+    replayed = (not gitlab_managed) and _is_idempotent_replay(response, data)
 
     if not quiet:
         _print_report_upload_success(
@@ -1251,8 +1320,12 @@ def _finalize_report_upload(
             plan=plan,
             scan_id=scan_id,
             credits_left=data.get("credits_remaining"),
+            replayed=replayed,
+            finding_warnings=data.get("finding_warnings"),
         )
     result = _report_upload_success_result(data, scan_id, passed, plan)
+    if replayed:
+        result["replayed"] = True
     if gitlab_managed:
         from skylos.cloud.gitlab import delivery_receipt
 
@@ -1267,22 +1340,9 @@ def _finalize_report_upload(
 
 
 def _report_upload_error_result(response) -> dict | None:
-    if response.status_code == 401:
-        return {
-            "success": False,
-            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
-        }
-    if response.status_code != 402:
+    if response.status_code not in (401, 402):
         return None
-    data = _safe_response_json(response)
-    return {
-        "success": False,
-        "error": data.get(
-            "error",
-            "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-        ),
-        "code": "NO_CREDITS",
-    }
+    return _describe_http_failure(response).as_result()
 
 
 def _safe_response_json(response) -> dict:
@@ -1301,8 +1361,23 @@ def _print_report_upload_success(
     plan: str,
     scan_id: str | None,
     credits_left,
+    replayed: bool = False,
+    finding_warnings=None,
 ) -> None:
-    print(" done!\n✓ Scan uploaded")
+    if replayed:
+        print(
+            " done!\n✓ Scan was already saved by an earlier attempt; "
+            "it was not saved or charged twice."
+        )
+    else:
+        print(" done!\n✓ Scan uploaded")
+    if isinstance(finding_warnings, list) and finding_warnings:
+        count = len(finding_warnings)
+        noun = "finding" if count == 1 else "findings"
+        print(
+            f"Skylos Cloud stored {count} {noun} with a warning "
+            "(for example, without a file location)."
+        )
     _print_report_grade(grade_data)
     _print_quality_gate_result(passed, new_violations, plan)
     if scan_id:
@@ -1381,7 +1456,22 @@ def _post_json_with_retries(
     initial_message=None,
     accepted_statuses=(200, 201, 401, 402),
     timeout=NETWORK_TIMEOUT_LONG,
+    idempotency_key=None,
+    raw_body: bytes | None = None,
 ):
+    """POST JSON with the upload contract's retry policy.
+
+    Returns ``(response, None)`` for a status in ``accepted_statuses`` and
+    ``(None, error)`` otherwise. For non-managed uploads the error is an
+    :class:`UploadFailure` (a ``str`` with ``code``/``status``/``retryable``).
+
+    Only connection errors, timeouts and the contract's retryable statuses are
+    retried, with exponential backoff and full jitter, honouring Retry-After.
+    Every attempt sends the same ``Idempotency-Key`` so the server can tell a
+    retry from a new upload. Managed GitLab uploads make exactly one attempt.
+    ``raw_body`` sends already-serialised JSON bytes unchanged (resends of a
+    saved upload) instead of ``payload``.
+    """
     managed = headers.get("X-Skylos-Auth") == "gitlab_oidc"
     try:
         safe_url = _validate_api_request_url(url)
@@ -1390,36 +1480,168 @@ def _post_json_with_retries(
             return None, "Invalid managed Cloud endpoint configuration."
         return None, f"Unsafe API URL: {exc}"
 
-    last_err = None
-    for attempt in range(1 if managed else 3):
+    if managed:
+        return _post_managed_json_once(
+            safe_url,
+            headers,
+            payload,
+            quiet=quiet,
+            initial_message=initial_message,
+            accepted_statuses=accepted_statuses,
+        )
+
+    request_headers = _upload_contract_headers(
+        headers,
+        idempotency_key or UploadSession.new().idempotency_key,
+        _cli_version(),
+    )
+    policy = RetryPolicy.from_env()
+    failure: UploadFailure | None = None
+    failed_attempts = 0  # attempts that count toward policy.max_attempts
+    requests_sent = 0
+    waited = 0.0
+    started = time.monotonic()
+    if not quiet and initial_message:
+        print(initial_message, end="", flush=True)
+    while requests_sent < _MAX_REQUESTS_PER_UPLOAD:
+        requests_sent += 1
         try:
-            if not quiet:
-                if attempt == 0 and initial_message:
-                    print(initial_message, end="", flush=True)
-                elif attempt > 0:
-                    print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
-            response = requests.post(
-                safe_url,
-                json=payload,
-                headers=headers,
-                timeout=300 if managed else timeout,
-                **({"allow_redirects": False} if managed else {}),
-            )
-            if managed and response.status_code >= 500:
-                return None, _GITLAB_DELIVERY_UNKNOWN
+            if raw_body is not None:
+                response = requests.post(
+                    safe_url,
+                    data=raw_body,
+                    headers={**request_headers, "Content-Type": "application/json"},
+                    timeout=timeout,
+                )
+            else:
+                response = requests.post(
+                    safe_url,
+                    json=payload,
+                    headers=request_headers,
+                    timeout=timeout,
+                )
+        except _request_exceptions.RequestException as exc:
+            failure = _describe_transport_exception(exc, safe_url)
+            if not _is_retryable_transport_exception(exc):
+                break
+        else:
             if response.status_code in accepted_statuses:
                 return response, None
-            if not quiet and response.status_code >= 400:
-                print(" failed.")
-            if managed:
-                return None, _GITLAB_DELIVERY_UNKNOWN
-            last_err = f"Server Error {response.status_code}: {response.text}"
-        except requests.exceptions.RequestException as e:
-            if managed:
-                return None, _GITLAB_DELIVERY_UNKNOWN
-            last_err = f"Connection Error: {str(e)}"
+            failure = _describe_http_failure(response)
 
-    return None, last_err or "Unknown error"
+        if failure.status is not None and _is_retryable_conflict(failure):
+            # The same upload is still being processed (for example after a
+            # read timeout). Wait as asked, within the conflict budget; a
+            # later answer is the finished scan, replayed.
+            delay = _conflict_delay(failure)
+            spent = max(time.monotonic() - started, waited)
+            if spent + delay > policy.conflict_budget_seconds:
+                break
+            if not quiet:
+                print(
+                    f" still processing; checking again in {delay:.0f}s...",
+                    end="",
+                    flush=True,
+                )
+            _upload_sleep(delay)
+            waited += delay
+            continue
+
+        if failure.status is not None and not _should_retry_now(failure):
+            break
+        failed_attempts += 1
+        if failed_attempts >= policy.max_attempts:
+            break
+        delay = _retry_delay(failure, failed_attempts, policy)
+        if delay is None:
+            break
+        if not quiet:
+            print(
+                f" retrying ({failed_attempts + 1}/{policy.max_attempts}) in {delay:.1f}s...",
+                end="",
+                flush=True,
+            )
+        _upload_sleep(delay)
+        waited += delay
+
+    if not quiet:
+        print(" failed.")
+    return None, failure or UploadFailure("The upload did not complete.")
+
+
+# Upper bound on requests for one upload, whatever the server answers.
+_MAX_REQUESTS_PER_UPLOAD = 100
+
+
+def _report_request_timeout() -> tuple[float, float]:
+    """(connect, read) timeout for the report endpoints.
+
+    The read timeout is the contract's ``client_read_timeout_seconds``, so a
+    slow but working upload is not cut off and retried while it still runs.
+    """
+    return (NETWORK_TIMEOUT_DEFAULT, float(_client_read_timeout_seconds()))
+
+
+def _retry_delay(
+    failure: UploadFailure | None, retry_number: int, policy: RetryPolicy
+) -> float | None:
+    """Seconds before the next attempt, or None to stop retrying now."""
+    retry_after = getattr(failure, "retry_after", None)
+    if retry_after is not None:
+        # The server asked for a longer wait than this run will spend;
+        # stop here so the scan can be saved and sent later.
+        if retry_after > policy.max_seconds:
+            return None
+        return max(retry_after, 0.0)
+    return _backoff_delay(retry_number, policy)
+
+
+def _upload_sleep(seconds: float) -> None:
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+def _post_managed_json_once(
+    safe_url,
+    headers,
+    payload,
+    *,
+    quiet,
+    initial_message,
+    accepted_statuses,
+):
+    """Managed GitLab: one long attempt, no redirects, no automatic re-upload."""
+    try:
+        destination = _validate_api_request_url(safe_url)
+        allowed_destinations = {
+            _validate_api_request_url(REPORT_URL),
+            _validate_api_request_url(REPORT_INIT_URL),
+            _validate_api_request_url(REPORT_COMPLETE_URL),
+        }
+    except ValueError:
+        return None, "Invalid managed Cloud endpoint configuration."
+    if destination not in allowed_destinations:
+        return None, "Invalid managed Cloud endpoint configuration."
+
+    try:
+        if not quiet and initial_message:
+            print(initial_message, end="", flush=True)
+        response = requests.post(
+            destination,
+            json=payload,
+            headers=headers,
+            timeout=300,
+            allow_redirects=False,
+        )
+    except requests.exceptions.RequestException:
+        return None, _GITLAB_DELIVERY_UNKNOWN
+    if response.status_code >= 500:
+        return None, _GITLAB_DELIVERY_UNKNOWN
+    if response.status_code in accepted_statuses:
+        return response, None
+    if not quiet and response.status_code >= 400:
+        print(" failed.")
+    return None, _GITLAB_DELIVERY_UNKNOWN
 
 
 _GITLAB_DELIVERY_UNKNOWN = (
@@ -1430,6 +1652,8 @@ _GITLAB_DELIVERY_UNKNOWN = (
 
 
 def _report_transport_failure(error: str | None) -> dict:
+    if isinstance(error, UploadFailure):
+        return error.as_result()
     result = {"success": False, "error": error or "Unknown error"}
     if error == _GITLAB_DELIVERY_UNKNOWN:
         result.update(
@@ -1453,18 +1677,24 @@ def _managed_report_rejected() -> dict:
     }
 
 
-def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
+def _post_report_payload(
+    token, payload, *, quiet=False, initial_message=None, idempotency_key=None
+):
     return _post_json_with_retries(
         REPORT_URL,
         _build_auth_headers(token),
         payload,
         quiet=quiet,
         initial_message=initial_message,
-        timeout=UPLOAD_TIMEOUT,
+        timeout=_report_request_timeout(),
+        idempotency_key=idempotency_key,
     )
 
 
 def _looks_like_server_error(error: str | None) -> bool:
+    status = getattr(error, "status", None)
+    if isinstance(status, int):
+        return status >= 500
     return bool(error and error.startswith("Server Error 5"))
 
 
@@ -1513,12 +1743,16 @@ def upload_report_legacy(
     strict=False,
     is_forced=False,
     initial_message: str | None = "Uploading scan results...",
+    session: UploadSession | None = None,
 ) -> dict:
+    if session is not None:
+        session.request_payload = payload
     response, last_err = _post_report_payload(
         token,
         payload,
         quiet=quiet,
         initial_message=initial_message,
+        idempotency_key=session.idempotency_key if session else None,
     )
     if response is None:
         return _report_transport_failure(last_err)
@@ -1540,6 +1774,7 @@ def upload_report_compatibility(
     strict=False,
     is_forced=False,
     initial_message=None,
+    session: UploadSession | None = None,
 ) -> dict:
     if token.startswith("gitlab_oidc:"):
         message = (
@@ -1556,6 +1791,9 @@ def upload_report_compatibility(
         }
     if prepared.compatibility_payload_size_bytes > _legacy_inline_upload_limit_bytes():
         return _build_compatibility_upload_too_large_error(prepared)
+    if session is not None:
+        # A different payload needs its own idempotency key.
+        session.switch("compat")
     return upload_report_legacy(
         token,
         prepared.compatibility_payload,
@@ -1564,6 +1802,7 @@ def upload_report_compatibility(
         strict=strict,
         is_forced=is_forced,
         initial_message=initial_message,
+        session=session,
     )
 
 
@@ -1574,8 +1813,43 @@ def upload_report_v2(
     quiet=False,
     strict=False,
     is_forced=False,
+    session: UploadSession | None = None,
+    initial_message: str | None = "Uploading scan results...",
 ) -> dict:
+    if session is None:
+        session = UploadSession.new()
+    session.switch("artifact")
     artifacts = _build_report_artifacts(prepared)
+    return _run_artifact_upload(
+        token,
+        prepared,
+        artifacts,
+        session=session,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+        initial_message=initial_message,
+    )
+
+
+def _run_artifact_upload(
+    token,
+    prepared: PreparedReportUpload,
+    artifacts: dict,
+    *,
+    session: UploadSession,
+    quiet: bool,
+    strict: bool,
+    is_forced: bool,
+    initial_message: str | None,
+    init_body: bytes | None = None,
+) -> dict:
+    """init -> upload artifacts -> complete, then remove the temp files.
+
+    If the upload does not finish, the artifact bytes are kept on the
+    session first so the scan can be saved and resent unchanged.
+    """
+    finished = False
     try:
         init_result = _start_report_artifact_upload(
             token,
@@ -1584,8 +1858,12 @@ def upload_report_v2(
             quiet,
             strict=strict,
             is_forced=is_forced,
+            session=session,
+            initial_message=initial_message,
+            init_body=init_body,
         )
         if init_result.get("complete"):
+            finished = bool(init_result["result"].get("success"))
             return init_result["result"]
 
         artifact_result = _upload_report_artifacts(
@@ -1602,10 +1880,11 @@ def upload_report_v2(
             artifact_result["uploaded_artifacts"],
             artifact_result["skipped_artifacts"],
             prepared.metadata,
+            idempotency_key=session.idempotency_key,
         )
         if complete_response.get("error"):
             return complete_response["error"]
-        return _finalize_report_upload(
+        result = _finalize_report_upload(
             complete_response["response"],
             grade_data=prepared.grade_data,
             quiet=quiet,
@@ -1613,7 +1892,12 @@ def upload_report_v2(
             is_forced=is_forced,
             gitlab_managed=token.startswith("gitlab_oidc:"),
         )
+        finished = bool(result.get("success"))
+        return result
     finally:
+        if not finished and not token.startswith("gitlab_oidc:"):
+            with contextlib.suppress(OSError):
+                session.artifact_snapshot = _snapshot_report_artifacts(artifacts)
         for artifact in artifacts.values():
             artifact.cleanup()
 
@@ -1626,18 +1910,28 @@ def _start_report_artifact_upload(
     *,
     strict: bool,
     is_forced: bool,
+    session: UploadSession | None = None,
+    initial_message: str | None = "Uploading scan results...",
+    init_body: bytes | None = None,
 ) -> dict[str, Any]:
     skipped_artifacts = []
-    initial_message = "Uploading scan results..."
 
     while True:
+        init_payload = None
+        if init_body is None:
+            init_payload = _build_report_init_payload(prepared, artifacts)
+            if session is not None:
+                session.request_payload = init_payload
         init_response, last_err = _post_json_with_retries(
             REPORT_INIT_URL,
             _build_auth_headers(token),
-            _build_report_init_payload(prepared, artifacts),
+            init_payload,
             quiet=quiet,
             initial_message=initial_message,
             accepted_statuses=(200, 201, 400, 401, 402, 404, 405, 501),
+            timeout=_report_request_timeout(),
+            idempotency_key=session.idempotency_key if session else None,
+            raw_body=init_body,
         )
         if not token.startswith(
             "gitlab_oidc:"
@@ -1647,6 +1941,10 @@ def _start_report_artifact_upload(
             skipped_artifacts,
         ):
             initial_message = None
+            # The init request changed, so it is rebuilt and needs a new key.
+            init_body = None
+            if session is not None:
+                session.rotate()
             continue
         break
 
@@ -1759,18 +2057,7 @@ def _report_init_error_message(response) -> str:
 
 
 def _build_report_init_error(response) -> dict[str, Any]:
-    error = f"Server Error {response.status_code}: {response.text}"
-    result = {
-        "success": False,
-        "error": error,
-    }
-    try:
-        data = response.json()
-    except (TypeError, ValueError):
-        data = {}
-    if isinstance(data, dict) and isinstance(data.get("code"), str):
-        result["code"] = data["code"]
-    return result
+    return _describe_http_failure(response).as_result()
 
 
 def _upload_report_artifacts(
@@ -1851,7 +2138,11 @@ def _handle_failed_report_artifact(
     skipped_artifacts: list,
 ) -> dict[str, Any]:
     if artifact.required:
-        return {"success": False, "error": upload_result["error"]}
+        return {
+            "success": False,
+            "error": upload_result["error"],
+            "retryable": bool(upload_result.get("retryable")),
+        }
     _append_skipped_artifact(
         skipped_artifacts,
         artifact_name,
@@ -1867,6 +2158,7 @@ def _complete_report_artifact_upload(
     uploaded_artifacts: dict,
     skipped_artifacts: list,
     metadata: dict,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     complete_response, last_err = _post_json_with_retries(
         REPORT_COMPLETE_URL,
@@ -1879,11 +2171,17 @@ def _complete_report_artifact_upload(
         ),
         quiet=True,
         accepted_statuses=(200, 201, 401, 402),
-        timeout=UPLOAD_TIMEOUT,
+        timeout=_report_request_timeout(),
+        idempotency_key=idempotency_key,
     )
     if complete_response is None:
         return {"error": _report_transport_failure(last_err)}
     return {"response": complete_response}
+
+
+_NO_TOKEN_ERROR = (
+    "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+)
 
 
 def upload_report(
@@ -1898,16 +2196,16 @@ def upload_report(
 ) -> dict:
     token = get_project_token()
     if not token:
-        return {
-            "success": False,
-            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
-        }
+        return {"success": False, "error": _NO_TOKEN_ERROR}
+    managed = token.startswith("gitlab_oidc:")
 
     if not quiet:
         info = get_project_info(token)
         if info and info.get("ok"):
             project_name = info.get("project", {}).get("name", "Unknown")
             print(f"Uploading to: {project_name}")
+    if not managed and not quiet:
+        _print_pending_upload_reminder()
 
     prepared = _prepare_report_upload(
         result_json,
@@ -1915,11 +2213,11 @@ def upload_report(
         analysis_mode=analysis_mode,
         scan_bundle_id=scan_bundle_id,
         analyzer_owned=analyzer_owned,
-        gitlab_managed=token.startswith("gitlab_oidc:"),
+        gitlab_managed=managed,
         gitlab_full_scan=gitlab_full_scan,
     )
 
-    if token.startswith("gitlab_oidc:"):
+    if managed:
         from skylos.cloud.gitlab import managed_project_root
 
         try:
@@ -1931,46 +2229,17 @@ def upload_report(
                 "success": False,
                 "error": "GitLab project-root binding does not match scan root.",
             }
+    else:
+        _print_preflight_notice(prepared, quiet=quiet)
 
-    if _should_use_legacy_inline_report_upload(prepared):
-        return upload_report_legacy(
-            token,
-            prepared.legacy_payload,
-            grade_data=prepared.grade_data,
-            quiet=quiet,
-            strict=strict,
-            is_forced=is_forced,
-        )
-
-    upload_result = upload_report_v2(
+    return _send_prepared_upload(
         token,
         prepared,
+        kind="report",
         quiet=quiet,
         strict=strict,
         is_forced=is_forced,
     )
-    if _should_retry_with_degraded_large_upload(upload_result):
-        if token.startswith("gitlab_oidc:"):
-            return {
-                **upload_result,
-                "gitlab_delivery_exit_code": 2,
-                "gitlab_delivery_message": "Managed GitLab upload requires a compatible Cloud artifact endpoint. The local report is retained; upgrade Cloud before a fresh pipeline. Lossy compatibility fallback is disabled.",
-            }
-        if not quiet:
-            print(
-                " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",
-                end="",
-                flush=True,
-            )
-        return upload_report_compatibility(
-            token,
-            prepared,
-            quiet=quiet,
-            strict=strict,
-            is_forced=is_forced,
-            initial_message=None,
-        )
-    return upload_result
 
 
 def upload_debt_report(
@@ -1983,24 +2252,96 @@ def upload_debt_report(
 ) -> dict:
     token = get_project_token()
     if not token:
-        return {
-            "success": False,
-            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
-        }
+        return {"success": False, "error": _NO_TOKEN_ERROR}
 
     if not quiet:
         info = get_project_info(token)
         if info and info.get("ok"):
             project_name = info.get("project", {}).get("name", "Unknown")
             print(f"Uploading to: {project_name}")
+    if not token.startswith("gitlab_oidc:") and not quiet:
+        _print_pending_upload_reminder()
 
     prepared = _prepare_debt_upload(
         debt_report,
         is_forced=is_forced,
         scan_bundle_id=scan_bundle_id,
     )
+    return _send_prepared_upload(
+        token,
+        prepared,
+        kind="debt",
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+    )
 
-    if _should_use_legacy_inline_report_upload(prepared):
+
+_UPLOAD_MESSAGES = {
+    "report": "Uploading scan results...",
+    "debt": "Uploading debt results...",
+}
+
+
+def _send_prepared_upload(
+    token,
+    prepared: PreparedReportUpload,
+    *,
+    kind: str,
+    quiet: bool,
+    strict: bool,
+    is_forced: bool,
+) -> dict:
+    """Upload a prepared scan; keep it for ``skylos upload --retry`` if needed."""
+    managed = token.startswith("gitlab_oidc:")
+    session = UploadSession.new(
+        mode="inline" if _should_use_legacy_inline_report_upload(prepared) else None
+    )
+    if managed:
+        return _upload_prepared_report(
+            token,
+            prepared,
+            session=session,
+            kind=kind,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+
+    if not quiet:
+        _begin_contract_check()
+    pending_dir = _pending_uploads_dir(_get_repo_root_for_link())
+    with _save_pending_on_interrupt(session, prepared, kind, pending_dir):
+        result = _upload_prepared_report(
+            token,
+            prepared,
+            session=session,
+            kind=kind,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+    result = _save_pending_if_retryable(
+        result, session, prepared, kind=kind, pending_dir=pending_dir, quiet=quiet
+    )
+    if not quiet:
+        notice = _newer_contract_notice()
+        if notice:
+            print(notice)
+    return result
+
+
+def _upload_prepared_report(
+    token,
+    prepared: PreparedReportUpload,
+    *,
+    session: UploadSession,
+    kind: str,
+    quiet: bool,
+    strict: bool,
+    is_forced: bool,
+) -> dict:
+    if session.mode == "inline":
         return upload_report_legacy(
             token,
             prepared.legacy_payload,
@@ -2008,7 +2349,8 @@ def upload_debt_report(
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
-            initial_message="Uploading debt results...",
+            initial_message=_UPLOAD_MESSAGES.get(kind, _UPLOAD_MESSAGES["report"]),
+            session=session,
         )
 
     upload_result = upload_report_v2(
@@ -2017,23 +2359,461 @@ def upload_debt_report(
         quiet=quiet,
         strict=strict,
         is_forced=is_forced,
+        session=session,
     )
-    if _should_retry_with_degraded_large_upload(upload_result):
-        if not quiet:
+    if not _should_retry_with_degraded_large_upload(upload_result):
+        return upload_result
+    if kind == "report" and token.startswith("gitlab_oidc:"):
+        return {
+            **upload_result,
+            "gitlab_delivery_exit_code": 2,
+            "gitlab_delivery_message": "Managed GitLab upload requires a compatible Cloud artifact endpoint. The local report is retained; upgrade Cloud before a fresh pipeline. Lossy compatibility fallback is disabled.",
+        }
+    if not quiet:
+        print(
+            " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",
+            end="",
+            flush=True,
+        )
+    return upload_report_compatibility(
+        token,
+        prepared,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+        initial_message=None if kind == "report" else _UPLOAD_MESSAGES[kind],
+        session=session,
+    )
+
+
+def _begin_contract_check() -> None:
+    _start_contract_version_check(
+        _contract_check_url(BASE_URL),
+        requests.get,
+        validate=_validate_api_request_url,
+    )
+
+
+def _print_preflight_notice(prepared, *, quiet: bool) -> None:
+    preflight = getattr(prepared, "preflight", None)
+    message = preflight.no_location_message() if preflight is not None else None
+    if not message:
+        return
+    print(message, file=sys.stderr if quiet else sys.stdout)
+
+
+def _display_path(path: Path) -> str:
+    try:
+        relative = os.path.relpath(path)
+    except ValueError:
+        return str(path)
+    return str(path) if relative.startswith("..") else relative
+
+
+def _print_pending_upload_reminder() -> None:
+    try:
+        root = _get_repo_root_for_link()
+        count = _count_pending_uploads(_pending_uploads_dir(root))
+    except OSError:
+        return
+    if count == 1:
+        print(
+            "1 earlier upload did not finish. Run 'skylos upload --retry' to send it."
+        )
+    elif count:
+        print(
+            f"{count} earlier uploads did not finish. "
+            "Run 'skylos upload --retry' to send them."
+        )
+    notice = legacy_pending_notice(root)
+    if notice:
+        print(notice)
+
+
+def legacy_pending_notice(project_root) -> str | None:
+    """One line about uploads an older Skylos saved inside the repository.
+
+    They are never sent: anyone who can write to the repository could have
+    written them. The user can rerun the scan and delete the folder.
+    """
+    directory, count = _legacy_pending_uploads(project_root)
+    if not count:
+        return None
+    noun = "upload" if count == 1 else "uploads"
+    return (
+        f"{count} {noun} saved by an older Skylos are in {_display_path(directory)}; "
+        "they are not sent automatically. Rerun the scan to upload, then delete "
+        "that folder."
+    )
+
+
+def _exact_json_body(payload: Any) -> bytes:
+    """The bytes ``requests.post(json=payload)`` puts on the wire.
+
+    Built with requests' own request preparation, so a saved upload keeps
+    exactly what the first attempt sent (the upload contract's resend rule).
+    """
+    body = (
+        _RequestsRequest("POST", "http://skylos.invalid/", json=payload).prepare().body
+    )
+    return body if isinstance(body, bytes) else str(body).encode("utf-8")
+
+
+def _pending_request_parts(
+    session: UploadSession, prepared: PreparedReportUpload
+) -> tuple[bytes, dict[str, Any] | None]:
+    """Request body and artifact bytes to keep for a resend of this upload."""
+    mode = session.mode or "artifact"
+    if mode != "artifact":
+        payload = session.request_payload
+        if payload is None:  # stopped before the first request was sent
+            payload = (
+                prepared.compatibility_payload
+                if mode == "compat"
+                else prepared.legacy_payload
+            )
+        return _exact_json_body(payload), None
+    snapshot = session.artifact_snapshot
+    payload = session.request_payload
+    if snapshot is None or payload is None:
+        # Stopped before the artifact files were written or init was sent;
+        # build them now (deterministic: same bytes the upload would send).
+        artifacts = _build_report_artifacts(prepared)
+        try:
+            snapshot = _snapshot_report_artifacts(artifacts)
+            payload = _build_report_init_payload(prepared, artifacts)
+        finally:
+            for artifact in artifacts.values():
+                artifact.cleanup()
+    return _exact_json_body(payload), snapshot
+
+
+def _pending_endpoint(mode: str) -> str:
+    return REPORT_INIT_URL if mode == "artifact" else REPORT_URL
+
+
+def _save_pending_for_session(
+    session: UploadSession,
+    prepared: PreparedReportUpload,
+    kind: str,
+    pending_dir: Path | None,
+    last_error: dict[str, Any],
+) -> Path | None:
+    mode = session.mode or "artifact"
+    metadata = getattr(prepared, "metadata", None) or {}
+    summary = getattr(prepared, "scan_summary", None) or {}
+    try:
+        body, artifacts = _pending_request_parts(session, prepared)
+        context: dict[str, Any] = {"grade_data": getattr(prepared, "grade_data", None)}
+        if mode == "artifact":
+            # Needed only if Cloud asks for the init request to be rebuilt.
+            context.update(
+                metadata=metadata,
+                scan_summary=summary,
+                legacy_payload_size_bytes=getattr(
+                    prepared, "legacy_payload_size_bytes", 0
+                ),
+            )
+        return _save_pending_upload(
+            pending_dir,
+            idempotency_key=session.idempotency_key,
+            kind=kind,
+            mode=mode,
+            endpoint=_pending_endpoint(mode),
+            api_base=BASE_URL,
+            project_id=metadata.get("project_id"),
+            cli_version=_cli_version(),
+            request_body=body,
+            artifacts=artifacts,
+            context=context,
+            finding_count=summary.get("finding_count"),
+            last_error=last_error,
+        )
+    except (OSError, TypeError, ValueError, AttributeError) as exc:
+        logger.debug("Could not save pending upload: %s", exc)
+        return None
+
+
+def _failure_details(result: dict[str, Any]) -> dict[str, Any]:
+    error = result.get("error")
+    return {
+        "code": result.get("code"),
+        "status": result.get("status"),
+        "request_id": result.get("request_id"),
+        "error": str(error) if error is not None else None,
+    }
+
+
+def _save_pending_if_retryable(
+    result: dict,
+    session: UploadSession,
+    prepared: PreparedReportUpload,
+    *,
+    kind: str,
+    pending_dir: Path | None,
+    quiet: bool,
+) -> dict:
+    if result.get("success") or not result.get("retryable"):
+        return result
+    path = _save_pending_for_session(
+        session, prepared, kind, pending_dir, _failure_details(result)
+    )
+    if path is None:
+        return result
+    error = result.get("error")
+    if isinstance(error, UploadFailure):
+        result["error"] = error.with_hint(_SAVED_HINT)
+    elif error:
+        result["error"] = f"{error} {_SAVED_HINT}"
+    result["pending_upload"] = str(path)
+    if quiet:
+        print(
+            f"Scan saved to {_display_path(path)}; "
+            "run 'skylos upload --retry' to send it.",
+            file=sys.stderr,
+        )
+    return result
+
+
+class _UploadTerminated(SystemExit):
+    """SIGTERM during an upload, raised so the scan can be saved first."""
+
+
+def _raise_upload_terminated(signum, _frame):
+    raise _UploadTerminated(128 + signum)
+
+
+def _install_sigterm_guard():
+    """Turn SIGTERM into an exception during an upload; returns the signal.
+
+    Only when nothing else handles SIGTERM, and only on the main thread.
+    """
+    sigterm = getattr(signal, "SIGTERM", None)
+    installed = None
+    if sigterm is not None and threading.current_thread() is threading.main_thread():
+        try:
+            if signal.getsignal(sigterm) is signal.SIG_DFL:
+                signal.signal(sigterm, _raise_upload_terminated)
+                installed = sigterm
+        except (ValueError, OSError):
+            installed = None
+    return installed
+
+
+def _remove_sigterm_guard(sigterm) -> None:
+    if sigterm is None:
+        return
+    with contextlib.suppress(ValueError, OSError):
+        signal.signal(sigterm, signal.SIG_DFL)
+
+
+@contextlib.contextmanager
+def _save_pending_on_interrupt(session, prepared, kind, pending_dir):
+    """Keep the scan if Ctrl-C or SIGTERM stops the upload part-way."""
+    guard = _install_sigterm_guard()
+    try:
+        yield
+    except (KeyboardInterrupt, _UploadTerminated):
+        _remove_sigterm_guard(guard)
+        guard = None
+        path = _save_pending_for_session(
+            session, prepared, kind, pending_dir, {"code": "INTERRUPTED"}
+        )
+        if path is not None:
             print(
-                " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",
-                end="",
+                f"\nUpload interrupted. Scan saved to {_display_path(path)}; "
+                "run 'skylos upload --retry' to send it.",
+                file=sys.stderr,
                 flush=True,
             )
-        return upload_report_compatibility(
-            token,
-            prepared,
+        raise
+    finally:
+        _remove_sigterm_guard(guard)
+
+
+def _prepared_from_pending(context: dict[str, Any]) -> PreparedReportUpload:
+    metadata = context.get("metadata")
+    scan_summary = context.get("scan_summary")
+    size = context.get("legacy_payload_size_bytes")
+    return PreparedReportUpload(
+        legacy_payload={},
+        core_payload={},
+        compatibility_payload={},
+        definitions_payload=None,
+        metadata=metadata if isinstance(metadata, dict) else {},
+        scan_summary=scan_summary if isinstance(scan_summary, dict) else {},
+        grade_data=context.get("grade_data"),
+        legacy_payload_size_bytes=size if isinstance(size, int) else 0,
+        compatibility_payload_size_bytes=0,
+    )
+
+
+def _resend_saved_request(token, pending, session, *, quiet, message) -> dict:
+    """Send a saved upload's exact bytes again with its original key."""
+    record = pending.record
+    body = _decode_request_body(record)
+    context = record.get("context") if isinstance(record.get("context"), dict) else {}
+    if session.mode != "artifact":
+        response, last_err = _post_json_with_retries(
+            REPORT_URL,
+            _build_auth_headers(token),
+            None,
             quiet=quiet,
-            strict=strict,
-            is_forced=is_forced,
-            initial_message="Uploading debt results...",
+            initial_message=message,
+            timeout=_report_request_timeout(),
+            idempotency_key=session.idempotency_key,
+            raw_body=body,
         )
-    return upload_result
+        if response is None:
+            return _report_transport_failure(last_err)
+        return _finalize_report_upload(
+            response,
+            grade_data=context.get("grade_data"),
+            quiet=quiet,
+            strict=False,
+            is_forced=False,
+        )
+    artifacts = _restore_report_artifacts(record.get("artifacts") or {})
+    return _run_artifact_upload(
+        token,
+        _prepared_from_pending(context),
+        artifacts,
+        session=session,
+        quiet=quiet,
+        strict=False,
+        is_forced=False,
+        initial_message=message,
+        init_body=body,
+    )
+
+
+def _format_saved_time(created_at: float) -> str:
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(created_at))
+    except (OverflowError, OSError, ValueError):
+        return "an earlier run"
+
+
+def _resend_one_pending_upload(token, pending, linked_project_id, *, quiet: bool):
+    record = pending.record
+    mode = record.get("mode")
+    if mode not in {"inline", "compat", "artifact"}:
+        return {"status": "skipped", "reason": "unknown upload format"}
+    expected_endpoint = _pending_endpoint(mode)
+    if record.get("endpoint") != expected_endpoint:
+        return {
+            "status": "skipped",
+            "reason": (
+                f"it was saved for {record.get('endpoint')}, but Skylos is now "
+                f"configured for {expected_endpoint}. Set SKYLOS_API_URL to resend it."
+            ),
+        }
+    # The saved scan must belong to the project this folder uploads to now
+    # (both unlinked counts as the same token-selected project).
+    if record.get("project_id") != linked_project_id:
+        return {
+            "status": "skipped",
+            "reason": "it belongs to a different linked project than this folder.",
+        }
+
+    if not _pending_within_resend_window(pending):
+        moved = _mark_pending_upload_failed(
+            pending, {"reason": _TOO_OLD_REASON, "code": "TOO_OLD"}
+        )
+        return {
+            "status": "failed",
+            "error": f"Saved scan is {_TOO_OLD_REASON}.",
+            "failed_path": str(moved) if moved else None,
+        }
+
+    session = UploadSession(idempotency_key=pending.idempotency_key, mode=mode)
+    count = pending.finding_count
+    count_text = f", {count:,} findings" if isinstance(count, int) else ""
+    message = (
+        f"Resending scan saved {_format_saved_time(pending.created_at)}{count_text}..."
+    )
+    try:
+        result = _resend_saved_request(
+            token, pending, session, quiet=quiet, message=message
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
+        result = {
+            "success": False,
+            "error": f"The saved upload could not be read ({type(exc).__name__}).",
+            "code": "PENDING_UPLOAD_INVALID",
+            "retryable": False,
+        }
+
+    if result.get("success"):
+        _delete_pending_upload(pending)
+        return {
+            "status": "already_saved" if result.get("replayed") else "sent",
+            "scan_id": result.get("scan_id"),
+        }
+    if result.get("retryable"):
+        return {"status": "kept", "error": str(result.get("error") or "")}
+    moved = _mark_pending_upload_failed(pending, _failure_details(result))
+    return {
+        "status": "failed",
+        "error": str(result.get("error") or ""),
+        "failed_path": str(moved) if moved else None,
+    }
+
+
+def resend_pending_uploads(project_root=None, *, quiet: bool = False) -> dict[str, Any]:
+    """Send scans saved by failed uploads again, each with its original key.
+
+    A scan the server accepts (or already had) is deleted; one it rejects for
+    a reason a retry cannot fix moves to ``failed/`` with the reason; one that
+    fails for a temporary reason stays for the next ``skylos upload --retry``.
+    """
+    root = Path(project_root) if project_root is not None else _get_repo_root_for_link()
+    directory = _pending_uploads_dir(root)
+    pending, unreadable = _list_pending_uploads(directory)
+    summary: dict[str, Any] = {
+        "directory": str(directory) if directory is not None else None,
+        "total": len(pending),
+        "unreadable": unreadable,
+        "sent": 0,
+        "already_saved": 0,
+        "kept": 0,
+        "failed": 0,
+        "skipped": 0,
+        "results": [],
+    }
+    legacy_notice = legacy_pending_notice(root)
+    if legacy_notice:
+        summary["legacy_notice"] = legacy_notice
+    if not pending:
+        return summary
+
+    token = get_project_token()
+    if not token:
+        summary["error"] = _NO_TOKEN_ERROR
+        return summary
+    if token.startswith("gitlab_oidc:"):
+        summary["error"] = (
+            "Managed GitLab uploads are never re-sent automatically. "
+            "Start a fresh pipeline instead."
+        )
+        return summary
+
+    if not quiet:
+        _begin_contract_check()
+    git_root = get_git_root()
+    linked_project_id = _load_repo_link(git_root).get("project_id")
+    for item in pending:
+        outcome = _resend_one_pending_upload(
+            token, item, linked_project_id, quiet=quiet
+        )
+        outcome["idempotency_key"] = item.idempotency_key
+        summary[outcome["status"]] += 1
+        summary["results"].append(outcome)
+    if not quiet:
+        notice = _newer_contract_notice()
+        if notice:
+            summary["contract_notice"] = notice
+    return summary
 
 
 def _should_use_legacy_inline_report_upload(

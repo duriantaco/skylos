@@ -135,13 +135,13 @@ def source_revision_state(result: object, git_root: str | None, reported_sha: st
     if not isinstance(scope, dict) or scope.get("complete_repository") is not True:
         return "unknown"
 
-    root = Path(git_root).resolve(strict=False)
     scan_root = scope.get("repository_root")
     if not isinstance(scan_root, str) or not scan_root:
         return "unknown"
     try:
+        root = Path(git_root).resolve(strict=False)
         Path(scan_root).resolve(strict=False).relative_to(root)
-    except ValueError:
+    except (OSError, RuntimeError, ValueError):
         return "unknown"
 
     try:

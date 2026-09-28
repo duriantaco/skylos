@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "actor": "fixture",
+  "ai_code": null,
+  "analysis_mode": "static",
+  "branch": "main",
+  "ci": null,
+  "cli_version": "fixture",
+  "commit_hash": "0000000000000000000000000000000000000000",
+  "definitions": null,
+  "is_forced": false,
+  "project_root": "",
+  "provenance": {
+    "agent_files": [],
+    "files": {},
+    "status": {
+      "ran": false,
+      "reason": "provenance was not run for this scan"
+    }
+  },
+  "runs": [
+    {
+      "results": [
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app.py"
+                },
+                "region": {
+                  "snippet": {
+                    "text": "import subprocess\n\ndef run(cmd):\n    subprocess.run(cmd, shell=True)"
+                  },
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. C..."
+          },
+          "partialFingerprints": {
+            "skylosFindingHash/v1": "692aac1c555a8a33fa8ea5688e5b2e443c538b198dd9a37fda1e384820b457c1:1"
+          },
+          "properties": {
+            "category": "SECURITY",
+            "skylos_evidence_contract": {
+              "limitations": [],
+              "proof_state": "candidate",
+              "schema_version": 1,
+              "sinks": [],
+              "sources": [],
+              "symbols": [],
+              "traces": [
+                "app.py:4"
+              ]
+            }
+          },
+          "ruleId": "SKY-D212"
+        }
+      ],
+      "taxonomies": [
+        {
+          "name": "CWE",
+          "organization": "MITRE",
+          "shortDescription": {
+            "text": "Common Weakness Enumeration"
+          },
+          "taxa": [
+            {
+              "id": "CWE-665",
+              "name": "Improper Initialization",
+              "shortDescription": {
+                "text": "Improper Initialization"
+              }
+            },
+            {
+              "id": "CWE-396",
+              "name": "Declaration of Catch for Generic Exception",
+              "shortDescription": {
+                "text": "Declaration of Catch for Generic Exception"
+              }
+            },
+            {
+              "id": "CWE-597",
+              "name": "Use of Wrong Operator in String Comparison",
+              "shortDescription": {
+                "text": "Use of Wrong Operator in String Comparison"
+              }
+            },
+            {
+              "id": "CWE-705",
+              "name": "Incorrect Control Flow Scoping",
+              "shortDescription": {
+                "text": "Incorrect Control Flow Scoping"
+              }
+            },
+            {
+              "id": "CWE-563",
+              "name": "Assignment to Variable without Use",
+              "shortDescription": {
+                "text": "Assignment to Variable without Use"
+              }
+            },
+            {
+              "id": "CWE-710",
+              "name": "Improper Adherence to Coding Standards",
+              "shortDescription": {
+                "text": "Improper Adherence to Coding Standards"
+              }
+            },
+            {
+              "id": "CWE-391",
+              "name": "Unchecked Error Condition",
+              "shortDescription": {
+                "text": "Unchecked Error Condition"
+              }
+            },
+            {
+              "id": "CWE-772",
+              "name": "Missing Release of Resource after Effective Lifetime",
+              "shortDescription": {
+                "text": "Missing Release of Resource after Effective Lifetime"
+              }
+            },
+            {
+              "id": "CWE-489",
+              "name": "Active Debug Code",
+              "shortDescription": {
+                "text": "Active Debug Code"
+              }
+            },
+            {
+              "id": "CWE-546",
+              "name": "Suspicious Comment",
+              "shortDescription": {
+                "text": "Suspicious Comment"
+              }
+            },
+            {
+              "id": "CWE-295",
+              "name": "Improper Certificate Validation",
+              "shortDescription": {
+                "text": "Improper Certificate Validation"
+              }
+            },
+            {
+              "id": "CWE-352",
+              "name": "Cross-Site Request Forgery",
+              "shortDescription": {
+                "text": "Cross-Site Request Forgery"
+              }
+            },
+            {
+              "id": "CWE-476",
+              "name": "NULL Pointer Dereference",
+              "shortDescription": {
+                "text": "NULL Pointer Dereference"
+              }
+            },
+            {
+              "id": "CWE-330",
+              "name": "Use of Insufficiently Random Values",
+              "shortDescription": {
+                "text": "Use of Insufficiently Random Values"
+              }
+            },
+            {
+              "id": "CWE-798",
+              "name": "Use of Hard-coded Credentials",
+              "shortDescription": {
+                "text": "Use of Hard-coded Credentials"
+              }
+            },
+            {
+              "id": "CWE-1188",
+              "name": "Initialization with Hard-Coded Network Resource Configuration",
+              "shortDescription": {
+                "text": "Initialization with Hard-Coded Network Resource Configuration"
+              }
+            },
+            {
+              "id": "CWE-209",
+              "name": "Generation of Error Message Containing Sensitive Information",
+              "shortDescription": {
+                "text": "Generation of Error Message Containing Sensitive Information"
+              }
+            },
+            {
+              "id": "CWE-732",
+              "name": "Incorrect Permission Assignment for Critical Resource",
+              "shortDescription": {
+                "text": "Incorrect Permission Assignment for Critical Resource"
+              }
+            },
+            {
+              "id": "CWE-1164",
+              "name": "Irrelevant Code",
+              "shortDescription": {
+                "text": "Irrelevant Code"
+              }
+            },
+            {
+              "id": "CWE-1106",
+              "name": "Insufficient Use of Symbolic Constants",
+              "shortDescription": {
+                "text": "Insufficient Use of Symbolic Constants"
+              }
+            },
+            {
+              "id": "CWE-1119",
+              "name": "Excessive Use of Unconditional Branching",
+              "shortDescription": {
+                "text": "Excessive Use of Unconditional Branching"
+              }
+            },
+            {
+              "id": "CWE-400",
+              "name": "Uncontrolled Resource Consumption",
+              "shortDescription": {
+                "text": "Uncontrolled Resource Consumption"
+              }
+            },
+            {
+              "id": "CWE-704",
+              "name": "Incorrect Type Conversion or Cast",
+              "shortDescription": {
+                "text": "Incorrect Type Conversion or Cast"
+              }
+            },
+            {
+              "id": "CWE-862",
+              "name": "Missing Authorization",
+              "shortDescription": {
+                "text": "Missing Authorization"
+              }
+            },
+            {
+              "id": "CWE-1121",
+              "name": "Excessive McCabe Cyclomatic Complexity",
+              "shortDescription": {
+                "text": "Excessive McCabe Cyclomatic Complexity"
+              }
+            },
+            {
+              "id": "CWE-1124",
+              "name": "Excessively Deep Nesting",
+              "shortDescription": {
+                "text": "Excessively Deep Nesting"
+              }
+            },
+            {
+              "id": "CWE-670",
+              "name": "Always-Incorrect Control Flow Implementation",
+              "shortDescription": {
+                "text": "Always-Incorrect Control Flow Implementation"
+              }
+            },
+            {
+              "id": "CWE-1041",
+              "name": "Use of Redundant Code",
+              "shortDescription": {
+                "text": "Use of Redundant Code"
+              }
+            },
+            {
+              "id": "CWE-693",
+              "name": "Protection Mechanism Failure",
+              "shortDescription": {
+                "text": "Protection Mechanism Failure"
+              }
+            },
+            {
+              "id": "CWE-1093",
+              "name": "Excessively Complex Data Representation",
+              "shortDescription": {
+                "text": "Excessively Complex Data Representation"
+              }
+            },
+            {
+              "id": "CWE-1080",
+              "name": "Source Code File with Excessive Number of Lines of Code",
+              "shortDescription": {
+                "text": "Source Code File with Excessive Number of Lines of Code"
+              }
+            },
+            {
+              "id": "CWE-1064",
+              "name": "Invokable Control Element with Signature Containing an Excessive Number of Parameters",
+              "shortDescription": {
+                "text": "Invokable Control Element with Signature Containing an Excessive Number of Parameters"
+              }
+            },
+            {
+              "id": "CWE-407",
+              "name": "Inefficient Algorithmic Complexity",
+              "shortDescription": {
+                "text": "Inefficient Algorithmic Complexity"
+              }
+            },
+            {
+              "id": "CWE-833",
+              "name": "Deadlock",
+              "shortDescription": {
+                "text": "Deadlock"
+              }
+            },
+            {
+              "id": "CWE-362",
+              "name": "Race Condition",
+              "shortDescription": {
+                "text": "Race Condition"
+              }
+            },
+            {
+              "id": "CWE-755",
+              "name": "Improper Handling of Exceptional Conditions",
+              "shortDescription": {
+                "text": "Improper Handling of Exceptional Conditions"
+              }
+            },
+            {
+              "id": "CWE-252",
+              "name": "Unchecked Return Value",
+              "shortDescription": {
+                "text": "Unchecked Return Value"
+              }
+            },
+            {
+              "id": "CWE-561",
+              "name": "Dead Code",
+              "shortDescription": {
+                "text": "Dead Code"
+              }
+            }
+          ],
+          "version": "4.14"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "Skylos",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://docs.skylos.dev/rules/SKY-D212",
+              "id": "SKY-D212",
+              "properties": {
+                "security-severity": "9.5",
+                "tags": [
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Command injection: the value flows from request.args into subprocess.run with shell=True and no validation. Command i..."
+              }
+            }
+          ],
+          "version": "1.0.0"
+        }
+      }
+    }
+  ],
+  "upload_client_session_id": "cli-fixture",
+  "version": "2.1.0"
+}

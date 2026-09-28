@@ -76,6 +76,17 @@ def test_upload_does_not_claim_exact_commit_for_partial_or_mismatched_scan(tmp_p
     assert source_revision_state(full, None, sha) == "unknown"
 
 
+def test_revision_path_resolution_failure_does_not_block_upload(tmp_path):
+    loop = tmp_path / "loop"
+    loop.symlink_to("loop")
+    full = {"analysis_summary": {"comparison_scope": {
+        "complete_repository": True, "repository_root": str(tmp_path),
+    }}}
+    assert source_revision_state(full, str(loop), "a" * 40) == "unknown"
+    full["analysis_summary"]["comparison_scope"]["repository_root"] = str(loop)
+    assert source_revision_state(full, str(tmp_path), "a" * 40) == "unknown"
+
+
 def test_git_blob_reader_rejects_traversal_and_symlink_parent(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

@@ -4940,7 +4940,9 @@ class Skylos:
                         _ud_root = _ud_root.parent
 
                     if "SKY-U005" not in project_ignore:
-                        ud_findings = scan_unused_dependencies(_ud_root, _ud_py_files)
+                        ud_findings = scan_unused_dependencies(
+                            _ud_root, _ud_py_files, location_root=project_root
+                        )
                         if ud_findings:
                             all_quality.extend(ud_findings)
 

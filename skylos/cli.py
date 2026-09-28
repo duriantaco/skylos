@@ -1381,7 +1381,10 @@ def _render_upload_failure(console: Console, upload_resp: dict[str, object]) -> 
     if err and err != (
         "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
     ):
-        console.print(f"[warn]Upload failed:[/warn] {err}")
+        # Server wording is plain text; never let it act as Rich markup.
+        from rich.markup import escape as _escape_markup
+
+        console.print(f"[warn]Upload failed:[/warn] {_escape_markup(err)}")
 
 
 def _is_ci():
@@ -2193,6 +2196,12 @@ def _run_credits_command(_argv):
     from skylos.commands.credits_cmd import run_credits_command
 
     return run_credits_command()
+
+
+def _run_upload_command(argv):
+    from skylos.commands.upload_cmd import run_upload_command
+
+    return run_upload_command(argv)
 
 
 def _run_init_command(_argv):

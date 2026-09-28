@@ -366,6 +366,35 @@ def test_managed_post_uses_one_long_attempt_and_redacts_ambiguous_errors(
     assert secret not in error
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data",
+        "https://elsewhere.example/api/report",
+        "file:///tmp/report",
+        f"{api.REPORT_URL}?next=https://elsewhere.example",
+    ],
+)
+def test_managed_post_rejects_unconfigured_destinations(monkeypatch, url):
+    calls = []
+    monkeypatch.setattr(
+        api.requests, "post", lambda *args, **kwargs: calls.append(args)
+    )
+
+    response, error = api._post_managed_json_once(
+        url,
+        {"X-Skylos-Auth": "gitlab_oidc"},
+        {},
+        quiet=True,
+        initial_message=None,
+        accepted_statuses=(200, 201),
+    )
+
+    assert response is None
+    assert error == "Invalid managed Cloud endpoint configuration."
+    assert calls == []
+
+
 @pytest.mark.parametrize("failure_at", ["init", "complete"])
 @pytest.mark.parametrize("failure", ["timeout", 500])
 def test_managed_artifact_failure_never_falls_back_to_another_upload(
@@ -415,7 +444,7 @@ def test_managed_artifact_failure_never_falls_back_to_another_upload(
     )
 
 
-def test_nonmanaged_post_retains_existing_retries_and_timeout(monkeypatch):
+def test_nonmanaged_post_uses_contract_retries_and_timeout(monkeypatch):
     calls = []
 
     def post(url, **kwargs):
@@ -426,10 +455,12 @@ def test_nonmanaged_post_retains_existing_retries_and_timeout(monkeypatch):
     response, error = api._post_json_with_retries(
         api.REPORT_URL, {"X-Skylos-Auth": "oidc"}, {}, quiet=True, timeout=17
     )
-    assert response is None and "Server Error 500" in error
-    assert len(calls) == 3
+    assert response is None and "HTTP 500" in error
+    assert "fixture" not in error
+    assert len(calls) == 4
     assert all(call["timeout"] == 17 for call in calls)
     assert all("allow_redirects" not in call for call in calls)
+    assert len({call["headers"]["Idempotency-Key"] for call in calls}) == 1
 
 
 @pytest.mark.parametrize("status", [404, 405])

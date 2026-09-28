@@ -1,0 +1,483 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "actor": "fixture",
+  "ai_code": null,
+  "analysis_mode": "static",
+  "branch": "main",
+  "ci": null,
+  "cli_version": "fixture",
+  "commit_hash": "0000000000000000000000000000000000000000",
+  "definitions": null,
+  "is_forced": false,
+  "project_root": "",
+  "provenance": {
+    "agent_files": [],
+    "files": {},
+    "status": {
+      "ran": false,
+      "reason": "provenance was not run for this scan"
+    }
+  },
+  "runs": [
+    {
+      "results": [
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "."
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Python project has no mypy or pyright policy configured. Add a checked type policy for public code paths."
+          },
+          "partialFingerprints": {
+            "skylosFindingHash/v1": "01939b1b6772ba15ea973a2bf97dc55d2100ec9f03d3c5eeb367b5ffe8e619f4:1"
+          },
+          "properties": {
+            "category": "QUALITY",
+            "kind": "repo_policy"
+          },
+          "ruleId": "SKY-R101"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "."
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Python project has no Ruff policy configured."
+          },
+          "partialFingerprints": {
+            "skylosFindingHash/v1": "eb836189c99fa3cdffd1df8f506afdc3f5e0654c4aec24441a96b11a0d29b9aa:1"
+          },
+          "properties": {
+            "category": "QUALITY",
+            "kind": "repo_policy"
+          },
+          "ruleId": "SKY-R102"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "."
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "No ［tool.skylos.gate］ policy is configured for repository quality gates."
+          },
+          "partialFingerprints": {
+            "skylosFindingHash/v1": "c6dfd49edad462bb587b7d48bed7ae7b4cda792ac04cc9cafe49962d5fef30ac:1"
+          },
+          "properties": {
+            "category": "QUALITY",
+            "kind": "repo_policy"
+          },
+          "ruleId": "SKY-R103"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "."
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Repository has no pre-commit policy file."
+          },
+          "partialFingerprints": {
+            "skylosFindingHash/v1": "0fc3139b4181632ea8b69fb0ef25552ebe8c3ac40883435589ec2876a8fe6703:1"
+          },
+          "properties": {
+            "category": "QUALITY",
+            "kind": "repo_policy"
+          },
+          "ruleId": "SKY-R104"
+        }
+      ],
+      "taxonomies": [
+        {
+          "name": "CWE",
+          "organization": "MITRE",
+          "shortDescription": {
+            "text": "Common Weakness Enumeration"
+          },
+          "taxa": [
+            {
+              "id": "CWE-665",
+              "name": "Improper Initialization",
+              "shortDescription": {
+                "text": "Improper Initialization"
+              }
+            },
+            {
+              "id": "CWE-396",
+              "name": "Declaration of Catch for Generic Exception",
+              "shortDescription": {
+                "text": "Declaration of Catch for Generic Exception"
+              }
+            },
+            {
+              "id": "CWE-597",
+              "name": "Use of Wrong Operator in String Comparison",
+              "shortDescription": {
+                "text": "Use of Wrong Operator in String Comparison"
+              }
+            },
+            {
+              "id": "CWE-705",
+              "name": "Incorrect Control Flow Scoping",
+              "shortDescription": {
+                "text": "Incorrect Control Flow Scoping"
+              }
+            },
+            {
+              "id": "CWE-563",
+              "name": "Assignment to Variable without Use",
+              "shortDescription": {
+                "text": "Assignment to Variable without Use"
+              }
+            },
+            {
+              "id": "CWE-710",
+              "name": "Improper Adherence to Coding Standards",
+              "shortDescription": {
+                "text": "Improper Adherence to Coding Standards"
+              }
+            },
+            {
+              "id": "CWE-391",
+              "name": "Unchecked Error Condition",
+              "shortDescription": {
+                "text": "Unchecked Error Condition"
+              }
+            },
+            {
+              "id": "CWE-772",
+              "name": "Missing Release of Resource after Effective Lifetime",
+              "shortDescription": {
+                "text": "Missing Release of Resource after Effective Lifetime"
+              }
+            },
+            {
+              "id": "CWE-489",
+              "name": "Active Debug Code",
+              "shortDescription": {
+                "text": "Active Debug Code"
+              }
+            },
+            {
+              "id": "CWE-546",
+              "name": "Suspicious Comment",
+              "shortDescription": {
+                "text": "Suspicious Comment"
+              }
+            },
+            {
+              "id": "CWE-295",
+              "name": "Improper Certificate Validation",
+              "shortDescription": {
+                "text": "Improper Certificate Validation"
+              }
+            },
+            {
+              "id": "CWE-352",
+              "name": "Cross-Site Request Forgery",
+              "shortDescription": {
+                "text": "Cross-Site Request Forgery"
+              }
+            },
+            {
+              "id": "CWE-476",
+              "name": "NULL Pointer Dereference",
+              "shortDescription": {
+                "text": "NULL Pointer Dereference"
+              }
+            },
+            {
+              "id": "CWE-330",
+              "name": "Use of Insufficiently Random Values",
+              "shortDescription": {
+                "text": "Use of Insufficiently Random Values"
+              }
+            },
+            {
+              "id": "CWE-798",
+              "name": "Use of Hard-coded Credentials",
+              "shortDescription": {
+                "text": "Use of Hard-coded Credentials"
+              }
+            },
+            {
+              "id": "CWE-1188",
+              "name": "Initialization with Hard-Coded Network Resource Configuration",
+              "shortDescription": {
+                "text": "Initialization with Hard-Coded Network Resource Configuration"
+              }
+            },
+            {
+              "id": "CWE-209",
+              "name": "Generation of Error Message Containing Sensitive Information",
+              "shortDescription": {
+                "text": "Generation of Error Message Containing Sensitive Information"
+              }
+            },
+            {
+              "id": "CWE-732",
+              "name": "Incorrect Permission Assignment for Critical Resource",
+              "shortDescription": {
+                "text": "Incorrect Permission Assignment for Critical Resource"
+              }
+            },
+            {
+              "id": "CWE-1164",
+              "name": "Irrelevant Code",
+              "shortDescription": {
+                "text": "Irrelevant Code"
+              }
+            },
+            {
+              "id": "CWE-1106",
+              "name": "Insufficient Use of Symbolic Constants",
+              "shortDescription": {
+                "text": "Insufficient Use of Symbolic Constants"
+              }
+            },
+            {
+              "id": "CWE-1119",
+              "name": "Excessive Use of Unconditional Branching",
+              "shortDescription": {
+                "text": "Excessive Use of Unconditional Branching"
+              }
+            },
+            {
+              "id": "CWE-400",
+              "name": "Uncontrolled Resource Consumption",
+              "shortDescription": {
+                "text": "Uncontrolled Resource Consumption"
+              }
+            },
+            {
+              "id": "CWE-704",
+              "name": "Incorrect Type Conversion or Cast",
+              "shortDescription": {
+                "text": "Incorrect Type Conversion or Cast"
+              }
+            },
+            {
+              "id": "CWE-862",
+              "name": "Missing Authorization",
+              "shortDescription": {
+                "text": "Missing Authorization"
+              }
+            },
+            {
+              "id": "CWE-1121",
+              "name": "Excessive McCabe Cyclomatic Complexity",
+              "shortDescription": {
+                "text": "Excessive McCabe Cyclomatic Complexity"
+              }
+            },
+            {
+              "id": "CWE-1124",
+              "name": "Excessively Deep Nesting",
+              "shortDescription": {
+                "text": "Excessively Deep Nesting"
+              }
+            },
+            {
+              "id": "CWE-670",
+              "name": "Always-Incorrect Control Flow Implementation",
+              "shortDescription": {
+                "text": "Always-Incorrect Control Flow Implementation"
+              }
+            },
+            {
+              "id": "CWE-1041",
+              "name": "Use of Redundant Code",
+              "shortDescription": {
+                "text": "Use of Redundant Code"
+              }
+            },
+            {
+              "id": "CWE-693",
+              "name": "Protection Mechanism Failure",
+              "shortDescription": {
+                "text": "Protection Mechanism Failure"
+              }
+            },
+            {
+              "id": "CWE-1093",
+              "name": "Excessively Complex Data Representation",
+              "shortDescription": {
+                "text": "Excessively Complex Data Representation"
+              }
+            },
+            {
+              "id": "CWE-1080",
+              "name": "Source Code File with Excessive Number of Lines of Code",
+              "shortDescription": {
+                "text": "Source Code File with Excessive Number of Lines of Code"
+              }
+            },
+            {
+              "id": "CWE-1064",
+              "name": "Invokable Control Element with Signature Containing an Excessive Number of Parameters",
+              "shortDescription": {
+                "text": "Invokable Control Element with Signature Containing an Excessive Number of Parameters"
+              }
+            },
+            {
+              "id": "CWE-407",
+              "name": "Inefficient Algorithmic Complexity",
+              "shortDescription": {
+                "text": "Inefficient Algorithmic Complexity"
+              }
+            },
+            {
+              "id": "CWE-833",
+              "name": "Deadlock",
+              "shortDescription": {
+                "text": "Deadlock"
+              }
+            },
+            {
+              "id": "CWE-362",
+              "name": "Race Condition",
+              "shortDescription": {
+                "text": "Race Condition"
+              }
+            },
+            {
+              "id": "CWE-755",
+              "name": "Improper Handling of Exceptional Conditions",
+              "shortDescription": {
+                "text": "Improper Handling of Exceptional Conditions"
+              }
+            },
+            {
+              "id": "CWE-252",
+              "name": "Unchecked Return Value",
+              "shortDescription": {
+                "text": "Unchecked Return Value"
+              }
+            },
+            {
+              "id": "CWE-561",
+              "name": "Dead Code",
+              "shortDescription": {
+                "text": "Dead Code"
+              }
+            }
+          ],
+          "version": "4.14"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "Skylos",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://docs.skylos.dev/rules/SKY-R101",
+              "id": "SKY-R101",
+              "properties": {
+                "tags": [
+                  "quality"
+                ]
+              },
+              "shortDescription": {
+                "text": "Python project has no mypy or pyright policy configured. Add a checked type policy for public code paths."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://docs.skylos.dev/rules/SKY-R102",
+              "id": "SKY-R102",
+              "properties": {
+                "tags": [
+                  "quality"
+                ]
+              },
+              "shortDescription": {
+                "text": "Python project has no Ruff policy configured."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://docs.skylos.dev/rules/SKY-R103",
+              "id": "SKY-R103",
+              "properties": {
+                "tags": [
+                  "quality"
+                ]
+              },
+              "shortDescription": {
+                "text": "No ［tool.skylos.gate］ policy is configured for repository quality gates."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://docs.skylos.dev/rules/SKY-R104",
+              "id": "SKY-R104",
+              "properties": {
+                "tags": [
+                  "quality"
+                ]
+              },
+              "shortDescription": {
+                "text": "Repository has no pre-commit policy file."
+              }
+            }
+          ],
+          "version": "1.0.0"
+        }
+      }
+    }
+  ],
+  "upload_client_session_id": "cli-fixture",
+  "version": "2.1.0"
+}
