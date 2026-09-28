@@ -16,6 +16,7 @@ from skylos.discover.graph import (
     GraphEdge,
     NodeType,
 )
+from skylos.discover.semantics.python_output_flow import attach_python_output_flow
 
 KNOWN_LLM_SDKS: dict[str, str] = {
     "openai": "OpenAI",
@@ -589,6 +590,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 "tool_names": [],
                 "func_scope": self._func_scope(),
                 "has_max_tokens": has_max_tokens,
+                "ast_node": node,
             }
         )
 
@@ -616,9 +618,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 if isinstance(kw.value, ast.Dict):
                     payload = {}
                     for key, val in zip(kw.value.keys, kw.value.values):
-                        if isinstance(key, ast.Constant) and isinstance(
-                            key.value, str
-                        ):
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
                             payload[key.value] = (
                                 val.value if isinstance(val, ast.Constant) else None
                             )
@@ -717,6 +717,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 "tool_names": tool_names,
                 "func_scope": self._func_scope(),
                 "has_max_tokens": has_max_tokens,
+                "ast_node": node,
             }
         )
 
@@ -1187,9 +1188,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 elif isinstance(node.value, ast.Dict):
                     entries: dict = {}
                     for key, val in zip(node.value.keys, node.value.values):
-                        if isinstance(key, ast.Constant) and isinstance(
-                            key.value, str
-                        ):
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
                             entries[key.value] = (
                                 val.value if isinstance(val, ast.Constant) else None
                             )
@@ -1392,6 +1391,9 @@ def _scan_python_file(
     visitor = _LLMDetectorVisitor(rel, source)
     visitor.visit(tree)
     visitor.finalize()
+    attach_python_output_flow(
+        tree, visitor._raw_llm_calls, visitor.integrations, rel, root, py_file
+    )
     return rel, visitor
 
 
@@ -1565,23 +1567,34 @@ def _add_tool_nodes(
 def _add_validation_node(
     graph: AIIntegrationGraph, integration: LLMIntegration, call_id: str
 ) -> None:
-    if not integration.has_output_validation:
-        return
+    if integration.output_flow_status is None:
+        locations = (
+            {integration.output_validation_location}
+            if integration.has_output_validation
+            else set()
+        )
+    else:
+        locations = {
+            evidence.validation_location
+            for evidence in integration.output_flow_evidence
+            if evidence.validation_location
+        }
 
-    val_id = f"validation:{integration.output_validation_location}"
-    graph.add_node(
-        GraphNode(
-            id=val_id,
-            node_type=NodeType.VALIDATION,
-            location=integration.output_validation_location,
-            label="output validation",
+    for location in sorted(locations):
+        val_id = f"validation:{location}"
+        graph.add_node(
+            GraphNode(
+                id=val_id,
+                node_type=NodeType.VALIDATION,
+                location=location,
+                label="output validation",
+            )
         )
-    )
-    graph.add_edge(
-        GraphEdge(
-            source_id=call_id,
-            target_id=val_id,
-            edge_type="data_flow",
-            label="LLM output → validation",
+        graph.add_edge(
+            GraphEdge(
+                source_id=call_id,
+                target_id=val_id,
+                edge_type="data_flow",
+                label="LLM output → validation",
+            )
         )
-    )

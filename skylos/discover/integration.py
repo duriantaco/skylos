@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from skylos.discover.semantics.vocabulary import FlowStatus, OutputFlowEvidence
+
 
 @dataclass
 class ToolDef:
@@ -41,9 +43,11 @@ class LLMIntegration:
     has_logging: bool = False
     has_max_tokens: bool = False
     has_rate_limiting: bool = False
+    output_flow_status: FlowStatus | None = None
+    output_flow_evidence: list[OutputFlowEvidence] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "provider": self.provider,
             "location": self.location,
             "integration_type": self.integration_type,
@@ -65,3 +69,9 @@ class LLMIntegration:
             "has_max_tokens": self.has_max_tokens,
             "has_rate_limiting": self.has_rate_limiting,
         }
+        if self.output_flow_status is not None:
+            result["output_flow_status"] = self.output_flow_status.value
+            result["output_flow_evidence"] = [
+                item.to_dict() for item in self.output_flow_evidence
+            ]
+        return result
