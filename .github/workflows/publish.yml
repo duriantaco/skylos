@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     permissions:
       contents: read
       checks: read
@@ -124,10 +124,12 @@ jobs:
           set -euo pipefail
           release_sha="$(git rev-parse HEAD)"
 
-          for attempt in {1..30}; do
+          # The push test suite currently takes over 25 minutes. A manual
+          # dispatch may start before it finishes, so allow a full hour.
+          for attempt in {1..180}; do
             gh api \
               -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs?per_page=100" \
+              "/repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs?per_page=100&filter=all" \
               > /tmp/skylos-release-checks.json
 
             set +e
@@ -143,20 +145,20 @@ jobs:
           failures = []
           pending = []
           for name in required:
-              matches = [run for run in runs if run.get("name") == name]
+              matches = [
+                  run for run in runs
+                  if run.get("name") == name
+                  and (run.get("app") or {}).get("slug") == "github-actions"
+              ]
               if not matches:
                   pending.append(f"{name}: missing")
                   continue
-              if any(run.get("conclusion") == "success" for run in matches):
+              latest = max(matches, key=lambda run: run["id"])
+              if latest.get("status") != "completed":
+                  pending.append(f"{name}: {latest.get('status') or 'pending'}")
                   continue
-              active = [run for run in matches if run.get("status") != "completed"]
-              if active:
-                  pending.append(f"{name}: {active[0].get('status')}")
-                  continue
-              conclusions = sorted(
-                  {str(run.get("conclusion") or "unknown") for run in matches}
-              )
-              failures.append(f"{name}: {', '.join(conclusions)}")
+              if latest.get("conclusion") != "success":
+                  failures.append(f"{name}: {latest.get('conclusion') or 'unknown'}")
 
           if failures:
               print("Required release checks failed:")
@@ -177,11 +179,11 @@ jobs:
             if [ "$status" -eq 0 ]; then
               exit 0
             fi
-            if [ "$status" -ne 2 ] || [ "$attempt" -eq 30 ]; then
+            if [ "$status" -ne 2 ] || [ "$attempt" -eq 180 ]; then
               exit "$status"
             fi
 
-            echo "Required release checks pending; retrying in 20s (attempt ${attempt}/30)."
+            echo "Required release checks pending; retrying in 20s (attempt ${attempt}/180)."
             sleep 20
           done
 
