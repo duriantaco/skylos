@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.41.0](https://github.com/duriantaco/skylos/compare/v4.40.0...v4.41.0) (2026-09-28)
+
+
+### Features
+
+* **upload:** report checkout state for commit grades ([#906](https://github.com/duriantaco/skylos/issues/906)) ([98729ec](https://github.com/duriantaco/skylos/commit/98729ec9500f39a5394048ead3b969a7568068d9))
+
+
+### Bug Fixes
+
+* **json:** align AI provenance counts with finding arrays ([#907](https://github.com/duriantaco/skylos/issues/907)) ([409e2bd](https://github.com/duriantaco/skylos/commit/409e2bd50047014ff95495aed7900a33cdc9b5a2))
+* **upload:** accept Skylos Cloud's storage upload URL for large reports ([#904](https://github.com/duriantaco/skylos/issues/904)) ([3dd95d3](https://github.com/duriantaco/skylos/commit/3dd95d365645cdd57b76e6ee8250fc229246d5ab))
+
 ## [4.40.0](https://github.com/duriantaco/skylos/compare/v4.39.2...v4.40.0) (2026-09-28)
 
 
