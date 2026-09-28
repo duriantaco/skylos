@@ -529,6 +529,11 @@ def test_release_please_waits_for_required_ci_on_current_main():
     assert "check_release_checks.py" in check_step["run"]
     assert "check-runs?per_page=100&filter=all" in check_step["run"]
     assert "for attempt in {1..180}" in check_step["run"]
+    poll = check_step["run"].split("for attempt in {1..180}; do", 1)[1]
+    before_check = poll.split("check-runs?per_page=100&filter=all", 1)[0]
+    assert "git/ref/heads/main" in before_check
+    assert 'if [[ "$TESTED_SHA" != "$main_sha" ]]; then' in before_check
+    assert "exit 0" in before_check
     assert "did not complete within one hour" in check_step["run"]
     assert release_step["if"] == "steps.checks.outputs.ready == 'true'"
     assert release_step["with"]["target-branch"] == "main"

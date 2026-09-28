@@ -55,6 +55,12 @@ jobs:
           # The aggregate test check appears only after the long matrix ends.
           # Wait up to an hour before Release Please creates a tag or PR.
           for attempt in {1..180}; do
+            main_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+            if [[ "$TESTED_SHA" != "$main_sha" ]]; then
+              echo "Skipping stale CI result: tested $TESTED_SHA, current main $main_sha"
+              exit 0
+            fi
+
             gh api \
               -H "Accept: application/vnd.github+json" \
               "/repos/${GITHUB_REPOSITORY}/commits/${TESTED_SHA}/check-runs?per_page=100&filter=all" \
