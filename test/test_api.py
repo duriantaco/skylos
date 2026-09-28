@@ -148,6 +148,9 @@ class TestSkylosApi(unittest.TestCase):
                 check=True,
             )
             subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+            fixture_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=repo
+            ).decode().strip()
 
             sentinel = root / "git-helper-ran"
             helper = root / "git-helper"
@@ -174,6 +177,8 @@ class TestSkylosApi(unittest.TestCase):
                 with patch.dict(
                     os.environ,
                     {
+                        # CI's GITHUB_SHA belongs to the outer checkout.
+                        "SKYLOS_COMMIT": fixture_commit,
                         "GIT_EXTERNAL_DIFF": str(helper),
                         "GIT_CONFIG_COUNT": "1",
                         "GIT_CONFIG_KEY_0": "diff.external",

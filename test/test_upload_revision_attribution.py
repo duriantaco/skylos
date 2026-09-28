@@ -26,6 +26,8 @@ def test_full_tree_upload_pins_clean_head_and_marks_worktree_changes(tmp_path, m
     _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "base")
     sha = _git(repo, "rev-parse", "HEAD")
     monkeypatch.chdir(repo)
+    monkeypatch.delenv("SKYLOS_COMMIT", raising=False)
+    monkeypatch.setattr(api, "_detect_ci", lambda: (None, {}))
 
     result = {
         "analysis_summary": {
