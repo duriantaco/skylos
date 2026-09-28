@@ -38,7 +38,7 @@ Defense checks (weighted; drive the defense score and the gate):
 | `tool-schema-present` | critical (8) | LLM04 | Every agent tool has a typed schema |
 | `untrusted-input-to-prompt` | critical (8) | LLM01 | Untrusted input cannot reach prompts unguarded |
 | `prompt-delimiter` | high (5) | LLM01 | Untrusted input is delimited inside prompts |
-| `output-validation` | high (5) | LLM02 | Model output is validated before use |
+| `output-validation` | high (5) | LLM02 | Resolved model output uses follow a structural parser or schema validator |
 | `rag-context-isolation` | high (5) | LLM01 | Retrieved context is isolated from instructions |
 | `output-pii-filter` | high (5) | LLM06 | PII filtering guards model output |
 | `model-pinned` | medium (3) | LLM03 | Model version is pinned, not floating |
@@ -60,6 +60,36 @@ is not penalized for agent-tool checks. MCP server integrations get the tool
 checks (`tool-scope`, `tool-schema-present`) but are exempt from call-shaped
 checks (`model-pinned`, `cost-controls`, `output-validation`,
 `no-dangerous-sink`) that have no meaning for a server exposing tools.
+
+### Python output validation evidence
+
+For Python, `output-validation` follows each discovered LLM response through
+local assignments, branches, and supported parser calls. A parser elsewhere in
+the function, a discarded parser result, or a parser that runs after a raw use
+does not establish a pass. A pass means every resolved use of that call's
+output is a parsed or schema-checked value on the paths the analyzer models.
+The built-in vocabulary and bounded flow analyzer live in
+`skylos/discover/semantics/`; they add no network or model dependency.
+
+Each Python integration in `skylos discover --json` includes
+`output_flow_status` (`validated`, `unvalidated`, or `unknown`) and
+`output_flow_evidence`. Evidence records the LLM call location, downstream use
+location, value path, optional validation location and kind, and the reason for
+the decision. `unknown` means Skylos could not prove the local path, for example
+because a helper call, nested scope, or unsupported control flow may change the
+value. Both `unvalidated` and `unknown` fail this check; the finding points to
+the use when Skylos can resolve it. JavaScript and TypeScript currently retain
+the existing scope-level validation check. The older `has_output_validation`
+inventory field still means a validator exists in the scope; use
+`output_flow_status` for the Python per-response verdict.
+
+Parsing establishes structure, not safety for a specific action. Passing
+parsed output to a recognized `eval`, `exec`, process, or filesystem sink does
+not pass `output-validation`; `no-dangerous-sink` also reports dangerous calls.
+Dynamic imports, monkeypatching, and effects inside arbitrary helpers can
+remain unresolved, so this evidence is a local static proof, not a runtime
+guarantee. The synthetic comparison and reproduction command are in
+`benchmarks/output_validation/README.md`.
 
 ## OWASP frameworks
 

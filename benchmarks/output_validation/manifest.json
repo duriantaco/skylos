@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "direct-json-return",
+      "fixture": "fixtures/direct_json_return",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "The returned value is the result of parsing this response as JSON."
+        }
+      ]
+    },
+    {
+      "id": "alias-json-return",
+      "fixture": "fixtures/alias_json_return",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "A local alias carries this response into JSON parsing before return."
+        }
+      ]
+    },
+    {
+      "id": "inline-json-return",
+      "fixture": "fixtures/inline_json_return",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "The return expression parses this response before use."
+        }
+      ]
+    },
+    {
+      "id": "schema-model-validate",
+      "fixture": "fixtures/schema_model_validate",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "The returned value is parsed from this response and checked by the Pydantic model."
+        }
+      ]
+    },
+    {
+      "id": "unrelated-validation",
+      "fixture": "fixtures/unrelated_validation",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The JSON parser sees only a settings literal, while raw LLM content is returned."
+        }
+      ]
+    },
+    {
+      "id": "validation-after-use",
+      "fixture": "fixtures/validation_after_use",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "Raw LLM content is printed before JSON parsing executes."
+        }
+      ]
+    },
+    {
+      "id": "swallowed-parse-failure",
+      "fixture": "fixtures/unused_parse_result",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The parser exception is swallowed and raw output is returned on either path."
+        }
+      ]
+    },
+    {
+      "id": "branch-bypass",
+      "fixture": "fixtures/branch_bypass",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The false branch returns raw LLM output without parsing."
+        }
+      ]
+    },
+    {
+      "id": "two-calls-one-validated",
+      "fixture": "fixtures/two_calls_one_validated",
+      "paths": [
+        {
+          "id": "first-to-first-result",
+          "call": "first",
+          "use": "first-result",
+          "label": "safe",
+          "reason": "The first response is parsed and its parsed value is printed."
+        },
+        {
+          "id": "second-to-second-result",
+          "call": "second",
+          "use": "second-result",
+          "label": "unsafe",
+          "reason": "The second response is printed raw; parsing the first response does not validate it."
+        }
+      ]
+    },
+    {
+      "id": "no-validation",
+      "fixture": "fixtures/no_validation",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "Raw LLM content is returned without a parser or validator."
+        }
+      ]
+    },
+    {
+      "id": "external-validator",
+      "fixture": "fixtures/external_validator",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unknown",
+          "reason": "The imported helper implementation is absent, so this fixture cannot prove whether it validates."
+        }
+      ]
+    },
+    {
+      "id": "validation-before-call",
+      "fixture": "fixtures/validation_before_call",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "A constant is parsed before the LLM call; its response is returned raw."
+        }
+      ]
+    },
+    {
+      "id": "different-value-validated",
+      "fixture": "fixtures/different_value_validated",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The fallback parameter is parsed, while LLM content is returned raw."
+        }
+      ]
+    },
+    {
+      "id": "container-index-single-source",
+      "cohort": "adversarial",
+      "fixture": "fixtures/container_index_single_source",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The one-element list contains raw LLM content, so index zero returns it unchanged."
+        }
+      ]
+    },
+    {
+      "id": "tuple-unpack-two-sources",
+      "cohort": "adversarial",
+      "fixture": "fixtures/tuple_unpack_two_sources",
+      "paths": [
+        {
+          "id": "first-to-first-result",
+          "call": "first",
+          "use": "first-result",
+          "label": "safe",
+          "reason": "The first tuple member is the JSON parser result from the first LLM call."
+        },
+        {
+          "id": "second-to-second-result",
+          "call": "second",
+          "use": "second-result",
+          "label": "unsafe",
+          "reason": "The second tuple member is raw content from the second LLM call."
+        }
+      ]
+    },
+    {
+      "id": "raw-yield",
+      "cohort": "adversarial",
+      "fixture": "fixtures/raw_yield",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The generator yields raw LLM content without parsing or validation."
+        }
+      ]
+    },
+    {
+      "id": "ternary-raw-escape",
+      "cohort": "adversarial",
+      "fixture": "fixtures/ternary_raw_escape",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The false arm of the conditional expression returns raw content."
+        }
+      ]
+    },
+    {
+      "id": "type-adapter-inline",
+      "cohort": "adversarial",
+      "fixture": "fixtures/type_adapter_inline",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "A Pydantic TypeAdapter for the local model validates this response before return."
+        }
+      ]
+    },
+    {
+      "id": "any-identity-pass-through",
+      "cohort": "adversarial",
+      "fixture": "fixtures/any_identity_pass_through",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "unsafe",
+          "reason": "The visible identity helper returns its argument unchanged; the Any annotation is not validation."
+        }
+      ]
+    },
+    {
+      "id": "parsed-get-answer",
+      "cohort": "adversarial",
+      "fixture": "fixtures/parsed_get_answer",
+      "paths": [
+        {
+          "id": "response-to-result",
+          "call": "response",
+          "use": "result",
+          "label": "safe",
+          "reason": "The field is selected from this response's JSON parser result before return."
+        }
+      ]
+    }
+  ]
+}
