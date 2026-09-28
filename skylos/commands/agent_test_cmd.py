@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-from io import StringIO
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -174,7 +174,12 @@ def run_agent_behavior_test(args, console: Console) -> int:
             max_seconds=getattr(args, "max_seconds", DEFAULT_MAX_SECONDS),
             max_tokens=getattr(args, "max_tokens", DEFAULT_MAX_TOKENS),
         )
-        output = _render_behavior_output(result.payload, args.format)
+        terminal_encoding = (
+            console.encoding if args.format == "table" and not args.output else None
+        )
+        output = _render_behavior_output(
+            result.payload, args.format, encoding=terminal_encoding
+        )
         if args.output:
             destination = _resolve_project_output(args.output, project_root)
             _write_user_output(destination, output, project_root=project_root)
@@ -183,11 +188,8 @@ def run_agent_behavior_test(args, console: Console) -> int:
                     f"[green]Wrote agent behavior report:[/green] {destination}"
                 )
         else:
-            if args.format == "json":
-                console.file.write(output + "\n")
-                console.file.flush()
-            else:
-                console.print(output, markup=False)
+            console.file.write(output + "\n")
+            console.file.flush()
     except (AgentBehaviorError, OSError, ValueError) as exc:
         if getattr(args, "format", None) == "json":
             payload = {
@@ -505,13 +507,25 @@ def _write_new_text_fallback(destination: Path, text: str) -> None:
         _close_fd(file_descriptor)
 
 
-def _render_behavior_output(payload: dict[str, Any], output_format: str) -> str:
+def _render_behavior_output(
+    payload: dict[str, Any], output_format: str, *, encoding: str | None = None
+) -> str:
     if output_format == "json":
         return json.dumps(payload, indent=2, sort_keys=True, default=str)
-    buffer = StringIO()
-    console = Console(file=buffer, force_terminal=False, color_system=None, width=120)
-    _print_behavior_table(console, payload)
-    return buffer.getvalue().rstrip()
+    target_encoding = encoding or "utf-8"
+    byte_buffer = BytesIO()
+    with TextIOWrapper(
+        byte_buffer,
+        encoding=target_encoding,
+        errors="backslashreplace" if encoding else "strict",
+        newline="",  # Let the destination stream handle Windows newlines.
+        write_through=True,
+    ) as text_buffer:
+        console = Console(
+            file=text_buffer, force_terminal=False, color_system=None, width=120
+        )
+        _print_behavior_table(console, payload)
+        return byte_buffer.getvalue().decode(target_encoding).rstrip()
 
 
 def _print_behavior_table(console: Console, payload: dict[str, Any]) -> None:

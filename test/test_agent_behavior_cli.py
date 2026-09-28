@@ -5,14 +5,16 @@ import os
 import shutil
 import time
 from argparse import Namespace
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
 
 import skylos.cli as cli
 import skylos.agents.evaluation.runner as behavior_runner_module
+import skylos.commands.agent_test_cmd as agent_test_cmd
 from skylos.agents.evaluation import (
     load_behavior_contract,
     load_behavior_observations,
@@ -93,6 +95,42 @@ def _args(**overrides) -> Namespace:
     }
     values.update(overrides)
     return Namespace(**values)
+
+
+@pytest.mark.parametrize(("status", "expected_exit"), [("pass", 0), ("incomplete", 2)])
+def test_table_output_works_on_cp1252_console_and_file_stays_utf8(
+    tmp_path, monkeypatch, status, expected_exit
+):
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / ".skylos" / "agent-test.yml", CONTRACT)
+    payload = {
+        "status": status,
+        "scenarios": [{"id": "snowman ☃", "status": status, "assertions": []}],
+        "summary": {"scenario_count": 1},
+    }
+    monkeypatch.setattr(
+        agent_test_cmd,
+        "run_behavior_test",
+        lambda *args, **kwargs: SimpleNamespace(payload=payload),
+    )
+    raw = BytesIO()
+    stream = TextIOWrapper(raw, encoding="cp1252", errors="strict", write_through=True)
+    console = Console(file=stream, force_terminal=False, color_system=None)
+
+    assert run_agent_behavior_test(_args(format="table"), console) == expected_exit
+    terminal_text = raw.getvalue().decode("cp1252")
+    assert "Scenario" in terminal_text
+    assert "snowman \\u2603" in terminal_text
+    assert "─" not in terminal_text
+    assert "\r\r\n" not in terminal_text
+
+    exit_code = run_agent_behavior_test(
+        _args(format="table", output="reports/table.txt"), console
+    )
+    assert exit_code == expected_exit
+    file_text = (tmp_path / "reports" / "table.txt").read_text(encoding="utf-8")
+    assert "snowman ☃" in file_text
+    assert b"\r\r\n" not in (tmp_path / "reports" / "table.txt").read_bytes()
 
 
 def test_agent_parser_exposes_init_and_test_without_llm_runtime_flags():
