@@ -14,7 +14,9 @@ from skylos.discover.graph import NodeType
 
 def _checks(tmp_path, body: str):
     source = "import json\nimport openai\n\n" + dedent(body)
-    (tmp_path / "app.py").write_text(source)
+    (tmp_path / "app.py").write_text(  # skylos: ignore[SKY-D324] fixed file in pytest tmp_path
+        source
+    )
     integrations, graph = detect_integrations(tmp_path)
     plugin = OutputValidationPlugin()
     return integrations, [

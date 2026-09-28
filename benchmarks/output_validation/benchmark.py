@@ -29,7 +29,11 @@ _MARKER = re.compile(r"# ov-(call|use): ([a-z][a-z0-9-]*)\s*$")
 
 
 def load_manifest(path: str | Path = MANIFEST_PATH) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(
+        Path(path).read_text(  # skylos: ignore[SKY-D215,SKY-D325] operator-selected benchmark manifest
+            encoding="utf-8"
+        )
+    )
 
 
 def _fixture_markers(root: Path) -> dict[str, dict[str, str]]:
