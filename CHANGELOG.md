@@ -1,5 +1,20 @@
 ## Changelog
 
+## [4.40.0](https://github.com/duriantaco/skylos/compare/v4.39.2...v4.40.0) (2026-09-28)
+
+
+### Features
+
+* **agent:** make skylos safer and less noisy for agents ([#892](https://github.com/duriantaco/skylos/issues/892)) ([979b71d](https://github.com/duriantaco/skylos/commit/979b71d0f382e51fd62f09fc5b26cb78eb105941))
+* **sca:** add npm publisher change review ([#895](https://github.com/duriantaco/skylos/issues/895)) ([a554fd9](https://github.com/duriantaco/skylos/commit/a554fd96a4a27e3cef09002c9e97a775270030af))
+
+
+### Bug Fixes
+
+* **agent:** enforce secret policy and report scan coverage ([#896](https://github.com/duriantaco/skylos/issues/896)) ([bf438a5](https://github.com/duriantaco/skylos/commit/bf438a567ea646de8f4c8047a3b68de5739fa2c9))
+* **security:** preserve path findings when input source is uncertain ([#897](https://github.com/duriantaco/skylos/issues/897)) ([0f6ccc8](https://github.com/duriantaco/skylos/commit/0f6ccc8eafdcbb35a15e277d760ffefc318bf89f))
+* **upload:** stop uploads failing for avoidable reasons ([#898](https://github.com/duriantaco/skylos/issues/898)) ([220ea2a](https://github.com/duriantaco/skylos/commit/220ea2a386e27b4493ea49f69e96dce783e208d1))
+
 ## [4.39.2](https://github.com/duriantaco/skylos/compare/v4.39.1...v4.39.2) (2026-09-25)
 
 
