@@ -17,6 +17,22 @@ _DEAD_CODE_CATEGORIES = (
     "unused_files",
 )
 
+_PROVENANCE_FINDING_SECTIONS = (
+    "danger",
+    "reliability",
+    "ai_defects",
+    "quality",
+    "secrets",
+    "custom_rules",
+    "unused_functions",
+    "unused_imports",
+    "unused_classes",
+    "unused_variables",
+    "unused_parameters",
+    "unused_files",
+    "dependency_vulnerabilities",
+)
+
 _DEFENSE_NOTE = (
     "AI defense currently scans Python and TypeScript direct SDK integrations."
 )
@@ -84,23 +100,8 @@ def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
 
 
 def _annotatable_findings(result: dict[str, Any]) -> list[dict[str, Any]]:
-    categories = [
-        "danger",
-        "reliability",
-        "ai_defects",
-        "quality",
-        "secrets",
-        "custom_rules",
-        "unused_functions",
-        "unused_imports",
-        "unused_classes",
-        "unused_variables",
-        "unused_parameters",
-        "unused_files",
-        "dependency_vulnerabilities",
-    ]
     items: list[dict[str, Any]] = []
-    for category in categories:
+    for category in _PROVENANCE_FINDING_SECTIONS:
         findings = result.get(category) or []
         for finding in findings:
             finding.setdefault("category", category)
@@ -297,7 +298,7 @@ def run_suite(
             from skylos.reporting.provenance import (
                 analyze_provenance,
                 annotate_findings_with_provenance,
-                compute_ai_security_stats,
+                compute_ai_security_stats_for_report,
             )
 
             git_root = str(find_git_root(target_path) or "")
@@ -317,7 +318,9 @@ def run_suite(
 
             annotatable = _annotatable_findings(static_result)
             annotate_findings_with_provenance(annotatable, provenance_report)
-            ai_stats = compute_ai_security_stats(annotatable)
+            ai_stats = compute_ai_security_stats_for_report(
+                static_result, _PROVENANCE_FINDING_SECTIONS
+            )
             static_result["ai_security_stats"] = ai_stats
             static_result["provenance_summary"] = provenance_report.summary
             static_result["provenance"] = provenance_report.to_dict()

@@ -1,6 +1,7 @@
 import logging
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -822,6 +823,26 @@ def compute_ai_security_stats(
         "by_severity": by_severity,
         "by_category": by_category,
     }
+
+
+def compute_ai_security_stats_for_report(
+    report: dict, sections: Iterable[str]
+) -> dict:
+    """Count annotated findings by their top-level JSON result section."""
+    findings = []
+    for section in sections:
+        for finding in report.get(section) or []:
+            # A finding can have a more specific category such as SECURITY
+            # while its result section is `danger`. Keep that field intact.
+            findings.append(
+                {
+                    "ai_authored": finding.get("ai_authored"),
+                    "ai_agent": finding.get("ai_agent"),
+                    "severity": finding.get("severity"),
+                    "category": section,
+                }
+            )
+    return compute_ai_security_stats(findings)
 
 
 @dataclass

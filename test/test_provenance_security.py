@@ -3,6 +3,7 @@ from skylos.reporting.provenance import (
     ProvenanceReport,
     annotate_findings_with_provenance,
     compute_ai_security_stats,
+    compute_ai_security_stats_for_report,
 )
 
 
@@ -220,6 +221,35 @@ class TestAnnotateFindings:
 
 
 class TestAISecurityStats:
+    def test_report_stats_use_output_sections_without_changing_finding_categories(self):
+        report = {
+            "danger": [
+                {
+                    "category": "SECURITY",
+                    "severity": "HIGH",
+                    "ai_authored": True,
+                    "ai_agent": "copilot",
+                },
+                {
+                    "category": "danger",
+                    "severity": "MEDIUM",
+                    "ai_authored": False,
+                },
+            ],
+            "quality": [{"category": "quality", "severity": "LOW"}],
+        }
+
+        stats = compute_ai_security_stats_for_report(report, ("danger", "quality"))
+
+        assert stats["total_findings"] == 3
+        assert stats["by_category"]["danger"] == {"total": 2, "ai": 1}
+        assert stats["by_category"]["quality"] == {"total": 1, "ai": 0}
+        assert "security" not in stats["by_category"]
+        assert [finding["category"] for finding in report["danger"]] == [
+            "SECURITY",
+            "danger",
+        ]
+
     def test_basic_stats(self):
         findings = [
             {

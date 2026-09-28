@@ -530,7 +530,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 from skylos.reporting.provenance import (
                     analyze_provenance,
                     annotate_findings_with_provenance,
-                    compute_ai_security_stats,
+                    compute_ai_security_stats_for_report,
                 )
                 from skylos.api import get_git_root
 
@@ -577,7 +577,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
                 annotate_findings_with_provenance(all_annotatable, prov_report)
 
-                ai_stats = compute_ai_security_stats(all_annotatable)
+                ai_stats = compute_ai_security_stats_for_report(
+                    result, _finding_categories
+                )
                 result["ai_security_stats"] = ai_stats
                 result["provenance_summary"] = prov_report.summary
                 result["provenance"] = prov_report.to_dict()

@@ -23,6 +23,7 @@ from skylos.cli import (
     main,
 )
 from skylos.commands.scan_cmd import _write_scan_output
+from skylos.reporting.provenance import ProvenanceReport
 
 
 def test_scan_output_rejects_symlink_without_clobbering_target(tmp_path):
@@ -2064,6 +2065,58 @@ def test_main_json_category_reliability_excludes_security_deployment_findings(
     assert "grade" not in output
     assert "ai_security_stats" not in output
     assert "provenance_summary" not in output
+
+
+def test_main_json_ai_security_categories_match_finding_arrays(monkeypatch, tmp_path):
+    result = {
+        "analysis_summary": {"total_files": 1, "danger_count": 2},
+        "danger": [
+            {
+                "rule_id": "SKY-D201",
+                "file": "app.py",
+                "line": 1,
+                "message": "SQL injection",
+                "severity": "HIGH",
+                "category": "SECURITY",
+            },
+            {
+                "rule_id": "SKY-D211",
+                "file": "app.py",
+                "line": 2,
+                "message": "Unsafe input",
+                "severity": "MEDIUM",
+                "category": "danger",
+            },
+        ],
+        "quality": [],
+        "secrets": [],
+        "dependency_vulnerabilities": [],
+    }
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", str(tmp_path), "-a", "--json"])
+
+    with (
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.api.get_git_root", return_value=str(tmp_path)),
+        patch(
+            "skylos.reporting.provenance.analyze_provenance",
+            return_value=ProvenanceReport(),
+        ),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    output = json.loads(mock_print.call_args.args[0])
+    assert len(output["danger"]) == 2
+    assert [finding["category"] for finding in output["danger"]] == [
+        "SECURITY",
+        "danger",
+    ]
+    assert output["ai_security_stats"]["by_category"]["danger"] == {
+        "total": 2,
+        "ai": 0,
+    }
+    assert "security" not in output["ai_security_stats"]["by_category"]
 
 
 def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
