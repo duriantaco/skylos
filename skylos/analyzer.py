@@ -3426,6 +3426,7 @@ class Skylos:
                     "languages": {},
                     "grade_categories": [
                         *(["security"] if enable_danger else []),
+                        *(["quality"] if enable_quality else []),
                         *(["ai_defects"] if enable_ai_defects else []),
                         "dead_code",
                         *(["dependencies"] if enable_sca else []),

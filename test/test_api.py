@@ -2594,3 +2594,101 @@ class TestProvenanceUploadStatus(unittest.TestCase):
         self.assertEqual(
             data["status"], {"ran": False, "reason": "not a git repository"}
         )
+
+
+def test_failed_gate_prints_the_reasons_from_skylos_cloud(capsys):
+    api._print_quality_gate_result(
+        False,
+        0,
+        "pro",
+        "Quality Gate Failed! 3 critical security issues; "
+        "1 new exposed secret (the policy always blocks secrets).",
+    )
+    out = capsys.readouterr().out
+    assert "❌ FAIL Quality gate: FAILED because of" in out
+    assert "   - 3 critical security issues\n" in out
+    assert "   - 1 new exposed secret (the policy always blocks secrets)\n" in out
+    assert "0 new violations" not in out
+
+
+def test_failed_gate_without_reasons_falls_back_to_the_new_violation_count(capsys):
+    for message in (None, "Quality Gate Failed.", "", 42):
+        api._print_quality_gate_result(False, 2, "pro", message)
+        assert (
+            "❌ FAIL Quality gate: FAILED (2 new violations)" in capsys.readouterr().out
+        )
+
+
+def test_passed_gate_ignores_the_message(capsys):
+    api._print_quality_gate_result(True, 0, "pro", "Quality Gate Passed.")
+    assert capsys.readouterr().out == "✅ PASS Quality gate: PASSED\n"
+
+
+def test_upload_success_prints_the_scan_link_once(capsys):
+    api._print_report_upload_success(
+        grade_data=None,
+        passed=False,
+        new_violations=0,
+        plan="pro",
+        scan_id="scan-1",
+        credits_left=None,
+        gate_message="Quality Gate Failed! 3 critical security issues.",
+    )
+    out = capsys.readouterr().out
+    assert out.count("/dashboard/scans/scan-1") == 1
+    assert "   - 3 critical security issues\n" in out
+
+
+def test_upload_metadata_sends_the_checks_the_scan_ran():
+    result = {"analysis_summary": {"grade_categories": ["dead_code", "security"]}}
+    metadata = api._build_report_metadata(
+        commit_hash="abc",
+        branch="main",
+        actor="me",
+        scanned_checks=api._scanned_checks(result),
+    )
+    assert metadata["scanned_checks"] == ["dead_code", "security"]
+
+
+def test_upload_metadata_omits_checks_it_cannot_read():
+    for result in (
+        None,
+        {},
+        {"analysis_summary": None},
+        {"analysis_summary": {"grade_categories": "all"}},
+        {"analysis_summary": {"grade_categories": [1]}},
+    ):
+        assert api._scanned_checks(result) is None
+    metadata = api._build_report_metadata(commit_hash="abc", branch="main", actor="me")
+    assert "scanned_checks" not in metadata
+
+
+def test_gate_reasons_keep_semicolons_inside_brackets():
+    assert api._quality_gate_reasons(
+        "Quality Gate Failed! 2 critical security issues; agent rules block the "
+        "change (2 reasons; see the scan page)."
+    ) == [
+        "2 critical security issues",
+        "agent rules block the change (2 reasons; see the scan page)",
+    ]
+
+
+def test_empty_project_reports_every_check_it_ran(tmp_path):
+    import json as _json
+
+    from skylos.analyzer import analyze
+
+    result = analyze(
+        str(tmp_path),
+        enable_danger=True,
+        enable_quality=True,
+        enable_secrets=True,
+    )
+    result = _json.loads(result) if isinstance(result, str) else result
+    assert result["analysis_summary"]["total_files"] == 0
+    assert result["analysis_summary"]["grade_categories"] == [
+        "security",
+        "quality",
+        "dead_code",
+        "secrets",
+    ]

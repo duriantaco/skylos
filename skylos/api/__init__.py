@@ -917,6 +917,7 @@ def _prepare_report_upload(
         project_root=project_root,
         workspace_data=workspace_data,
         source_revision_state=source_revision_state(result_json, git_root, commit),
+        scanned_checks=_scanned_checks(result_json),
     )
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
@@ -1202,6 +1203,17 @@ def _detect_report_provenance_data(git_root):
     }
 
 
+def _scanned_checks(result_json: Any) -> list[str] | None:
+    """The checks this scan ran (result_builder sets them before grading)."""
+    if not isinstance(result_json, dict):
+        return None
+    summary = result_json.get("analysis_summary")
+    checks = summary.get("grade_categories") if isinstance(summary, dict) else None
+    if isinstance(checks, list) and all(isinstance(check, str) for check in checks):
+        return list(checks)
+    return None
+
+
 def _build_report_metadata(
     *,
     commit_hash,
@@ -1220,6 +1232,7 @@ def _build_report_metadata(
     upload_client_session_id=None,
     cli_version=None,
     source_revision_state=None,
+    scanned_checks=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1238,6 +1251,13 @@ def _build_report_metadata(
         metadata["source_revision_state"] = source_revision_state
     if grade_data:
         metadata["grade"] = grade_data
+    # The checks this scan ran, sent even when the grade is withheld, so
+    # Skylos Cloud tracks each check on its own (a check that did not run is
+    # "not checked", never 0 findings).
+    if isinstance(scanned_checks, list) and all(
+        isinstance(check, str) for check in scanned_checks
+    ):
+        metadata["scanned_checks"] = list(scanned_checks)
     if project_id:
         metadata["project_id"] = project_id
     if scan_bundle_id:
@@ -1322,6 +1342,7 @@ def _finalize_report_upload(
             credits_left=data.get("credits_remaining"),
             replayed=replayed,
             finding_warnings=data.get("finding_warnings"),
+            gate_message=quality_gate.get("message"),
         )
     result = _report_upload_success_result(data, scan_id, passed, plan)
     if replayed:
@@ -1363,6 +1384,7 @@ def _print_report_upload_success(
     credits_left,
     replayed: bool = False,
     finding_warnings=None,
+    gate_message=None,
 ) -> None:
     if replayed:
         print(
@@ -1379,10 +1401,9 @@ def _print_report_upload_success(
             "(for example, without a file location)."
         )
     _print_report_grade(grade_data)
-    _print_quality_gate_result(passed, new_violations, plan)
+    _print_quality_gate_result(passed, new_violations, plan, gate_message)
     if scan_id:
-        print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
-        print(f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}")
+        print(f"\n🔗 View the scan: {BASE_URL}/dashboard/scans/{scan_id}")
     _print_credit_balance_after_upload(credits_left)
 
 
@@ -1392,12 +1413,47 @@ def _print_report_grade(grade_data) -> None:
         print(f"Grade: {grade['letter']} ({grade['score']}/100)")
 
 
-def _print_quality_gate_result(passed: bool, new_violations: int, plan: str) -> None:
+_GATE_FAILED_PREFIX = "Quality Gate Failed!"
+
+
+def _quality_gate_reasons(message) -> list[str]:
+    """The reasons in Skylos Cloud's gate message, e.g.
+    "Quality Gate Failed! 3 critical security issues; 1 new exposed secret."
+    """
+    if not isinstance(message, str) or not message.startswith(_GATE_FAILED_PREFIX):
+        return []
+    text = message[len(_GATE_FAILED_PREFIX) :].strip().rstrip(".")
+    # Reasons are separated by ";" outside brackets, e.g.
+    # "agent rules block the change (2 reasons; see the scan page)".
+    reasons, current, depth = [], [], 0
+    for char in text:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(depth - 1, 0)
+        if char == ";" and depth == 0:
+            reasons.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    reasons.append("".join(current))
+    return [reason.strip() for reason in reasons if reason.strip()]
+
+
+def _print_quality_gate_result(
+    passed: bool, new_violations: int, plan: str, message=None
+) -> None:
     if passed:
         print("✅ PASS Quality gate: PASSED")
         return
-    suffix = "" if new_violations == 1 else "s"
-    print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
+    reasons = _quality_gate_reasons(message)
+    if reasons:
+        print("❌ FAIL Quality gate: FAILED because of")
+        for reason in reasons:
+            print(f"   - {reason}")
+    else:
+        suffix = "" if new_violations == 1 else "s"
+        print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
     if plan == "free":
         print("\n⚠️  Quality gate failed but continuing (Free plan)")
         print("💡 Upgrade to Pro to automatically block commits/CI on failures")
