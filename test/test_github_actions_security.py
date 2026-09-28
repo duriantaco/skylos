@@ -487,6 +487,7 @@ def test_publish_workflow_verifies_required_checks_before_publish():
     release_please = _release_please_workflow()
 
     assert workflow["jobs"]["build"]["permissions"]["checks"] == "read"
+    assert workflow["jobs"]["build"]["timeout-minutes"] >= 75
     assert release_please["jobs"]["publish-release"]["permissions"]["checks"] == "read"
 
     build_steps = workflow["jobs"]["build"]["steps"]
@@ -503,9 +504,39 @@ def test_publish_workflow_verifies_required_checks_before_publish():
         '["test", "analyzer-speed", "corpus", "quality-benchmark", "scan"]'
     )
     assert "gh api" in check_step["run"]
-    assert "check-runs?per_page=100" in check_step["run"]
+    assert "check-runs?per_page=100&filter=all" in check_step["run"]
+    assert "for attempt in {1..180}" in check_step["run"]
+    assert 'run["id"]' in check_step["run"]
+    assert '"github-actions"' in check_step["run"]
     assert "Required release checks failed" in check_step["run"]
     assert "Required release checks are not complete yet" in check_step["run"]
+
+
+def test_release_please_waits_for_required_ci_on_current_main():
+    workflow = _release_please_workflow()
+    trigger = workflow.get("on", workflow.get(True))["workflow_run"]
+    assert set(trigger["workflows"]) == {
+        "Tests + Coverage",
+        "Analyzer Speed Check",
+        "Corpus Guard",
+        "Quality Benchmark",
+        "Skylos Advisory Scan",
+    }
+    assert trigger["types"] == ["completed"]
+    assert trigger["branches"] == ["main"]
+
+    job = workflow["jobs"]["release-please"]
+    assert job["permissions"]["checks"] == "read"
+    assert "workflow_run.event == 'push'" in job["if"]
+    assert "workflow_run.head_repository.full_name == github.repository" in job["if"]
+    steps = job["steps"]
+    head_step = next(s for s in steps if s.get("id") == "main_commit")
+    check_step = next(s for s in steps if s.get("id") == "checks")
+    release_step = next(s for s in steps if s.get("id") == "release")
+    assert "git/ref/heads/main" in head_step["run"]
+    assert "check_release_checks.py" in check_step["run"]
+    assert "check-runs?per_page=100&filter=all" in check_step["run"]
+    assert release_step["if"] == "steps.checks.outputs.ready == 'true'"
 
 
 def test_release_please_updates_skylos_version_in_uv_lock():

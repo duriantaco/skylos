@@ -1,7 +1,14 @@
 name: Release Please
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Tests + Coverage
+      - Analyzer Speed Check
+      - Corpus Guard
+      - Quality Benchmark
+      - Skylos Advisory Scan
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -10,17 +17,84 @@ permissions:
 jobs:
   release-please:
     name: Release Please
+    if: >-
+      ${{ github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-please-main
+      cancel-in-progress: false
     permissions:
       contents: write
+      checks: read
       issues: write
       pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      - name: Require current main commit
+        id: main_commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          main_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$TESTED_SHA" != "$main_sha" ]]; then
+            echo "Skipping stale CI result: tested $TESTED_SHA, current main $main_sha"
+            exit 0
+          fi
+          echo "current=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: steps.main_commit.outputs.current == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Require successful release checks
+        id: checks
+        if: steps.main_commit.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # Each required workflow emits a completion event. The last event
+          # should find every check complete; retry briefly for API lag.
+          for attempt in {1..12}; do
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/commits/${TESTED_SHA}/check-runs?per_page=100&filter=all" \
+              > "$RUNNER_TEMP/skylos-release-checks.json"
+
+            status=0
+            python tools/release/check_release_checks.py "$RUNNER_TEMP/skylos-release-checks.json" || status=$?
+            if [ "$status" -eq 0 ]; then
+              main_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+              if [[ "$TESTED_SHA" != "$main_sha" ]]; then
+                echo "Skipping stale CI result: tested $TESTED_SHA, current main $main_sha"
+                exit 0
+              fi
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$status" -eq 1 ]; then
+              exit 0
+            fi
+            if [ "$status" -ne 2 ]; then
+              exit "$status"
+            fi
+            if [ "$attempt" -lt 12 ]; then
+              sleep 5
+            fi
+          done
+
       - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0 (pin SHA to avoid supply chain attacks))
         id: release
+        if: steps.checks.outputs.ready == 'true'
         with:
           # Prefer a dedicated token/App so release PRs can satisfy required PR checks.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' && secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
