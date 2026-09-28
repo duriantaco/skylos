@@ -315,6 +315,13 @@ automation, otherwise it is human. For "everything not AI-authored", combine
 Cloud. The upload follows a versioned contract shared with the server
 (`skylos/api/upload_contract/v1.json`).
 
+For a full-scan upload, Skylos also sends `source_revision_state` as `clean`,
+`dirty`, or `unknown`. `clean` means the local checkout matched the reported
+Git HEAD when the upload was prepared. Partial scans, unavailable Git data,
+unsupported repository entries, or a revision mismatch produce `unknown`.
+This is local metadata, not proof that an API-key upload matches a remote
+GitHub commit or that files were unchanged throughout the scan.
+
 **Before sending**, every finding is checked against the contract. Findings are
 never dropped:
 

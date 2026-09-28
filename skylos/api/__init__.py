@@ -57,6 +57,7 @@ from skylos.api._snippets import (
     _resolve_snippet_path as _resolve_snippet_path,
     extract_snippet as extract_snippet,
 )
+from skylos.api._source_revision import source_revision_state
 from skylos.api._contract_check import (
     contract_check_url as _contract_check_url,
     newer_contract_notice as _newer_contract_notice,
@@ -915,6 +916,7 @@ def _prepare_report_upload(
         scan_bundle_id=scan_bundle_id,
         project_root=project_root,
         workspace_data=workspace_data,
+        source_revision_state=source_revision_state(result_json, git_root, commit),
     )
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
@@ -1217,6 +1219,7 @@ def _build_report_metadata(
     workspace_data=None,
     upload_client_session_id=None,
     cli_version=None,
+    source_revision_state=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1231,6 +1234,8 @@ def _build_report_metadata(
         or _new_upload_client_session_id(),
         "cli_version": cli_version or _cli_version(),
     }
+    if source_revision_state in {"clean", "dirty", "unknown"}:
+        metadata["source_revision_state"] = source_revision_state
     if grade_data:
         metadata["grade"] = grade_data
     if project_id:

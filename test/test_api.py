@@ -148,6 +148,9 @@ class TestSkylosApi(unittest.TestCase):
                 check=True,
             )
             subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+            fixture_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=repo
+            ).decode().strip()
 
             sentinel = root / "git-helper-ran"
             helper = root / "git-helper"
@@ -174,6 +177,8 @@ class TestSkylosApi(unittest.TestCase):
                 with patch.dict(
                     os.environ,
                     {
+                        # CI's GITHUB_SHA belongs to the outer checkout.
+                        "SKYLOS_COMMIT": fixture_commit,
                         "GIT_EXTERNAL_DIFF": str(helper),
                         "GIT_CONFIG_COUNT": "1",
                         "GIT_CONFIG_KEY_0": "diff.external",
@@ -192,6 +197,12 @@ class TestSkylosApi(unittest.TestCase):
                                 }
                             ],
                             "provenance": {},
+                            "analysis_summary": {
+                                "comparison_scope": {
+                                    "complete_repository": True,
+                                    "repository_root": str(repo),
+                                }
+                            },
                         },
                         analyzer_owned=True,
                     )
@@ -199,6 +210,7 @@ class TestSkylosApi(unittest.TestCase):
                 os.chdir(previous_cwd)
 
             self.assertEqual(len(prepared.compatibility_payload["findings"]), 1)
+            self.assertEqual(prepared.metadata["source_revision_state"], "dirty")
             self.assertFalse(sentinel.exists())
 
     def test_compact_upload_finding_preserves_npm_dependency_context(self):
