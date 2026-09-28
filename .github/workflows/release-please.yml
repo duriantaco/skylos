@@ -1,14 +1,7 @@
 name: Release Please
 
 on:
-  workflow_run:
-    workflows:
-      - Tests + Coverage
-      - Analyzer Speed Check
-      - Corpus Guard
-      - Quality Benchmark
-      - Skylos Advisory Scan
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
@@ -17,11 +10,8 @@ permissions:
 jobs:
   release-please:
     name: Release Please
-    if: >-
-      ${{ github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.head_branch == 'main' &&
-          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     concurrency:
       group: release-please-main
       cancel-in-progress: false
@@ -38,7 +28,7 @@ jobs:
         id: main_commit
         env:
           GH_TOKEN: ${{ github.token }}
-          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TESTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           main_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
@@ -51,7 +41,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.main_commit.outputs.current == 'true'
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Require successful release checks
@@ -59,12 +49,12 @@ jobs:
         if: steps.main_commit.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TESTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Each required workflow emits a completion event. The last event
-          # should find every check complete; retry briefly for API lag.
-          for attempt in {1..12}; do
+          # The aggregate test check appears only after the long matrix ends.
+          # Wait up to an hour before Release Please creates a tag or PR.
+          for attempt in {1..180}; do
             gh api \
               -H "Accept: application/vnd.github+json" \
               "/repos/${GITHUB_REPOSITORY}/commits/${TESTED_SHA}/check-runs?per_page=100&filter=all" \
@@ -87,9 +77,11 @@ jobs:
             if [ "$status" -ne 2 ]; then
               exit "$status"
             fi
-            if [ "$attempt" -lt 12 ]; then
-              sleep 5
+            if [ "$attempt" -eq 180 ]; then
+              echo "Required release checks did not complete within one hour" >&2
+              exit 2
             fi
+            sleep 20
           done
 
       - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0 (pin SHA to avoid supply chain attacks))

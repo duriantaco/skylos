@@ -86,9 +86,10 @@ This prevents retroactive release generation for older history and starts automa
 ## End-to-End Release Flow
 
 1. Contributors merge PRs to `main` with semantic titles.
-2. The five required CI workflows run on the new `main` commit. Each completed
-   workflow triggers `release-please.yml`, which proceeds only when all five
-   checks passed for the current `main` commit.
+2. A push to `main` starts the five required CI workflows and
+   `release-please.yml`. Release Please waits for all five checks to pass on
+   that commit and confirms it is still the current `main` commit before
+   creating a release PR or tag.
 3. Release Please updates or opens a release PR.
 4. Maintainer reviews and merges the Release Please PR. CI runs on that merge
    commit, then Release Please creates the GitHub tag/release (`vX.Y.Z`).
