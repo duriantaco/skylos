@@ -214,6 +214,12 @@ analysis context; the finding lists and their summary counts are scoped.
 `origin/main`.
 Diff-scoped reports cannot be combined with `--upload`, because Cloud treats
 uploaded scans as full-project results. Run a separate full scan to upload.
+For a full-scan upload, Skylos also sends `source_revision_state` as `clean`,
+`dirty`, or `unknown`. `clean` means the local checkout matched the reported
+Git HEAD when the upload was prepared. Partial scans, unavailable Git data,
+unsupported repository entries, or a revision mismatch produce `unknown`.
+This is local metadata, not proof that an API-key upload matches a remote
+GitHub commit or that files were unchanged throughout the scan.
 Removing a call can make an unchanged function dead; neither diff mode currently
 reports that function unless its definition is also in the selected scope.
 

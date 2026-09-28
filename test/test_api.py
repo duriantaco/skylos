@@ -192,6 +192,12 @@ class TestSkylosApi(unittest.TestCase):
                                 }
                             ],
                             "provenance": {},
+                            "analysis_summary": {
+                                "comparison_scope": {
+                                    "complete_repository": True,
+                                    "repository_root": str(repo),
+                                }
+                            },
                         },
                         analyzer_owned=True,
                     )
@@ -199,6 +205,7 @@ class TestSkylosApi(unittest.TestCase):
                 os.chdir(previous_cwd)
 
             self.assertEqual(len(prepared.compatibility_payload["findings"]), 1)
+            self.assertEqual(prepared.metadata["source_revision_state"], "dirty")
             self.assertFalse(sentinel.exists())
 
     def test_compact_upload_finding_preserves_npm_dependency_context(self):
