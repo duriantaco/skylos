@@ -7,6 +7,7 @@ import pytest
 import skylos.cli as cli
 from skylos.commands import install_standards_cmd as standards
 from skylos.commands.agent_standards_policy import load_agent_standards_policy
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _run(project: Path, *flags: str, path: Path | None = None):
@@ -21,7 +22,7 @@ def _run(project: Path, *flags: str, path: Path | None = None):
 def _source(project: Path, content: str = "# Style\n\nUse clear names.\n") -> Path:
     source = project / ".skylos" / "standards.md"
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text(content, encoding="utf-8")
+    assert write_text_no_symlink(source, content)
     return source
 
 

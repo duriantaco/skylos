@@ -7,11 +7,11 @@ but unusable policy so an agent cannot evade requested checks by corrupting it.
 from __future__ import annotations
 
 import json
-import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 from skylos.rules.catalog import get_rule_catalog
 
 POLICY_PATH = Path(".skylos/agent-standards.json")
@@ -49,7 +49,9 @@ def load_agent_standards_policy(root: Path) -> AgentStandardsPolicy | None:
 
     if (root / ".skylos").is_symlink():
         raise AgentStandardsPolicyError(".skylos must not be a symlink")
-    raw = _read_regular_file(policy_path, MAX_POLICY_BYTES, "agent-standards.json")
+    raw = _read_regular_file(
+        root, POLICY_PATH, MAX_POLICY_BYTES, "agent-standards.json"
+    )
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -93,7 +95,7 @@ def load_agent_standards_policy(root: Path) -> AgentStandardsPolicy | None:
         except OSError as exc:
             raise AgentStandardsPolicyError("cannot inspect standards_file") from exc
     standards_raw = _read_regular_file(
-        standards_path, MAX_STANDARDS_BYTES, "standards_file"
+        root, relative, MAX_STANDARDS_BYTES, "standards_file"
     )
     try:
         standards_text = standards_raw.decode("utf-8")
@@ -116,33 +118,29 @@ def load_agent_standards_policy(root: Path) -> AgentStandardsPolicy | None:
     return AgentStandardsPolicy(standards_file, frozenset(rule_ids))
 
 
-def _read_regular_file(path: Path, limit: int, label: str) -> bytes:
+def _read_regular_file(root: Path, relative: Path, limit: int, label: str) -> bytes:
+    path = root / relative
     try:
         entry = path.lstat()
         if not stat.S_ISREG(entry.st_mode):
             raise AgentStandardsPolicyError(f"{label} must be a regular file")
         if entry.st_size > limit:
             raise AgentStandardsPolicyError(f"{label} exceeds {limit} bytes")
-        flags = (
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_CLOEXEC", 0)
-        )
-        fd = os.open(path, flags)
-        with os.fdopen(fd, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode):
-                raise AgentStandardsPolicyError(f"{label} must be a regular file")
-            if info.st_size > limit:
-                raise AgentStandardsPolicyError(f"{label} exceeds {limit} bytes")
-            raw = stream.read(limit + 1)
     except AgentStandardsPolicyError:
         raise
     except (OSError, ValueError) as exc:
         raise AgentStandardsPolicyError(
             f"cannot read {label} as a regular file"
         ) from exc
+
+    # Latin-1 preserves each byte exactly so the shared no-symlink reader can
+    # enforce the byte limit while opening every parent relative to a safe fd.
+    text = read_project_text_no_symlink(
+        root, relative, max_bytes=limit, encoding="latin-1"
+    )
+    if text is None:
+        raise AgentStandardsPolicyError(f"cannot read {label} as a regular file")
+    raw = text.encode("latin-1")
     if len(raw) > limit:
         raise AgentStandardsPolicyError(f"{label} exceeds {limit} bytes")
     return raw

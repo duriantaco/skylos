@@ -9,21 +9,25 @@ import pytest
 
 import skylos.cli as cli
 from skylos.commands.check_standards_cmd import run_check_standards_command
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _project(tmp_path: Path, rule_ids: list[str]) -> Path:
     (tmp_path / ".git").mkdir()
-    (tmp_path / "STANDARDS.md").write_text("# Project coding standards\n")
+    assert write_text_no_symlink(
+        tmp_path / "STANDARDS.md", "# Project coding standards\n"
+    )
     skylos_dir = tmp_path / ".skylos"
     skylos_dir.mkdir()
-    (skylos_dir / "agent-standards.json").write_text(
+    assert write_text_no_symlink(
+        skylos_dir / "agent-standards.json",
         json.dumps(
             {
                 "schema_version": 1,
                 "standards_file": "STANDARDS.md",
                 "enforce_rule_ids": rule_ids,
             }
-        )
+        ),
     )
     return tmp_path
 
