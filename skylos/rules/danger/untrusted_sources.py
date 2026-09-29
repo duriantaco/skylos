@@ -161,9 +161,218 @@ def _immediate_nested_functions(func: ast.AST):
         stack.extend(ast.iter_child_nodes(node))
 
 
-def _attribute_source(node: ast.Attribute, request_names: set[str]) -> str | None:
+def _scope_bindings(scope: ast.AST) -> dict[str, str | None]:
+    """Names bound in a scope, with unambiguous imports where available.
+
+    Any assignment or competing import makes a binding uncertain. In that
+    case, a spelling such as ``urllib.request`` cannot prove it is the module.
+    """
+    imports: dict[str, str | None] = {}
+    other_bindings: set[str] = set()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        other_bindings.update(param.arg for param in _params(scope))
+
+    # _module_level_nodes intentionally skips nested definitions, but their
+    # names still rebind imports in the surrounding scope.
+    stack = list(getattr(scope, "body", []) or [])
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            other_bindings.add(node.name)
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+    for node in _module_level_nodes(scope):
+        if isinstance(node, ast.Import):
+            pairs = (
+                (alias.asname or alias.name.split(".", 1)[0],
+                 alias.name if alias.asname else alias.name.split(".", 1)[0])
+                for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            pairs = (
+                (alias.asname or alias.name,
+                 f"{node.module}.{alias.name}" if node.module and not node.level else None)
+                for alias in node.names
+                if alias.name != "*"
+            )
+        else:
+            pairs = ()
+            other_bindings.update(_assign_parts(node)[1])
+            if isinstance(node, ast.ExceptHandler) and node.name:
+                other_bindings.add(node.name)
+            elif isinstance(node, ast.comprehension):
+                other_bindings.update(_target_names([node.target]))
+            elif isinstance(node, ast.Lambda):
+                other_bindings.update(param.arg for param in _params(node))
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+                other_bindings.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and node.rest:
+                other_bindings.add(node.rest)
+        for name, qualified in pairs:
+            if name in imports and imports[name] != qualified:
+                other_bindings.add(name)
+            imports[name] = qualified
+
+    return {
+        **{name: None for name in other_bindings},
+        **{name: qualified for name, qualified in imports.items()
+           if name not in other_bindings},
+    }
+
+
+def _assignment_targets(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.Assign):
+        return node.targets
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+        return [node.target]
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return [node.target]
+    if isinstance(node, ast.withitem) and node.optional_vars is not None:
+        return [node.optional_vars]
+    if isinstance(node, ast.Delete):
+        return node.targets
+    return []
+
+
+def _is_globals_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "globals"
+        and not node.args
+        and not node.keywords
+    )
+
+
+def _module_dict_root(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+        dotted = _dotted(node.value)
+        return dotted.split(".", 1)[0] if dotted else None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and len(node.args) == 1
+    ):
+        dotted = _dotted(node.args[0])
+        return dotted.split(".", 1)[0] if dotted else None
+    return None
+
+
+def _unsafe_import_roots(module: ast.AST) -> tuple[set[str], bool]:
+    """Find writes that can replace an imported module or one of its members.
+
+    This deliberately overapproximates aliases across scopes: uncertain module
+    identity must not be used as proof that ``request`` means urllib's module.
+    """
+    aliases: dict[str, set[str]] = {}
+    unsafe: set[str] = set()
+    unknown_global_write = False
+
+    for node in ast.walk(module):
+        targets = _assignment_targets(node)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+            node.value, (ast.Name, ast.Attribute)
+        ):
+            source = _dotted(node.value) if isinstance(node.value, ast.Attribute) else node.value.id
+            if source:
+                root = source.split(".", 1)[0]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        aliases.setdefault(target.id, set()).add(root)
+
+        for target in targets:
+            for part in ast.walk(target):
+                if isinstance(part, ast.Attribute):
+                    dotted = _dotted(part)
+                    if dotted:
+                        unsafe.add(dotted.split(".", 1)[0])
+                elif isinstance(part, ast.Subscript) and _is_globals_call(part.value):
+                    key = part.slice
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        unsafe.add(key.value)
+                    else:
+                        unknown_global_write = True
+                elif isinstance(part, ast.Subscript):
+                    if isinstance(part.value, ast.Name):
+                        unsafe.add(part.value.id)
+                    else:
+                        root = _module_dict_root(part.value)
+                        if root:
+                            unsafe.add(root)
+
+        if isinstance(node, ast.Call):
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"setattr", "delattr"}
+                and node.args
+            ):
+                dotted = _dotted(node.args[0])
+                if dotted:
+                    unsafe.add(dotted.split(".", 1)[0])
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and _is_globals_call(node.func.value)
+                and node.func.attr in {"update", "__setitem__", "pop", "clear"}
+            ):
+                # Dynamic updates may replace any imported root.
+                unknown_global_write = True
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in {
+                "update", "__setitem__", "__delitem__", "setdefault",
+                "pop", "popitem", "clear",
+            }:
+                receiver = node.func.value
+                if isinstance(receiver, ast.Name):
+                    unsafe.add(receiver.id)
+                else:
+                    root = _module_dict_root(receiver)
+                    if root:
+                        unsafe.add(root)
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = list(_module_level_nodes(node))
+            declared = {
+                name
+                for part in body
+                if isinstance(part, ast.Global)
+                for name in part.names
+            }
+            writes = {
+                name
+                for part in body
+                for name in _assign_parts(part)[1]
+            }
+            unsafe.update(declared & writes)
+
+    pending = list(unsafe)
+    while pending:
+        name = pending.pop()
+        for source in aliases.get(name, ()):
+            if source not in unsafe:
+                unsafe.add(source)
+                pending.append(source)
+    return unsafe, unknown_global_write
+
+
+def _attribute_source(
+    node: ast.Attribute,
+    request_names: set[str],
+    import_bindings: dict[str, str | None] | None = None,
+) -> str | None:
     dotted = _dotted(node)
     segments = dotted.split(".") if dotted else []
+    if segments and import_bindings:
+        imported = import_bindings.get(segments[0])
+        if imported:
+            qualified = ".".join((imported, *segments[1:]))
+            # Suppress only a proven import binding, never a same-named local.
+            if qualified in {
+                "urllib.request",
+                "urllib.request.Request",
+                "urllib.request.urlopen",
+            }:
+                return None
     if any(seg in request_names for seg in segments[:-1]):
         return f"request data `{dotted}`"
     if dotted in SOURCE_ATTRS or any(
@@ -183,12 +392,19 @@ def _call_source(node: ast.Call) -> str | None:
 
 
 def _node_sources(
-    node: ast.AST, origins: dict[str, list[str]], request_names: set[str]
+    node: ast.AST,
+    origins: dict[str, list[str]],
+    request_names: set[str],
+    import_bindings: dict[str, str | None] | None = None,
 ) -> list[str]:
     if isinstance(node, ast.Name):
         return origins.get(node.id, [])
     if isinstance(node, ast.Attribute):
-        label = _attribute_source(node, request_names)
+        dotted = _dotted(node)
+        root = dotted.split(".", 1)[0] if dotted else ""
+        if root in origins and root not in request_names:
+            return origins[root]
+        label = _attribute_source(node, request_names, import_bindings)
         return [label] if label else []
     if isinstance(node, ast.Call):
         label = _call_source(node)
@@ -200,15 +416,21 @@ def _direct_sources(
     node: ast.AST,
     origins: dict[str, list[str]],
     request_names: set[str],
+    import_bindings: dict[str, str | None] | None = None,
 ) -> list[str]:
     """Source labels referenced anywhere inside ``node``, in source order."""
     found: list[str] = []
     stack = [node]
     while stack:
         sub = stack.pop()
-        labels = _node_sources(sub, origins, request_names)
+        labels = _node_sources(sub, origins, request_names, import_bindings)
         if not labels:
-            stack.extend(reversed(list(ast.iter_child_nodes(sub))))
+            if isinstance(sub, ast.Call):
+                # Prefer data arguments over a misleading source-like method name.
+                children = [*sub.args, *(k.value for k in sub.keywords), sub.func]
+            else:
+                children = list(ast.iter_child_nodes(sub))
+            stack.extend(reversed(children))
             continue
         for label in labels:
             if label not in found:
@@ -229,9 +451,11 @@ class _FunctionSources:
         module: ast.AST | None,
         incoming: dict[str, list[str]] | None = None,
         traversal_incoming: dict[str, list[str]] | None = None,
+        import_bindings: dict[str, str | None] | None = None,
     ):
         self.func = func
         self.request_names: set[str] = set(REQUEST_NAMES)
+        self.import_bindings = import_bindings or {}
         # name -> human label of the original untrusted source
         self.origins: dict[str, list[str]] = {}
         self.traversal_origins: dict[str, list[str]] = {}
@@ -282,7 +506,9 @@ class _FunctionSources:
                 break
 
     def _propagate_one(self, value: ast.AST, targets: list[str]) -> bool:
-        labels = _direct_sources(value, self.origins, self.request_names)
+        labels = _direct_sources(
+            value, self.origins, self.request_names, self.import_bindings
+        )
         traversal_labels = self.traversal_sources_in(value)
         changed = False
         for name in targets:
@@ -294,17 +520,23 @@ class _FunctionSources:
         return changed
 
     def sources_in(self, expr: ast.AST) -> list[str]:
-        return _direct_sources(expr, self.origins, self.request_names)
+        return _direct_sources(
+            expr, self.origins, self.request_names, self.import_bindings
+        )
 
     def traversal_sources_in(self, expr: ast.AST) -> list[str]:
-        return _direct_sources(expr, self.traversal_origins, self.request_names)
+        return _direct_sources(
+            expr, self.traversal_origins, self.request_names, self.import_bindings
+        )
 
     def direct_sources_in(self, expr: ast.AST) -> list[str]:
         """Sources written directly in an expression, excluding derived names."""
         labels: list[str] = []
         for node in ast.walk(expr):
             if isinstance(node, ast.Attribute):
-                label = _attribute_source(node, self.request_names)
+                label = _attribute_source(
+                    node, self.request_names, self.import_bindings
+                )
             elif isinstance(node, ast.Call):
                 label = _call_source(node)
             else:
@@ -332,6 +564,56 @@ class UntrustedSourceIndex:
         self.follow_local_calls = follow_local_calls
         self._cache: dict[int, _FunctionSources] = {}
         self._calls_indexed = False
+        self._parents: dict[int, ast.AST] | None = None
+        self._scope_bindings_cache: dict[int, dict[str, str | None]] = {}
+        self._import_bindings_cache: dict[int, dict[str, str | None]] = {}
+        self._unsafe_import_roots: tuple[set[str], bool] | None = None
+
+    def _import_bindings_for(self, func: ast.AST | None) -> dict[str, str | None]:
+        if self.module is None:
+            return {}
+        key = id(func)
+        cached = self._import_bindings_cache.get(key)
+        if cached is not None:
+            return cached
+        scopes = [self.module]
+        if func is not None:
+            if self._parents is None:
+                self._parents = {
+                    id(child): parent
+                    for parent in ast.walk(self.module)
+                    for child in ast.iter_child_nodes(parent)
+                }
+            chain: list[ast.AST] = []
+            current: ast.AST | None = func
+            while current is not None and current is not self.module:
+                if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    chain.append(current)
+                current = self._parents.get(id(current))
+            scopes.extend(reversed(chain))
+        bindings: dict[str, str | None] = {}
+        for scope in scopes:
+            scope_bindings = self._scope_bindings_cache.get(id(scope))
+            if scope_bindings is None:
+                scope_bindings = _scope_bindings(scope)
+                self._scope_bindings_cache[id(scope)] = scope_bindings
+            bindings.update(scope_bindings)
+        if self._unsafe_import_roots is None:
+            self._unsafe_import_roots = _unsafe_import_roots(self.module)
+        unsafe, unknown_global_write = self._unsafe_import_roots
+        for name in bindings:
+            if name in unsafe or unknown_global_write:
+                bindings[name] = None
+        self._import_bindings_cache[key] = bindings
+        return bindings
+
+    def resolved_import(self, func: ast.AST | None, name: str) -> str | None:
+        """Resolve a dotted name through an unambiguous import binding."""
+        root, separator, rest = name.partition(".")
+        imported = self._import_bindings_for(func).get(root)
+        if imported is None:
+            return None
+        return f"{imported}.{rest}" if separator else imported
 
     def _index_local_calls(self) -> None:
         """Carry entry-point sources through direct calls in the same module."""
@@ -435,7 +717,12 @@ class UntrustedSourceIndex:
                     if keyword.arg in param_names:
                         edges.append((id(caller), id(callee), keyword.arg, keyword.value))
 
-        facts = {id(func): _FunctionSources(func, None) for func in functions}
+        facts = {
+            id(func): _FunctionSources(
+                func, None, import_bindings=self._import_bindings_for(func)
+            )
+            for func in functions
+        }
         incoming: dict[int, dict[str, list[str]]] = {id(func): {} for func in functions}
         traversal_incoming: dict[int, dict[str, list[str]]] = {
             id(func): {} for func in functions
@@ -499,6 +786,7 @@ class UntrustedSourceIndex:
                         None,
                         incoming[fid],
                         traversal_incoming[fid],
+                        import_bindings=self._import_bindings_for(func),
                     )
         self._cache.update(facts)
 
@@ -510,6 +798,7 @@ class UntrustedSourceIndex:
             facts = _FunctionSources(
                 func,
                 self.module if func is None else None,
+                import_bindings=self._import_bindings_for(func),
             )
             self._cache[key] = facts
         return facts

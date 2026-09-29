@@ -86,6 +86,411 @@ def test_urllib_urlopen_security_evidence_names_sink(tmp_path):
     assert any("HTTP sink `u.urlopen`" == step for step in evidence["path"])
 
 
+def test_urllib_request_constructor_is_not_inbound_request_data(tmp_path):
+    code = (
+        "import json\n"
+        "import urllib.request\n"
+        "from typing import Any\n"
+        "def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:\n"
+        "    body = json.dumps(payload, separators=(',', ':')).encode('utf-8')\n"
+        "    request = urllib.request.Request(\n"
+        "        base_url + path, data=body, method='POST',\n"
+        "        headers={'Content-Type': 'application/json', 'Accept': 'application/json'},\n"
+        "    )\n"
+        "    with urllib.request.urlopen(request, timeout=timeout) as response:\n"
+        "        data = response.read().decode('utf-8')\n"
+        "    value = json.loads(data or '{}')\n"
+        "    return value if isinstance(value, dict) else {}\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_request_helper.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_constructor_keeps_real_request_source(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def post_json():\n"
+        "    outbound = urllib.request.Request(request.args['url'], method='POST')\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_request_input.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"] == "request data `request.args`"
+
+
+def test_urllib_request_tainted_host_still_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "@app.get('/x')\n"
+        "def fetch(host):\n"
+        "    outbound = urllib.request.Request('https://' + host)\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_request_host.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"].startswith("route parameter `host`")
+
+
+def test_urllib_name_shadowed_by_route_parameter_still_flags(tmp_path):
+    code = (
+        "import requests\n"
+        "@app.get('/x')\n"
+        "def fetch(urllib):\n"
+        "    return requests.get(urllib.request.url)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_shadow.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"].startswith("route parameter `urllib`")
+
+
+def test_urllib_request_alias_is_not_inbound_request_data(tmp_path):
+    code = (
+        "from urllib import request\n"
+        "def post_json(base_url, path):\n"
+        "    outbound = request.Request(base_url + path)\n"
+        "    return request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_alias_helper.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_fixed_url_ignores_tainted_post_body(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def send():\n"
+        "    outbound = urllib.request.Request(\n"
+        "        'https://api.example.com/upload', data=request.form['body'])\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_request_body.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_fixed_host_ignores_tainted_path(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request(\n"
+        "        'https://api.example.com/items/' + request.args['id'])\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_request_path.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_direct_constructor_tainted_host_flags(tmp_path):
+    code = (
+        "import urllib.request as u\n"
+        "@app.get('/x')\n"
+        "def fetch(host):\n"
+        "    return u.urlopen(u.Request('https://' + host))\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_direct.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"].startswith("route parameter `host`")
+
+
+def test_urllib_request_imported_constructor_and_urlopen_flag(tmp_path):
+    code = (
+        "from urllib.request import Request as R, urlopen as open_url\n"
+        "@app.get('/x')\n"
+        "def fetch(host):\n"
+        "    outbound = R(url='https://' + host)\n"
+        "    return open_url(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_imports.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"].startswith("route parameter `host`")
+
+
+def test_urllib_request_full_url_mutation_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    outbound.full_url = request.args['url']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_mutation.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"] == "request data `request.args`"
+
+
+def test_urllib_request_fixed_url_mutation_ignores_tainted_body(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request(\n"
+        "        'https://api.example.com/', data=request.form['body'])\n"
+        "    outbound.full_url = 'https://api.example.com/items/' + request.args['id']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_fixed_mutation_body.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_alias_full_url_mutation_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    alias = outbound\n"
+        "    alias.full_url = request.args['url']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_alias_mutation.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"] == "request data `request.args`"
+
+
+def test_urllib_request_alias_mutation_survives_original_rebinding(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    alias = outbound\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    alias.host = request.args['host']\n"
+        "    return urllib.request.urlopen(alias)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_alias_rebinding.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_alias_keeps_mutation_before_rebinding(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    outbound.host = request.args['host']\n"
+        "    alias = outbound\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    return urllib.request.urlopen(alias)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_alias_copy_mutation.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_host_augassign_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    outbound.host += request.args['suffix']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_host_augassign.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_full_url_augassign_can_change_authority(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com')\n"
+        "    outbound.full_url += request.args['suffix']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_url_augassign.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_full_url_augassign_after_path_is_safe(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    outbound.full_url += request.args['path']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_safe_augassign.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_safe_augassign_ignores_tainted_body(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request(\n"
+        "        'https://api.example.com/', data=request.form['body'])\n"
+        "    outbound.full_url += request.args['path']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_safe_augassign_body.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_urllib_request_alias_augassign_after_rebinding_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com')\n"
+        "    alias = outbound\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    alias.full_url += request.args['suffix']\n"
+        "    return urllib.request.urlopen(alias)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_alias_augassign.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_setattr_full_url_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    setattr(outbound, 'full_url', request.args['url'])\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_setattr.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_set_proxy_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('https://api.example.com/')\n"
+        "    outbound.set_proxy(request.args['proxy'], 'https')\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_proxy.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_request_proxy_selector_mutation_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    outbound = urllib.request.Request('http://api.example.com/')\n"
+        "    outbound.set_proxy('proxy.example.com:8080', 'http')\n"
+        "    outbound.selector = request.args['url']\n"
+        "    return urllib.request.urlopen(outbound)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_proxy_selector.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_urllib_urlopen_keyword_url_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def fetch():\n"
+        "    return urllib.request.urlopen(url=request.args['url'])\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_keyword.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["metadata"]["untrusted_source"] == "request data `request.args`"
+
+
+def test_rebound_request_constructor_keeps_tainted_body_visible(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from urllib.request import Request as R\n"
+        "from flask import request\n"
+        "def R(url, data=None):\n"
+        "    return urllib.request.Request(data)\n"
+        "def fetch():\n"
+        "    return urllib.request.urlopen(R('https://api.example.com/', data=request.args['url']))\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_rebound_constructor.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_rebound_imported_urlopen_is_not_an_http_sink(tmp_path):
+    code = (
+        "from urllib.request import urlopen as open_url\n"
+        "from flask import request\n"
+        "def open_url(url):\n"
+        "    return url\n"
+        "def read():\n"
+        "    return open_url(request.args['url'])\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_rebound_urlopen.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_global_urllib_rebinding_does_not_hide_request_source(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "import requests\n"
+        "from types import SimpleNamespace\n"
+        "from flask import request as inbound\n"
+        "def change():\n"
+        "    global urllib\n"
+        "    urllib = SimpleNamespace(request=inbound)\n"
+        "change()\n"
+        "def fetch():\n"
+        "    return requests.get(f\"https://{urllib.request.args['url']}\")\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_global_urllib_rebind.py", code)
+    assert _ssrf_findings(out)
+
+
+def test_route_to_urllib_request_helper_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "def post_json(base_url, path):\n"
+        "    outbound = urllib.request.Request(base_url + path)\n"
+        "    return urllib.request.urlopen(outbound)\n"
+        "@app.get('/proxy')\n"
+        "def proxy(target):\n"
+        "    return post_json(target, '/v1')\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_helper_route.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["symbol"] == "post_json"
+    assert finding["metadata"]["untrusted_source"].startswith("route parameter `target`")
+
+
+def test_literal_caller_to_urllib_request_helper_is_not_ssrf(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "def post_json(base_url, path):\n"
+        "    outbound = urllib.request.Request(base_url + path)\n"
+        "    return urllib.request.urlopen(outbound)\n"
+        "def job():\n"
+        "    return post_json('https://api.example.com/', '/v1')\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_helper_literal.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_dynamic_caller_to_generic_urllib_helper_still_flags(tmp_path):
+    code = (
+        "import urllib.request\n"
+        "from flask import request\n"
+        "def post_json(base_url, path):\n"
+        "    outbound = urllib.request.Request(base_url + request.args['path'])\n"
+        "    return urllib.request.urlopen(outbound)\n"
+        "def job():\n"
+        "    return post_json('https://api.example.com/', '/v1')\n"
+        "@app.get('/items')\n"
+        "def items(target):\n"
+        "    return globals()['post_json'](target, '/v1')\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urllib_helper_dynamic.py", code)
+    finding = _ssrf_findings(out)[0]
+    assert finding["symbol"] == "post_json"
+    assert finding["metadata"]["untrusted_source"] == "request data `request.args`"
+
+
 def test_requests_constant_url_ok(tmp_path):
     code = (
         "import requests\n"
