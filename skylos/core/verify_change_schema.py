@@ -146,6 +146,7 @@ def build_verify_change_response(
     scan_target: str | Path | None = None,
     contract: Any | None = None,
     include_security_findings: bool = False,
+    include_quality_rule_ids: frozenset[str] = frozenset(),
     analyzer_owned: bool = False,
 ) -> dict[str, Any]:
     root = _project_root(project_root)
@@ -155,6 +156,7 @@ def build_verify_change_response(
     for finding, category in _iter_ai_findings(
         analysis_result,
         include_security_findings=include_security_findings,
+        include_quality_rule_ids=include_quality_rule_ids,
     ):
         if not _matches_target(finding, root, target_file):
             continue
@@ -193,7 +195,12 @@ def build_verify_change_response(
             "range": _range_for_payload(parsed_range),
         },
         "findings": findings,
-        "summary": _summary(findings, status, coverage),
+        "summary": _summary(
+            findings,
+            status,
+            coverage,
+            selected_quality_rule_ids=include_quality_rule_ids,
+        ),
         "security_checks_enabled": bool(include_security_findings),
     }
     if coverage is not None:
@@ -205,10 +212,17 @@ def _iter_ai_findings(
     analysis_result: dict[str, Any],
     *,
     include_security_findings: bool = False,
+    include_quality_rule_ids: frozenset[str] = frozenset(),
 ) -> Iterator[tuple[dict[str, Any], str]]:
     for section, category in FINDING_SECTIONS:
         for finding in _section_findings(analysis_result, section):
             if _is_ai_finding(finding):
+                yield finding, category
+            elif (
+                category == "quality"
+                and _finding_value(finding, ("rule_id", "rule"), "")
+                in include_quality_rule_ids
+            ):
                 yield finding, category
             elif include_security_findings and (
                 (category == "security" and _is_security_finding(finding))
@@ -491,6 +505,8 @@ def _summary(
     findings: list[dict[str, Any]],
     status: str,
     coverage: dict[str, Any] | None,
+    *,
+    selected_quality_rule_ids: frozenset[str] = frozenset(),
 ) -> str:
     count = len(findings)
     if count == 0:
@@ -525,16 +541,24 @@ def _summary(
         issue_word = "issues"
     security = sum(1 for item in findings if item.get("category") == "security")
     secrets = sum(1 for item in findings if item.get("category") == "secret")
-    if not security and not secrets:
+    quality = sum(
+        1
+        for item in findings
+        if item.get("category") == "quality"
+        and item.get("rule_id") in selected_quality_rule_ids
+    )
+    if not security and not secrets and not quality:
         return f"{count} AI-code {issue_word} found"
     parts = []
-    ai_code = count - security - secrets
+    ai_code = count - security - secrets - quality
     if ai_code:
         parts.append(f"{ai_code} AI-code")
     if security:
         parts.append(f"{security} security")
     if secrets:
         parts.append(f"{secrets} secret")
+    if quality:
+        parts.append(f"{quality} quality")
     return f"{count} {issue_word} found: {', '.join(parts)}"
 
 

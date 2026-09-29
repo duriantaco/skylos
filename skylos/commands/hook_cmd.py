@@ -24,6 +24,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from skylos.commands.agent_standards_policy import (
+    AgentStandardsPolicy,
+    AgentStandardsPolicyError,
+    load_agent_standards_policy,
+)
 from skylos.commands.hook_policy import dedupe_by_line
 
 EVENTS = ("post-edit", "pre-read", "pre-bash", "stop")
@@ -78,6 +83,7 @@ class HookDeps:
     verify: VerifyFunc | None = None
     install_checker: InstallChecker | None = None
     env: dict[str, str] = field(default_factory=lambda: dict(os.environ))
+    standards_policy: AgentStandardsPolicy | None = None
 
 
 @dataclass
@@ -127,9 +133,19 @@ def run_hook_command(
             record["outcome"] = "disabled"
             output = _allow_output(event, client)
         else:
+            if event in {"post-edit", "stop"}:
+                deps.standards_policy = load_agent_standards_policy(root)
             handler = _HANDLERS[event]
             with _quiet():
                 output = handler(payload, root, client, deps, record)
+    except AgentStandardsPolicyError as exc:
+        record["outcome"] = "invalid-policy"
+        reason = f"Skylos agent standards policy is invalid: {exc}. Fix .skylos/agent-standards.json."
+        output = (
+            _stop_block_output(client, reason)
+            if event == "stop"
+            else _block_output(client, reason)
+        )
     except (Exception, SystemExit) as exc:  # fail open, always
         record["outcome"] = "error"
         record["error"] = type(exc).__name__
@@ -185,6 +201,14 @@ def run_recheck(argv: list[str], *, stdout=None, deps: HookDeps | None = None) -
         return 2
 
     root = _project_root({"cwd": os.getcwd()}, deps.env)
+    try:
+        deps.standards_policy = load_agent_standards_policy(root)
+    except AgentStandardsPolicyError as exc:
+        stdout.write(
+            f"skylos hook recheck: invalid agent standards policy: {exc}. "
+            "Fix .skylos/agent-standards.json.\n"
+        )
+        return 2
     state = _load_session_state(_state_root(root))
     if session_mode:
         files = [
@@ -676,7 +700,10 @@ def _check_file(path: Path, root: Path, deps: HookDeps):
         return None
     from skylos.commands.hook_policy import classify_findings
 
-    classify_findings(findings, path, text)
+    selected = (
+        deps.standards_policy.enforce_rule_ids if deps.standards_policy else frozenset()
+    )
+    classify_findings(findings, path, text, enforce_quality_rule_ids=selected)
     return findings, lines, stat_key
 
 
@@ -706,7 +733,12 @@ def _is_ignored_env_file(path: Path, root: Path) -> bool:
     return proc.returncode == 0
 
 
-def hook_verify(target: str | Path, root: Path) -> dict[str, Any]:
+def hook_verify(
+    target: str | Path,
+    root: Path,
+    *,
+    include_quality_rule_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """The verify call every edit hook makes (also used to warm its caches).
 
     Project-wide facts (module surfaces, installed distributions) come from
@@ -721,24 +753,33 @@ def hook_verify(target: str | Path, root: Path) -> dict[str, Any]:
 
     # Outside a Git repo every project cache lives under the user cache too.
     state_root = _state_root(root)
-    with redirect_project_caches(root, state_root), module_facts_index_session(
-        state_root
+    with (
+        redirect_project_caches(root, state_root),
+        module_facts_index_session(state_root),
     ):
         return verify_change_path(
             str(target),
             exclude_folders=list(parse_exclude_folders(use_defaults=True)),
             include_security_findings=True,
+            include_quality_rule_ids=include_quality_rule_ids,
             behavior_comparison=False,
         )
 
 
 def _verify_findings(path: Path, root: Path, deps: HookDeps) -> list[dict[str, Any]]:
+    selected = (
+        deps.standards_policy.enforce_rule_ids if deps.standards_policy else frozenset()
+    )
     if deps.verify is None:
-        result = hook_verify(path, root)
+        result = hook_verify(path, root, include_quality_rule_ids=selected)
     else:
-        result = deps.verify(
-            str(path), include_security_findings=True, behavior_comparison=False
-        )
+        kwargs: dict[str, Any] = {
+            "include_security_findings": True,
+            "behavior_comparison": False,
+        }
+        if selected:
+            kwargs["include_quality_rule_ids"] = selected
+        result = deps.verify(str(path), **kwargs)
     findings = []
     for raw in result.get("findings") or []:
         rng = raw.get("range") or {}
@@ -1092,7 +1133,9 @@ def _mutate_session(root: Path, session_id: str, mutate) -> None:
             return
         state = _load_session_state(root)
         sessions = state["sessions"]
-        session = sessions.get(session_id)  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
+        session = sessions.get(
+            session_id
+        )  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
         if not isinstance(session, dict):
             session = {"files": {}}
         session.setdefault("files", {})
@@ -1245,9 +1288,7 @@ def _format_notes(notes, root: Path) -> str:
         shown.append(f"{location} {finding.get('rule_id')} {message}")
     more = f" (+{len(notes) - MAX_NOTES} more)" if len(notes) > MAX_NOTES else ""
     return (
-        "Skylos notes (not blocking; fix only if relevant): "
-        + "; ".join(shown)
-        + more
+        "Skylos notes (not blocking; fix only if relevant): " + "; ".join(shown) + more
     )
 
 
@@ -1380,7 +1421,9 @@ def _log(root: Path | None, record: dict[str, Any]) -> None:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **record}
-        fd = os.open(path, flags, 0o600)  # skylos: ignore[SKY-D215] fixed log path under selected project root; no-follow open
+        fd = os.open(
+            path, flags, 0o600
+        )  # skylos: ignore[SKY-D215] fixed log path under selected project root; no-follow open
         try:
             os.write(fd, (json.dumps(entry, sort_keys=True) + "\n").encode())
         finally:

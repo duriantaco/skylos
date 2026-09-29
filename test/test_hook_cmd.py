@@ -1007,7 +1007,14 @@ def run_eval(expr):
 def shell(cmd):
     subprocess.run(cmd, shell=True)
 """
-QA_HELPER_LINES = {11, 15, 19, 23, 27, 32}  # open/json.load/read_text/urlopen/write/"clear"
+QA_HELPER_LINES = {
+    11,
+    15,
+    19,
+    23,
+    27,
+    32,
+}  # open/json.load/read_text/urlopen/write/"clear"
 QA_BLOCKING_LINES = {36, 41, 45, 49, 53}
 
 
@@ -1152,7 +1159,11 @@ def test_post_edit_notes_only_is_additional_context_and_never_blocks_stop(tmp_pa
     )
     assert text == ""
     _, stop, _ = _run(
-        tmp_path, "stop", {"session_id": "n1"}, client="claude", deps=HookDeps(verify=verify)
+        tmp_path,
+        "stop",
+        {"session_id": "n1"},
+        client="claude",
+        deps=HookDeps(verify=verify),
     )
     assert stop == {}
 
@@ -1164,7 +1175,9 @@ def test_post_edit_notes_only_is_additional_context_and_never_blocks_stop(tmp_pa
 
 def test_recheck_matches_hook_verdict(tmp_path, monkeypatch):
     app = _write(tmp_path / "app.py", APP)
-    verify = FakeVerify({"app.py": [(5, "SKY-D212", "injection"), (9, "SKY-D215", "n")]})
+    verify = FakeVerify(
+        {"app.py": [(5, "SKY-D212", "injection"), (9, "SKY-D215", "n")]}
+    )
     _run(
         tmp_path,
         "post-edit",
@@ -1180,7 +1193,9 @@ def test_recheck_matches_hook_verdict(tmp_path, monkeypatch):
     assert len(stdout.getvalue()) < 1000
 
     app.write_text(APP.replace("os.system(cmd)", "print(cmd)"), encoding="utf-8")
-    fixed = HookDeps(verify=FakeVerify({"app.py": [(9, "SKY-D215", "n")]}), env=deps.env)
+    fixed = HookDeps(
+        verify=FakeVerify({"app.py": [(9, "SKY-D215", "n")]}), env=deps.env
+    )
     stdout = io.StringIO()
     assert run_hook_command(["recheck", "app.py"], stdout=stdout, deps=fixed) == 0
     assert "no blocking issues" in stdout.getvalue()
@@ -1188,7 +1203,253 @@ def test_recheck_matches_hook_verdict(tmp_path, monkeypatch):
 
     stdout = io.StringIO()
     assert run_hook_command(["recheck"], stdout=stdout, deps=fixed) == 2
-    assert run_hook_command(["recheck", "missing.py"], stdout=io.StringIO(), deps=fixed) == 2
+    assert (
+        run_hook_command(["recheck", "missing.py"], stdout=io.StringIO(), deps=fixed)
+        == 2
+    )
+
+
+# --------------------------------------------------------------------------
+# Opt-in project standards: selected quality findings only
+# --------------------------------------------------------------------------
+
+
+def _standards_policy(tmp_path, rule_ids=("SKY-C304",)):
+    _write(tmp_path / "STANDARDS.md", "# Project standards\n")
+    return _write(
+        tmp_path / ".skylos" / "agent-standards.json",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "STANDARDS.md",
+                "enforce_rule_ids": list(rule_ids),
+            }
+        ),
+    )
+
+
+class QualityVerify:
+    def __call__(self, target, **kwargs):
+        name = Path(target).name
+        findings = [
+            {
+                "rule_id": rule,
+                "severity": "MEDIUM",
+                "category": "quality",
+                "message": message,
+                "range": {"file": name, "start_line": line},
+            }
+            for line, rule, message in [
+                (1, "SKY-C304", "selected long function"),
+                (2, "SKY-Q301", "unselected complexity"),
+            ]
+        ]
+        return {"status": "fail", "findings": findings}
+
+
+def test_selected_quality_blocks_post_edit_stop_and_recheck(tmp_path, monkeypatch):
+    app = _write(tmp_path / "app.py", "def f():\n    return 1\n")
+    _standards_policy(tmp_path)
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(app)},
+    }
+    deps = HookDeps(verify=QualityVerify())
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude", deps=deps)
+    assert out["decision"] == "block"
+    assert "SKY-C304" in out["reason"]
+    assert "SKY-Q301" in out["reason"]  # visible note, not a blocking item
+    assert deps.standards_policy.enforce_rule_ids == frozenset({"SKY-C304"})
+
+    _, out, _ = _run(
+        tmp_path,
+        "stop",
+        {"session_id": "s1"},
+        client="claude",
+        deps=HookDeps(verify=QualityVerify()),
+    )
+    assert out["decision"] == "block"
+    assert "SKY-C304" in out["reason"]
+    assert "SKY-Q301" not in out["reason"]
+
+    monkeypatch.chdir(tmp_path)
+    stdout = io.StringIO()
+    assert (
+        run_hook_command(
+            ["recheck", "app.py"],
+            stdout=stdout,
+            deps=HookDeps(
+                verify=QualityVerify(), env={"CLAUDE_PROJECT_DIR": str(tmp_path)}
+            ),
+        )
+        == 1
+    )
+    assert "SKY-C304" in stdout.getvalue()
+    assert "SKY-Q301" not in stdout.getvalue().split("Check again")[0]
+
+
+def test_without_standards_policy_quality_remains_nonblocking(tmp_path):
+    app = _write(tmp_path / "app.py", "def f():\n    return 1\n")
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(app)},
+    }
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        payload,
+        client="claude",
+        deps=HookDeps(verify=QualityVerify()),
+    )
+    assert out["hookSpecificOutput"]["additionalContext"].count("SKY-") == 2
+
+
+@pytest.mark.parametrize(
+    "bad_json",
+    [
+        "{",
+        json.dumps(
+            {
+                "schema_version": 2,
+                "standards_file": "STANDARDS.md",
+                "enforce_rule_ids": ["SKY-C304"],
+            }
+        ),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "../outside.md",
+                "enforce_rule_ids": ["SKY-C304"],
+            }
+        ),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "STANDARDS\u0000.md",
+                "enforce_rule_ids": ["SKY-C304"],
+            }
+        ),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "STANDARDS.txt",
+                "enforce_rule_ids": ["SKY-C304"],
+            }
+        ),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "STANDARDS.md",
+                "enforce_rule_ids": ["SKY-D212"],
+            }
+        ),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "standards_file": "STANDARDS.md",
+                "enforce_rule_ids": [123],
+            }
+        ),
+    ],
+)
+def test_invalid_configured_policy_blocks_visibly(tmp_path, monkeypatch, bad_json):
+    app = _write(tmp_path / "app.py", "x = 1\n")
+    _standards_policy(tmp_path).write_text(bad_json, encoding="utf-8")
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        {"tool_name": "Write", "tool_input": {"file_path": str(app)}},
+        client="claude",
+        deps=HookDeps(verify=FakeVerify()),
+    )
+    assert out["decision"] == "block"
+    assert "agent standards policy is invalid" in out["reason"]
+
+    _, out, _ = _run(tmp_path, "stop", {"session_id": "s1"}, client="claude")
+    assert out["decision"] == "block"
+    monkeypatch.chdir(tmp_path)
+    stdout = io.StringIO()
+    assert run_hook_command(["recheck", "app.py"], stdout=stdout) == 2
+    assert "invalid agent standards policy" in stdout.getvalue()
+
+
+def test_symlink_and_oversized_policy_are_rejected(tmp_path):
+    app = _write(tmp_path / "app.py", "x = 1\n")
+    policy = _standards_policy(tmp_path)
+    elsewhere = _write(tmp_path / "elsewhere.json", policy.read_text())
+    policy.unlink()
+    policy.symlink_to(elsewhere)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(app)}}
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude")
+    assert out["decision"] == "block"
+    assert "agent-standards.json" in out["reason"]
+    policy.unlink()
+    policy.write_text(" " * 16_385, encoding="utf-8")
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude")
+    assert out["decision"] == "block"
+    assert "exceeds 16384 bytes" in out["reason"]
+
+
+def test_missing_empty_and_symlinked_standards_file_are_rejected(tmp_path):
+    app = _write(tmp_path / "app.py", "x = 1\n")
+    _standards_policy(tmp_path)
+    standards = tmp_path / "STANDARDS.md"
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(app)}}
+
+    standards.unlink()
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude")
+    assert out["decision"] == "block"
+    assert "standards_file" in out["reason"]
+
+    standards.write_text("  \n", encoding="utf-8")
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude")
+    assert out["decision"] == "block"
+    assert "must not be empty" in out["reason"]
+
+    standards.unlink()
+    elsewhere = _write(tmp_path / "elsewhere.md", "# Moved standards\n")
+    standards.symlink_to(elsewhere)
+    _, out, _ = _run(tmp_path, "post-edit", payload, client="claude")
+    assert out["decision"] == "block"
+    assert "symlink" in out["reason"]
+
+
+def test_runtime_verify_error_still_fails_open_with_valid_standards(tmp_path):
+    app = _write(tmp_path / "app.py", "x = 1\n")
+    _standards_policy(tmp_path)
+    _, out, text = _run(
+        tmp_path,
+        "post-edit",
+        {"tool_name": "Write", "tool_input": {"file_path": str(app)}},
+        client="claude",
+        deps=HookDeps(verify=FakeVerify(error=RuntimeError("scan failed"))),
+    )
+    assert out is None and text == ""
+    assert _log_lines(tmp_path)[-1]["outcome"] == "error"
+
+
+def test_real_analyzer_selected_function_length_blocks(tmp_path):
+    app = _write(
+        tmp_path / "app.py",
+        "def calculate():\n    total = 0\n"
+        + "    total += 1\n" * 101
+        + "    return total\n",
+    )
+    _standards_policy(tmp_path)
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        {
+            "session_id": "s1",
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(app)},
+        },
+        client="claude",
+    )
+    assert out["decision"] == "block"
+    assert "SKY-C304" in out["reason"]
 
 
 # --------------------------------------------------------------------------
@@ -1270,7 +1531,9 @@ def test_install_resolves_relative_bin_and_refuses_unsupported(tmp_path, monkeyp
         seen.append(cmd)
         return "9.9.9"
 
-    code, printed = _install(tmp_path, probe=probe, dry_run=True, skylos_bin="venv/bin/skylos")
+    code, printed = _install(
+        tmp_path, probe=probe, dry_run=True, skylos_bin="venv/bin/skylos"
+    )
     assert code == 0
     absolute = str(tmp_path / "venv" / "bin" / "skylos")
     assert seen == [[absolute]]
@@ -1603,7 +1866,9 @@ def test_stop_hint_lists_every_file_or_points_to_session_recheck(tmp_path, monke
     assert run_hook_command(["recheck", "--session"], stdout=stdout, deps=clean) == 0
     assert "no blocking issues in 7 file(s)" in stdout.getvalue()
     bad = io.StringIO()
-    assert run_hook_command(["recheck", "--session", "m0.py"], stdout=bad, deps=clean) == 2
+    assert (
+        run_hook_command(["recheck", "--session", "m0.py"], stdout=bad, deps=clean) == 2
+    )
 
 
 def test_pre_bash_deny_mentions_allowlist_escape_hatch(tmp_path):
@@ -1627,7 +1892,11 @@ def test_pre_bash_deny_mentions_allowlist_escape_hatch(tmp_path):
 def test_post_edit_env_generic_key_secret_blocks_without_leaking(tmp_path):
     value = "ak_live_" + "7Hq2Lm9Xv4Rt8Wz1Np6Ks3Jd"
     env = _write(tmp_path / ".env", f"ACME_BILLING_KEY={value}\n")
-    payload = {"session_id": "k1", "tool_name": "Write", "tool_input": {"file_path": str(env)}}
+    payload = {
+        "session_id": "k1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(env)},
+    }
     _, out, text = _run(tmp_path, "post-edit", payload, client="claude")
     assert out["decision"] == "block"
     assert ".env:1 SKY-S101" in out["reason"]

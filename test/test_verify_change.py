@@ -57,6 +57,29 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
     assert finding["suggested_fix"]
 
 
+def test_build_verify_change_response_includes_only_selected_quality_rules(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("def f():\n    return 1\n", encoding="utf-8")
+    result = {
+        "quality": [
+            {"rule_id": "SKY-C304", "file": str(app), "line": 1, "message": "Long"},
+            {"rule_id": "SKY-Q301", "file": str(app), "line": 2, "message": "Complex"},
+        ]
+    }
+
+    default = build_verify_change_response(result, project_root=tmp_path)
+    selected = build_verify_change_response(
+        result,
+        project_root=tmp_path,
+        include_quality_rule_ids=frozenset({"SKY-C304"}),
+    )
+
+    assert default["findings"] == []
+    assert [f["rule_id"] for f in selected["findings"]] == ["SKY-C304"]
+    assert selected["findings"][0]["category"] == "quality"
+    assert selected["summary"] == "1 issue found: 1 quality"
+
+
 def test_build_verify_change_response_marks_unproven_references_incomplete(tmp_path):
     result = {
         "analysis_summary": {
@@ -811,8 +834,7 @@ def test_verify_change_path_passes_with_declared_typescript_dependencies(tmp_pat
         encoding="utf-8",
     )
     (repo / "app.ts").write_text(
-        'import { Command } from "commander";\n'
-        'import { readFile } from "node:fs";\n',
+        'import { Command } from "commander";\nimport { readFile } from "node:fs";\n',
         encoding="utf-8",
     )
 

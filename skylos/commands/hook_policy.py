@@ -30,7 +30,11 @@ HALLUCINATION_RULES = frozenset(
     {"SKY-D222", "SKY-D224", "SKY-D225", "SKY-L012", "SKY-L023"}
 )
 HALLUCINATION_VIBES = frozenset(
-    {"dependency_hallucination", "api_signature_hallucination", "hallucinated_reference"}
+    {
+        "dependency_hallucination",
+        "api_signature_hallucination",
+        "hallucinated_reference",
+    }
 )
 # The project's own AI contract: the user asked for these to be enforced.
 CONTRACT_RULES = frozenset({"SKY-A105"})
@@ -105,7 +109,11 @@ _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
 def classify_findings(
-    findings: list[dict[str, Any]], path: Path, text: str | None
+    findings: list[dict[str, Any]],
+    path: Path,
+    text: str | None,
+    *,
+    enforce_quality_rule_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Set ``blocking`` (bool) and ``why`` on each finding, in place."""
     facts: _SourceFacts | None = None
@@ -115,7 +123,7 @@ def classify_findings(
     if need_ast and text is not None:
         facts = _SourceFacts.parse(text)
     for finding in findings:
-        blocking, why = _decide(finding, facts, path)
+        blocking, why = _decide(finding, facts, path, enforce_quality_rule_ids)
         finding["blocking"] = blocking
         finding["why"] = why
 
@@ -126,7 +134,10 @@ def _needs_ast(finding: dict[str, Any]) -> bool:
 
 
 def _decide(
-    finding: dict[str, Any], facts: "_SourceFacts | None", path: Path
+    finding: dict[str, Any],
+    facts: "_SourceFacts | None",
+    path: Path,
+    enforce_quality_rule_ids: frozenset[str],
 ) -> tuple[bool, str]:
     rule = str(finding.get("rule_id") or "")
     category = str(finding.get("category") or "")
@@ -136,6 +147,8 @@ def _decide(
         return True, "hallucination"
     if rule in CONTRACT_RULES:
         return True, "contract"
+    if category == "quality" and rule in enforce_quality_rule_ids:
+        return True, "project-standard"
     if category != "security":
         return False, "note"
     if rule in ALWAYS_BLOCK_RULES:
@@ -222,7 +235,9 @@ class _SourceFacts:
                 return True
         for call in calls:
             args = list(call.args) + [
-                kw.value for kw in call.keywords if kw.arg in {None, "args", "cmd", "source", "stream"}
+                kw.value
+                for kw in call.keywords
+                if kw.arg in {None, "args", "cmd", "source", "stream"}
             ]
             if not args:
                 continue
