@@ -21,7 +21,9 @@ _SINK = (
 
 def _ssrf_findings(tmp_path, mutation):
     path = tmp_path / "module_mutation.py"
-    path.write_text(_SOURCE + mutation + "\n" + _SINK, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] fixed file under pytest tmp_path
+        _SOURCE + mutation + "\n" + _SINK, encoding="utf-8"
+    )
     return [
         finding
         for finding in scan_ctx(tmp_path, [path])
