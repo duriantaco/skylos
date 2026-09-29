@@ -1,5 +1,21 @@
 ## Changelog
 
+## [4.42.0](https://github.com/duriantaco/skylos/compare/v4.41.0...v4.42.0) (2026-09-29)
+
+
+### Features
+
+* **defend:** add semantic flow evidence for Python LLM output validation ([#908](https://github.com/duriantaco/skylos/issues/908)) ([45199c0](https://github.com/duriantaco/skylos/commit/45199c0d9bd353d7980adf2413ff19509b2c9335))
+
+
+### Bug Fixes
+
+* **agent:** render behavior tables for console encoding ([#911](https://github.com/duriantaco/skylos/issues/911)) ([b6c275c](https://github.com/duriantaco/skylos/commit/b6c275c44bf6b374d6899bf485207ceb1ae797f5))
+* **release:** wait for required CI before creating releases ([#909](https://github.com/duriantaco/skylos/issues/909)) ([cee7d68](https://github.com/duriantaco/skylos/commit/cee7d68a5e0001c1ef972d15722fd2465a921d47))
+* **typescript:** exempt test callbacks from length rule ([#914](https://github.com/duriantaco/skylos/issues/914)) ([73d5c42](https://github.com/duriantaco/skylos/commit/73d5c42e7df0b32045aaffae7ef976293ef8d399))
+* **upload:** print why the gate failed and send the checks that ran ([#912](https://github.com/duriantaco/skylos/issues/912)) ([31fbc74](https://github.com/duriantaco/skylos/commit/31fbc7421772a5a866bc917f8609d61daacab93d))
+* **verify:** exclude known external TS imports from local proof ([#913](https://github.com/duriantaco/skylos/issues/913)) ([bb1ee5b](https://github.com/duriantaco/skylos/commit/bb1ee5b152c4491007c53707da00382b6939d626))
+
 ## [4.41.0](https://github.com/duriantaco/skylos/compare/v4.40.0...v4.41.0) (2026-09-28)
 
 
