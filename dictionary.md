@@ -629,7 +629,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
-| C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines |
+| C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
