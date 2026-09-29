@@ -3,6 +3,8 @@ from __future__ import annotations
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Query, QueryCursor
 
+from skylos.constants import get_non_library_dir_kind
+
 from .quality_signals import scan_quality_signals
 from .type_safety import _is_generated_file, scan_type_safety
 
@@ -62,6 +64,31 @@ _FUNC_PATTERN = """
 
 _AWAIT_PATTERN = "(await_expression) @await_expr"
 _CONDITION_PREVIEW_LIMIT = 120
+_TEST_CALLBACK_CALLS = frozenset(
+    {"test", "it", "describe", "suite", "specify", "context"}
+)
+_TEST_CALLBACK_MODIFIERS = frozenset(
+    {
+        "only",
+        "skip",
+        "todo",
+        "concurrent",
+        "serial",
+        "sequential",
+        "failing",
+        "each",
+        "describe",
+    }
+)
+_TEST_FUNCTION_NODES = frozenset(
+    {
+        "arrow_function",
+        "function",
+        "function_expression",
+        "function_declaration",
+        "method_definition",
+    }
+)
 
 
 def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
@@ -131,6 +158,110 @@ def _param_count(func_node) -> int:
     return count
 
 
+def _is_test_callback_call(callee, source: bytes) -> bool:
+    """Recognize a test DSL call, including common modifiers and `.each` calls."""
+    if callee.type == "call_expression":
+        callee = callee.child_by_field_name("function")
+        if callee is None or callee.type != "member_expression":
+            return False
+        property_node = callee.child_by_field_name("property")
+        if property_node is None or _get_text(source, property_node) != "each":
+            return False
+
+    modifiers: list[str] = []
+    while callee is not None and callee.type == "member_expression":
+        property_node = callee.child_by_field_name("property")
+        if property_node is None:
+            return False
+        modifier = _get_text(source, property_node)
+        if modifier not in _TEST_CALLBACK_MODIFIERS:
+            return False
+        modifiers.append(modifier)
+        callee = callee.child_by_field_name("object")
+
+    if callee is None or callee.type != "identifier":
+        return False
+    root = _get_text(source, callee)
+    if "describe" in modifiers and (
+        root != "test"
+        or modifiers.count("describe") != 1
+        or modifiers[-1] != "describe"
+    ):
+        return False
+    return root in _TEST_CALLBACK_CALLS
+
+
+def _is_nested_subtest_call(callee, func_node, source: bytes) -> bool:
+    """Match `t.test(...)` only when `t` is the enclosing test's context."""
+    if callee.type != "member_expression":
+        return False
+    obj = callee.child_by_field_name("object")
+    prop = callee.child_by_field_name("property")
+    if (
+        obj is None
+        or obj.type != "identifier"
+        or prop is None
+        or _get_text(source, prop) != "test"
+    ):
+        return False
+
+    enclosing = func_node.parent
+    while enclosing is not None and enclosing.type not in _TEST_FUNCTION_NODES:
+        enclosing = enclosing.parent
+    if enclosing is None or enclosing.type != "arrow_function":
+        return False
+
+    param = enclosing.child_by_field_name("parameter")
+    if param is None:
+        params = enclosing.child_by_field_name("parameters")
+        if params is None or not params.named_children:
+            return False
+        param = params.named_children[0]
+        if param.type != "identifier":
+            param = param.child_by_field_name("pattern")
+    return (
+        param is not None
+        and param.type == "identifier"
+        and _get_text(source, param) == _get_text(source, obj)
+        and _is_test_callback(enclosing, source)
+    )
+
+
+def _is_test_callback(func_node, source: bytes) -> bool:
+    """Limit the length exemption to a test or suite's direct callback."""
+    arguments = func_node.parent
+    if arguments is None or arguments.type != "arguments":
+        return False
+    call = arguments.parent
+    if call is None or call.type != "call_expression":
+        return False
+    args = arguments.named_children
+    callback_index = next(
+        (index for index, argument in enumerate(args) if argument.id == func_node.id),
+        -1,
+    )
+    if callback_index < 0:
+        return False
+    if len(args) == 1:
+        if callback_index != 0:
+            return False
+    elif (
+        args[0].type not in {"string", "template_string"}
+        or callback_index not in (1, 2)
+        or len(args) - callback_index not in (1, 2)
+        or (
+            len(args) - callback_index == 2
+            and args[-1].type in {"arrow_function", "function_expression"}
+        )
+    ):
+        return False
+    callee = call.child_by_field_name("function")
+    return callee is not None and (
+        _is_test_callback_call(callee, source)
+        or _is_nested_subtest_call(callee, func_node, source)
+    )
+
+
 def scan_quality(
     root_node,
     source: bytes,
@@ -148,6 +279,7 @@ def scan_quality(
         return []
 
     func_nodes = _get_func_nodes(root_node, lang)
+    is_test_file = get_non_library_dir_kind(file_path) == "test"
 
     for func_node in func_nodes:
         line: int = func_node.start_point[0] + 1
@@ -184,7 +316,9 @@ def scan_quality(
             )
 
         func_length: int = func_node.end_point[0] - func_node.start_point[0] + 1
-        if func_length > max_length:
+        if func_length > max_length and not (
+            is_test_file and _is_test_callback(func_node, source)
+        ):
             findings.append(
                 {
                     "rule_id": "SKY-C304",
