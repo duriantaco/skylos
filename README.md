@@ -283,6 +283,7 @@ facts through `skylos.preflight.run_preflight(...)`.
 | Runtime agent behavior test | `skylos agent init && skylos agent test --allow-contract-endpoint` | Checks final responses, tool selection, explicit refusals, and source IDs against a versioned contract | [Agent Behavior Testing](./docs/agent-behavior-testing.md) |
 | Verification-backed remediation | `skylos agent remediate .` | Scans and fixes supported findings, then re-scans them and records proof-test metadata when available | [AI features](https://docs.skylos.dev/ai-features) |
 | Agent-loop hooks | `skylos agent install-hooks [--codex\|--cursor]` | Verifies every agent edit, blocks secret reads and hallucinated package installs, and holds "done" while new issues are open | [Agent-loop hooks](./docs/agent-hooks.md) |
+| Project standards for agents | `skylos agent install-standards --enforce SKY-L002` | Gives Codex, Claude Code, and Cursor a project skill and selects measurable quality rules for hook and CI checks | [Project standards](./docs/agent-standards.md) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires `SKYLOS_API_KEY`; `skylos verify` and agent-loop hooks need no key | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps recognized LLM calls, agent tools, prompt sites, and input sources in Python and TypeScript/JavaScript | [Agent verification](./docs/agent-verification.md) |
 | Pre-deployment agent verification | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
@@ -344,6 +345,30 @@ Hooks fail open, log to `.skylos/hook.log`, and merge with your existing hooks.
 `--uninstall` removes only the Skylos entries. See
 [Agent-loop hooks](./docs/agent-hooks.md) for the contract, latency, and
 limits.
+
+## Give Coding Agents Project Standards
+
+Create `.skylos/standards.md` with the guidance you want agents to follow:
+
+```markdown
+# Coding standards
+
+- Keep functions focused and handle exceptions explicitly.
+- Add a focused test when changing behavior.
+```
+
+Then install the project skill and choose any Skylos quality rules to enforce:
+
+```bash
+skylos agent install-standards --enforce SKY-L002
+skylos agent install-hooks --codex   # use --cursor for Cursor, or omit for Claude Code
+skylos agent check-standards .       # run this project-wide check in CI
+```
+
+The installer writes `SKILL.md` files for Codex, Cursor, and Claude Code.
+Agent skills provide guidance; the hooks and project-wide check enforce the
+selected built-in quality rules. See [project standards](./docs/agent-standards.md)
+for the generated files, rule selection, and coverage limits.
 
 ## Verify AI Agents Before They Ship
 

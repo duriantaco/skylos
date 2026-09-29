@@ -3661,6 +3661,19 @@ def _build_agent_parser():
 
     add_install_hooks_parser(agent_sub)
 
+    from skylos.commands.install_standards_cmd import add_install_standards_parser
+
+    add_install_standards_parser(agent_sub)
+
+    p_check_standards = agent_sub.add_parser(
+        "check-standards",
+        help="Check selected project coding standards with Skylos",
+    )
+    p_check_standards.add_argument(
+        "path", nargs="?", default=".", help="Project directory (default: .)"
+    )
+    p_check_standards.add_argument("--format", choices=["text", "json"], default="text")
+
     from skylos.commands.warm_cache_cmd import add_warm_cache_parser
 
     add_warm_cache_parser(agent_sub)
@@ -3892,6 +3905,24 @@ def main() -> None:
             from skylos.commands.install_hooks_cmd import run_install_hooks_command
 
             sys.exit(run_install_hooks_command(agent_args))
+
+        if cmd == "install-standards":
+            from skylos.commands.install_standards_cmd import (
+                run_install_standards_command,
+            )
+
+            sys.exit(run_install_standards_command(agent_args))
+
+        if cmd == "check-standards":
+            from skylos.commands.check_standards_cmd import (
+                run_check_standards_command,
+            )
+
+            sys.exit(
+                run_check_standards_command(
+                    agent_args.path, output_format=agent_args.format
+                )
+            )
 
         if cmd == "warm-cache":
             from skylos.commands.warm_cache_cmd import run_warm_cache_command

@@ -137,6 +137,16 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
+        "name": "skylos agent install-standards [--enforce RULE_ID]",
+        "desc": "Install project coding standards as native agent skills",
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos agent check-standards [path]",
+        "desc": "Check selected project coding standards with Skylos",
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos agent install-hooks [--claude|--codex|--cursor]",
         "desc": "Install agent-loop hooks: verify every edit, block secret reads and hallucinated installs",
         "details": [

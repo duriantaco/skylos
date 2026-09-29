@@ -39,6 +39,7 @@ def verify_change_path(
     project_context: bool = False,
     include_dependency_hallucinations: bool = True,
     include_security_findings: bool = True,
+    include_quality_rule_ids: frozenset[str] = frozenset(),
     contract_path: str | Path | None = None,
     contract_enabled: bool = True,
     analyze_func=None,
@@ -102,6 +103,7 @@ def verify_change_path(
         scan_target=scan_target,
         contract=contract,
         include_security_findings=include_security_findings,
+        include_quality_rule_ids=include_quality_rule_ids,
         analyzer_owned=analyzer_owned,
     )
     _rebase_display_paths(response, root)

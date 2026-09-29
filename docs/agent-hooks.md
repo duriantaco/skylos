@@ -139,8 +139,14 @@ traversal. The hook does not block on that. It blocks only on:
    references (SKY-D222/224/225, SKY-L012/L023), and violations of your own
    AI contract (SKY-A105).
 
-Everything else on the changed lines is a **note**: Claude Code gets it as
-non-blocking `additionalContext`; it is never re-raised at `stop`.
+Other findings on the changed lines are **notes**: Claude Code gets them as
+non-blocking `additionalContext`; they are not re-raised at `stop`.
+
+You can opt into blocking specific built-in quality rules with
+`skylos agent install-standards --enforce RULE_ID`. Selected quality findings
+then block on agent-added lines and remain open at `stop` until fixed. The
+project-wide `skylos agent check-standards .` command checks the same selected
+rules across the whole project for CI. See [project standards](./agent-standards.md).
 
 For source files (Python, TS/JS, Java, Go, PHP, Rust, Dart, C#, Kotlin, C++,
 shell), Skylos runs the full `verify` check set. For config files (`.env`,
@@ -256,12 +262,14 @@ References:
 
 ## Failure behaviour and logs
 
-Every hook fails open. If the JSON input is malformed, the event is unknown,
-the analyzer crashes or a lock is busy, Skylos allows the action and logs the
-error. It never blocks the agent because Skylos itself broke. Hook timeouts
-set by the installer are 15 s (`pre-read`), 30 s (`pre-bash`), 120 s
-(`post-edit`) and 180 s (`stop`). All three agents treat a timeout as a
-non-blocking failure.
+Runtime hook failures fail open. If the JSON input is malformed, the event is
+unknown, the analyzer crashes or a lock is busy, Skylos allows the action and
+logs the error. An explicitly configured but invalid agent standards policy
+gives Claude Code and Codex a repair message at `post-edit` and reports the
+problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
+timeouts set by the installer are 15 s (`pre-read`), 30 s
+(`pre-bash`), 120 s (`post-edit`) and 180 s (`stop`). All three agents treat a
+timeout as a non-blocking failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
 event, client, outcome, counts and duration. The log never holds file
