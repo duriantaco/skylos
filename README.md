@@ -346,6 +346,30 @@ Hooks fail open, log to `.skylos/hook.log`, and merge with your existing hooks.
 [Agent-loop hooks](./docs/agent-hooks.md) for the contract, latency, and
 limits.
 
+## Give Coding Agents Project Standards
+
+Create `.skylos/standards.md` with the guidance you want agents to follow:
+
+```markdown
+# Coding standards
+
+- Keep functions focused and handle exceptions explicitly.
+- Add a focused test when changing behavior.
+```
+
+Then install the project skill and choose any Skylos quality rules to enforce:
+
+```bash
+skylos agent install-standards --enforce SKY-L002
+skylos agent install-hooks --codex   # use --cursor for Cursor, or omit for Claude Code
+skylos agent check-standards .       # run this project-wide check in CI
+```
+
+The installer writes `SKILL.md` files for Codex, Cursor, and Claude Code.
+Agent skills provide guidance; the hooks and project-wide check enforce the
+selected built-in quality rules. See [project standards](./docs/agent-standards.md)
+for the generated files, rule selection, and coverage limits.
+
 ## Verify AI Agents Before They Ship
 
 Runtime guardrails are the WAF; Skylos is the SAST. `skylos discover` scans
