@@ -125,3 +125,11 @@ only new findings.
 - `skylos clean`: interactively remove or comment dead code.
 - `skylos cache stats|clear`: manage cache data.
 - `skylos doctor`: installation health check.
+- `skylos verify-verdict BUNDLE [--commit SHA] [--repository HOST/OWNER/REPO]
+  [--project ID] [--workspace ID] [--require-repository-verified]
+  [--max-age 7d] [--require-passed [--allow-override]] [--keys PATH_OR_URL]
+  [--json]`: verify a Skylos Cloud signed check verdict (Ed25519 DSSE,
+  in-toto/SLSA VSA) for deploy gates. Exit 0 verified, 1 not passing under
+  `--require-passed` (FAILED, overridden without `--allow-override`, or gate
+  disabled), 2 not verified or an expectation mismatch. Needs
+  `skylos[verdict]`. Details: `docs/verify-verdict.md`.

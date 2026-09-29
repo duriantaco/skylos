@@ -67,6 +67,73 @@ def _check_managed_gitlab_delivery(response: dict) -> None:
         raise SystemExit(2)
 
 
+def _verify_security_findings(result: dict, args, console, *, project_root, machine_output: bool) -> None:
+    """Plan 7.3: attach AI evidence levels to high-severity security findings.
+
+    Display only. A missing key or a failed provider leaves findings unchecked;
+    unchecked and unverified findings still block exactly as before.
+    """
+    import os
+    from pathlib import Path
+
+    from skylos.llm.finding_verification import VerificationSettings, verify_security_findings
+    from skylos.llm.runtime import resolve_llm_runtime
+
+    def note(message: str) -> None:
+        if not machine_output:
+            console.print(message)
+
+    runs = int(getattr(args, "verify_runs", 3) or 3)
+    max_findings = int(getattr(args, "verify_max", 20) or 0)
+    if not 1 <= runs <= 9 or max_findings < 0:
+        note("[warn]AI verification skipped: --verify-runs must be 1-9 and --verify-max 0 or more.[/warn]")
+        return
+    model = getattr(args, "verify_model", None) or os.getenv("SKYLOS_VERIFY_MODEL") or "gpt-4.1"
+    provider, api_key, base_url, local = resolve_llm_runtime(
+        model=model,
+        provider_override=getattr(args, "verify_provider", None),
+        base_url_override=None,
+        console=None,
+        allow_prompt=False,
+    )
+    if not api_key and not local:
+        note(
+            f"[warn]AI verification skipped: no API key for {provider}. "
+            "Findings stay unchecked and keep blocking as before.[/warn]"
+        )
+        return
+
+    root = Path(project_root)
+
+    def read_source(path: str) -> str:
+        file_path = Path(path)
+        return (file_path if file_path.is_absolute() else root / file_path).read_text(encoding="utf-8")
+
+    findings = [item for item in (result.get("danger") or []) if isinstance(item, dict)]
+    try:
+        counts = verify_security_findings(
+            findings,
+            model=model,
+            api_key=api_key,
+            provider=provider,
+            base_url=base_url,
+            settings=VerificationSettings(runs=runs, max_findings=max_findings),
+            read_source=read_source,
+        )
+    except Exception as exc:  # Never let the optional check break a scan.
+        note(f"[warn]AI verification failed: {type(exc).__name__}. Findings are unchanged.[/warn]")
+        return
+    result["security_verification"] = {"model": model, "runs": runs, **counts}
+    checked = sum(counts[key] for key in ("traced", "ai_verified", "refuted", "unverified"))
+    if checked or counts.get("not_checked"):
+        note(
+            f"[muted]AI check ({model}, {runs} runs):[/muted] "
+            f"{counts['traced']} traced, {counts['ai_verified']} AI-verified, "
+            f"{counts['refuted']} likely false positive, {counts['unverified']} unverified, "
+            f"{counts['not_checked']} not checked. Blocking is unchanged."
+        )
+
+
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     """
     Run the main scan command after top-level CLI dispatch.
@@ -671,6 +738,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 )
             else:
                 result = filter_new_findings(result, baseline)
+
+        if getattr(args, "verify_security", False):
+            _verify_security_findings(
+                result, args, console, project_root=project_root, machine_output=machine_output
+            )
 
         json_result = dict(result)
         json_result.pop("provenance_status", None)

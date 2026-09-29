@@ -106,12 +106,14 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 llm = ["litellm>=1.84.0,<1.85.0", "aiohttp>=3.14.0"]
 lint = ["ruff>=0.15.0"]
 test = ["pytest>=9.0.2", "packaging>=24.2"]
+verdict = ["cryptography>=42"]
 all = [
     "pytest>=9.0.2",
     "packaging>=24.2",
     "litellm>=1.84.0,<1.85.0",
     "aiohttp>=3.14.0",
     "ruff>=0.15.0",
+    "cryptography>=42",
 ]
 
 [project.scripts]

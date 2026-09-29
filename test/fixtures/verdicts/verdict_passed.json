@@ -1,0 +1,14 @@
+{
+  "schema": "skylos.verdict-bundle/v1",
+  "envelope": {
+    "payloadType": "application/vnd.in-toto+json",
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoiZ2l0K2h0dHBzOi8vZ2l0aHViLmNvbS9leGFtcGxlLW9yZy9leGFtcGxlLWFwaUAzZjJhOWMxZTViN2Q0YTZjOGUwZjFhMmIzYzRkNWU2ZjdhOGI5YzBkIiwiZGlnZXN0Ijp7ImdpdENvbW1pdCI6IjNmMmE5YzFlNWI3ZDRhNmM4ZTBmMWEyYjNjNGQ1ZTZmN2E4YjljMGQifX1dLCJwcmVkaWNhdGVUeXBlIjoiaHR0cHM6Ly9zbHNhLmRldi92ZXJpZmljYXRpb25fc3VtbWFyeS92MSIsInByZWRpY2F0ZSI6eyJ2ZXJpZmllciI6eyJpZCI6Imh0dHBzOi8vc2t5bG9zLmRldi92ZXJpZmllcnMvcHItY2hlY2siLCJ2ZXJzaW9uIjp7InNreWxvcy1jbG91ZCI6ImZpeHR1cmUifX0sInRpbWVWZXJpZmllZCI6IjIwMjYtMDktMjlUMDA6MDA6MDEuMDAwWiIsInJlc291cmNlVXJpIjoiZ2l0K2h0dHBzOi8vZ2l0aHViLmNvbS9leGFtcGxlLW9yZy9leGFtcGxlLWFwaUAzZjJhOWMxZTViN2Q0YTZjOGUwZjFhMmIzYzRkNWU2ZjdhOGI5YzBkIiwicG9saWN5Ijp7InVyaSI6Imh0dHBzOi8vc2t5bG9zLmRldi9kYXNoYm9hcmQvcG9saWN5P3ZlcnNpb249MzMzMzMzMzMtMzMzMy0zMzMzLTMzMzMtMzMzMzMzMzMzMzMzIiwiZGlnZXN0Ijp7InNoYTI1NiI6ImJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIifX0sImlucHV0QXR0ZXN0YXRpb25zIjpbeyJ1cmkiOiJodHRwczovL3NreWxvcy5kZXYvYXBpL3ZlcmRpY3RzLzQ0NDQ0NDQ0LTQ0NDQtNDQ0NC00NDQ0LTQ0NDQ0NDQ0NDQ0NCIsImRpZ2VzdCI6eyJzaGEyNTYiOiI3Zjg2ZTAwNDNlYjg1ZTE1MGVlOTEzY2YyNmUzNjk0M2EzMjI0NjUxMjhiMjdhY2Q3NjE2MzlkYWM3NGY5MGI4In19XSwidmVyaWZpY2F0aW9uUmVzdWx0IjoiUEFTU0VEIiwidmVyaWZpZWRMZXZlbHMiOlsiU0tZTE9TX1BPTElDWV9QQVNTRUQiXX19",
+    "signatures": [
+      {
+        "keyid": "skylos-verdict-a0065c999b24100a",
+        "sig": "brsZ/ALSRcJCOVoCZPm+vQUaXSNBmkRAic6yA1zq4lgIC30rJiwpxPtet2LkuHJYRehjylpUQ7h7u9jaXCaaAg=="
+      }
+    ]
+  },
+  "summary_json": "{\"agents\":{\"agent_policy_outcome\":\"pass\",\"complete\":true,\"files_by_agent\":{\"claude-code\":2},\"source\":\"github\"},\"branch\":\"feat/agent-change\",\"commit\":\"3f2a9c1e5b7d4a6c8e0f1a2b3c4d5e6f7a8b9c0d\",\"findings\":{\"by_severity\":{},\"listed\":[],\"listed_truncated\":false,\"new_unsuppressed\":0},\"gate_overridden\":false,\"policy\":{\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"receipt_hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"version_id\":\"33333333-3333-3333-3333-333333333333\",\"version_state\":\"matched\"},\"project\":{\"id\":\"11111111-1111-1111-1111-111111111111\",\"name\":\"example-api\"},\"pull_request\":42,\"repository\":\"github.com/example-org/example-api\",\"scan\":{\"analyzer\":{\"tool\":\"skylos\",\"version\":\"4.42.0\"},\"id\":\"22222222-2222-2222-2222-222222222222\",\"uploaded_at\":\"2026-09-29T00:00:00.000Z\"},\"schema\":\"skylos.check-summary/v1\",\"trigger\":\"upload\",\"upload_identity\":{\"actor\":\"dev-bot\",\"api_key_label\":null,\"repository_verified\":true,\"run_id\":\"123\",\"type\":\"github_oidc\",\"workflow\":\"Skylos\"},\"verdict\":\"PASSED\"}"
+}

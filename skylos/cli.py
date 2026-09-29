@@ -2280,6 +2280,12 @@ def _run_verify_command(argv):
     return run_verify_command(argv)
 
 
+def _run_verify_verdict_command(argv):
+    from skylos.commands.verify_verdict_cmd import run_verify_verdict_command
+
+    return run_verify_verdict_command(argv)
+
+
 def _run_hook_command(argv):
     from skylos.commands.hook_cmd import run_hook_command
 

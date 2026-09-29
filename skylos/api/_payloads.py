@@ -158,6 +158,34 @@ def _truncate_upload_text(value: Any, max_len: int) -> str | None:
     return text if len(text) <= max_len else text[:max_len] + "..."
 
 
+_VERIFICATION_LEVELS = {"traced", "ai_verified", "refuted", "unverified"}
+
+
+def _compact_verification(value: Any) -> dict[str, Any] | None:
+    """The evidence level record from `skylos.llm.finding_verification`, bounded."""
+    if not isinstance(value, dict) or value.get("level") not in _VERIFICATION_LEVELS:
+        return None
+    votes = value.get("votes") if isinstance(value.get("votes"), dict) else {}
+    compact: dict[str, Any] = {
+        "level": value["level"],
+        "runs": _int_upload_value(value.get("runs")),
+        "votes": {
+            key: _int_upload_value(votes.get(key))
+            for key in ("supported", "refuted", "uncertain")
+        },
+    }
+    if value.get("disputed") is True:
+        compact["disputed"] = True
+    for key, limit in (("reason", 500), ("proof_kind", 64), ("model", 128)):
+        text = _truncate_upload_text(value.get(key), limit)
+        if text:
+            compact[key] = text
+    lines = value.get("proof_lines")
+    if isinstance(lines, list):
+        compact["proof_lines"] = [line for line in lines if isinstance(line, int) and line > 0][:20]
+    return compact
+
+
 def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict):
         return None
@@ -191,6 +219,9 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "review_decision",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
+    verification = _compact_verification(metadata.get("verification"))
+    if verification:
+        compact["verification"] = verification
     aliases = metadata.get("aliases")
     if isinstance(aliases, list):
         compact["aliases"] = aliases[:5]
