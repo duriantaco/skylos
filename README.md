@@ -123,11 +123,14 @@ the versioned JSON result.
 
 `skylos verify` schema version 2 returns `pass`, `fail`, or `incomplete`.
 `incomplete` means a requested proof could not be established, such as a
-third-party TS/JS import, computed namespace member, unsupported language-local
+missing local TS/JS import, computed namespace member, unsupported language-local
 API check, or parser surface that Skylos could not prove; it exits `2` unless
 `--no-fail` is set. The `coverage` object lists detected languages, expected
 checks, language support, missing checks, completed/skipped checks, checked
-references, and deterministic skip reasons.
+references, and deterministic skip reasons. Declared third-party dependencies
+and recognized Node built-ins are outside the local TS/JS API proof; their
+references are counted in `out_of_scope_references` and do not make a clean
+verification incomplete. Unknown bare imports still require review.
 
 Deterministic local/workspace API verification currently covers Python,
 TypeScript/JavaScript, Go, and Java without executing target code. PHP, Rust,

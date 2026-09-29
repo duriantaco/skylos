@@ -312,6 +312,29 @@ def test_run_verify_command_uses_distinct_incomplete_exit_code(capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "incomplete"
 
 
+def test_run_verify_command_passes_declared_external_typescript_imports(
+    tmp_path, monkeypatch, capsys
+):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"commander": "^14.0.0"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "app.ts").write_text(
+        'import { Command } from "commander";\n'
+        'import { readFile } from "node:fs";\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_verify_command([".", "--format", "short"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == (
+        "PASS: No AI-code issues found; "
+        "2 external references outside local API proof"
+    )
+
+
 def test_run_verify_command_reads_stdin_manifest(monkeypatch, capsys):
     seen = {}
 

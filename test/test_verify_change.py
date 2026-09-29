@@ -803,6 +803,32 @@ def test_verify_change_path_is_incomplete_for_unresolved_typescript_dependency(
     assert check["reasons"] == [{"code": "external_or_unresolved_module", "count": 1}]
 
 
+def test_verify_change_path_passes_with_declared_typescript_dependencies(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"dependencies": {"commander": "^14.0.0"}}),
+        encoding="utf-8",
+    )
+    (repo / "app.ts").write_text(
+        'import { Command } from "commander";\n'
+        'import { readFile } from "node:fs";\n',
+        encoding="utf-8",
+    )
+
+    payload = verify_change_path(repo)
+
+    assert payload["status"] == "pass"
+    assert payload["findings"] == []
+    assert payload["summary"] == (
+        "No AI-code issues found; 2 external references outside local API proof"
+    )
+    check = payload["coverage"]["checks"][0]
+    assert check["outcome"] == "pass"
+    assert check["references"] == 0
+    assert check["out_of_scope_references"] == 2
+
+
 def test_verify_change_file_uses_declared_monorepo_root(tmp_path):
     repo = tmp_path / "repo"
     app = repo / "apps" / "web"

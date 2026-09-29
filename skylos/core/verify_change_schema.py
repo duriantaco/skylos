@@ -511,6 +511,13 @@ def _summary(
                     f"{incomplete_checks} required checks did not complete"
                 )
             return "Verification incomplete: required checks did not complete"
+        out_of_scope = _out_of_scope_reference_count(coverage)
+        if out_of_scope:
+            noun = "reference" if out_of_scope == 1 else "references"
+            return (
+                "No AI-code issues found; "
+                f"{out_of_scope} external {noun} outside local API proof"
+            )
         return "No AI-code issues found"
     if count == 1:
         issue_word = "issue"
@@ -693,6 +700,19 @@ def _skipped_reference_count(coverage: dict[str, Any] | None) -> int:
         if isinstance(check, dict):
             total += max(0, _optional_int(check.get("skipped_references")) or 0)
     return total
+
+
+def _out_of_scope_reference_count(coverage: dict[str, Any] | None) -> int:
+    if not isinstance(coverage, dict):
+        return 0
+    checks = coverage.get("checks")
+    if not isinstance(checks, list):
+        return 0
+    return sum(
+        max(0, _optional_int(check.get("out_of_scope_references")) or 0)
+        for check in checks
+        if isinstance(check, dict)
+    )
 
 
 def _incomplete_check_count(coverage: dict[str, Any] | None) -> int:

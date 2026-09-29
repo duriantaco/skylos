@@ -125,6 +125,12 @@ The local/workspace API suite currently has deterministic proof for:
 | Go | `go_workspace_api_surface` | Exported selectors from local modules, workspaces, and local replacements |
 | Java | `java_workspace_api_surface` | Explicitly attributable local types and statically knowable members |
 
+For TypeScript and JavaScript, imports from declared third-party dependencies
+and recognized Node built-ins are outside this local API check. The check
+reports their count in `out_of_scope_references` and can pass without proving
+those external APIs. A missing relative import, unresolved workspace package,
+local path alias, or unknown bare import still makes the check incomplete.
+
 PHP, Rust, Dart, C#, Kotlin, and Shell retain their existing static-analysis
 coverage; C++ currently has only narrow file-local dead-code detection.
 Deterministic local/workspace API proof is not implemented for any of those
