@@ -420,22 +420,36 @@ class _SSRFFlowChecker(TaintVisitor):
 
     def __init__(self, file_path, findings, sanitizers=None, tree=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
+        self.tree = tree
         self.http_names: set[str] = set()
         self.http_receiver_alias_stack: list[set[str]] = [set()]
-        self.untrusted_sources = UntrustedSourceIndex(tree)
+        self.untrusted_sources = UntrustedSourceIndex(tree, follow_local_calls=True)
         self.assigned_values: list[dict[str, ast.AST]] = [{}]
+        self.request_url_mutations: list[dict[str, list[ast.AST]]] = [{}]
+        self.parents = (
+            {
+                id(child): parent
+                for parent in ast.walk(tree)
+                for child in ast.iter_child_nodes(parent)
+            }
+            if tree is not None
+            else {}
+        )
         self.dispatched_functions = _dispatched_functions(tree)
 
     def _push(self):
         super()._push()
         self.http_receiver_alias_stack.append(set())
         self.assigned_values.append({})
+        self.request_url_mutations.append({})
 
     def _pop(self):
         if len(self.http_receiver_alias_stack) > 1:
             self.http_receiver_alias_stack.pop()
         if len(self.assigned_values) > 1:
             self.assigned_values.pop()
+        if len(self.request_url_mutations) > 1:
+            self.request_url_mutations.pop()
         super()._pop()
 
     def _resolve_url_expr(self, node: ast.AST) -> ast.AST:
@@ -446,11 +460,151 @@ class _SSRFFlowChecker(TaintVisitor):
                     return scope[node.id]
         return node
 
+    def _is_urllib_request_constructor(self, node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        name = _qualified_name_from_call(node)
+        if not name:
+            return False
+        return (
+            self.untrusted_sources.resolved_import(self._current_function(), name)
+            == "urllib.request.Request"
+        )
+
+    def _request_constructor_url(self, node: ast.AST) -> ast.AST | None:
+        if not self._is_urllib_request_constructor(node):
+            return None
+        if node.args:
+            return node.args[0]
+        for keyword in node.keywords:
+            if keyword.arg == "url":
+                return keyword.value
+        return None
+
+    def _request_root_name(self, name: str) -> str:
+        seen = set()
+        while name not in seen:
+            seen.add(name)
+            value = self._resolve_url_expr(ast.Name(id=name, ctx=ast.Load()))
+            if not isinstance(value, ast.Name):
+                break
+            name = value.id
+        return name
+
+    def _request_name_has_one_store(self, name: str) -> bool:
+        scope = self._current_function() or self.tree
+        return scope is not None and sum(
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Store)
+            for node in ast.walk(scope)
+        ) == 1
+
+    def _record_request_url_mutation(self, name: str, value: ast.AST) -> None:
+        # Preserve the concrete name as well as names that currently alias it.
+        # A later rebinding must not erase a mutation to the old Request object.
+        root = self._request_root_name(name)
+        names = {name, root}
+        names.update(
+            alias
+            for scope in self.assigned_values
+            for alias in scope
+            if self._request_root_name(alias) == root
+        )
+        for alias in names:
+            self.request_url_mutations[-1].setdefault(alias, []).append(value)
+
+    def _is_tracked_request_use(self, node: ast.Name) -> bool:
+        parent = self.parents.get(id(node))
+        if not isinstance(parent, ast.Attribute) or parent.value is not node:
+            return False
+        grandparent = self.parents.get(id(parent))
+        if parent.attr == "set_proxy":
+            return (
+                isinstance(grandparent, ast.Call)
+                and grandparent.func is parent
+                and bool(grandparent.args)
+            )
+        if parent.attr not in {"full_url", "host", "type", "selector"}:
+            return False
+        if isinstance(grandparent, ast.Assign):
+            return parent in grandparent.targets
+        if isinstance(grandparent, (ast.AnnAssign, ast.AugAssign)):
+            return grandparent.target is parent
+        return False
+
+    def _request_binding_is_stable(self, arg: ast.Name) -> bool:
+        """The local Request is only used at this sink or in tracked URL writes."""
+        scope = self._current_function() or self.tree
+        if scope is None:
+            return False
+        stores = 0
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Name) or node.id != arg.id:
+                continue
+            if isinstance(node.ctx, ast.Store):
+                stores += 1
+                continue
+            if node is arg:
+                continue
+            ancestor = self.parents.get(id(node))
+            while ancestor is not None and ancestor is not scope:
+                if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                    return False
+                ancestor = self.parents.get(id(ancestor))
+            if not isinstance(node.ctx, ast.Load) or not self._is_tracked_request_use(node):
+                return False
+        return stores == 1
+
+    def _urlopen_url_candidates(self, arg: ast.AST) -> list[ast.AST]:
+        if isinstance(arg, ast.Name):
+            root = self._request_root_name(arg.id)
+            mutations = list(
+                dict.fromkeys(
+                    expr
+                    for scope in self.request_url_mutations
+                    for name in dict.fromkeys((arg.id, root))
+                    for expr in scope.get(name, [])
+                )
+            )
+            if mutations:
+                if self._request_binding_is_stable(arg):
+                    url = self._request_constructor_url(self._resolve_url_expr(arg))
+                    if url is not None:
+                        return [*mutations, url]
+                return [*mutations, arg]
+            if self._request_binding_is_stable(arg):
+                url = self._request_constructor_url(self._resolve_url_expr(arg))
+                if url is not None:
+                    return [url]
+        else:
+            url = self._request_constructor_url(arg)
+            if url is not None:
+                return [url]
+        return [arg]
+
+    @staticmethod
+    def _urlopen_argument(node: ast.Call) -> ast.AST | None:
+        if node.args:
+            return node.args[0]
+        for keyword in node.keywords:
+            if keyword.arg == "url":
+                return keyword.value
+        return None
+
     def _record_assignment(self, targets, value) -> None:
         if value is None:
             return
         for target in targets:
             if isinstance(target, ast.Name):
+                existing = []
+                if isinstance(value, ast.Name):
+                    for scope in self.request_url_mutations:
+                        existing.extend(scope.get(value.id, []))
+                if existing:
+                    self.request_url_mutations[-1][target.id] = list(existing)
+                else:
+                    self.request_url_mutations[-1].pop(target.id, None)
                 self.assigned_values[-1][target.id] = value
 
     def _mark_http_receiver_alias(self, name: str) -> None:
@@ -512,14 +666,56 @@ class _SSRFFlowChecker(TaintVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node):
+        for target in node.targets:
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.attr in {"full_url", "host", "type", "selector"}
+            ):
+                self._record_request_url_mutation(target.value.id, node.value)
         self._track_http_receiver_aliases(node.targets, node.value)
         self._record_assignment(node.targets, node.value)
         super().visit_Assign(node)
 
     def visit_AnnAssign(self, node):
+        if (
+            isinstance(node.target, ast.Attribute)
+            and isinstance(node.target.value, ast.Name)
+            and node.target.attr in {"full_url", "host", "type", "selector"}
+            and node.value is not None
+        ):
+            self._record_request_url_mutation(node.target.value.id, node.value)
         self._track_http_receiver_aliases([node.target], node.value)
         self._record_assignment([node.target], node.value)
         super().visit_AnnAssign(node)
+
+    def visit_AugAssign(self, node):
+        target = node.target
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.attr in {"full_url", "host", "type", "selector"}
+        ):
+            root = self._request_root_name(target.value.id)
+            prior = [
+                expr
+                for scope in self.request_url_mutations
+                for expr in scope.get(root, [])
+            ]
+            constructor = self._request_constructor_url(
+                self._resolve_url_expr(ast.Name(id=root, ctx=ast.Load()))
+            )
+            prefix = _literal_url_prefix(constructor)[0] if constructor else ""
+            if not (
+                target.attr == "full_url"
+                and isinstance(node.op, ast.Add)
+                and not prior
+                and target.value.id == root
+                and self._request_name_has_one_store(root)
+                and _CONSTANT_HOST_PREFIX_RE.match(prefix)
+            ):
+                self._record_request_url_mutation(target.value.id, node.value)
+        self.generic_visit(node)
 
     def _is_likely_http_receiver(self, node: ast.Call) -> bool:
         name = _receiver_name(node)
@@ -598,6 +794,21 @@ class _SSRFFlowChecker(TaintVisitor):
     def visit_Call(self, node):
         qn = _qualified_name_from_call(node)
 
+        if (
+            qn == "setattr"
+            and len(node.args) >= 3
+            and isinstance(node.args[0], ast.Name)
+            and _constant_string(node.args[1]) in {"full_url", "host", "type", "selector"}
+        ):
+            self._record_request_url_mutation(node.args[0].id, node.args[2])
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "set_proxy"
+            and isinstance(node.func.value, ast.Name)
+            and node.args
+        ):
+            self._record_request_url_mutation(node.func.value.id, node.args[0])
+
         if qn and "." in qn:
             parts = qn.rsplit(".", 1)
             func = parts[1]
@@ -609,12 +820,21 @@ class _SSRFFlowChecker(TaintVisitor):
                     ) or _tainted_url_is_ssrf_relevant(self, url_arg):
                         self._append_finding(node, url_arg, qn)
 
-        if qn and qn.endswith(".urlopen") and node.args:
-            url_arg = node.args[0]
-            if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
-                self, url_arg
-            ):
-                self._append_finding(node, url_arg, qn)
+        if qn and (
+            qn.endswith(".urlopen")
+            or self.untrusted_sources.resolved_import(self._current_function(), qn)
+            == "urllib.request.urlopen"
+        ):
+            raw_arg = self._urlopen_argument(node)
+            if raw_arg is not None:
+                for url_arg in self._urlopen_url_candidates(raw_arg):
+                    if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
+                        self, url_arg
+                    ):
+                        before = len(self.findings)
+                        self._append_finding(node, url_arg, qn)
+                        if len(self.findings) > before:
+                            break
 
         self.generic_visit(node)
 
