@@ -354,6 +354,10 @@ def _merge_max_check_counts(
         "suppressed_findings",
     ):
         merged[key] = max(int(check.get(key) or 0) for check in checks)
+    if any("out_of_scope_references" in check for check in checks):
+        merged["out_of_scope_references"] = max(
+            int(check.get("out_of_scope_references") or 0) for check in checks
+        )
 
 
 def _merged_check_status(checks: list[dict[str, Any]]) -> str:
@@ -393,6 +397,10 @@ def _normalize_actual_check(check: dict[str, Any]) -> dict[str, Any]:
         "suppressed_findings",
     ):
         normalized[key] = max(0, int(normalized.get(key) or 0))
+    if "out_of_scope_references" in normalized:
+        normalized["out_of_scope_references"] = max(
+            0, int(normalized["out_of_scope_references"] or 0)
+        )
     if normalized["finding_count"]:
         normalized["outcome"] = "fail"
     elif normalized["skipped_references"] or (

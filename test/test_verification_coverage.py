@@ -218,6 +218,28 @@ def test_coverage_merges_duplicate_checks_conservatively():
     }
 
 
+def test_coverage_merges_external_reference_counts_in_duplicate_js_checks():
+    expectations = expected_ai_verification_checks([Path("app.ts")])
+    checks = [
+        {
+            "id": "typescript_local_api_surface",
+            "status": "completed",
+            "outcome": "pass",
+            "languages": ["typescript"],
+            "applicable_files": 1,
+            "skipped_references": 0,
+            "finding_count": 0,
+            "out_of_scope_references": count,
+        }
+        for count in (1, 3)
+    ]
+
+    coverage = build_ai_verification_coverage(checks, expected_checks=expectations)
+
+    assert coverage["state"] == "incomplete"
+    assert coverage["checks"][0]["out_of_scope_references"] == 3
+
+
 def test_coverage_preserves_duplicate_failure_and_marks_proof_incomplete():
     expectations = expected_ai_verification_checks([Path("app.java")])
     checks = [

@@ -10,11 +10,13 @@ from skylos.core.js_api_surface import (
     inspect_js_file_api_surface,
     inspect_js_package_api_surface,
 )
+from skylos.core.js_api_surface_utils import read_package_json
 from skylos.rules.ai_defect.js_api_references import (
     JsApiReference,
     extract_js_api_references,
 )
 from skylos.visitors.languages.typescript.analysis import resolve_ts_module
+from skylos.visitors.languages.typescript.resolve import MonorepoResolver
 
 
 JS_API_CHECK_ID = "typescript_local_api_surface"
@@ -29,6 +31,28 @@ JS_SOURCE_SUFFIXES = (
     ".cjs",
 )
 
+# Stable public Node modules. Prefix-only modules are listed separately so a
+# bare package named "test" or "sqlite" is not mistaken for a built-in.
+_NODE_BUILTINS = frozenset(
+    """assert assert/strict async_hooks buffer child_process cluster console
+    constants crypto dgram diagnostics_channel dns dns/promises domain events
+    fs fs/promises http http2 https inspector inspector/promises module net os
+    path path/posix path/win32 perf_hooks process punycode querystring readline
+    readline/promises repl stream stream/consumers stream/promises stream/web
+    string_decoder sys timers timers/promises tls trace_events tty url util
+    util/types v8 vm wasi worker_threads zlib""".split()
+)
+_NODE_PREFIX_ONLY_BUILTINS = frozenset(
+    {"ffi", "sea", "sqlite", "test", "test/reporters"}
+)
+_DEPENDENCY_SECTIONS = (
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+)
+_LOCAL_DEPENDENCY_PREFIXES = ("workspace:", "file:", "link:", "portal:", "patch:")
+
 
 @dataclass
 class _ScanState:
@@ -41,6 +65,7 @@ class _ScanState:
     references: int = 0
     verified: int = 0
     skipped: int = 0
+    out_of_scope: int = 0
 
     def skip(self, reason: str) -> None:
         self.reasons[reason] += 1
@@ -57,6 +82,8 @@ def scan_js_local_api_hallucinations(
     root = _safe_root(project_root)
     if root is None:
         return [], failed_js_api_check("invalid_project_root")
+    if monorepo_resolver is None:
+        monorepo_resolver = MonorepoResolver(str(root))
     js_files = _safe_js_files(root, files)
     if not js_files:
         return [], _not_applicable_check()
@@ -72,6 +99,7 @@ def scan_js_local_api_hallucinations(
         references=state.references,
         verified=state.verified,
         skipped=state.skipped,
+        out_of_scope=state.out_of_scope,
         findings=len(findings),
         reasons=state.reasons,
         languages=_languages(js_files),
@@ -92,7 +120,6 @@ def _scan_importer(
         state.references += extraction_skips
         state.skipped += extraction_skips
     for reference in extracted:
-        state.references += 1
         _evaluate_reference(root, importer, reference, state, monorepo_resolver)
 
 
@@ -103,18 +130,35 @@ def _evaluate_reference(
     state: _ScanState,
     monorepo_resolver: Any | None,
 ) -> None:
+    surface: dict[str, Any] | None = None
+    resolution_reason: str | None = None
+    if reference.source is not None and not str(reference.source).startswith("."):
+        surface, resolution_reason = _surface_for_reference(
+            root,
+            importer,
+            reference,
+            state.surface_cache,
+            state.package_surface_cache,
+            monorepo_resolver,
+        )
+        if resolution_reason == "external_module_out_of_scope":
+            state.out_of_scope += 1
+            return
+
+    state.references += 1
     reference_reason = _reference_skip_reason(reference)
     if reference_reason is not None:
         state.skip(reference_reason)
         return
-    surface, resolution_reason = _surface_for_reference(
-        root,
-        importer,
-        reference,
-        state.surface_cache,
-        state.package_surface_cache,
-        monorepo_resolver,
-    )
+    if surface is None and resolution_reason is None:
+        surface, resolution_reason = _surface_for_reference(
+            root,
+            importer,
+            reference,
+            state.surface_cache,
+            state.package_surface_cache,
+            monorepo_resolver,
+        )
     if surface is None:
         state.skip(resolution_reason or "unresolved_module")
         return
@@ -149,6 +193,7 @@ def failed_js_api_check(reason: str) -> dict[str, Any]:
         references=0,
         verified=0,
         skipped=1,
+        out_of_scope=0,
         findings=0,
         reasons=Counter({reason: 1}),
         languages=[],
@@ -189,11 +234,12 @@ def _surface_for_reference(
 
     resolved = resolve_ts_module(source, str(importer), monorepo_resolver)
     if resolved is None:
-        reason = (
-            "unresolved_local_module"
-            if source.startswith(".")
-            else "external_or_unresolved_module"
-        )
+        if source.startswith("."):
+            reason = "unresolved_local_module"
+        elif _is_known_external_source(root, importer, source, monorepo_resolver):
+            reason = "external_module_out_of_scope"
+        else:
+            reason = "external_or_unresolved_module"
         return None, reason
 
     cache_key = str(Path(resolved).resolve(strict=False))
@@ -207,6 +253,65 @@ def _surface_for_reference(
     if surface is None:
         return None, "unsafe_or_unsupported_module"
     return surface, None
+
+
+def _is_known_external_source(
+    root: Path,
+    importer: Path,
+    source: str,
+    monorepo_resolver: Any | None,
+) -> bool:
+    claims_local = getattr(monorepo_resolver, "claims_local_source", None)
+    if (
+        not callable(claims_local)
+        or claims_local(source, str(importer))
+        or _browser_remaps_source(root, importer, source)
+    ):
+        return False
+    if source.startswith("node:"):
+        return source[5:] in _NODE_BUILTINS | _NODE_PREFIX_ONLY_BUILTINS
+    package_name = _package_name_for_source(source)
+    if package_name is None:
+        return False
+
+    current = importer.parent
+    while True:
+        package = read_package_json(current / "package.json")
+        for section in _DEPENDENCY_SECTIONS:
+            dependencies = package.get(section)
+            if not isinstance(dependencies, dict) or package_name not in dependencies:
+                continue
+            spec = dependencies[package_name]
+            # A local protocol overrides a bare built-in name in bundler setups.
+            return (
+                isinstance(spec, str)
+                and bool(spec.strip())
+                and not spec.strip().startswith(_LOCAL_DEPENDENCY_PREFIXES)
+                and not spec.strip().startswith((".", "/"))
+            )
+        if current == root:
+            return source in _NODE_BUILTINS
+        current = current.parent
+
+
+def _browser_remaps_source(root: Path, importer: Path, source: str) -> bool:
+    current = importer.parent
+    while True:
+        browser = read_package_json(current / "package.json").get("browser")
+        if isinstance(browser, dict) and source in browser:
+            return True
+        if current == root:
+            return False
+        current = current.parent
+
+
+def _package_name_for_source(source: str) -> str | None:
+    if source.startswith((".", "#", "/")) or ":" in source:
+        return None
+    parts = source.split("/")
+    if source.startswith("@"):
+        return "/".join(parts[:2]) if len(parts) >= 2 and parts[1] else None
+    return parts[0] or None
 
 
 def _reference_resolution_mode(reference: JsApiReference) -> str:
@@ -290,6 +395,7 @@ def _coverage_check(
     references: int,
     verified: int,
     skipped: int,
+    out_of_scope: int,
     findings: int,
     reasons: Counter[str],
     languages: list[str],
@@ -312,6 +418,7 @@ def _coverage_check(
         "checked_references": verified + findings,
         "verified_references": verified,
         "skipped_references": skipped,
+        "out_of_scope_references": out_of_scope,
         "finding_count": findings,
         "reasons": [
             {"code": code, "count": count} for code, count in sorted(reasons.items())
@@ -332,6 +439,7 @@ def _not_applicable_check() -> dict[str, Any]:
         "checked_references": 0,
         "verified_references": 0,
         "skipped_references": 0,
+        "out_of_scope_references": 0,
         "finding_count": 0,
         "reasons": [{"code": "no_supported_files", "count": 1}],
     }

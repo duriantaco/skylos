@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import posixpath
+from fnmatch import fnmatchcase
 from functools import lru_cache
 from pathlib import Path
 
@@ -526,6 +527,37 @@ class MonorepoResolver:
             self._package_map = _build_package_map(self.project_root)
         return self._package_map
 
+    def claims_local_source(self, source: str, importer: str) -> bool:
+        """Whether workspace configuration claims an unresolved bare import."""
+        if source.startswith("#"):
+            return True
+
+        tsconfig_context = self._get_tsconfig_context(importer)
+        if tsconfig_context is not None:
+            base_url, paths, project_references = tsconfig_context
+            # A catchall path is a fallback search location, not evidence that
+            # every named dependency is workspace-owned.
+            if any(
+                pattern != "*" and fnmatchcase(source, pattern)
+                for pattern in paths
+            ):
+                return True
+            first_part = source.split("/", 1)[0]
+            if first_part and os.path.exists(os.path.join(base_url, first_part)):
+                return True
+            for reference_root in project_references:
+                package = _read_json_file(os.path.join(reference_root, "package.json"))
+                name = package.get("name")
+                if isinstance(name, str) and (
+                    source == name or source.startswith(f"{name}/")
+                ):
+                    return True
+
+        return any(
+            source == name or source.startswith(f"{name}/")
+            for name in self._ensure_package_map()
+        )
+
     def resolve(self, source: str, importer: str) -> str | None:
         if source.startswith("."):
             return None
@@ -574,6 +606,15 @@ class MonorepoResolver:
                     candidate = resolved_base + suffix
                     if os.path.isfile(candidate):
                         return candidate
+
+        for target_pattern in tsconfig_paths.get("*", []):
+            if target_pattern.count("*") != 1:
+                continue
+            resolved_base = os.path.normpath(target_pattern.replace("*", source, 1))
+            for suffix in ("", *_SOURCE_FILE_SUFFIXES):
+                candidate = resolved_base + suffix
+                if os.path.isfile(candidate):
+                    return candidate
 
         resolved_base = os.path.normpath(os.path.join(base_url, source))
         for suffix in ("", *_SOURCE_FILE_SUFFIXES):

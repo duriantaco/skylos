@@ -87,6 +87,9 @@ def test_js_api_hallucination_marks_external_and_computed_references_incomplete(
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"dependencies": {"react": "^18.0.0"}}), encoding="utf-8"
+    )
     (repo / "local.ts").write_text(
         "export function known() { return true; }\n",
         encoding="utf-8",
@@ -106,11 +109,139 @@ useState();
 
     assert findings == []
     assert coverage["outcome"] == "incomplete"
-    assert coverage["references"] == 2
-    assert coverage["skipped_references"] == 2
+    assert coverage["references"] == 1
+    assert coverage["skipped_references"] == 1
+    assert coverage["out_of_scope_references"] == 1
+    assert coverage["reasons"] == [{"code": "computed_namespace_member", "count": 1}]
+
+
+def test_js_api_hallucination_excludes_declared_dependencies_and_node_builtins(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {"commander": "^14.0.0"},
+                "devDependencies": {"yaml": "^2.0.0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / "app.ts").write_text(
+        """import { Command } from "commander";
+import { parse } from "yaml";
+import { readFile } from "node:fs/promises";
+import { join } from "path";
+""",
+        encoding="utf-8",
+    )
+
+    findings, coverage = _scan(repo)
+
+    assert findings == []
+    assert coverage["outcome"] == "pass"
+    assert coverage["references"] == 0
+    assert coverage["skipped_references"] == 0
+    assert coverage["verified_references"] == 0
+    assert coverage["out_of_scope_references"] == 4
+
+
+def test_js_api_hallucination_allows_declared_dependency_with_catchall_ts_path(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"dependencies": {"commander": "^14.0.0"}}),
+        encoding="utf-8",
+    )
+    (repo / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"paths": {"*": ["src/*"]}}}),
+        encoding="utf-8",
+    )
+    (repo / "src").mkdir()
+    (repo / "app.ts").write_text(
+        'import { Command } from "commander";\n', encoding="utf-8"
+    )
+
+    findings, coverage = _scan(repo)
+
+    assert findings == []
+    assert coverage["outcome"] == "pass"
+    assert coverage["out_of_scope_references"] == 1
+
+
+def test_js_api_hallucination_checks_local_catchall_ts_path_before_dependency(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    src = repo / "src"
+    src.mkdir(parents=True)
+    (repo / "package.json").write_text(
+        json.dumps({"dependencies": {"commander": "^14.0.0"}}),
+        encoding="utf-8",
+    )
+    (repo / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"paths": {"*": ["src/*"]}}}),
+        encoding="utf-8",
+    )
+    (src / "commander.ts").write_text("export const known = true;\n", encoding="utf-8")
+    (repo / "app.ts").write_text(
+        'import { missing } from "commander";\n', encoding="utf-8"
+    )
+
+    findings, coverage = _scan(repo)
+
+    assert {finding["simple_name"] for finding in findings} == {"missing"}
+    assert coverage["outcome"] == "fail"
+    assert coverage["out_of_scope_references"] == 0
+
+
+def test_js_api_hallucination_keeps_declared_but_unresolved_local_imports_incomplete(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {
+                    "commander": "^14.0.0",
+                    "yaml": "^2.0.0",
+                    "local-api": "workspace:*",
+                    "fs": "file:./missing",
+                },
+                "browser": {"yaml": "./missing-shim.ts"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"paths": {"commander": ["./missing.ts"]}}}),
+        encoding="utf-8",
+    )
+    (repo / "app.ts").write_text(
+        """import { Command } from "commander";
+import { parse } from "yaml";
+import { missing } from "local-api";
+import { absentBuiltin } from "fs";
+import { absent } from "./missing";
+""",
+        encoding="utf-8",
+    )
+
+    findings, coverage = _scan(repo)
+
+    assert findings == []
+    assert coverage["outcome"] == "incomplete"
+    assert coverage["references"] == 5
+    assert coverage["skipped_references"] == 5
+    assert coverage["out_of_scope_references"] == 0
     assert {reason["code"] for reason in coverage["reasons"]} == {
-        "computed_namespace_member",
         "external_or_unresolved_module",
+        "unresolved_local_module",
     }
 
 
