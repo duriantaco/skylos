@@ -229,10 +229,19 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     config = context.config
     config_file = context.config_file
     machine_output = _is_main_machine_output(args)
+    explicit_rich_upload = (
+        getattr(args, "_explicit_upload_requested", False)
+        and getattr(args, "format", "rich") == "rich"
+        and not machine_output
+    )
     selected_prerequisite_ids = _selected_rule_prerequisite_ids(args.select)
 
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
+    if explicit_rich_upload:
+        console.print(
+            "[muted]Analyzing locally; Cloud upload starts after the scan completes.[/muted]"
+        )
 
     with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
         pre_analysis = _run_pre_analysis_steps(args, project_root, console)
@@ -283,6 +292,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 include_review_context=include_review_context,
             )
 
+        def run_main_analysis_with_notice(progress_callback=None):
+            try:
+                return run_main_analysis(progress_callback)
+            except KeyboardInterrupt:
+                if explicit_rich_upload:
+                    console.print(
+                        "[warn]Scan interrupted before upload; no Cloud scan was created.[/warn]"
+                    )
+                    raise SystemExit(130) from None
+                raise
+
         quiet_analysis_output = (
             machine_output or getattr(args, "format", "rich") == "pretty"
         )
@@ -293,7 +313,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             analyzer_logger.setLevel(logging.WARNING)
             try:
                 with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
-                    result_json = run_main_analysis()
+                    result_json = run_main_analysis_with_notice()
             finally:
                 analyzer_logger.setLevel(analyzer_logger_level)
         else:
@@ -310,9 +330,13 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                         task, description=f"[{current}/{total}] {file.name}"
                     )
 
-                result_json = run_main_analysis(update_progress)
+                result_json = run_main_analysis_with_notice(update_progress)
 
         result = json.loads(result_json)
+        if explicit_rich_upload:
+            console.print(
+                "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
+            )
 
         if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
             try:
