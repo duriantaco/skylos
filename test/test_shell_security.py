@@ -328,6 +328,20 @@ rm -rf ~/.cache-to-reset
     assert "SKY-D329" in _rule_ids(findings)
 
 
+def test_apt_index_cleanup_is_not_broad_destructive_rm(tmp_path):
+    findings = _scan_shell_findings(
+        tmp_path,
+        "#!/usr/bin/env bash\napt-get update; rm -rf /var/lib/apt/lists/*\n",
+    )
+    assert "SKY-D329" not in _rule_ids(findings)
+
+    unsafe = _scan_shell_findings(
+        tmp_path,
+        "#!/usr/bin/env bash\nrm -rf /var/lib/apt/lists/* /etc\n",
+    )
+    assert "SKY-D329" in _rule_ids(unsafe)
+
+
 def test_curl_fixed_host_with_tainted_path_is_not_ssrf(tmp_path):
     findings = _scan_shell_findings(
         tmp_path,

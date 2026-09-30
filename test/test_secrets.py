@@ -51,22 +51,29 @@ def _unicode_escape(value):
     return "".join(f"\\u{ord(character):04x}" for character in value)
 
 
-def test_generated_flight_directory_id_is_not_a_generic_secret():
-    flight_id = "slam-auto-20260928T014434Z-3777d48be9bb"
-    source = json.dumps({"flightId": flight_id}, indent=2) + "\n"
-    rel_path = f"lidar-bievr/{flight_id}/flight-products.json"
+def test_generated_directory_id_is_not_a_generic_secret():
+    resource_id = "artifact-run-20260928T014434Z-3777d48be9bb"
+    source = json.dumps({"jobId": resource_id}, indent=2) + "\n"
+    rel_path = f"artifacts/{resource_id}/metadata.json"
 
     assert not list(scan_ctx(_ctx_from_source(source, rel=rel_path)))
 
 
-def test_flight_id_suppression_requires_directory_and_field_evidence():
-    flight_id = "slam-auto-20260928T014434Z-3777d48be9bb"
-    wrong_directory = "lidar-bievr/other-flight/flight-products.json"
-    token_field = f"lidar-bievr/{flight_id}/flight-products.json"
+def test_generated_id_suppression_requires_directory_and_nonsensitive_field():
+    resource_id = "artifact-run-20260928T014434Z-3777d48be9bb"
+    wrong_directory = "artifacts/other-job/metadata.json"
+    matching_directory = f"artifacts/{resource_id}/metadata.json"
 
     for source, rel_path in (
-        (json.dumps({"flightId": flight_id}, indent=2), wrong_directory),
-        (json.dumps({"apiToken": flight_id}, indent=2), token_field),
+        (json.dumps({"jobId": resource_id}, indent=2), wrong_directory),
+        (json.dumps({"apiToken": resource_id}, indent=2), matching_directory),
+        (json.dumps({"sessionId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"userSessionId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"tokenId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"secretId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"credentialId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"apiKeyId": resource_id}, indent=2), matching_directory),
+        (json.dumps({"valid": resource_id}, indent=2), matching_directory),
     ):
         findings = list(scan_ctx(_ctx_from_source(source + "\n", rel=rel_path)))
         assert any(finding["provider"] == "generic" for finding in findings)

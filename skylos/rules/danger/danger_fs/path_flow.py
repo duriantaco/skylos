@@ -257,13 +257,13 @@ def _archive_call_name(node):
     if node.func.attr not in {"extract", "extractall"}:
         return None
     if node.func.attr == "extract":
-        # ``extract`` is also a common method on feature extractors and other
-        # non-archive objects. Require an archive-shaped receiver before
-        # reporting the archive-specific write risk.
-        receiver = _expr_name(node.func.value)
-        if receiver is None or not any(
-            part in {"archive", "tar", "tarfile", "zip", "zipfile", "bundle"}
-            for part in receiver.lower().split(".")
+        # ZIP/TAR extraction supports these keyword names. An incompatible
+        # keyword proves this is another API (for example image features).
+        if any(
+            keyword.arg is not None
+            and keyword.arg
+            not in {"member", "path", "pwd", "set_attrs", "numeric_owner", "filter"}
+            for keyword in node.keywords
         ):
             return None
     return node.func.attr

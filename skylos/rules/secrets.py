@@ -236,10 +236,26 @@ BARE_GENERIC_VALUE = re.compile(
     r"(?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))"
 )
 _TIMESTAMPED_DIRECTORY_ID = re.compile(
-    r"^[A-Za-z][A-Za-z0-9-]*-\d{8}T\d{6}Z-[0-9a-f]{12}$"
+    r"^[A-Za-z][A-Za-z0-9_-]*[-_]\d{8}T\d{6}Z[-_][0-9a-f]{12,}$"
 )
-_JSON_FLIGHT_ID_LINE = re.compile(
-    r'^\s*"flightId"\s*:\s*"(?P<value>[^"\\]+)"\s*,?\s*$'
+_JSON_DIRECTORY_ID_LINE = re.compile(
+    r'^\s*"(?P<key>[A-Za-z_][A-Za-z0-9_]*)"\s*:\s*"(?P<value>[^"\\]+)"\s*,?\s*$'
+)
+_IDENTIFIER_FIELD_NAME = re.compile(r"(?:id|ID|[A-Za-z0-9]*Id|[A-Za-z0-9_]+_id)")
+_SENSITIVE_ID_FIELD_STEMS = (
+    "secret",
+    "token",
+    "credential",
+    "password",
+    "passwd",
+    "privatekey",
+    "apikey",
+    "session",
+    "auth",
+    "access",
+    "refresh",
+    "oauth",
+    "bearer",
 )
 
 # Public compatibility pattern used by MCP diff validation. Keep this linear:
@@ -734,16 +750,23 @@ def _bare_generic_candidates(
     return candidates
 
 
-def _is_generated_flight_directory_id(
+def _is_generated_directory_identifier(
     line_content: str, token: str, rel_path: str
 ) -> bool:
-    """A timestamped flight ID repeated in its directory name is not a key."""
+    """A generated, noncredential ID repeated in its directory is not a key."""
     if not _TIMESTAMPED_DIRECTORY_ID.fullmatch(token):
         return False
     if PurePosixPath(rel_path.replace("\\", "/")).parent.name != token:
         return False
-    match = _JSON_FLIGHT_ID_LINE.fullmatch(line_content.rstrip("\r\n"))
-    return match is not None and match.group("value") == token
+    match = _JSON_DIRECTORY_ID_LINE.fullmatch(line_content.rstrip("\r\n"))
+    if match is None or match.group("value") != token:
+        return False
+    key = match.group("key")
+    return bool(
+        _IDENTIFIER_FIELD_NAME.fullmatch(key)
+        and not re.fullmatch(_SECRET_KEY_NAME_RE, key)
+        and not any(stem in key.lower() for stem in _SENSITIVE_ID_FIELD_STEMS)
+    )
 
 
 def _find_generic_values(
@@ -4005,7 +4028,7 @@ def scan_ctx(
             if is_bare and _looks_like_identifier(clean_token):
                 continue
 
-            if is_bare and _is_generated_flight_directory_id(
+            if is_bare and _is_generated_directory_identifier(
                 line_content, clean_token, rel_path
             ):
                 continue

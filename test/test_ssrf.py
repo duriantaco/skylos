@@ -721,6 +721,67 @@ def test_cli_configured_url_through_helper_is_not_ssrf(tmp_path):
     assert _ssrf_findings(out) == []
 
 
+def test_direct_argv_url_is_operator_input(tmp_path):
+    code = (
+        "import sys, requests\n"
+        "def main():\n"
+        "    return requests.get(f'{sys.argv[1]}', timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_direct_argv.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_request_parser_arguments_are_not_cli_configuration(tmp_path):
+    code = (
+        "import requests\n"
+        "from flask_restful import reqparse\n"
+        "@app.get('/proxy')\n"
+        "def proxy():\n"
+        "    parser = reqparse.RequestParser()\n"
+        "    parser.add_argument('url')\n"
+        "    args = parser.parse_args()\n"
+        "    return requests.get(args['url'], timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_request_parser.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [8]
+
+
+def test_request_source_after_four_operator_sources_still_flags(tmp_path):
+    code = (
+        "import argparse, os, requests, sys\n"
+        "@app.get('/proxy')\n"
+        "def proxy(host):\n"
+        "    a = os.getenv('A')\n"
+        "    b = os.environ['B']\n"
+        "    c = sys.argv[1]\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    d = parser.parse_args().url\n"
+        "    return requests.get(f'{a}{b}{c}{d}{host}', timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_many_sources.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [9]
+
+
+def test_dispatch_source_survives_unrelated_cli_call(tmp_path):
+    code = (
+        "import argparse, requests\n"
+        "def fetch(url):\n"
+        "    return requests.get(url, timeout=3)\n"
+        "def other(url):\n"
+        "    return url\n"
+        "handlers = {'fetch': fetch, 'other': other}\n"
+        "def dispatch(command):\n"
+        "    return handlers[command['name']](command['url'])\n"
+        "def main():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--url')\n"
+        "    args = parser.parse_args()\n"
+        "    return fetch(args.url)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_dispatch_and_cli.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [3]
+
+
 def test_route_param_controls_host_flags(tmp_path):
     code = (
         "import requests\n"
