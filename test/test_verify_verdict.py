@@ -74,7 +74,8 @@ def _load(path: Path) -> dict:
 def _write(tmp_path: Path, name: str, value) -> str:
     path = tmp_path / name
     text = value if isinstance(value, str) else json.dumps(value)
-    path.write_text(text, encoding="utf-8")
+    # All callers pass literal filenames beneath pytest's tmp_path.
+    path.write_text(text, encoding="utf-8")  # skylos: ignore[SKY-D324]
     return str(path)
 
 

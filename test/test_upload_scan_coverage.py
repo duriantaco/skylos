@@ -215,7 +215,8 @@ def test_uploaded_analyzer_covers_standard_default_exclusions(
 ):
     from skylos.analyzer import analyze
 
-    (tmp_path / filename).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    # Parametrization supplies only literal basenames beneath pytest's tmp_path.
+    (tmp_path / filename).write_text(  # skylos: ignore[SKY-D215,SKY-D324]
         source, encoding="utf-8"
     )
     result = json.loads(
