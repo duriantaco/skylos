@@ -58,6 +58,11 @@ from skylos.api._snippets import (
     extract_snippet as extract_snippet,
 )
 from skylos.api._source_revision import source_revision_state
+from skylos.api._scan_coverage import (
+    architecture_advisory_summary,
+    quality_rule_classification,
+    scan_coverage_receipt,
+)
 from skylos.api._contract_check import (
     contract_check_url as _contract_check_url,
     newer_contract_notice as _newer_contract_notice,
@@ -918,6 +923,13 @@ def _prepare_report_upload(
         workspace_data=workspace_data,
         source_revision_state=source_revision_state(result_json, git_root, commit),
         scanned_checks=_scanned_checks(result_json),
+        scan_coverage=scan_coverage_receipt(
+            result_json,
+            analyzer_owned=analyzer_owned,
+            analysis_mode=analysis_mode,
+        ),
+        quality_rule_classification=quality_rule_classification(result_json),
+        architecture_advisories=architecture_advisory_summary(result_json),
     )
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
@@ -1233,6 +1245,9 @@ def _build_report_metadata(
     cli_version=None,
     source_revision_state=None,
     scanned_checks=None,
+    scan_coverage=None,
+    quality_rule_classification=None,
+    architecture_advisories=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1258,6 +1273,12 @@ def _build_report_metadata(
         isinstance(check, str) for check in scanned_checks
     ):
         metadata["scanned_checks"] = list(scanned_checks)
+    if isinstance(scan_coverage, dict):
+        metadata["scan_coverage"] = scan_coverage
+    if isinstance(quality_rule_classification, dict):
+        metadata["quality_rule_classification"] = quality_rule_classification
+    if isinstance(architecture_advisories, dict):
+        metadata["architecture_advisories"] = architecture_advisories
     if project_id:
         metadata["project_id"] = project_id
     if scan_bundle_id:

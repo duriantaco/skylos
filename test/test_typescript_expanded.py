@@ -559,6 +559,45 @@ class TestTSQualityRules:
         ids = {f["rule_id"] for f in quality}
         assert "SKY-Q301" in ids
 
+    def test_nested_callable_branches_belong_to_their_own_functions(self, tmp_path):
+        code = (
+            "function outer() {\n"
+            "  const a = function inner() { if (a) {} if (b) {} };\n"
+            "  const b = function* generator() { if (a) {} };\n"
+            "  function* declared() { if (a) {} }\n"
+            "  const c = () => { if (a) {} };\n"
+            "}\n"
+        )
+        path = tmp_path / "nested.ts"
+        _write(path, code)
+        quality = scan_typescript_file(str(path), config={"complexity": 1})[6]
+        complexity = [f for f in quality if f["rule_id"] == "SKY-Q301"]
+
+        assert {f["name"] for f in complexity} == {
+            "inner",
+            "generator",
+            "declared",
+            "anonymous",
+        }
+        assert len(complexity) == 4
+        assert not any(f["name"] == "outer" for f in complexity)
+
+    def test_nested_callable_nesting_is_not_charged_to_parent(self, tmp_path):
+        code = (
+            "function outer() {\n"
+            "  if (ready) {\n"
+            "    const inner = function worker() {\n"
+            "      if (a) { if (b) { if (c) { if (d) { if (e) { return 1; } } } } }\n"
+            "    };\n"
+            "  }\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        nesting = [f for f in quality if f["rule_id"] == "SKY-Q302"]
+
+        assert [f["name"] for f in nesting] == ["worker"]
+        assert "nesting depth 5" in nesting[0]["message"]
+
     def test_nesting_depth(self, tmp_path):
         code = (
             "function deep(x: number) {\n"
@@ -2278,11 +2317,13 @@ class TestNewQualityRules:
             "fetchAll([]);\n"
         )
         _, _, quality, _ = _scan_ts(tmp_path, code)
-        ids = {f["rule_id"] for f in quality}
-        assert "SKY-Q402" in ids
+        q402 = [f for f in quality if f["rule_id"] == "SKY-Q402"]
+        assert len(q402) == 1
+        assert q402[0]["severity"] == "LOW"
+        assert "only when iterations are independent" in q402[0]["message"]
 
-    def test_await_in_while_loop(self, tmp_path):
-        """SKY-Q402: await inside while loop."""
+    def test_await_in_while_loop_is_serial_polling(self, tmp_path):
+        """Polling depends on the previous await's result."""
         code = (
             "async function poll() {\n"
             "    let done = false;\n"
@@ -2294,7 +2335,47 @@ class TestNewQualityRules:
         )
         _, _, quality, _ = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in quality}
-        assert "SKY-Q402" in ids
+        assert "SKY-Q402" not in ids
+
+    @pytest.mark.parametrize(
+        "loop_code",
+        [
+            "for await (const chunk of stream) { await consume(chunk); }",
+            "for (let page = 0; page < 10; page++) { "
+            "const items = await getPage(page); if (items.length < 20) break; }",
+            "for (;;) { await poll(); if (done) break; }",
+            "for (const batch of batches) { await Promise.all(batch.map(send)); }",
+            "for (const item of items) { await delay(100); }",
+        ],
+    )
+    def test_await_in_clearly_serial_or_already_batched_loop(self, tmp_path, loop_code):
+        code = f"async function process() {{ {loop_code} }}\n"
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+
+        assert not any(f["rule_id"] == "SKY-Q402" for f in quality)
+
+    def test_await_in_loop_header_is_not_per_iteration_body_work(self, tmp_path):
+        code = (
+            "async function process() {\n"
+            "  for (let i = await first(); i < 10; i++) { use(i); }\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+
+        assert not any(f["rule_id"] == "SKY-Q402" for f in quality)
+
+    def test_await_in_nested_function_is_not_attributed_to_outer_loop(self, tmp_path):
+        code = (
+            "async function process(items: string[]) {\n"
+            "  for (const item of items) {\n"
+            "    const run = async function() { await send(item); };\n"
+            "    use(run);\n"
+            "  }\n"
+            "}\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+
+        assert not any(f["rule_id"] == "SKY-Q402" for f in quality)
 
     def test_await_outside_loop_safe(self, tmp_path):
         """await outside loop should NOT trigger SKY-Q402."""

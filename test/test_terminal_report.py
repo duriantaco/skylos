@@ -9,6 +9,28 @@ def _recording_console() -> Console:
     return Console(record=True, width=120, force_terminal=False)
 
 
+def test_pretty_renderer_counts_architecture_advisories_separately():
+    result = {
+        "analysis_summary": {"total_files": 1, "quality_count": 0},
+        "architecture_metrics": {
+            "advisory_count": 1,
+            "advisory_signal_count": 2,
+            "advisories": [
+                {"name": "shared", "rule_ids": ["SKY-Q802", "SKY-Q803"]}
+            ],
+        },
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result)
+    output = console.export_text()
+
+    assert "0 issues" in output
+    assert "Architecture: 1 advisory module (2 signals)" in output
+    assert "architecture_metrics.advisories" in output
+    assert "HIGH" not in output
+
+
 def test_pretty_renderer_groups_findings_by_file_and_keeps_copyable_locations(tmp_path):
     source = tmp_path / "src" / "app.py"
     source.parent.mkdir()

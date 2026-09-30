@@ -102,6 +102,24 @@
     "verified pull-request scan cannot be verified with GitHub",
     "request body malformed or over the size limit"
   ],
+  "scan_metadata": {
+    "description": "The CLI sends these top-level fields alongside SARIF results. Cloud accepts bounded, well-formed values only from native Skylos SARIF. They are scanner claims, not a signature or proof of code execution. Invalid or absent metadata never removes findings or relaxes the gate.",
+    "scan_coverage": {
+      "version": 1,
+      "fields": ["scope: full_repository or partial", "complete: boolean", "selected_rules: bounded SKY-* rule ID list", "reasons: bounded string list", "resolution_covered_checks: bounded subset of explicit scanned_checks"],
+      "resolution_rule": "Cloud derives stats.resolution_covered_categories and server marker stats.resolution_coverage_version from resolution_covered_checks in a full_repository and complete receipt with no selected rules or reasons, explicit scanned_checks, static analysis, and a default-branch upload outside PR diff scope. A completed scan may exclude dependency resolution when package versions could not be resolved. Legacy or malformed receipts prove no absence-based resolution."
+    },
+    "quality_rule_classification": {
+      "version": 1,
+      "architecture_iad": ["advisory", "enforced", "unknown"],
+      "rule": "Q802 and Q803 remain actionable results when I/A/D enforcement is enabled; Cloud must not suppress these rule IDs by name. An advisory claim paired with actionable Q802 or Q803 results is recorded as unknown while the findings remain actionable."
+    },
+    "architecture_advisories": {
+      "version": 1,
+      "fields": ["module_count: nonnegative integer", "signal_count: nonnegative integer", "by_rule: counts for SKY-Q802 and SKY-Q803"],
+      "rule": "Aggregate advisory metadata is separate from SARIF results, quality counts, and gate findings. Cloud stores only validated aggregate counts."
+    }
+  },
   "transport": {
     "idempotency_header": "Idempotency-Key",
     "idempotency_key_format": "UUID v4, generated once per upload and reused for every retry and resend of that upload",

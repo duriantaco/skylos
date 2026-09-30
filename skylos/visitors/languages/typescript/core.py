@@ -204,6 +204,98 @@ def _get_parser(lang: Language) -> Parser:
     return _PARSER_CACHE[lang_id]
 
 
+def _jsx_text_ampersands(root_node, source: bytes) -> set[int]:
+    """Find raw ampersands where TSX error recovery stopped parsing JSX text."""
+    positions: set[int] = set()
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if (
+            node.is_error
+            and node.parent is not None
+            and node.parent.type in {"jsx_element", "jsx_fragment"}
+            and node.start_byte < len(source)
+            and source[node.start_byte] == ord("&")
+        ):
+            positions.add(node.start_byte)
+        elif (
+            node.type == "jsx_text"
+            and node.end_byte < len(source)
+            and source[node.end_byte] == ord("&")
+        ):
+            # With several raw ampersands, recovery can wrap the opening tag
+            # and preceding text in a broad ERROR node instead.
+            ancestor = node.parent
+            while ancestor is not None and not ancestor.is_error:
+                ancestor = ancestor.parent
+            if ancestor is not None:
+                positions.add(node.end_byte)
+        stack.extend(node.children)
+    return positions
+
+
+def _ampersands_are_jsx_text(root_node, positions: set[int]) -> bool:
+    """Check that a repaired parse treats every masked byte as JSX text."""
+    text_spans: list[tuple[int, int]] = []
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "jsx_text":
+            text_spans.append((node.start_byte, node.end_byte))
+        stack.extend(node.children)
+
+    text_spans.sort()
+    span_index = 0
+    for position in sorted(positions):
+        while span_index < len(text_spans) and text_spans[span_index][1] <= position:
+            span_index += 1
+        if span_index == len(text_spans) or text_spans[span_index][0] > position:
+            return False
+    return True
+
+
+def _parse_tsx_with_raw_ampersands(parser: Parser, source: bytes):
+    tree = parser.parse(source)
+    if not tree.root_node.has_error or b"&" not in source:
+        return tree
+
+    # The TSX grammar rejects raw '&' in JSX text. Mask only text segments
+    # identified by error recovery, keeping every byte and line offset intact.
+    # The original source remains available to all finding and reference code.
+    masked = bytearray(source)
+    masked_positions: set[int] = set()
+    for _ in range(32):
+        candidates = _jsx_text_ampersands(tree.root_node, source)
+        new_positions: set[int] = set()
+        for position in candidates:
+            if masked[position] != ord("&"):
+                continue
+            end = len(source)
+            for delimiter in (b"<", b"{"):
+                found = source.find(delimiter, position)
+                if found >= 0:
+                    end = min(end, found)
+            cursor = source.find(b"&", position, end)
+            while cursor >= 0:
+                if masked[cursor] == ord("&"):
+                    masked[cursor] = ord("x")
+                    new_positions.add(cursor)
+                cursor = source.find(b"&", cursor + 1, end)
+
+        if not new_positions:
+            break
+        repaired = parser.parse(bytes(masked))
+        if not _ampersands_are_jsx_text(
+            repaired.root_node, masked_positions | new_positions
+        ):
+            break
+        tree = repaired
+        masked_positions.update(new_positions)
+        if not tree.root_node.has_error:
+            break
+    return tree
+
+
 class TypeScriptCore:
     def __init__(self, file_path: str, source_bytes: bytes) -> None:
         self.file_path: str = file_path
@@ -226,7 +318,11 @@ class TypeScriptCore:
 
         if self.lang:
             self.parser = _get_parser(self.lang)
-            self.tree = self.parser.parse(source_bytes)
+            self.tree = (
+                _parse_tsx_with_raw_ampersands(self.parser, source_bytes)
+                if self._uses_jsx_parser
+                else self.parser.parse(source_bytes)
+            )
             self.root_node = self.tree.root_node
         else:
             self.tree = None

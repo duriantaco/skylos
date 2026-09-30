@@ -27,6 +27,14 @@ from skylos.analyzer import (
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 
 
+def _architecture_advisory_signals(result):
+    return [
+        signal
+        for advisory in result.get("architecture_metrics", {}).get("advisories", [])
+        for signal in advisory["signals"]
+    ]
+
+
 @pytest.fixture
 def mock_definition():
     def _create_mock_def(
@@ -1961,7 +1969,7 @@ max_args = false
         mock_scan.assert_called_once()
         assert result == tuple(range(13))
 
-    def test_analyze_quality_includes_architecture_findings(self):
+    def test_analyze_reports_architecture_advisories_outside_quality(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "abstract_mod.py").write_text(
@@ -1979,12 +1987,51 @@ max_args = false
 
         result = json.loads(result_json)
         assert result.get("architecture_metrics")
+        advisories = result["architecture_metrics"]["advisories"]
+        assert advisories
+        assert result["architecture_metrics"]["advisory_count"] == len(advisories)
+        assert result["analysis_summary"]["architecture_advisory_count"] == len(
+            advisories
+        )
         assert any(
-            f.get("rule_id") in {"SKY-Q802", "SKY-Q803", "SKY-Q804"}
+            f["rule_id"] in {"SKY-Q802", "SKY-Q803"}
+            for f in _architecture_advisory_signals(result)
+        )
+        assert not any(
+            f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
             for f in result.get("quality", [])
         )
         assert result["analysis_summary"]["quality_count"] == len(
             result.get("quality", [])
+        )
+
+    def test_explicit_iad_enforcement_keeps_architecture_in_quality(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.skylos.architecture]\nenforce_iad = true\n", encoding="utf-8"
+        )
+        (tmp_path / "shared.py").write_text("VALUE = 1\n", encoding="utf-8")
+        for name in ("first", "second"):
+            (tmp_path / f"{name}.py").write_text(
+                "from shared import VALUE\nRESULT = VALUE\n", encoding="utf-8"
+            )
+
+        result = json.loads(
+            analyze(str(tmp_path), enable_quality=True, grep_verify=False)
+        )
+
+        enforced = [
+            finding
+            for finding in result.get("quality", [])
+            if finding.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        ]
+        assert {finding["rule_id"] for finding in enforced} == {
+            "SKY-Q802",
+            "SKY-Q803",
+        }
+        assert all(finding["advisory"] is False for finding in enforced)
+        assert result["architecture_metrics"].get("advisories", []) == []
+        assert result["analysis_summary"]["quality_count"] == len(
+            result["quality"]
         )
 
     def test_typescript_architecture_metrics_and_layer_policy(self, tmp_path):
@@ -2112,7 +2159,7 @@ max_args = false
         assert metrics["src.contract"]["abstractness"] == 1.0
         zone_rules = {
             (finding["rule_id"], finding["name"])
-            for finding in result.get("quality", [])
+            for finding in _architecture_advisory_signals(result)
             if finding.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
         }
         assert ("SKY-Q802", "src.service") in zone_rules
@@ -2121,9 +2168,16 @@ max_args = false
         assert ("SKY-Q803", "src.contract") not in zone_rules
         service_finding = next(
             finding
-            for finding in result["quality"]
+            for finding in _architecture_advisory_signals(result)
             if finding["rule_id"] == "SKY-Q803" and finding["name"] == "src.service"
         )
+        service_advisory = next(
+            advisory
+            for advisory in result["architecture_metrics"]["advisories"]
+            if advisory["name"] == "src.service"
+        )
+        assert service_advisory["rule_ids"] == ["SKY-Q802", "SKY-Q803"]
+        assert len(service_advisory["signals"]) == 2
         hints = " ".join(item["hint"] for item in service_finding["remediations"])
         assert "public package exports" in hints
         assert "rename the module" not in hints
@@ -2251,7 +2305,7 @@ max_args = false
         ]
         assert not any(
             finding["rule_id"] in {"SKY-Q802", "SKY-Q803"}
-            for finding in result.get("quality", [])
+            for finding in _architecture_advisory_signals(result)
         )
 
     def test_mixed_python_typescript_architecture_modules_do_not_collide(
@@ -2453,7 +2507,7 @@ max_args = false
 
         architecture_rules = {
             (f.get("rule_id"), f.get("name"))
-            for f in result.get("quality", [])
+            for f in _architecture_advisory_signals(result)
             if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
         }
         assert ("SKY-Q803", "mypkg") not in architecture_rules
@@ -2522,7 +2576,7 @@ max_args = false
 
         architecture_rules = {
             (f.get("rule_id"), f.get("name"))
-            for f in result.get("quality", [])
+            for f in _architecture_advisory_signals(result)
             if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
         }
         assert ("SKY-Q803", "mypkg._banner") not in architecture_rules
@@ -2553,7 +2607,7 @@ max_args = false
 
         architecture_rules = {
             (f.get("rule_id"), f.get("name"))
-            for f in result.get("quality", [])
+            for f in _architecture_advisory_signals(result)
             if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
         }
         assert ("SKY-Q802", "mypkg") not in architecture_rules
@@ -2614,7 +2668,7 @@ max_args = false
 
         architecture_rules = {
             (f.get("rule_id"), f.get("name"))
-            for f in result.get("quality", [])
+            for f in _architecture_advisory_signals(result)
             if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
         }
         assert ("SKY-Q802", "mini_pkg.core") not in architecture_rules

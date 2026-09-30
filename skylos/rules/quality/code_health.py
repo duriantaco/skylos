@@ -21,7 +21,9 @@ these findings are therefore moved out of ``quality`` into a separate
 * when the base version cannot be analyzed (non-Python file, file added by
   the change, git failure) the finding is listed as ``"unverified"``.
 
-A full-repository scan (``skylos .``) keeps reporting them under ``quality``.
+A full-repository scan (``skylos .``) reports these rules under ``quality``,
+except default advisory Q802/Q803, which are grouped under
+``architecture_metrics.advisories``.
 """
 
 from __future__ import annotations
@@ -201,4 +203,19 @@ def partition_code_health(
             count_key = f"{bucket}_count"
             if count_key in summary and isinstance(result.get(bucket), list):
                 summary[count_key] = len(result[bucket])
+
+    # I/A/D advisories are full-project context. They cannot be compared to a
+    # changed file in isolation because the dependency graph determines their
+    # values, so do not copy all of them into a diff-scoped report.
+    architecture = result.get("architecture_metrics")
+    if isinstance(architecture, dict) and isinstance(
+        architecture.get("advisories"), list
+    ):
+        architecture = dict(architecture)
+        architecture["advisories"] = []
+        architecture["advisory_count"] = 0
+        architecture["advisory_signal_count"] = 0
+        result["architecture_metrics"] = architecture
+        if isinstance(summary, dict):
+            summary["architecture_advisory_count"] = 0
     return result

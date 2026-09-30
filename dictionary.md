@@ -615,7 +615,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
-| Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
+| Q402 | LOW | Await in loop | TS/JS | review bounded parallelism only when iterations are independent and ordering/rate limits allow |
 | Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed lock order in nested or compound `with` / `async with` statements; includes non-adjacent pairs |
 | Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
@@ -626,8 +626,8 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q701 | MEDIUM | High coupling | Python | CBO-style signal |
 | Q702 | MEDIUM | Low cohesion | Python | LCOM-style signal |
 | Q801 | MEDIUM | High architectural instability | Reserved | no current finding emission |
-| Q802 | MEDIUM | Distance from main sequence | Python, TS/JS |
-| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python, TS/JS |
+| Q802 | ADVISORY by default | Distance from main sequence | Python, TS/JS | included in actionable quality only with `enforce_iad = true` |
+| Q803 | ADVISORY by default | Zone of Pain / Zone of Uselessness | Python, TS/JS | grouped with Q802 per module by default |
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
@@ -635,7 +635,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
-| P403 | LOW | Nested loop O(N^2) | Python / generic |
+| P403 | LOW | Potentially quadratic nested loop | Python / generic | per-directory `os.walk` partition loops are excluded |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
@@ -649,13 +649,16 @@ uses project ignores, not inline comments, consistently across supported files.
 | R102 | MEDIUM | Repository missing Python lint command | Repo policy |
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy |
 | R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
-| R105 | MEDIUM | Repository missing TypeScript type-check command | Repo policy |
+| R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | varies | Circular dependency | Python |
 
 Architecture metrics include scanned TS/JS modules and use `package.json`
 workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
 interfaces, abstract classes, concrete classes, and functions as a file-level
-abstractness heuristic. If a TS/JS source cannot be parsed or opened with
+abstractness heuristic. Default Q802/Q803 signals are grouped per module under
+`architecture_metrics.advisories` and excluded from `quality_count`, grades,
+gates, and issue uploads. Setting `[tool.skylos.architecture] enforce_iad = true`
+places them in actionable `quality` instead. If a TS/JS source cannot be parsed or opened with
 no-follow directory descriptors on the host platform, its module still
 participates in the dependency graph, but Q802/Q803 are suppressed for that
 module and its name appears in
