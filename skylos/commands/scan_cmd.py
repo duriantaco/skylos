@@ -1305,6 +1305,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     strict_exit_code = _strict_scan_exit_code(result, args)
     if strict_exit_code:
+        if explicit_rich_upload:
+            from skylos.core.gatekeeper import _analysis_incomplete_reasons
+
+            reasons = _analysis_incomplete_reasons(result)
+            console.print(
+                "[bad]Scan incomplete; Cloud upload was not started.[/bad]"
+                if reasons
+                else "[bad]Scan did not pass --strict; Cloud upload was not started.[/bad]"
+            )
+            for reason in reasons:
+                console.print(f"[warn]{reason}[/warn]")
         raise SystemExit(strict_exit_code)
 
     if (

@@ -2339,6 +2339,45 @@ def test_explicit_rich_upload_interrupted_during_analysis_reports_no_upload(
     upload.assert_not_called()
 
 
+def test_explicit_rich_upload_reports_incomplete_scan_before_exit(monkeypatch):
+    result = {
+        "analysis_summary": {
+            "total_files": 1,
+            "sca_coverage": {"status": "unavailable"},
+        },
+        "analysis_errors": [],
+        "dependency_vulnerabilities": [],
+    }
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "-a", "--upload", "--no-provenance"],
+    )
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli.upload_report") as upload,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 2
+    messages = [
+        str(call.args[0])
+        for call in fake_logger.console.print.call_args_list
+        if call.args
+    ]
+    assert any("Cloud upload was not started" in message for message in messages)
+    assert any("Dependency vulnerability scan incomplete" in message for message in messages)
+    upload.assert_not_called()
+
+
 def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},
