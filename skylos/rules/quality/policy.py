@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -117,7 +118,42 @@ def _has_ruff_config(root: Path, pyproject: dict[str, Any]) -> bool:
     )
 
 
-def _package_scripts_run_tsc(package_json: Path) -> bool:
+_NEXT_BUILD_RE = re.compile(r"(?<![\w.-])next\s+build\b")
+_NEXT_IGNORE_BUILD_ERRORS_RE = re.compile(
+    r"(?:['\"]?ignoreBuildErrors['\"]?)\s*:\s*(true|false)\b"
+)
+_NEXT_CONFIG_NAMES = (
+    "next.config.js",
+    "next.config.mjs",
+    "next.config.cjs",
+    "next.config.ts",
+    "next.config.mts",
+    "next.config.cts",
+)
+
+
+def _next_build_checks_typescript(package_root: Path) -> bool:
+    config_files = [
+        package_root / name
+        for name in _NEXT_CONFIG_NAMES
+        if (package_root / name).is_file()
+    ]
+    if len(config_files) > 1:
+        return False
+    if not config_files:
+        return True
+    try:
+        config_text = config_files[0].read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    if "ignoreBuildErrors" not in config_text:
+        return True
+    # Dynamic settings cannot establish that Next's type check is enabled.
+    settings = _NEXT_IGNORE_BUILD_ERRORS_RE.findall(config_text)
+    return bool(settings) and all(setting == "false" for setting in settings)
+
+
+def _package_scripts_run_typecheck(package_json: Path) -> bool:
     try:
         data = json.loads(package_json.read_text(encoding="utf-8"))
     except Exception:
@@ -125,7 +161,20 @@ def _package_scripts_run_tsc(package_json: Path) -> bool:
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):
         return False
-    return any("tsc" in str(command) for command in scripts.values())
+    commands = [str(command) for command in scripts.values()]
+    if any("tsc" in command for command in commands):
+        return True
+    dependencies = data.get("dependencies")
+    dev_dependencies = data.get("devDependencies")
+    has_next = any(
+        isinstance(group, dict) and "next" in group
+        for group in (dependencies, dev_dependencies)
+    )
+    return bool(
+        has_next
+        and any(_NEXT_BUILD_RE.search(command) for command in commands)
+        and _next_build_checks_typescript(package_json.parent)
+    )
 
 
 def _iter_package_json_files(root: Path, exclude_folders: tuple[str, ...]):
@@ -257,14 +306,14 @@ def analyze_repo_policy(
             package_root = package_json.parent
             if (
                 package_root / "tsconfig.json"
-            ).exists() and not _package_scripts_run_tsc(package_json):
+            ).exists() and not _package_scripts_run_typecheck(package_json):
                 findings.append(
                     _finding(
                         rule_id="SKY-R105",
                         name="typescript-typecheck-policy",
                         message=(
                             f"{package_json.relative_to(root_path)} has tsconfig.json "
-                            "but no npm script that runs tsc."
+                            "but no detected npm script that checks TypeScript."
                         ),
                         file=package_json,
                         severity="LOW",

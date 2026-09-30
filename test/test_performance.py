@@ -72,6 +72,36 @@ def heavy():
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["rule_id"], "SKY-P403")
 
+    def test_os_walk_partition_loops_are_not_quadratic(self):
+        code = """
+def inspect_tree(path):
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for dirname in list(dirs):
+            inspect_directory(root, dirname)
+        for filename in files:
+            inspect_file(root, filename)
+"""
+        findings = [
+            finding
+            for finding in self._analyze(code)
+            if finding["rule_id"] == "SKY-P403"
+        ]
+        self.assertEqual(findings, [])
+
+    def test_os_walk_does_not_hide_independent_nested_loops(self):
+        code = """
+def compare_tree(path, candidates):
+    for root, dirs, files in os.walk(path):
+        for candidate in candidates:
+            compare(root, candidate)
+"""
+        findings = [
+            finding
+            for finding in self._analyze(code)
+            if finding["rule_id"] == "SKY-P403"
+        ]
+        self.assertEqual(len(findings), 1)
+
     def test_detect_unbounded_orm_all(self):
         code = """
 def list_users():

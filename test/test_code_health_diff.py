@@ -106,6 +106,35 @@ def test_partition_without_base_marks_unverified(tmp_path):
     assert out["code_health"][0]["code_health_change"] == "unverified"
 
 
+def test_diff_partition_omits_full_project_architecture_advisories(tmp_path):
+    result = {
+        "quality": [],
+        "architecture_metrics": {
+            "module_metrics": {"shared": {"distance": 1.0}},
+            "advisories": [
+                {
+                    "name": "shared",
+                    "rule_ids": ["SKY-Q802", "SKY-Q803"],
+                    "signals": [{"rule_id": "SKY-Q802"}, {"rule_id": "SKY-Q803"}],
+                }
+            ],
+            "advisory_count": 1,
+            "advisory_signal_count": 2,
+        },
+        "analysis_summary": {"architecture_advisory_count": 1},
+    }
+
+    out = partition_code_health(result, git_root=tmp_path, base_commit=None)
+
+    assert out["architecture_metrics"]["module_metrics"] == {
+        "shared": {"distance": 1.0}
+    }
+    assert out["architecture_metrics"]["advisories"] == []
+    assert out["architecture_metrics"]["advisory_count"] == 0
+    assert out["architecture_metrics"]["advisory_signal_count"] == 0
+    assert out["analysis_summary"]["architecture_advisory_count"] == 0
+
+
 def test_metric_rules_are_style_not_defect_rules():
     assert "SKY-C304" in CODE_HEALTH_RULES and "SKY-Q301" in CODE_HEALTH_RULES
     # Defect-class quality rules stay findings.

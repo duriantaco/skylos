@@ -116,9 +116,16 @@ def _attach_architecture(
     except Exception:
         _debug_traceback()
         return
-    _attach_architecture_findings(result, project_cfg, all_quality, findings)
     if summary:
         result["architecture_metrics"] = summary
+        summary["iad_enforced"] = architecture_iad_strict(
+            project_cfg.get("architecture")
+        )
+        summary["advisories"] = []
+        summary["advisory_count"] = 0
+        summary["advisory_signal_count"] = 0
+        result["analysis_summary"]["architecture_advisory_count"] = 0
+    _attach_architecture_findings(result, project_cfg, all_quality, findings)
 
 
 def _architecture_findings(
@@ -357,10 +364,49 @@ def _attach_architecture_findings(result, project_cfg, all_quality, arch_finding
             kept.append(finding)
     if not kept:
         return
-    all_quality.extend(kept)
     from skylos.rules.quality.standards import enrich_finding
 
     for finding in kept:
         enrich_finding(finding)
-    result.setdefault("quality", []).extend(kept)
-    result["analysis_summary"]["quality_count"] = len(result.get("quality", []) or [])
+
+    advisory = []
+    actionable = []
+    for finding in kept:
+        if (
+            finding.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+            and finding.get("advisory") is True
+        ):
+            advisory.append(finding)
+        else:
+            actionable.append(finding)
+    if advisory:
+        # Both rules often describe the same module. Keep their full evidence
+        # available in JSON while presenting one advisory record per module.
+        grouped = {}
+        for finding in advisory:
+            key = (finding.get("file", ""), finding.get("name", ""))
+            if key not in grouped:
+                grouped[key] = {
+                    "file": finding.get("file", ""),
+                    "name": finding.get("name", ""),
+                    "line": finding.get("line", 1),
+                    "advisory": True,
+                    "rule_ids": [],
+                    "signals": [],
+                }
+            grouped[key]["rule_ids"].append(finding["rule_id"])
+            grouped[key]["signals"].append(finding)
+        advisories = [grouped[key] for key in sorted(grouped)]
+        for item in advisories:
+            item["rule_ids"].sort()
+            item["signals"].sort(key=lambda signal: signal["rule_id"])
+        metrics = result.setdefault("architecture_metrics", {})
+        metrics["advisories"] = advisories
+        metrics["advisory_count"] = len(advisories)
+        metrics["advisory_signal_count"] = len(advisory)
+        result["analysis_summary"]["architecture_advisory_count"] = len(advisories)
+
+    if actionable:
+        all_quality.extend(actionable)
+        result.setdefault("quality", []).extend(actionable)
+        result["analysis_summary"]["quality_count"] = len(result["quality"])

@@ -48,7 +48,7 @@ _RULES = (
     RuleCatalogEntry("SKY-Q305", "Duplicate branch logic", "quality"),
     RuleCatalogEntry("SKY-Q306", "Cognitive complexity", "quality"),
     RuleCatalogEntry("SKY-Q401", "Async blocking call", "quality"),
-    RuleCatalogEntry("SKY-Q402", "Await in loop", "quality", "MEDIUM"),
+    RuleCatalogEntry("SKY-Q402", "Await in loop", "quality", "LOW"),
     RuleCatalogEntry(
         "SKY-Q403", "Inconsistent lock acquisition order", "quality", "HIGH"
     ),

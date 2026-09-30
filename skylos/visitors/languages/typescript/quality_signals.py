@@ -107,7 +107,12 @@ _ARRAY_CHAIN_METHODS = frozenset(
     }
 )
 _INTENTIONAL_EMPTY_CATCH_RE = re.compile(
-    r"\b(?:best[- ]effort|circular references?|do nothing|expected|fallback|ignore(?:d)?|intentional(?:ly)?|no changes?|no[- ]?op|optional|skip(?:ped)?)\b",
+    r"\b(?:best[- ]effort|circular references?|deliberate(?:ly)?|do nothing|expected|"
+    r"fall back|fallback|ignore(?:d)?|immutable|intentional(?:ly)?|"
+    r"may already|must never (?:break|change)|never break|"
+    r"no changes?|no[- ]?op|not json|nothing to|optional|"
+    r"take ownership|"
+    r"safe(?:ly)? permits?|skip(?:ped)?)\b",
     re.IGNORECASE,
 )
 _NOT_IMPLEMENTED_RE = re.compile(
@@ -894,7 +899,7 @@ def _empty_catch_findings(nodes: list, source: bytes, file_path: str) -> list[di
             and _node_text(source, parameter).startswith("_")
         ):
             continue
-        if _has_immediate_fallback_return(node):
+        if _has_immediate_fallback_exit(node):
             continue
         findings.append(
             _finding(
@@ -912,7 +917,7 @@ def _empty_catch_findings(nodes: list, source: bytes, file_path: str) -> list[di
     return findings
 
 
-def _has_immediate_fallback_return(catch_clause) -> bool:
+def _has_immediate_fallback_exit(catch_clause) -> bool:
     try_statement = catch_clause.parent
     parent = try_statement.parent if try_statement is not None else None
     if try_statement is None or try_statement.type != "try_statement" or parent is None:
@@ -926,7 +931,8 @@ def _has_immediate_fallback_return(catch_clause) -> bool:
         if sibling.id != try_statement.id:
             continue
         return bool(
-            index + 1 < len(siblings) and siblings[index + 1].type == "return_statement"
+            index + 1 < len(siblings)
+            and siblings[index + 1].type in {"return_statement", "throw_statement"}
         )
     return False
 
@@ -950,6 +956,10 @@ def _documents_intentional_ignore(comment: str) -> bool:
             "should not skip",
             "not intentionally ignore",
             "not intentionally ignored",
+            "not deliberately ignore",
+            "not deliberately ignored",
+            "do not deliberately ignore",
+            "dont deliberately ignore",
         )
     ):
         return False

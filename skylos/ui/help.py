@@ -367,6 +367,25 @@ COMMANDS = [
         "group": "Release",
     },
     {
+        "name": "skylos verify-verdict BUNDLE [--commit SHA] [--require-passed]",
+        "desc": "Verify a signed Skylos Cloud check verdict before a deploy",
+        "details": [
+            "Checks the Ed25519 DSSE signature, the in-toto/SLSA statement, and the signed check summary",
+            "--keys PATH_OR_URL: trusted keys file (offline) or https:// URL; "
+            "default https://skylos.dev/.well-known/skylos-verdict-keys.json",
+            "--commit/--repository/--project/--workspace: the verdict must be for these",
+            "--require-repository-verified: require a GitHub OIDC upload bound to the repository",
+            "--max-age 7d: reject verdicts signed longer ago",
+            "--require-passed: exit 1 unless PASSED at level SKYLOS_POLICY_PASSED; "
+            "--allow-override also accepts SKYLOS_GATE_OVERRIDDEN",
+            "--json: print one JSON object",
+            "Proves the check ran under this policy with this result, not that the code is safe",
+            'Needs the cryptography package: pip install "skylos[verdict]"',
+            "Exit codes: 0 verified, 1 not passing with --require-passed, 2 not verified",
+        ],
+        "group": "Release",
+    },
+    {
         "name": "skylos ingest <trivy|claude-security>",
         "desc": "Ingest findings from external tools",
         "details": [

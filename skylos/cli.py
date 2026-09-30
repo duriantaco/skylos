@@ -1729,6 +1729,35 @@ def _incomplete_grep_verify_report(summary):
     return None
 
 
+def _filter_architecture_advisories(result, filtered, keep_signal):
+    """Keep coalesced architecture signals in sync with report filters."""
+    metrics = result.get("architecture_metrics")
+    if not isinstance(metrics, dict) or not isinstance(metrics.get("advisories"), list):
+        return
+    advisories = []
+    for advisory in metrics["advisories"]:
+        if not isinstance(advisory, dict):
+            continue
+        signals = [
+            signal
+            for signal in advisory.get("signals", [])
+            if isinstance(signal, dict) and keep_signal(signal)
+        ]
+        if not signals:
+            continue
+        selected = dict(advisory)
+        selected["signals"] = signals
+        selected["rule_ids"] = [signal["rule_id"] for signal in signals]
+        advisories.append(selected)
+    selected_metrics = dict(metrics)
+    selected_metrics["advisories"] = advisories
+    selected_metrics["advisory_count"] = len(advisories)
+    selected_metrics["advisory_signal_count"] = sum(
+        len(advisory["signals"]) for advisory in advisories
+    )
+    filtered["architecture_metrics"] = selected_metrics
+
+
 def _apply_display_filters(result, severity=None, category=None, file_filter=None):
     import copy
 
@@ -1747,6 +1776,13 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
             continue
 
         filtered[key] = _display_filter_items(items, file_filter, min_rank)
+
+    _filter_architecture_advisories(
+        result,
+        filtered,
+        lambda signal: (not allowed_cats or "quality" in allowed_cats)
+        and bool(_display_filter_items([signal], file_filter, min_rank)),
+    )
 
     reviewed_items = result.get("reviewed_findings")
     if isinstance(reviewed_items, list):
@@ -1779,6 +1815,10 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
     for key, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if key in result or count_key in summary:
             summary[count_key] = len(filtered.get(key) or [])
+    if "architecture_advisory_count" in summary:
+        summary["architecture_advisory_count"] = len(
+            (filtered.get("architecture_metrics") or {}).get("advisories") or []
+        )
     if "reviewed_findings_summary" in filtered:
         summary["reviewed_findings"] = copy.copy(filtered["reviewed_findings_summary"])
     filtered["analysis_summary"] = summary
@@ -1851,6 +1891,12 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
             if _finding_rule_id(item, category).upper() in allowed
         ]
 
+    _filter_architecture_advisories(
+        result,
+        filtered,
+        lambda signal: _finding_rule_id(signal, "quality").upper() in allowed,
+    )
+
     summary = copy.copy(result.get("analysis_summary") or {})
     incomplete_grep_verify = _incomplete_grep_verify_report(summary)
     summary["selected_rules"] = selected_rules
@@ -1862,6 +1908,10 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
     for category, count_key in _RULE_SELECTION_SUMMARY_COUNTS.items():
         if category in result or count_key in summary:
             summary[count_key] = len(filtered.get(category) or [])
+    if "architecture_advisory_count" in summary:
+        summary["architecture_advisory_count"] = len(
+            (filtered.get("architecture_metrics") or {}).get("advisories") or []
+        )
     filtered["analysis_summary"] = summary
 
     # Aggregate grades describe the unfiltered scan and would be misleading in
@@ -2280,6 +2330,12 @@ def _run_verify_command(argv):
     return run_verify_command(argv)
 
 
+def _run_verify_verdict_command(argv):
+    from skylos.commands.verify_verdict_cmd import run_verify_verdict_command
+
+    return run_verify_verdict_command(argv)
+
+
 def _run_hook_command(argv):
     from skylos.commands.hook_cmd import run_hook_command
 
@@ -2591,6 +2647,27 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
                     item,
                     str(label),
                     category=category,
+                    root_path=root_path,
+                )
+            )
+
+    metrics = result.get("architecture_metrics")
+    advisories = metrics.get("advisories") if isinstance(metrics, dict) else None
+    if isinstance(advisories, list):
+        for advisory in advisories[:limit] if limit is not None else advisories:
+            if not isinstance(advisory, dict):
+                continue
+            rule_ids = advisory.get("rule_ids")
+            if not isinstance(rule_ids, list):
+                continue
+            selected = dict(advisory)
+            selected["rule_id"] = "/".join(str(rule_id) for rule_id in rule_ids)
+            name = advisory.get("name") or advisory.get("file") or "module"
+            lines.append(
+                _concise_line(
+                    selected,
+                    f"architecture advisory: {name}",
+                    category="quality",
                     root_path=root_path,
                 )
             )

@@ -220,6 +220,43 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Scan for security issues. Off by default.",
     )
     parser.add_argument(
+        "--verify-security",
+        action="store_true",
+        dest="verify_security",
+        help=(
+            "Ask an AI model to check high-severity security findings several times "
+            "and record an evidence level on each (traced, AI-verified, likely false "
+            "positive, unverified). Needs an LLM API key. Display only: it never "
+            "changes which findings block."
+        ),
+    )
+    parser.add_argument(
+        "--verify-runs",
+        type=int,
+        default=3,
+        dest="verify_runs",
+        help="Independent AI runs per finding for --verify-security (1-9, default 3).",
+    )
+    parser.add_argument(
+        "--verify-max",
+        type=int,
+        default=20,
+        dest="verify_max",
+        help="Most findings to check with --verify-security (default 20, worst first).",
+    )
+    parser.add_argument(
+        "--verify-model",
+        default=None,
+        dest="verify_model",
+        help="Model for --verify-security (default: SKYLOS_VERIFY_MODEL or gpt-4.1).",
+    )
+    parser.add_argument(
+        "--verify-provider",
+        default=None,
+        dest="verify_provider",
+        help="Provider for --verify-security (default: detected from the model).",
+    )
+    parser.add_argument(
         "--quality",
         action="store_true",
         help="Run code quality checks. Off by default.",

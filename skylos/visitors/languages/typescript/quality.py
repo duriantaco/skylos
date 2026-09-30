@@ -42,6 +42,9 @@ _LOOP_NODES: set[str] = {
 
 _FUNC_BOUNDARY_NODES: set[str] = {
     "function_declaration",
+    "function_expression",
+    "generator_function",
+    "generator_function_declaration",
     "arrow_function",
     "method_definition",
     "function",
@@ -58,6 +61,9 @@ _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FUNC_PATTERN = """
 (function_declaration) @func
+(function_expression) @func
+(generator_function) @func
+(generator_function_declaration) @func
 (arrow_function) @func
 (method_definition) @func
 """
@@ -86,6 +92,8 @@ _TEST_FUNCTION_NODES = frozenset(
         "function",
         "function_expression",
         "function_declaration",
+        "generator_function",
+        "generator_function_declaration",
         "method_definition",
     }
 )
@@ -137,6 +145,8 @@ def _max_nesting(node, depth: int = 0) -> int:
     while stack:
         current, current_depth = stack.pop()
         for child in current.children:
+            if child.type in _FUNC_BOUNDARY_NODES:
+                continue
             child_depth = (
                 current_depth + 1 if child.type in NESTING_NODES else current_depth
             )
@@ -384,26 +394,14 @@ def scan_quality(
 
 def _calc_complexity(node) -> int:
     count = 1
-    cursor = node.walk()
-    visited_children = False
-
-    while True:
-        if visited_children:
-            if cursor.node.id == node.id:
-                break
-            if cursor.goto_next_sibling():
-                visited_children = False
-            elif cursor.goto_parent():
-                visited_children = True
-            else:
-                break
-        else:
-            if cursor.node.type in COMPLEXITY_NODES:
-                count += 1
-            if cursor.goto_first_child():
-                visited_children = False
-            else:
-                visited_children = True
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.id != node.id and current.type in _FUNC_BOUNDARY_NODES:
+            continue
+        if current.type in COMPLEXITY_NODES:
+            count += 1
+        stack.extend(current.children)
     return count
 
 
@@ -479,7 +477,7 @@ def _enclosing_function_name(node, source: bytes) -> str | None:
 def _check_await_in_loop(
     root_node, source: bytes, file_path: str, findings: list[dict], lang: Language
 ) -> None:
-    """SKY-Q402: Detect await expressions inside for/while loops."""
+    """SKY-Q402: Review sequential awaits in loops that may be parallelizable."""
     query = _get_query(lang, "quality_await", _AWAIT_PATTERN)
     if query is None:
         return
@@ -496,10 +494,16 @@ def _check_await_in_loop(
             if current.type in _FUNC_BOUNDARY_NODES:
                 break
             if current.type in _LOOP_NODES:
+                if _is_clearly_serial_loop(current, node, source):
+                    break
                 finding = {
                     "rule_id": "SKY-Q402",
-                    "severity": "MEDIUM",
-                    "message": "await inside loop — consider using Promise.all() for parallel execution.",
+                    "severity": "LOW",
+                    "message": (
+                        "Sequential await in loop; consider bounded parallelism only "
+                        "when iterations are independent and ordering and rate "
+                        "limits allow."
+                    ),
                     "file": str(file_path),
                     "line": node.start_point[0] + 1,
                     "col": 0,
@@ -510,6 +514,80 @@ def _check_await_in_loop(
                 findings.append(finding)
                 break
             current = current.parent
+
+
+def _is_clearly_serial_loop(loop, await_node, source: bytes) -> bool:
+    """Exclude loop controls and common intentional serial or batched work."""
+    body = loop.child_by_field_name("body")
+    if body is None or not (body.start_byte <= await_node.start_byte < body.end_byte):
+        return True
+    if loop.type in {"while_statement", "do_statement"}:
+        return True
+    if loop.type == "for_in_statement" and any(
+        child.type == "await" for child in loop.children
+    ):
+        return True
+    if loop.type == "for_statement":
+        condition = loop.child_by_field_name("condition")
+        if condition is None or condition.type == "empty_statement":
+            return True
+    if _has_loop_exit(body, loop) or _is_batched_or_delayed_await(await_node, source):
+        return True
+    return False
+
+
+def _has_loop_exit(body, loop) -> bool:
+    """Find exits from this loop without attributing nested callables or loops."""
+    stack = [body]
+    while stack:
+        current = stack.pop()
+        if current.type in _FUNC_BOUNDARY_NODES:
+            continue
+        if current.type == "return_statement":
+            return True
+        if current.type in {"break_statement", "continue_statement"}:
+            ancestor = current.parent
+            while ancestor is not None and ancestor.id != loop.id:
+                if ancestor.type in _LOOP_NODES or (
+                    current.type == "break_statement"
+                    and ancestor.type == "switch_statement"
+                ):
+                    break
+                ancestor = ancestor.parent
+            if ancestor is not None and ancestor.id == loop.id:
+                return True
+        stack.extend(current.children)
+    return False
+
+
+def _is_batched_or_delayed_await(await_node, source: bytes) -> bool:
+    expression = next(iter(await_node.named_children), None)
+    while expression is not None and expression.type == "parenthesized_expression":
+        expression = next(iter(expression.named_children), None)
+    if expression is None or expression.type != "call_expression":
+        return False
+    callee = expression.child_by_field_name("function")
+    if callee is None:
+        return False
+    if callee.type == "identifier":
+        return _get_text(source, callee).lower() in {
+            "sleep",
+            "delay",
+            "backoff",
+            "pause",
+        }
+    if callee.type == "member_expression":
+        obj = callee.child_by_field_name("object")
+        prop = callee.child_by_field_name("property")
+        if obj is None or prop is None:
+            return False
+        if _get_text(source, obj) == "Promise" and _get_text(source, prop) in {
+            "all",
+            "allSettled",
+        }:
+            return True
+        return _get_text(source, prop).lower() in {"sleep", "delay", "backoff", "pause"}
+    return False
 
 
 def _check_unreachable_code(

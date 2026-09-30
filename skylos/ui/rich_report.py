@@ -48,6 +48,16 @@ def _results_pill(label, n, ok_style="good", bad_style="bad"):
     return f"[{style}]{label}: {n}[/{style}]"
 
 
+def _architecture_advisory_pill(result):
+    metrics = result.get("architecture_metrics")
+    count = metrics.get("advisory_count") if isinstance(metrics, dict) else None
+    if not isinstance(count, int) or count <= 0:
+        return None
+    return _results_pill(
+        "Architecture advisories", count, ok_style="muted", bad_style="muted"
+    )
+
+
 def _grep_verify_pill(summary):
     grep_verify = summary.get("grep_verify")
     if not isinstance(grep_verify, dict):
@@ -976,6 +986,7 @@ def render_results(
                 _results_pill(
                     "Quality", len(result.get("quality", []) or []), bad_style="warn"
                 ),
+                _architecture_advisory_pill(result),
                 _results_pill(
                     "Reliability",
                     len(result.get("reliability", []) or []),

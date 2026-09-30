@@ -1,0 +1,10 @@
+{
+  "keys": [
+    {
+      "key_id": "skylos-verdict-a0065c999b24100a",
+      "algorithm": "ed25519",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAVL5rewCR8KxKBOujq/3n0THIFwoHiVXRP0eDcZ9oodg=\n-----END PUBLIC KEY-----\n",
+      "status": "active"
+    }
+  ]
+}

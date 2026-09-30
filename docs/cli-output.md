@@ -229,8 +229,8 @@ scans (`--diff`, `--diff-base`, `skylos cicd review`): function length
 (`SKY-C304`), argument count (`SKY-C303`), cyclomatic and cognitive complexity
 (`SKY-Q301`, `SKY-Q306`), nesting (`SKY-Q302`), return count (`SKY-L028`),
 try-block size (`SKY-L004`), repeated literals (`SKY-L027`), boolean
-parameters (`SKY-L029`), class cohesion (`SKY-Q702`), architecture metrics
-(`SKY-Q802`, `SKY-Q803`) and missing annotations (`SKY-T101`, `SKY-T102`).
+parameters (`SKY-L029`), class cohesion (`SKY-Q702`) and missing annotations
+(`SKY-T101`, `SKY-T102`).
 They move to a separate `code_health` list in the JSON report:
 
 - Skylos re-measures each changed Python file at the merge base. A metric the
@@ -243,9 +243,31 @@ They move to a separate `code_health` list in the JSON report:
 
 `code_health` entries are not counted as findings. They never fail `--gate` or
 `--fail-on`, and they are not posted as PR review comments. A full scan
-(`skylos .`) still reports these rules under `quality`, and there they count
-toward the gate as before. To enforce a metric in PR checks, run a full scan
-with the gate.
+(`skylos .`) still reports the other code-health rules under `quality`, and
+there they count toward the gate as before. To enforce one of those metrics in
+PR checks, run a full scan with the gate. Default advisory architecture metrics
+(`SKY-Q802`, `SKY-Q803`) are shown in full scans and omitted from diff-scoped
+reports because their values depend on the whole dependency graph.
+
+### Architecture advisories in full scans
+
+By default, `SKY-Q802` (distance from the main sequence) and `SKY-Q803`
+(architecture zone) are file-level advisory metrics. A full scan groups both
+signals for the same module into one record in
+`architecture_metrics.advisories`. Each record has `file`, `name`, `rule_ids`,
+and `signals`; the signals retain their original rule IDs, evidence, and
+severity. `architecture_metrics.advisory_count` counts modules, while
+`advisory_signal_count` counts the underlying rule signals.
+
+These advisories are excluded from `quality`, `analysis_summary.quality_count`,
+grades, gates, SARIF issue results, and Cloud issue uploads. They remain in
+local `json` and `json-ci` output, including when selected with
+`--select SKY-Q802` or `--select SKY-Q803`. `concise` prints one advisory line
+per module without treating it as a blocking finding. Cloud's issue list no
+longer shows the default I/A/D advisories. Set
+`[tool.skylos.architecture] enforce_iad = true` to put both rules in `quality`
+and make them eligible for enforcement. `SKY-Q804` and `SKY-Q805` remain
+actionable architecture findings in `quality`.
 
 ## SARIF And GitHub Code Scanning
 
@@ -319,6 +341,18 @@ automation, otherwise it is human. For "everything not AI-authored", combine
 `skylos . --upload` (and `skylos debt . --upload`) sends the scan to Skylos
 Cloud. The upload follows a versioned contract shared with the server
 (`skylos/api/upload_contract/v1.json`).
+
+Code-scan uploads include a bounded `scan_coverage` receipt with the scan
+scope, completeness, selected rules, and `resolution_covered_checks`. A
+selected-rule, diff, suppressed, or incomplete scan covers no checks for
+absence-based issue resolution. Dependency coverage can be omitted while
+other checks remain complete. The upload also carries
+`quality_rule_classification.architecture_iad` and aggregate
+`architecture_advisories` counts. Advisory source paths and messages stay in
+local output; they are not uploaded as actionable SARIF findings. Cloud
+validates these client claims before using them for issue history. Local JSON
+exposes `analysis_summary.resolution_scope_limited` and
+`architecture_metrics.iad_enforced` for inspection.
 
 For a full-scan upload, Skylos also sends `source_revision_state` as `clean`,
 `dirty`, or `unknown`. `clean` means the local checkout matched the reported

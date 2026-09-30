@@ -863,6 +863,109 @@ def test_apply_rule_selection_filters_exact_ids_and_preserves_analysis_errors():
     assert filtered["analysis_summary"]["selected_rules"] == ["SKY-L012"]
 
 
+def test_architecture_advisories_support_rule_selection_and_display_filters():
+    q802 = {
+        "rule_id": "SKY-Q802",
+        "file": "src/shared.ts",
+        "line": 1,
+        "severity": "HIGH",
+    }
+    q803 = {
+        "rule_id": "SKY-Q803",
+        "file": "src/shared.ts",
+        "line": 1,
+        "severity": "MEDIUM",
+    }
+    result = {
+        "quality": [{"rule_id": "SKY-Q301", "file": "src/other.ts"}],
+        "architecture_metrics": {
+            "module_metrics": {"src.shared": {"distance": 1.0}},
+            "advisories": [
+                {
+                    "name": "src.shared",
+                    "file": "src/shared.ts",
+                    "rule_ids": ["SKY-Q802", "SKY-Q803"],
+                    "signals": [q802, q803],
+                }
+            ],
+            "advisory_count": 1,
+            "advisory_signal_count": 2,
+        },
+        "analysis_summary": {
+            "quality_count": 1,
+            "architecture_advisory_count": 1,
+        },
+    }
+
+    selected = cli._apply_rule_selection(result, ["SKY-Q803"])
+    metrics = selected["architecture_metrics"]
+    assert selected["quality"] == []
+    assert metrics["module_metrics"] == result["architecture_metrics"]["module_metrics"]
+    assert metrics["advisory_count"] == 1
+    assert metrics["advisory_signal_count"] == 1
+    assert metrics["advisories"][0]["rule_ids"] == ["SKY-Q803"]
+    assert metrics["advisories"][0]["signals"] == [q803]
+    assert selected["analysis_summary"]["architecture_advisory_count"] == 1
+    assert cli._apply_rule_selection(result, ["SKY-Q301"])[
+        "architecture_metrics"
+    ]["advisories"] == []
+    high = cli._apply_display_filters(result, severity="high")
+    assert high["architecture_metrics"]["advisories"][0]["signals"] == [q802]
+    assert cli._apply_display_filters(result, category="security")[
+        "architecture_metrics"
+    ]["advisories"] == []
+    assert result["architecture_metrics"]["advisories"][0]["signals"] == [
+        q802,
+        q803,
+    ]
+
+
+def test_concise_shows_selected_architecture_advisory_without_blocking():
+    result = {
+        "quality": [],
+        "architecture_metrics": {
+            "advisories": [
+                {
+                    "file": "src/shared.ts",
+                    "line": 1,
+                    "name": "src.shared",
+                    "rule_ids": ["SKY-Q802", "SKY-Q803"],
+                    "signals": [
+                        {"rule_id": "SKY-Q802", "file": "src/shared.ts"},
+                        {"rule_id": "SKY-Q803", "file": "src/shared.ts"},
+                    ],
+                }
+            ]
+        },
+        "analysis_summary": {"quality_count": 0},
+    }
+
+    selected = cli._apply_rule_selection(result, ["SKY-Q802"])
+    assert cli._format_concise_results(selected) == (
+        "src/shared.ts:1  SKY-Q802  architecture advisory: src.shared\n"
+    )
+    assert cli._has_concise_findings(selected) is False
+    assert cli._format_concise_results(result).count("\n") == 1
+
+
+def test_rich_summary_counts_architecture_advisories_separately():
+    console = Mock()
+    cli.render_results(
+        console,
+        {
+            "analysis_summary": {"total_files": 1},
+            "quality": [],
+            "architecture_metrics": {"advisory_count": 1},
+        },
+    )
+
+    printed = "\n".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Quality: 0" in printed
+    assert "Architecture advisories: 1" in printed
+
+
 def test_apply_rule_selection_preserves_incomplete_grep_status():
     grep_verify = {
         "enabled": True,

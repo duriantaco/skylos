@@ -171,6 +171,37 @@ def _merge_project_config_overrides(project_cfg, overrides):
     return merged
 
 
+def _resolution_scope_limited(project_cfg, threshold: int) -> bool:
+    """Whether configured suppression makes absence unsafe for issue resolution."""
+    if threshold != 60 or not isinstance(project_cfg, dict):
+        return True
+    if any(
+        project_cfg.get(key)
+        for key in (
+            "ignore",
+            "exclude",
+            "whitelist",
+            "whitelist_documented",
+            "whitelist_temporary",
+            "lower_confidence",
+            "overrides",
+            "non_library_dirs",
+        )
+    ):
+        return True
+    if project_cfg.get("check_circular") is False:
+        return True
+    masking = project_cfg.get("masking")
+    if not isinstance(masking, dict):
+        return True
+    if any(masking.get(key) for key in ("names", "decorators", "bases")):
+        return True
+    if masking.get("keep_docstring") is not True:
+        return True
+    dead_code = project_cfg.get("dead_code")
+    return not isinstance(dead_code, dict) or bool(dead_code.get("entrypoints"))
+
+
 def _merge_ordered_lists(left, right):
     merged = []
     for value in list(left) + list(right):
@@ -3376,6 +3407,7 @@ class Skylos:
                 project_cfg, project_config_overrides
             )
         project_ignore = set(project_cfg.get("ignore", []))
+        resolution_scope_limited = _resolution_scope_limited(project_cfg, thr)
         requested_changed_files = changed_files
 
         def refresh_review_context(effective_changed_files):
@@ -3434,6 +3466,7 @@ class Skylos:
                     ],
                     "excluded_folders": exclude_folders if exclude_folders else [],
                     "analysis_error_count": 0,
+                    "resolution_scope_limited": resolution_scope_limited,
                     "comparison_scope": dict(self._analysis_scope),
                     "monorepo_detected": workspace_inventory.is_monorepo,
                     "workspace_count": len(workspace_inventory.packages),
@@ -5232,6 +5265,11 @@ class Skylos:
         )
 
         self._review_file_configs = effective_file_configs
+        if effective_file_configs is None or any(
+            _resolution_scope_limited(config, thr)
+            for config in effective_file_configs.values()
+        ):
+            resolution_scope_limited = True
         refresh_review_context(changed_files)
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
@@ -5273,6 +5311,9 @@ class Skylos:
             result["analysis_summary"]["analysis_warning_count"] = len(
                 outside_diff_warnings
             )
+        result["analysis_summary"]["resolution_scope_limited"] = (
+            resolution_scope_limited
+        )
 
         return json.dumps(result, indent=2)
 

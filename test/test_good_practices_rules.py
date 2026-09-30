@@ -463,6 +463,44 @@ def test_repo_policy_from_direct_analyzer_ignores_config_excluded_python(tmp_pat
     assert {"SKY-R101", "SKY-R102"}.isdisjoint(rule_ids)
 
 
+@pytest.mark.parametrize(
+    ("script", "next_dependency", "next_config", "expect_r105"),
+    [
+        ("next build --webpack", True, None, False),
+        ("next build --webpack", True, "export default { reactStrictMode: true };", False),
+        (
+            "next build",
+            True,
+            "export default { typescript: { ignoreBuildErrors: true } };",
+            True,
+        ),
+        (
+            "next build",
+            True,
+            "export default { typescript: { ignoreBuildErrors: false } };",
+            False,
+        ),
+        ("next dev", True, None, True),
+        ("next build", False, None, True),
+        ("tsc --noEmit", False, None, False),
+    ],
+)
+def test_repo_policy_recognizes_next_build_type_check(
+    tmp_path, script, next_dependency, next_config, expect_r105
+):
+    package = {
+        "scripts": {"build": script},
+        "dependencies": {"next": "^16.0.0"} if next_dependency else {},
+    }
+    (tmp_path / "package.json").write_text(json.dumps(package), encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    if next_config is not None:
+        (tmp_path / "next.config.ts").write_text(next_config, encoding="utf-8")
+
+    rule_ids = {finding["rule_id"] for finding in analyze_repo_policy(tmp_path)}
+    assert ("SKY-R105" in rule_ids) is expect_r105
+
+
 def test_repo_policy_cli_config_exclusion_ignores_python(tmp_path, monkeypatch, capsys):
     (tmp_path / "pyproject.toml").write_text(
         '[tool.skylos]\nexclude = ["scripts"]\n', encoding="utf-8"

@@ -2420,6 +2420,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "aiohttp" },
+    { name = "cryptography" },
     { name = "litellm" },
     { name = "packaging" },
     { name = "pytest" },
@@ -2436,12 +2437,17 @@ test = [
     { name = "packaging" },
     { name = "pytest" },
 ]
+verdict = [
+    { name = "cryptography" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.0" },
     { name = "aiohttp", marker = "extra == 'llm'", specifier = ">=3.14.0" },
     { name = "ca9", specifier = ">=0.6.0" },
+    { name = "cryptography", marker = "extra == 'all'", specifier = ">=42" },
+    { name = "cryptography", marker = "extra == 'verdict'", specifier = ">=42" },
     { name = "inquirer", specifier = ">=3.1.0" },
     { name = "keyring", specifier = "!=3.4.2,>=25.6.0" },
     { name = "libcst", specifier = ">=1.8.2" },
@@ -2470,7 +2476,7 @@ requires-dist = [
     { name = "tree-sitter-rust", specifier = ">=0.24.2,<0.25" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2,<0.24" },
 ]
-provides-extras = ["llm", "lint", "test", "all"]
+provides-extras = ["llm", "lint", "test", "verdict", "all"]
 
 [[package]]
 name = "sniffio"

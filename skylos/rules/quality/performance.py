@@ -10,7 +10,44 @@ def _get_loop_target_name(node: ast.For) -> str | None:
     return None
 
 
+def _os_walk_partition_names(outer: ast.For) -> set[str]:
+    """Names bound to the per-directory children returned by ``os.walk``."""
+    iterator = outer.iter
+    target = outer.target
+    if not (
+        isinstance(iterator, ast.Call)
+        and isinstance(iterator.func, ast.Attribute)
+        and isinstance(iterator.func.value, ast.Name)
+        and iterator.func.value.id == "os"
+        and iterator.func.attr == "walk"
+        and isinstance(target, (ast.Tuple, ast.List))
+        and len(target.elts) == 3
+    ):
+        return set()
+    return {
+        element.id
+        for element in target.elts[1:]
+        if isinstance(element, ast.Name)
+    }
+
+
+def _iterates_walk_partition(inner_iter: ast.AST, partition_names: set[str]) -> bool:
+    if isinstance(inner_iter, ast.Name):
+        return inner_iter.id in partition_names
+    return bool(
+        isinstance(inner_iter, ast.Call)
+        and isinstance(inner_iter.func, ast.Name)
+        and inner_iter.func.id == "list"
+        and len(inner_iter.args) == 1
+        and not inner_iter.keywords
+        and isinstance(inner_iter.args[0], ast.Name)
+        and inner_iter.args[0].id in partition_names
+    )
+
+
 def _inner_iterates_over_outer(outer: ast.For, inner: ast.For) -> bool:
+    if _iterates_walk_partition(inner.iter, _os_walk_partition_names(outer)):
+        return True
     outer_name = _get_loop_target_name(outer)
     if outer_name is None:
         return False

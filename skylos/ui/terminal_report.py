@@ -120,6 +120,7 @@ def render_pretty_results(
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
+    _print_architecture_advisory_status(console, result)
     _print_publisher_review_status(console, result)
     _print_directory_rollups(console, result)
     console.print()
@@ -153,6 +154,24 @@ def render_pretty_results(
         console.print()
 
     _print_footer(console, findings)
+
+
+def _print_architecture_advisory_status(console: Console, result: dict) -> None:
+    metrics = result.get("architecture_metrics")
+    if not isinstance(metrics, dict):
+        return
+    count = metrics.get("advisory_count")
+    if not isinstance(count, int) or count <= 0:
+        return
+    signals = metrics.get("advisory_signal_count")
+    signal_label = f" ({signals} signals)" if isinstance(signals, int) else ""
+    console.print(
+        Text(
+            f"  Architecture: {count} advisory module{'s' if count != 1 else ''}"
+            f"{signal_label}; see architecture_metrics.advisories in JSON",
+            style="dim",
+        )
+    )
 
 
 def _print_publisher_review_status(console: Console, result: dict) -> None:

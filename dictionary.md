@@ -72,6 +72,8 @@ Rule IDs use a stable public prefix:
 | "Upload failed: <what went wrong> <what to do> (ref: <id>)" | The upload error format. The reference is Cloud's request id to quote to support. Raw server responses are never printed. |
 | "still processing; checking again in Ns" | Cloud answered a retryable 409 (the same upload is still running); the CLI waits as asked, for up to 300 seconds in total. |
 | "Scan was already saved by an earlier attempt" | Cloud recognised the idempotency key (`Idempotent-Replayed: true`); nothing was saved or charged twice. |
+| Signed check verdict | The check result Skylos Cloud decided for one commit, signed as an in-toto Statement v1 with a SLSA Verification Summary predicate in an Ed25519 DSSE envelope, bundled with the check summary it commits to (`skylos.verdict-bundle/v1`). It proves the check ran under that policy with that result; it does not prove the code is safe, and only GitHub OIDC uploads (`repository_verified`) prove the results came from that commit's code. See [docs/verify-verdict.md](./docs/verify-verdict.md). |
+| `skylos verify-verdict` | Verifies a signed check verdict offline against the published keys (`https://skylos.dev/.well-known/skylos-verdict-keys.json` or a local `--keys` file). `--commit`, `--repository`, `--project`, and `--workspace` bind it to what is being deployed; `--require-repository-verified` requires a GitHub OIDC upload bound to the repository; `--max-age` rejects old verdicts; `--require-passed` exits 1 unless the level is `SKYLOS_POLICY_PASSED` (`--allow-override` also accepts `SKYLOS_GATE_OVERRIDDEN`; `SKYLOS_GATE_DISABLED` never passes). Exit 2 means not verified. Needs `skylos[verdict]` (`cryptography`). |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
@@ -613,7 +615,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
-| Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
+| Q402 | LOW | Await in loop | TS/JS | review bounded parallelism only when iterations are independent and ordering/rate limits allow |
 | Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed lock order in nested or compound `with` / `async with` statements; includes non-adjacent pairs |
 | Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
 | Q405 | HIGH | Async Promise executor | TS/JS | `new Promise(async ...)` ignores the executor's async result |
@@ -624,8 +626,8 @@ uses project ignores, not inline comments, consistently across supported files.
 | Q701 | MEDIUM | High coupling | Python | CBO-style signal |
 | Q702 | MEDIUM | Low cohesion | Python | LCOM-style signal |
 | Q801 | MEDIUM | High architectural instability | Reserved | no current finding emission |
-| Q802 | MEDIUM | Distance from main sequence | Python, TS/JS |
-| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python, TS/JS |
+| Q802 | ADVISORY by default | Distance from main sequence | Python, TS/JS | included in actionable quality only with `enforce_iad = true` |
+| Q803 | ADVISORY by default | Zone of Pain / Zone of Uselessness | Python, TS/JS | grouped with Q802 per module by default |
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
@@ -633,7 +635,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
-| P403 | LOW | Nested loop O(N^2) | Python / generic |
+| P403 | LOW | Potentially quadratic nested loop | Python / generic | per-directory `os.walk` partition loops are excluded |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
@@ -647,13 +649,16 @@ uses project ignores, not inline comments, consistently across supported files.
 | R102 | MEDIUM | Repository missing Python lint command | Repo policy |
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy |
 | R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
-| R105 | MEDIUM | Repository missing TypeScript type-check command | Repo policy |
+| R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | varies | Circular dependency | Python |
 
 Architecture metrics include scanned TS/JS modules and use `package.json`
 workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
 interfaces, abstract classes, concrete classes, and functions as a file-level
-abstractness heuristic. If a TS/JS source cannot be parsed or opened with
+abstractness heuristic. Default Q802/Q803 signals are grouped per module under
+`architecture_metrics.advisories` and excluded from `quality_count`, grades,
+gates, and issue uploads. Setting `[tool.skylos.architecture] enforce_iad = true`
+places them in actionable `quality` instead. If a TS/JS source cannot be parsed or opened with
 no-follow directory descriptors on the host platform, its module still
 participates in the dependency graph, but Q802/Q803 are suppressed for that
 module and its name appears in
