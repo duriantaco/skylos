@@ -64,9 +64,6 @@ ROS_PYTHON_IMPORT_ROOTS = frozenset(
         "tf2_ros",
     }
 )
-# The Livox driver provides generated ROS message imports, but is vendor
-# software rather than a core ROS package. Require the `.msg` import form.
-ROS_VENDOR_MESSAGE_ROOTS = frozenset({"livox_ros_driver2"})
 logger = logging.getLogger(__name__)
 
 
@@ -1435,36 +1432,14 @@ def _collect_ros_package_dependencies(repo_root, py_files):
     return manifests
 
 
-def _is_generated_ros_message_import(mod, source):
-    if mod not in ROS_VENDOR_MESSAGE_ROOTS or not source:
-        return False
-    try:
-        tree = ast.parse(source)
-    except (MemoryError, RecursionError, SyntaxError, ValueError):
-        return False
-    imports = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            if node.module.split(".", 1)[0] == mod:
-                imports.append(node.module == f"{mod}.msg")
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.split(".", 1)[0] == mod:
-                    imports.append(False)
-    return bool(imports) and all(imports)
-
-
-def _is_ros_import(mod, ctx, importer, source=None):
+def _is_ros_import(mod, ctx, importer):
     manifests = ctx["ros_package_deps"]
-    if not manifests:
+    if not manifests or importer is None:
         return False
-    if mod in ROS_PYTHON_IMPORT_ROOTS or _is_generated_ros_message_import(mod, source):
-        return True
-    if mod == "launch" and importer is not None and importer.name.endswith(".launch.py"):
-        return True
-    if importer is None:
+    package_deps = [manifests[parent] for parent in importer.parents if parent in manifests]
+    if not package_deps:
         return False
-    return any(mod in manifests.get(parent, ()) for parent in importer.parents)
+    return any(mod in dependencies for dependencies in package_deps)
 
 
 def _find_import_line(src, mod):
@@ -1694,7 +1669,6 @@ def _classify_import(
     diff_path=False,
     direct_script=False,
     local_fallbacks=frozenset(),
-    source=None,
 ):
     """Return a finding template (without file/line) for an import root, or None."""
     if not mod or mod.startswith("_"):
@@ -1725,7 +1699,7 @@ def _classify_import(
     ):
         return None
 
-    if local_scope_valid and _is_ros_import(mod, ctx, importer, source):
+    if local_scope_valid and _is_ros_import(mod, ctx, importer):
         return None
 
     declared_deps = ctx["declared_deps"]
@@ -1749,6 +1723,23 @@ def _classify_import(
     mapped_result = _classify_mapped_import(mod, ctx)
     if mapped_result is not _NO_FINDING:
         return mapped_result
+
+    ros_launch = (
+        mod == "launch"
+        and importer is not None
+        and importer.name.endswith(".launch.py")
+        and any(parent in ctx["ros_package_deps"] for parent in importer.parents)
+    )
+    if mod in ROS_PYTHON_IMPORT_ROOTS or ros_launch:
+        # These are known ROS modules, so a missing PyPI project is not proof
+        # of hallucination. A manifest must actually declare the imported
+        # package; an unrelated ROS package elsewhere in a monorepo cannot.
+        if manifest_context or ctx["ros_package_deps"]:
+            return _undeclared_template(
+                mod,
+                f"Undeclared ROS import '{mod}' in package.xml or Python manifest.",
+            )
+        return None
 
     return _classify_registry_import(mod, ctx, manifest_context)
 
@@ -1893,7 +1884,6 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 file_path,
                 direct_script=direct_script,
                 local_fallbacks=local_fallbacks,
-                source=src,
             )
             if template is None:
                 continue
@@ -1950,7 +1940,6 @@ def scan_diff_added_imports(
     seen = set()
     direct_script_cache = {}
     local_fallback_cache = {}
-    source_cache = {}
     for file_label, line_no, module_name in added_imports:
         mod = str(module_name).split(".")[0].strip()
         if (file_label, mod) in seen:
@@ -1980,7 +1969,6 @@ def scan_diff_added_imports(
                 encoding="utf-8",
                 errors="ignore",
             )
-            source_cache[script_key] = source
             local_fallback_cache[script_key] = (
                 _local_import_fallbacks(source, ctx, importer)
                 if source is not None
@@ -1993,7 +1981,6 @@ def scan_diff_added_imports(
             diff_path=True,
             direct_script=direct_script_cache[script_key],
             local_fallbacks=local_fallback_cache[script_key],
-            source=source_cache[script_key],
         )
         if template is None:
             continue
