@@ -9,6 +9,7 @@ import stat
 import sys
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 try:
@@ -41,8 +42,31 @@ MAX_DEPENDENCY_SCOPE_COMPONENTS = 256
 MAX_DEPENDENCY_SCOPE_PATH_CHARS = 4096
 MAX_PYTHON_SOURCE_ROOTS = 256
 MAX_PYTHON_LAYOUT_CANDIDATES = 1024
+MAX_ROS_MANIFEST_BYTES = 256_000
+MAX_ROS_MANIFEST_CANDIDATES = 128
+MAX_ROS_PACKAGE_DIRECTORIES = 256
 CONVENTIONAL_PYTHON_SOURCE_ROOT = Path("src")
 PYTHON_SOURCE_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
+# These are ROS 2 Python import roots, including generated message packages.
+# ROS packages are normally installed by apt/colcon, not published to PyPI.
+ROS_PYTHON_IMPORT_ROOTS = frozenset(
+    {
+        "ament_index_python",
+        "geometry_msgs",
+        "launch_ros",
+        "nav_msgs",
+        "rclpy",
+        "rosidl_runtime_py",
+        "sensor_msgs",
+        "sensor_msgs_py",
+        "std_msgs",
+        "std_srvs",
+        "tf2_ros",
+    }
+)
+# The Livox driver provides generated ROS message imports, but is vendor
+# software rather than a core ROS package. Require the `.msg` import form.
+ROS_VENDOR_MESSAGE_ROOTS = frozenset({"livox_ros_driver2"})
 logger = logging.getLogger(__name__)
 
 
@@ -828,6 +852,68 @@ def _has_direct_script_evidence(source):
     return False
 
 
+def _local_import_fallbacks(src, ctx, importer):
+    """Find absolute imports paired with a sibling relative import fallback.
+
+    A package module can use ``from .helper`` when imported as a package and
+    ``from helper`` when executed as a script. Only accept the absolute form
+    when *every* absolute import of that root is in a matching ImportError
+    handler and a real sibling Python module exists.
+    """
+    if (
+        importer is None
+        or "except ImportError" not in src
+        or not _has_direct_script_evidence(src)
+    ):
+        return frozenset()
+    try:
+        tree = ast.parse(src)
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        return frozenset()
+
+    absolute_imports = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            root = node.module.split(".", 1)[0]
+            absolute_imports.setdefault(root, set()).add(id(node))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                absolute_imports.setdefault(root, set()).add(id(node))
+
+    paired = {}
+    for statement in ast.walk(tree):
+        if not isinstance(statement, ast.Try):
+            continue
+        relative_modules = {
+            node.module
+            for node in statement.body
+            if isinstance(node, ast.ImportFrom)
+            and node.level == 1
+            and node.module
+            and node.module.isidentifier()
+        }
+        for handler in statement.handlers:
+            if not (
+                isinstance(handler.type, ast.Name) and handler.type.id == "ImportError"
+            ):
+                continue
+            for node in handler.body:
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.level == 0
+                    and node.module in relative_modules
+                    and _context_has_local_python_file(
+                        ctx, importer.parent / f"{node.module}.py"
+                    )
+                ):
+                    paired.setdefault(node.module, set()).add(id(node))
+
+    return frozenset(
+        mod for mod, nodes in paired.items() if absolute_imports.get(mod) == nodes
+    )
+
+
 def _diff_file_has_direct_script_evidence(repo_root, file_label):
     if _contained_importer_path(repo_root, file_label, diff_path=True) is None:
         return False
@@ -1246,6 +1332,141 @@ def _split_extra_dependency_scopes(repo_root, extra_declared_deps):
     return scopes.pop(root, frozenset()), scopes
 
 
+def _ros_manifest_candidates(repo_root, py_files):
+    """Inspect conventional ROS workspace locations and analyzed file parents.
+
+    Keep discovery bounded; a repository cannot make the dependency pass walk
+    its entire tree just by adding many package directories.
+    """
+    candidates = [Path("package.xml")]
+    seen = set(candidates)
+
+    def add(relative):
+        if relative not in seen and len(candidates) < MAX_ROS_MANIFEST_CANDIDATES:
+            seen.add(relative)
+            candidates.append(relative)
+
+    for workspace in (Path("ros2"), Path("src"), Path("ros2_ws/src")):
+        directory = _contained_directory(repo_root, workspace)
+        if directory is None:
+            continue
+        try:
+            children = []
+            for index, child in enumerate(directory.iterdir()):
+                if index >= MAX_ROS_PACKAGE_DIRECTORIES:
+                    break
+                children.append(child)
+            for child in sorted(children, key=lambda path: path.name):
+                if child.name.startswith(".") or not stat.S_ISDIR(
+                    child.lstat().st_mode
+                ):
+                    continue
+                manifest = child / "package.xml"
+                try:
+                    if stat.S_ISREG(manifest.lstat().st_mode):
+                        add(workspace / child.name / "package.xml")
+                except FileNotFoundError:
+                    continue
+        except OSError:
+            continue
+
+    for file_path in py_files or ():
+        if len(candidates) >= MAX_ROS_MANIFEST_CANDIDATES:
+            break
+        relative = _contained_importer_path(repo_root, file_path)
+        if relative is None:
+            continue
+        for parent in relative.parents:
+            if not parent.parts or parent == Path("."):
+                break
+            add(parent / "package.xml")
+
+    return candidates
+
+
+def _parse_ros_package_manifest(repo_root, relative):
+    text = read_project_text_no_symlink(
+        repo_root,
+        relative,
+        max_bytes=MAX_ROS_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if text is None or "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+        return None
+    try:
+        package = ET.fromstring(text)
+    except (ET.ParseError, RecursionError, ValueError):
+        return None
+    if package.tag != "package" or package.get("format") not in {"2", "3"}:
+        return None
+    name = package.findtext("name")
+    if not name or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name.strip()):
+        return None
+    # A package.xml alone could describe ROS 1 or unrelated XML. An ament
+    # build dependency/export identifies a ROS 2 package.
+    has_ament = any(
+        child.tag == "buildtool_depend"
+        and (child.text or "").strip().startswith("ament_")
+        for child in package
+    ) or any(
+        child.tag == "export"
+        and any(
+            item.tag == "build_type" and (item.text or "").strip().startswith("ament_")
+            for item in child
+        )
+        for child in package
+    )
+    if not has_ament:
+        return None
+    return frozenset(
+        (child.text or "").strip()
+        for child in package
+        if child.tag in {"depend", "exec_depend"}
+        and (child.text or "").strip().isidentifier()
+    )
+
+
+def _collect_ros_package_dependencies(repo_root, py_files):
+    manifests = {}
+    for relative in _ros_manifest_candidates(repo_root, py_files):
+        dependencies = _parse_ros_package_manifest(repo_root, relative)
+        if dependencies is not None:
+            manifests[relative.parent] = dependencies
+    return manifests
+
+
+def _is_generated_ros_message_import(mod, source):
+    if mod not in ROS_VENDOR_MESSAGE_ROOTS or not source:
+        return False
+    try:
+        tree = ast.parse(source)
+    except (MemoryError, RecursionError, SyntaxError, ValueError):
+        return False
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            if node.module.split(".", 1)[0] == mod:
+                imports.append(node.module == f"{mod}.msg")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".", 1)[0] == mod:
+                    imports.append(False)
+    return bool(imports) and all(imports)
+
+
+def _is_ros_import(mod, ctx, importer, source=None):
+    manifests = ctx["ros_package_deps"]
+    if not manifests:
+        return False
+    if mod in ROS_PYTHON_IMPORT_ROOTS or _is_generated_ros_message_import(mod, source):
+        return True
+    if mod == "launch" and importer is not None and importer.name.endswith(".launch.py"):
+        return True
+    if importer is None:
+        return False
+    return any(mod in manifests.get(parent, ()) for parent in importer.parents)
+
+
 def _find_import_line(src, mod):
     if not src:
         return 1
@@ -1414,6 +1635,7 @@ def _build_dependency_context(repo_root, py_files=None):
         "file_local_cache": {},
         "package_context_cache": {},
         "declared_deps": declared_deps,
+        "ros_package_deps": _collect_ros_package_dependencies(repo_root, py_files),
         "manifest_context": bool(declared_deps)
         or _has_dependency_manifest_context(repo_root),
         "private_allow": _load_private_allowlist(),
@@ -1464,7 +1686,16 @@ def _hallucinated_template(mod):
     }
 
 
-def _classify_import(mod, ctx, file_path=None, *, diff_path=False, direct_script=False):
+def _classify_import(
+    mod,
+    ctx,
+    file_path=None,
+    *,
+    diff_path=False,
+    direct_script=False,
+    local_fallbacks=frozenset(),
+    source=None,
+):
     """Return a finding template (without file/line) for an import root, or None."""
     if not mod or mod.startswith("_"):
         return None
@@ -1490,7 +1721,11 @@ def _classify_import(mod, ctx, file_path=None, *, diff_path=False, direct_script
     if local_scope_valid and (
         mod in ctx["local_modules"]
         or _is_file_local_import(mod, ctx, importer, direct_script=direct_script)
+        or mod in local_fallbacks
     ):
+        return None
+
+    if local_scope_valid and _is_ros_import(mod, ctx, importer, source):
         return None
 
     declared_deps = ctx["declared_deps"]
@@ -1649,9 +1884,16 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             continue
 
         direct_script = _has_direct_script_evidence(src)
+        importer = _contained_importer_path(root, file_path)
+        local_fallbacks = _local_import_fallbacks(src, ctx, importer)
         for mod in sorted(_extract_imports(src)):
             template = _classify_import(
-                mod, ctx, file_path, direct_script=direct_script
+                mod,
+                ctx,
+                file_path,
+                direct_script=direct_script,
+                local_fallbacks=local_fallbacks,
+                source=src,
             )
             if template is None:
                 continue
@@ -1707,6 +1949,8 @@ def scan_diff_added_imports(
 
     seen = set()
     direct_script_cache = {}
+    local_fallback_cache = {}
+    source_cache = {}
     for file_label, line_no, module_name in added_imports:
         mod = str(module_name).split(".")[0].strip()
         if (file_label, mod) in seen:
@@ -1727,12 +1971,29 @@ def scan_diff_added_imports(
             direct_script_cache[script_key] = _diff_file_has_direct_script_evidence(
                 root, file_label
             )
+        if script_key not in local_fallback_cache:
+            importer = _contained_importer_path(root, file_label, diff_path=True)
+            source = read_project_text_no_symlink(
+                root,
+                file_label,
+                max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            source_cache[script_key] = source
+            local_fallback_cache[script_key] = (
+                _local_import_fallbacks(source, ctx, importer)
+                if source is not None
+                else frozenset()
+            )
         template = _classify_import(
             mod,
             ctx,
             file_label,
             diff_path=True,
             direct_script=direct_script_cache[script_key],
+            local_fallbacks=local_fallback_cache[script_key],
+            source=source_cache[script_key],
         )
         if template is None:
             continue
