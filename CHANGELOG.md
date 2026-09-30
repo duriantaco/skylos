@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.43.0](https://github.com/duriantaco/skylos/compare/v4.42.0...v4.43.0) (2026-09-30)
+
+
+### Features
+
+* **agent:** add project standards skills and quality gates ([#915](https://github.com/duriantaco/skylos/issues/915)) ([0572bfb](https://github.com/duriantaco/skylos/commit/0572bfb4606c940edc72995c72e069bd7fcf93ff))
+* **quality:** reduce FPs and attest upload coverage ([#918](https://github.com/duriantaco/skylos/issues/918)) ([ddaff2b](https://github.com/duriantaco/skylos/commit/ddaff2b039fc71687edbdbb5679375fe95475afa))
+
+
+### Bug Fixes
+
+* **security:** trace urllib Request destination for SSRF ([#916](https://github.com/duriantaco/skylos/issues/916)) ([ddcb7de](https://github.com/duriantaco/skylos/commit/ddcb7de4eebc55809f5f41a9b5606cf891b86c9d))
+
 ## [4.42.0](https://github.com/duriantaco/skylos/compare/v4.41.0...v4.42.0) (2026-09-29)
 
 
