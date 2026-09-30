@@ -705,6 +705,22 @@ def test_environment_configured_url_ok(tmp_path):
     assert "SKY-D216" not in _rule_ids(out)
 
 
+def test_cli_configured_url_through_helper_is_not_ssrf(tmp_path):
+    code = (
+        "import argparse, urllib.request\n"
+        "def post_json(base_url):\n"
+        "    request = urllib.request.Request(base_url + '/ingest')\n"
+        "    return urllib.request.urlopen(request, timeout=3)\n"
+        "def main():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--backend')\n"
+        "    args = parser.parse_args()\n"
+        "    return post_json(args.backend)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_cli_backend.py", code)
+    assert _ssrf_findings(out) == []
+
+
 def test_route_param_controls_host_flags(tmp_path):
     code = (
         "import requests\n"

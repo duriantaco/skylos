@@ -51,6 +51,27 @@ def _unicode_escape(value):
     return "".join(f"\\u{ord(character):04x}" for character in value)
 
 
+def test_generated_flight_directory_id_is_not_a_generic_secret():
+    flight_id = "slam-auto-20260928T014434Z-3777d48be9bb"
+    source = json.dumps({"flightId": flight_id}, indent=2) + "\n"
+    rel_path = f"lidar-bievr/{flight_id}/flight-products.json"
+
+    assert not list(scan_ctx(_ctx_from_source(source, rel=rel_path)))
+
+
+def test_flight_id_suppression_requires_directory_and_field_evidence():
+    flight_id = "slam-auto-20260928T014434Z-3777d48be9bb"
+    wrong_directory = "lidar-bievr/other-flight/flight-products.json"
+    token_field = f"lidar-bievr/{flight_id}/flight-products.json"
+
+    for source, rel_path in (
+        (json.dumps({"flightId": flight_id}, indent=2), wrong_directory),
+        (json.dumps({"apiToken": flight_id}, indent=2), token_field),
+    ):
+        findings = list(scan_ctx(_ctx_from_source(source + "\n", rel=rel_path)))
+        assert any(finding["provider"] == "generic" for finding in findings)
+
+
 def test_github_and_generic_both_fire_on_token_assignment():
     src = 'GITHUB_TOKEN = "ghp_1234567890abcdef1234567890abcdef1234"\n'
 

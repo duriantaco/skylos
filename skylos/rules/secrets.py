@@ -11,6 +11,7 @@ from hashlib import blake2s
 from html import unescape
 from html.parser import HTMLParser
 from math import log2
+from pathlib import PurePosixPath
 
 try:
     import yaml
@@ -233,6 +234,12 @@ GENERIC_KEYED_VALUE = re.compile(
 
 BARE_GENERIC_VALUE = re.compile(
     r"(?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))"
+)
+_TIMESTAMPED_DIRECTORY_ID = re.compile(
+    r"^[A-Za-z][A-Za-z0-9-]*-\d{8}T\d{6}Z-[0-9a-f]{12}$"
+)
+_JSON_FLIGHT_ID_LINE = re.compile(
+    r'^\s*"flightId"\s*:\s*"(?P<value>[^"\\]+)"\s*,?\s*$'
 )
 
 # Public compatibility pattern used by MCP diff validation. Keep this linear:
@@ -725,6 +732,18 @@ def _bare_generic_candidates(
             continue
         candidates.append((start, 3, token, True, match.end("bare")))
     return candidates
+
+
+def _is_generated_flight_directory_id(
+    line_content: str, token: str, rel_path: str
+) -> bool:
+    """A timestamped flight ID repeated in its directory name is not a key."""
+    if not _TIMESTAMPED_DIRECTORY_ID.fullmatch(token):
+        return False
+    if PurePosixPath(rel_path.replace("\\", "/")).parent.name != token:
+        return False
+    match = _JSON_FLIGHT_ID_LINE.fullmatch(line_content.rstrip("\r\n"))
+    return match is not None and match.group("value") == token
 
 
 def _find_generic_values(
@@ -3984,6 +4003,11 @@ def scan_ctx(
             if not clean_token:
                 continue
             if is_bare and _looks_like_identifier(clean_token):
+                continue
+
+            if is_bare and _is_generated_flight_directory_id(
+                line_content, clean_token, rel_path
+            ):
                 continue
 
             if _is_obvious_placeholder(clean_token):

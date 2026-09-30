@@ -354,6 +354,46 @@ cat "/srv/backups/$backup_name"
     assert "SKY-D215" in _rule_ids(findings)
 
 
+def test_here_string_is_not_a_filesystem_redirection(tmp_path):
+    findings = _scan_shell_findings(
+        tmp_path,
+        '''#!/usr/bin/env bash
+address="$1"
+IFS=. read -r -a octets <<<"${address}"
+''',
+    )
+
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_real_file_redirections_still_flag_path_traversal(tmp_path):
+    statements = ('cat < "$1"', 'printf data > "$1"', 'printf data >> "$1"')
+    for index, statement in enumerate(statements):
+        findings = _scan_shell_findings(
+            tmp_path,
+            f"#!/usr/bin/env bash\n{statement}\n",
+            filename=f"redirect-{index}.sh",
+        )
+        assert "SKY-D215" in _rule_ids(findings), statement
+
+
+def test_heredoc_body_is_skipped_but_later_file_redirection_is_checked(tmp_path):
+    findings = _scan_shell_findings(
+        tmp_path,
+        '''#!/usr/bin/env bash
+cat <<'TEXT'
+cat "$1"
+TEXT
+cat < "$1"
+''',
+    )
+
+    traversal_lines = [
+        finding["line"] for finding in findings if finding["rule_id"] == "SKY-D215"
+    ]
+    assert traversal_lines == [5]
+
+
 def test_basename_sanitized_file_path_is_safe(tmp_path):
     findings = _scan_shell_findings(
         tmp_path,

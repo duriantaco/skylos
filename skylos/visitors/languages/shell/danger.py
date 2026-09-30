@@ -74,7 +74,10 @@ _PREFIX_OPTIONS_WITH_VALUES = {
     "sudo": {"-C", "-g", "-h", "-p", "-T", "-u"},
 }
 _REDIRECT_RE = re.compile(
-    r"(?:^|[^\d])(?:>>?|<)\s*(?P<target>(?:\"[^\"]+\"|'[^']+'|\S+))"
+    # Bash <<< supplies a string, while << introduces a heredoc. Neither
+    # operand is a filesystem path. The lookbehind also prevents matching
+    # the final < inside either operator as a separate input redirection.
+    r"(?<![\d<])(?:>>?|<(?!<))\s*(?P<target>(?:\"[^\"]+\"|'[^']+'|\S+))"
 )
 
 _COMMAND_FINDING = (

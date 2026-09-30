@@ -311,9 +311,13 @@ def _dispatched_functions(tree) -> set[str]:
 
 
 def _only_operator_sources(evidence):
-    # Environment variables are deployment configuration, not attacker input.
+    # Deployment settings and process arguments are chosen by the operator.
+    # A separate request source still keeps the finding actionable.
     return all(
-        "os.environ" in label or "os.getenv" in label
+        "os.environ" in label
+        or "os.getenv" in label
+        or label.startswith("CLI arguments `")
+        or label.startswith("sys.argv")
         for label in evidence.get("sources", [])
     )
 
@@ -758,6 +762,8 @@ class _SSRFFlowChecker(TaintVisitor):
         )
         if evidence is not None and not _only_operator_sources(evidence):
             return evidence
+        if evidence is not None:
+            return None
         name = getattr(func, "name", None)
         if name in self.dispatched_functions and super().is_tainted(url_arg):
             source = f"command-dispatch argument of `{name}`"
