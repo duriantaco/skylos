@@ -1017,9 +1017,10 @@ def test_max_age_rejects_unparseable_signing_time(capsys, tmp_path, time_verifie
     "value", ["7", "0d", "-1h", "7 days", "1.5h", "", "99999999999999999999w"]
 )
 def test_max_age_rejects_bad_durations(capsys, value):
+    # The equals form sends negative values to the validator on Python 3.12.
     with pytest.raises(SystemExit) as exc:
         run_verify_verdict_command(
-            [str(PASSED), "--keys", str(KEYS), "--max-age", value]
+            [str(PASSED), "--keys", str(KEYS), f"--max-age={value}"]
         )
 
     assert exc.value.code == 2
