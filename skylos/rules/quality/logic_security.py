@@ -57,6 +57,128 @@ def _is_cli_or_script(filename):
     return False
 
 
+def _is_main_guard(node: ast.AST) -> bool:
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return False
+    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
+        return False
+    left, right = test.left, test.comparators[0]
+    return (
+        isinstance(left, ast.Name)
+        and left.id == "__name__"
+        and isinstance(right, ast.Constant)
+        and right.value == "__main__"
+    ) or (
+        isinstance(right, ast.Name)
+        and right.id == "__name__"
+        and isinstance(left, ast.Constant)
+        and left.value == "__main__"
+    )
+
+
+def _scope_calls(statements: list[ast.stmt]) -> list[ast.Call]:
+    calls: list[ast.Call] = []
+
+    class CallVisitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:
+            calls.append(node)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            return
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            return
+
+    visitor = CallVisitor()
+    for statement in statements:
+        visitor.visit(statement)
+    return calls
+
+
+def _is_cli_entry_name(name: str) -> bool:
+    return name == "cli" or name.endswith("_cli") or name.startswith("cli_")
+
+
+def _main_has_cli_arguments(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if any(arg.arg == "argv" for arg in (*node.args.posonlyargs, *node.args.args)):
+        return True
+    for call in _scope_calls(node.body):
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "parse_args":
+            return True
+    return any(
+        isinstance(child, ast.Attribute)
+        and child.attr == "argv"
+        and isinstance(child.value, ast.Name)
+        and child.value.id == "sys"
+        for child in ast.walk(node)
+    )
+
+
+def _intentional_cli_prints(source: str) -> set[tuple[int, int]]:
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return set()
+
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    guard_calls = [
+        call
+        for node in tree.body
+        if _is_main_guard(node)
+        for call in _scope_calls(node.body)
+    ]
+    if not guard_calls:
+        return set()
+
+    positions = {
+        (call.lineno, call.col_offset)
+        for call in guard_calls
+        if isinstance(call.func, ast.Name) and call.func.id == "print"
+    }
+    reachable = {
+        call.func.id
+        for call in guard_calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id in functions
+        and not functions[call.func.id].decorator_list
+    }
+    queued = list(reachable)
+    while queued:
+        name = queued.pop()
+        for call in _scope_calls(functions[name].body):
+            if isinstance(call.func, ast.Name) and call.func.id in functions:
+                called = call.func.id
+                if called not in reachable and not functions[called].decorator_list:
+                    reachable.add(called)
+                    queued.append(called)
+
+    for name in reachable:
+        if not (
+            _is_cli_entry_name(name)
+            or (name == "main" and _main_has_cli_arguments(functions[name]))
+        ):
+            continue
+        for call in _scope_calls(functions[name].body):
+            if not isinstance(call.func, ast.Name) or call.func.id != "print":
+                continue
+            positions.add((call.lineno, call.col_offset))
+    return positions
+
+
 class DebugLeftoverRule(SkylosRule):
     rule_id = "SKY-L009"
     name = "Debug Leftover"
@@ -111,7 +233,7 @@ class DebugLeftoverRule(SkylosRule):
                 return None
             if _is_test_file(filename):
                 return None
-            if self._has_main_guard(context):
+            if func_name == "print" and self._is_intentional_cli_output(node, context):
                 return None
 
         if func_name == "breakpoint" or debug_name.endswith("set_trace"):
@@ -135,8 +257,13 @@ class DebugLeftoverRule(SkylosRule):
             }
         ]
 
-    def _has_main_guard(self, context):
-        return context.get("_has_main_guard", False)
+    def _is_intentional_cli_output(self, node: ast.Call, context: dict) -> bool:
+        source = context.get("source")
+        if not isinstance(source, str):
+            return False
+        if "_intentional_cli_prints" not in context:
+            context["_intentional_cli_prints"] = _intentional_cli_prints(source)
+        return (node.lineno, node.col_offset) in context["_intentional_cli_prints"]
 
 
 _SECURITY_TODO_RE = re.compile(

@@ -277,6 +277,131 @@ def _is_local_scope_node(node: ast.AST) -> bool:
     )
 
 
+def _receiver_shape(node: ast.AST) -> tuple | None:
+    if isinstance(node, ast.Name):
+        return ("name", node.id)
+    if isinstance(node, ast.Attribute):
+        base = _receiver_shape(node.value)
+        if base is not None:
+            return ("attribute", base, node.attr)
+    return None
+
+
+def _receiver_scope(node: ast.AST, parent_map: dict[int, ast.AST]) -> int | None:
+    class_field = (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"self", "cls"}
+    )
+    current = node
+    while parent := parent_map.get(id(current)):
+        if class_field and isinstance(parent, ast.ClassDef):
+            return id(parent)
+        if not class_field and isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        ):
+            return id(parent)
+        if isinstance(parent, ast.Module):
+            return id(parent)
+        current = parent
+    return None
+
+
+def _mapping_receiver_key(
+    node: ast.AST, parent_map: dict[int, ast.AST]
+) -> tuple[int | None, tuple] | None:
+    shape = _receiver_shape(node)
+    if shape is None:
+        return None
+    return (_receiver_scope(node, parent_map), shape)
+
+
+def _is_mapping_annotation(node: ast.AST) -> bool:
+    if isinstance(node, ast.Subscript):
+        return _is_mapping_annotation(node.value)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _is_mapping_annotation(node.left) or _is_mapping_annotation(
+            node.right
+        )
+    if isinstance(node, ast.Name):
+        return node.id in {"dict", "Dict", "Mapping", "MutableMapping"}
+    return isinstance(node, ast.Attribute) and node.attr in {
+        "Dict",
+        "Mapping",
+        "MutableMapping",
+    }
+
+
+def _bound_receiver_keys(
+    target: ast.AST, parent_map: dict[int, ast.AST]
+) -> set[tuple[int | None, tuple]]:
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {
+            key
+            for element in target.elts
+            for key in _bound_receiver_keys(element, parent_map)
+        }
+    if isinstance(target, ast.Starred):
+        return _bound_receiver_keys(target.value, parent_map)
+    key = _mapping_receiver_key(target, parent_map)
+    return {key} if key is not None else set()
+
+
+def _mapping_receiver_evidence(
+    tree: ast.Module, parent_map: dict[int, ast.AST]
+) -> set[tuple[int | None, tuple]]:
+    receivers: set[tuple[int | None, tuple]] = set()
+    rebound: set[tuple[int | None, tuple]] = set()
+    for node in ast.walk(tree):
+        candidate: ast.AST | None = None
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            if isinstance(node.slice.value, str):
+                candidate = node.value
+        elif isinstance(node, ast.AnnAssign):
+            if _is_mapping_annotation(node.annotation):
+                candidate = node.target
+            if node.value is not None and not isinstance(node.value, ast.Dict):
+                rebound.update(_bound_receiver_keys(node.target, parent_map))
+        elif isinstance(node, ast.arg) and node.annotation is not None:
+            if _is_mapping_annotation(node.annotation):
+                candidate = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                keys = _bound_receiver_keys(target, parent_map)
+                if isinstance(node.value, ast.Dict):
+                    receivers.update(keys)
+                else:
+                    rebound.update(keys)
+        elif isinstance(
+            node, (ast.AugAssign, ast.NamedExpr, ast.For, ast.AsyncFor, ast.comprehension)
+        ):
+            rebound.update(_bound_receiver_keys(node.target, parent_map))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            scope = _receiver_scope(node, parent_map)
+            if scope is not None:
+                rebound.add((scope, ("name", node.name)))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    rebound.update(
+                        _bound_receiver_keys(item.optional_vars, parent_map)
+                    )
+        elif isinstance(node, ast.Delete):
+            for target in node.targets:
+                rebound.update(_bound_receiver_keys(target, parent_map))
+        if isinstance(candidate, ast.arg):
+            # A parameter's annotation belongs to its containing function.
+            scope = _receiver_scope(node, parent_map)
+            if scope is not None:
+                receivers.add((scope, ("name", node.arg)))
+            continue
+        if candidate is not None:
+            key = _mapping_receiver_key(candidate, parent_map)
+            if key is not None:
+                receivers.add(key)
+    return receivers - rebound
+
+
 class DuplicateStringLiteralRule(SkylosRule):
     rule_id = "SKY-L027"
     name = "Duplicate String Literal"
@@ -306,6 +431,19 @@ class DuplicateStringLiteralRule(SkylosRule):
         if isinstance(parent, ast.Dict) and node in parent.keys:
             return True
         return False
+
+    def _is_mapping_lookup_key(self, node, parent_map, mapping_receivers):
+        parent = parent_map.get(id(node))
+        if not isinstance(parent, ast.Call) or not parent.args or parent.args[0] is not node:
+            return False
+        func = parent.func
+        if not isinstance(func, ast.Attribute) or func.attr not in {
+            "get",
+            "setdefault",
+            "pop",
+        }:
+            return False
+        return _mapping_receiver_key(func.value, parent_map) in mapping_receivers
 
     def _is_annotation_literal(self, node, parent_map):
         current = node
@@ -367,6 +505,7 @@ class DuplicateStringLiteralRule(SkylosRule):
         for parent in ast.walk(node):
             for child in ast.iter_child_nodes(parent):
                 parent_map[id(child)] = parent
+        mapping_receivers = _mapping_receiver_evidence(node, parent_map)
 
         string_occurrences = {}
         for child in ast.walk(node):
@@ -376,6 +515,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 if self._is_docstring(child, parent_map):
                     continue
                 if self._is_structural_key_literal(child, parent_map):
+                    continue
+                if self._is_mapping_lookup_key(child, parent_map, mapping_receivers):
                     continue
                 if self._is_annotation_literal(child, parent_map):
                     continue
@@ -443,7 +584,7 @@ class TooManyReturnsRule(SkylosRule):
             return None
 
         count = self._count_returns(node)
-        if count < self.threshold:
+        if count <= self.threshold:
             return None
 
         severity = "MEDIUM" if count >= 9 else "LOW"
@@ -602,6 +743,10 @@ class BroadExceptionRule(SkylosRule):
             return None
         if not _handler_body_is_trivial(node.body):
             return None
+        # Empty handlers are already reported by SKY-L007. A placeholder
+        # return is a separate broad-exception fallback worth reporting here.
+        if not any(isinstance(stmt, ast.Return) for stmt in node.body):
+            return None
 
         exc_name = ", ".join(sorted(set(broad_types)))
 
@@ -609,7 +754,7 @@ class BroadExceptionRule(SkylosRule):
             {
                 "rule_id": self.rule_id,
                 "kind": "logic",
-                "severity": "MEDIUM",
+                "severity": "HIGH",
                 "type": "block",
                 "name": "except",
                 "simple_name": "except",

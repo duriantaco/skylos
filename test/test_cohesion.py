@@ -15,10 +15,10 @@ def _parse(code: str) -> ast.ClassDef:
     raise ValueError("No class found")
 
 
-def _run_lcom_rule(code: str, **rule_kwargs) -> list[dict]:
+def _run_lcom_rule(code: str, *, filename="test.py", **rule_kwargs) -> list[dict]:
     tree = ast.parse(code)
     rule = LCOMRule(**rule_kwargs)
-    context = {"filename": "test.py"}
+    context = {"filename": filename}
     rule.visit_node(tree, context)
 
     findings = []
@@ -275,6 +275,31 @@ class Uncohesive:
         assert finding["rule_id"] == "SKY-Q702"
         assert finding["lcom4"] == 3
         assert "cohesion_groups" in finding
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_count"),
+        [
+            ("pkg/service.py", 1),
+            ("pkg/tests/test_service.py", 0),
+            ("pkg/test_service.py", 0),
+        ],
+    )
+    def test_test_classes_do_not_get_cohesion_warnings(
+        self, filename, expected_count
+    ):
+        code = """
+class IndependentCases:
+    def a(self):
+        self.x = 1
+
+    def b(self):
+        self.y = 2
+
+    def c(self):
+        self.z = 3
+"""
+        findings = _run_lcom_rule(code, filename=filename)
+        assert len(findings) == expected_count
 
     def test_dataclass_exempted(self):
         code = """

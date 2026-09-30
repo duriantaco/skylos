@@ -708,9 +708,7 @@ except Exception:
 """
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
-        assert len(findings) == 1
-        assert findings[0]["rule_id"] == "SKY-L030"
-        assert "broad" in findings[0]["message"]
+        assert findings == []
 
     def test_exception_continue(self):
         code = """
@@ -722,8 +720,7 @@ for i in range(5):
 """
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
-        assert len(findings) == 1
-        assert findings[0]["rule_id"] == "SKY-L030"
+        assert findings == []
 
     def test_exception_return(self):
         code = """
@@ -772,9 +769,7 @@ except BaseException:
 """
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
-        assert len(findings) == 1
-        assert findings[0]["rule_id"] == "SKY-L030"
-        assert "broad" in findings[0]["message"]
+        assert findings == []
 
     def test_specific_exception(self):
         code = """
@@ -807,8 +802,7 @@ except (Exception, ValueError):
 """
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
-        assert len(findings) == 1
-        assert findings[0]["rule_id"] == "SKY-L030"
+        assert findings == []
 
     def test_exception_with_logging(self):
         code = """
