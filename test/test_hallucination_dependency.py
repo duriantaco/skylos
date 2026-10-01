@@ -1357,6 +1357,276 @@ def test_scan_pypi_missing_should_emit_hallucination(monkeypatch, tmp_path):
     assert halluc[0]["symbol"] == "nonexistentpkg"
 
 
+def test_ros2_imports_use_package_manifest_instead_of_pypi(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(repo / "pyproject.toml", '[project]\nname = "robot"\ndependencies = []\n')
+    _write_py(
+        repo / "ros2" / "robot_slam" / "package.xml",
+        '<package format="3">\n'
+        "  <name>robot_slam</name>\n"
+        "  <buildtool_depend>ament_cmake</buildtool_depend>\n"
+        "  <depend>nav_msgs</depend>\n"
+        "  <exec_depend>launch_ros</exec_depend>\n"
+        "  <exec_depend>rclpy</exec_depend>\n"
+        "  <exec_depend>sensor_msgs_py</exec_depend>\n"
+        "  <exec_depend>ament_index_python</exec_depend>\n"
+        "  <exec_depend>rosidl_runtime_py</exec_depend>\n"
+        "</package>\n",
+    )
+    source = _write_py(
+        repo / "ros2" / "robot_slam" / "scripts" / "probe.py",
+        "import rclpy\n"
+        "from nav_msgs.msg import Odometry\n"
+        "from launch_ros.actions import Node\n"
+        "import sensor_msgs_py\n"
+        "import ament_index_python\n"
+        "import rosidl_runtime_py\n"
+        "from livox_ros_driver2.msg import CustomMsg\n"
+        "import fabricated_robot_package\n"
+        "import requests\n",
+    )
+    _stub_dependency_registry(monkeypatch, {"requests": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    diff_findings, _ = dep.scan_diff_added_imports(
+        repo,
+        [
+            ("ros2/robot_slam/scripts/probe.py", line, mod)
+            for line, mod in enumerate(
+                (
+                    "rclpy",
+                    "nav_msgs",
+                    "launch_ros",
+                    "sensor_msgs_py",
+                    "ament_index_python",
+                    "rosidl_runtime_py",
+                    "livox_ros_driver2",
+                    "fabricated_robot_package",
+                    "requests",
+                ),
+                start=1,
+            )
+        ],
+    )
+
+    expected = {
+        (dep.RULE_ID_HALLUCINATION, "fabricated_robot_package"),
+        (dep.RULE_ID_HALLUCINATION, "livox_ros_driver2"),
+        (dep.RULE_ID_UNDECLARED, "requests"),
+    }
+    assert {(f["rule_id"], f["symbol"]) for f in findings} == expected
+    assert {(f["rule_id"], f["symbol"]) for f in diff_findings} == expected
+
+    bare_vendor = _write_py(
+        repo / "scripts" / "bare_vendor.py", "import livox_ros_driver2\n"
+    )
+    vendor_findings = dep.scan_python_dependency_hallucinations(repo, [bare_vendor])
+    assert [(f["rule_id"], f["symbol"]) for f in vendor_findings] == [
+        (dep.RULE_ID_HALLUCINATION, "livox_ros_driver2")
+    ]
+
+
+def test_ros_core_import_outside_manifest_package_remains_undeclared(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(repo / "pyproject.toml", '[project]\nname = "mixed"\ndependencies = []\n')
+    _write_py(
+        repo / "ros2" / "robot" / "package.xml",
+        '<package format="3"><name>robot</name>'
+        "<buildtool_depend>ament_cmake</buildtool_depend>"
+        "<exec_depend>rclpy</exec_depend></package>",
+    )
+    inside = _write_py(repo / "ros2" / "robot" / "node.py", "import rclpy\n")
+    outside = _write_py(repo / "service" / "app.py", "import rclpy\n")
+    _stub_dependency_registry(monkeypatch, {})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [inside, outside])
+
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "rclpy")
+    ]
+    assert findings[0]["file"].endswith("service/app.py")
+
+
+def test_ros_core_import_requires_manifest_dependency(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(
+        repo / "ros2" / "robot" / "package.xml",
+        '<package format="3"><name>robot</name>'
+        "<buildtool_depend>ament_cmake</buildtool_depend>"
+        "<exec_depend>nav_msgs</exec_depend></package>",
+    )
+    source = _write_py(
+        repo / "ros2" / "robot" / "node.py", "import nav_msgs\nimport rclpy\n"
+    )
+    _stub_dependency_registry(monkeypatch, {})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "rclpy")
+    ]
+
+
+def test_ros_manifest_declared_custom_import_is_scoped_to_its_package(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(
+        repo / "ros2" / "robot_slam" / "package.xml",
+        '<package format="3"><name>robot_slam</name>'
+        "<buildtool_depend>ament_cmake</buildtool_depend>"
+        "<exec_depend>custom_robot_msgs</exec_depend></package>",
+    )
+    inside = _write_py(
+        repo / "ros2" / "robot_slam" / "launch" / "robot.launch.py",
+        "import custom_robot_msgs\n",
+    )
+    outside = _write_py(repo / "scripts" / "probe.py", "import custom_robot_msgs\n")
+    _stub_dependency_registry(monkeypatch, {})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [inside, outside])
+
+    assert [(f["rule_id"], f["symbol"], f["file"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "custom_robot_msgs", str(outside))
+    ]
+
+
+def test_ros_launch_import_scoped_to_declaring_package(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(repo / "pyproject.toml", '[project]\nname = "robot"\ndependencies = []\n')
+    _write_py(
+        repo / "ros2" / "robot_slam" / "package.xml",
+        '<package format="3"><name>robot_slam</name>'
+        "<buildtool_depend>ament_cmake</buildtool_depend>"
+        "<exec_depend>launch</exec_depend></package>",
+    )
+    launch_file = _write_py(
+        repo / "ros2" / "robot_slam" / "bringup.launch.py",
+        "from launch import LaunchDescription\n",
+    )
+    ordinary_file = _write_py(repo / "probe.py", "import launch\n")
+    _stub_dependency_registry(monkeypatch, {"launch": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(
+        repo, [launch_file, ordinary_file]
+    )
+
+    assert [(f["rule_id"], f["symbol"], f["file"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "launch", str(ordinary_file))
+    ]
+
+
+def test_ros_manifest_requires_ament_and_rejects_symlink(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = repo / "ros2" / "robot_slam" / "package.xml"
+    _write_py(
+        manifest,
+        '<package format="3"><name>robot_slam</name>'
+        "<exec_depend>custom_robot_msgs</exec_depend></package>",
+    )
+    source = _write_py(
+        repo / "ros2" / "robot_slam" / "probe.py", "import custom_robot_msgs\n"
+    )
+    _stub_dependency_registry(monkeypatch, {})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "custom_robot_msgs")
+    ]
+
+    manifest.unlink()
+    _write_py(
+        manifest,
+        '<!DOCTYPE package [<!ENTITY fake "ament_cmake">]>'
+        '<package format="3"><name>robot_slam</name>'
+        "<buildtool_depend>&fake;</buildtool_depend>"
+        "<exec_depend>custom_robot_msgs</exec_depend></package>",
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "custom_robot_msgs")
+    ]
+
+    outside = _write_py(
+        tmp_path / "outside.xml",
+        '<package format="3"><name>robot_slam</name>'
+        "<buildtool_depend>ament_cmake</buildtool_depend>"
+        "<exec_depend>custom_robot_msgs</exec_depend></package>",
+    )
+    manifest.unlink()
+    try:
+        manifest.symlink_to(outside)
+    except OSError:
+        return
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "custom_robot_msgs")
+    ]
+
+
+def test_paired_relative_import_fallback_is_local_without_hiding_other_imports(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_py(repo / "pyproject.toml", '[project]\nname = "robot"\ndependencies = []\n')
+    _write_py(repo / "backend" / "__init__.py", "")
+    detection = _write_py(repo / "backend" / "detection.py", "PinStore = object\n")
+    source = _write_py(
+        repo / "backend" / "vision.py",
+        "#!/usr/bin/env python3\n"
+        "try:\n"
+        "    from .detection import PinStore\n"
+        "except ImportError:\n"
+        "    from detection import PinStore\n"
+        "import missing_backend_dependency\n",
+    )
+    _stub_dependency_registry(monkeypatch, {"detection": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [detection, source])
+    diff_findings, _ = dep.scan_diff_added_imports(
+        repo,
+        [
+            ("backend/vision.py", 5, "detection"),
+            ("backend/vision.py", 6, "missing_backend_dependency"),
+        ],
+    )
+
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "missing_backend_dependency")
+    ]
+    assert [(f["rule_id"], f["symbol"]) for f in diff_findings] == [
+        (dep.RULE_ID_HALLUCINATION, "missing_backend_dependency")
+    ]
+
+    source_text = source.read_text(encoding="utf-8")
+    source.write_text(
+        source_text.replace("#!/usr/bin/env python3\n", "", 1),
+        encoding="utf-8",
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [detection, source])
+    assert (dep.RULE_ID_UNDECLARED, "detection") in [
+        (f["rule_id"], f["symbol"]) for f in findings
+    ]
+
+    source.write_text(
+        source_text + "from detection import PinStore\n",
+        encoding="utf-8",
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [detection, source])
+    assert (dep.RULE_ID_UNDECLARED, "detection") in [
+        (f["rule_id"], f["symbol"]) for f in findings
+    ]
+
+
 def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -2250,7 +2250,26 @@ def test_local_server_outage_then_resend_via_cli(
     assert local_cloud.raw == [first_bytes]
     out = capsys.readouterr().out
     assert "Saved uploads: 1 sent." in out
+    assert f"View the scan: {api.BASE_URL}/dashboard/scans/scan-late" in out
     assert _pending_files(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"scanId": ""}, {"scanId": "../other"}, None],
+)
+def test_success_response_without_valid_scan_id_is_saved_for_retry(
+    repo, tmp_path, local_cloud, body
+):
+    local_cloud.script = [(200, body, {})]
+
+    result = api.upload_report(_result(repo, quality=[_quality(repo)]), quiet=True)
+
+    assert result["success"] is False
+    assert result["code"] == "UPLOAD_RESPONSE_INVALID"
+    assert result["retryable"] is True
+    assert len(local_cloud.seen) == 1
+    assert len(_pending_files(tmp_path)) == 1
 
 
 def test_contract_check_against_local_server(repo, local_cloud, monkeypatch, capsys):

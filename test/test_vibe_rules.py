@@ -12,6 +12,7 @@ import pytest
 from skylos.analyzer import analyze
 from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality.logic import (
+    BroadExceptionRule,
     EmptyErrorHandlerRule,
     MissingResourceCleanupRule,
     DebugLeftoverRule,
@@ -191,11 +192,15 @@ class TestEmptyErrorHandlerFindings:
         ],
     )
     def test_swallowing_handlers_are_flagged(self, code, expected_severity):
-        findings = check_code(EmptyErrorHandlerRule(), code)
-        l007 = [f for f in findings if f["rule_id"] == "SKY-L007"]
-        assert l007
+        findings = check_code(EmptyErrorHandlerRule(), code) + check_code(
+            BroadExceptionRule(), code
+        )
+        assert len(findings) == 1
         if expected_severity is not None:
-            assert any(f["severity"] == expected_severity for f in l007)
+            assert findings[0]["rule_id"] == "SKY-L030"
+            assert findings[0]["severity"] == expected_severity
+        else:
+            assert findings[0]["rule_id"] == "SKY-L007"
 
 
 class TestEmptyErrorHandlerSafeCases:

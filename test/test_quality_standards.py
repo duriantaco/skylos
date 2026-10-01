@@ -367,9 +367,8 @@ def outer():
     return 0
 """
         results = self._run(code, threshold=5)
-        # outer has 1 return, inner has 5 — only inner triggers
-        assert len(results) == 1
-        assert results[0]["name"] == "inner"
+        # The inner function has exactly the allowed five returns.
+        assert results == []
 
 
 # ---------------------------------------------------------------------------

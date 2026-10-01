@@ -1753,6 +1753,13 @@ class EmptyErrorHandlerRule(SkylosRule):
             return None
 
         if _handler_body_is_trivial(node.body):
+            if any(
+                exc_name in _BROAD_EXCEPTION_TYPES
+                for exc_name in _exception_type_names(node.type)
+            ) and any(isinstance(stmt, ast.Return) for stmt in node.body):
+                # SKY-L030 reports broad exceptions with placeholder returns.
+                # Keep SKY-L007 for handlers that merely discard the error.
+                return None
             has_return = any(isinstance(stmt, ast.Return) for stmt in node.body)
             severity = "HIGH" if has_return else "MEDIUM"
             return self._make_finding(node, context, severity, "trivial")

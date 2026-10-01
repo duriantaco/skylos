@@ -367,6 +367,18 @@ class LCOMRule(SkylosRule):
             return None
         if id(node) in self._protocol_class_ids:
             return None
+        filename = context.get("filename", "")
+        normalized_filename = str(filename).replace("\\", "/")
+        basename = normalized_filename.rsplit("/", 1)[-1]
+        if (
+            basename.startswith("test_")
+            or basename.endswith("_test.py")
+            or any(
+                part in {"test", "tests"}
+                for part in normalized_filename.split("/")[:-1]
+            )
+        ):
+            return None
 
         result = analyze_cohesion(node)
         if result is None:
@@ -393,8 +405,6 @@ class LCOMRule(SkylosRule):
                 methods += f" (+{len(g['methods']) - 5} more)"
             group_descs.append(f"Group {i}: [{methods}]")
         groups_str = "; ".join(group_descs)
-
-        filename = context.get("filename", "")
 
         return [
             {

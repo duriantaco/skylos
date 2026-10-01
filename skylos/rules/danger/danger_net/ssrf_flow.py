@@ -310,11 +310,16 @@ def _dispatched_functions(tree) -> set[str]:
     return dispatched
 
 
-def _only_operator_sources(evidence):
-    # Environment variables are deployment configuration, not attacker input.
+def _only_operator_sources(labels):
+    # Deployment settings and process arguments are chosen by the operator.
+    # A separate request source still keeps the finding actionable.
     return all(
-        "os.environ" in label or "os.getenv" in label
-        for label in evidence.get("sources", [])
+        label.startswith("`os.environ")
+        or label.startswith("`os.getenv")
+        or label.startswith("CLI arguments `")
+        or label.startswith("CLI parameter `")
+        or label.startswith("`sys.argv")
+        for label in labels
     )
 
 
@@ -323,7 +328,11 @@ def _tainted_url_is_ssrf_relevant(checker, node):
         return False
     if _is_fixed_host_urljoin(node):
         return False
-    return checker.is_tainted(node)
+    return checker.is_tainted(node) or bool(
+        checker.untrusted_sources.for_function(
+            checker._current_function()
+        ).sources_in(node)
+    )
 
 
 def _is_interpolated_string(node):
@@ -756,7 +765,10 @@ class _SSRFFlowChecker(TaintVisitor):
             missing_guard="URL host allowlist",
             evidence_kind="python_ssrf_taint",
         )
-        if evidence is not None and not _only_operator_sources(evidence):
+        # Evidence packets show at most four labels. Decide from the complete
+        # source set so a later request source cannot hide behind CLI inputs.
+        sources = self.untrusted_sources.for_function(func).sources_in(url_arg)
+        if evidence is not None and not _only_operator_sources(sources):
             return evidence
         name = getattr(func, "name", None)
         if name in self.dispatched_functions and super().is_tainted(url_arg):

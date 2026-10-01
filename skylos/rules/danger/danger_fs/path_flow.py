@@ -226,10 +226,11 @@ def _string_value(node):
     return None
 
 
-def _call_mode(node, default="r"):
+def _call_mode(node, default="r", *, bound_method=False):
     mode = None
-    if len(node.args) >= 2:
-        mode = _string_value(node.args[1])
+    mode_position = 0 if bound_method else 1
+    if len(node.args) > mode_position:
+        mode = _string_value(node.args[mode_position])
     for kw in node.keywords or []:
         if kw.arg == "mode":
             mode = _string_value(kw.value)
@@ -255,6 +256,16 @@ def _archive_call_name(node):
         return None
     if node.func.attr not in {"extract", "extractall"}:
         return None
+    if node.func.attr == "extract":
+        # ZIP/TAR extraction supports these keyword names. An incompatible
+        # keyword proves this is another API (for example image features).
+        if any(
+            keyword.arg is not None
+            and keyword.arg
+            not in {"member", "path", "pwd", "set_attrs", "numeric_owner", "filter"}
+            for keyword in node.keywords
+        ):
+            return None
     return node.func.attr
 
 
@@ -1073,7 +1084,7 @@ class _PathFlowChecker(TaintVisitor):
             elif node.func.attr in self.PATHLIB_READ_METHODS:
                 self._flag_symlink_read_if_unsafe(node, node.func.value)
             elif node.func.attr == "open":
-                mode = _call_mode(node)
+                mode = _call_mode(node, bound_method=True)
                 if _mode_writes(mode):
                     self._flag_symlink_write_if_unsafe(node, node.func.value)
                 else:

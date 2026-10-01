@@ -382,12 +382,34 @@ def _attribute_source(
     return None
 
 
-def _call_source(node: ast.Call) -> str | None:
+def _argument_parser_names(
+    body: list[ast.AST], import_bindings: dict[str, str | None]
+) -> set[str]:
+    """Names whose assignments all construct a proven argparse parser."""
+    assigned: dict[str, bool] = {}
+    for node in body:
+        value, targets = _assign_parts(node)
+        if value is None or not targets:
+            continue
+        callee = _dotted(value.func) if isinstance(value, ast.Call) else ""
+        head, _, tail = callee.partition(".")
+        imported = import_bindings.get(head)
+        canonical = f"{imported}.{tail}" if imported and tail else imported
+        is_parser = canonical == "argparse.ArgumentParser"
+        for target in targets:
+            assigned[target] = assigned.get(target, True) and is_parser
+    return {name for name, is_parser in assigned.items() if is_parser}
+
+
+def _call_source(node: ast.Call, cli_parser_names=frozenset()) -> str | None:
     name = _dotted(node.func)
     if name in SOURCE_CALLS:
         return f"`{name}()`"
     if name.endswith(".parse_args"):
-        return f"CLI arguments `{name}()`"
+        receiver = name.rsplit(".", 1)[0]
+        if receiver in cli_parser_names:
+            return f"CLI arguments `{name}()`"
+        return f"parser arguments `{name}()`"
     return None
 
 
@@ -396,6 +418,7 @@ def _node_sources(
     origins: dict[str, list[str]],
     request_names: set[str],
     import_bindings: dict[str, str | None] | None = None,
+    cli_parser_names=frozenset(),
 ) -> list[str]:
     if isinstance(node, ast.Name):
         return origins.get(node.id, [])
@@ -407,7 +430,7 @@ def _node_sources(
         label = _attribute_source(node, request_names, import_bindings)
         return [label] if label else []
     if isinstance(node, ast.Call):
-        label = _call_source(node)
+        label = _call_source(node, cli_parser_names)
         return [label] if label else []
     return []
 
@@ -417,13 +440,16 @@ def _direct_sources(
     origins: dict[str, list[str]],
     request_names: set[str],
     import_bindings: dict[str, str | None] | None = None,
+    cli_parser_names=frozenset(),
 ) -> list[str]:
     """Source labels referenced anywhere inside ``node``, in source order."""
     found: list[str] = []
     stack = [node]
     while stack:
         sub = stack.pop()
-        labels = _node_sources(sub, origins, request_names, import_bindings)
+        labels = _node_sources(
+            sub, origins, request_names, import_bindings, cli_parser_names
+        )
         if not labels:
             if isinstance(sub, ast.Call):
                 # Prefer data arguments over a misleading source-like method name.
@@ -475,6 +501,7 @@ class _FunctionSources:
             body = list(_module_level_nodes(func))
         elif module is not None:
             body = list(_module_level_nodes(module))
+        self.cli_parser_names = _argument_parser_names(body, self.import_bindings)
         for name, labels in (incoming or {}).items():
             self._merge_origin(self.origins, name, labels)
         for name, labels in (traversal_incoming or {}).items():
@@ -507,7 +534,11 @@ class _FunctionSources:
 
     def _propagate_one(self, value: ast.AST, targets: list[str]) -> bool:
         labels = _direct_sources(
-            value, self.origins, self.request_names, self.import_bindings
+            value,
+            self.origins,
+            self.request_names,
+            self.import_bindings,
+            self.cli_parser_names,
         )
         traversal_labels = self.traversal_sources_in(value)
         changed = False
@@ -521,12 +552,20 @@ class _FunctionSources:
 
     def sources_in(self, expr: ast.AST) -> list[str]:
         return _direct_sources(
-            expr, self.origins, self.request_names, self.import_bindings
+            expr,
+            self.origins,
+            self.request_names,
+            self.import_bindings,
+            self.cli_parser_names,
         )
 
     def traversal_sources_in(self, expr: ast.AST) -> list[str]:
         return _direct_sources(
-            expr, self.traversal_origins, self.request_names, self.import_bindings
+            expr,
+            self.traversal_origins,
+            self.request_names,
+            self.import_bindings,
+            self.cli_parser_names,
         )
 
     def direct_sources_in(self, expr: ast.AST) -> list[str]:
@@ -538,7 +577,7 @@ class _FunctionSources:
                     node, self.request_names, self.import_bindings
                 )
             elif isinstance(node, ast.Call):
-                label = _call_source(node)
+                label = _call_source(node, self.cli_parser_names)
             else:
                 label = None
             if label and label not in labels:

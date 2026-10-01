@@ -320,6 +320,35 @@ def show_history(project_root):
     assert "SKY-D325" in _rule_ids(out)
 
 
+def test_path_open_modes_report_read_and_write_rules_correctly(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_path_open.py",
+        """
+from pathlib import Path
+
+def use(path):
+    Path(path).open("w")
+    Path(path).open(mode="ab")
+    Path(path).open("r")
+    open(path, "w")
+    open(path, "r")
+""",
+    )
+    by_line = {
+        line: {finding["rule_id"] for finding in out if finding["line"] == line}
+        for line in range(5, 10)
+    }
+    assert "SKY-D324" in by_line[5]
+    assert "SKY-D325" not in by_line[5]
+    assert "SKY-D324" in by_line[6]
+    assert "SKY-D325" not in by_line[6]
+    assert "SKY-D325" in by_line[7]
+    assert "SKY-D324" not in by_line[7]
+    assert "SKY-D324" in by_line[8]
+    assert "SKY-D325" in by_line[9]
+
+
 def test_symlink_rules_keep_unknown_helper_parameters(tmp_path):
     # A helper's caller can be in another module and may pass remote input.
     out = _scan_one(
@@ -473,6 +502,84 @@ def unpack(archive_path, dest):
 """,
     )
     assert "SKY-D326" in _rule_ids(out)
+
+
+def test_archive_extract_ignores_incompatible_keyword(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_extract.py",
+        """
+class FeatureMatcher:
+    def match(self, image):
+        return self.extractor.extract(image, resize=None)
+
+def unpack(archive, destination, member):
+    archive.extract(member, path=destination)
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert len(archive_findings) == 1
+    assert archive_findings[0]["line"] == 7
+
+
+def test_archive_extract_recognizes_short_handle_from_zipfile(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_zip_extract.py",
+        """
+import zipfile
+
+def unpack(upload, destination, member):
+    with zipfile.ZipFile(upload) as zf:
+        zf.extract(member, path=destination)
+        zf.extract(member)
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert [finding["line"] for finding in archive_findings] == [6, 7]
+
+
+def test_archive_extract_in_helper_keeps_one_arg_call(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_zip_helper.py",
+        """
+import zipfile
+
+def extract_one(zf, member, destination):
+    zf.extract(member)
+
+def unpack(upload, member, destination):
+    with zipfile.ZipFile(upload) as zf:
+        extract_one(zf, member, destination)
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert [finding["line"] for finding in archive_findings] == [5]
+
+
+def test_archive_extract_recognizes_import_below_function(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_zip_late_import.py",
+        """
+def unpack(upload, member):
+    with zipfile.ZipFile(upload) as zf:
+        zf.extract(member)
+
+import zipfile
+""",
+    )
+    archive_findings = [
+        finding for finding in out if finding.get("rule_id") == "SKY-D326"
+    ]
+    assert [finding["line"] for finding in archive_findings] == [4]
 
 
 def test_archive_member_validation_suppresses_extractall_finding(tmp_path):

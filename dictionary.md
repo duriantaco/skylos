@@ -599,7 +599,7 @@ uses project ignores, not inline comments, consistently across supported files.
 | L027 | LOW-MEDIUM | Duplicate string literal | Python |
 | L028 | MEDIUM | Too many return statements | Python |
 | L029 | MEDIUM | Boolean positional parameter trap | Python |
-| L030 | MEDIUM | Broad exception with trivial handler | Python |
+| L030 | HIGH | Broad exception with trivial handler | Python |
 | L031 | MEDIUM | Missing network timeout | Python |
 | L032 | MEDIUM | Mock or placeholder production data | Python |
 | L033 | MEDIUM | No-effect statement | Python |

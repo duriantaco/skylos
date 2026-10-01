@@ -114,6 +114,9 @@ DESTRUCTIVE_PATTERNS = (
     re.compile(r"\bgit\s+clean\s+-(?=[A-Za-z]*f)(?=[A-Za-z]*d)(?=[A-Za-z]*x)[A-Za-z]+\b", re.I),
     re.compile(r"\bgit\s+reset\s+--hard\b", re.I),
 )
+_APT_LIST_CLEANUP_RE = re.compile(
+    r"\brm\s+-rf\s+/var/lib/apt/lists/\*(?=\s*(?:;|&&|\|\||$))"
+)
 
 
 def command_risks(command: str) -> Iterator[CommandRisk]:
@@ -121,7 +124,10 @@ def command_risks(command: str) -> Iterator[CommandRisk]:
         yield REMOTE_SCRIPT_RULE
     if any(pattern.search(command) for pattern in REVERSE_SHELL_PATTERNS):
         yield DATA_EXFIL_RULE
-    if any(pattern.search(command) for pattern in DESTRUCTIVE_PATTERNS):
+    # Removing apt's downloaded package indexes is a bounded Docker/build
+    # cleanup, even though the literal path begins at the filesystem root.
+    destructive_command = _APT_LIST_CLEANUP_RE.sub("", command)
+    if any(pattern.search(destructive_command) for pattern in DESTRUCTIVE_PATTERNS):
         yield DESTRUCTIVE_RULE
 
 
