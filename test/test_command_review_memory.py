@@ -296,7 +296,7 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
     fake_logger = Mock()
     fake_logger.console = Mock()
     monkeypatch.chdir(project)
-    monkeypatch.setattr(cli, "setup_logger", lambda: fake_logger)
+    monkeypatch.setattr(cli, "setup_logger", lambda **_kwargs: fake_logger)
     monkeypatch.setattr(cli, "run_analyze", lambda *args, **kwargs: json.dumps(raw))
     monkeypatch.setattr(cli, "load_config", lambda *args, **kwargs: {})
     monkeypatch.setattr(cli, "upload_report", fake_upload)

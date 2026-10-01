@@ -112,6 +112,26 @@ class TestSetupLogger:
         mock_rich_handler.assert_called_once()
         mock_file_handler.assert_called_once_with("output.log")
 
+    def test_setup_logger_can_keep_logs_off_stdout(self, capsys):
+        logger = setup_logger(log_to_stderr=True)
+
+        logger.warning("registry lookup failed")
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "registry lookup failed" in captured.err
+        assert logger.console.stderr is False
+
+    def test_main_json_output_sends_logs_to_stderr(self):
+        with (
+            patch("sys.argv", ["cli.py", "test_path", "--json"]),
+            patch("skylos.cli.setup_logger", side_effect=RuntimeError("stop")) as setup,
+            pytest.raises(RuntimeError),
+        ):
+            main()
+
+        setup.assert_called_once_with(log_to_stderr=True)
+
     def test_remove_simple_import(self):
         """Test removing a simple import statement."""
         content = """import os
@@ -384,6 +404,30 @@ class TestMainFunction:
 
             mock_analyze.assert_called_once()
             mock_print.assert_called_once_with(json.dumps(mock_skylos_result))
+
+    @pytest.mark.parametrize("format_args", [["--json"], ["--format", "json"]])
+    def test_main_json_remains_parseable_when_analysis_logs(
+        self, mock_skylos_result, tmp_path, monkeypatch, capsys, format_args
+    ):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["skylos", str(tmp_path), *format_args, "--no-provenance"],
+        )
+
+        def analyze_with_warning(*_args, **_kwargs):
+            logging.getLogger("skylos").warning("dependency inventory unavailable")
+            return json.dumps(mock_skylos_result)
+
+        with (
+            patch("skylos.cli.run_analyze", side_effect=analyze_with_warning),
+            patch("skylos.cli.load_config", return_value={}),
+        ):
+            main()
+
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == mock_skylos_result
+        assert "dependency inventory unavailable" in captured.err
 
     def test_main_config_file_is_loaded_and_forwarded(
         self, mock_skylos_result, tmp_path, monkeypatch

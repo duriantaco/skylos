@@ -323,6 +323,16 @@ requires-python = ">=3.10"
         "_build_installed_module_mapping",
         lambda: {"rich": {"rich"}},
     )
+    monkeypatch.setattr(
+        dep,
+        "_fetch_dist_modules",
+        lambda _name, **_kwargs: {
+            "modules": ["rich"],
+            "module_paths": ["rich", "rich.console"],
+            "concrete_module_paths": ["rich", "rich.console"],
+            "complete_for_requirement": False,
+        },
+    )
 
     findings = dep.scan_python_dependency_hallucinations(repo, [source])
 
@@ -1128,8 +1138,9 @@ def test_symlinked_packages_and_importers_do_not_claim_local_modules(
     assert [finding["symbol"] for finding in findings] == [
         "root_package",
         "source_package",
-        "local_helper",
     ]
+    # An importer reached through a directory symlink is outside scan scope.
+    assert all(finding["file"] == str(source) for finding in findings)
 
 
 def test_diff_import_resolution_uses_the_importing_file(monkeypatch, tmp_path):
@@ -1627,7 +1638,7 @@ def test_paired_relative_import_fallback_is_local_without_hiding_other_imports(
     ]
 
 
-def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
+def test_scan_registry_status_is_not_persisted(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "pyproject.toml").write_text(
@@ -1654,10 +1665,7 @@ def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
 
     _ = dep.scan_python_dependency_hallucinations(repo, [f])
 
-    assert cache_path.exists()
-    data = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert "somepkg" in data
-    assert data["somepkg"] == "exists"
+    assert not cache_path.exists()
 
 
 def test_scan_rejects_symlinked_pypi_cache_file(monkeypatch, tmp_path):
