@@ -121,7 +121,7 @@ def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monk
     rendered = output.getvalue()
     assert "Scan incomplete; Cloud upload was not started." in rendered
     assert "Source analysis complete; preparing Cloud upload." not in rendered
-    assert "app.py" in rendered
+    assert "Analysis Errors" in rendered
     assert "grep budget exhausted" in rendered
     assert "Increase SKYLOS_GREP_BUDGET" in rendered
     upload.assert_not_called()
