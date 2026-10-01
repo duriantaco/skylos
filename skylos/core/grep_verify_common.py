@@ -2305,6 +2305,7 @@ def _read_python_grep_bytes(
     parts = relative.split(os.sep)
     if not parts or any(part in {"", ".", ".."} for part in parts):
         raise OSError("grep file is outside the search root")
+    leaf_name = os.path.basename(parts[-1])
     directory_flags = os.O_RDONLY | os.O_NOFOLLOW
     directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     file_flags = os.O_RDONLY | os.O_NOFOLLOW
@@ -2316,7 +2317,7 @@ def _read_python_grep_bytes(
             next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
             os.close(directory_fd)
             directory_fd = next_fd
-        file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+        file_fd = os.open(leaf_name, file_flags, dir_fd=directory_fd)
         opened = os.fstat(file_fd)
         if not stat.S_ISREG(opened.st_mode):
             raise OSError("grep target is not a regular file")

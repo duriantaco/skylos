@@ -259,7 +259,7 @@ def test_an_expired_deadline_leaves_requests_unanswered(repo):
     assert request not in results
 
 
-def test_the_file_cache_lives_only_for_one_verification_scope(repo):
+def test_the_file_cache_lives_only_for_one_verification_scope(repo, tmp_path):
     request = _request(r"\bOdomCalibration\b", repo)
     with (
         patch("skylos.core.grep_verify_common.shutil.which", side_effect=_no_ripgrep),
@@ -271,7 +271,7 @@ def test_the_file_cache_lives_only_for_one_verification_scope(repo):
     assert gc._PYTHON_GREP_CACHES.get() is None
 
     # Edits between scans are seen: nothing stale is reused.
-    (repo / "app.py").write_text("unrelated = 1\n", encoding="utf-8")
+    (tmp_path / "repo" / "app.py").write_text("unrelated = 1\n", encoding="utf-8")
     with (
         patch("skylos.core.grep_verify_common.shutil.which", side_effect=_no_ripgrep),
         grep_verification_scope(repo, []),
@@ -336,10 +336,60 @@ def test_a_selected_file_disappearing_during_scan_abstains(repo):
     os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"),
     reason="needs nofollow directory-relative opens",
 )
-def test_a_file_swapped_for_an_outside_symlink_is_not_read(repo):
+def test_an_outside_path_is_rejected_before_reading(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("OutsideReference()\n", encoding="utf-8")
+    with patch("skylos.core.grep_verify_common.os.read") as read:
+        with pytest.raises(OSError, match="outside the search root"):
+            gc._read_python_grep_bytes(str(root), str(outside), 1024, None)
+        with pytest.raises(OSError, match="outside the search root"):
+            gc._read_python_grep_bytes(
+                str(root), str(root / ".." / "outside.py"), 1024, None
+            )
+    read.assert_not_called()
+
+
+@pytest.mark.skipif(
+    os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"),
+    reason="needs nofollow directory-relative opens",
+)
+def test_an_intermediate_directory_swapped_for_a_symlink_abstains(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    nested = root / "nested"
+    nested.mkdir()
+    selected = nested / "app.py"
+    selected.write_text("LocalReference()\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "app.py").write_text("OutsideReference()\n", encoding="utf-8")
+    selected.unlink()
+    nested.rmdir()
+    nested.symlink_to(outside, target_is_directory=True)
+
+    request = _request(r"\bOutsideReference\b", root)
+    with (
+        patch("skylos.core.grep_verify_common.shutil.which", side_effect=_no_ripgrep),
+        patch(
+            "skylos.core.grep_verify_common._python_grep_files",
+            return_value=[str(selected)],
+        ),
+        grep_verification_scope(root, []),
+    ):
+        results = execute_grep_batch([request])
+    assert request not in results
+
+
+@pytest.mark.skipif(
+    os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"),
+    reason="needs nofollow directory-relative opens",
+)
+def test_a_file_swapped_for_an_outside_symlink_is_not_read(repo, tmp_path):
     request = _request(r"\bOdomCalibration\b", repo)
     selected = repo / "app.py"
-    outside = repo.parent / "outside.py"
+    outside = tmp_path / "outside.py"
     outside.write_text("OdomCalibration()\n", encoding="utf-8")
     selected.unlink()
     selected.symlink_to(outside)
@@ -355,8 +405,8 @@ def test_a_file_swapped_for_an_outside_symlink_is_not_read(repo):
     assert request not in results
 
 
-def test_a_non_utf8_nonmatch_uses_byte_preserving_fallback(repo):
-    (repo / "latin1.py").write_bytes(b"caf\xe9\n")
+def test_a_non_utf8_nonmatch_uses_byte_preserving_fallback(repo, tmp_path):
+    (tmp_path / "repo" / "latin1.py").write_bytes(b"caf\xe9\n")
     request = _request(r"\bno_such_reference\b", repo)
     calls = []
 
@@ -383,8 +433,10 @@ def test_a_non_utf8_nonmatch_uses_byte_preserving_fallback(repo):
         ("x = 'a\x1cb'\n", r"a\sb"),
     ],
 )
-def test_engine_sensitive_unicode_uses_exact_subprocess_search(repo, source, pattern):
-    (repo / "sensitive.py").write_text(source, encoding="utf-8")
+def test_engine_sensitive_unicode_uses_exact_subprocess_search(
+    repo, tmp_path, source, pattern
+):
+    (tmp_path / "repo" / "sensitive.py").write_text(source, encoding="utf-8")
     request = _request(pattern, repo)
     calls = []
 
@@ -417,8 +469,8 @@ def test_file_growth_after_stat_still_respects_byte_cap(repo):
             gc._read_python_grep_bytes(str(repo), str(target), 2, None)
 
 
-def test_matches_in_non_utf8_files_keep_the_conservative_subprocess_path(repo):
-    (repo / "latin1.py").write_bytes(b"OdomCalibration()  # caf\xe9\n")
+def test_matches_in_non_utf8_files_keep_the_conservative_subprocess_path(repo, tmp_path):
+    (tmp_path / "repo" / "latin1.py").write_bytes(b"OdomCalibration()  # caf\xe9\n")
     request = _request(r"\bOdomCalibration\b", repo)
     direct_calls = []
 
