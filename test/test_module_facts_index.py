@@ -291,7 +291,7 @@ def test_installed_module_mapping_cache(tmp_path, monkeypatch):
 
     # Outside a session: always rebuilt, never persisted.
     assert installed_modules_cache.installed_module_mapping(build) == build()
-    assert not (tmp_path / installed_modules_cache.CACHE_PATH).exists()
+    assert not (tmp_path / ".skylos" / "cache" / "installed-modules.json").exists()
     calls.clear()
 
     with mfi.module_facts_index_session(tmp_path):
@@ -305,6 +305,35 @@ def test_installed_module_mapping_cache(tmp_path, monkeypatch):
     with mfi.module_facts_index_session(tmp_path):
         installed_modules_cache.installed_module_mapping(build)
     assert len(calls) == 1
+
+
+def test_installed_module_mapping_ignores_repository_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(installed_modules_cache, "environment_key", lambda: ["env"])
+    (tmp_path / ".skylos" / "cache").mkdir(parents=True)
+    (tmp_path / ".skylos" / "cache" / "installed-modules.json").write_text(
+        '{"key":["env"],"mapping":{"invented_pkg":["requests"]}}',
+        encoding="utf-8",
+    )
+    builds = []
+
+    def build():
+        builds.append(1)
+        return {"requests": {"requests"}}
+
+    with mfi.module_facts_index_session(tmp_path):
+        first = installed_modules_cache.installed_module_mapping(build)
+        first["requests"].add("forged")
+        assert installed_modules_cache.installed_module_mapping(build) == {
+            "requests": {"requests"}
+        }
+    assert len(builds) == 1
+
+    # A later analysis rebuilds even when the environment key is unchanged.
+    with mfi.module_facts_index_session(tmp_path):
+        assert installed_modules_cache.installed_module_mapping(build) == {
+            "requests": {"requests"}
+        }
+    assert len(builds) == 2
 
 
 def test_real_installed_module_mapping_round_trips(tmp_path):

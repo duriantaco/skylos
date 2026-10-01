@@ -12,7 +12,9 @@ import skylos.rules.ai_defect.dependency_hallucination as dep
 
 def _write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        text, encoding="utf-8"
+    )
     return path
 
 
@@ -32,7 +34,9 @@ def _rules(findings):
 
 
 def test_sys_path_insert_repository_module_is_not_hallucinated(monkeypatch, tmp_path):
-    _stub(monkeypatch)
+    # Root metadata proves requests is installed, but cannot prove every
+    # other import absent from all versions permitted by the declaration.
+    _stub(monkeypatch, installed={"requests": {"requests"}})
     repo = tmp_path / "repo"
     _write(repo / "requirements.txt", "requests\n")
     tool = _write(repo / "tools" / "job_key.py", "def key():\n    return 1\n")
@@ -44,13 +48,16 @@ def test_sys_path_insert_repository_module_is_not_hallucinated(monkeypatch, tmp_
     )
     findings = dep.scan_python_dependency_hallucinations(repo, [tool, test])
     # The genuinely unknown package is still reported.
-    assert _rules(findings) == [(dep.RULE_ID_HALLUCINATION, "totally_made_up_pkg")]
+    assert _rules(findings) == [(dep.RULE_ID_UNDECLARED, "totally_made_up_pkg")]
 
 
 def test_root_namespace_package_is_local_not_a_distribution(monkeypatch, tmp_path):
     _stub(monkeypatch, installed={"examples": {"tweepy"}, "faiss": {"faiss-cpu"}})
     repo = tmp_path / "repo"
-    _write(repo / "pyproject.toml", '[project]\nname = "agentlightning"\ndependencies = []\n')
+    _write(
+        repo / "pyproject.toml",
+        '[project]\nname = "agentlightning"\ndependencies = []\n',
+    )
     agent = _write(repo / "examples" / "search_r1" / "agent.py", "import faiss\n")
     test = _write(
         repo / "tests" / "examples" / "test_agent.py",

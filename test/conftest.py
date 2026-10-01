@@ -190,6 +190,22 @@ def cleanup_temp_files():
 
 
 @pytest.fixture(autouse=True)
+def _no_pypi_wheel_lookups(monkeypatch):
+    """Dependency checks must not read wheel indexes from the real PyPI.
+
+    Every declared distribution reads as "no wheel" (modules unknown). Tests
+    that cover provider lookups stub ``_fetch_dist_modules`` with real answers.
+    """
+    from skylos.rules.ai_defect import dependency_hallucination
+
+    monkeypatch.setattr(
+        dependency_hallucination,
+        "_fetch_dist_modules",
+        lambda _dist, **_kwargs: {"status": "no_wheel"},
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cloud_uploads(monkeypatch, tmp_path_factory):
     """Keep upload retries fast and their side effects out of the checkout.
 

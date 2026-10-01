@@ -547,6 +547,21 @@ use the `SKY-A` prefix.
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
+Python import names can differ from distribution names. Skylos checks installed
+distribution metadata and bounded PyPI wheel indexes to resolve declared aliases.
+Namespace packages require the imported portion's full path: a distribution
+providing `sphinxcontrib.applehelp` does not establish
+`sphinxcontrib.serializinghtml`. Target packages are never installed or executed.
+
+A missing PyPI project for an import name alone does not prove a hallucinated
+dependency. Source-only, private, dynamic, unsupported, unavailable, and unresolved
+version-range providers leave an import unverified; these reports use MEDIUM
+`SKY-D223`. An exact compatible pin with an unambiguous artifact inventory can
+support absence evidence. Provider
+inventories and registry answers are reused within the current analysis, and
+repository cache files are not accepted as trusted evidence. Provider checks do
+not resolve lockfiles into a deployed environment.
+
 SKY-D224 rejects explicit keyword arguments that are not parameters of the
 installed API's known signature (for example `jwt.encode(..., expires_in=...)`
 with PyJWT). The inspected packages default to `requests`, `pandas`, `boto3`,

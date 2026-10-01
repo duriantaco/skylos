@@ -91,8 +91,20 @@ class TestScanDiffAddedImports:
         monkeypatch.setattr(
             dep_mod, "_check_pypi_status", lambda _name, _cache: "missing"
         )
+        (tmp_path / "requirements.txt").write_text("click==8.1.8\n", encoding="utf-8")
+        monkeypatch.setattr(
+            dep_mod,
+            "_fetch_dist_modules",
+            lambda _name, **_kwargs: {
+                "modules": ["click"],
+                "module_paths": ["click"],
+                "concrete_module_paths": ["click"],
+                "complete_for_requirement": True,
+                "version": "8.1.8",
+            },
+        )
         findings, unreachable = scan_diff_added_imports(
-            self._repo(tmp_path),
+            tmp_path,
             [("app.py", 2, "totally_fake_module_zz")],
         )
         assert unreachable is False

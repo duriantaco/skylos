@@ -316,9 +316,11 @@ resolve the same way (adding or removing a module invalidates the entries
 that depend on it). A new Skylos or Python version rebuilds the whole index.
 Cached and uncached checks report the same findings.
 
-The installed-package map used for hallucinated-import checks is cached the
-same way in `.skylos/cache/installed-modules.json`. It rebuilds when
-anything on `sys.path` is installed, upgraded or removed.
+Installed-package metadata used for hallucinated-import checks is reused in
+memory during the current analysis session. The snapshot is keyed by the
+interpreter and environment directory metadata; environment changes
+invalidate it. Repository cache files do not supply trusted installed-package
+mappings.
 
 `skylos hook` runs without loading the rest of the CLI. After upgrading from
 an older Skylos, reinstall it (`pip install -U skylos`, or `pip install -e .`

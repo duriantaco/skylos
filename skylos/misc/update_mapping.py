@@ -7,7 +7,13 @@ import sys
 from pathlib import Path
 
 
-MAPPING_FILE = Path(__file__).with_name("pipreqs_import_mapping.txt")
+# The file the dependency checks load (and the wheel ships).
+MAPPING_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "rules"
+    / "ai_defect"
+    / "pipreqs_import_mapping.txt"
+)
 
 
 def _normalize(name: str) -> str:
