@@ -912,7 +912,7 @@ def _grep_verify_error_payload(
 ) -> dict:
     reason = str(report.get("incomplete_reason") or "verification_incomplete")
     if reason == "budget_exhausted":
-        budget = report.get("time_budget_seconds", 30)
+        budget = report.get("time_budget_seconds", 120)
         message = (
             f"Grep verification exceeded its {budget:g}-second budget. "
             "Dead-code findings that required grep verification were withheld. "
@@ -2279,7 +2279,7 @@ class Skylos:
         if use_project_cache:
             grep_cache.load(grep_root)
         try:
-            grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
+            grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "120"))
             report_filter = getattr(self, "_python_reachability_report", None)
             filter_kwargs = (
                 {"evidence_filter": report_filter.filter_grep_results}

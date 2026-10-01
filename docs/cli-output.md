@@ -151,8 +151,13 @@ the grade and clean-code claim, and exits with status `2` in every output mode.
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 
+For a plain `skylos . --upload`, successful Cloud delivery returns `0` even
+when the Cloud quality gate reports advisory violations. Use `--gate` or
+`--strict` to enforce a failing exit. An incomplete scan does not upload, and
+rich output shows the analysis error that blocked it.
+
 The same contract applies when grep verification exceeds
-`SKYLOS_GREP_BUDGET` (30 seconds by default). Skylos discards the partial grep
+`SKYLOS_GREP_BUDGET` (120 seconds by default). Skylos discards the partial grep
 verdicts, records the affected dead-code candidates as abstentions, emits
 `SKY-ANALYSIS-INCOMPLETE`, and exits with status `2`. JSON consumers can inspect
 `analysis_summary.grep_verify.status` and `incomplete_reason`; increase the
