@@ -948,7 +948,10 @@ def _direct_grep_results(
     if used_ripgrep:
         matches = _parse_ripgrep_json_matches(result.stdout, deadline=deadline)
         return [match.legacy_line() for match in matches[: request.max_results]]
-    return _filter_null_grep_output(result.stdout)[: request.max_results]
+    # grep -r walks in directory order; clip in ripgrep's path order instead
+    # so the retained prefix does not depend on the filesystem.
+    lines = sorted(_filter_null_grep_output(result.stdout), key=_grep_match_sort_key)
+    return lines[: request.max_results]
 
 
 def _run_grep_request(
@@ -999,7 +1002,7 @@ def _python_regex(pattern: str) -> re.Pattern[str] | None:
         return None
 
 
-def _grep_match_sort_key(match: _GrepMatch) -> tuple[str, int, str]:
+def _grep_match_sort_key(match: _GrepMatch | _GrepEvidence) -> tuple[str, int, str]:
     return match.path.replace("\\", "/"), match.line_number, match.content
 
 
