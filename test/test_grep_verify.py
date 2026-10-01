@@ -2191,7 +2191,9 @@ class TestBatchedGrepVerify:
         ):
             results = execute_grep_batch([request])
 
-        assert request not in results
+        # Planted binaries are never run. The in-process backend answers
+        # instead (the empty directory has no matches).
+        assert results[request] == ()
         popen.assert_not_called()
 
     def test_single_file_scan_rejects_sibling_search_backends(self, tmp_path):
@@ -2219,7 +2221,9 @@ class TestBatchedGrepVerify:
         ):
             results = execute_grep_batch([request])
 
-        assert request not in results
+        # Sibling binaries are never run; the in-process backend reads the
+        # target file itself.
+        assert [str(line).rsplit(":", 1)[-1] for line in results[request]] == ["helper()"]
         popen.assert_not_called()
 
     def test_deleted_single_file_still_rejects_sibling_search_backends(
@@ -2565,7 +2569,7 @@ class TestBatchedGrepVerify:
 
         assert cache.size == 0
 
-    def test_no_ripgrep_uses_legacy_requests(self):
+    def test_no_secure_in_process_reads_uses_legacy_requests(self):
         request = GrepRequest(
             pattern="helper",
             project_root="/repo",
@@ -2577,6 +2581,10 @@ class TestBatchedGrepVerify:
 
         with (
             patch("skylos.core.grep_verify_common.shutil.which", return_value=None),
+            patch(
+                "skylos.core.grep_verify_common._python_grep_secure_reads_available",
+                return_value=False,
+            ),
             patch(
                 "skylos.core.grep_verify_common._run_grep_request",
                 return_value=["/repo/main.py:1:helper()"],
@@ -2904,7 +2912,10 @@ class TestAnalyzerIntegration:
             "SKY-ANALYSIS-INCOMPLETE"
         )
         assert result["analysis_errors"][0]["kind"] == "grep_budget_exhausted"
-        assert result["analysis_summary"]["grep_verify"] == {
+        grep_report = dict(result["analysis_summary"]["grep_verify"])
+        # Which backend ran depends on whether this machine has ripgrep.
+        assert grep_report.pop("backend") in {"ripgrep", "in_process", "serial_grep"}
+        assert grep_report == {
             "enabled": True,
             "rescued_count": 0,
             "project_cache_enabled": True,

@@ -2,6 +2,20 @@ from unittest.mock import patch, MagicMock
 import sys
 
 
+def _command_text(call) -> str:
+    """The command a mocked subprocess.run call ran, without its environment.
+
+    The environment carries PYTEST_CURRENT_TEST, which names this file and so
+    contains "coverage" for every subprocess (e.g. git) the scan makes.
+    """
+    command = call.args[0] if call.args else call.kwargs.get("args", "")
+    return (
+        " ".join(map(str, command))
+        if isinstance(command, (list, tuple))
+        else str(command)
+    )
+
+
 class TestCoverageFlag:
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
@@ -30,7 +44,10 @@ class TestCoverageFlag:
                 pass
 
         calls = mock_run.call_args_list
-        assert any("coverage" in str(call) and "pytest" in str(call) for call in calls)
+        assert any(
+            "coverage" in _command_text(call) and "pytest" in _command_text(call)
+            for call in calls
+        )
 
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
@@ -51,7 +68,9 @@ class TestCoverageFlag:
                 pass
 
         coverage_calls = [
-            call for call in mock_run.call_args_list if "coverage" in str(call)
+            call
+            for call in mock_run.call_args_list
+            if "coverage" in _command_text(call)
         ]
         assert coverage_calls == []
         mock_analyze.assert_called_once()
@@ -61,10 +80,21 @@ class TestCoverageFlag:
     def test_coverage_falls_back_to_unittest(self, mock_analyze, mock_run):
         from skylos.cli import main
 
-        mock_run.side_effect = [
-            MagicMock(returncode=1),  # pytest fails
-            MagicMock(returncode=0),  # unittest succeeds
-        ]
+        test_runs = iter(
+            [
+                MagicMock(returncode=1),  # pytest fails
+                MagicMock(returncode=0),  # unittest succeeds
+            ]
+        )
+
+        def run(*args, **kwargs):
+            command = args[0] if args else kwargs.get("args")
+            # Other subprocesses (e.g. git) are not test runs.
+            if isinstance(command, (list, tuple)) and command and command[0] == "git":
+                return MagicMock(returncode=1, stdout="", stderr="")
+            return next(test_runs)
+
+        mock_run.side_effect = run
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(
@@ -84,9 +114,12 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        assert mock_run.call_count == 2
-
-        calls = [str(c) for c in mock_run.call_args_list]
+        calls = [
+            _command_text(c)
+            for c in mock_run.call_args_list
+            if not _command_text(c).startswith("git ")
+        ]
+        assert len(calls) == 2
         assert any("pytest" in c for c in calls)
         assert any("unittest" in c for c in calls)
 
@@ -174,7 +207,7 @@ class TestCoverageFlag:
 
             # subprocess.run should not be called for coverage
             coverage_calls = [
-                c for c in mock_run.call_args_list if "coverage" in str(c)
+                c for c in mock_run.call_args_list if "coverage" in _command_text(c)
             ]
             assert len(coverage_calls) == 0
 

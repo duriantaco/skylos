@@ -37,6 +37,13 @@ def _interactive_available() -> bool:
         return False
 
 
+def _ripgrep_available() -> bool:
+    """Whether scans here would use ripgrep (else the slower in-process search)."""
+    from skylos.core.grep_verify_common import grep_backend_name
+
+    return grep_backend_name(str(Path.cwd())) == "ripgrep"
+
+
 def _go_engine_status() -> dict[str, str]:
     from skylos.engines.go_runner import get_go_engine_status
 
@@ -72,6 +79,9 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             "llm_support": {"status": "available" if llm_available else "unavailable"},
             "interactive": {
                 "status": "available" if interactive_available else "unavailable"
+            },
+            "ripgrep": {
+                "status": "available" if _ripgrep_available() else "unavailable"
             },
         },
     }
@@ -127,6 +137,14 @@ def _print_optional_status(console: Console) -> None:
         "  [green]OK[/green]  Interactive mode available",
         "  [yellow]--[/yellow]  Interactive mode not available "
         "[dim](optional: pip install inquirer)[/dim]",
+    )
+    _print_availability(
+        console,
+        _ripgrep_available(),
+        "  [green]OK[/green]  ripgrep available (fast dead-code verification)",
+        "  [yellow]--[/yellow]  ripgrep not installed "
+        "[dim](optional, faster on large repos: brew install ripgrep / "
+        "apt install ripgrep)[/dim]",
     )
 
 

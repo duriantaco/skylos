@@ -163,6 +163,22 @@ verdicts, records the affected dead-code candidates as abstentions, emits
 `analysis_summary.grep_verify.status` and `incomplete_reason`; increase the
 budget and rerun before treating the dead-code result as complete.
 
+Grep verification uses ripgrep when it is installed. Without ripgrep, Skylos
+searches in-process when secure file reads are available: it reads the
+git-visible source files once and checks
+every pattern against them, so gitignored data (datasets, videos, build
+output) is never read. On a 226-file project with 2.3 GB of gitignored data,
+that took grep verification from about six minutes (one `grep` process per
+pattern) to about ten seconds, with identical findings. Patterns it cannot
+decide in Python (non-ASCII, multi-line or untranslatable regex) and matches
+in files that are not valid UTF-8 still use the one-pattern `grep` path.
+`analysis_summary.grep_verify.backend` says which ran (`ripgrep`,
+`in_process`, or `serial_grep` when secure in-process reads are unavailable),
+and `skylos doctor` reports whether ripgrep is available. The in-process
+search limits its source bytes and materialized text to
+`SKYLOS_GREP_MAX_BYTES` per scan (512 MiB by default); past that it falls
+back to the one-pattern path.
+
 Circular dependencies (`SKY-CIRC`) are shown in rich, pretty, and concise
 output, and remain available in JSON under `circular_dependencies`. When
 source evidence is available, the finding points to an actual import in the

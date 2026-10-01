@@ -913,10 +913,17 @@ def _grep_verify_error_payload(
     reason = str(report.get("incomplete_reason") or "verification_incomplete")
     if reason == "budget_exhausted":
         budget = report.get("time_budget_seconds", 120)
+        hint = "Increase SKYLOS_GREP_BUDGET (seconds) and rerun."
+        if report.get("backend") in {"in_process", "serial_grep"}:
+            hint += (
+                " Installing ripgrep makes verification much faster (macOS: brew "
+                "install ripgrep; Debian/Ubuntu: apt install ripgrep; Windows: "
+                "winget install BurntSushi.ripgrep.MSVC)."
+            )
         message = (
             f"Grep verification exceeded its {budget:g}-second budget. "
             "Dead-code findings that required grep verification were withheld. "
-            "Increase SKYLOS_GREP_BUDGET and rerun."
+            + hint
         )
         kind = "grep_budget_exhausted"
     else:
@@ -2242,7 +2249,10 @@ class Skylos:
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.core.grep_cache import GrepCache
         from skylos.core.grep_verify import grep_verify_findings
-        from skylos.core.grep_verify_common import grep_verification_scope
+        from skylos.core.grep_verify_common import (
+            grep_backend_name,
+            grep_verification_scope,
+        )
 
         self.__dict__.pop("_grep_verify_incomplete_candidates", None)
         report = getattr(self, "_grep_verify_report", None)
@@ -2275,6 +2285,7 @@ class Skylos:
             return 0
 
         grep_root = find_git_root(project_root) or Path(project_root)
+        report["backend"] = grep_backend_name(project_root)
         grep_cache = GrepCache()
         if use_project_cache:
             grep_cache.load(grep_root)
