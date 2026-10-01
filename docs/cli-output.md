@@ -151,12 +151,39 @@ the grade and clean-code claim, and exits with status `2` in every output mode.
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 
+For a plain `skylos . --upload`, successful Cloud delivery returns `0` even
+when the Cloud quality gate reports advisory violations. Use `--gate` or
+`--strict` to enforce a failing exit. An incomplete scan does not upload, and
+rich output shows the analysis error that blocked it.
+
 The same contract applies when grep verification exceeds
-`SKYLOS_GREP_BUDGET` (30 seconds by default). Skylos discards the partial grep
+`SKYLOS_GREP_BUDGET` (120 seconds by default). Skylos discards the partial grep
 verdicts, records the affected dead-code candidates as abstentions, emits
 `SKY-ANALYSIS-INCOMPLETE`, and exits with status `2`. JSON consumers can inspect
 `analysis_summary.grep_verify.status` and `incomplete_reason`; increase the
 budget and rerun before treating the dead-code result as complete.
+
+Grep verification uses ripgrep when it is installed. Without ripgrep, Skylos
+searches in-process when secure file reads are available: it reads the
+git-visible source files once and checks
+every pattern against them, so gitignored data (datasets, videos, build
+output) is never read. On a 226-file project with 2.3 GB of gitignored data,
+that took grep verification from about six minutes (one `grep` process per
+pattern) to about ten seconds, with identical findings. Patterns it cannot
+decide in Python (non-ASCII, multi-line or untranslatable regex) and matches
+in files that are not valid UTF-8 still use the one-pattern `grep` path.
+`analysis_summary.grep_verify.backend` says which ran (`ripgrep`,
+`in_process`, or `serial_grep` when secure in-process reads are unavailable),
+and `skylos doctor` reports whether ripgrep is available. The in-process
+search limits its source bytes and materialized text to
+`SKYLOS_GREP_MAX_BYTES` per scan (512 MiB by default); past that it falls
+back to the one-pattern path.
+If `rg` is absent from `PATH`, or Skylos refuses an executable inside the
+scanned project, human scan output shows the fallback and links to the
+[official ripgrep installation guide](https://github.com/BurntSushi/ripgrep#installation).
+Install it for faster scans, ensure `rg` is on `PATH`, and check with
+`rg --version` and `skylos doctor`. Skylos does not install system tools
+during a scan.
 
 Circular dependencies (`SKY-CIRC`) are shown in rich, pretty, and concise
 output, and remain available in JSON under `circular_dependencies`. When

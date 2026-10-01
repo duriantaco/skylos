@@ -5,6 +5,7 @@ from types import ModuleType
 from typing import Sequence
 
 from skylos.core.safe_cache_io import write_text_no_symlink
+from skylos.constants import RIPGREP_INSTALL_URL
 
 
 _DIFF_FINDING_CATEGORIES = (
@@ -333,9 +334,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result_json = run_main_analysis_with_notice(update_progress)
 
         result = json.loads(result_json)
-        if explicit_rich_upload:
+
+        grep_report = (result.get("analysis_summary") or {}).get("grep_verify") or {}
+        if (
+            not machine_output
+            and getattr(args, "format", "rich") in {"rich", "pretty"}
+            and grep_report.get("backend") in {"in_process", "serial_grep"}
+        ):
             console.print(
-                "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
+                "[warn]ripgrep (rg) unavailable to Skylos; using fallback "
+                "verification. For faster scans, install ripgrep and ensure "
+                f"rg is on PATH: {RIPGREP_INSTALL_URL}[/warn]"
             )
 
         if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
@@ -817,7 +826,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
                     "passed", True
                 )
-            if cloud_gate_passed is False and not args.force:
+            if cloud_gate_passed is False and (args.strict or args.gate) and not args.force:
                 raise SystemExit(1)
 
         if args.sarif:
@@ -1078,6 +1087,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     if args.gate:
         incomplete_exit_code = _strict_scan_exit_code(result, args)
         if incomplete_exit_code:
+            if explicit_rich_upload:
+                console.print(
+                    "[bad]Scan incomplete; Cloud upload was not started.[/bad]"
+                )
             render_results(
                 console,
                 result,
@@ -1087,6 +1100,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 copy_badge=not getattr(args, "no_clipboard", False),
             )
             raise SystemExit(incomplete_exit_code)
+
+        if explicit_rich_upload:
+            console.print(
+                "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
+            )
 
         should_upload_gate = bool(getattr(args, "upload", False)) and not bool(
             getattr(args, "no_upload", False)
@@ -1117,7 +1135,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
                         "passed", True
                     )
-                if cloud_gate_passed is False and not args.force:
+                if cloud_gate_passed is False and (args.strict or args.gate) and not args.force:
                     raise SystemExit(1)
 
         exit_code = run_gate_interaction(
@@ -1316,7 +1334,21 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             )
             for reason in reasons:
                 console.print(f"[warn]{reason}[/warn]")
+            if reasons and result.get("analysis_errors"):
+                from skylos.ui.rich_report import _render_analysis_errors
+
+                _render_analysis_errors(
+                    console,
+                    result,
+                    root_path=project_root,
+                    limit=getattr(args, "limit", None),
+                )
         raise SystemExit(strict_exit_code)
+
+    if explicit_rich_upload:
+        console.print(
+            "[muted]Source analysis complete; preparing Cloud upload.[/muted]"
+        )
 
     if (
         not args.json
@@ -1474,7 +1506,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     f"[bold red]  {new_v} new violation{'s' if new_v != 1 else ''}[/bold red]"
                 )
 
-            if passed is False and not args.force:
+            if passed is False and (args.strict or args.gate) and not args.force:
                 raise SystemExit(1)
 
     if args.command and not args.gate:

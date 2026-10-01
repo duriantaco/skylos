@@ -852,6 +852,7 @@ def test_doctor_command_reports_core_statuses(tmp_path):
         patch("skylos.commands.doctor_cmd._rust_available", return_value=True),
         patch("skylos.commands.doctor_cmd._llm_available", return_value=True),
         patch("skylos.commands.doctor_cmd._interactive_available", return_value=True),
+        patch("skylos.commands.doctor_cmd._ripgrep_available", return_value=False),
         patch(
             "skylos.commands.doctor_cmd._go_engine_status",
             return_value={"status": "available", "binary": "/bin/skylos-go"},
@@ -881,6 +882,8 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
     assert "community rule pack(s) installed" in printed
+    assert "ripgrep (rg) unavailable to Skylos" in printed
+    assert "https://github.com/BurntSushi/ripgrep#installation" in printed
 
 
 def test_doctor_command_json_reports_unavailable_go_engine(capsys):
@@ -892,6 +895,7 @@ def test_doctor_command_json_reports_unavailable_go_engine(capsys):
         patch("skylos.commands.doctor_cmd._rust_available", return_value=True),
         patch("skylos.commands.doctor_cmd._llm_available", return_value=False),
         patch("skylos.commands.doctor_cmd._interactive_available", return_value=True),
+        patch("skylos.commands.doctor_cmd._ripgrep_available", return_value=False),
         patch(
             "skylos.commands.doctor_cmd._go_engine_status",
             return_value={
@@ -910,6 +914,10 @@ def test_doctor_command_json_reports_unavailable_go_engine(capsys):
     assert payload["status"] == "degraded"
     assert payload["checks"]["go_engine"]["status"] == "unavailable"
     assert payload["checks"]["go_engine"]["reason"] == "Go engine binary not found"
+    assert payload["checks"]["ripgrep"]["status"] == "unavailable"
+    assert payload["checks"]["ripgrep"]["install_url"] == (
+        "https://github.com/BurntSushi/ripgrep#installation"
+    )
 
 
 def test_discover_command_json_output_prints_report(tmp_path):

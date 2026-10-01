@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import io
 import json
 import logging
@@ -7,13 +8,14 @@ import ntpath
 import os
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
 import tokenize
 import unicodedata
 from bisect import bisect_right
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
@@ -634,9 +636,12 @@ def grep_verification_scope(
         root, exclusions, visible_files, _prune_names(exclusions, root, visible_files)
     )
     token = _GREP_SCOPE.set(scope)
+    cache_token = _PYTHON_GREP_CACHES.set({})
     try:
         yield
     finally:
+        # Drop file text with the scope: the next scan reads fresh files.
+        _PYTHON_GREP_CACHES.reset(cache_token)
         _GREP_SCOPE.reset(token)
 
 
@@ -1736,7 +1741,7 @@ def _request_matches_line(
 
 def _classify_grep_request(
     request: GrepRequest,
-    grep_matches: Sequence[_GrepMatch],
+    grep_matches: Iterable[_GrepMatch],
     overrides: dict[int, bool] | None = None,
     *,
     deadline: float | None = None,
@@ -1995,6 +2000,593 @@ def _grep_request_chunks(
         yield chunk
 
 
+# ---------------------------------------------------------------------------
+# In-process batch backend, used when ripgrep is not installed.
+#
+# Without ripgrep every request used to start its own `grep -r`, one process
+# per pattern over the whole tree: thousands of processes on a real project,
+# minutes of wall time, and a grep-verification budget that runs out (the scan
+# is then incomplete and uploads are refused). This backend reads each
+# candidate file once, finds the lines that contain the literal every match of
+# a request must contain, and decides each request on those lines with the
+# same Python classifier the ripgrep batch path uses. Requests it cannot
+# decide in Python (non-ASCII or multi-line patterns, untranslatable regex)
+# keep the one-pattern subprocess path.
+# ---------------------------------------------------------------------------
+
+_PY_BACKEND_MIN_ANCHOR = 3
+_PY_BACKEND_DEADLINE_STRIDE = 64
+# Most text the in-process backend will hold for one scan (all glob sets).
+_PY_BACKEND_DEFAULT_MAX_BYTES = 512 * 1024 * 1024
+
+
+def _env_byte_limit(name: str, default: int) -> int:
+    """A positive integer from the environment; a bad value never breaks a scan."""
+    raw = os.getenv(name, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        if raw:
+            logger.warning("Ignoring invalid %s=%r; using %d", name, raw, default)
+        return default
+    return value if value > 0 else default
+
+
+_PY_BACKEND_MAX_TOTAL_BYTES = _env_byte_limit(
+    "SKYLOS_GREP_MAX_BYTES", _PY_BACKEND_DEFAULT_MAX_BYTES
+)
+
+
+class _PythonCorpusTooLarge(RuntimeError):
+    """The in-process corpus would exceed its memory cap."""
+
+
+# Characters that are literal when unescaped outside a class ("." is not).
+_REGEX_ESCAPED_LITERALS = frozenset(".-/:=,'\"#@%&~<>!;` ")
+# Characters that are literal when escaped.
+_REGEX_ESCAPED_METACHARS = _REGEX_ESCAPED_LITERALS | frozenset("()[]{}|*+?^$\\")
+_VERBOSE_FLAG_PATTERN = re.compile(r"\(\?[a-z-]*x")
+
+
+def _required_literal(request: GrepRequest) -> str | None:
+    """A substring every line matching the request must contain, or None.
+
+    Fixed strings are their own literal. For a regex, only top-level runs of
+    mandatory literal atoms count: anything inside a group, a character
+    class, an escape class or before a `?`/`*`/`{` quantifier ends a run, and
+    a top-level alternation means no literal is required.
+    """
+    pattern = request.pattern
+    if request.fixed_string:
+        return pattern if pattern else None
+    # Case-insensitive or verbose (whitespace-insignificant) patterns have no
+    # byte-exact literal.
+    if _UNICODE_CASE_INSENSITIVE_PATTERN.search(
+        pattern
+    ) or _VERBOSE_FLAG_PATTERN.search(pattern):
+        return None
+    runs: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    length = len(pattern)
+
+    def end_run() -> None:
+        if current:
+            runs.append("".join(current))
+            current.clear()
+
+    while index < length:
+        char = pattern[index]
+        if char == "\\" and index + 1 < length:
+            escaped = pattern[index + 1]
+            index += 2
+            if escaped in "xuUpP":
+                # \x27, \x{1F600}, \u00e9, \U0001F600, \pL, \p{Greek}: never
+                # part of a literal run, and their payload is not literal text.
+                if index < length and pattern[index] == "{":
+                    close = pattern.find("}", index)
+                    index = close + 1 if close != -1 else length
+                elif escaped in "pP":
+                    index += 1
+                else:
+                    width = {"x": 2, "u": 4, "U": 8}[escaped]
+                    while (
+                        width
+                        and index < length
+                        and pattern[index] in "0123456789abcdefABCDEF"
+                    ):
+                        index += 1
+                        width -= 1
+                end_run()
+                continue
+            literal = (
+                escaped if depth == 0 and escaped in _REGEX_ESCAPED_METACHARS else None
+            )
+            if literal is None:
+                end_run()
+                continue
+            if depth == 0:
+                current.append(literal)
+                if index < length and pattern[index] in "?*{":
+                    current.pop()
+                    end_run()
+                elif index < length and pattern[index] == "+":
+                    end_run()
+            continue
+        if char == "[":
+            # Skip the whole class, including POSIX classes like [[:space:]].
+            end_run()
+            index += 1
+            if index < length and pattern[index] == "^":
+                index += 1
+            if index < length and pattern[index] == "]":
+                index += 1
+            while index < length and pattern[index] != "]":
+                if pattern[index] == "[" and pattern.startswith("[:", index):
+                    close = pattern.find(":]", index + 2)
+                    index = close + 2 if close != -1 else length
+                    continue
+                if pattern[index] == "\\":
+                    index += 1
+                index += 1
+            index += 1
+            continue
+        if char == "(":
+            end_run()
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            end_run()
+            depth = max(0, depth - 1)
+            index += 1
+            continue
+        if char == "|" and depth == 0:
+            return None
+        if depth > 0:
+            index += 1
+            continue
+        if (
+            char.isalnum()
+            or char == "_"
+            or (char in _REGEX_ESCAPED_LITERALS and char != ".")
+        ):
+            current.append(char)
+            index += 1
+            if index < length and pattern[index] in "?*{":
+                current.pop()
+                end_run()
+            elif index < length and pattern[index] == "+":
+                end_run()
+            continue
+        # `.`, `^`, `$`, quantifiers and anything else end a literal run.
+        end_run()
+        index += 1
+    end_run()
+    best = max(runs, key=len, default="")
+    return best if len(best) >= _PY_BACKEND_MIN_ANCHOR else None
+
+
+@dataclass(slots=True)
+class _PythonGrepCorpus:
+    """Text of the files one glob set selects, read once per scan."""
+
+    paths: list[str]
+    blob: str
+    line_starts: list[int]
+    line_paths: list[int]
+    line_numbers: list[int]
+    has_non_utf8: bool = False
+    anchor_hits: dict[str, list[int]] = field(default_factory=dict)
+
+
+_PYTHON_GREP_CACHE_LOCK = threading.Lock()
+
+
+@dataclass(slots=True)
+class _PythonGrepCache:
+    scope: object
+    target: str
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    loaded_bytes: int = 0
+    materialized_chars: int = 0
+    # Set once the memory cap is hit: later requests skip straight to the
+    # subprocess path instead of re-reading files until the cap trips again.
+    disabled: bool = False
+    incomplete: bool = False
+    file_text: dict[str, str | None] = field(default_factory=dict)
+    # Files that are not valid UTF-8. ripgrep reports their lines as raw bytes,
+    # which the batch path never trusts as evidence; requests matching there
+    # keep the one-pattern subprocess path so both backends agree.
+    non_utf8: set[str] = field(default_factory=set)
+    corpora: dict[tuple[str, ...], _PythonGrepCorpus] = field(default_factory=dict)
+
+
+# One cache per verification scope, carried in the context (worker threads
+# started with copy_context share it; separate scans never do).
+_PYTHON_GREP_CACHES: ContextVar[dict[str, _PythonGrepCache] | None] = ContextVar(
+    "python_grep_caches", default=None
+)
+
+
+def _python_grep_cache(target: str) -> _PythonGrepCache:
+    caches = _PYTHON_GREP_CACHES.get()
+    if caches is None:
+        # Outside a verification scope (direct calls, tests): nothing to reuse.
+        return _PythonGrepCache(scope=None, target=target)
+    with _PYTHON_GREP_CACHE_LOCK:
+        cache = caches.get(target)
+        if cache is None:
+            cache = _PythonGrepCache(scope=_GREP_SCOPE.get(), target=target)
+            caches[target] = cache
+        return cache
+
+
+def _excluded_walk_directory(
+    name: str, relative: str, prune_names: Sequence[str]
+) -> bool:
+    if name in _GREP_EXCLUDE_DIRS or name.endswith(".egg-info"):
+        return True
+    return any(
+        relative == prune or relative.endswith("/" + prune) for prune in prune_names
+    )
+
+
+def _matches_any_glob(name: str, relative: str, globs: tuple[str, ...]) -> bool:
+    """ripgrep -g semantics: a glob without "/" matches the file name anywhere."""
+    for glob in globs:
+        candidate = relative if "/" in glob else name
+        if fnmatch.fnmatchcase(candidate, glob.lstrip("/")):
+            return True
+    return False
+
+
+def _python_grep_globs_supported(globs: tuple[str, ...]) -> bool:
+    """Use the fast path only for basename globs with matching semantics."""
+    return bool(globs) and all(
+        glob
+        and not glob.startswith("!")
+        and not any(character in glob for character in "/\\{}")
+        for glob in globs
+    )
+
+
+def _python_grep_files(
+    target: str, globs: tuple[str, ...], deadline: float | None
+) -> list[str]:
+    """Files ripgrep would search for these globs, in deterministic order."""
+    if os.path.isfile(target):
+        name = os.path.basename(target)
+        return [target] if _matches_any_glob(name, name, globs) else []
+    if not os.path.isdir(target):
+        # ripgrep exits with an error for a missing root: never "no matches".
+        raise OSError(f"search root is not a directory: {target}")
+    prune_names = _scope_prune_names()
+    files: list[str] = []
+
+    def unreadable(error: OSError) -> None:
+        # A directory ripgrep would report as an error makes the search incomplete.
+        raise error
+
+    for directory, dirnames, filenames in os.walk(target, onerror=unreadable):
+        if _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded while listing files")
+        relative_dir = os.path.relpath(directory, target).replace("\\", "/")
+        relative_dir = "" if relative_dir == "." else relative_dir
+        kept = []
+        for name in dirnames:
+            child = f"{relative_dir}/{name}" if relative_dir else name
+            if os.path.islink(os.path.join(directory, name)):
+                continue
+            if not _excluded_walk_directory(name, child, prune_names):
+                kept.append(name)
+        dirnames[:] = sorted(kept)
+        for name in filenames:
+            relative = f"{relative_dir}/{name}" if relative_dir else name
+            if not _matches_any_glob(name, relative, globs):
+                continue
+            path = os.path.join(directory, name)
+            if os.path.islink(path) or _is_ignored_grep_path(path):
+                continue
+            files.append(path)
+    return sorted(files, key=lambda path: path.replace("\\", "/"))
+
+
+def _read_python_grep_bytes(
+    target: str, path: str, max_bytes: int, deadline: float | None
+) -> bytes:
+    """Read a regular file beneath the target without following repository links."""
+    if not _python_grep_secure_reads_available():
+        raise OSError("secure directory-relative reads are unavailable")
+    logical_base = target if os.path.isdir(target) else os.path.dirname(target)
+    relative = os.path.relpath(path, logical_base)
+    base = os.path.realpath(logical_base)
+    parts = relative.split(os.sep)
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise OSError("grep file is outside the search root")
+    leaf_name = os.path.basename(parts[-1])
+    directory_flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    file_flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = os.open(base, directory_flags)
+    file_fd: int | None = None
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(leaf_name, file_flags, dir_fd=directory_fd)
+        opened = os.fstat(file_fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError("grep target is not a regular file")
+        if opened.st_size > max_bytes:
+            raise _PythonCorpusTooLarge("in-process grep corpus exceeds its byte cap")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            if _deadline_expired(deadline):
+                raise _GrepDeadlineExceeded("deadline exceeded while reading grep files")
+            chunk = os.read(file_fd, min(1024 * 1024, max_bytes - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise _PythonCorpusTooLarge("in-process grep corpus exceeds its byte cap")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        os.close(directory_fd)
+
+
+def _python_grep_secure_reads_available() -> bool:
+    return os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")
+
+
+def _read_python_grep_text(
+    cache: _PythonGrepCache, path: str, deadline: float | None
+) -> str | None:
+    if path in cache.file_text:
+        return cache.file_text[path]
+    try:
+        remaining = _PY_BACKEND_MAX_TOTAL_BYTES - cache.loaded_bytes
+        if remaining <= 0:
+            raise _PythonCorpusTooLarge("in-process grep corpus exceeds its byte cap")
+        data = _read_python_grep_bytes(cache.target, path, remaining, deadline)
+        cache.loaded_bytes += len(data)
+    except OSError as exc:
+        raise _GrepExecutionIncomplete(f"could not safely read {path}") from exc
+    else:
+        # Like ripgrep's default binary detection: a NUL byte means binary.
+        if b"\0" in data:
+            text = None
+        else:
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                # A replacement character can change a regex verdict. The
+                # request must use the byte-preserving subprocess path.
+                text = None
+                cache.non_utf8.add(path)
+    cache.file_text[path] = text
+    return text
+
+
+def _python_grep_corpus(
+    cache: _PythonGrepCache,
+    globs: tuple[str, ...],
+    deadline: float | None,
+) -> _PythonGrepCorpus:
+    with cache.lock:
+        corpus = cache.corpora.get(globs)
+        if corpus is None:
+            corpus = _build_python_grep_corpus(cache, globs, deadline)
+            cache.corpora[globs] = corpus
+        return corpus
+
+
+def _build_python_grep_corpus(
+    cache: _PythonGrepCache,
+    globs: tuple[str, ...],
+    deadline: float | None,
+) -> _PythonGrepCorpus:
+    paths: list[str] = []
+    pieces: list[str] = []
+    line_starts: list[int] = []
+    line_paths: list[int] = []
+    line_numbers: list[int] = []
+    offset = 0
+    has_non_utf8 = False
+    for path in _python_grep_files(cache.target, globs, deadline):
+        if _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded while building grep corpus")
+        text = _read_python_grep_text(cache, path, deadline)
+        if text is None:
+            has_non_utf8 |= path in cache.non_utf8
+            continue
+        path_index = len(paths)
+        paths.append(path)
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        for number, line in enumerate(lines, start=1):
+            if number % 1024 == 0 and _deadline_expired(deadline):
+                raise _GrepDeadlineExceeded(
+                    "deadline exceeded while building grep corpus"
+                )
+            if line.endswith("\r"):
+                line = line[:-1]
+            line_starts.append(offset)
+            line_paths.append(path_index)
+            line_numbers.append(number)
+            pieces.append(line)
+            offset += len(line) + 1
+            if (
+                cache.loaded_bytes + cache.materialized_chars + offset
+                > _PY_BACKEND_MAX_TOTAL_BYTES
+            ):
+                raise _PythonCorpusTooLarge(
+                    "in-process grep corpus exceeds its byte cap"
+                )
+    blob = "\n".join(pieces)
+    cache.materialized_chars += offset
+    return _PythonGrepCorpus(
+        paths=paths,
+        blob=blob,
+        line_starts=line_starts,
+        line_paths=line_paths,
+        line_numbers=line_numbers,
+        has_non_utf8=has_non_utf8,
+    )
+
+
+def _python_grep_candidate_lines(
+    corpus: _PythonGrepCorpus, anchor: str | None, deadline: float | None
+) -> Sequence[int]:
+    if anchor is None:
+        return range(len(corpus.line_starts))
+    hits = corpus.anchor_hits.get(anchor)
+    if hits is not None:
+        return hits
+    found: list[int] = []
+    # Computed outside the lock (pure function of immutable text); the
+    # last writer wins with an identical list.
+    blob = corpus.blob
+    position = blob.find(anchor)
+    examined = 0
+    while position != -1:
+        if examined % 256 == 0 and _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded while locating grep lines")
+        examined += 1
+        line_index = bisect_right(corpus.line_starts, position) - 1
+        if not found or found[-1] != line_index:
+            found.append(line_index)
+        # Continue after this line: one hit per line is enough.
+        next_start = (
+            corpus.line_starts[line_index + 1]
+            if line_index + 1 < len(corpus.line_starts)
+            else len(blob)
+        )
+        position = blob.find(anchor, next_start)
+    corpus.anchor_hits[anchor] = found
+    return found
+
+
+def _python_grep_line(corpus: _PythonGrepCorpus, line_index: int) -> str:
+    end = (
+        corpus.line_starts[line_index + 1] - 1
+        if line_index + 1 < len(corpus.line_starts)
+        else len(corpus.blob)
+    )
+    return corpus.blob[corpus.line_starts[line_index] : end]
+
+
+def _python_grep_needs_exact_search(
+    request: GrepRequest,
+    corpus: _PythonGrepCorpus,
+    candidates: Sequence[int],
+    deadline: float | None,
+) -> bool:
+    if request.fixed_string:
+        return False
+    check_case = bool(_UNICODE_CASE_INSENSITIVE_PATTERN.search(request.pattern))
+    check_word = bool(_UNICODE_WORD_PATTERN.search(request.pattern))
+    check_space = bool(_ENGINE_SENSITIVE_SPACE_PATTERN.search(request.pattern))
+    if not (check_case or check_word or check_space):
+        return False
+    for index, line_index in enumerate(candidates):
+        if index % 256 == 0 and _deadline_expired(deadline):
+            raise _GrepDeadlineExceeded("deadline exceeded checking grep semantics")
+        line = _python_grep_line(corpus, line_index)
+        if check_space and _contains_engine_divergent_space(line):
+            return True
+        if check_case and not line.isascii():
+            return True
+        if check_word and not line.isascii() and _rust_and_python_word_classes_can_differ(
+            line, deadline=deadline
+        ):
+            return True
+    return False
+
+
+def _run_python_grep_batch(
+    requests: Sequence[GrepRequest],
+    *,
+    deadline: float | None = None,
+) -> _GrepBatchResults:
+    """Decide batchable requests in-process; the rest keep the subprocess path."""
+    if not _python_grep_secure_reads_available():
+        return _run_serial_grep_requests(requests, deadline=deadline)
+    batched, direct = _partition_grep_requests(requests)
+    results = _GrepBatchResults()
+    for index, request in enumerate(batched):
+        if index % _PY_BACKEND_DEADLINE_STRIDE == 0 and _deadline_expired(deadline):
+            return results
+        if not _python_grep_globs_supported(request.include_globs):
+            direct.append(request)
+            continue
+        target = os.path.abspath(request.project_root)
+        cache = _python_grep_cache(target)
+        if cache.incomplete:
+            continue
+        if cache.disabled:
+            direct.append(request)
+            continue
+        try:
+            corpus = _python_grep_corpus(cache, request.include_globs, deadline)
+            if corpus.has_non_utf8:
+                direct.append(request)
+                continue
+            candidates = _python_grep_candidate_lines(
+                corpus, _required_literal(request), deadline
+            )
+            if _python_grep_needs_exact_search(
+                request, corpus, candidates, deadline
+            ):
+                direct.append(request)
+                continue
+            def matches() -> Iterator[_GrepMatch]:
+                for line_index in candidates:
+                    yield _GrepMatch(
+                        path=corpus.paths[corpus.line_paths[line_index]],
+                        line_number=corpus.line_numbers[line_index],
+                        content=_python_grep_line(corpus, line_index),
+                    )
+            classified = _classify_grep_request(
+                request, matches(), None, deadline=deadline
+            )
+            results[request] = classified
+        except _GrepDeadlineExceeded:
+            return results
+        except (_GrepExecutionIncomplete, OSError) as exc:
+            logger.debug("in-process grep was incomplete: %s", exc)
+            cache.incomplete = True
+        except _PythonCorpusTooLarge as exc:
+            logger.warning("In-process grep disabled for this scan: %s", exc)
+            cache.disabled = True
+            direct.append(request)
+        except (RuntimeError, UnicodeError, ValueError) as exc:
+            logger.debug("in-process grep failed for %r: %s", request.pattern, exc)
+            direct.append(request)
+    results.merge(_run_serial_grep_requests(direct, deadline=deadline))
+    return results
+
+
+def grep_backend_name(project_root: str) -> str:
+    """Which search backend grep verification uses for this root."""
+    request_root = (
+        os.path.dirname(os.path.abspath(project_root))
+        if os.path.isfile(project_root)
+        else project_root
+    )
+    if _trusted_which("rg", (request_root,)):
+        return "ripgrep"
+    return "in_process" if _python_grep_secure_reads_available() else "serial_grep"
+
+
 def execute_grep_batch(
     requests: Sequence[GrepRequest],
     *,
@@ -2014,7 +2606,7 @@ def execute_grep_batch(
         "rg", tuple(_request_trust_root(request) for request in unique_requests)
     )
     if not rg:
-        return _run_serial_grep_requests(unique_requests, deadline=deadline)
+        return _run_python_grep_batch(unique_requests, deadline=deadline)
 
     results = _GrepBatchResults()
     for group_requests in _group_grep_requests(unique_requests).values():

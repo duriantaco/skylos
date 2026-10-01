@@ -18,6 +18,8 @@ NETWORK_TIMEOUT_DEFAULT = 15
 NETWORK_TIMEOUT_LONG = 30
 UPLOAD_TIMEOUT = 60
 
+RIPGREP_INSTALL_URL = "https://github.com/BurntSushi/ripgrep#installation"
+
 # safety score const
 SAFETY_VERY_HIGH = 0.95
 SAFETY_HIGH = 0.90
