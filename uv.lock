@@ -1188,7 +1188,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.84.5"
+version = "1.88.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1204,9 +1204,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/43/f06e0b499caa4b1c47b7a5b4d1f363bd79e92a3ca41432aa352c994a82ba/litellm-1.84.5.tar.gz", hash = "sha256:2486493af45fc45bb0fe534d3322ce31b9c32d7c42a0af485af2bc17b3bc83ec", size = 15109489, upload-time = "2026-06-04T03:52:07.196Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/a6/d2312da4d65390f0d899a669731500983c8a10bd89009657680949c5766d/litellm-1.88.6.tar.gz", hash = "sha256:07d947dfe92f137d5296c40285dbcf97cb405b4300d73c0feda48d76468d6eb4", size = 13889078, upload-time = "2026-08-09T00:06:33.818Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/45/b4a6f2defbb2c59afc0ee595e145d254459396af86a6986387f5ebd23231/litellm-1.84.5-py3-none-any.whl", hash = "sha256:90020821c9fc8392839e71cf5f218aeb04e8a0bb2e7d7a246f62c0a62f017641", size = 16740410, upload-time = "2026-06-04T03:52:02.768Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/0b/2e42b95ccca2e2a8a524808e9c414f70a0352165dac589efa01192afb8ba/litellm-1.88.6-py3-none-any.whl", hash = "sha256:8c01f7e9aebded5b3509128be648518a2ec4f1feb8dfb87a539895091651898b", size = 15271205, upload-time = "2026-08-09T00:06:30.607Z" },
 ]
 
 [[package]]
@@ -2451,8 +2451,8 @@ requires-dist = [
     { name = "inquirer", specifier = ">=3.1.0" },
     { name = "keyring", specifier = "!=3.4.2,>=25.6.0" },
     { name = "libcst", specifier = ">=1.8.2" },
-    { name = "litellm", marker = "extra == 'all'", specifier = ">=1.84.0,<1.85.0" },
-    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.84.0,<1.85.0" },
+    { name = "litellm", marker = "extra == 'all'", specifier = ">=1.84.0,<1.89.0" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.84.0,<1.89.0" },
     { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "networkx" },
     { name = "packaging", marker = "extra == 'all'", specifier = ">=24.2" },
