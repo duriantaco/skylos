@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.43.2](https://github.com/duriantaco/skylos/compare/v4.43.1...v4.43.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **dependencies:** validate python import provider evidence ([#930](https://github.com/duriantaco/skylos/issues/930)) ([92dd37b](https://github.com/duriantaco/skylos/commit/92dd37beb8c4896576a854bcfdffbcd18ae8dc5e))
+* **scan:** complete scans without ripgrep and explain upload failures ([#928](https://github.com/duriantaco/skylos/issues/928)) ([5edd9e5](https://github.com/duriantaco/skylos/commit/5edd9e5aaf251eddb0129c35274f165a30378fc3))
+
 ## [4.43.1](https://github.com/duriantaco/skylos/compare/v4.43.0...v4.43.1) (2026-10-01)
 
 
