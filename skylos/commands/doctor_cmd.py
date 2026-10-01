@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from skylos.config import load_config
+from skylos.constants import RIPGREP_INSTALL_URL
 
 
 def _rust_available() -> bool:
@@ -80,9 +81,11 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             "interactive": {
                 "status": "available" if interactive_available else "unavailable"
             },
-            "ripgrep": {
-                "status": "available" if _ripgrep_available() else "unavailable"
-            },
+            "ripgrep": (
+                {"status": "available"}
+                if _ripgrep_available()
+                else {"status": "unavailable", "install_url": RIPGREP_INSTALL_URL}
+            ),
         },
     }
 
@@ -142,9 +145,9 @@ def _print_optional_status(console: Console) -> None:
         console,
         _ripgrep_available(),
         "  [green]OK[/green]  ripgrep available (fast dead-code verification)",
-        "  [yellow]--[/yellow]  ripgrep not installed "
+        "  [yellow]--[/yellow]  ripgrep (rg) unavailable to Skylos "
         "[dim](optional, faster on large repos: brew install ripgrep / "
-        "apt install ripgrep)[/dim]",
+        f"apt install ripgrep; ensure rg is on PATH; {RIPGREP_INSTALL_URL})[/dim]",
     )
 
 

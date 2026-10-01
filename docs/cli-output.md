@@ -178,6 +178,12 @@ and `skylos doctor` reports whether ripgrep is available. The in-process
 search limits its source bytes and materialized text to
 `SKYLOS_GREP_MAX_BYTES` per scan (512 MiB by default); past that it falls
 back to the one-pattern path.
+If `rg` is absent from `PATH`, or Skylos refuses an executable inside the
+scanned project, human scan output shows the fallback and links to the
+[official ripgrep installation guide](https://github.com/BurntSushi/ripgrep#installation).
+Install it for faster scans, ensure `rg` is on `PATH`, and check with
+`rg --version` and `skylos doctor`. Skylos does not install system tools
+during a scan.
 
 Circular dependencies (`SKY-CIRC`) are shown in rich, pretty, and concise
 output, and remain available in JSON under `circular_dependencies`. When

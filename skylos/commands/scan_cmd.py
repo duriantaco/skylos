@@ -5,6 +5,7 @@ from types import ModuleType
 from typing import Sequence
 
 from skylos.core.safe_cache_io import write_text_no_symlink
+from skylos.constants import RIPGREP_INSTALL_URL
 
 
 _DIFF_FINDING_CATEGORIES = (
@@ -333,6 +334,18 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result_json = run_main_analysis_with_notice(update_progress)
 
         result = json.loads(result_json)
+
+        grep_report = (result.get("analysis_summary") or {}).get("grep_verify") or {}
+        if (
+            not machine_output
+            and getattr(args, "format", "rich") in {"rich", "pretty"}
+            and grep_report.get("backend") in {"in_process", "serial_grep"}
+        ):
+            console.print(
+                "[warn]ripgrep (rg) unavailable to Skylos; using fallback "
+                "verification. For faster scans, install ripgrep and ensure "
+                f"rg is on PATH: {RIPGREP_INSTALL_URL}[/warn]"
+            )
 
         if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
             try:

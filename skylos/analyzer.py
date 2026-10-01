@@ -31,6 +31,7 @@ from skylos.constants import (
     AUTO_CALLED,
     DEFAULT_EXCLUDE_FOLDERS,
     MARKREFS_TICK_DEFAULT,
+    RIPGREP_INSTALL_URL,
 )
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
@@ -918,7 +919,8 @@ def _grep_verify_error_payload(
             hint += (
                 " Installing ripgrep makes verification much faster (macOS: brew "
                 "install ripgrep; Debian/Ubuntu: apt install ripgrep; Windows: "
-                "winget install BurntSushi.ripgrep.MSVC)."
+                "winget install BurntSushi.ripgrep.MSVC). Ensure rg is on PATH. "
+                f"Install guide: {RIPGREP_INSTALL_URL}."
             )
         message = (
             f"Grep verification exceeded its {budget:g}-second budget. "

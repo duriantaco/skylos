@@ -1,6 +1,7 @@
 """Exercise the rich upload flow with a real local analysis."""
 
 import json
+import shutil
 from io import StringIO
 from unittest.mock import Mock, patch
 
@@ -8,6 +9,56 @@ import pytest
 from rich.console import Console
 
 import skylos.cli as cli
+
+
+def test_rich_upload_explains_missing_ripgrep_and_still_uploads(tmp_path, monkeypatch):
+    from skylos.core.grep_verify_common import _python_grep_secure_reads_available
+
+    if not _python_grep_secure_reads_available():
+        pytest.skip("secure in-process grep requires POSIX dirfd reads")
+
+    (tmp_path / "app.py").write_text(
+        "def orphan():\n    return 1\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            str(tmp_path),
+            "--upload",
+            "--no-provenance",
+            "--no-clipboard",
+        ],
+    )
+    output = StringIO()
+    logger = Mock()
+    logger.console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        theme=cli._skylos_console_theme(),
+        width=180,
+    )
+    original_which = shutil.which
+
+    def without_rg(executable):
+        return None if executable == "rg" else original_which(executable)
+
+    with (
+        patch("skylos.core.grep_verify_common.shutil.which", side_effect=without_rg),
+        patch("skylos.cli.setup_logger", return_value=logger),
+        patch("skylos.cli._print_upload_destination", return_value=(True, False)),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli.upload_report", return_value={"success": True}) as upload,
+    ):
+        cli.main()
+
+    rendered = output.getvalue()
+    assert "ripgrep (rg) unavailable to Skylos" in rendered
+    assert "https://github.com/BurntSushi/ripgrep#installation" in rendered
+    assert "Source analysis complete; preparing Cloud upload." in rendered
+    upload.assert_called_once()
 
 
 @pytest.mark.parametrize("source,expected_exit,should_upload,cloud_gate_passed", [

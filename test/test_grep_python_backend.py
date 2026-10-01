@@ -473,6 +473,8 @@ def test_budget_error_tells_users_how_to_fix_it(tmp_path):
         },
     )
     assert "brew install ripgrep" in in_process["message"]
+    assert "https://github.com/BurntSushi/ripgrep#installation" in in_process["message"]
+    assert "rg is on PATH" in in_process["message"]
     assert "SKYLOS_GREP_BUDGET" in in_process["message"]
     with_rg = _grep_verify_error_payload(
         tmp_path,
