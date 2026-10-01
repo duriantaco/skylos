@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.43.1](https://github.com/duriantaco/skylos/compare/v4.43.0...v4.43.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **quality:** reduce false positives in python rules ([#923](https://github.com/duriantaco/skylos/issues/923)) ([106555c](https://github.com/duriantaco/skylos/commit/106555ca8dd81cf9264a8f232403c3a9d016bde6))
+
 ## [4.43.0](https://github.com/duriantaco/skylos/compare/v4.42.0...v4.43.0) (2026-09-30)
 
 
