@@ -2333,6 +2333,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_github_actions_full_flow(self, mock_git):
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["GITHUB_ACTIONS"] = "true"
         os.environ["GITHUB_SHA"] = "ghsha123"
         os.environ["GITHUB_REF"] = "refs/pull/42/merge"
@@ -2349,6 +2350,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_jenkins_full_flow(self, mock_git):
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["JENKINS_URL"] = "https://jenkins.example.com"
         os.environ["BUILD_NUMBER"] = "99"
         os.environ["GIT_COMMIT"] = "jenkinssha"
@@ -2366,6 +2368,7 @@ class TestGetGitInfo(unittest.TestCase):
     @patch("subprocess.check_output")
     def test_jenkins_detached_head_uses_git_branch_env(self, mock_git):
         """Jenkins often checks out in detached HEAD; should use GIT_BRANCH."""
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["BUILD_NUMBER"] = "100"
         os.environ["GIT_COMMIT"] = "detachedsha"
         os.environ["GIT_BRANCH"] = "origin/main"
@@ -2378,6 +2381,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_circleci_full_flow(self, mock_git):
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["CIRCLECI"] = "true"
         os.environ["CIRCLE_SHA1"] = "circlesha"
         os.environ["CIRCLE_BRANCH"] = "develop"
@@ -2394,6 +2398,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_gitlab_full_flow(self, mock_git):
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["GITLAB_CI"] = "true"
         os.environ["CI_COMMIT_SHA"] = "gitlabsha"
         os.environ["CI_COMMIT_BRANCH"] = "feature/gitlab"
@@ -2433,6 +2438,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_ci_metadata_excludes_none_values(self, mock_git):
+        mock_git.side_effect = subprocess.SubprocessError("git unavailable")
         os.environ["GITHUB_ACTIONS"] = "true"
         os.environ["GITHUB_SHA"] = "sha123"
         os.environ["GITHUB_REF"] = "refs/heads/main"

@@ -297,7 +297,19 @@ _PLACEHOLDER_MARKER_RE = re.compile(
 )
 
 
+# Credentials published in vendor documentation. They have the real shape and
+# no marker at a token boundary ("...7EXAMPLE"), so the regex cannot tell.
+_DOCUMENTED_EXAMPLE_CREDENTIALS = frozenset(
+    {
+        "AKIA" + "IOSFODNN7EXAMPLE",
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    }
+)
+
+
 def _is_obvious_placeholder(token: str) -> bool:
+    if token.strip("'\"") in _DOCUMENTED_EXAMPLE_CREDENTIALS:
+        return True
     return bool(_PLACEHOLDER_MARKER_RE.search(token))
 
 
@@ -3977,7 +3989,7 @@ def scan_ctx(
             aws_secret_pattern = r"['\"]?([A-Za-z0-9/+=]{40})['\"]?"
             aws_match = re.search(aws_secret_pattern, line_content)
 
-            if aws_match:
+            if aws_match and aws_match.group(1) not in _DOCUMENTED_EXAMPLE_CREDENTIALS:
                 aws_token = aws_match.group(1)
                 tok_entropy = _entropy(aws_token)
                 if tok_entropy >= min_entropy:

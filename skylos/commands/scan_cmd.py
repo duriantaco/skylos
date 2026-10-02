@@ -205,6 +205,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             "diff-scoped results cannot be uploaded as a full scan; "
             "run a separate scan without --diff or --diff-base to upload"
         )
+    done_receipt = None
+    if getattr(args, "done_receipt", None):
+        if not args.upload:
+            parser.error("--done-receipt is sent with an upload; add --upload")
+        from skylos.done.receipt import load_receipt_for_upload
+
+        done_receipt, receipt_error = load_receipt_for_upload(
+            args.done_receipt, args.path[0]
+        )
+        if receipt_error:
+            parser.error(receipt_error)
     gitlab_output = getattr(args, "format", "rich") == "gitlab"
     if getattr(args, "baseline_ref", None) is not None:
         args.baseline = True
@@ -809,6 +820,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             if not args.upload:
                 return
             _attach_upload_project_context(result, project_root)
+            if done_receipt is not None:
+                result["done_receipt"] = done_receipt
             upload_resp = upload_report(
                 result,
                 is_forced=args.force,
@@ -1116,6 +1129,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
         if should_upload_gate:
             _attach_upload_project_context(result, project_root)
+            if done_receipt is not None:
+                result["done_receipt"] = done_receipt
             upload_resp = upload_report(
                 result,
                 is_forced=args.force,
@@ -1480,6 +1495,8 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
         _print_main_upload_manifest(console, args, result)
         _attach_upload_project_context(result, project_root)
+        if done_receipt is not None:
+            result["done_receipt"] = done_receipt
         upload_resp = upload_report(
             result,
             is_forced=args.force,

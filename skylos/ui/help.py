@@ -86,6 +86,22 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos done [path] [--base REF]",
+        "desc": "Check that a change is finished, then write a receipt",
+        "details": [
+            "Runs the tests itself and reads their JUnit results; the agent's own "
+            "test claims are ignored",
+            "Blocks on deleted or newly skipped tests (SKY-A110/A111), loosened "
+            "test settings (SKY-A112), failing tests (SKY-A113), edits to Skylos "
+            "settings or hooks (SKY-A114) and added secrets",
+            "--base origin/main: compare a pull request with its merge base (CI)",
+            "Settings come from [tool.skylos.done] at the base, never the change",
+            "Writes .skylos/receipts/latest.json; receipt [path]: print it again",
+            "Exit 0 pass, 1 fail or unfinished, 2 could not run",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos discover [path]",
         "desc": "Inventory Python and TypeScript/JavaScript LLM integrations",
         "group": "Core Analysis",

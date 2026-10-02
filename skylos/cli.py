@@ -2348,6 +2348,12 @@ def _run_hook_command(argv):
     return run_hook_command(argv)
 
 
+def _run_done_command(argv):
+    from skylos.commands.done_cmd import run_done_command
+
+    return run_done_command(argv)
+
+
 def _run_preflight_command(argv):
     from skylos.commands.preflight_cmd import run_preflight_command
 

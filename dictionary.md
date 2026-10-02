@@ -541,6 +541,11 @@ use the `SKY-A` prefix.
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | A105 | HIGH | Contract route guard missing | Python contract verify |
 | A106 | LOW | Suspicious dependency version bump | Python manifests and lock files in Git changes |
+| A110 | HIGH | Test deleted (`skylos done`): a test that existed at the base is gone and no test with the same body exists now | Python tests |
+| A111 | HIGH | Test newly skipped (`skylos done`): skip, skipif, xfail, `pytest.skip()`, `importorskip` or `skipTest` added to an existing test | Python tests |
+| A112 | HIGH | Test settings loosened (`skylos done`): pytest selection options, `conftest.py` hooks that drop tests or rewrite results, coverage floors, CI test steps that may fail | pytest, coverage, GitHub Actions |
+| A113 | HIGH | Tests fail when Skylos runs them (`skylos done`), or an expected Python test did not run | Any test command; JUnit XML for details |
+| A114 | HIGH | Skylos settings or hooks changed (`skylos done`): protected paths, `[tool.skylos]`, the CI workflow that runs Skylos | Repository files |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |

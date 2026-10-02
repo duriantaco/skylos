@@ -36,6 +36,11 @@ _RULES = (
     RuleCatalogEntry(
         "SKY-A106", "Suspicious dependency version bump", "ai_defect", "LOW"
     ),
+    RuleCatalogEntry("SKY-A110", "Test deleted", "ai_defect", "HIGH"),
+    RuleCatalogEntry("SKY-A111", "Test newly skipped", "ai_defect", "HIGH"),
+    RuleCatalogEntry("SKY-A112", "Test settings loosened", "ai_defect", "HIGH"),
+    RuleCatalogEntry("SKY-A113", "Tests fail when Skylos runs them", "ai_defect", "HIGH"),
+    RuleCatalogEntry("SKY-A114", "Skylos settings or hooks changed", "ai_defect", "HIGH"),
     RuleCatalogEntry(
         "SKY-SCA-LIC001", "Dependency license policy violation", "dependency", "HIGH"
     ),
