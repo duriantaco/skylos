@@ -36,6 +36,14 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Upload this code scan to Skylos Cloud",
     )
     parser.add_argument(
+        "--done-receipt",
+        metavar="PATH",
+        help=(
+            "With --upload: attach a receipt written by 'skylos done' for this "
+            "commit (e.g. .skylos/receipts/latest.json)"
+        ),
+    )
+    parser.add_argument(
         "--no-upload",
         action="store_true",
         help="Skip automatic code-scan upload even if connected to Skylos Cloud",

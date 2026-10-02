@@ -198,7 +198,7 @@ def test_gitlab_metadata_preserves_namespace_and_mr_context_without_tokens(monke
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(api, "_read_git_head", lambda: ("fallback", "HEAD"))
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
     commit, branch, actor, ci = api.get_git_info()
     assert (commit, branch, actor) == ("a" * 40, "feature/example", "fixture-user")
     assert ci["provider"] == "gitlab"

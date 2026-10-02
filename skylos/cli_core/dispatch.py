@@ -33,6 +33,7 @@ EARLY_COMMAND_HANDLERS = {
     "verify": "_run_verify_command",
     "verify-verdict": "_run_verify_verdict_command",
     "hook": "_run_hook_command",
+    "done": "_run_done_command",
     "preflight": "_run_preflight_command",
     "review": "_run_review_command",
     "discover": "_run_discover_command",
@@ -52,6 +53,7 @@ NATIVE_HELP_COMMANDS = frozenset(
     {
         "clean",
         "defend",
+        "done",
         "image",
         "preflight",
         "suite",

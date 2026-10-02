@@ -617,7 +617,10 @@ def get_git_info() -> tuple[str, str, str, dict]:
     override_actor = os.getenv("SKYLOS_ACTOR")
     provider, meta = _detect_ci()
     git_commit, git_branch = _read_git_head()
-    commit = override_sha or _ci_commit(meta) or git_commit or "unknown"
+    # CI event SHAs can name a merge commit even when the workflow checks out
+    # a PR head. Attribute the scan to its actual checkout; retain the event
+    # SHA in CI metadata and explicit overrides for artifact publishing.
+    commit = override_sha or git_commit or _ci_commit(meta) or "unknown"
     branch = override_branch or _ci_branch(provider, meta) or git_branch or "unknown"
     actor = override_actor or _ci_actor(meta) or os.getenv("USER") or "unknown"
     branch = _normalize_branch(branch)
@@ -931,6 +934,9 @@ def _prepare_report_upload(
         ),
         quality_rule_classification=quality_rule_classification(result_json),
         architecture_advisories=architecture_advisory_summary(result_json),
+        done_receipt=_done_receipt_for_upload(
+            result_json, commit_hash=commit, repo_root=git_root
+        ),
     )
     if gitlab_managed:
         from skylos.cloud.gitlab import scan_receipt
@@ -1249,6 +1255,7 @@ def _build_report_metadata(
     scan_coverage=None,
     quality_rule_classification=None,
     architecture_advisories=None,
+    done_receipt=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1280,6 +1287,8 @@ def _build_report_metadata(
         metadata["quality_rule_classification"] = quality_rule_classification
     if isinstance(architecture_advisories, dict):
         metadata["architecture_advisories"] = architecture_advisories
+    if isinstance(done_receipt, dict):
+        metadata["done_receipt"] = done_receipt
     if project_id:
         metadata["project_id"] = project_id
     if scan_bundle_id:
@@ -1289,6 +1298,28 @@ def _build_report_metadata(
     if workspace_data:
         metadata["workspaces"] = workspace_data
     return metadata
+
+
+def _done_receipt_for_upload(
+    result_json, *, commit_hash=None, repo_root=None
+) -> dict[str, Any] | None:
+    """The `skylos done` receipt attached with --done-receipt, if valid."""
+    receipt = result_json.get("done_receipt") if isinstance(result_json, dict) else None
+    if not isinstance(receipt, dict):
+        return None
+    from skylos.done.receipt import receipt_upload_error, validate_receipt
+
+    if validate_receipt(receipt):
+        return None
+    if commit_hash is not None:
+        if not repo_root:
+            raise ValueError(
+                "cannot bind the done receipt to this upload without a Git checkout"
+            )
+        error = receipt_upload_error(receipt, repo_root, commit_hash=commit_hash)
+        if error:
+            raise ValueError(error)
+    return receipt
 
 
 def _build_compatibility_inline_payload(

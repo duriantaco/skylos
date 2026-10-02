@@ -74,6 +74,7 @@ def _set(monkeypatch, env):
 
 def test_bitbucket_pr_build_payload(monkeypatch):
     _set(monkeypatch, BITBUCKET_PR_ENV)
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
 
     commit, branch, _actor, ci = api.get_git_info()
 
@@ -98,6 +99,7 @@ def test_bitbucket_branch_build_has_no_pr_context(monkeypatch):
     del env["BITBUCKET_PR_DESTINATION_BRANCH"]
     env["BITBUCKET_BRANCH"] = "main"
     _set(monkeypatch, env)
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
 
     commit, branch, _actor, ci = api.get_git_info()
 
@@ -127,10 +129,11 @@ def test_bitbucket_invalid_pr_id_is_dropped(monkeypatch):
 
 def test_azure_pr_build_payload(monkeypatch):
     _set(monkeypatch, AZURE_PR_ENV)
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
 
     commit, branch, _actor, ci = api.get_git_info()
 
-    # The scanned tree is the merge commit; the PR head travels separately.
+    # Without local Git, the merge event SHA is the fallback; PR head stays separate.
     assert commit == SHA_MERGE
     assert branch == "users/dev/fix"
     assert ci == {
@@ -156,6 +159,7 @@ def test_azure_ci_build_uses_source_branch(monkeypatch):
     }
     env["BUILD_SOURCEBRANCH"] = "refs/heads/release/2.0"
     _set(monkeypatch, env)
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
 
     commit, branch, _actor, ci = api.get_git_info()
 
@@ -299,6 +303,7 @@ def test_upload_payload_carries_azure_ci(
     mock_post, _root, _ver, _token, mock_exporter, _ai, monkeypatch
 ):
     _set(monkeypatch, AZURE_PR_ENV)
+    monkeypatch.setattr(api, "_read_git_head", lambda: (None, None))
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {"scanId": "scan_ci"}
@@ -315,6 +320,21 @@ def test_upload_payload_carries_azure_ci(
     assert payload["ci"]["pr_number"] == 7
     assert payload["ci"]["source_commit_sha"] == SHA_SOURCE
     assert payload["ci"]["repository_id"] == AZURE_PR_ENV["BUILD_REPOSITORY_ID"]
+
+
+@pytest.mark.parametrize("env", [BITBUCKET_PR_ENV, AZURE_PR_ENV])
+def test_checkout_commit_wins_and_ci_event_commit_is_preserved(monkeypatch, env):
+    _set(monkeypatch, env)
+    checkout = "d" * 40
+    monkeypatch.setattr(api, "_read_git_head", lambda: (checkout, "HEAD"))
+
+    commit, branch, _actor, ci = api.get_git_info()
+
+    assert commit == checkout
+    assert ci["commit_sha"] == env.get(
+        "BITBUCKET_COMMIT", env.get("BUILD_SOURCEVERSION")
+    )
+    assert branch == env.get("BITBUCKET_BRANCH", "users/dev/fix")
 
 
 # --- --diff base detection -------------------------------------------------

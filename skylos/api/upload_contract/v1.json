@@ -118,6 +118,22 @@
       "version": 1,
       "fields": ["module_count: nonnegative integer", "signal_count: nonnegative integer", "by_rule: counts for SKY-Q802 and SKY-Q803"],
       "rule": "Aggregate advisory metadata is separate from SARIF results, quality counts, and gate findings. Cloud stores only validated aggregate counts."
+    },
+    "done_receipt": {
+      "version": 1,
+      "schema": "skylos.done-receipt/v1",
+      "fields": [
+        "skylos_version: version string or null",
+        "base: {sha: 7-64 lowercase hex, source: session, merge_base or head}",
+        "head: {sha: 7-64 lowercase hex, dirty: boolean}",
+        "agent: {client: lowercase id such as claude-code, codex, cursor, copilot, devin or unknown; model: string or null; session_id: string or null}",
+        "config_digest: sha256:<64 hex> or null",
+        "verdict: pass, fail or incomplete",
+        "stop_blocks: nonnegative integer (times the stop hook sent the agent back) or null outside an agent session",
+        "checks: 1-20 entries {id, rule: SKY-* or null, mode: block, advise, shadow or off, status: pass, fail, incomplete or skipped, evidence: up to 12 scalar values, findings: up to 500 {rule, file: repository-relative path, line, message up to 300 characters}}",
+        "unverified: up to 5000 {file: repository-relative path, line} changed lines no test checks"
+      ],
+      "rule": "Cloud applies the workspace's agent-check settings (agent guardrails policy agent_checks) to the result again: a check the workspace blocks on raises the reported mode unless local loosening is allowed, and a required check that is missing or skipped counts as unfinished regardless of its reported mode. A readable receipt must identify the same full head commit as the upload and dirty must be false; an unavailable full upload commit, abbreviated or mismatched receipt head, or dirty head counts as incomplete. A fail or incomplete outcome fails the quality gate until a person overrides it; a pass never lifts a gate that failed for another reason. An absent or malformed result preserves compatibility: a malformed result is stored as unreadable and changes nothing. Signed summaries preserve receipt base/head/config/version and Cloud's binding; the checks are labeled client_claim, and verified CI upload identity does not attest that tests actually ran. Cloud keeps the first 20 findings per check and the first 20 unverified lines."
     }
   },
   "transport": {
