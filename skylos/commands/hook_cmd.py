@@ -18,6 +18,8 @@ import io
 import json
 import os
 import re
+import shlex
+import stat
 import sys
 import time
 from dataclasses import dataclass, field
@@ -31,7 +33,7 @@ from skylos.commands.agent_standards_policy import (
 )
 from skylos.commands.hook_policy import dedupe_by_line
 
-EVENTS = ("post-edit", "pre-read", "pre-bash", "stop")
+EVENTS = ("session-start", "post-edit", "pre-read", "pre-bash", "stop")
 CLIENTS = ("claude", "codex", "cursor")
 
 SESSION_PATH = Path(".skylos") / "agent-session.json"
@@ -62,7 +64,13 @@ CODE_SUFFIXES = frozenset(
     }
 )  # fmt: skip
 CURSOR_EVENTS = frozenset(
-    {"afterFileEdit", "beforeReadFile", "beforeShellExecution", "stop"}
+    {
+        "beforeSubmitPrompt",
+        "afterFileEdit",
+        "beforeReadFile",
+        "beforeShellExecution",
+        "stop",
+    }
 )
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "apply_patch"})
 _REDACTED_RE = re.compile(r"\s*\(redacted:[^)]*\)")
@@ -133,13 +141,29 @@ def run_hook_command(
             record["outcome"] = "disabled"
             output = _allow_output(event, client)
         else:
-            if event in {"post-edit", "stop"}:
-                deps.standards_policy = load_agent_standards_policy(root)
-            handler = _HANDLERS[event]
             with _quiet():
+                # The prompt/pre-tool event captures work already present before
+                # the agent edits. A late post-edit/stop event falls back to HEAD.
+                record["done_capture_started"] = True
+                from skylos.done.session import capture_session
+
+                baseline = capture_session(
+                    root,
+                    _session_id(payload),
+                    before_edit=event in {"session-start", "pre-read", "pre-bash"},
+                )
+                record["done_configured"] = baseline is not None
+                record["done_capture_started"] = False
+                if event in {"post-edit", "stop"}:
+                    deps.standards_policy = load_agent_standards_policy(root)
+                handler = _HANDLERS[event]
                 output = handler(payload, root, client, deps, record)
     except AgentStandardsPolicyError as exc:
         record["outcome"] = "invalid-policy"
+        if record.get("done_capture_started") or record.get("done_configured"):
+            record["done_verdict"] = "incomplete"
+            if root is not None:
+                _publish_done_error_receipt(root, _session_id(payload), client)
         reason = f"Skylos agent standards policy is invalid: {exc}. Fix .skylos/agent-standards.json."
         output = (
             _stop_block_output(client, reason)
@@ -150,10 +174,22 @@ def run_hook_command(
         record["outcome"] = "error"
         record["error"] = type(exc).__name__
         output = _allow_output(event, client)
+        if record.get("done_capture_started") or record.get("done_configured"):
+            if root is not None:
+                _publish_done_error_receipt(root, _session_id(payload), client)
+            warning = (
+                "Skylos Done verification is unfinished because the hook could not "
+                "complete. The agent may continue; no passing receipt was produced. "
+                "Run skylos done to verify the change."
+            )
+            record["warning"] = warning
+            output = _done_warning_output(event, client, warning)
         if root is None:
             with contextlib.suppress(Exception):
                 root = _project_root({}, deps.env)
 
+    if client == "cursor" and record.get("warning"):
+        print(record["warning"], file=sys.stderr)
     if output is not None:
         stdout.write(json.dumps(output) + "\n")
         stdout.flush()
@@ -211,11 +247,17 @@ def run_recheck(argv: list[str], *, stdout=None, deps: HookDeps | None = None) -
         return 2
     state = _load_session_state(_state_root(root))
     if session_mode:
-        files = [
-            str(root / rel)
-            for rel in _files_with_introduced(state)
-            if (root / rel).is_file()
-        ]
+        from skylos.done.base import DoneError
+
+        try:
+            files = []
+            for rel in _files_with_introduced(state):
+                path = _recorded_edit_path(root, rel)
+                if path is not None:
+                    files.append(str(path))
+        except DoneError as exc:
+            stdout.write(f"skylos hook recheck: {exc}\n")
+            return 2
     blocking: list[dict[str, Any]] = []
     notes = 0
     checked = 0
@@ -314,7 +356,7 @@ def _parse_argv(argv: Sequence[str]) -> tuple[str, str | None]:
 
 def _usage() -> str:
     return (
-        "usage: skylos hook {post-edit,pre-read,pre-bash,stop} "
+        "usage: skylos hook {session-start,post-edit,pre-read,pre-bash,stop} "
         "[--client claude|codex|cursor]\n"
         "       skylos hook recheck FILE... [--range L1:L2]\n"
         "       skylos hook recheck --session\n\n"
@@ -399,6 +441,8 @@ def _quiet():
 
 def _allow_output(event: str, client: str) -> dict[str, Any] | None:
     if client == "cursor":
+        if event == "session-start":
+            return {"continue": True}
         if event in {"pre-read", "pre-bash"}:
             # Cursor treats empty/invalid output of permission hooks as deny.
             return {"permission": "allow"}
@@ -450,6 +494,21 @@ def _stop_block_output(client: str, reason: str) -> dict[str, Any]:
     if client == "cursor":
         return {"followup_message": reason}
     return {"decision": "block", "reason": reason}
+
+
+def _done_warning_output(event: str, client: str, warning: str) -> dict[str, Any]:
+    # A warning must never request another turn after the retry budget expires.
+    # Cursor's Stop contract has no non-blocking message field.
+    if client == "cursor":
+        return _allow_output(event, client) or {}
+    output = _allow_output(event, client) or {}
+    output["systemMessage"] = warning
+    return output
+
+
+def _handle_session_start(payload, root, client, deps, record):
+    record["outcome"] = "captured" if record.get("done_configured") else "skip"
+    return _allow_output("session-start", client)
 
 
 # --------------------------------------------------------------------------
@@ -1008,42 +1067,357 @@ def _handle_pre_bash(payload, root, client, deps, record):
 # --------------------------------------------------------------------------
 
 
+def _done_recheck(session_id: str) -> str:
+    return f"skylos done --session {shlex.quote(session_id)}"
+
+
+def _done_problem_lines(result) -> list[str]:
+    """Concrete blocking findings, or the check's unfinished summary."""
+    lines = []
+    for outcome in result.checks:
+        if not outcome.blocking:
+            continue
+        check = outcome.result
+        if check.evidence.get("blocked_by") == "agent_edits":
+            continue
+        findings = [finding for finding in check.findings if finding.blocking]
+        if not findings:
+            summary = _clean_message(check.summary, MAX_MESSAGE_CHARS)
+            lines.append(f"{check.id}: {summary}")
+            continue
+        for finding in findings:
+            location = finding.file or check.id
+            if finding.line is not None:
+                location += f":{finding.line}"
+            message = _clean_message(finding.message, MAX_MESSAGE_CHARS)
+            lines.append(f"{location} {finding.rule or check.id}: {message}")
+    return list(dict.fromkeys(lines))
+
+
+def _done_stop_count(root: Path, session_id: str, digest: str | None, maximum: int):
+    """Increment only actual stop blocks, under the shared session lock."""
+    from skylos.done.base import DoneError
+
+    count = 0
+    should_block = False
+
+    def update(session):
+        nonlocal count, should_block
+        prior = session.get("done_stop_blocks", 0)
+        prior = prior if isinstance(prior, int) and not isinstance(prior, bool) else 0
+        prior = max(0, min(prior, maximum))
+        if digest is None:
+            count = prior
+            session.pop("done_problem_digest", None)
+            session["done_stop_blocks"] = 0
+            return
+        if session.get("done_problem_digest") != digest:
+            prior = 0
+        should_block = prior < maximum
+        count = prior + 1 if should_block else prior
+        session["done_problem_digest"] = digest
+        session["done_stop_blocks"] = count
+
+    if not _mutate_session(_state_root(root), session_id, update):
+        raise DoneError("the Done stop retry counter could not be saved")
+    return count, should_block
+
+
+def _agent_edits_check(root: Path, findings: list[dict[str, Any]], checked: int):
+    from skylos.done.checks import CheckResult, Finding
+    from skylos.done.engine import CheckOutcome
+
+    summary = (
+        f"{len(findings)} blocking issue(s) remain in recorded edits"
+        if findings
+        else "No open blocking findings in recorded edits"
+    )
+    check = CheckResult(
+        id="agent_edits",
+        rule=None,
+        status="fail" if findings else "pass",
+        summary=summary,
+        evidence={
+            "summary": summary,
+            "scope": "recorded edits",
+            "files_rechecked": checked,
+        },
+        findings=[
+            Finding(
+                finding.get("rule_id"),
+                _display_path(finding.get("path"), root),
+                finding.get("line") or None,
+                _clean_message(finding.get("message"), MAX_MESSAGE_CHARS),
+            )
+            for finding in findings
+        ],
+    )
+    return CheckOutcome("block", check)
+
+
+def _done_with_blocking_edits(comparison, config, edit_check):
+    """Retain the actual security/standards failure and state which checks did not run."""
+    from skylos.done.checks import CHECKS, CheckResult
+    from skylos.done.config import CHECK_IDS
+    from skylos.done.engine import CheckOutcome, DoneResult
+
+    checks = [edit_check]
+    for check_id in CHECK_IDS:
+        mode = config.mode(check_id)
+        summary = (
+            "Off in the trusted Done policy"
+            if mode == "off"
+            else "Not run because blocking findings remain in recorded edits"
+        )
+        checks.append(
+            CheckOutcome(
+                mode,
+                CheckResult(
+                    id=check_id,
+                    rule=CHECKS[check_id][1],
+                    status="skipped" if mode == "off" else "incomplete",
+                    summary=summary,
+                    evidence={"summary": summary, "blocked_by": "agent_edits"},
+                ),
+            )
+        )
+    return DoneResult(comparison, config, checks, "fail", 0.0)
+
+
+def _handle_done_stop(payload, root, client, deps, record):
+    from skylos.done.base import DoneError
+    from skylos.done.config import parse_done_config
+    from skylos.done.engine import run
+    from skylos.done.receipt import (
+        LATEST_NAME,
+        RECEIPTS_DIR,
+        build_receipt,
+        read_receipt,
+        validate_receipt,
+        write_receipt,
+    )
+    from skylos.done.session import assert_session_unchanged, open_session_comparison
+
+    session_id = _session_id(payload)
+    comparison = open_session_comparison(root, session_id)
+    config = parse_done_config(
+        comparison.base_text("pyproject.toml", sha=comparison.config_sha)
+    )
+    _, open_findings, checked = _recheck_recorded_edits(
+        payload, root, deps, record, comparison=comparison
+    )
+    edit_check = _agent_edits_check(root, open_findings, checked)
+    assert_session_unchanged(comparison)
+    # Failure text can contain times and changing logs. Only a real source
+    # tree or trusted policy change earns another automatic retry budget.
+    workspace_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "base": comparison.base_sha,
+                "config": comparison.config_sha,
+                "head": comparison.head_sha,
+                "tree": comparison._head_tree,
+                "policy": config.digest(),
+                "edit_findings": sorted(
+                    (str(f.get("path")), str(f.get("key"))) for f in open_findings
+                ),
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    session = (
+        _load_session_state(_state_root(root)).get("sessions", {}).get(session_id, {})
+    )
+    prior = session.get("done_stop_blocks", 0)
+    if (
+        session.get("done_problem_digest") == workspace_digest
+        and isinstance(prior, int)
+        and not isinstance(prior, bool)
+        and prior >= config.max_stop_blocks
+    ):
+        assert_session_unchanged(comparison)
+        # Escaping a loop is not successful verification. The unchanged tree
+        # must not trigger another full test/mutation run after exhaustion.
+        receipt = read_receipt(root / RECEIPTS_DIR / LATEST_NAME)
+        if not (
+            receipt is not None
+            and not validate_receipt(receipt)
+            and receipt.get("verdict") in {"fail", "incomplete"}
+            and receipt.get("agent", {}).get("session_id") == session_id
+            and receipt.get("head", {}).get("sha") == comparison.head_sha
+            and receipt.get("base", {}).get("sha") == comparison.base_sha
+        ):
+            _write_done_incomplete_receipt(
+                root,
+                session_id,
+                client,
+                comparison,
+                config,
+                summary="Stop retry budget exhausted; no new verification ran",
+                count=prior,
+            )
+            verdict = "incomplete"
+        else:
+            verdict = receipt["verdict"]
+        return _done_exhausted_output(
+            client,
+            record,
+            session_id,
+            verdict,
+            prior,
+            open_findings=open_findings,
+            root=root,
+        )
+
+    if open_findings:
+        result = _done_with_blocking_edits(comparison, config, edit_check)
+    else:
+        result = run(root, session_id=session_id)
+        result.checks.append(edit_check)
+    assert_session_unchanged(comparison)
+    problems = _done_problem_lines(result)
+    digest = workspace_digest if result.verdict != "pass" else None
+    count, should_block = _done_stop_count(
+        root, session_id, digest, result.config.max_stop_blocks
+    )
+    receipt = build_receipt(
+        result, agent_client=client, session_id=session_id, stop_blocks=count
+    )
+    if validate_receipt(receipt) or write_receipt(root, receipt) is None:
+        raise DoneError("the Done receipt could not be saved")
+    record["done_verdict"] = result.verdict
+    record["stop_blocks"] = count
+    record["findings"] = len(problems)
+    if result.verdict == "pass":
+        record["outcome"] = "pass"
+        return _allow_output("stop", client)
+
+    if not should_block:
+        return _done_exhausted_output(
+            client,
+            record,
+            session_id,
+            result.verdict,
+            count,
+            open_findings=open_findings,
+            root=root,
+        )
+    record["outcome"] = "block"
+    lines = [f"Skylos Done: change is {result.verdict}."]
+    lines.extend(f"- {problem}" for problem in problems[:MAX_ITEMS])
+    if len(problems) > MAX_ITEMS:
+        lines.append(
+            f"{len(problems) - MAX_ITEMS} additional reason(s) are in the receipt."
+        )
+    if open_findings:
+        lines.append(_rerun_hint(open_findings, root))
+        lines.append(
+            f"After recorded edits are clean, verify the Done checks: {_done_recheck(session_id)}."
+        )
+    else:
+        lines.append(f"Fix these problems, then recheck: {_done_recheck(session_id)}.")
+    return _stop_block_output(client, "\n".join(lines))
+
+
+def _done_exhausted_output(
+    client, record, session_id, verdict, count, *, open_findings=(), root=None
+):
+    warning = (
+        f"Skylos Done remains {verdict} after {count} stop blocks. "
+        "The agent may stop; the receipt is not passing. "
+        f"Recheck: {_done_recheck(session_id)}."
+    )
+    if open_findings and root is not None:
+        warning += " Recorded edit guards: " + _rerun_hint(open_findings, root)
+    record["done_verdict"] = verdict
+    record["stop_blocks"] = count
+    record["outcome"] = "gave-up"
+    record["warning"] = warning
+    return _done_warning_output("stop", client, warning)
+
+
+def _publish_done_error_receipt(root: Path, session_id: str, client: str) -> None:
+    """Publish failure evidence, or make a stale latest success unavailable."""
+    with _quiet():
+        try:
+            _write_done_error_receipt(root, session_id, client)
+        except (Exception, SystemExit):
+            with contextlib.suppress(Exception, SystemExit):
+                from skylos.done.session import invalidate_latest_receipt
+
+                invalidate_latest_receipt(root)
+
+
+def _write_done_error_receipt(root: Path, session_id: str, client: str) -> None:
+    """Replace an earlier success with an explicit unfinished check when possible."""
+    from skylos.done.base import open_comparison
+    from skylos.done.config import parse_done_config
+    from skylos.done.session import open_session_comparison
+
+    try:
+        comparison = open_session_comparison(root, session_id)
+    except Exception:
+        try:
+            comparison = open_comparison(root)
+        except Exception:
+            # A receipt needs real commit identities. Without them, invalidate
+            # only the latest pointer rather than inventing a new comparison.
+            from skylos.done.session import invalidate_latest_receipt
+
+            invalidate_latest_receipt(root)
+            raise
+    config = parse_done_config(
+        comparison.base_text("pyproject.toml", sha=comparison.config_sha)
+    )
+    _write_done_incomplete_receipt(
+        root,
+        session_id,
+        client,
+        comparison,
+        config,
+        summary="Done hook failed; test execution and the session baseline were not verified",
+        count=0,
+    )
+
+
+def _write_done_incomplete_receipt(
+    root, session_id, client, comparison, config, *, summary, count
+):
+    from skylos.done.base import DoneError
+    from skylos.done.checks import CheckResult
+    from skylos.done.engine import CheckOutcome, DoneResult
+    from skylos.done.receipt import build_receipt, write_receipt
+
+    check = CheckResult(
+        id="tests_pass",
+        rule="SKY-A113",
+        status="incomplete",
+        summary=summary,
+        evidence={"summary": summary},
+    )
+    result = DoneResult(
+        comparison, config, [CheckOutcome("block", check)], "incomplete", 0.0
+    )
+    written = write_receipt(
+        root,
+        build_receipt(
+            result, agent_client=client, session_id=session_id, stop_blocks=count
+        ),
+    )
+    if written is None:
+        raise DoneError("the unfinished Done receipt could not be saved")
+
+
 def _handle_stop(payload, root, client, deps, record):
     if client == "cursor" and payload.get("status") not in {None, "completed"}:
         record["outcome"] = "skip"
         return _allow_output("stop", client)
-    session_id = _session_id(payload)
-    state = _load_session_state(_state_root(root))
-    session = state.get("sessions", {}).get(session_id)
-    if not isinstance(session, dict) or not session.get("files"):
+    if record.get("done_configured"):
+        return _handle_done_stop(payload, root, client, deps, record)
+    has_files, open_findings, _ = _recheck_recorded_edits(payload, root, deps, record)
+    if not has_files:
         record["outcome"] = "skip"
         return _allow_output("stop", client)
-
-    open_findings: list[dict[str, Any]] = []
-    refreshed: dict[str, dict[str, Any]] = {}
-    for rel, info in sorted(session["files"].items()):
-        if not isinstance(info, dict):
-            continue
-        introduced = set(info.get("introduced") or [])
-        if not introduced:
-            continue
-        path = (root / rel).resolve()
-        current = _current_findings(path, root, deps)
-        if current is None:
-            continue
-        refreshed[rel] = current["update"]
-        open_findings.extend(
-            f
-            for f in current["findings"]
-            if f.get("key") in introduced and f.get("blocking", True)
-        )
-
-    if refreshed:
-        _update_session(
-            _state_root(root), session_id, refreshed, replace_introduced=False
-        )
-    open_findings = dedupe_by_line(open_findings)
-    record["findings"] = len(open_findings)
     if not open_findings:
         record["outcome"] = "pass"
         return _allow_output("stop", client)
@@ -1051,6 +1425,8 @@ def _handle_stop(payload, root, client, deps, record):
     digest = hashlib.sha256(
         "\n".join(sorted(f"{f['path']}|{f.get('key')}" for f in open_findings)).encode()
     ).hexdigest()[:16]
+    session_id = _session_id(payload)
+    session = _load_session_state(_state_root(root))["sessions"][session_id]
     looping = (
         bool(payload.get("stop_hook_active")) or _int(payload.get("loop_count")) > 0
     )
@@ -1080,6 +1456,130 @@ def _handle_stop(payload, root, client, deps, record):
         footer=_rerun_hint(open_findings, root),
     )
     return _stop_block_output(client, reason)
+
+
+def _recheck_recorded_edits(payload, root, deps, record, *, comparison=None):
+    """Refresh the existing per-file guard before either kind of stop gate."""
+    session_id = _session_id(payload)
+    state = _load_session_state(_state_root(root))
+    session = state.get("sessions", {}).get(session_id)
+    if not isinstance(session, dict) or not session.get("files"):
+        return False, [], 0
+    open_findings = []
+    refreshed = {}
+    checked = 0
+    for rel, info in sorted(session["files"].items()):
+        if not isinstance(info, dict):
+            if record.get("done_configured"):
+                from skylos.done.base import DoneError
+
+                raise DoneError("a recorded edit has invalid verification data")
+            continue
+        if not info.get("introduced"):
+            continue
+        if record.get("done_configured") and (
+            not isinstance(info["introduced"], list)
+            or any(not isinstance(key, str) for key in info["introduced"])
+        ):
+            from skylos.done.base import DoneError
+
+            raise DoneError("a recorded edit has invalid verification data")
+        path = _recorded_edit_path(root, rel, comparison=comparison)
+        if path is None:
+            # Removing a formerly vulnerable file resolves its recorded
+            # findings only when its absence matches the captured tree.
+            continue
+        if record.get("done_configured"):
+            from skylos.core.safe_cache_io import read_project_text_no_symlink
+            from skylos.done.base import DoneError
+
+            if (
+                read_project_text_no_symlink(
+                    root, path, max_bytes=MAX_SCAN_BYTES, errors="ignore"
+                )
+                is None
+            ):
+                raise DoneError(
+                    "a recorded edit is unreadable; verification is unfinished"
+                )
+        current = _current_findings(path, root, deps)
+        if current is None or any(
+            finding.get("rule_id") == PARSE_INCOMPLETE_RULE
+            for finding in current["findings"]
+        ):
+            if record.get("done_configured"):
+                from skylos.done.base import DoneError
+
+                raise DoneError(
+                    "a recorded edit could not be rechecked; verification is unfinished"
+                )
+            continue
+        checked += 1
+        refreshed[rel] = current["update"]
+        introduced = set(info["introduced"])
+        open_findings.extend(
+            finding
+            for finding in current["findings"]
+            if finding.get("key") in introduced and finding.get("blocking", True)
+        )
+    if refreshed:
+        _update_session(
+            _state_root(root), session_id, refreshed, replace_introduced=False
+        )
+    open_findings = dedupe_by_line(open_findings)
+    record["findings"] = len(open_findings)
+    return True, open_findings, checked
+
+
+def _recorded_edit_path(root: Path, relative: str, *, comparison=None) -> Path | None:
+    """Never turn mutable cached paths into reads outside the project."""
+    from skylos.done.base import DoneError, _git_text
+
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        or re.match(r"^[A-Za-z]:", relative)
+        or any(part in {"", ".", ".."} for part in relative.split("/"))
+    ):
+        raise DoneError("an unsafe recorded edit path needs review")
+    canonical_root = root.resolve(strict=True)
+    path = canonical_root
+    parts = relative.split("/")
+    try:
+        for index, part in enumerate(parts):
+            path = path / part
+            try:
+                mode = path.lstat().st_mode
+            except FileNotFoundError:
+                if comparison is not None:
+                    snapshot_entry = _git_text(
+                        comparison._context,
+                        "ls-tree",
+                        "--name-only",
+                        comparison._head_tree,
+                        "--",
+                        ":(literal)" + relative,
+                    )
+                    if snapshot_entry is None or snapshot_entry.strip():
+                        raise DoneError(
+                            "a recorded edit's removal could not be verified"
+                        )
+                return None
+            if stat.S_ISLNK(mode):
+                raise DoneError(
+                    "a recorded edit uses a symlink; verification is unfinished"
+                )
+            if index < len(parts) - 1 and not stat.S_ISDIR(mode):
+                raise DoneError("a recorded edit parent is not a directory")
+        if not stat.S_ISREG(mode):
+            raise DoneError(
+                "a recorded edit is not a regular file; verification is unfinished"
+            )
+        path.resolve(strict=True).relative_to(canonical_root)
+    except (OSError, ValueError) as exc:
+        raise DoneError("a recorded edit cannot be inspected safely") from exc
+    return path
 
 
 def _current_findings(path: Path, root: Path, deps: HookDeps):
@@ -1120,17 +1620,21 @@ def _load_session_state(root: Path) -> dict[str, Any]:
     from skylos.core.safe_cache_io import load_project_json_cache
 
     state = load_project_json_cache(root, SESSION_PATH)
-    if state.get("schema_version") != 1 or not isinstance(state.get("sessions"), dict):
-        return {"schema_version": 1, "sessions": {}}
+    if state.get("schema_version") not in {1, 2} or not isinstance(
+        state.get("sessions"), dict
+    ):
+        return {"schema_version": 2, "sessions": {}}
+    # Existing introduced findings survive the move to Done session baselines.
+    state["schema_version"] = 2
     return state
 
 
-def _mutate_session(root: Path, session_id: str, mutate) -> None:
+def _mutate_session(root: Path, session_id: str, mutate) -> bool:
     from skylos.core.safe_cache_io import project_cache_lock, save_project_json_cache
 
     with project_cache_lock(root, SESSION_LOCK_PATH, timeout_seconds=5) as locked:
         if not locked:
-            return
+            return False
         state = _load_session_state(root)
         sessions = state["sessions"]
         session = sessions.get(  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
@@ -1143,7 +1647,7 @@ def _mutate_session(root: Path, session_id: str, mutate) -> None:
         session["updated"] = int(time.time())
         sessions[session_id] = session
         _prune_sessions(sessions)
-        save_project_json_cache(root, SESSION_PATH, state)
+        return save_project_json_cache(root, SESSION_PATH, state)
 
 
 def _update_session(
@@ -1433,6 +1937,7 @@ def _log(root: Path | None, record: dict[str, Any]) -> None:
 
 
 _HANDLERS = {
+    "session-start": _handle_session_start,
     "post-edit": _handle_post_edit,
     "pre-read": _handle_pre_read,
     "pre-bash": _handle_pre_bash,

@@ -401,6 +401,21 @@ def test_added_lines_from_diff_handles_new_and_deleted_files():
 # ---------------------------------------------------------------------------
 
 
+def test_binary_attributes_cannot_hide_added_secrets_from_session_diff(repo: Path):
+    from skylos.done.session import capture_session, open_session_comparison
+
+    _write(repo, ".gitattributes", "*.py -diff\n")
+    _commit(repo, "trusted binary attribute fixture")
+    capture_session(repo, "binary-source")
+    _write(repo, "app/calc.py", CALC + f'\nTOKEN = "{GH_TOKEN}"\n')
+    comparison = open_session_comparison(repo, "binary-source")
+    changed = next(item for item in comparison.changed if item.path == "app/calc.py")
+    assert comparison.added_lines(changed)
+    result = check_secrets(CheckContext(comparison, DoneConfig(), run_tests=False))
+    assert result.status == "fail"
+    assert any(finding.file == "app/calc.py" for finding in result.findings)
+
+
 def test_loosened_pytest_options_are_found(repo: Path):
     _write(
         repo,
@@ -653,10 +668,13 @@ def test_tampering_change_fails_every_relevant_check(repo: Path):
     result = run(repo, base_ref="main")
     by_id = {c.result.id: c.result for c in result.checks}
     assert result.verdict == "fail"
-    assert by_id["tests_pass"].status == "incomplete"  # conftest dropped test_sub
-    assert any(
-        "test_sub did not run" in f.message for f in by_id["tests_pass"].findings
-    )
+    # Known tampering blocks before expensive execution. Exercise the runner
+    # independently so missing-test detection remains covered as well.
+    assert by_id["tests_pass"].status == "incomplete"
+    assert "earlier required check" in by_id["tests_pass"].summary
+    tests = done_checks.check_tests_pass(_ctx(repo))
+    assert tests.status == "incomplete"  # conftest dropped test_sub
+    assert any("test_sub did not run" in f.message for f in tests.findings)
     rules = {f.rule for f in by_id["test_tampering"].findings if f.blocking}
     assert rules == {"SKY-A110", "SKY-A112"}
     assert by_id["secrets"].status == "fail"
@@ -1173,6 +1191,9 @@ def test_runtime_deselection_from_modified_globals_cannot_prove_base_exclusion(
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     assert result.verdict == "fail"
     assert tests.status == "incomplete"
+    assert "earlier required check" in tests.summary
+    tests = done_checks.check_tests_pass(_ctx(repo))
+    assert tests.status == "incomplete"
     assert any(
         "test_sub did not run" in f.message and f.blocking for f in tests.findings
     )
@@ -1508,6 +1529,8 @@ def test_unchanged_result_hook_cannot_forge_success_with_changed_dependency(
     result = run(repo, base_ref="main")
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     tampering = next(c.result for c in result.checks if c.result.id == "test_tampering")
+    assert tests.status == "incomplete"  # Known tampering prevents execution.
+    tests = done_checks.check_tests_pass(_ctx(repo))
     assert tests.status == "pass"  # The forged JUnit has every expected case.
     assert tampering.status == "fail" and result.verdict == "fail"
     assert any(
@@ -1611,6 +1634,8 @@ def test_generate_tests_dependency_changes_cannot_remove_generated_cases(repo: P
     result = run(repo, base_ref="main")
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     tampering = next(c.result for c in result.checks if c.result.id == "test_tampering")
+    assert tests.status == "incomplete"  # Known tampering prevents execution.
+    tests = done_checks.check_tests_pass(_ctx(repo))
     assert tests.status == "pass"
     assert tampering.status == "fail" and result.verdict == "fail"
     assert any(

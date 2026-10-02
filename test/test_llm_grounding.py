@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.llm.repo_activation import build_repo_activation_index
 
 
@@ -65,3 +68,40 @@ def test_grounding_context_is_bounded():
         ]
         assert len(graph_lines) <= 8
         assert len(block) < 1600
+
+
+def _write_source(root: Path, relative: str) -> Path:
+    root = root.resolve(strict=True)
+    path = root / relative
+    path.resolve(strict=False).relative_to(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert write_text_no_symlink(path, "def fetch_status():\n    return {'ok': True}\n")
+    return path
+
+
+@pytest.mark.parametrize(
+    "parent", ["auth", "session", "security", "auth-session-checkout"]
+)
+def test_grounding_ignores_security_named_checkout_parent(tmp_path, parent):
+    root = tmp_path / parent / "clean-project"
+    root.mkdir(parents=True)
+    service = _write_source(root, "service.py")
+    index = build_repo_activation_index([service], project_root=root)
+    metadata = index.by_path[str(service.resolve())]
+    context = index.context_map_for([service])[str(service.resolve())]
+
+    assert metadata.security_hints == []
+    assert "security surfaces:" not in context
+
+
+@pytest.mark.parametrize(
+    "relative", ["auth/service.py", "sessions/service.py", "session.py"]
+)
+def test_grounding_keeps_project_relative_security_path_signal(tmp_path, relative):
+    service = _write_source(tmp_path, relative)
+    index = build_repo_activation_index([service], project_root=tmp_path)
+    metadata = index.by_path[str(service.resolve())]
+    context = index.context_map_for([service])[str(service.resolve())]
+
+    assert metadata.security_hints == ["path suggests a security-sensitive surface"]
+    assert "security surfaces: path suggests a security-sensitive surface" in context

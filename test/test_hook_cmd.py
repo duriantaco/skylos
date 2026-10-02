@@ -897,7 +897,7 @@ def test_install_hooks_cursor_and_codex_shapes(tmp_path):
     assert cursor["hooks"]["beforeReadFile"][0]["command"] == _cmd(
         "pre-read", "cursor", fallback="""echo '{"permission":"allow"}'"""
     )
-    assert cursor["hooks"]["stop"][0]["loop_limit"] == 3
+    assert cursor["hooks"]["stop"][0]["loop_limit"] == 10
 
     _install(tmp_path, agent="codex", scope="user")
     codex = json.loads((tmp_path / "home" / ".codex" / "hooks.json").read_text())
@@ -918,15 +918,21 @@ def test_install_hooks_dry_run_and_custom_bin(tmp_path):
     assert not (tmp_path / ".claude" / "settings.json").exists()
     # Custom-bin entries are still recognised as ours on reinstall/uninstall.
     cleaned, removed = uninstall_hooks(config, "claude")
-    assert removed == 4 and cleaned == {}
+    assert removed == 5 and cleaned == {}
 
 
 def test_install_hooks_pure_functions_keep_foreign_entries():
     merged, removed, added = install_hooks(EXISTING_CLAUDE, "claude", "skylos")
-    assert (removed, added) == (0, 4)
+    assert (removed, added) == (0, 5)
     again, removed, added = install_hooks(merged, "claude", "skylos")
-    assert again == merged and (removed, added) == (4, 4)
-    assert hook_cmd.EVENTS == ("post-edit", "pre-read", "pre-bash", "stop")
+    assert again == merged and (removed, added) == (5, 5)
+    assert hook_cmd.EVENTS == (
+        "session-start",
+        "post-edit",
+        "pre-read",
+        "pre-bash",
+        "stop",
+    )
 
 
 def test_system_exit_inside_analysis_still_fails_open(tmp_path):
@@ -1553,7 +1559,7 @@ def test_install_default_uses_current_interpreter(tmp_path):
     assert "-m skylos.entry hook stop --client claude" in command
     assert command.split()[0].strip("'") == sys.executable
     # Reinstall/uninstall still recognises the interpreter form as ours.
-    assert uninstall_hooks(json.loads(printed[-1]), "claude")[1] == 4
+    assert uninstall_hooks(json.loads(printed[-1]), "claude")[1] == 5
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell wrapper")
