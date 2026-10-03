@@ -35,9 +35,19 @@ def run(
     *,
     base_ref: str | None = None,
     run_tests: bool = True,
+    session_id: str | None = None,
 ) -> DoneResult:
     started = time.monotonic()
-    comparison = open_comparison(path, base_ref)
+    if session_id is not None:
+        if base_ref is not None:
+            from skylos.done.base import DoneError
+
+            raise DoneError("choose either a session baseline or a PR base")
+        from skylos.done.session import open_session_comparison
+
+        comparison = open_session_comparison(path, session_id)
+    else:
+        comparison = open_comparison(path, base_ref)
     # The change under review never supplies its own settings: they come
     # from the base commit (the target branch's tip for a pull request).
     config = parse_done_config(
@@ -59,11 +69,47 @@ def run(
                 ),
             )
             continue
-        result = run_check(check_id, ctx)
+        if check_id in {"tests_pass", "changed_lines_checked"} and any(
+            outcome.blocking for outcome in results.values()
+        ):
+            result = CheckResult(
+                check_id,
+                CHECKS[check_id][1],
+                "incomplete",
+                "Not run because an earlier required check needs attention",
+                evidence={
+                    "summary": "Earlier required checks failed or were incomplete"
+                },
+            )
+        elif (
+            check_id == "tests_pass"
+            and mode == "block"
+            and not _has_test_evidence(config)
+        ):
+            result = CheckResult(
+                check_id,
+                CHECKS[check_id][1],
+                "incomplete",
+                "A non-pytest test command requires junit_xml; exit zero alone cannot verify tests",
+                evidence={"summary": "Configure JUnit results for this test command"},
+            )
+        else:
+            result = run_check(check_id, ctx)
         if mode == "block" and result.status == "skipped":
             result.status = "incomplete"
         results[check_id] = CheckOutcome(mode, result)
     checks = [results[check_id] for check_id in CHECK_IDS]
+    if comparison._session_late:
+        outcome = results["tests_pass"]
+        outcome.mode = "block"
+        if outcome.result.status != "fail":
+            outcome.result.status = "incomplete"
+        outcome.result.summary = "Session baseline was captured after edits; initial session coverage is unverified"
+        outcome.result.evidence["session_base"] = "head_fallback"
+    if session_id is not None:
+        from skylos.done.session import assert_session_unchanged
+
+        assert_session_unchanged(comparison)
     return DoneResult(
         comparison=comparison,
         config=config,
@@ -71,6 +117,12 @@ def run(
         verdict=decide_verdict(checks),
         seconds=round(time.monotonic() - started, 1),
     )
+
+
+def _has_test_evidence(config: DoneConfig) -> bool:
+    from skylos.done.runner import _is_pytest
+
+    return bool(config.junit_xml) or _is_pytest(config.test_command or ("pytest",))
 
 
 def decide_verdict(checks: list[CheckOutcome]) -> str:

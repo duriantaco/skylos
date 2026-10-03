@@ -86,7 +86,7 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
-        "name": "skylos done [path] [--base REF]",
+        "name": "skylos done [path] [--base REF | --session ID]",
         "desc": "Check that a change is finished, then write a receipt",
         "details": [
             "Runs the tests itself and reads their JUnit results; the agent's own "
@@ -94,7 +94,10 @@ COMMANDS = [
             "Blocks on deleted or newly skipped tests (SKY-A110/A111), loosened "
             "test settings (SKY-A112), failing tests (SKY-A113), edits to Skylos "
             "settings or hooks (SKY-A114) and added secrets",
+            "Advises on changed lines no test checks (SKY-A120): no test runs the "
+            "line, or no test fails when Skylos deliberately changes it",
             "--base origin/main: compare a pull request with its merge base (CI)",
+            "--session ID: recheck all edits against the captured session baseline",
             "Settings come from [tool.skylos.done] at the base, never the change",
             "Writes .skylos/receipts/latest.json; receipt [path]: print it again",
             "Exit 0 pass, 1 fail or unfinished, 2 could not run",

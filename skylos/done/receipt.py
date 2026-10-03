@@ -20,6 +20,7 @@ from skylos.core.safe_cache_io import (
     _directory_open_flags,
     _open_output_parent,
     read_text_no_symlink,
+    save_project_json_cache,
     write_text_no_symlink,
 )
 from skylos.done.engine import DoneResult
@@ -49,18 +50,22 @@ _EVIDENCE_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 LABELS = {
+    "agent_edits": "Recorded session edits pass the existing guards",
     "tests_pass": "Tests pass when Skylos runs them",
     "test_tampering": "No tests deleted, skipped or weakened",
     "gate_tampering": "Skylos settings and hooks left alone",
     "secrets": "No secrets added",
     "unknown_imports": "Every package and import is real",
+    "changed_lines_checked": "Tests check the changed lines",
 }
 FIXES = {
+    "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
     "tests_pass": "Fix the failing tests, or the code they test.",
     "test_tampering": "Put back the removed or skipped tests and the original assertions and settings.",
     "gate_tampering": "Undo the changes to those files. A person should make changes there.",
     "secrets": "Remove the secret, rotate it, and load it from the environment or a secret store.",
     "unknown_imports": "Remove the made-up import, or declare the real package that provides it.",
+    "changed_lines_checked": "Add a test assertion that fails when the listed line changes.",
 }
 
 
@@ -124,8 +129,26 @@ def build_receipt(
         "verdict": result.verdict,
         "stop_blocks": stop_blocks,
         "checks": checks,
-        "unverified": [],
+        "unverified": _unverified(result),
     }
+
+
+def _unverified(result: DoneResult) -> list[dict[str, Any]]:
+    """Changed lines no test checks, from the checks that report them."""
+    lines = []
+    seen = set()
+    for outcome in result.checks:
+        for file, line in getattr(outcome.result, "unverified", ()):
+            path = _clean_path(file)
+            if (
+                path
+                and isinstance(line, int)
+                and line >= 1
+                and (path, line) not in seen
+            ):
+                seen.add((path, line))
+                lines.append({"file": path, "line": line})
+    return lines[:MAX_UNVERIFIED]
 
 
 def validate_receipt(receipt: Any) -> list[str]:
@@ -412,7 +435,8 @@ def write_receipt(root: Path, receipt: dict[str, Any]) -> Path | None:
     path = directory / name
     if not write_text_no_symlink(path, text):
         return None
-    write_text_no_symlink(directory / LATEST_NAME, text)
+    if not save_project_json_cache(root, RECEIPTS_DIR / LATEST_NAME, json.loads(text)):
+        return None
     return path
 
 
@@ -424,7 +448,7 @@ def read_receipt(path: Path) -> dict[str, Any] | None:
         data = json.loads(text)
     except ValueError:
         return None
-    return data if isinstance(data, dict) else None
+    return data if isinstance(data, dict) and data.get("schema") == SCHEMA else None
 
 
 # ---------------------------------------------------------------------------

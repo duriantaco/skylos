@@ -223,7 +223,11 @@ class RepoActivationIndex:
             meta.source_lines = len(source.splitlines())
 
             basename = file_path.name.lower()
-            normalized_path = norm.replace("\\", "/").lower()
+            try:
+                project_path = file_path.relative_to(self.project_root)
+            except ValueError:
+                project_path = Path(file_path.name)
+            normalized_path = project_path.as_posix().lower()
             if basename in ENTRYPOINT_BASENAMES:
                 meta.entrypoint_reasons.append(f"conventional entry file `{basename}`")
             if (

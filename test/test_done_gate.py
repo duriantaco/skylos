@@ -401,6 +401,21 @@ def test_added_lines_from_diff_handles_new_and_deleted_files():
 # ---------------------------------------------------------------------------
 
 
+def test_binary_attributes_cannot_hide_added_secrets_from_session_diff(repo: Path):
+    from skylos.done.session import capture_session, open_session_comparison
+
+    _write(repo, ".gitattributes", "*.py -diff\n")
+    _commit(repo, "trusted binary attribute fixture")
+    capture_session(repo, "binary-source")
+    _write(repo, "app/calc.py", CALC + f'\nTOKEN = "{GH_TOKEN}"\n')
+    comparison = open_session_comparison(repo, "binary-source")
+    changed = next(item for item in comparison.changed if item.path == "app/calc.py")
+    assert comparison.added_lines(changed)
+    result = check_secrets(CheckContext(comparison, DoneConfig(), run_tests=False))
+    assert result.status == "fail"
+    assert any(finding.file == "app/calc.py" for finding in result.findings)
+
+
 def test_loosened_pytest_options_are_found(repo: Path):
     _write(
         repo,
@@ -653,10 +668,13 @@ def test_tampering_change_fails_every_relevant_check(repo: Path):
     result = run(repo, base_ref="main")
     by_id = {c.result.id: c.result for c in result.checks}
     assert result.verdict == "fail"
-    assert by_id["tests_pass"].status == "incomplete"  # conftest dropped test_sub
-    assert any(
-        "test_sub did not run" in f.message for f in by_id["tests_pass"].findings
-    )
+    # Known tampering blocks before expensive execution. Exercise the runner
+    # independently so missing-test detection remains covered as well.
+    assert by_id["tests_pass"].status == "incomplete"
+    assert "earlier required check" in by_id["tests_pass"].summary
+    tests = done_checks.check_tests_pass(_ctx(repo))
+    assert tests.status == "incomplete"  # conftest dropped test_sub
+    assert any("test_sub did not run" in f.message for f in tests.findings)
     rules = {f.rule for f in by_id["test_tampering"].findings if f.blocking}
     assert rules == {"SKY-A110", "SKY-A112"}
     assert by_id["secrets"].status == "fail"
@@ -1173,6 +1191,9 @@ def test_runtime_deselection_from_modified_globals_cannot_prove_base_exclusion(
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     assert result.verdict == "fail"
     assert tests.status == "incomplete"
+    assert "earlier required check" in tests.summary
+    tests = done_checks.check_tests_pass(_ctx(repo))
+    assert tests.status == "incomplete"
     assert any(
         "test_sub did not run" in f.message and f.blocking for f in tests.findings
     )
@@ -1508,6 +1529,8 @@ def test_unchanged_result_hook_cannot_forge_success_with_changed_dependency(
     result = run(repo, base_ref="main")
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     tampering = next(c.result for c in result.checks if c.result.id == "test_tampering")
+    assert tests.status == "incomplete"  # Known tampering prevents execution.
+    tests = done_checks.check_tests_pass(_ctx(repo))
     assert tests.status == "pass"  # The forged JUnit has every expected case.
     assert tampering.status == "fail" and result.verdict == "fail"
     assert any(
@@ -1557,9 +1580,7 @@ def test_old_false_assignment_does_not_prove_base_test_exclusion(repo: Path, res
 
 
 @pytest.mark.parametrize("computed", [False, True])
-def test_parameter_case_totals_require_literal_values_or_simple_constants(
-    repo: Path, computed
-):
+def test_unrelated_changes_keep_parameter_case_totals_trusted(repo: Path, computed):
     values = (
         "VALUES = list(range(3))\n"
         if computed
@@ -1575,14 +1596,228 @@ def test_parameter_case_totals_require_literal_values_or_simple_constants(
     _write(repo, "tests/test_values.py", source)
     _make_current_base(repo)
     _write(repo, "app/calc.py", CALC + "\n# ordinary edit\n")
+    _write(
+        repo,
+        "tests/test_values.py",
+        source + "\n\ndef test_added():\n    assert True\n",
+    )
     result = run(repo, base_ref="main")
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
-    assert result.verdict == ("incomplete" if computed else "pass")
-    assert tests.evidence["unknown_case_totals"] == int(computed)
-    if computed:
-        assert (
-            "use literal case lists or simple local constants" in tests.summary.lower()
-        )
+    assert result.verdict == "pass"
+    assert tests.evidence["unknown_case_totals"] == 0
+
+
+def test_edited_computed_case_source_leaves_tests_unfinished(repo: Path):
+    source = (
+        "import pytest\nVALUES = list(range({n}))\n"
+        "@pytest.mark.parametrize('value', VALUES)\n"
+        "def test_values(value):\n    assert value >= 0\n"
+    )
+    _write(repo, "tests/test_values.py", source.format(n=3))
+    _make_current_base(repo)
+    _write(repo, "tests/test_values.py", source.format(n=2))
+    result = run(repo, base_ref="main")
+    tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
+    assert result.verdict == "incomplete" and tests.status == "incomplete"
+    assert tests.evidence["unknown_case_totals"] == 1
+    assert "0 test(s)" not in tests.summary
+    assert "use literal case lists or simple local constants" in tests.summary.lower()
+    assert any(
+        "edits VALUES (tests/test_values.py:2)" in f.message for f in tests.findings
+    )
+
+
+_COMPUTED = (
+    "import pytest\nVALUES = list(range(3))\n\n\n"
+    "@pytest.mark.parametrize('value', VALUES)\n"
+    "def test_values(value):\n    assert value >= 0\n"
+)
+_CASE_HELPER_TEST = (
+    "import pytest\nfrom tests.helpers import cases\n\n\n"
+    "@pytest.mark.parametrize('value', cases())\n"
+    "def test_values(value):\n    assert True\n"
+)
+_CASE_STAR_TEST = (
+    "import pytest\nfrom tests.helpers import *\n\n\n"
+    "@pytest.mark.parametrize('value', VALUES)\n"
+    "def test_values(value):\n    assert True\n"
+)
+_CASE_CLASS_TEST = (
+    "import pytest\n\n\nclass TestValues:\n    CASES = list(range(3))\n\n"
+    "    @pytest.mark.parametrize('value', CASES)\n"
+    "    def test_values(self, value):\n        assert True\n"
+)
+_CASE_DATA_TEST = (
+    "import pytest\nfrom pathlib import Path\n\nDATA = Path(__file__).parent / 'data'\n\n\n"
+    "@pytest.mark.parametrize('name', sorted(p.name for p in DATA.iterdir()))\n"
+    "def test_values(name):\n    assert True\n"
+)
+_CASE_DATA = {
+    "tests/data/a.txt": "a\n",
+    "tests/data/b.txt": "b\n",
+    "tests/test_values.py": _CASE_DATA_TEST,
+}
+
+
+def _case_changes(repo: Path) -> dict[str, str]:
+    from skylos.done.test_config import computed_case_changes
+
+    ctx = _ctx(repo)
+    base_tests, head_tests = ctx.tests()
+    return computed_case_changes(ctx.comparison, head_tests, base_tests)
+
+
+def _apply(repo: Path, files: dict[str, str | None]) -> None:
+    for path, text in files.items():
+        if text is None:
+            (repo / path).unlink()
+        else:
+            _write(repo, path, text)
+
+
+@pytest.mark.parametrize(
+    "files, edits, expected",
+    [
+        pytest.param(
+            None,
+            {"tests/test_values.py": _COMPUTED.replace("range(3)", "range(2)")},
+            "edits VALUES (tests/test_values.py:2)",
+            id="constant",
+        ),
+        pytest.param(
+            None,
+            {"tests/test_values.py": _COMPUTED.replace("', VALUES)", "', VALUES[:1])")},
+            "edits its parametrize decorators",
+            id="decorator",
+        ),
+        pytest.param(
+            None,
+            {
+                "tests/test_values.py": _COMPUTED.replace(
+                    "\n\n\n@", "\nif True:\n    VALUES.remove(2)\n\n\n@"
+                )
+            },
+            "edits VALUES",
+            id="compound-mutation",
+        ),
+        pytest.param(
+            None,
+            {
+                "tests/test_values.py": _COMPUTED.replace(
+                    "\n\n\n@", "\nVALUES[2:] = []\n\n\n@"
+                )
+            },
+            "edits VALUES",
+            id="slice-store",
+        ),
+        pytest.param(
+            None,
+            {
+                "tests/test_values.py": _COMPUTED.replace(
+                    "import pytest\n",
+                    "import pytest\n\n\ndef range(n):\n    return [0]\n",
+                )
+            },
+            "edits range",
+            id="shadowed-builtin",
+        ),
+        pytest.param(
+            None,
+            {
+                "tests/test_values.py": _COMPUTED.replace(
+                    "range(3)", "range(2)"
+                ).replace("def test_values", "def test_values_renamed")
+            },
+            "edits VALUES",
+            id="renamed-test",
+        ),
+        pytest.param(
+            {
+                "tests/helpers.py": "def cases():\n    return list(range(3))\n",
+                "tests/test_values.py": _CASE_HELPER_TEST,
+            },
+            {"tests/helpers.py": "def cases():\n    return list(range(2))\n"},
+            "edits cases (tests/helpers.py:1)",
+            id="helper-module",
+        ),
+        pytest.param(
+            {
+                "tests/helpers.py": "VALUES = list(range(3))\n",
+                "tests/test_values.py": _CASE_STAR_TEST,
+            },
+            {"tests/helpers.py": "VALUES = list(range(2))\n"},
+            "edits VALUES (tests/helpers.py:1)",
+            id="star-import",
+        ),
+        pytest.param(
+            {"tests/test_values.py": _CASE_CLASS_TEST},
+            {"tests/test_values.py": _CASE_CLASS_TEST.replace("range(3)", "range(2)")},
+            "class attributes",
+            id="class-attribute",
+        ),
+        pytest.param(
+            _CASE_DATA,
+            {"tests/data/b.txt": None},
+            "tracked input (tests/data/b.txt)",
+            id="deleted-data-file",
+        ),
+    ],
+)
+def test_edited_computed_case_sources_are_not_trusted(
+    repo: Path, files, edits, expected
+):
+    _apply(repo, files or {"tests/test_values.py": _COMPUTED})
+    _make_current_base(repo)
+    _apply(repo, edits)
+    changes = _case_changes(repo)
+    assert len(changes) == 1
+    assert expected in next(iter(changes.values()))
+
+
+@pytest.mark.parametrize(
+    "files, edits",
+    [
+        pytest.param(
+            None,
+            {
+                "tests/test_values.py": _COMPUTED
+                + "\n\ndef test_added():\n    assert True\n"
+            },
+            id="new-test-in-same-file",
+        ),
+        pytest.param(
+            None,
+            {"tests/test_values.py": "import os\n" + _COMPUTED.replace(">= 0", "> -1")},
+            id="unrelated-import-and-body",
+        ),
+        pytest.param(
+            None,
+            {
+                "tests/test_new.py": "import pytest\n\n\n"
+                "@pytest.mark.parametrize('v', list(range(2)))\n"
+                "def test_new(v):\n    assert True\n"
+            },
+            id="new-computed-test",
+        ),
+        pytest.param(
+            {
+                "tests/helpers.py": "def cases():\n    return list(range(3))\n\n\n"
+                "def other():\n    return 1\n",
+                "tests/test_values.py": _CASE_HELPER_TEST,
+            },
+            {
+                "tests/helpers.py": "def cases():\n    return list(range(3))\n\n\n"
+                "def other():\n    return 2\n"
+            },
+            id="unreached-helper",
+        ),
+    ],
+)
+def test_unrelated_edits_keep_computed_case_totals_trusted(repo: Path, files, edits):
+    _apply(repo, files or {"tests/test_values.py": _COMPUTED})
+    _make_current_base(repo)
+    _apply(repo, edits)
+    assert _case_changes(repo) == {}
 
 
 @pytest.mark.parametrize(
@@ -1611,12 +1846,76 @@ def test_generate_tests_dependency_changes_cannot_remove_generated_cases(repo: P
     result = run(repo, base_ref="main")
     tests = next(c.result for c in result.checks if c.result.id == "tests_pass")
     tampering = next(c.result for c in result.checks if c.result.id == "test_tampering")
+    assert tests.status == "incomplete"  # Known tampering prevents execution.
+    tests = done_checks.check_tests_pass(_ctx(repo))
     assert tests.status == "pass"
     assert tampering.status == "fail" and result.verdict == "fail"
     assert any(
         "dependency of the pytest hook pytest_generate_tests" in f.message
         for f in tampering.findings
     )
+
+
+_GENERATE_HOOK = (
+    "def pytest_generate_tests(metafunc):\n"
+    "    if 'value' in metafunc.fixturenames:\n"
+    "        metafunc.parametrize('value', {expr})\n"
+)
+
+
+@pytest.mark.parametrize(
+    "base, head, expr",
+    [
+        pytest.param(
+            "VALUES = [0, 1, 2]\n",
+            "VALUES = [0, 1, 2]\nif True:\n    VALUES.remove(2)\n",
+            "VALUES",
+            id="compound-mutation",
+        ),
+        pytest.param(
+            "VALUES = [0, 1, 2]\n",
+            "VALUES = [0, 1, 2]\nVALUES[2:] = []\n",
+            "VALUES",
+            id="slice-store",
+        ),
+        pytest.param(
+            "VALUES = [0, 1, 2]\n",
+            "VALUES = [0, 1, 2]\n\n\ndef trim():\n    del VALUES[2]\n\n\ntrim()\n",
+            "VALUES",
+            id="local-function-call",
+        ),
+        pytest.param(
+            "",
+            "def range(n):\n    return [0]\n",
+            "list(range(3))",
+            id="shadowed-builtin",
+        ),
+    ],
+)
+def test_generate_tests_dependencies_include_mutations_and_shadowing(
+    repo: Path, base, head, expr
+):
+    hook = _GENERATE_HOOK.format(expr=expr)
+    _write(repo, "conftest.py", base + hook)
+    _make_current_base(repo)
+    _write(repo, "conftest.py", head + hook)
+    findings = detect_loosened_test_config(open_comparison(repo, "main"))
+    assert any(
+        "dependency of the pytest hook pytest_generate_tests" in f.message
+        for f in findings
+    )
+
+
+def test_unrelated_conftest_statements_do_not_change_hook_dependencies(repo: Path):
+    hook = _GENERATE_HOOK.format(expr="VALUES")
+    _write(repo, "conftest.py", "VALUES = [0, 1, 2]\n" + hook)
+    _make_current_base(repo)
+    _write(
+        repo,
+        "conftest.py",
+        "OTHER = [1]\nOTHER.append(len(OTHER))\nVALUES = [0, 1, 2]\n" + hook,
+    )
+    assert detect_loosened_test_config(open_comparison(repo, "main")) == []
 
 
 @pytest.mark.parametrize("fallback", [False, True])
@@ -1653,3 +1952,243 @@ def test_fixture_writer_rejects_paths_outside_its_root(repo: Path):
     with pytest.raises(ValueError):
         _write(repo, "../escape.py", "assert True\n")
     assert not (repo.parent / "escape.py").exists()
+
+
+@pytest.mark.parametrize("filename", ["cases.json", "app/cases.json"])
+def test_qa_computed_case_file_outside_tests_cannot_narrow(repo, filename):
+    source = f"import pytest\nimport json\nfrom pathlib import Path\nVALUES = json.loads(Path({filename!r}).read_text())\n@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert value >= 0\n"
+    _write(repo, filename, "[0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, filename, "[0]\n")
+    changes = _case_changes(repo)
+    result = run(repo, base_ref="main")
+    print(
+        "external-policy-qa",
+        filename,
+        changes,
+        result.verdict,
+        [
+            (c.result.id, c.result.status, c.result.summary, c.result.evidence)
+            for c in result.checks
+            if c.result.id in {"tests_pass", "test_tampering"}
+        ],
+    )
+    assert result.verdict != "pass"
+
+
+def test_qa_opaque_factory_cannot_become_known_singleton(repo):
+    source = "import pytest\ndef make_cases():\n    return [0, 1, 2]\n@pytest.mark.parametrize('value', make_cases())\ndef test_values(value):\n    assert value >= 0\n"
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(
+        repo,
+        "tests/test_values.py",
+        source.replace("'value', make_cases()", "'value', [0]"),
+    )
+    result = run(repo, base_ref="main")
+    print(
+        "external-policy-qa-opaque",
+        result.verdict,
+        [
+            (c.result.id, c.result.status, c.result.summary, c.result.evidence)
+            for c in result.checks
+            if c.result.id in {"tests_pass", "test_tampering"}
+        ],
+    )
+    assert result.verdict != "pass"
+
+
+@pytest.mark.parametrize("opaque", [False, True])
+def test_qa_removing_parametrize_decorator_cannot_hide_base_cases(repo, opaque):
+    values = "make_cases()" if opaque else "[0, 1, 2]"
+    source = f"import pytest\ndef make_cases():\n    return [0, 1, 2]\n@pytest.mark.parametrize('value', {values})\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    head = source.replace(f"@pytest.mark.parametrize('value', {values})\n", "").replace(
+        "def test_values(value):", "def test_values():"
+    )
+    _write(repo, "tests/test_values.py", head)
+    result = run(repo, base_ref="main")
+    assert result.verdict == ("incomplete" if opaque else "fail")
+    check = next(
+        c.result
+        for c in result.checks
+        if c.result.id == ("tests_pass" if opaque else "test_tampering")
+    )
+    assert check.status == result.verdict
+
+
+def test_qa_added_sentinel_cannot_narrow_computed_cases(repo):
+    source = "import pytest\nfrom pathlib import Path\nVALUES = list(range(1 if Path('skip-cases').exists() else 3))\n@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "skip-cases", "present\n")
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+    check = next(c.result for c in result.checks if c.result.id == "tests_pass")
+    assert check.status == "incomplete" and check.evidence["unknown_case_totals"] == 1
+
+
+def test_qa_added_data_file_total_cannot_be_independently_proven(repo):
+    _apply(repo, _CASE_DATA)
+    _make_current_base(repo)
+    _write(repo, "tests/data/c.txt", "c\n")
+    changes = _case_changes(repo)
+    assert len(changes) == 1
+    assert "tests/data/c.txt" in next(iter(changes.values()))
+
+
+def test_qa_unchanged_file_cases_have_no_unknown_totals(repo):
+    _apply(repo, _CASE_DATA)
+    _make_current_base(repo)
+    assert _case_changes(repo) == {}
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "reader = open\nVALUES = json.load(reader('cases.json'))",
+        "from io import open as reader\nVALUES = json.load(reader('cases.json'))",
+        "reader = Path('cases.json').read_text\nVALUES = json.loads(reader())",
+        "VALUES = json.loads(getattr(Path('cases.json'), 'read_text')())",
+    ],
+)
+def test_qa_opaque_reader_aliases_cannot_hide_changed_input(repo, reader):
+    source = f"import pytest\nimport json\nfrom pathlib import Path\n{reader}\n@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "cases.json", "[0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "cases.json", "[0]\n")
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+    check = next(c.result for c in result.checks if c.result.id == "tests_pass")
+    assert check.evidence["unknown_case_totals"] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "ALIAS = VALUES\nALIAS.pop()",
+        "truncate = VALUES.pop\ntruncate()",
+        "for alias in [VALUES]: alias.pop()",
+        "[VALUES].pop().pop()",
+        "match [0]:\n    case VALUES: pass",
+        "match VALUES:\n    case alias: alias.pop()",
+    ],
+)
+def test_qa_alias_or_capture_cannot_hide_mutated_case_source(repo, mutation):
+    source = "import pytest\nVALUES = list(range(3))\n"
+    test = "@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/test_values.py", source + test)
+    _make_current_base(repo)
+    _write(repo, "tests/test_values.py", source + mutation + "\n" + test)
+    changes = _case_changes(repo)
+    assert len(changes) == 1
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+
+
+@pytest.mark.parametrize(
+    "import_line",
+    [
+        "from tests.helpers import cases",
+        "import tests.helpers\ncases = tests.helpers.cases",
+        "from tests import helpers\ncases = helpers.cases",
+    ],
+)
+def test_qa_added_package_cannot_shadow_unchanged_case_module(repo, import_line):
+    source = f"import pytest\n{import_line}\n@pytest.mark.parametrize('value', cases())\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/helpers.py", "def cases():\n    return [0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "tests/helpers/__init__.py", "def cases():\n    return [0]\n")
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+    check = next(c.result for c in result.checks if c.result.id == "tests_pass")
+    assert check.evidence["run"] == 7 and check.evidence["unknown_case_totals"] == 1
+
+
+def test_qa_unrelated_pure_assignment_keeps_opaque_cases_trusted(repo):
+    _write(repo, "tests/test_values.py", _COMPUTED)
+    _make_current_base(repo)
+    _write(
+        repo,
+        "tests/test_values.py",
+        _COMPUTED.replace("\n\n\n@", "\nOTHER = list(range(9))\n\n@"),
+    )
+    assert _case_changes(repo) == {}
+    result = run(repo, base_ref="main")
+    assert result.verdict == "pass"
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "VALUES = json.loads(getattr(Path('cases.py'), 'read' + '_text')())",
+        "from io import FileIO\nVALUES = json.load(FileIO('cases.py'))",
+    ],
+)
+def test_qa_opaque_python_named_input_cannot_narrow_cases(repo, reader):
+    source = f"import pytest\nimport json\nfrom pathlib import Path\n{reader}\n@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "cases.py", "[0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "cases.py", "[0]\n")
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "class Trigger:\n    VALUES.pop()",
+        "def helper(value=VALUES.pop()):\n    pass",
+        "class Trigger:\n    global VALUES\n    VALUES = [0]",
+        "def helper(value=(VALUES := [0])):\n    pass",
+    ],
+)
+def test_qa_definition_time_effects_cannot_narrow_closed_cases(repo, mutation):
+    source = "import pytest\nVALUES = list(range(3))\n"
+    test = "@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/test_values.py", source + test)
+    _make_current_base(repo)
+    _write(repo, "tests/test_values.py", source + mutation + "\n" + test)
+    assert _case_changes(repo)
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+
+
+def test_qa_lazy_import_factory_cannot_hide_python_dependency_edits(repo):
+    source = "import pytest\ndef cases():\n    from tests.helpers import VALUES\n    return VALUES\n@pytest.mark.parametrize('value', cases())\ndef test_values(value):\n    assert True\n"
+    _write(repo, "tests/helpers.py", "VALUES = [0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "tests/helpers.py", "VALUES = [0]\n")
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+
+
+def test_qa_builtin_namespace_rebinding_invalidates_closed_case_proof(repo):
+    _write(repo, "tests/test_values.py", _COMPUTED)
+    _make_current_base(repo)
+    head = _COMPUTED.replace(
+        "\n\n\n@", "\nimport builtins as b\nb.range = lambda *args: [0]\n\n@"
+    )
+    _write(repo, "tests/test_values.py", head)
+    assert _case_changes(repo)
+
+
+def test_qa_head_import_initializer_cannot_silently_narrow_imported_cases(repo):
+    source = "import pytest\nfrom helpers import VALUES\n@pytest.mark.parametrize('value', VALUES)\ndef test_values(value):\n    assert True\n"
+    _write(repo, "helpers.py", "VALUES = [0, 1, 2]\n")
+    _write(repo, "tests/test_values.py", source)
+    _make_current_base(repo)
+    _write(repo, "helpers.py", "VALUES = [0, 1, 2]\nimport poison\n")
+    _write(
+        repo, "poison.py", "from helpers import VALUES\nVALUES.pop()\nVALUES.pop()\n"
+    )
+    result = run(repo, base_ref="main")
+    assert result.verdict == "incomplete"
+    check = next(c.result for c in result.checks if c.result.id == "tests_pass")
+    assert check.evidence["run"] == 7 and check.evidence["unknown_case_totals"] == 1

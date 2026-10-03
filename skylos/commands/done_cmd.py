@@ -42,13 +42,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "path", nargs="?", default=".", help="Repository to check (default: .)"
     )
-    parser.add_argument(
+    baseline = parser.add_mutually_exclusive_group()
+    baseline.add_argument(
         "--base",
         metavar="REF",
         help=(
             "Compare with the merge base of REF (for a pull request: its target, "
             "e.g. origin/main). Default: HEAD, so only uncommitted changes count."
         ),
+    )
+    baseline.add_argument(
+        "--session",
+        metavar="ID",
+        help="Recheck the entire working tree against this agent session's captured baseline.",
     )
     parser.add_argument(
         "--format",
@@ -105,16 +111,52 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
     )
 
     try:
-        result = run(args.path, base_ref=args.base, run_tests=not args.no_tests)
+        result = run(
+            args.path,
+            base_ref=args.base,
+            run_tests=not args.no_tests,
+            session_id=args.session,
+        )
+        receipt = build_receipt(
+            result, agent_client=args.agent, session_id=args.session
+        )
+        problems = validate_receipt(receipt)
+        if problems:  # a bug in Skylos, never the user's change
+            logger.warning(
+                "done receipt does not match the upload contract: %s", problems
+            )
+            _invalidate_latest_receipt(result.comparison.root, err)
+            err.print(
+                Text(
+                    "skylos done: verification is unfinished because the receipt failed validation",
+                    style="red",
+                )
+            )
+            return EXIT_ERROR
+        written = write_receipt(result.comparison.root, receipt)
+        if written is None:
+            _invalidate_latest_receipt(result.comparison.root, err)
+            err.print(
+                Text(
+                    "skylos done: verification is unfinished because the receipt could not be saved",
+                    style="red",
+                )
+            )
+            return EXIT_ERROR
     except DoneError as exc:
+        _invalidate_latest_receipt(args.path, err)
         err.print(Text(f"skylos done: {exc}", style="red"))
         return EXIT_ERROR
-
-    receipt = build_receipt(result, agent_client=args.agent)
-    problems = validate_receipt(receipt)
-    if problems:  # a bug in Skylos, never the user's change
-        logger.warning("done receipt does not match the upload contract: %s", problems)
-    written = write_receipt(result.comparison.root, receipt)
+    except Exception:
+        logger.debug("Done verification or receipt publication failed", exc_info=True)
+        _invalidate_latest_receipt(args.path, err)
+        err.print(
+            Text(
+                "skylos done: verification could not complete; no new receipt was verified",
+                style="red",
+            )
+        )
+        return EXIT_ERROR
 
     if args.format == "json":
         print(json.dumps(receipt, indent=2))
@@ -134,6 +176,25 @@ def run_done_command(argv: list[str], *, console: Console | None = None) -> int:
 
     _write_step_summary(lambda: render_markdown(receipt))
     return EXIT_PASS if receipt["verdict"] == "pass" else EXIT_BLOCKED
+
+
+def _invalidate_latest_receipt(path: str | Path, err: Console) -> None:
+    """A failed invocation must not leave an earlier success usable as latest."""
+    from skylos.core.git_context import GitContext
+    from skylos.done.session import invalidate_latest_receipt
+
+    try:
+        root = Path(GitContext.from_path(path).root)
+        if invalidate_latest_receipt(root):
+            return
+    except Exception:
+        logger.debug("could not invalidate the latest Done receipt", exc_info=True)
+    err.print(
+        Text(
+            "skylos done: could not invalidate the latest receipt; earlier receipts do not verify this attempt",
+            style="yellow",
+        )
+    )
 
 
 def _run_receipt_command(argv: list[str], *, console: Console | None) -> int:

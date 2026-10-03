@@ -14,6 +14,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from skylos.core.git_context import GitContext
 from skylos.core.git_safety import read_only_git_command
@@ -70,6 +71,11 @@ class Comparison:
     _context: GitContext = field(repr=False)
     _untracked: frozenset[str] = field(default_factory=frozenset, repr=False)
     _diff_cache: dict[str, str] = field(default_factory=dict, repr=False)
+    # Session snapshots include files absent from the user's index. Comparing
+    # two trees preserves those files without staging anything in that index.
+    _head_tree: str | None = field(default=None, repr=False)
+    _session_late: bool = field(default=False, repr=False)
+    _index_owner: Any = field(default=None, repr=False)
 
     # -- file contents ---------------------------------------------------
 
@@ -104,7 +110,7 @@ class Comparison:
         """Unified diff of one file, base to working tree."""
         key = f"{changed.base_path}\0{changed.path}"
         if key not in self._diff_cache:
-            if changed.path in self._untracked:
+            if self._head_tree is None and changed.path in self._untracked:
                 self._diff_cache[key] = _new_file_diff(
                     changed.path, self.head_text(changed.path)
                 )
@@ -118,6 +124,7 @@ class Comparison:
                         "diff",
                         "-M",
                         self.base_sha,
+                        *((self._head_tree,) if self._head_tree else ()),
                         "--",
                         *(f":(literal){p}" for p in paths),
                     )
@@ -232,9 +239,18 @@ def _resolve_commit(context: GitContext, ref: str) -> str | None:
 
 
 def _changed_files(
-    context: GitContext, base_sha: str
+    context: GitContext, base_sha: str, *, head_tree: str | None = None
 ) -> tuple[tuple[ChangedFile, ...], frozenset[str]]:
-    out = _git_text(context, "diff", "--name-status", "-z", "-M", base_sha, "--")
+    out = _git_text(
+        context,
+        "diff",
+        "--name-status",
+        "-z",
+        "-M",
+        base_sha,
+        *((head_tree,) if head_tree else ()),
+        "--",
+    )
     if out is None:
         raise DoneError("git diff failed; check that the base commit is available")
     changed: dict[str, ChangedFile] = {}
@@ -272,7 +288,7 @@ def _changed_files(
     )
     untracked = set()
     for path in (untracked_out or "").split("\0"):
-        if path and path not in changed:
+        if path and path not in changed and head_tree is None:
             changed[path] = ChangedFile(path, "added", None)
             untracked.add(path)
 
@@ -306,7 +322,9 @@ def _command(context: GitContext, args: tuple[str, ...]) -> list[str]:
     safe = list(args)
     overrides = ["core.quotePath=false"]
     if safe and safe[0] == "diff":
-        safe[1:1] = ["--no-ext-diff", "--no-textconv", "--no-color"]
+        # Repository attributes must not hide source hunks by marking them
+        # binary. The checks read UTF-8 source independently and need its lines.
+        safe[1:1] = ["--no-ext-diff", "--no-textconv", "--no-color", "--text"]
     if safe and safe[0] in {"diff", "status"}:
         # Comparing the working tree runs clean filters; disable them all.
         overrides.extend(context.filter_config_overrides or ())

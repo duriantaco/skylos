@@ -23,46 +23,63 @@ AGENTS = ("claude", "codex", "cursor")
 MAX_CONFIG_BYTES = 2_000_000
 OUR_COMMAND_RE = re.compile(
     r"(?:^|[\s/\\'\"])skylos(?:\.exe|\.entry)?['\"]?\s+hook\s+"
-    r"(?:post-edit|pre-read|pre-bash|stop)\b"
+    r"(?:session-start|post-edit|pre-read|pre-bash|stop)\b"
 )
 PROBE_TIMEOUT_SECONDS = 30
 # Local hook state, never meant for version control. ``.skylos/`` itself also
 # holds committed files (config, AI contract, rules), so only these paths.
-GITIGNORE_ENTRIES = (".skylos/cache/", ".skylos/agent-session.*", ".skylos/hook.log*")
+GITIGNORE_ENTRIES = (
+    ".skylos/cache/",
+    ".skylos/agent-session.*",
+    ".skylos/hook.log*",
+    ".skylos/receipts/",
+)
 GITIGNORE_HEADER = "# Skylos agent hooks: local session state, log and cache"
 # What the wrapper prints when the Skylos command itself cannot run (missing,
 # too old, broken). Claude Code treats exit 2 as "block", and Cursor treats
 # empty output from a permission hook as "deny", so the wrapper must never
 # surface either.
 CURSOR_PERMISSION_FALLBACK = '{"permission":"allow"}'
+CURSOR_PROMPT_FALLBACK = '{"continue":true}'
+# The trusted done configuration permits up to 3,600 seconds for tests and
+# 1,800 for changed-line mutation checks. Leave time to persist the receipt
+# and render feedback; never derive this ceiling from the working tree.
+STOP_TIMEOUT_SECONDS = 3600 + 1800 + 60
 
 Probe = Callable[[Sequence[str]], "str | None"]
 
 # (event name in the agent's config, matcher or None, skylos hook, timeout s)
 CLAUDE_HOOKS = (
+    ("UserPromptSubmit", None, "session-start", 30),
     ("PreToolUse", "Read", "pre-read", 15),
     ("PreToolUse", "Bash|PowerShell", "pre-bash", 30),
     ("PostToolUse", "Edit|Write|MultiEdit", "post-edit", 120),
-    ("Stop", None, "stop", 180),
+    ("Stop", None, "stop", STOP_TIMEOUT_SECONDS),
 )
 CODEX_HOOKS = (
+    # Codex supports UserPromptSubmit; see https://learn.chatgpt.com/docs/hooks.
+    ("UserPromptSubmit", None, "session-start", 30),
     ("PreToolUse", "^Bash$", "pre-bash", 30),
     ("PostToolUse", "apply_patch|Edit|Write", "post-edit", 120),
-    ("Stop", None, "stop", 180),
+    ("Stop", None, "stop", STOP_TIMEOUT_SECONDS),
 )
 CURSOR_HOOKS = (
+    ("beforeSubmitPrompt", None, "session-start", 30),
     ("beforeReadFile", None, "pre-read", 15),
     ("beforeShellExecution", None, "pre-bash", 30),
     ("afterFileEdit", None, "post-edit", 120),
-    ("stop", None, "stop", 180),
+    ("stop", None, "stop", STOP_TIMEOUT_SECONDS),
 )
 STATUS_MESSAGES = {
+    "session-start": "Skylos: recording the starting checkout",
     "pre-read": "Skylos: checking file for secrets",
     "pre-bash": "Skylos: checking packages",
     "post-edit": "Skylos: verifying edit",
     "stop": "Skylos: checking session edits",
 }
-CURSOR_STOP_LOOP_LIMIT = 3
+# Cursor counts follow-ups across the conversation. Allow the largest Done
+# retry budget while retaining a native cap; the runtime bounds each tree.
+CURSOR_STOP_LOOP_LIMIT = 10
 
 
 def add_install_hooks_parser(agent_sub) -> None:
@@ -70,7 +87,7 @@ def add_install_hooks_parser(agent_sub) -> None:
         "install-hooks",
         help="Install Skylos agent-loop hooks for Claude Code, Codex, or Cursor",
         description=(
-            "Merge Skylos hooks (post-edit verify, secret-read guard, "
+            "Merge Skylos hooks (prompt baseline, post-edit verify, secret-read guard, "
             "package-install guard, stop gate) into the agent's hook config. "
             "Existing hooks are preserved; re-running is a no-op."
         ),
@@ -147,7 +164,9 @@ def run_install_hooks_command(
     else:
         check = getattr(args, "check_bin", True)
         command, version, problem = resolve_skylos_command(
-            args.skylos_bin, which=which, probe=(probe or probe_hook_support) if check else None
+            args.skylos_bin,
+            which=which,
+            probe=(probe or probe_hook_support) if check else None,
         )
         if command is None:
             print_func(problem or "Cannot find a Skylos that supports `skylos hook`.")
@@ -162,6 +181,10 @@ def run_install_hooks_command(
     if updated == existing and config_path.exists():
         state = "not installed" if args.uninstall else "already installed"
         print_func(f"Skylos hooks {state} in {config_path} (no change).")
+        if not args.uninstall and scope == "project":
+            note = ensure_gitignored(config_path.parent.parent)
+            if note:
+                print_func(note)
         return 0
     if args.uninstall and not config_path.exists():
         print_func(f"No {config_path}; nothing to uninstall.")
@@ -302,6 +325,8 @@ def hook_command(skylos_bin: str | Sequence[str], name: str, agent: str) -> str:
 def _fallback(name: str, agent: str) -> str:
     if agent == "cursor" and name in {"pre-read", "pre-bash"}:
         payload = CURSOR_PERMISSION_FALLBACK
+    elif agent == "cursor" and name == "session-start":
+        payload = CURSOR_PROMPT_FALLBACK
     elif name == "stop":
         payload = "{}"  # Codex requires JSON from Stop
     else:
@@ -387,6 +412,8 @@ def probe_hook_support(command: Sequence[str]) -> str | None:
         return None
     if "recheck" not in proc.stdout:
         return None  # predates the policy the hook messages refer to
+    if "session-start" not in proc.stdout:
+        return None  # cannot record the checkout before prompt-driven edits
     try:
         version = subprocess.run(
             [*command, "--version"],
@@ -410,22 +437,41 @@ def ensure_gitignored(project: Path) -> str | None:
         return None
     gitignore = project / ".gitignore"
     if gitignore.exists():
-        text = read_text_no_symlink(gitignore, max_bytes=MAX_CONFIG_BYTES, encoding="utf-8")
+        text = read_text_no_symlink(
+            gitignore, max_bytes=MAX_CONFIG_BYTES, encoding="utf-8"
+        )
         if text is None:
             return f"Could not update {gitignore}; add {', '.join(GITIGNORE_ENTRIES)}."
         present = {line.strip() for line in text.splitlines()}
         missing = [entry for entry in GITIGNORE_ENTRIES if entry not in present]
         if not missing:
             return None
-        block = ("" if text.endswith("\n") or not text else "\n") + "\n".join(
-            [GITIGNORE_HEADER, *missing]
-        ) + "\n"
+        block = (
+            ("" if text.endswith("\n") or not text else "\n")
+            + "\n".join([GITIGNORE_HEADER, *missing])
+            + "\n"
+        )
         if not write_text_no_symlink(gitignore, text + block):
             return f"Could not update {gitignore}; add {', '.join(missing)}."
         return f"Added {', '.join(missing)} to {gitignore}."
     local = project / ".skylos" / ".gitignore"
     if local.exists():
-        return None
+        text = read_text_no_symlink(local, max_bytes=MAX_CONFIG_BYTES, encoding="utf-8")
+        if text is None:
+            return f"Could not update {local}; add receipts/ to ignore local receipts."
+        entries = [e.replace(".skylos/", "", 1) for e in GITIGNORE_ENTRIES]
+        present = {line.strip() for line in text.splitlines()}
+        missing = [entry for entry in entries if entry not in present]
+        if not missing:
+            return None
+        block = (
+            ("" if text.endswith("\n") or not text else "\n")
+            + "\n".join([GITIGNORE_HEADER, *missing])
+            + "\n"
+        )
+        if not write_text_no_symlink(local, text + block):
+            return f"Could not update {local}; add {', '.join(missing)}."
+        return f"Added {', '.join(missing)} to {local}."
     try:
         local.parent.mkdir(exist_ok=True)
     except OSError:
@@ -439,7 +485,13 @@ def ensure_gitignored(project: Path) -> str | None:
 
 
 def _already_ignored(project: Path) -> bool:
-    for path in (".skylos/cache/x", ".skylos/agent-session.json", ".skylos/hook.log"):
+    for path in (
+        ".skylos/cache/x",
+        ".skylos/agent-session.json",
+        ".skylos/agent-session.lock",
+        ".skylos/hook.log",
+        ".skylos/receipts/latest.json",
+    ):
         try:
             proc = subprocess.run(
                 ["git", "check-ignore", "--no-index", "-q", "--", path],
