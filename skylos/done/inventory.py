@@ -179,13 +179,14 @@ def compare_inventories(
         added = current.markers - test.markers
         if added:
             result.newly_skipped.append(NewlySkipped(current, frozenset(added)))
+        current_cases = current.param_cases if current.parametrized else 1
         if (
             test.param_cases is not None
-            and current.param_cases is not None
-            and current.param_cases < test.param_cases
+            and current_cases is not None
+            and current_cases < test.param_cases
         ):
             result.dropped_cases.append(
-                DroppedCases(current, test.param_cases, current.param_cases)
+                DroppedCases(current, test.param_cases, current_cases)
             )
     return result
 

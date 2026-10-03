@@ -122,7 +122,8 @@ class TestRunResult:
     flaky: list[CaseResult] = field(default_factory=list)
     missing: list[TestItem] = field(default_factory=list)
     missing_cases: list[tuple[TestItem, int, int]] = field(default_factory=list)
-    unknown_cases: list[TestItem] = field(default_factory=list)
+    # Computed parametrized tests whose case sources this change edits.
+    unknown_cases: list[tuple[TestItem, str]] = field(default_factory=list)
     silent_files: list[str] = field(default_factory=list)
     output_tail: str = ""
     auto_command: bool = False
@@ -162,7 +163,7 @@ def run_tests(
                 "(no pytest project was found to run automatically)"
             ),
         )
-    from skylos.done.test_config import base_excluded_tests
+    from skylos.done.test_config import base_excluded_tests, computed_case_changes
 
     excluded = (
         base_excluded_tests(
@@ -170,6 +171,11 @@ def run_tests(
         )
         if invocation.pytest
         else set()
+    )
+    case_changes = (
+        computed_case_changes(comparison, changed_tests, base_tests, skip=excluded)
+        if invocation.pytest
+        else {}
     )
     budget_end = deadline or (time.monotonic() + config.test_budget_seconds)
     shown = _shown_command(invocation)
@@ -194,7 +200,9 @@ def run_tests(
         if trace_out is not None:
             _read_trace(result, trace_out, root)
         if result.status != "fail" or not invocation.pytest:
-            return _with_missing(result, first, changed_tests, invocation, excluded)
+            return _with_missing(
+                result, first, changed_tests, invocation, excluded, case_changes
+            )
 
         # Rerun what failed once: a test that passes now is flaky, not failed.
         rerun_ids = [c.node_id for c in result.failures if c.node_id][:MAX_RERUN_TESTS]
@@ -219,7 +227,9 @@ def run_tests(
                         f"{result.passed + len(result.flaky)} of {result.run} tests passed; "
                         f"{len(result.flaky)} failed once and passed on a rerun (flaky)"
                     )
-        return _with_missing(result, first, changed_tests, invocation, excluded)
+        return _with_missing(
+            result, first, changed_tests, invocation, excluded, case_changes
+        )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -752,11 +762,14 @@ def _with_missing(
     changed_tests: list[TestItem],
     invocation: _Invocation,
     base_excluded: set[str],
+    case_changes: dict[str, str] | None = None,
 ) -> TestRunResult:
     """Inventory tests whose execution cannot be proved.
 
     Only statically proven base exclusions excuse a missing result. A runtime
     ``pytest_deselected`` notification comes from PR code and is not proof.
+    A computed case total is trusted unless ``case_changes`` names the test;
+    without ``case_changes`` none is.
     """
     cases = outcome.cases
     if not invocation.pytest or not cases or result.status == "incomplete":
@@ -782,8 +795,14 @@ def _with_missing(
         and (count := len(reported.get((test.path, test.classes, test.name), ()))) > 0
         and count < test.param_cases
     ]
+    if case_changes is None:
+        case_changes = {
+            test.id: "its case sources were not checked"
+            for test in expected
+            if test.parametrized and test.param_cases is None
+        }
     result.unknown_cases = [
-        test for test in expected if test.parametrized and test.param_cases is None
+        (test, case_changes[test.id]) for test in expected if test.id in case_changes
     ]
     if (
         result.missing
@@ -792,16 +811,34 @@ def _with_missing(
         or result.unknown_cases
     ) and result.status == "pass":
         result.status = "incomplete"
-        result.reason = (
-            f"{len(result.missing)} test(s), {sum(before - after for _, before, after in result.missing_cases)} parameter case(s), and {len(result.silent_files)} "
-            "test file(s) reported no results without a proven base selection exclusion. "
-            "Restore their execution or configure an explicit selector at the base."
-        )
-        if result.unknown_cases:
-            result.reason += (
-                f" Expected case totals for {len(result.unknown_cases)} computed parametrized test(s) "
-                "cannot be independently inventoried; use literal case lists or simple local constants."
+        dropped = sum(before - after for _, before, after in result.missing_cases)
+        silent = [
+            f"{count} {noun}"
+            for count, noun in (
+                (len(result.missing), "test(s)"),
+                (dropped, "parameter case(s)"),
+                (len(result.silent_files), "test file(s)"),
             )
+            if count
+        ]
+        reasons = []
+        if silent:
+            listed = (
+                f"{', '.join(silent[:-1])} and {silent[-1]}"
+                if len(silent) > 1
+                else silent[0]
+            )
+            reasons.append(
+                f"{listed} reported no results without a proven base selection exclusion. "
+                "Restore their execution or configure an explicit selector at the base."
+            )
+        if result.unknown_cases:
+            reasons.append(
+                f"Expected case totals for {len(result.unknown_cases)} test(s) "
+                "cannot be checked against the base after changes to their parametrization or inputs; "
+                "use literal case lists or simple local constants."
+            )
+        result.reason = " ".join(reasons)
     return result
 
 

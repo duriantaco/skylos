@@ -531,9 +531,9 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
             RULE_TESTS_PASS,
             test.path,
             test.line,
-            f"{test.local_id} has a computed parameter case total that cannot be independently inventoried; use literal case lists or simple local constants",
+            f"The parameter case total for {test.local_id} cannot be checked against the base because {reason}; use literal case lists or simple local constants",
         )
-        for test in result.unknown_cases
+        for test, reason in result.unknown_cases
     ]
     evidence: dict[str, str | int | float | bool] = {
         "run": result.run,

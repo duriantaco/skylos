@@ -283,7 +283,18 @@ boundaries needs the CI runner or an external sandbox.
 - Authenticated organization-policy sync into local Done checks and automatic
   session-receipt upload to Cloud.
 - Rerunning a failing test on the base to call it pre-existing.
-- Complete inventory of computed parametrization and exclusions of individual
-  parameter cases. These produce an unfinished test check when Skylos cannot
-  prove the expected case total. Literal lists, tuples and simple module-level
-  constant aliases are supported.
+- Counting computed parametrize cases, and excluding individual parameter
+  cases. Literal lists, tuples and simple module-level constant aliases are
+  counted. A computed case list is trusted while the change leaves alone
+  everything that builds it: the test's parametrize decorators, its class
+  attributes, the repository code those reach and, for lists read from files,
+  tracked repository inputs when the reader paths cannot be proven. Opaque
+  readers also remain unfinished when any tracked input changes, including
+  Python files used as data. Reader names are not proof of input independence:
+  only restricted closed expressions and resolved pure repository factories
+  can ignore unrelated inputs. Reflection, external calls, local imports and
+  complex control flow remain opaque. Additions,
+  renames and Python files count too: a new sentinel or changed enumeration can
+  narrow the cases. Such changes leave the test check unfinished. An opaque
+  base case list changed to a literal singleton or an ordinary test also stays
+  unfinished; removing a known parametrization reports the missing cases.
