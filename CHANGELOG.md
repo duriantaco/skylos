@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.44.0](https://github.com/duriantaco/skylos/compare/v4.43.2...v4.44.0) (2026-10-03)
+
+
+### Features
+
+* **agent:** verify session stops and changed-line tests ([#932](https://github.com/duriantaco/skylos/issues/932)) ([7a597ad](https://github.com/duriantaco/skylos/commit/7a597ad0f9c0caf16d3043db661ca930917bc5d3))
+
 ## [4.43.2](https://github.com/duriantaco/skylos/compare/v4.43.1...v4.43.2) (2026-10-01)
 
 
