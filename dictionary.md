@@ -546,6 +546,7 @@ use the `SKY-A` prefix.
 | A112 | HIGH | Test settings loosened (`skylos done`): pytest selection options, `conftest.py` hooks that drop tests or rewrite results, coverage floors, CI test steps that may fail | pytest, coverage, GitHub Actions |
 | A113 | HIGH | Tests fail when Skylos runs them (`skylos done`), or an expected Python test did not run | Any test command; JUnit XML for details |
 | A114 | HIGH | Skylos settings or hooks changed (`skylos done`): protected paths, `[tool.skylos]`, the CI workflow that runs Skylos | Repository files |
+| A120 | MEDIUM | Changed line not checked by tests (`skylos done`, advice by default): no test runs the line, or no test fails when Skylos deliberately changes it | Python with pytest |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |

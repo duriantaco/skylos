@@ -56,6 +56,7 @@ LABELS = {
     "gate_tampering": "Skylos settings and hooks left alone",
     "secrets": "No secrets added",
     "unknown_imports": "Every package and import is real",
+    "changed_lines_checked": "Tests check the changed lines",
 }
 FIXES = {
     "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
@@ -64,6 +65,7 @@ FIXES = {
     "gate_tampering": "Undo the changes to those files. A person should make changes there.",
     "secrets": "Remove the secret, rotate it, and load it from the environment or a secret store.",
     "unknown_imports": "Remove the made-up import, or declare the real package that provides it.",
+    "changed_lines_checked": "Add a test assertion that fails when the listed line changes.",
 }
 
 
@@ -127,8 +129,26 @@ def build_receipt(
         "verdict": result.verdict,
         "stop_blocks": stop_blocks,
         "checks": checks,
-        "unverified": [],
+        "unverified": _unverified(result),
     }
+
+
+def _unverified(result: DoneResult) -> list[dict[str, Any]]:
+    """Changed lines no test checks, from the checks that report them."""
+    lines = []
+    seen = set()
+    for outcome in result.checks:
+        for file, line in getattr(outcome.result, "unverified", ()):
+            path = _clean_path(file)
+            if (
+                path
+                and isinstance(line, int)
+                and line >= 1
+                and (path, line) not in seen
+            ):
+                seen.add((path, line))
+                lines.append({"file": path, "line": line})
+    return lines[:MAX_UNVERIFIED]
 
 
 def validate_receipt(receipt: Any) -> list[str]:

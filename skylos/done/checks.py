@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from typing import TYPE_CHECKING
 
 from skylos.done.base import Comparison, DoneError, _git_text
 from skylos.done.config import DoneConfig
@@ -23,6 +24,9 @@ from skylos.done.inventory import (
     compare_inventories,
     is_pytest_file,
 )
+
+if TYPE_CHECKING:
+    from skylos.done.runner import TestRunResult
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,8 @@ class CheckResult:
     summary: str
     evidence: dict[str, str | int | float | bool] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
+    # Changed lines no test checks (file, line): the receipt's "unverified".
+    unverified: list[tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -60,6 +66,18 @@ class CheckContext:
     run_tests: bool = True
     deadline: float | None = None
     _tests: tuple[list[TestItem], list[TestItem]] | None = None
+    # The tests_pass run, reused by the changed-lines check.
+    test_run: TestRunResult | None = None
+    _targets: list | None = None
+
+    def change_targets(self) -> list:
+        """Changed lines in non-test Python code that the tests should check."""
+        if self._targets is None:
+            from skylos.done.mutation import select_targets
+
+            _, head = self.tests()
+            self._targets = select_targets(self.comparison, {t.path for t in head})
+        return self._targets
 
     def tests(self) -> tuple[list[TestItem], list[TestItem]]:
         """Complete static Python test inventories, including unchanged files.
@@ -440,13 +458,21 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
             evidence={"summary": "Tests not run (--no-tests)"},
         )
     base_tests, head_tests = ctx.tests()
+    trace_targets = None
+    if ctx.config.mode("changed_lines_checked") != "off":
+        # Map the changed lines to the tests that run them in this same run.
+        trace_targets = {}
+        for target in ctx.change_targets():
+            trace_targets.setdefault(target.path, []).append(target.line)
     result = run_tests(
         ctx.comparison,
         ctx.config,
         changed_tests=head_tests,
         base_tests=base_tests,
         deadline=ctx.deadline,
+        trace_targets=trace_targets,
     )
+    ctx.test_run = result
     findings = [
         Finding(
             RULE_TESTS_PASS,
@@ -791,6 +817,12 @@ def _relative_file(value, comparison: Comparison) -> str | None:
     return text
 
 
+def _check_changed_lines(ctx: CheckContext) -> CheckResult:
+    from skylos.done.mutation import check_changed_lines
+
+    return check_changed_lines(ctx)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -802,6 +834,7 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "gate_tampering": (check_gate_tampering, RULE_GATE_TAMPERING),
     "secrets": (check_secrets, "SKY-S101"),
     "unknown_imports": (check_unknown_imports, "SKY-D222"),
+    "changed_lines_checked": (_check_changed_lines, "SKY-A120"),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
@@ -810,6 +843,7 @@ RUN_ORDER = (
     "secrets",
     "unknown_imports",
     "tests_pass",
+    "changed_lines_checked",  # reuses the tests_pass run and its line trace
 )
 
 

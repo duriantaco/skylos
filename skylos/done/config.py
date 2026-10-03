@@ -21,6 +21,7 @@ CHECK_IDS = (
     "gate_tampering",
     "secrets",
     "unknown_imports",
+    "changed_lines_checked",
 )
 MODES = ("block", "advise", "shadow", "off")
 
@@ -33,6 +34,9 @@ DEFAULT_MODES = {
     "gate_tampering": "block",
     "secrets": "block",
     "unknown_imports": "advise",
+    # Some lines are not worth a test; the plan keeps this advisory until
+    # partner reviews measure how often a missed line matters.
+    "changed_lines_checked": "advise",
 }
 # Skylos's own settings and the agent hook files that run it. Not all of
 # .claude/ or .cursor/: skills and rules there are ordinary project files.
@@ -51,6 +55,9 @@ DEFAULT_MAX_STOP_BLOCKS = 3
 MIN_STOP_BLOCKS = 1
 MAX_STOP_BLOCKS = 10
 MAX_PROTECTED_PATHS = 100
+DEFAULT_CHANGED_LINES_BUDGET_SECONDS = 120
+MIN_CHANGED_LINES_BUDGET_SECONDS = 10
+MAX_CHANGED_LINES_BUDGET_SECONDS = 1800
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,7 @@ class DoneConfig:
     test_command: tuple[str, ...] | None = None
     junit_xml: str | None = None
     test_budget_seconds: int = DEFAULT_TEST_BUDGET_SECONDS
+    changed_lines_budget_seconds: int = DEFAULT_CHANGED_LINES_BUDGET_SECONDS
     max_stop_blocks: int = DEFAULT_MAX_STOP_BLOCKS
     protected_paths: tuple[str, ...] = DEFAULT_PROTECTED_PATHS
     modes: Mapping[str, str] = field(default_factory=lambda: dict(DEFAULT_MODES))
@@ -76,6 +84,7 @@ class DoneConfig:
                 "test_command": list(self.test_command or ()),
                 "junit_xml": self.junit_xml,
                 "test_budget_seconds": self.test_budget_seconds,
+                "changed_lines_budget_seconds": self.changed_lines_budget_seconds,
                 "max_stop_blocks": self.max_stop_blocks,
                 "protected_paths": list(self.protected_paths),
                 "modes": {key: self.mode(key) for key in CHECK_IDS},
@@ -114,6 +123,14 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
         MAX_TEST_BUDGET_SECONDS,
         problems,
     )
+    changed_lines_budget = _bounded_int(
+        table.get("changed_lines_budget_seconds"),
+        "changed_lines_budget_seconds",
+        DEFAULT_CHANGED_LINES_BUDGET_SECONDS,
+        MIN_CHANGED_LINES_BUDGET_SECONDS,
+        MAX_CHANGED_LINES_BUDGET_SECONDS,
+        problems,
+    )
     stop_blocks = _bounded_int(
         table.get("max_stop_blocks"),
         "max_stop_blocks",
@@ -128,6 +145,7 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
         test_command=test_command,
         junit_xml=junit_xml,
         test_budget_seconds=budget,
+        changed_lines_budget_seconds=changed_lines_budget,
         max_stop_blocks=stop_blocks,
         protected_paths=protected,
         modes=modes,

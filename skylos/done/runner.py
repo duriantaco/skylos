@@ -46,7 +46,13 @@ MAX_JUNIT_BYTES = 64 * 1024 * 1024
 MAX_RERUN_TESTS = 50
 OUTPUT_TAIL_CHARS = 4000
 _MIN_RERUN_SECONDS = 5.0
-_STRIPPED_ENV = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS")
+_STRIPPED_ENV = (
+    "PYTEST_ADDOPTS",
+    "PYTEST_PLUGINS",
+    "SKYLOS_DONE_MUTANT",
+    "SKYLOS_DONE_TRACE",
+    "SKYLOS_DONE_DESELECTED",
+)
 _PYTEST_CONFIG_FILES = (
     "pytest.ini",
     ".pytest.ini",
@@ -55,29 +61,14 @@ _PYTEST_CONFIG_FILES = (
     "setup.cfg",
 )
 
-# A standalone pytest plugin (it imports nothing from Skylos, so it loads in
-# any environment) that records the tests pytest itself deselected: -m, -k
-# and --deselect from the base's settings. A test that vanishes without being
-# deselected was dropped some other way, such as a conftest.py hook.
+# A standalone pytest plugin (pytest_probe.py, which imports nothing from
+# Skylos, so it loads in any environment), copied next to each run. It records
+# pytest's own deselections, maps changed lines to the tests that run them,
+# and loads a mutant in memory for the changed-lines check.
 _PLUGIN_MODULE = "skylos_done_pytest_plugin"
-_PLUGIN_SOURCE = """\
-import json
-import os
-
-_deselected = []
-
-
-def pytest_deselected(items):
-    _deselected.extend(item.nodeid for item in items)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    path = os.environ.get("SKYLOS_DONE_DESELECTED")
-    if path:
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(_deselected[:100000], handle)
-"""
+_PLUGIN_SOURCE = Path(__file__).with_name("pytest_probe.py").read_text(encoding="utf-8")
 _MAX_DESELECTED_BYTES = 16 * 1024 * 1024
+_MAX_TRACE_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -88,6 +79,7 @@ class CaseResult:
     line: int | None
     outcome: str  # "passed", "failed", "error" or "skipped"
     message: str = ""
+    seconds: float = 0.0
 
     @property
     def classes(self) -> tuple[str, ...]:
@@ -134,6 +126,14 @@ class TestRunResult:
     silent_files: list[str] = field(default_factory=list)
     output_tail: str = ""
     auto_command: bool = False
+    pytest: bool = False
+    # Changed-lines check: which tests ran each traced line (repository-
+    # relative path and line -> node ids), per-test seconds, and how the
+    # trace went. None when no trace was requested.
+    line_map: dict[tuple[str, int], set[str]] | None = None
+    import_lines: set[tuple[str, int]] = field(default_factory=set)
+    trace: dict | None = None
+    node_seconds: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -150,6 +150,7 @@ def run_tests(
     changed_tests: list[TestItem],
     base_tests: list[TestItem] | None = None,
     deadline: float | None = None,
+    trace_targets: dict[str, list[int]] | None = None,
 ) -> TestRunResult:
     root = comparison.root
     invocation = _invocation(root, config)
@@ -175,8 +176,23 @@ def run_tests(
     workdir = Path(tempfile.mkdtemp(prefix="skylos-done-")).resolve()
     try:
         (workdir / f"{_PLUGIN_MODULE}.py").write_text(_PLUGIN_SOURCE, encoding="utf-8")
-        first = _run_once(root, config, invocation, (), workdir / "run.xml", budget_end)
+        trace_env, trace_out = _trace_environment(
+            root, workdir, trace_targets if invocation.pytest else None
+        )
+        first = _run_once(
+            root,
+            config,
+            invocation,
+            (),
+            workdir / "run.xml",
+            budget_end,
+            extra_env=trace_env,
+        )
         result = _assess(first, invocation, shown)
+        result.pytest = invocation.pytest
+        result.node_seconds = {c.node_id: c.seconds for c in first.cases if c.node_id}
+        if trace_out is not None:
+            _read_trace(result, trace_out, root)
         if result.status != "fail" or not invocation.pytest:
             return _with_missing(result, first, changed_tests, invocation, excluded)
 
@@ -204,6 +220,162 @@ def run_tests(
                         f"{len(result.flaky)} failed once and passed on a rerun (flaky)"
                     )
         return _with_missing(result, first, changed_tests, invocation, excluded)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Changed-lines check support: line tracing and mutant runs
+# ---------------------------------------------------------------------------
+
+
+def _trace_environment(
+    root: Path, workdir: Path, targets: dict[str, list[int]] | None
+) -> tuple[dict[str, str], Path | None]:
+    """Environment that asks the probe to trace ``targets`` (repo-relative)."""
+    if not targets:
+        return {}, None
+    request = workdir / "trace-request.json"
+    out = workdir / "trace.json"
+    with os.fdopen(_create_log(request), "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "targets": {
+                    str((root / path).resolve()): sorted(lines)
+                    for path, lines in targets.items()
+                },
+                "out": str(out),
+            },
+            handle,
+        )
+    return {"SKYLOS_DONE_TRACE": str(request)}, out
+
+
+def _read_trace(result: TestRunResult, out: Path, root: Path) -> None:
+    raw = _read_regular(out, _MAX_TRACE_BYTES)
+    data = None
+    if raw is not None:
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            data = None
+    if not isinstance(data, dict) or not isinstance(data.get("hits"), dict):
+        result.trace = {"ok": False, "reason": "the test run wrote no line trace"}
+        return
+    real_root = root.resolve()
+
+    def relative(path) -> str | None:
+        try:
+            return Path(str(path)).resolve().relative_to(real_root).as_posix()
+        except (OSError, ValueError):
+            return None
+
+    prefix = ""
+    rootdir = relative(data.get("rootdir", ""))
+    if rootdir and rootdir != ".":
+        prefix = rootdir + "/"
+    line_map: dict[tuple[str, int], set[str]] = {}
+    for node, hits in data["hits"].items():
+        if not isinstance(hits, list):
+            continue
+        for item in hits:
+            if not (
+                isinstance(item, list) and len(item) == 2 and isinstance(item[1], int)
+            ):
+                continue
+            path = relative(item[0])
+            if path is None:
+                continue
+            if node:
+                line_map.setdefault((path, item[1]), set()).add(prefix + str(node))
+            else:
+                # Ran while modules were imported, outside any test.
+                result.import_lines.add((path, item[1]))
+    result.line_map = line_map
+    result.trace = {
+        "ok": not data.get("lost"),
+        "reason": "another tool replaced the line tracer" if data.get("lost") else "",
+        "backend": str(data.get("backend") or ""),
+        "loaded": {p for p in map(relative, data.get("loaded") or []) if p},
+        "shadowed": {
+            p: str(other)
+            for target, other in (data.get("shadowed") or {}).items()
+            if (p := relative(target))
+        },
+    }
+
+
+@dataclass(frozen=True)
+class MutantRun:
+    outcome: str  # "killed", "survived" or "not_checked"
+    reason: str = ""
+    seconds: float = 0.0
+
+
+def run_mutant(
+    comparison: Comparison,
+    config: DoneConfig,
+    *,
+    node_ids: list[str],
+    path: str,
+    source: str,
+    timeout: float,
+) -> MutantRun:
+    """Run ``node_ids`` with ``path`` replaced in memory by ``source``.
+
+    Killed: a test failed (or the run hung past ``timeout``, which counts as
+    detected). Survived: every test passed with the mutant loaded. Anything
+    else (the mutant never loaded, nothing ran) is not checked.
+    """
+    root = comparison.root
+    invocation = _invocation(root, config)
+    if invocation is None or not invocation.pytest or not node_ids:
+        return MutantRun("not_checked", "needs pytest and a test that runs the line")
+    workdir = Path(tempfile.mkdtemp(prefix="skylos-mutant-")).resolve()
+    try:
+        (workdir / f"{_PLUGIN_MODULE}.py").write_text(_PLUGIN_SOURCE, encoding="utf-8")
+        flag = workdir / "loaded.json"
+        request = workdir / "mutant.json"
+        with os.fdopen(_create_log(request), "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "file": str((root / path).resolve()),
+                    "source": source,
+                    "loaded_flag": str(flag),
+                },
+                handle,
+            )
+        outcome = _run_once(
+            root,
+            config,
+            invocation,
+            tuple(node_ids),
+            workdir / "mutant.xml",
+            time.monotonic() + max(1.0, timeout),
+            extra_env={"SKYLOS_DONE_MUTANT": str(request)},
+        )
+        loaded = _read_regular(flag, 4096) is not None
+        seconds = round(outcome.seconds, 1)
+        if outcome.error == "timeout":
+            if loaded:
+                return MutantRun("killed", "the tests hung with the change", seconds)
+            return MutantRun(
+                "not_checked", "the run timed out before the code loaded", seconds
+            )
+        if not loaded:
+            return MutantRun(
+                "not_checked",
+                "the tests did not load this file from the repository",
+                seconds,
+            )
+        if any(c.outcome in {"failed", "error"} for c in outcome.cases):
+            return MutantRun("killed", "", seconds)
+        passed = [c for c in outcome.cases if c.outcome == "passed"]
+        if passed and outcome.exit_code == 0:
+            return MutantRun("survived", "", seconds)
+        if outcome.exit_code not in (0, None, 5):
+            return MutantRun("killed", "the test run failed with the change", seconds)
+        return MutantRun("not_checked", "no test ran", seconds)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -272,6 +444,8 @@ def _run_once(
     node_ids: tuple[str, ...],
     junit_path: Path,
     budget_end: float,
+    *,
+    extra_env: dict[str, str] | None = None,
 ) -> _RunOutcome:
     argv = list(invocation.argv)
     if invocation.pytest:
@@ -299,6 +473,7 @@ def _run_once(
             p for p in (str(junit_path.parent), env.get("PYTHONPATH", "")) if p
         )
         env["SKYLOS_DONE_DESELECTED"] = str(deselected_path)
+        env.update(extra_env or {})
     log_path = junit_path.with_suffix(".log")
     started_wall = time.time()
     started = time.monotonic()
@@ -667,6 +842,7 @@ def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
                 line=_int(case.get("line")),
                 outcome=outcome,
                 message=message,
+                seconds=_float(case.get("time")),
             )
         )
     return cases
@@ -683,6 +859,14 @@ def _relative(file_attr: str, root: Path) -> str:
     while path.startswith("./"):
         path = path[2:]
     return path
+
+
+def _float(value: str | None) -> float:
+    try:
+        number = float(value or 0)
+    except ValueError:
+        return 0.0
+    return number if number >= 0 and number < 1e9 else 0.0
 
 
 def _int(value: str | None) -> int | None:

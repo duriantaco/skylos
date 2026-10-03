@@ -27,6 +27,7 @@ Skylos could not run (for example, the base is not fetched).
 | Skylos settings and hooks left alone | SKY-A114 | yes | Edits to `protected_paths`, to `[tool.skylos]` in pyproject.toml, or to a CI workflow that runs Skylos. |
 | No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. |
 | Every package and import is real | SKY-D222, SKY-D225, SKY-D223 (advice) | advise | Added imports and dependencies resolve to real, declared packages. Names that only cannot be tied to a declared package are advice. |
+| Tests check the changed lines | SKY-A120 | advise | Each changed line in non-test Python code is run by a test, and a test fails when Skylos changes that line on purpose. Lines that fail either are listed on the receipt as unverified. See below. |
 
 A deleted test that directly references a deleted production module is
 reported as a feature removal (advice). Renaming a module or deleting an
@@ -62,7 +63,11 @@ test_tampering = "block"
 gate_tampering = "block"
 secrets = "block"
 unknown_imports = "advise"
+changed_lines_checked = "advise"
 ```
+
+`changed_lines_budget_seconds` (default 120, 10 to 1800) bounds the
+changed-lines check separately from `test_budget_seconds`.
 
 Modes: `block` decides the verdict; `advise` is shown but never blocks;
 `shadow` is recorded on the receipt but not shown; `off` does not run.
@@ -152,6 +157,50 @@ conversation. Done's `max_stop_blocks` applies to an unchanged working tree;
 editing the tree gives Done a fresh retry budget but does not reset Cursor's
 conversation counter. After Cursor reaches its limit, continue manually or
 start a new conversation. Reaching that limit never makes the receipt pass.
+
+## Tests check the changed lines (SKY-A120)
+
+AI agents often write tests that pass without checking anything the change
+does. This check asks two questions about every changed, executable line in
+non-test Python code:
+
+1. **Does any test run it?** The `tests_pass` run is traced (`sys.monitoring`
+   on Python 3.12+, `sys.settrace` before that), mapping each changed line to
+   the tests that execute it. A line no test runs is reported, grouped per
+   function: `No test runs shop/billing.py:26-28 (in refund).`
+2. **Does any test notice if it is wrong?** Skylos makes one deliberate change
+   to the line, chosen by what the line does: flip a comparison (`>` to `>=`),
+   swap `and`/`or`, negate a condition, return a default value, change an
+   integer by one, swap `+`/`-`, pass `None` for a changed argument, assign
+   `None`, or remove a call. It reruns only the tests that run the line. If
+   they all still pass: `No test fails if shop/billing.py:14 changes > to >=.
+   Add an assertion that would.`
+
+The changed code is loaded in memory inside the test process. The working
+tree is never modified and no bytecode is written. Only code on the lines the
+change touched is mutated, so a long statement with one changed argument is
+judged on that argument.
+
+Skipped on purpose: logging and `print` calls, imports, docstrings, type
+hints, module-level and class-level code, `raise NotImplementedError`, the
+messages passed to exceptions, `if TYPE_CHECKING:`, `if __name__ ==
+"__main__":`, test files and `migrations/`.
+
+Limits, reported and never counted as passing:
+
+- At most 20 mutants run, within `changed_lines_budget_seconds`; each mutant
+  times out at twice its tests' normal time plus 15 seconds. A hung run counts
+  as caught. Lines past either limit are "not checked".
+- A line that only runs while modules are imported, a file the tests import
+  from somewhere else (an installed copy), or a line no mutation applies to is
+  not judged.
+- Needs pytest. Code run in a subprocess (a CLI started by a test) is not
+  traced, so those lines can be reported as not run.
+- Runs only when the test run finished with every test passing.
+
+Some lines are not worth a test, so the check advises by default. Its
+findings are suggestions for the agent, and the receipt's `unverified` list
+tells a reviewer where to look.
 
 ## Receipt
 
