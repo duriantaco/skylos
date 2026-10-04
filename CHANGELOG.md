@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.44.0](https://github.com/duriantaco/skylos/compare/v4.43.2...v4.44.0) (2026-10-04)
+
+
+### Features
+
+* **agent:** verify session stops and changed-line tests ([#932](https://github.com/duriantaco/skylos/issues/932)) ([7a597ad](https://github.com/duriantaco/skylos/commit/7a597ad0f9c0caf16d3043db661ca930917bc5d3))
+* **cloud:** show upload trust and add --require-trusted-upload ([#935](https://github.com/duriantaco/skylos/issues/935)) ([7ec7637](https://github.com/duriantaco/skylos/commit/7ec76375b46719f36d389ef45a4e1b9926fe90da))
+
+
+### Bug Fixes
+
+* **scan:** correct false python import reports and missed code checks ([#937](https://github.com/duriantaco/skylos/issues/937)) ([f989704](https://github.com/duriantaco/skylos/commit/f98970463a140734b0682102212c8a1262e182ad))
+
 ## [4.43.2](https://github.com/duriantaco/skylos/compare/v4.43.1...v4.43.2) (2026-10-01)
 
 
