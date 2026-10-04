@@ -76,6 +76,10 @@ SUMMARY_NOT_JSON = "The summary is not JSON."
 SUMMARY_DISAGREES = "The summary and the signed statement disagree."
 OTHER_WORKSPACE = "The verdict belongs to a different workspace."
 NOT_REPOSITORY_VERIFIED = "The verdict is not bound to a verified repository upload."
+NOT_TRUSTED_UPLOAD = (
+    "The verdict is not for a trusted upload "
+    "(CI with OIDC, or a CI key the project trusts)."
+)
 INVALID_SIGNING_TIME = "The verdict has an invalid signing time."
 TOO_OLD = "The verdict is older than the allowed age."
 
@@ -113,6 +117,10 @@ class VerdictExpectations:
     # Reject verdicts signed longer ago than this.
     max_age: timedelta | None = None
     now: datetime | None = None
+    # Require a trusted upload: CI with OIDC, or a CI key the project trusts.
+    # Verdicts signed before Skylos Cloud recorded trust fail this.
+    # Append new fields to preserve existing positional max_age/now callers.
+    require_trusted_upload: bool = False
 
 
 @dataclass(frozen=True)
@@ -178,6 +186,18 @@ def repository_verified(summary: Mapping[str, Any]) -> bool:
     return (
         summary.get("repository_binding") == "verified"
         and get_path(summary, "upload_identity", "repository_verified") is True
+    )
+
+
+def trusted_upload(summary: Mapping[str, Any]) -> bool:
+    """Skylos Cloud trusted the upload: OIDC CI, or a CI key the project trusts.
+
+    Uploads with the ``skylos login`` key never are: any coding agent on the
+    developer's machine can read that key.
+    """
+    return get_path(summary, "upload_identity", "trust") in (
+        "verified_ci",
+        "trusted_api_key",
     )
 
 
@@ -405,6 +425,8 @@ def _check_trust_expectations(
 ) -> None:
     if expect.require_repository_verified and not repository_verified(summary):
         raise _Rejected(NOT_REPOSITORY_VERIFIED)
+    if expect.require_trusted_upload and not trusted_upload(summary):
+        raise _Rejected(NOT_TRUSTED_UPLOAD)
     if expect.max_age is None:
         return
     signed_at = _parse_signing_time(get_path(statement, "predicate", "timeVerified"))

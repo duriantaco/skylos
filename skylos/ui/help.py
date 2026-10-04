@@ -394,6 +394,7 @@ COMMANDS = [
             "default https://skylos.dev/.well-known/skylos-verdict-keys.json",
             "--commit/--repository/--project/--workspace: the verdict must be for these",
             "--require-repository-verified: require a GitHub OIDC upload bound to the repository",
+            "--require-trusted-upload: reject skylos login uploads and verdicts signed before upload trust",
             "--max-age 7d: reject verdicts signed longer ago",
             "--require-passed: exit 1 unless PASSED at level SKYLOS_POLICY_PASSED; "
             "--allow-override also accepts SKYLOS_GATE_OVERRIDDEN",

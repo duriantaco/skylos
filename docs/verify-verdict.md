@@ -45,7 +45,7 @@ curl -fsS "https://skylos.dev/api/v1/verdicts?commit=$SHA&project_id=$PROJECT_ID
 
 skylos verify-verdict verdict.json --commit "$SHA" \
   --repository github.com/org/repo --require-repository-verified \
-  --max-age 7d --require-passed
+  --require-trusted-upload --max-age 7d --require-passed
 ```
 
 The API needs an organization API token with `read:findings` and a
@@ -69,6 +69,7 @@ You can also download a verdict from the scan page in the dashboard
 | `--project PROJECT_ID` | the verdict is for this Skylos project id (exact). |
 | `--workspace ORG_ID` | the verdict belongs to this Skylos workspace id (exact). Verdicts signed before workspaces were recorded never match. |
 | `--require-repository-verified` | the upload was GitHub OIDC bound to the repository **and** the project is bound to that repository by its GitHub repository id (`repository_binding: verified`; missing counts as unverified). |
+| `--require-trusted-upload` | Skylos Cloud trusted the upload (`upload_identity.trust` is `verified_ci` or `trusted_api_key`): CI with GitHub or GitLab OIDC, or a CI key the project trusts. A `skylos login` key never is, because any coding agent on that machine can read it. Verdicts signed before Skylos Cloud recorded trust fail this. A GitLab merge request pipeline (`upload_identity.event` = `merge_request_event`) counts as trusted but runs the merge request's own CI configuration; `--require-repository-verified` accepts only GitHub uploads from the default branch or the pinned `pull_request_target` workflow. |
 | `--max-age DURATION` | the verdict was signed within this time (`90m`, `24h`, `7d`, `2w`; units `s m h d w`). A signing time more than five minutes in the future is rejected. |
 | `--require-passed` | the result is PASSED at level `SKYLOS_POLICY_PASSED`. |
 | `--allow-override` | with `--require-passed`, also accept `SKYLOS_GATE_OVERRIDDEN`. |
@@ -102,7 +103,7 @@ example `Not verified: No valid signature from a trusted Skylos key.` or
 |:---|:---|
 | `0` | Verified, and every option you passed holds. |
 | `1` | Only with `--require-passed`: verified, but not passing (FAILED, an overridden gate without `--allow-override`, or a disabled gate). |
-| `2` | Not verified: bad signature or content, a `--commit`, `--repository`, `--project`, `--workspace`, `--require-repository-verified`, or `--max-age` mismatch, invalid input, keys unavailable, or `cryptography` not installed. |
+| `2` | Not verified: bad signature or content, a `--commit`, `--repository`, `--project`, `--workspace`, `--require-repository-verified`, `--require-trusted-upload`, or `--max-age` mismatch, invalid input, keys unavailable, or `cryptography` not installed. |
 
 `--json` prints one object instead: `verified`, `verdict`, `verified_level`,
 `commit`, `repository`, `repository_binding`, `project_id`, `workspace_id`,
