@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import csv
 import io
 import json
@@ -899,6 +900,11 @@ def _has_direct_script_evidence(source):
 _IMPORT_ERROR_CATCHERS = frozenset(
     {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
 )
+_BUILTIN_EXCEPTION_NAMES = frozenset(
+    name
+    for name, value in vars(builtins).items()
+    if isinstance(value, type) and issubclass(value, BaseException)
+)
 
 
 def _catches_import_error(handler):
@@ -912,13 +918,19 @@ def _catches_import_error(handler):
     )
 
 
-def _import_nodes(statements):
+def _import_nodes(statements, *, transparent_try=None):
     """Import statements that run with ``statements`` (not in nested defs)."""
     pending = list(statements)
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             yield node
+        elif (
+            isinstance(node, ast.Try)
+            and transparent_try is not None
+            and not transparent_try(node)
+        ):
+            continue
         elif not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             pending.extend(ast.iter_child_nodes(node))
 
@@ -960,14 +972,29 @@ def _optional_import_paths(src, *, allow_uncertain=False):
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     )
+    shadowed.update(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and node.name
+    )
+    shadowed.update(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name
+    )
+    shadowed.update(
+        node.rest
+        for node in ast.walk(tree)
+        if isinstance(node, ast.MatchMapping) and node.rest
+    )
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             shadowed.update(
                 alias.asname or alias.name.split(".")[0] for alias in node.names
             )
 
-    def survives(handler):
-        for node in handler.body:
+    def survives(statements):
+        for node in statements:
             if isinstance(node, ast.Pass):
                 continue
             if isinstance(node, ast.Assign) and all(
@@ -981,78 +1008,287 @@ def _optional_import_paths(src, *, allow_uncertain=False):
             return False
         return True
 
-    def explicitly_fails(handler):
-        for node in ast.walk(handler):
-            if isinstance(node, (ast.Raise, ast.Return)):
-                return True
-            if isinstance(node, ast.Call):
-                function = node.func
-                if isinstance(function, ast.Name) and function.id in {"exit", "quit"}:
+    def explicitly_fails(statements):
+        for statement in statements:
+            for node in ast.walk(statement):
+                if isinstance(node, (ast.Raise, ast.Return)):
                     return True
-                if isinstance(function, ast.Attribute) and isinstance(
-                    function.value, ast.Name
-                ):
-                    if (function.value.id, function.attr) in {
-                        ("sys", "exit"),
-                        ("os", "_exit"),
+                if isinstance(node, ast.Call):
+                    function = node.func
+                    if isinstance(function, ast.Name) and function.id in {
+                        "exit",
+                        "quit",
                     }:
                         return True
+                    if isinstance(function, ast.Attribute) and isinstance(
+                        function.value, ast.Name
+                    ):
+                        if (function.value.id, function.attr) in {
+                            ("sys", "exit"),
+                            ("os", "_exit"),
+                        }:
+                            return True
         return False
+
+    def valid_catcher(handler):
+        if handler.type is None:
+            return True
+        types = (
+            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        )
+        # Python validates the complete tuple when handling an exception. One
+        # real ImportError catcher cannot make an invalid or unresolved member
+        # safe, and repository bindings cannot prove a built-in exception type.
+        return all(
+            isinstance(value, ast.Name)
+            and value.id in _BUILTIN_EXCEPTION_NAMES
+            and value.id not in shadowed
+            for value in types
+        )
+
+    def invalid_catcher(handler):
+        if handler.type is None:
+            return False
+        types = (
+            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        )
+        return any(
+            isinstance(
+                value,
+                (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Set, ast.Lambda),
+            )
+            or (
+                isinstance(value, ast.Name)
+                and value.id in vars(builtins)
+                and value.id not in _BUILTIN_EXCEPTION_NAMES
+                and value.id not in shadowed
+            )
+            for value in types
+        )
+
+    def body_bindings(statements, import_node):
+        pending = [(node, False) for node in statements]
+        while pending:
+            node, class_local = pending.pop()
+            if getattr(node, "end_lineno", None) is not None and (
+                node.end_lineno,
+                node.end_col_offset,
+            ) < (import_node.lineno, import_node.col_offset):
+                # A binding completed before this import survives its failure.
+                continue
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if not class_local:
+                    yield node.name
+                # Function bodies run later and class-local names do not become
+                # bindings in the surrounding scope, but class bodies execute
+                # now and can mutate containers outside their local namespace.
+                if isinstance(node, ast.ClassDef):
+                    pending.extend(
+                        (child, True) for child in ast.iter_child_nodes(node)
+                    )
+                continue
+            if isinstance(node, ast.Lambda):
+                continue
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Store)
+                and not class_local
+            ):
+                yield node.id
+            if (
+                isinstance(node, (ast.MatchAs, ast.MatchStar))
+                and node.name
+                and not class_local
+            ):
+                yield node.name
+            if isinstance(node, ast.MatchMapping) and node.rest and not class_local:
+                yield node.rest
+            receiver = None
+            if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, ast.Store
+            ):
+                receiver = node.value
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr
+                in {
+                    "append",
+                    "extend",
+                    "insert",
+                    "update",
+                    "setdefault",
+                    "add",
+                    "__setitem__",
+                    "__setattr__",
+                }
+            ):
+                receiver = node.func.value
+            while isinstance(receiver, (ast.Attribute, ast.Subscript)):
+                receiver = receiver.value
+            if isinstance(receiver, ast.Name):
+                yield receiver.id
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and not class_local:
+                for alias in node.names:
+                    yield alias.asname or alias.name.split(".")[0]
+            pending.extend((child, class_local) for child in ast.iter_child_nodes(node))
+
+    statement_blocks = {
+        id(child): value
+        for parent in ast.walk(tree)
+        for _field, value in ast.iter_fields(parent)
+        if isinstance(value, list)
+        for child in value
+        if isinstance(child, ast.stmt)
+    }
+
+    def fallback_binding_values(statement, handler, import_node):
+        """Literal values guaranteed when this import fails."""
+        siblings = statement_blocks[id(statement)]
+        index = siblings.index(statement)
+        if (
+            not survives(handler.body)
+            or not survives(statement.finalbody)
+            or import_node not in statement.body
+        ):
+            return {}
+        prefix = statement.body[: statement.body.index(import_node)]
+        if not survives(prefix):
+            return {}
+
+        # Only uninterrupted literal assignments in the same statement block
+        # prove initialization. A write inside an earlier conditional does not.
+        before = []
+        for earlier in reversed(siblings[:index]):
+            if not (
+                isinstance(earlier, ast.Assign)
+                and isinstance(earlier.value, ast.Constant)
+                and all(isinstance(target, ast.Name) for target in earlier.targets)
+            ):
+                break
+            before.append(earlier)
+        fallback = {}
+
+        def update_fallback(statements):
+            for node in statements:
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        fallback[target.id] = node.value.value
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    for alias in node.names:
+                        fallback.pop(alias.asname or alias.name.split(".")[0], None)
+
+        # Earlier imports in a multi-name statement may already have replaced
+        # a sentinel before a later imported name fails.
+        update_fallback(list(reversed(before)) + prefix + [import_node] + handler.body)
+        # Python deletes the exception target when its handler finishes, even
+        # if the handler assigned a new value to that name.
+        if handler.name:
+            fallback.pop(handler.name, None)
+        update_fallback(statement.finalbody)
+        return fallback
+
+    def guarded_binding_uses(statement, bindings, fallback):
+        """Accept immediate safe reads or a None guard with proven fallbacks."""
+        siblings = statement_blocks[id(statement)]
+        index = siblings.index(statement)
+        if index + 1 == len(siblings):
+            return set()
+        guard = siblings[index + 1]
+        value = getattr(guard, "value", None)
+        if isinstance(guard, (ast.Expr, ast.Return)):
+            if isinstance(value, ast.Name) and value.id in fallback:
+                return {id(value)}
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "print"
+                and "print" not in shadowed
+            ):
+                return {
+                    id(arg)
+                    for arg in value.args
+                    if isinstance(arg, ast.Name) and arg.id in fallback
+                }
+        if not isinstance(guard, ast.If):
+            return set()
+        test = guard.test
+        if isinstance(test, ast.Name):
+            name, branch = test.id, guard.body
+        elif (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and len(test.ops) == len(test.comparators) == 1
+            and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+        ):
+            name = test.left.id
+            branch = guard.body if isinstance(test.ops[0], ast.IsNot) else guard.orelse
+        else:
+            return set()
+        if name not in bindings:
+            return set()
+        if name not in fallback or fallback[name] is not None:
+            return set()
+        protected = {
+            id(node)
+            for node in ast.walk(test)
+            if isinstance(node, ast.Name) and node.id == name
+        }
+        pending = list(branch)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(node, ast.Name) and node.id == name:
+                protected.add(id(node))
+            pending.extend(ast.iter_child_nodes(node))
+        return protected
+
+    def transparent_nested_try(statement):
+        # A nested catcher can swallow ImportError and let execution continue
+        # with missing bindings. An outer ImportError handler does not protect
+        # that path, nor can it protect an exception raised by a fatal finally.
+        return survives(statement.finalbody) and all(
+            valid_catcher(handler) and not _catches_import_error(handler)
+            for handler in statement.handlers
+        )
 
     guarded = set()
     protected_uses = {}
+    guarded_bindings = {}
     for statement in ast.walk(tree):
         if not isinstance(statement, ast.Try):
             continue
         handler = next(
             (h for h in statement.handlers if _catches_import_error(h)), None
         )
-        if handler is None or any(
-            isinstance(node, ast.Name) and node.id in shadowed
-            for node in (ast.walk(handler.type) if handler.type is not None else ())
-        ):
+        if handler is None or not valid_catcher(handler):
             continue
         preceding = statement.handlers[: statement.handlers.index(handler)]
-        disjoint = {
-            "ValueError",
-            "TypeError",
-            "AttributeError",
-            "RuntimeError",
-            "NameError",
-            "LookupError",
-            "KeyError",
-            "IndexError",
-            "ArithmeticError",
-            "AssertionError",
-            "OSError",
-            "SyntaxError",
-            "UnicodeError",
-            "StopIteration",
-            "StopAsyncIteration",
-        }
         uncertain_preceding = []
         for earlier in preceding:
-            types = (
-                earlier.type.elts
-                if isinstance(earlier.type, ast.Tuple)
-                else [earlier.type]
-            )
-            if not all(
-                isinstance(value, ast.Name)
-                and value.id in disjoint
-                and value.id not in shadowed
-                for value in types
-            ):
+            if not valid_catcher(earlier):
                 uncertain_preceding.append(earlier)
+        if any(invalid_catcher(h) for h in uncertain_preceding):
+            continue
         if uncertain_preceding and (
-            not allow_uncertain or any(explicitly_fails(h) for h in uncertain_preceding)
+            not allow_uncertain
+            or any(explicitly_fails(h.body) for h in uncertain_preceding)
         ):
             continue
-        if not survives(handler) and not (
-            allow_uncertain and not explicitly_fails(handler)
+        if not survives(handler.body) and not (
+            allow_uncertain and not explicitly_fails(handler.body)
         ):
             continue
-        imports = list(_import_nodes(statement.body))
+        if not survives(statement.finalbody) and not (
+            allow_uncertain and not explicitly_fails(statement.finalbody)
+        ):
+            continue
+        imports = list(
+            _import_nodes(statement.body, transparent_try=transparent_nested_try)
+        )
         guarded.update(id(node) for node in imports)
         running = list(statement.body)
         protected = set()
@@ -1063,7 +1299,11 @@ def _optional_import_paths(src, *, allow_uncertain=False):
             protected.add(id(node))
             running.extend(ast.iter_child_nodes(node))
         for node in imports:
-            protected_uses.setdefault(id(node), set()).update(protected)
+            bindings = set(body_bindings(statement.body, node))
+            fallback = fallback_binding_values(statement, handler, node)
+            uses = protected | guarded_binding_uses(statement, bindings, fallback)
+            protected_uses.setdefault(id(node), set()).update(uses)
+            guarded_bindings.setdefault(id(node), set()).update(bindings)
 
     if not guarded:
         return frozenset()
@@ -1082,6 +1322,10 @@ def _optional_import_paths(src, *, allow_uncertain=False):
         for node in ast.walk(tree):
             if id(node) not in nodes:
                 continue
+            # Import failure also skips assignments, functions and classes in
+            # the try body. A later use of those bindings needs a proof just as
+            # a later use of the imported module does.
+            aliases.update(guarded_bindings[id(node)])
             aliases.update(
                 alias.asname
                 or (

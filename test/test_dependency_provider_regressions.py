@@ -154,6 +154,143 @@ def test_exact_editable_install_without_wheel_cannot_prove_absence(
     assert fetched == [("mlx", "==1.0")]
 
 
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n    import ghost_required\nexcept (ImportError, 42):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, UnknownError):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, (ValueError,)):\n    pass\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    raise RuntimeError('required')\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    sys.exit(1)\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    first = ghost_required.run\n    handler = first\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    handler: object = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    def handler():\n        return 1\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    async def handler():\n        return 1\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    class Handler:\n        import ghost_required\nexcept ImportError:\n    pass\nHandler()\n",
+        "try:\n    import ghost_required\n    class Handler:\n        pass\nexcept ImportError:\n    pass\nHandler()\n",
+        "try:\n    import ghost_required\n    handlers = [ghost_required.run]\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "try:\n    import ghost_required\n    def handler():\n        return 1\nexcept ImportError:\n    handler = None\nhandler()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "if False:\n    handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError as handler:\n    handler = None\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nfinally:\n    handler = 1\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    handler = 1\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    if condition:\n        handler = 1\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nhandler = None\ntry:\n    import json as handler, ghost_required\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    try:\n        import ghost_required\n        handler = ghost_required.run\n    except ImportError:\n        pass\n    handler()\nexcept ImportError:\n    pass\n",
+        "try:\n    try:\n        import ghost_required\n    except ImportError:\n        pass\n    finally:\n        raise RuntimeError('required')\nexcept ImportError:\n    pass\n",
+        "def load():\n    try:\n        raise ValueError()\n    except ValueError as ImportError:\n        pass\n    try:\n        import ghost_required\n    except ImportError:\n        pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, 42):\n    pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, (TypeError,)):\n    pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, int):\n    pass\nexcept ImportError:\n    pass\n",
+        "handlers = []\ntry:\n    import ghost_required\n    handlers.append(ghost_required.run)\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "handlers = {}\ntry:\n    import ghost_required\n    handlers['run'] = ghost_required.run\nexcept ImportError:\n    pass\nhandlers['run']()\n",
+        "state = State()\ntry:\n    import ghost_required\n    state.handler = ghost_required.run\nexcept ImportError:\n    pass\nstate.handler()\n",
+        "handlers = []\ntry:\n    class Handler:\n        import ghost_required\n        handlers.append(ghost_required.run)\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "match 42:\n    case ImportError:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "match []:\n    case [*ImportError]:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "match {}:\n    case {**ImportError}:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    match ghost_required.run:\n        case handler:\n            pass\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready.value)\n",
+        "print = lambda x: x.run()\ntry:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready)\n",
+    ],
+    ids=[
+        "invalid-catcher-tuple",
+        "unknown-catcher-tuple",
+        "nested-catcher-tuple",
+        "fatal-finally-raise",
+        "fatal-finally-exit",
+        "derived-binding",
+        "transitive-derived-binding",
+        "annotated-derived-binding",
+        "function-binding",
+        "async-function-binding",
+        "class-body-import",
+        "class-binding",
+        "container-binding",
+        "unsafe-constant-fallback",
+        "unsafe-preinitialized-binding",
+        "conditional-initialization",
+        "deleted-exception-target",
+        "finally-overwrites-sentinel",
+        "try-overwrites-sentinel",
+        "conditional-try-overwrites-sentinel",
+        "partial-import-overwrites-sentinel",
+        "nested-guard-unbound-use",
+        "nested-guard-fatal-finally",
+        "earlier-exception-target-shadows-catcher",
+        "invalid-preceding-catcher-tuple",
+        "nested-preceding-catcher-tuple",
+        "nonexception-preceding-catcher",
+        "list-mutation",
+        "dict-mutation",
+        "attribute-mutation",
+        "class-body-list-mutation",
+        "match-shadows-catcher",
+        "match-star-shadows-catcher",
+        "match-mapping-shadows-catcher",
+        "match-derived-binding",
+        "unsafe-fallback-attribute-use",
+        "shadowed-print-fallback-use",
+    ],
+)
+def test_unproven_optional_import_remains_visible(monkeypatch, tmp_path, mode, source):
+    repo, path = _project(tmp_path, source)
+    _isolate(monkeypatch, {"safe-lib": _inventory("safe_lib/__init__.py")})
+    findings = _scan(mode, repo, path)
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "ghost_required")
+    ]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n    import ghost_required\nexcept (ImportError, AttributeError):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, ZeroDivisionError):\n    pass\n",
+        "try:\n    import ghost_required\n    ghost_required.run()\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\n    handler()\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    import json as ghost_required\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    ghost_required = None\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    cleanup_done = True\n",
+        "try:\n    ready = True\n    import ghost_required\nexcept ImportError:\n    pass\nprint(ready)\n",
+        "try:\n    def ready():\n        return 1\n    import ghost_required\nexcept ImportError:\n    pass\nready()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    handler = None\nif handler:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError as handler:\n    pass\nfinally:\n    handler = None\nif handler is not None:\n    handler()\n",
+        "try:\n    try:\n        import ghost_required\n    except ValueError:\n        pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready)\n",
+        "def load():\n    try:\n        import ghost_required\n        ready = True\n    except ImportError:\n        ready = False\n    return ready\n",
+    ],
+    ids=[
+        "valid-catcher-tuple",
+        "valid-builtin-catcher-tuple",
+        "guarded-module-use",
+        "guarded-derived-use",
+        "stdlib-fallback-binding",
+        "constant-fallback-binding",
+        "safe-finally",
+        "earlier-assignment",
+        "earlier-function",
+        "preinitialized-guarded-binding",
+        "fallback-guarded-binding",
+        "finally-restores-sentinel",
+        "nested-disjoint-catcher",
+        "literal-fallback-print",
+        "literal-fallback-return",
+    ],
+)
+def test_proven_optional_import_controls_remain_suppressed(
+    monkeypatch, tmp_path, mode, source
+):
+    repo, path = _project(tmp_path, source)
+    _isolate(monkeypatch)
+    assert _scan(mode, repo, path) == []
+
+
 @pytest.mark.parametrize(
     "partial_evidence", ["generic-pth", "invalid-direct-url", "symlinked-direct-url"]
 )
