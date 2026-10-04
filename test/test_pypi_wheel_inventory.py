@@ -221,6 +221,81 @@ def test_other_platform_artifact_keeps_portable_exact_pin_absence_unverified(
     assert result["complete_for_requirement"] is False
 
 
+@pytest.mark.parametrize(
+    "loader",
+    [
+        "provider_loader.pth",
+        "sample-1.0.data/purelib/provider_loader.pth",
+        "sample-1.0.data/platlib/provider_loader.pth",
+    ],
+)
+def test_exact_wheel_path_loader_keeps_positive_paths_but_cannot_prove_absence(
+    monkeypatch, loader
+):
+    body = _wheel(["known_provider.py", loader])
+    _registry(monkeypatch, {"1.0": (body, _file("1.0"))})
+    result = wheel_modules.fetch_distribution_modules("sample", specifier="==1.0")
+    assert "known_provider" in result["module_paths"]
+    assert result["complete_for_requirement"] is False
+
+
+@pytest.mark.parametrize(
+    "data_file",
+    [
+        "known_provider/data.pth",
+        "docs/example.pth",
+        "directory.pth/",
+        "sample-1.0.data/purelib/directory.pth/",
+        ".hidden.pth",
+        "sample-1.0.data/platlib/.hidden.pth",
+    ],
+)
+def test_non_loader_pth_entries_do_not_make_wheel_inventory_incomplete(
+    monkeypatch, data_file
+):
+    body = _wheel(["known_provider.py", data_file])
+    _registry(monkeypatch, {"1.0": (body, _file("1.0"))})
+    result = wheel_modules.fetch_distribution_modules("sample", specifier="==1.0")
+    assert result["complete_for_requirement"] is True
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+def test_loader_wheel_unknown_import_stays_unverified(monkeypatch, tmp_path, mode):
+    from skylos.rules.ai_defect import dependency_hallucination as dep
+
+    body = _wheel(["known_provider.py", "provider_loader.pth"])
+    _registry(monkeypatch, {"1.0": (body, _file("1.0"))})
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: {"os", "sys"})
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(dep, "_load_import_to_dist_mapping", lambda: {})
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+    monkeypatch.setattr(dep, "_installed_provider_inventory", lambda _dist, _ctx: None)
+    monkeypatch.setattr(dep, "_check_pypi_status", lambda _name, _cache: "missing")
+    monkeypatch.setattr(
+        dep,
+        "_fetch_dist_modules",
+        lambda dist, *, specifier="": wheel_modules.fetch_distribution_modules(
+            dist, specifier=specifier
+        ),
+    )
+    (tmp_path / "requirements.txt").write_text("sample==1.0\n", encoding="utf-8")
+    path = tmp_path / "main.py"
+    path.write_text(
+        "import known_provider\nimport dynamic_provider\n", encoding="utf-8"
+    )
+    if mode == "diff":
+        findings, _unreachable = dep.scan_diff_added_imports(
+            tmp_path,
+            [("main.py", 1, "known_provider"), ("main.py", 2, "dynamic_provider")],
+        )
+    else:
+        findings = dep.scan_python_dependency_hallucinations(tmp_path, [path])
+    assert [(finding["rule_id"], finding["symbol"]) for finding in findings] == [
+        (dep.RULE_ID_UNDECLARED, "dynamic_provider")
+    ]
+    assert findings[0]["message"].startswith("Unverified import")
+
+
 def test_full_module_paths_distinguish_namespace_portions(monkeypatch):
     body = _wheel(
         [
