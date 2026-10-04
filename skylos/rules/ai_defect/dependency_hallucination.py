@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import csv
 import io
+import json
 import logging
 import os
 import re
@@ -2262,6 +2263,38 @@ def _requirement_is_exact(specifier):
         return False
 
 
+def _installed_record_is_incomplete(directory, dist_info, file_names):
+    # Editable RECORDs list loader machinery rather than all source modules.
+    # Inspect metadata only; never execute the loader or follow its source URL.
+    if any(
+        PurePosixPath(name).name.startswith("__editable__")
+        or (len(PurePosixPath(name).parts) == 1 and name.endswith(".pth"))
+        for name in file_names
+    ):
+        return True
+    direct_url = read_project_text_no_symlink(
+        directory,
+        dist_info / "direct_url.json",
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if direct_url is None:
+        return f"{dist_info.name}/direct_url.json" in file_names
+    try:
+        metadata = json.loads(direct_url)
+    except (ValueError, RecursionError):
+        return True
+    if not isinstance(metadata, dict):
+        return True
+    dir_info = metadata.get("dir_info")
+    if dir_info is None:
+        return False
+    if not isinstance(dir_info, dict):
+        return True
+    editable = dir_info.get("editable", False)
+    return editable is not False
+
+
 def _installed_provider_inventory(dist, ctx):
     key = _dist_key(dist, ctx)
     if key in ctx["environment_inventories"]:
@@ -2328,7 +2361,11 @@ def _installed_provider_inventory(dist, ctx):
                     continue
                 inventory = pypi_wheel_modules.module_inventory(file_names)
                 inventory["version"] = str(version)
-                inventory["complete_for_requirement"] = _requirement_is_exact(specifier)
+                inventory["complete_for_requirement"] = _requirement_is_exact(
+                    specifier
+                ) and not _installed_record_is_incomplete(
+                    directory, dist_info, file_names
+                )
                 ctx["environment_inventories"][key] = inventory
                 return inventory
         except OSError:
@@ -2338,14 +2375,84 @@ def _installed_provider_inventory(dist, ctx):
 
 def _verified_provider_inventory(dist, ctx):
     installed = _installed_provider_inventory(dist, ctx)
-    if installed is not None:
+    if installed is not None and installed.get("complete_for_requirement") is True:
         return installed
-    inventory = ctx["dist_modules"].get(_dist_key(dist, ctx))
-    return (
-        inventory
-        if isinstance(inventory, dict) and "module_paths" in inventory
-        else None
+    wheel = ctx["dist_modules"].get(_dist_key(dist, ctx))
+    if not isinstance(wheel, dict) or "module_paths" not in wheel:
+        return installed
+    if installed is None:
+        return wheel
+
+    # Positive wheel evidence can supplement a partial installed inventory.
+    # It cannot establish absence in an editable checkout, which may differ
+    # from the published wheel even when both report the same version.
+    inventory = dict(wheel)
+    inventory["complete_for_requirement"] = False
+    installed_version, wheel_version = installed.get("version"), wheel.get("version")
+    installed_paths = set(installed["module_paths"])
+    if installed_version and wheel_version:
+        try:
+            same_version = Version(installed_version) == Version(wheel_version)
+        except (TypeError, InvalidVersion):
+            same_version = False
+        if not same_version:
+            # A different release must independently cover the installed
+            # paths and their shapes, including concrete from-import bases.
+            # Never combine disjoint releases or invalidate earlier checks.
+            for field in (
+                "module_paths",
+                "concrete_module_paths",
+                "plain_module_paths",
+                "package_paths",
+            ):
+                provider_paths = {
+                    path
+                    for path in installed.get(field, ())
+                    if not path.split(".", 1)[0].startswith("__editable__")
+                }
+                if not provider_paths <= set(wheel.get(field, ())):
+                    return installed
+
+    installed_plain = set(installed.get("plain_module_paths", ()))
+    installed_packages = set(installed.get("package_paths", ()))
+    installed_parents = {
+        ".".join(path.split(".")[:index])
+        for path in installed_paths
+        for index in range(1, len(path.split(".")))
+    }
+    blocked = {
+        path
+        for path in wheel["module_paths"]
+        if any(
+            ".".join(path.split(".")[:index]) in installed_plain
+            for index in range(1, len(path.split(".")))
+        )
+    }
+    # A published wheel may differ from an editable checkout. Supplement its
+    # paths without replacing the module/package layout actually installed.
+    conflicting_plain = set(wheel.get("plain_module_paths", ())) & (
+        installed_packages | installed_parents
     )
+    for field, excluded in (
+        ("module_paths", blocked),
+        ("concrete_module_paths", blocked | conflicting_plain | installed_plain),
+        ("plain_module_paths", blocked | conflicting_plain),
+        ("package_paths", blocked | installed_plain),
+    ):
+        inventory[field] = sorted(
+            set(installed.get(field, ())) | (set(wheel.get(field, ())) - excluded)
+        )
+    inventory["modules"] = sorted(
+        {path.split(".", 1)[0] for path in inventory["module_paths"]}
+    )
+    namespace_paths = set(inventory["module_paths"]) - set(
+        inventory["concrete_module_paths"]
+    )
+    inventory["namespace_paths"] = sorted(namespace_paths)
+    inventory["namespace_roots"] = sorted(
+        path for path in namespace_paths if "." not in path
+    )
+    return inventory
 
 
 def _provider_absence_proved(dist, ctx):
