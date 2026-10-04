@@ -8,6 +8,7 @@ processes for batchable requests, and the same file boundary as the analyzer.
 """
 
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -122,6 +123,59 @@ def _lines(results, request):
         + line.split(":", 2)[1]
         for line in results[request]
     )
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (r"foo.{0,80}bar", "foo bar"),
+        (r"abc{1,10}", "abc"),
+        (r"(?:abc){2,10}", "abcabc"),
+        (r"foo.{0,80}?bar", "foobar"),
+        (r"a{,10}", "aaa"),
+        (r"foo{literal|other}bar", "foo{literal"),
+        (r"foo\{12,34\}bar", "foo{12,34}bar"),
+    ],
+)
+def test_python_backend_preserves_matches_with_counted_quantifiers(
+    tmp_path, monkeypatch, pattern, text
+):
+    root = tmp_path / "quantifiers"
+    root.mkdir()
+    (root / "app.py").write_text(text + "\n", encoding="utf-8")
+    assert re.search(pattern, text) is not None
+    request = _request(pattern, root)
+    anchor = _required_literal(request)
+    assert anchor is None or anchor in text
+    monkeypatch.setattr(gc.shutil, "which", _no_ripgrep)
+    with grep_verification_scope(root, []):
+        results = execute_grep_batch([request])
+    assert _lines(results, request) == ["app.py:1"]
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (r"\123456abc", "S456abc"),
+        (r"foo\123456bar", "fooS456bar"),
+        (r"\141bar", "abar"),
+        (r"\077tail", "?tail"),
+        (r"(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)\11tail", "abcdefghijkktail"),
+    ],
+)
+def test_python_backend_preserves_matches_with_numeric_escapes(
+    tmp_path, monkeypatch, pattern, text
+):
+    root = tmp_path / "numeric-escapes"
+    root.mkdir()
+    (root / "app.py").write_text(text + "\n", encoding="utf-8")
+    assert re.search(pattern, text) is not None
+    request = _request(pattern, root)
+    assert _required_literal(request) is None
+    monkeypatch.setattr(gc.shutil, "which", _no_ripgrep)
+    with grep_verification_scope(root, []):
+        results = execute_grep_batch([request])
+    assert _lines(results, request) == ["app.py:1"]
 
 
 def test_python_backend_answers_like_grep_within_the_scan_boundary(repo):
