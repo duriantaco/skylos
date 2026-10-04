@@ -7,6 +7,7 @@ limits Cloud does, so a receipt Skylos writes is never stored as unreadable.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -19,10 +20,12 @@ from skylos.core.safe_cache_io import (
     _close_file_descriptor,
     _directory_open_flags,
     _open_output_parent,
+    read_project_text_no_symlink,
     read_text_no_symlink,
     save_project_json_cache,
     write_text_no_symlink,
 )
+from skylos.done.base import Comparison
 from skylos.done.engine import DoneResult
 
 SCHEMA = "skylos.done-receipt/v1"
@@ -606,9 +609,122 @@ def receipt_upload_error(
             "the done receipt includes uncommitted changes; "
             "commit them and run skylos done again"
         )
-    if comparison.head_dirty:
+    try:
+        dirty = comparison.head_dirty or _hidden_index_is_dirty(comparison)
+    except DoneError as exc:
+        return f"cannot check the done receipt: {exc}"
+    if dirty:
         return (
             "the current checkout has uncommitted changes; "
             "commit them and run skylos done again before uploading the receipt"
         )
     return None
+
+
+def _hidden_index_is_dirty(comparison: Comparison) -> bool:
+    """Verify content Git status intentionally skips, without changing the index.
+
+    ``assume-unchanged`` and ``skip-worktree`` hide tracked edits from status.
+    Hash their actual bytes and link targets, independent of stat caches. Only
+    builtin CRLF normalization is permitted; repository filters never run.
+    Missing paths (including omitted sparse-checkout files) cannot be vouched
+    for by a receipt and remain dirty. Reads use the session inventory bounds.
+    """
+    from skylos.done.base import DoneError, _git_bytes, _git_text, is_runtime_path
+    from skylos.done.session import (
+        MAX_SNAPSHOT_BYTES,
+        MAX_TREE_BYTES,
+        MAX_TREE_FILES,
+        _normalization_modes,
+        _plain_auto_text,
+        _read_link,
+        _require_object_id,
+    )
+
+    inventory = _git_bytes(comparison._context, "ls-files", "--stage", "-v", "-z")
+    if (
+        inventory is None
+        or len(inventory) > MAX_TREE_BYTES
+        or not inventory.endswith(b"\0")
+    ):
+        if inventory == b"":
+            return False
+        raise DoneError("could not inventory index-hidden files")
+    entries = inventory.split(b"\0")[:-1]
+    entries = [row for row in entries if row[:1] == b"S" or row[:1].islower()]
+    if len(entries) > MAX_TREE_FILES:
+        raise DoneError("the receipt index exceeds 50000 index-hidden files")
+    if not entries:
+        return False
+    filemode = (
+        _git_text(comparison._context, "config", "--bool", "--get", "core.filemode")
+        or "true"
+    ).strip() != "false"
+    algorithm = hashlib.sha1 if len(comparison.head_sha) == 40 else hashlib.sha256
+    total = 0
+    candidates = {}
+    auto_text = set()
+    for row in entries:
+        try:
+            metadata, name = row.split(b"\t", 1)
+            _flag, mode, oid, stage = metadata.decode("ascii").split()
+            path = name.decode("utf-8")
+            _require_object_id(oid)
+        except (UnicodeError, ValueError):
+            raise DoneError(
+                "the receipt contains unsupported index-hidden paths"
+            ) from None
+        if is_runtime_path(path):
+            continue
+        if stage != "0" or mode not in {"100644", "100755", "120000"}:
+            return True
+        relative = Path(path)
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            raise DoneError("an index-hidden file is outside the repository")
+        try:
+            actual_mode = (comparison.root / relative).lstat().st_mode
+        except OSError:
+            return True
+        if mode == "120000":
+            if not stat.S_ISLNK(actual_mode):
+                return True
+            data = _read_link(comparison.root, path)
+        else:
+            if not stat.S_ISREG(actual_mode):
+                return True
+            if filemode and bool(actual_mode & stat.S_IXUSR) != (mode == "100755"):
+                return True
+            text = read_project_text_no_symlink(
+                comparison.root,
+                relative,
+                max_bytes=MAX_SNAPSHOT_BYTES,
+                encoding="latin1",
+                newline="",
+            )
+            if text is None:
+                raise DoneError(
+                    "could not safely read an index-hidden file (limit 32 MB)"
+                )
+            data = text.encode("latin1")
+        total += len(data)
+        if total > MAX_TREE_BYTES:
+            raise DoneError("index-hidden receipt contents exceed 256 MB")
+        header = b"blob " + str(len(data)).encode() + b"\0"
+        if algorithm(header + data).hexdigest() == oid:
+            continue
+        if mode == "120000":
+            return True
+        normalized = data.replace(b"\r\n", b"\n")
+        header = b"blob " + str(len(normalized)).encode() + b"\0"
+        if algorithm(header + normalized).hexdigest() != oid:
+            return True
+        candidates[path] = (oid, oid)
+        if _plain_auto_text(normalized):
+            auto_text.add(path)
+    if candidates:
+        modes = _normalization_modes(comparison, candidates)
+        if modes is None or any(
+            mode == "auto" and path not in auto_text for path, mode in modes.items()
+        ):
+            return True
+    return False
