@@ -35,6 +35,8 @@ def isolated_creds(monkeypatch, tmp_path):
 
     monkeypatch.setattr(syncmod, "GLOBAL_CREDS_DIR", creds_dir, raising=False)
     monkeypatch.setattr(syncmod, "GLOBAL_CREDS_FILE", creds_file, raising=False)
+    # cmd_connect writes .skylos/link.json under the working directory.
+    monkeypatch.chdir(tmp_path)
 
     return creds_dir, creds_file
 
