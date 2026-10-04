@@ -1174,7 +1174,9 @@ def test_verifier_expectations_match_ts_semantics(tmp_path):
 def test_a_pass_without_recorded_gate_settings_is_not_a_policy_pass(capsys, tmp_path):
     bundle, keys = _level_bundle(tmp_path, gate={"enabled": None, "mode": None})
 
-    code, out, _ = _run(capsys, bundle, "--keys", keys, "--require-passed", "--allow-override")
+    code, out, _ = _run(
+        capsys, bundle, "--keys", keys, "--require-passed", "--allow-override"
+    )
 
     assert code == 1
     assert "level SKYLOS_GATE_UNKNOWN" in out
@@ -1182,3 +1184,120 @@ def test_a_pass_without_recorded_gate_settings_is_not_a_policy_pass(capsys, tmp_
         "--require-passed: the scan recorded no gate settings (SKYLOS_GATE_UNKNOWN); "
         "upload a fresh scan to get a policy decision."
     )
+
+
+@pytest.mark.parametrize("trust", ["verified_ci", "trusted_api_key"])
+def test_require_trusted_upload_accepts_trusted_uploads(capsys, tmp_path, trust):
+    identity = {**_bound_summary()["upload_identity"], "trust": trust}
+    bundle, keys = _signed_bundle(tmp_path, _bound_summary(upload_identity=identity))
+
+    _expect_passes(capsys, bundle, keys, "--require-trusted-upload")
+
+
+@pytest.mark.parametrize("trust", [None, "unverified", "VERIFIED_CI"])
+def test_require_trusted_upload_rejects_unverified_and_older_verdicts(
+    capsys, tmp_path, trust
+):
+    # None: a verdict signed before Skylos Cloud recorded upload trust.
+    identity = dict(_bound_summary()["upload_identity"])
+    identity.pop("trust", None)
+    if trust is not None:
+        identity["trust"] = trust
+    bundle, keys = _signed_bundle(tmp_path, _bound_summary(upload_identity=identity))
+
+    _expect_passes(capsys, bundle, keys)
+    _expect_not_verified_with(
+        capsys,
+        bundle,
+        keys,
+        ["--require-trusted-upload"],
+        "The verdict is not for a trusted upload "
+        "(CI with OIDC, or a CI key the project trusts).",
+    )
+
+
+def test_positional_max_age_still_rejects_an_ancient_trusted_verdict(tmp_path):
+    identity = {**_bound_summary()["upload_identity"], "trust": "verified_ci"}
+    bundle_path, keys_path = _signed_bundle(
+        tmp_path,
+        _bound_summary(upload_identity=identity),
+        mutate_statement=lambda statement: statement["predicate"].update(
+            timeVerified="2000-01-01T00:00:00.000Z"
+        ),
+    )
+    # This constructor predates require_trusted_upload; its sixth argument
+    # must remain the age limit rather than becoming a truthy trust flag.
+    expectations = VerdictExpectations(None, None, None, None, False, timedelta(days=1))
+
+    result = verify_verdict_bundle(
+        _load(Path(bundle_path)), _load(Path(keys_path))["keys"], expectations
+    )
+
+    assert not result.ok
+    assert result.reason == "The verdict is older than the allowed age."
+
+
+@pytest.mark.parametrize(
+    ("hours_after_signing", "expected_reason"),
+    [(12, None), (48, "The verdict is older than the allowed age.")],
+)
+def test_positional_max_age_and_now_keep_the_original_clock(
+    tmp_path, hours_after_signing, expected_reason
+):
+    signed_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    bundle_path, keys_path = _signed_bundle(
+        tmp_path,
+        _bound_summary(),
+        mutate_statement=lambda statement: statement["predicate"].update(
+            timeVerified="2000-01-01T00:00:00.000Z"
+        ),
+    )
+    expectations = VerdictExpectations(
+        None,
+        None,
+        None,
+        None,
+        False,
+        timedelta(days=1),
+        signed_at + timedelta(hours=hours_after_signing),
+    )
+
+    result = verify_verdict_bundle(
+        _load(Path(bundle_path)), _load(Path(keys_path))["keys"], expectations
+    )
+
+    assert result.ok is (expected_reason is None)
+    assert result.reason == expected_reason
+
+
+@pytest.mark.parametrize("trust", [None, "unverified", "trusted_api_key"])
+def test_trusted_upload_keyword_works_with_existing_positional_expectations(
+    tmp_path, trust
+):
+    identity = dict(_bound_summary()["upload_identity"])
+    if trust is not None:
+        identity["trust"] = trust
+    bundle_path, keys_path = _signed_bundle(
+        tmp_path, _bound_summary(upload_identity=identity)
+    )
+    expectations = VerdictExpectations(
+        None,
+        None,
+        None,
+        None,
+        False,
+        timedelta(days=1),
+        SIGNED_AT,
+        require_trusted_upload=True,
+    )
+
+    result = verify_verdict_bundle(
+        _load(Path(bundle_path)), _load(Path(keys_path))["keys"], expectations
+    )
+
+    assert result.ok is (trust == "trusted_api_key")
+    if trust != "trusted_api_key":
+        assert result.reason == (
+            "The verdict is not for a trusted upload "
+            "(CI with OIDC, or a CI key the project trusts)."
+        )

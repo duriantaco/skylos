@@ -1404,6 +1404,7 @@ def _finalize_report_upload(
             replayed=replayed,
             finding_warnings=data.get("finding_warnings"),
             gate_message=quality_gate.get("message"),
+            trust_notice=data.get("upload_trust_notice"),
         )
     result = _report_upload_success_result(data, scan_id, passed, plan)
     if replayed:
@@ -1446,6 +1447,7 @@ def _print_report_upload_success(
     replayed: bool = False,
     finding_warnings=None,
     gate_message=None,
+    trust_notice=None,
 ) -> None:
     if replayed:
         print(
@@ -1463,9 +1465,23 @@ def _print_report_upload_success(
         )
     _print_report_grade(grade_data)
     _print_quality_gate_result(passed, new_violations, plan, gate_message)
+    _print_upload_trust_notice(trust_notice)
     if scan_id:
         print(f"\n🔗 View the scan: {BASE_URL}/dashboard/scans/{scan_id}")
     _print_credit_balance_after_upload(credits_left)
+
+
+def _print_upload_trust_notice(notice) -> None:
+    """Skylos Cloud's note when it stored the upload as unverified.
+
+    Uploads with the `skylos login` key do not publish GitHub checks or mark
+    issues fixed: any coding agent on this machine can read that key.
+    """
+    if not isinstance(notice, str):
+        return
+    text = "".join(char for char in notice[:600] if char.isprintable()).strip()
+    if text:
+        print(f"\n⚠️  {text}")
 
 
 def _print_report_grade(grade_data) -> None:
@@ -1555,13 +1571,17 @@ def _report_upload_success_result(
     passed: bool,
     plan: str,
 ) -> dict:
-    return {
+    result = {
         "success": True,
         "scan_id": scan_id,
         "quality_gate_passed": passed,
         "plan": plan,
         "credits_warning": data.get("credits_warning", False),
     }
+    # Older servers do not report it; only verified uploads publish checks.
+    if isinstance(data.get("upload_trust"), str):
+        result["upload_trust"] = data["upload_trust"]
+    return result
 
 
 def _post_json_with_retries(

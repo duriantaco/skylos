@@ -102,11 +102,12 @@ _EPILOG = (
     "Recommended deploy gate (fetch the verdict fresh from the API):\n"
     '  skylos verify-verdict verdict.json --commit "$SHA" \\\n'
     "    --repository github.com/org/repo --require-repository-verified \\\n"
-    "    --max-age 7d --require-passed\n\n"
+    "    --require-trusted-upload --max-age 7d --require-passed\n\n"
     "Exit codes: 0 verified (and passing, with --require-passed); 1 verified\n"
     "but not passing, only with --require-passed; 2 not verified, a --commit/\n"
-    "--repository/--project/--workspace/--max-age/--require-repository-verified\n"
-    "mismatch, invalid input, keys unavailable, or cryptography missing."
+    "--repository/--project/--workspace/--max-age/--require-repository-verified/\n"
+    "--require-trusted-upload mismatch, invalid input, keys unavailable, or\n"
+    "cryptography missing."
 )
 
 
@@ -190,6 +191,15 @@ def _add_expectation_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--require-trusted-upload",
+        action="store_true",
+        help=(
+            "Require an upload Skylos Cloud trusted: CI with GitHub or GitLab "
+            "OIDC, or a CI key the project trusts. Rejects skylos login uploads "
+            "and verdicts signed before trust was recorded."
+        ),
+    )
+    parser.add_argument(
         "--max-age",
         metavar="DURATION",
         type=_parse_duration,
@@ -251,6 +261,7 @@ def _expectations(args: argparse.Namespace) -> VerdictExpectations:
         workspace=_flag_value(args.workspace, "--workspace"),
         repository=_flag_value(args.repository, "--repository"),
         require_repository_verified=args.require_repository_verified,
+        require_trusted_upload=args.require_trusted_upload,
         max_age=args.max_age,
     )
 
@@ -421,7 +432,11 @@ def _require_passed_problem(
     # A disabled gate never passes, whatever else the levels say.
     if VERDICT_GATE_DISABLED_LEVEL not in levels and accepted.intersection(levels):
         return None
-    for level in (VERDICT_GATE_DISABLED_LEVEL, VERDICT_GATE_UNKNOWN_LEVEL, VERDICT_OVERRIDDEN_LEVEL):
+    for level in (
+        VERDICT_GATE_DISABLED_LEVEL,
+        VERDICT_GATE_UNKNOWN_LEVEL,
+        VERDICT_OVERRIDDEN_LEVEL,
+    ):
         if level in levels:
             return _REQUIRE_PASSED + _LEVEL_REFUSALS[level]
     return _REQUIRE_PASSED + f"the verdict has no {VERDICT_PASSED_LEVEL} level."

@@ -154,3 +154,20 @@ def test_api_key_and_github_finalization_keep_existing_result_and_gate_behavior(
     with pytest.raises(SystemExit) as caught:
         api._finalize_report_upload(response, grade_data=None, quiet=True, strict=True)
     assert caught.value.code == 1
+
+
+def test_unverified_upload_notice_is_printed_and_returned(capsys):
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "scan_id": "fixture-saved-scan",
+            "quality_gate": {"passed": True},
+            "upload_trust": "unverified",
+            "upload_trust_notice": "Unverified upload: it used the key from skylos login.\x1b[2J",
+        },
+    )
+    result = api._finalize_report_upload(response, grade_data=None, quiet=False)
+    assert result["upload_trust"] == "unverified"
+    out = capsys.readouterr().out
+    assert "Unverified upload: it used the key from skylos login." in out
+    assert "\x1b" not in out, "server text is printed without control characters"

@@ -148,6 +148,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
 
 def browser_login(console=None, base_url=None):
     base_url = base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL).rstrip("/")
+    _safe_whoami_url(base_url)
 
     port = _find_free_port()
     repo_name = _get_repo_name() or ""
@@ -225,15 +226,26 @@ def browser_login(console=None, base_url=None):
     return verified
 
 
-def manual_token_fallback(console=None):
+def manual_token_fallback(console=None, base_url=None):
+    base_url = base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL).rstrip("/")
+    _safe_whoami_url(base_url)
+    # Cloud trusts the credential, not the machine holding it. A trusted CI
+    # key retains that authority if someone saves it on a developer machine.
+    note = (
+        "Do not paste a key marked as a CI key. It can publish trusted uploads "
+        "even from this machine, and any coding agent that can read it can use "
+        "that authority. Keep CI keys in your CI secret store."
+    )
     if console:
         console.print("\n[bold]Manual connection[/bold]")
         console.print(
-            "Get your API key at: [bold]https://skylos.dev/dashboard/settings[/bold]\n"
+            f"Get your API key at: [bold]{base_url}/dashboard/settings[/bold]"
         )
+        console.print(f"[dim]{note}[/dim]\n")
     else:
         print("\nManual connection")
-        print("Get your API key at: https://skylos.dev/dashboard/settings\n")
+        print(f"Get your API key at: {base_url}/dashboard/settings")
+        print(f"{note}\n")
 
     try:
         token = input("Paste your API token: ").strip()
@@ -247,28 +259,15 @@ def manual_token_fallback(console=None):
     if not token:
         return None
 
-    from skylos.cloud.sync import api_get, AuthError
-
-    try:
-        info = api_get("/api/sync/whoami", token)
-    except AuthError as e:
+    verified = _verify_login_result(token, base_url=base_url)
+    if verified is None:
+        message = f"Could not verify token with {base_url}. No credentials were saved."
         if console:
-            console.print(f"[bad]Invalid token: {e}[/bad]")
+            console.print(f"[bad]{message}[/bad]")
         else:
-            print(f"Invalid token: {e}")
+            print(message)
         return None
-
-    project = info.get("project", {})
-    org = info.get("organization", {})
-
-    return LoginResult(
-        token=token,
-        project_id=project.get("id", ""),
-        project_name=project.get("name", "Unknown"),
-        org_name=org.get("name", "My Workspace"),
-        plan=info.get("plan", "free"),
-        repo_subpath=project.get("repo_subpath", ""),
-    )
+    return verified
 
 
 def _save_login_result(result, base_url=None):
@@ -297,25 +296,15 @@ def _save_login_result(result, base_url=None):
 
 
 def get_current_connection(base_url=None):
-    from skylos.cloud.sync import get_token, api_get, AuthError
+    from skylos.cloud.sync import get_token
 
     token = get_token()
     if not token:
         return None
 
-    try:
-        info = api_get("/api/sync/whoami", token)
-    except AuthError:
-        return None
-
-    project = info.get("project", {})
-    return LoginResult(
-        token=token,
-        project_id=project.get("id", ""),
-        project_name=project.get("name", "Unknown"),
-        org_name=info.get("organization", {}).get("name", "My Workspace"),
-        plan=info.get("plan", "free"),
-        repo_subpath=project.get("repo_subpath", ""),
+    return _verify_login_result(
+        token,
+        base_url=base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL).rstrip("/"),
     )
 
 
@@ -348,6 +337,13 @@ def _print_connected_result(result, console=None):
 
 
 def run_login(console=None, base_url=None):
+    from skylos.cloud.sync import _normalize_api_base_url
+
+    # Select once so browser/manual auth and the saved link use the same server,
+    # even if the environment changes during the interactive login.
+    base_url = _normalize_api_base_url(
+        base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL)
+    )
     existing = get_current_connection(base_url=base_url)
     if existing:
         if console:
@@ -387,7 +383,7 @@ def run_login(console=None, base_url=None):
             else:
                 print(f"Keeping current project: {existing.project_name}")
             return existing
-        result = manual_token_fallback(console=console)
+        result = manual_token_fallback(console=console, base_url=base_url)
 
     if result is None:
         return None
@@ -451,10 +447,12 @@ def _verify_login_result(token: str, *, base_url: str) -> LoginResult | None:
     except ValueError:
         return None
 
+    from skylos.cloud.sync import _auth_headers
+
     try:
         resp = requests.get(
             whoami_url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_auth_headers(token),
             timeout=30,
         )
     except requests.RequestException:

@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from skylos.cicd.workflow import PINNED_ACTIONS_CHECKOUT, PINNED_ACTIONS_SETUP_PYTHON
+
 
 CANCELLED_MESSAGE = "\nCancelled."
 
@@ -58,44 +60,73 @@ exit 0
 
 
 def cloud_workflow_content() -> str:
-    return """name: Skylos Quality Gate
+    content = """# Save as .github/workflows/skylos.yml: Cloud pins this workflow path.
+# Pull requests receive a local scan. Only default-branch pushes upload to Cloud.
+name: Skylos Quality Gate
 
-on:
+"on":
+  push:
   pull_request:
-    branches: [main, master]
 
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-  id-token: write
+permissions: {}
 
 jobs:
-  skylos:
+  pull-request:
+    if: github.event_name == 'pull_request'
+    name: Skylos pull request scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+          persist-credentials: false
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install Skylos
-        run: python -m pip install skylos
+        run: python -I -m pip install skylos
+
+      - name: Scan pull request locally
+        run: skylos . --danger --secrets --quality --ai-defects --no-upload
+
+  cloud-upload:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: Skylos default branch upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Skylos
+        run: python -I -m pip install skylos
 
       - name: Pull Skylos Cloud Policy
-        run: |
-          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
-      
+        run: skylos sync pull
+
       - name: Run Skylos Scan & Upload
-        run: |
-          skylos . --danger --secrets --quality --ai-defects --upload
+        run: skylos . --danger --secrets --quality --ai-defects --upload
         env:
-          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          SKYLOS_COMMIT: ${{ github.sha }}
+          SKYLOS_BRANCH: ${{ github.ref_name }}
 """
+    return content.replace("actions/checkout@v4", PINNED_ACTIONS_CHECKOUT).replace(
+        "actions/setup-python@v5", PINNED_ACTIONS_SETUP_PYTHON
+    )
 
 
 def print_free_plan_setup_summary(*, has_git: bool) -> None:
@@ -105,7 +136,7 @@ def print_free_plan_setup_summary(*, has_git: bool) -> None:
     if has_git:
         print("  🔒 Git hooks - Block bad code on push")
         print("  🔒 Pre-commit - Block bad code on commit")
-        print("  🔒 GitHub Actions - Block PRs automatically")
+        print("  🔒 GitHub Actions - Scan PRs and upload default-branch results")
     else:
         print("  ⚠️  Initialize git first: git init")
 
@@ -158,7 +189,7 @@ def collect_setup_choices(
     setup_ci = False
     if not has_workflow:
         setup_ci = _prompt_setup_choice(
-            "  Create GitHub Actions? (blocks PR merges) [Y/n]: ",
+            "  Create GitHub Actions? (PR scans and default-branch Cloud uploads) [Y/n]: ",
             default=True,
         )
         if setup_ci is None:
@@ -229,7 +260,9 @@ def _resolve_safe_write_path(path: Path, allowed_dir: Path) -> Path:
     try:
         resolved_parent.relative_to(resolved_allowed_dir)
     except ValueError as exc:
-        raise OSError(f"Refusing to write outside {resolved_allowed_dir}: {path}") from exc
+        raise OSError(
+            f"Refusing to write outside {resolved_allowed_dir}: {path}"
+        ) from exc
 
     safe_path = resolved_parent / path.name
     if safe_path.is_symlink():
@@ -283,8 +316,9 @@ def print_setup_next_steps(*, setup_precommit: bool, setup_ci: bool) -> None:
     if setup_ci:
         print(f"{step_num}. Bind this GitHub repo to the Skylos Cloud project.")
         print(
-            "   The workflow uses GitHub OIDC by default; no SKYLOS_TOKEN secret is required."
+            "   Default-branch uploads use GitHub OIDC; no SKYLOS_TOKEN secret is required."
         )
+        print("   Pull requests receive local scan feedback without Cloud upload.")
         print("   Keep SKYLOS_TOKEN only as a legacy fallback for non-GitHub CI.\n")
         step_num += 1
 
