@@ -135,7 +135,7 @@ def select_targets(comparison, test_paths: set[str]) -> list[TargetLine]:
 class _Unit:
     start: int
     end: int
-    node: cst.CSTNode  # a SimpleStatementLine, or the test of an if/while
+    node: cst.CSTNode  # a simple statement line/suite, or the test of an if/while
     kind: str  # "simple" or "condition"
     function: str = ""
 
@@ -182,6 +182,12 @@ class _UnitCollector(cst.CSTVisitor):
         self.names.pop()
 
     def visit_SimpleStatementLine(self, node: cst.SimpleStatementLine) -> None:
+        self._simple(node)
+
+    def visit_SimpleStatementSuite(self, node: cst.SimpleStatementSuite) -> None:
+        self._simple(node)
+
+    def _simple(self, node: cst.SimpleStatementLine | cst.SimpleStatementSuite) -> None:
         if self.depth and not _skippable_line(node):
             position = self.get_metadata(PositionProvider, node)
             self.units.append(
@@ -270,7 +276,7 @@ def _skippable_small(statement: cst.BaseSmallStatement) -> bool:
     return False
 
 
-def _skippable_line(node: cst.SimpleStatementLine) -> bool:
+def _skippable_line(node: cst.SimpleStatementLine | cst.SimpleStatementSuite) -> bool:
     return all(_skippable_small(statement) for statement in node.body)
 
 
@@ -306,13 +312,14 @@ def make_mutant(
         return None
     collector = _UnitCollector()
     wrapper.visit(collector)
-    unit = next((u for u in collector.units if u.start == line), None)
-    if unit is None:
+    units = [u for u in collector.units if u.start == line]
+    if not units:
         return None
     positions = wrapper.resolve(PositionProvider)
     allowed = set(changed or (line,))
     candidates = [
         c
+        for unit in units
         for c in _candidates(unit)
         if c[1] in positions and positions[c[1]].start.line in allowed
     ]

@@ -2049,6 +2049,7 @@ _REGEX_ESCAPED_LITERALS = frozenset(".-/:=,'\"#@%&~<>!;` ")
 # Characters that are literal when escaped.
 _REGEX_ESCAPED_METACHARS = _REGEX_ESCAPED_LITERALS | frozenset("()[]{}|*+?^$\\")
 _VERBOSE_FLAG_PATTERN = re.compile(r"\(\?[a-z-]*x")
+_COUNTED_QUANTIFIER_PATTERN = re.compile(r"\{(?:[0-9]+(?:,[0-9]*)?|,[0-9]*)\}")
 
 
 def _required_literal(request: GrepRequest) -> str | None:
@@ -2084,6 +2085,10 @@ def _required_literal(request: GrepRequest) -> str | None:
         if char == "\\" and index + 1 < length:
             escaped = pattern[index + 1]
             index += 2
+            if escaped in "0123456789":
+                # Numeric escapes may consume several octal digits or name a
+                # capture group. Their remaining digits are not literal text.
+                return None
             if escaped in "xuUpP":
                 # \x27, \x{1F600}, \u00e9, \U0001F600, \pL, \p{Greek}: never
                 # part of a literal run, and their payload is not literal text.
@@ -2149,6 +2154,15 @@ def _required_literal(request: GrepRequest) -> str | None:
             return None
         if depth > 0:
             index += 1
+            continue
+        if char == "{":
+            end_run()
+            quantifier = _COUNTED_QUANTIFIER_PATTERN.match(pattern, index)
+            if quantifier is None:
+                # Unrecognized braces may contain literal text or alternation.
+                # Their contents cannot establish a mandatory substring.
+                return None
+            index = quantifier.end()
             continue
         if (
             char.isalnum()

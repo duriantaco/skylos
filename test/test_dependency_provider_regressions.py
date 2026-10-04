@@ -1,6 +1,7 @@
 """Provider evidence must survive unsafe lookalikes without trusting repo caches."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -51,6 +52,512 @@ def _scan(mode, repo, path, root="ghost_required"):
             repo, [(path.relative_to(repo).as_posix(), 1, root)]
         )[0]
     return dep.scan_python_dependency_hallucinations(repo, [path])
+
+
+def _isolate_with_installed_record(
+    monkeypatch,
+    tmp_path,
+    answers=None,
+    *,
+    dist="safe-lib",
+    version="1.0",
+    files=(),
+    editable_metadata=False,
+    editable_marker=False,
+):
+    actual_lookup = dep._installed_provider_inventory
+    fetched, names = _isolate(monkeypatch, answers)
+    monkeypatch.setattr(dep, "_installed_provider_inventory", actual_lookup)
+    monkeypatch.setattr(
+        dep, "_get_stdlib_modules", lambda: {"os", "sys", "json", "typing"}
+    )
+    site_packages = tmp_path / "site-packages"
+    dist_info_name = f"{dist.replace('-', '_')}-{version}.dist-info"
+    dist_info = site_packages / dist_info_name
+    _write(
+        dist_info / "METADATA",
+        f"Metadata-Version: 2.1\nName: {dist}\nVersion: {version}\n",
+    )
+    record_files = [
+        *files,
+        f"{dist_info_name}/METADATA",
+        f"{dist_info_name}/RECORD",
+    ]
+    if editable_metadata:
+        _write(
+            dist_info / "direct_url.json",
+            json.dumps(
+                {"url": (tmp_path / "source").as_uri(), "dir_info": {"editable": True}}
+            ),
+        )
+        record_files.append(f"{dist_info_name}/direct_url.json")
+    if editable_marker:
+        marker = f"__editable__.{dist.replace('-', '_')}-{version}.pth"
+        _write(site_packages / marker, str(tmp_path / "source") + "\n")
+        record_files.append(marker)
+    _write(dist_info / "RECORD", "".join(f"{name},,\n" for name in record_files))
+    monkeypatch.setattr(dep, "virtual_env_site_packages", lambda: [str(site_packages)])
+    monkeypatch.setattr(dep.site, "getsitepackages", lambda: [])
+    monkeypatch.setattr(dep.site, "getusersitepackages", lambda: [])
+    return fetched, names
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("wheel_version", ["1.0", "2.0"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import mlx\n",
+        "import mlx.core\n",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from mlx.core import array\n",
+    ],
+)
+def test_metadata_only_installed_record_uses_compatible_wheel(
+    monkeypatch, tmp_path, mode, wheel_version, source
+):
+    repo, path = _project(tmp_path, source, "mlx>=1.0")
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {
+            "mlx": _inventory(
+                "mlx/__init__.py", "mlx/core.py", complete=False, version=wheel_version
+            )
+        },
+        dist="mlx",
+        editable_metadata=True,
+        editable_marker=True,
+    )
+    assert _scan(mode, repo, path, "mlx") == []
+    if "mlx.core" in source:
+        assert fetched == [("mlx", ">=1.0")]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("editable_evidence", ["metadata", "pth"])
+def test_exact_editable_install_without_wheel_cannot_prove_absence(
+    monkeypatch, tmp_path, mode, editable_evidence
+):
+    repo, path = _project(tmp_path, "import mlx.core\n", "mlx==1.0")
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        dist="mlx",
+        editable_metadata=editable_evidence == "metadata",
+        editable_marker=editable_evidence == "pth",
+    )
+    findings = _scan(mode, repo, path, "mlx")
+    assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "mlx")
+    ]
+    assert findings[0]["message"].startswith("Unverified import")
+    assert fetched == [("mlx", "==1.0")]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n    import ghost_required\nexcept (ImportError, 42):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, UnknownError):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, (ValueError,)):\n    pass\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    raise RuntimeError('required')\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    sys.exit(1)\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    first = ghost_required.run\n    handler = first\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    handler: object = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    def handler():\n        return 1\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    async def handler():\n        return 1\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    class Handler:\n        import ghost_required\nexcept ImportError:\n    pass\nHandler()\n",
+        "try:\n    import ghost_required\n    class Handler:\n        pass\nexcept ImportError:\n    pass\nHandler()\n",
+        "try:\n    import ghost_required\n    handlers = [ghost_required.run]\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "try:\n    import ghost_required\n    def handler():\n        return 1\nexcept ImportError:\n    handler = None\nhandler()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nhandler()\n",
+        "if False:\n    handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError as handler:\n    handler = None\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nfinally:\n    handler = 1\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    handler = 1\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "handler = None\ntry:\n    if condition:\n        handler = 1\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nhandler = None\ntry:\n    import json as handler, ghost_required\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    try:\n        import ghost_required\n        handler = ghost_required.run\n    except ImportError:\n        pass\n    handler()\nexcept ImportError:\n    pass\n",
+        "try:\n    try:\n        import ghost_required\n    except ImportError:\n        pass\n    finally:\n        raise RuntimeError('required')\nexcept ImportError:\n    pass\n",
+        "def load():\n    try:\n        raise ValueError()\n    except ValueError as ImportError:\n        pass\n    try:\n        import ghost_required\n    except ImportError:\n        pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, 42):\n    pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, (TypeError,)):\n    pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ValueError, int):\n    pass\nexcept ImportError:\n    pass\n",
+        "handlers = []\ntry:\n    import ghost_required\n    handlers.append(ghost_required.run)\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "handlers = {}\ntry:\n    import ghost_required\n    handlers['run'] = ghost_required.run\nexcept ImportError:\n    pass\nhandlers['run']()\n",
+        "state = State()\ntry:\n    import ghost_required\n    state.handler = ghost_required.run\nexcept ImportError:\n    pass\nstate.handler()\n",
+        "handlers = []\ntry:\n    class Handler:\n        import ghost_required\n        handlers.append(ghost_required.run)\nexcept ImportError:\n    pass\nhandlers[0]()\n",
+        "match 42:\n    case ImportError:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "match []:\n    case [*ImportError]:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "match {}:\n    case {**ImportError}:\n        pass\ntry:\n    import ghost_required\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    match ghost_required.run:\n        case handler:\n            pass\nexcept ImportError:\n    pass\nhandler()\n",
+        "try:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready.value)\n",
+        "print = lambda x: x.run()\ntry:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready)\n",
+    ],
+    ids=[
+        "invalid-catcher-tuple",
+        "unknown-catcher-tuple",
+        "nested-catcher-tuple",
+        "fatal-finally-raise",
+        "fatal-finally-exit",
+        "derived-binding",
+        "transitive-derived-binding",
+        "annotated-derived-binding",
+        "function-binding",
+        "async-function-binding",
+        "class-body-import",
+        "class-binding",
+        "container-binding",
+        "unsafe-constant-fallback",
+        "unsafe-preinitialized-binding",
+        "conditional-initialization",
+        "deleted-exception-target",
+        "finally-overwrites-sentinel",
+        "try-overwrites-sentinel",
+        "conditional-try-overwrites-sentinel",
+        "partial-import-overwrites-sentinel",
+        "nested-guard-unbound-use",
+        "nested-guard-fatal-finally",
+        "earlier-exception-target-shadows-catcher",
+        "invalid-preceding-catcher-tuple",
+        "nested-preceding-catcher-tuple",
+        "nonexception-preceding-catcher",
+        "list-mutation",
+        "dict-mutation",
+        "attribute-mutation",
+        "class-body-list-mutation",
+        "match-shadows-catcher",
+        "match-star-shadows-catcher",
+        "match-mapping-shadows-catcher",
+        "match-derived-binding",
+        "unsafe-fallback-attribute-use",
+        "shadowed-print-fallback-use",
+    ],
+)
+def test_unproven_optional_import_remains_visible(monkeypatch, tmp_path, mode, source):
+    repo, path = _project(tmp_path, source)
+    _isolate(monkeypatch, {"safe-lib": _inventory("safe_lib/__init__.py")})
+    findings = _scan(mode, repo, path)
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "ghost_required")
+    ]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n    import ghost_required\nexcept (ImportError, AttributeError):\n    pass\n",
+        "try:\n    import ghost_required\nexcept (ImportError, ZeroDivisionError):\n    pass\n",
+        "try:\n    import ghost_required\n    ghost_required.run()\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\n    handler()\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    import json as ghost_required\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    ghost_required = None\n",
+        "try:\n    import ghost_required\nexcept ImportError:\n    pass\nfinally:\n    cleanup_done = True\n",
+        "try:\n    ready = True\n    import ghost_required\nexcept ImportError:\n    pass\nprint(ready)\n",
+        "try:\n    def ready():\n        return 1\n    import ghost_required\nexcept ImportError:\n    pass\nready()\n",
+        "handler = None\ntry:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    pass\nif handler is not None:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError:\n    handler = None\nif handler:\n    handler()\n",
+        "try:\n    import ghost_required\n    handler = ghost_required.run\nexcept ImportError as handler:\n    pass\nfinally:\n    handler = None\nif handler is not None:\n    handler()\n",
+        "try:\n    try:\n        import ghost_required\n    except ValueError:\n        pass\nexcept ImportError:\n    pass\n",
+        "try:\n    import ghost_required\n    ready = True\nexcept ImportError:\n    ready = False\nprint(ready)\n",
+        "def load():\n    try:\n        import ghost_required\n        ready = True\n    except ImportError:\n        ready = False\n    return ready\n",
+    ],
+    ids=[
+        "valid-catcher-tuple",
+        "valid-builtin-catcher-tuple",
+        "guarded-module-use",
+        "guarded-derived-use",
+        "stdlib-fallback-binding",
+        "constant-fallback-binding",
+        "safe-finally",
+        "earlier-assignment",
+        "earlier-function",
+        "preinitialized-guarded-binding",
+        "fallback-guarded-binding",
+        "finally-restores-sentinel",
+        "nested-disjoint-catcher",
+        "literal-fallback-print",
+        "literal-fallback-return",
+    ],
+)
+def test_proven_optional_import_controls_remain_suppressed(
+    monkeypatch, tmp_path, mode, source
+):
+    repo, path = _project(tmp_path, source)
+    _isolate(monkeypatch)
+    assert _scan(mode, repo, path) == []
+
+
+@pytest.mark.parametrize(
+    "partial_evidence", ["generic-pth", "invalid-direct-url", "symlinked-direct-url"]
+)
+def test_installed_loader_or_unreadable_origin_cannot_prove_absence(
+    monkeypatch, tmp_path, partial_evidence
+):
+    repo, path = _project(tmp_path, "import ghost_required\n")
+    origin = "safe_lib-1.0.dist-info/direct_url.json"
+    marker = "safe_lib.pth" if partial_evidence == "generic-pth" else origin
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch, tmp_path, files=("installed_alias.py", marker)
+    )
+    metadata_path = tmp_path / "site-packages" / marker
+    if partial_evidence == "generic-pth":
+        _write(metadata_path, str(tmp_path / "source") + "\n")
+    elif partial_evidence == "invalid-direct-url":
+        _write(metadata_path, "{malformed JSON")
+    else:
+        outside = _write(
+            tmp_path / "outside/direct_url.json",
+            json.dumps({"dir_info": {"editable": False}}),
+        )
+        try:
+            metadata_path.symlink_to(outside)
+        except OSError:
+            pytest.skip("file symlinks unavailable")
+    findings = dep.scan_python_dependency_hallucinations(repo, [path])
+    assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "ghost_required")
+    ]
+    assert findings[0]["message"].startswith("Unverified import")
+    assert fetched == [("safe-lib", "==1.0")]
+
+
+@pytest.mark.parametrize("wheel_version", ["1.0", "1.0.0"])
+def test_partial_installed_and_wheel_paths_both_survive_without_absence_proof(
+    monkeypatch, tmp_path, wheel_version
+):
+    repo, path = _project(
+        tmp_path,
+        "import installed_alias\nimport wheel_alias\nimport ghost_required\n",
+    )
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("wheel_alias.py", version=wheel_version)},
+        files=("installed_alias.py",),
+        editable_metadata=True,
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [path])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "ghost_required")
+    ]
+    assert findings[0]["message"].startswith("Unverified import")
+    assert fetched == [("safe-lib", "==1.0")]
+
+
+@pytest.mark.parametrize(
+    "installed_files, wheel_files, expected",
+    [
+        (
+            ("shared.py",),
+            ("shared/__init__.py", "shared/child.py"),
+            [(dep.RULE_ID_UNDECLARED, "shared")],
+        ),
+        (("shared/__init__.py", "shared/child.py"), ("shared.py",), []),
+    ],
+)
+def test_installed_module_package_layout_takes_precedence_over_wheel(
+    monkeypatch, tmp_path, installed_files, wheel_files, expected
+):
+    repo, path = _project(tmp_path, "import early_alias\nimport shared.child\n")
+    _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("early_alias.py", *wheel_files)},
+        files=installed_files,
+        editable_metadata=True,
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [path])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == expected
+    if findings:
+        assert findings[0]["message"].startswith("Unverified import")
+
+
+def test_different_compatible_releases_do_not_combine_disjoint_import_paths(
+    monkeypatch, tmp_path
+):
+    repo, path = _project(
+        tmp_path, "import shared.one\nimport shared.two\n", "safe-lib>=1,<3"
+    )
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("shared/two.py", version="2.0", complete=False)},
+        files=("shared/one.py",),
+        editable_metadata=True,
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [path])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "shared")
+    ]
+    assert findings[0]["message"].startswith("Unverified import")
+    assert fetched == [("safe-lib", "<3,>=1")]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("wheel_version", ["1.0", "2.0"])
+@pytest.mark.parametrize("package_marker", [False, True])
+def test_installed_provider_evidence_is_stable_across_file_order(
+    monkeypatch, tmp_path, mode, reverse, wheel_version, package_marker
+):
+    repo, installed_path = _project(
+        tmp_path,
+        "import shared.child\n",
+        "safe-lib>=1,<3",
+    )
+    wheel_path = _write(repo / "second.py", "import early_alias\n")
+    _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("early_alias.py", "shared.py", version=wheel_version)},
+        files=("shared/__init__.py", "shared/child.py")
+        if package_marker
+        else ("shared/child.py",),
+        editable_metadata=True,
+    )
+    paths = [installed_path, wheel_path]
+    if reverse:
+        paths.reverse()
+    if mode == "diff":
+        findings, _unreachable = dep.scan_diff_added_imports(
+            repo,
+            [
+                (
+                    path.relative_to(repo).as_posix(),
+                    1,
+                    "shared" if path == installed_path else "early_alias",
+                )
+                for path in paths
+            ],
+        )
+    else:
+        findings = dep.scan_python_dependency_hallucinations(repo, paths)
+    expected = (
+        []
+        if wheel_version == "1.0"
+        else [(dep.RULE_ID_UNDECLARED, "early_alias", "second.py")]
+    )
+    assert [
+        (finding["rule_id"], finding["symbol"], Path(finding["file"]).name)
+        for finding in findings
+    ] == expected
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_different_compatible_wheel_can_supply_all_installed_and_new_paths(
+    monkeypatch, tmp_path, mode, reverse
+):
+    repo, first = _project(tmp_path, "import shared.one\n", "safe-lib>=1,<3")
+    second = _write(repo / "second.py", "import shared.two\n")
+    _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {
+            "safe-lib": _inventory(
+                "shared/one.py", "shared/two.py", version="2.0", complete=False
+            )
+        },
+        files=("shared/one.py",),
+        editable_metadata=True,
+    )
+    paths = [first, second]
+    if reverse:
+        paths.reverse()
+    if mode == "diff":
+        findings, _unreachable = dep.scan_diff_added_imports(
+            repo, [(path.relative_to(repo).as_posix(), 1, "shared") for path in paths]
+        )
+    else:
+        findings = dep.scan_python_dependency_hallucinations(repo, paths)
+    assert findings == []
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_different_wheel_namespace_cannot_borrow_installed_package_exports(
+    monkeypatch, tmp_path, mode, reverse
+):
+    repo, first = _project(tmp_path, "from shared import OldAPI\n", "safe-lib>=1,<3")
+    second = _write(repo / "second.py", "import shared.two\n")
+    _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("shared/two.py", version="2.0", complete=False)},
+        files=("shared/__init__.py",),
+        editable_metadata=True,
+    )
+    paths = [first, second]
+    if reverse:
+        paths.reverse()
+    if mode == "diff":
+        findings, _unreachable = dep.scan_diff_added_imports(
+            repo, [(path.relative_to(repo).as_posix(), 1, "shared") for path in paths]
+        )
+    else:
+        findings = dep.scan_python_dependency_hallucinations(repo, paths)
+    assert [
+        (finding["rule_id"], finding["symbol"], Path(finding["file"]).name)
+        for finding in findings
+    ] == [(dep.RULE_ID_UNDECLARED, "shared", "second.py")]
+
+
+def test_editable_installed_record_with_wrong_version_remains_rejected(
+    monkeypatch, tmp_path
+):
+    repo, path = _project(tmp_path, "import real_alias\n")
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("safe_lib/__init__.py")},
+        version="2.0",
+        files=("real_alias.py",),
+        editable_metadata=True,
+    )
+    findings = dep.scan_python_dependency_hallucinations(repo, [path])
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_HALLUCINATION, "real_alias")
+    ]
+    assert fetched == [("safe-lib", "==1.0")]
+
+
+@pytest.mark.parametrize("files", [(), ("installed_alias.py",)])
+def test_cached_wheel_positive_paths_are_not_shadowed_by_partial_installed_record(
+    monkeypatch, tmp_path, files
+):
+    repo, path = _project(tmp_path, "import wheel_alias\n")
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        files=files,
+        editable_metadata=True,
+    )
+    ctx = dep._build_dependency_context(repo, [path])
+    ctx["dist_modules"][("safe-lib", "==1.0")] = _inventory("wheel_alias.py")
+    inventory = dep._verified_provider_inventory("safe-lib", ctx)
+    expected = {"wheel_alias"} | ({"installed_alias"} if files else set())
+    assert set(inventory["module_paths"]) == expected
+    assert inventory["complete_for_requirement"] is False
+    assert fetched == []
+
+
+def test_editable_finder_does_not_hide_a_different_compatible_wheel(
+    monkeypatch, tmp_path
+):
+    repo, path = _project(tmp_path, "import wheel_alias\n", "safe-lib>=1,<3")
+    fetched, _ = _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        {"safe-lib": _inventory("wheel_alias.py", version="2.0", complete=False)},
+        files=("__editable___safe_lib_1_0_finder.py",),
+        editable_metadata=True,
+    )
+    assert dep.scan_python_dependency_hallucinations(repo, [path]) == []
+    assert fetched == [("safe-lib", "<3,>=1")]
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])

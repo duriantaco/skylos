@@ -17,6 +17,7 @@ import re
 import struct
 import urllib.error
 import urllib.request
+from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -153,9 +154,29 @@ def fetch_distribution_modules(dist_name: str, *, specifier: str = "") -> dict:
         **module_inventory(names),
         "version": version,
         "complete_for_requirement": bool(
-            version is not None and _exact_pin(declared) and len(candidates) == 1
+            version is not None
+            and _exact_pin(declared)
+            and len(candidates) == 1
+            and not _has_site_path_loader(names)
         ),
     }
+
+
+def _has_site_path_loader(file_names):
+    # Wheels can put site-level .pth files under their purelib/platlib data
+    # paths. Such files may expose modules absent from the wheel's file list.
+    # Read their names only; never execute or unpack a loader.
+    for name in file_names:
+        if name.endswith("/"):
+            continue
+        installed = PurePosixPath(_WHEEL_DATA_LIB.sub("", str(PurePosixPath(name))))
+        if (
+            len(installed.parts) == 1
+            and installed.name.endswith(".pth")
+            and not installed.name.startswith(".")
+        ):
+            return True
+    return False
 
 
 def module_inventory(file_names) -> dict:

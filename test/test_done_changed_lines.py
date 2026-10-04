@@ -239,6 +239,39 @@ def test_units_skip_logging_docstrings_imports_hints_and_module_code():
     assert starts == [13, 14]
 
 
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("def total(a, b): return a + b\n", [(1, 1, "total")]),
+        ("async def total(a, b): return a + b\n", [(1, 1, "total")]),
+        (
+            "class Shop:\n    def total(self, a, b): result = a + b; return result\n",
+            [(2, 2, "Shop.total")],
+        ),
+        (
+            "def total(a, b): return (\n    a + b\n)\n",
+            [(1, 3, "total")],
+        ),
+        ("def total(a, b):\n    return a + b\n", [(2, 2, "total")]),
+    ],
+)
+def test_units_include_inline_function_bodies(source, expected):
+    assert [(u.start, u.end, u.function) for u in statement_units(source)] == expected
+
+
+@pytest.mark.parametrize(
+    "body, selected",
+    [
+        ("pass", False),
+        ('"Doc."; import os; logger.info("x"); value: int', False),
+        ('logger.info("x"); return 1', True),
+    ],
+)
+def test_inline_suites_preserve_statement_exclusions(body, selected):
+    assert bool(statement_units(f"def total(): {body}\n")) is selected
+    assert statement_units(f"if True: {body}\n") == []
+
+
 def test_multi_line_statement_is_one_target_with_its_changed_lines(tmp_path: Path):
     root = tmp_path / "r"
     root.mkdir()
@@ -327,6 +360,57 @@ def test_one_mutation_per_line_chosen_by_what_the_line_does(
     assert fragment in mutant.source
 
 
+@pytest.mark.parametrize(
+    "source, line, changed, description, expected",
+    [
+        (
+            "def total(a, b): return a > b\n",
+            1,
+            (1,),
+            "changes `>` to `>=`",
+            "def total(a, b): return a >= b\n",
+        ),
+        (
+            "def total(a, b): result = a + b; return result\n",
+            1,
+            (1,),
+            "returns None instead",
+            "def total(a, b): result = a + b; return None\n",
+        ),
+        (
+            "def total(a, b): return combine(\n    first=a,\n    second=b,\n)\n",
+            1,
+            (3,),
+            "passes None as `second`",
+            "def total(a, b): return combine(\n    first=a,\n    second=None,\n)\n",
+        ),
+        (
+            "def reset_all(): reset(); flush()\n",
+            1,
+            (1,),
+            "removes the call to `reset()`",
+            "def reset_all(): pass; flush()\n",
+        ),
+        (
+            "def total(a, b):\n    if a > b: return combine(\n"
+            "        first=a,\n        second=b,\n    )\n",
+            2,
+            (4,),
+            "passes None as `second`",
+            "def total(a, b):\n    if a > b: return combine(\n"
+            "        first=a,\n        second=None,\n    )\n",
+        ),
+    ],
+)
+def test_mutations_apply_to_inline_function_bodies(
+    source, line, changed, description, expected
+):
+    mutant = make_mutant("app.py", source, line, changed)
+    assert mutant is not None
+    assert mutant.description == description
+    assert mutant.source == expected
+
+
 def test_only_changed_lines_of_a_statement_are_mutated():
     # The ca9 case: a multi-line call with an unchanged literal and a changed
     # keyword argument. Mutating the literal says nothing about this change.
@@ -351,6 +435,75 @@ def test_line_ranges():
 # ---------------------------------------------------------------------------
 # The check, end to end
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body, changed_line",
+    [
+        (" return a - b\n", 1),
+        (" result = a - b; return result\n", 1),
+        ("\n    return a - b\n", 2),
+    ],
+)
+def test_blocking_changed_lines_check_rejects_untested_inline_bodies(
+    tmp_path: Path, body: str, changed_line: int
+):
+    root = tmp_path / "inline-body"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _write(root, "app.py", "def total(a, b): return a + b\n")
+    _write(root, "tests/test_app.py", "def test_smoke():\n    assert True\n")
+    _write(
+        root,
+        "pyproject.toml",
+        '[tool.skylos.done.checks]\nchanged_lines_checked = "block"\n',
+    )
+    _git(root, "add", "app.py", "tests/test_app.py", "pyproject.toml")
+    _git(root, "commit", "-qm", "base")
+    _write(root, "app.py", "def total(a, b):" + body)
+
+    targets = select_targets(open_comparison(root, "main"), set())
+    assert [(t.line, t.changed, t.function) for t in targets] == [
+        (changed_line, (changed_line,), "total")
+    ]
+    result = run(root, base_ref="main")
+    check = _changed_lines_check(result).result
+    assert result.verdict == "fail"
+    assert check.status == "fail"
+    assert check.evidence["changed_lines"] == 1
+    assert check.evidence["not_run_by_tests"] == 1
+    assert [(f.file, f.line) for f in check.findings] == [("app.py", changed_line)]
+    assert check.unverified == [("app.py", changed_line)]
+
+
+def test_changed_lines_check_mutates_tested_inline_body(tmp_path: Path):
+    root = tmp_path / "tested-inline-body"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _write(root, "app.py", "def total(a, b): return a + b\n")
+    _write(
+        root,
+        "tests/test_app.py",
+        "from app import total\n\ndef test_total():\n    assert total(3, 2) == 5\n",
+    )
+    _write(root, "pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-q"\n')
+    _git(root, "add", "app.py", "tests/test_app.py", "pyproject.toml")
+    _git(root, "commit", "-qm", "base")
+    _write(root, "app.py", "def total(a, b): return a - b\n")
+    _write(
+        root,
+        "tests/test_app.py",
+        "from app import total\n\ndef test_total():\n    assert total(3, 2) == 1\n",
+    )
+
+    result = run(root, base_ref="main")
+    check = _changed_lines_check(result).result
+    assert check.status == "pass"
+    assert check.evidence["changed_lines"] == 1
+    assert check.evidence["mutants"] == 1
+    assert check.evidence["caught"] == 1
+    assert check.unverified == []
+    assert (root / "app.py").read_text() == "def total(a, b): return a - b\n"
 
 
 @pytest.mark.parametrize("backend", ["sys.monitoring", "settrace"])
