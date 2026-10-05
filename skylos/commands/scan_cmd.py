@@ -1458,9 +1458,16 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     raise SystemExit(0)
             elif _is_ci():
                 console.print(
-                    "[warn]No SKYLOS_TOKEN set. To upload from CI, add SKYLOS_TOKEN to your environment.[/warn]"
+                    "[warn]No CI identity token or SKYLOS_TOKEN, so nothing was uploaded.[/warn]"
                 )
-                console.print("  See: https://docs.skylos.dev/ci-setup")
+                console.print(
+                    "  On GitHub Actions: give the job `permissions: id-token: write` and "
+                    "upload from a push to the default branch (pull_request uploads are "
+                    "not accepted). Otherwise set SKYLOS_TOKEN to a project API key."
+                )
+                console.print(
+                    "  See: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md"
+                )
                 raise SystemExit(1)
             else:
                 from skylos.cloud.login import manual_token_fallback

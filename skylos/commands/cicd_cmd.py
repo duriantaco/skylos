@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -67,20 +68,37 @@ def _cicd_load_results(args, *, console_factory, load_config_func):
         return None, 1
 
 
-def _default_workflow_output() -> str:
+def _git_output(*args: str) -> str:
     try:
-        root = (
+        return (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                ["git", *args],
                 stderr=subprocess.DEVNULL,
+                timeout=10,
             )
             .decode()
             .strip()
         )
-    except (subprocess.SubprocessError, OSError):
-        root = ""
-    base = Path(root) if root else Path.cwd()
-    return str(base / ".github" / "workflows" / "skylos.yml")
+    except (subprocess.SubprocessError, OSError, UnicodeDecodeError):
+        return ""
+
+
+def _repo_root() -> Path:
+    root = _git_output("rev-parse", "--show-toplevel")
+    return Path(root) if root else Path.cwd()
+
+
+def _default_workflow_output() -> str:
+    return str(_repo_root() / ".github" / "workflows" / "skylos.yml")
+
+
+def _detect_default_branch() -> str | None:
+    """The branch origin/HEAD points to, as recorded by `git clone`."""
+    ref = _git_output("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    branch = ref.removeprefix("origin/") if ref.startswith("origin/") else ""
+    from skylos.cicd.workflow import is_valid_branch_name
+
+    return branch if is_valid_branch_name(branch) else None
 
 
 def _read_review_sidecar_json(raw_path: str, *, label: str) -> dict | list:
@@ -141,6 +159,69 @@ def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
     return path
 
 
+def _run_cicd_init(cicd_args, console) -> int:
+    """
+    Write the workflow for `skylos cicd init` and print the next steps.
+
+    Calls: skylos/cicd/init_setup.py detect_done_setup;
+        skylos/cicd/workflow.py generate_workflow;
+        skylos/cicd/init_setup.py print_init_next_steps.
+
+    Called from: skylos/commands/cicd_cmd.py run_cicd_command.
+    """
+    from skylos.cicd.init_setup import detect_done_setup, print_init_next_steps
+    from skylos.cicd.workflow import (
+        FALLBACK_DEFAULT_BRANCHES,
+        generate_workflow,
+        write_workflow,
+    )
+
+    done_setup = detect_done_setup(_repo_root())
+    use_done = done_setup.enabled if cicd_args.done is None else cicd_args.done
+    default_branch = cicd_args.default_branch or _detect_default_branch()
+    try:
+        yaml_content = generate_workflow(
+            triggers=cicd_args.triggers,
+            analysis_types=cicd_args.analysis,
+            python_version=cicd_args.python_version,
+            use_baseline=not cicd_args.no_baseline,
+            use_llm=cicd_args.llm,
+            model=cicd_args.model,
+            use_claude_security=cicd_args.claude_security,
+            use_upload=cicd_args.upload,
+            use_defend=cicd_args.defend,
+            advisory_gate=cicd_args.advisory_gate,
+            scan_path=cicd_args.scan_path,
+            use_done=use_done,
+            done_install_commands=done_setup.install_commands,
+            default_branch=default_branch,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
+        return 1
+    output_path = cicd_args.output or _default_workflow_output()
+    write_workflow(yaml_content, output_path)
+    if use_done and not done_setup.enabled:
+        done_setup = dataclasses.replace(
+            done_setup, enabled=True, reason="added with --done"
+        )
+    elif not use_done:
+        done_setup = dataclasses.replace(done_setup, enabled=False)
+    print_init_next_steps(
+        console,
+        output_path=output_path,
+        triggers=cicd_args.triggers,
+        upload=cicd_args.upload,
+        done_requested=cicd_args.done,
+        done_setup=done_setup,
+        push_branches=(
+            (default_branch,) if default_branch else FALLBACK_DEFAULT_BRANCHES
+        ),
+        branch_detected=bool(default_branch),
+    )
+    return 0
+
+
 def run_cicd_command(
     argv: list[str],
     *,
@@ -152,7 +233,7 @@ def run_cicd_command(
     """
     Run the CI/CD subcommands for workflow generation, gates, annotations, and reviews.
 
-    Calls: skylos/cicd/workflow.py generate_workflow;
+    Calls: skylos/commands/cicd_cmd.py _run_cicd_init;
         skylos/core/gatekeeper.py run_gate_interaction;
         skylos/cicd/review.py run_pr_review.
 
@@ -163,7 +244,15 @@ def run_cicd_command(
     )
     cicd_sub = cicd_parser.add_subparsers(dest="cicd_cmd")
 
-    p_ci_init = cicd_sub.add_parser("init", help="Generate GitHub Actions workflow")
+    p_ci_init = cicd_sub.add_parser(
+        "init",
+        help="Generate GitHub Actions workflow",
+        description=(
+            "Write .github/workflows/skylos.yml: a pull request gate (changed-line "
+            "scan, PR comments, `skylos done` when your tests can run) and a "
+            "default-branch upload to Skylos Cloud through GitHub OIDC."
+        ),
+    )
     p_ci_init.add_argument("--python-version", default="3.12")
     p_ci_init.add_argument(
         "--triggers",
@@ -199,9 +288,28 @@ def run_cicd_command(
     )
     p_ci_init.add_argument(
         "--upload",
-        action="store_true",
-        help="Include upload step to send scan results to the Skylos cloud dashboard. "
-        "Requires SKYLOS_TOKEN in repo secrets.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Upload full scans from default-branch pushes to Skylos Cloud with "
+            "GitHub OIDC; no API key secret. Needs the Skylos GitHub App on the "
+            "repository (default: on; --no-upload for local-only CI)"
+        ),
+    )
+    p_ci_init.add_argument(
+        "--done",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Add the Skylos Done job, which runs your tests on pull requests "
+            "(default: only when a pytest project or [tool.skylos.done] "
+            "test_command is found)"
+        ),
+    )
+    p_ci_init.add_argument(
+        "--default-branch",
+        default=None,
+        help="Branch whose pushes upload (default: origin/HEAD, else main or master)",
     )
     p_ci_init.add_argument(
         "--defend",
@@ -291,27 +399,7 @@ def run_cicd_command(
     console = console_factory()
 
     if cicd_args.cicd_cmd == "init":
-        from skylos.cicd.workflow import generate_workflow, write_workflow
-
-        try:
-            yaml_content = generate_workflow(
-                triggers=cicd_args.triggers,
-                analysis_types=cicd_args.analysis,
-                python_version=cicd_args.python_version,
-                use_baseline=not cicd_args.no_baseline,
-                use_llm=cicd_args.llm,
-                model=cicd_args.model,
-                use_claude_security=cicd_args.claude_security,
-                use_upload=cicd_args.upload,
-                use_defend=cicd_args.defend,
-                advisory_gate=cicd_args.advisory_gate,
-                scan_path=cicd_args.scan_path,
-            )
-        except ValueError as e:
-            console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
-            return 1
-        write_workflow(yaml_content, cicd_args.output or _default_workflow_output())
-        return 0
+        return _run_cicd_init(cicd_args, console)
 
     if cicd_args.cicd_cmd == "gate":
         results, exit_code = _cicd_load_results(

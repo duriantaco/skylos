@@ -230,6 +230,60 @@ def test_api_get_401_raises(monkeypatch):
     assert "Invalid API token" in str(e.value)
 
 
+def test_api_get_shows_cloud_reason_for_refused_request(monkeypatch):
+    def fake_get(url, headers=None, timeout=None):
+        return FakeResponse(
+            404,
+            {
+                "error": "No verified GitHub App project is linked to acme/app.",
+                "hint": "Connect the GitHub App to this repository.",
+                "code": "PROJECT_NOT_FOUND",
+            },
+        )
+
+    monkeypatch.setattr(syncmod.requests, "get", fake_get)
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("/api/sync/whoami", "oidc:JWT")
+    assert str(e.value) == (
+        "No verified GitHub App project is linked to acme/app. "
+        "Connect the GitHub App to this repository. (PROJECT_NOT_FOUND)"
+    )
+
+
+def test_api_get_never_echoes_a_raw_error_body(monkeypatch):
+    class HtmlResponse(FakeResponse):
+        def json(self):
+            raise ValueError("not json")
+
+    def fake_get(url, headers=None, timeout=None):
+        return HtmlResponse(500, text="<html>private detail</html>")
+
+    monkeypatch.setattr(syncmod.requests, "get", fake_get)
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("/api/sync/config", "TOKEN")
+    assert str(e.value) == "Skylos Cloud refused /api/sync/config (HTTP 500)"
+
+
+def test_api_get_strips_control_characters_from_cloud_reason(monkeypatch):
+    def fake_get(url, headers=None, timeout=None):
+        return FakeResponse(403, {"error": "Denied\x1b[31m\nnow"})
+
+    monkeypatch.setattr(syncmod.requests, "get", fake_get)
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("/api/sync/config", "TOKEN")
+    assert str(e.value) == "Denied[31mnow"
+
+
+def test_api_get_401_names_a_rejected_ci_identity(monkeypatch):
+    def fake_get(url, headers=None, timeout=None):
+        return FakeResponse(401, {"ok": False})
+
+    monkeypatch.setattr(syncmod.requests, "get", fake_get)
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("/api/sync/whoami", "oidc:JWT")
+    assert str(e.value) == "Skylos Cloud rejected this CI identity token"
+
+
 def test_api_get_connection_error(monkeypatch):
     def fake_get(url, headers=None, timeout=None):
         raise syncmod.requests.exceptions.ConnectionError()
