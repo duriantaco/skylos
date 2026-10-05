@@ -165,6 +165,12 @@ def _render_analysis_errors(
         console.print(
             f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
         )
+    # e.g. how to install a missing language engine; shown once per distinct fix.
+    for suggestion in dict.fromkeys(
+        str(error.get("suggestion") or "").strip() for error in errors
+    ):
+        if suggestion:
+            console.print(f"  [bold]How to fix:[/bold] {escape(suggestion)}")
     console.print()
 
 

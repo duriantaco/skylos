@@ -39,6 +39,26 @@ def test_aggregate_go_engine_error_shows_affected_files_and_engine_runtime():
     assert "4 files" in rendered
     assert "Go engine" in rendered
     assert "Python ?" not in rendered
+    assert "How to fix" not in rendered
+
+
+def test_missing_go_engine_table_says_how_to_fix_once():
+    from skylos.analyzer import GO_ENGINE_SETUP_HINT
+
+    error = {
+        "kind": "language_engine_unavailable",
+        "message": "Go analysis incomplete: engine unavailable.",
+        "file": "/repo/first.go",
+        "language": "go",
+        "suggestion": GO_ENGINE_SETUP_HINT,
+    }
+    rendered = _render_errors({"analysis_errors": [error, dict(error)]})
+
+    assert rendered.count("How to fix:") == 1
+    flat = " ".join(rendered.split())
+    assert "PyPI package does not include" in flat
+    assert "SKYLOS_GO_BIN" in flat
+    assert "go build -o skylos-go ./cmd/skylos-go" in flat
 
 
 def test_syntax_error_keeps_python_runtime_and_single_file_rendering():

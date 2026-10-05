@@ -188,8 +188,18 @@ COMMANDS = [
         "name": "skylos hook <post-edit|pre-read|pre-bash|stop>",
         "desc": "Agent hook entry point (reads hook JSON on stdin; installed by agent install-hooks)",
         "details": [
-            "Fails open on internal errors and logs to .skylos/hook.log",
+            "Fails open on internal errors but says the action was not checked; "
+            "stop reports unchecked actions. Logs to .skylos/hook.log",
             "Disable one hook with SKYLOS_HOOKS_DISABLE=pre-read (comma list or 'all')",
+        ],
+        "group": "AI Agent",
+    },
+    {
+        "name": "skylos mcp [--transport stdio|sse|streamable-http]",
+        "desc": "Start the Skylos MCP server for Claude Code, Cursor and other MCP clients",
+        "details": [
+            "Speaks MCP over stdio by default; MCP clients start it as `skylos mcp`",
+            "Without SKYLOS_API_KEY only the analyze tool works (5 calls/day)",
         ],
         "group": "AI Agent",
     },

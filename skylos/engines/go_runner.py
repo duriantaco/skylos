@@ -112,8 +112,8 @@ def resolve_go_engine_bin():
 
     raise GoEngineError(
         "Go engine binary not found (skylos-go).\n"
-        "Build it locally:\n"
-        "  cd engines/go && go build -o skylos-go ./cmd/skylos-go\n"
+        "Build it from a Skylos source checkout:\n"
+        "  cd skylos/engines/go && go build -o skylos-go ./cmd/skylos-go\n"
         "Then set:\n"
         "  export SKYLOS_GO_BIN=/absolute/path/to/skylos-go"
     )

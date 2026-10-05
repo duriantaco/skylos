@@ -2354,6 +2354,12 @@ def _run_done_command(argv):
     return run_done_command(argv)
 
 
+def _run_mcp_command(argv):
+    from skylos.commands.mcp_cmd import run_mcp_command
+
+    return run_mcp_command(argv)
+
+
 def _run_preflight_command(argv):
     from skylos.commands.preflight_cmd import run_preflight_command
 

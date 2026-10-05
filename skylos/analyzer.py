@@ -1116,6 +1116,15 @@ def _sanitize_go_engine_reason(value) -> str:
     return " ".join(text.split())[:500]
 
 
+GO_ENGINE_SETUP_HINT = (
+    "Go dead-code and security checks need the native skylos-go engine, which "
+    "the PyPI package does not include. Build it from a Skylos source checkout "
+    "(cd skylos/engines/go && go build -o skylos-go ./cmd/skylos-go) and set "
+    "SKYLOS_GO_BIN to its absolute path, or scan with the Skylos GitHub Action, "
+    "which builds it. `skylos doctor` shows whether the engine is found."
+)
+
+
 def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
     if not isinstance(report, dict) or report.get("status") != "partial":
         return None
@@ -1139,7 +1148,7 @@ def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
         if str(check).strip()
     ]
     skipped_label = ", ".join(check.replace("_", " ") for check in skipped_checks)
-    message = f"Go analysis incomplete: {reason}."
+    message = f"Go analysis incomplete: {reason.rstrip('.')}."
     if skipped_label:
         message += f" Skipped checks: {skipped_label}."
 
@@ -1155,10 +1164,7 @@ def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
         "language": "go",
         "affected_file_count": len(go_files),
         "skipped_checks": skipped_checks,
-        "suggestion": (
-            "Run `skylos doctor` and configure a runnable skylos-go engine "
-            "for this platform."
-        ),
+        "suggestion": GO_ENGINE_SETUP_HINT,
     }
 
 

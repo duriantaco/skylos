@@ -196,12 +196,17 @@ Timeout-Pflicht beizubringen.
 | Python | Ja | Ja | Ja | stärkste Abdeckung; framework-aware statische Analyse und optionales Tracing |
 | TypeScript / JavaScript | Ja | Ja | Ja | Tree-sitter-Parsing, Paketgraph-Reachability, Framework-Konventionen |
 | Java | Ja | Ja | Ja | Tree-sitter-Parsing und strukturierte Security-Flow-Analyse |
-| Go | Ja | Teilweise | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
-| PHP | Ja | Ja | Teilweise | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
-| Rust | Ja | Ja | Teilweise | Rust-Parser-Abdeckung plus Security-Sink/Source-Prüfungen |
-| Dart | Ja | Ja | Teilweise | Dart-Parser-Abdeckung plus ausgewählte Security-Sinks und -Sources |
+| Go | Ja¹ | Teilweise¹ | Teilweise | Dead-Code- und ausgewählte Security-Benchmark-Abdeckung |
+| PHP | Ja | Ja | Nein | PHP-Parser-Abdeckung plus taint-artige Security-Sinks und -Sources |
+| Rust | Ja | Ja | Nein | Rust-Parser-Abdeckung plus Security-Sink/Source-Prüfungen |
+| Dart | Ja | Ja | Nein | Dart-Parser-Abdeckung plus ausgewählte Security-Sinks und -Sources |
 | C# | Teilweise | Teilweise | Teilweise | C#-Symbole, unerreichbare Anweisungen in direkten Blöcken, ausgewählte Security-Senken und direkte NuGet-Inventarisierung |
-| Shell | Nein | Ja | Teilweise | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
+| Shell | Nein | Ja | Nein | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
+
+¹ Dead-Code- und Security-Prüfungen für Go brauchen die separat gebaute
+`skylos-go`-Engine; das PyPI-Paket enthält sie nicht (die offizielle GitHub
+Action baut sie). Ohne sie laufen nur die Go-Quality-Prüfungen, und der Scan
+wird als unvollständig gemeldet.
 
 C#-Dead-Code-Funde sind konservativ: Bei einer vollständigen Analyse einer
 ausführbaren oder Web-Anwendung gelten unreferenzierte öffentliche Typen und

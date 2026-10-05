@@ -7,7 +7,9 @@ The agent runs this command with the hook event JSON on stdin. Contracts:
 * Cursor:      https://cursor.com/docs/agent/hooks
 
 Every hook exits 0 and signals through JSON on stdout. Any internal error
-fails open: the agent is never blocked because Skylos broke.
+fails open: the agent is never blocked because Skylos broke. A fail-open is
+never silent: the agent/user is told the action was not checked, and the stop
+hook reports how many actions went unchecked in the session.
 """
 
 from __future__ import annotations
@@ -35,10 +37,23 @@ from skylos.commands.hook_policy import dedupe_by_line
 
 EVENTS = ("session-start", "post-edit", "pre-read", "pre-bash", "stop")
 CLIENTS = ("claude", "codex", "cursor")
+# What a fail-open message calls the action that went unchecked.
+FAIL_OPEN_ACTIONS = {
+    "session-start": "prompt",
+    "post-edit": "edit",
+    "pre-read": "read",
+    "pre-bash": "command",
+    "stop": "stop",
+}
 
 SESSION_PATH = Path(".skylos") / "agent-session.json"
 SESSION_LOCK_PATH = Path(".skylos") / "agent-session.lock"
 LOG_PATH = Path(".skylos") / "hook.log"
+# Unchecked (fail-open) actions, reported at stop. Kept apart from the agent
+# session file: a broken session file must not be rewritten to record that it
+# is broken, and .skylos/cache/ is already ignored by Git and by Done.
+FAIL_OPEN_PATH = Path(".skylos") / "cache" / "hook-fail-open.json"
+FAIL_OPEN_LOCK_PATH = Path(".skylos") / "cache" / "hook-fail-open.lock"
 DISABLE_ENV = "SKYLOS_HOOKS_DISABLE"
 
 MAX_STDIN_BYTES = 8_000_000
@@ -129,8 +144,12 @@ def run_hook_command(
     client = client_arg or "claude"
     root: Path | None = None
     output: dict[str, Any] | None = None
+    payload: dict[str, Any] = {}
+    input_read = False
+    notices: list[str] = []
     try:
         payload = _read_payload(stdin)
+        input_read = True
         client = client_arg or _detect_client(payload)
         root = _project_root(payload, deps.env)
         record["client"] = client
@@ -187,9 +206,28 @@ def run_hook_command(
         if root is None:
             with contextlib.suppress(Exception):
                 root = _project_root({}, deps.env)
+        if event in EVENTS and not _disabled(event, deps.env):
+            # Allowed without a check must never look like a pass.
+            reason = _fail_open_reason(exc, input_read=input_read)
+            notice = _fail_open_message(event, reason)
+            notices.append(notice)
+            output = _with_notice(event, client, output, notice)
+            if event != "stop" and root is not None:
+                # Stop reports its own failure now; earlier ones wait for it.
+                _record_fail_open(root, _session_id(payload), event, reason)
 
-    if client == "cursor" and record.get("warning"):
-        print(record["warning"], file=sys.stderr)
+    if event == "stop" and root is not None and not _disabled(event, deps.env):
+        summary = _take_fail_open_summary(root, _session_id(payload))
+        if summary is not None:
+            record["unchecked_actions"], text = summary
+            notices.append(text)
+            output = _with_notice(event, client, output, text)
+
+    if client == "cursor":
+        # Cursor shows no message on an allowed action or a non-blocking stop;
+        # its Hooks output channel shows stderr.
+        for text in ([record["warning"]] if record.get("warning") else []) + notices:
+            print(text, file=sys.stderr)
     if output is not None:
         stdout.write(json.dumps(output) + "\n")
         stdout.flush()
@@ -504,6 +542,46 @@ def _done_warning_output(event: str, client: str, warning: str) -> dict[str, Any
     output = _allow_output(event, client) or {}
     output["systemMessage"] = warning
     return output
+
+
+def _with_notice(
+    event: str, client: str, output: dict[str, Any] | None, text: str
+) -> dict[str, Any] | None:
+    """Add a non-blocking message to ``output``; never changes its decision."""
+    if client == "cursor":
+        # Cursor ignores messages on "allow" and its Stop has no non-blocking
+        # field (followup_message would start another turn): stderr only.
+        return output
+    merged = dict(output or {})
+    shown = merged.get("systemMessage")
+    merged["systemMessage"] = f"{shown}\n{text}" if shown else text
+    if client == "claude" and event in {"post-edit", "pre-read", "pre-bash"}:
+        # systemMessage reaches the user; additionalContext reaches the agent.
+        # No permissionDecision: the normal permission flow still applies.
+        specific = dict(merged.get("hookSpecificOutput") or {})
+        specific.setdefault(
+            "hookEventName", "PostToolUse" if event == "post-edit" else "PreToolUse"
+        )
+        context = specific.get("additionalContext")
+        specific["additionalContext"] = f"{context}\n{text}" if context else text
+        merged["hookSpecificOutput"] = specific
+    return merged
+
+
+def _fail_open_reason(exc: BaseException, *, input_read: bool) -> str:
+    # Only the exception type: its text can hold file contents or commands.
+    name = type(exc).__name__
+    if not input_read:
+        return f"the hook input could not be read ({name})"
+    return f"internal error ({name})"
+
+
+def _fail_open_message(event: str, reason: str) -> str:
+    action = FAIL_OPEN_ACTIONS.get(event, "action")
+    return (
+        f"Skylos could not check this {action}: {reason}. "
+        "It was allowed without a check."
+    )
 
 
 def _handle_session_start(payload, root, client, deps, record):
@@ -1696,6 +1774,117 @@ def _prune_sessions(sessions: dict[str, Any]) -> None:
         ordered = sorted(sessions, key=lambda k: _int(sessions[k].get("updated")))
         for key in ordered[: len(sessions) - MAX_SESSIONS]:
             sessions.pop(key, None)
+
+
+# --------------------------------------------------------------------------
+# Unchecked actions (.skylos/cache/hook-fail-open.json)
+# --------------------------------------------------------------------------
+
+
+def _load_fail_open_state(base: Path) -> dict[str, Any]:
+    from skylos.core.safe_cache_io import load_project_json_cache
+
+    state = load_project_json_cache(base, FAIL_OPEN_PATH)
+    if state.get("schema_version") != 1 or not isinstance(state.get("sessions"), dict):
+        return {"schema_version": 1, "sessions": {}}
+    return state
+
+
+def _record_fail_open(root: Path, session_id: str, event: str, reason: str) -> None:
+    """Remember an action that was allowed unchecked; never raises."""
+    try:
+        from skylos.core.safe_cache_io import (
+            project_cache_lock,
+            save_project_json_cache,
+        )
+
+        base = _state_root(root)
+        with project_cache_lock(base, FAIL_OPEN_LOCK_PATH, timeout_seconds=1) as ok:
+            if not ok:
+                return
+            state = _load_fail_open_state(base)
+            sessions = state["sessions"]
+            entry = sessions.get(  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
+                session_id
+            )
+            if not isinstance(entry, dict):
+                entry = {}
+            events = entry.get("events")
+            events = events if isinstance(events, list) else []
+            events.append({"action": FAIL_OPEN_ACTIONS[event], "reason": reason})
+            entry["events"] = events[-MAX_ITEMS:]
+            entry["count"] = max(_int(entry.get("count")), 0) + 1
+            entry["updated"] = int(time.time())
+            sessions[session_id] = entry
+            _prune_sessions(sessions)
+            save_project_json_cache(base, FAIL_OPEN_PATH, state)
+    except (Exception, SystemExit):
+        return
+
+
+def _take_fail_open_summary(root: Path, session_id: str) -> tuple[int, str] | None:
+    """Pop this session's unchecked actions and describe them; never raises.
+
+    Events from input that could not be parsed have no session ID and are
+    stored under "default"; the next stop in the project reports them.
+    """
+    try:
+        from skylos.core.safe_cache_io import (
+            project_cache_lock,
+            save_project_json_cache,
+        )
+
+        base = _state_root(root)
+        if not os.path.lexists(base / FAIL_OPEN_PATH):
+            return None
+        count = 0
+        events: list[dict[str, Any]] = []
+        with project_cache_lock(base, FAIL_OPEN_LOCK_PATH, timeout_seconds=1) as ok:
+            if not ok:
+                return None
+            state = _load_fail_open_state(base)
+            for key in dict.fromkeys((session_id, "default")):
+                entry = state["sessions"].pop(key, None)
+                if not isinstance(entry, dict):
+                    continue
+                kept = [
+                    e
+                    for e in entry.get("events") or []
+                    if isinstance(e, dict)
+                    and isinstance(e.get("action"), str)
+                    and isinstance(e.get("reason"), str)
+                ]
+                events.extend(kept)
+                count += max(_int(entry.get("count")), len(kept))
+            if not count:
+                return None
+            save_project_json_cache(base, FAIL_OPEN_PATH, state)
+    except (Exception, SystemExit):
+        return None
+    return count, _fail_open_summary(count, events)
+
+
+def _fail_open_summary(count: int, events: list[dict[str, Any]]) -> str:
+    grouped: dict[str, int] = {}
+    for event in events:
+        action = _clean_message(event["action"], 20)
+        reason = _clean_message(event["reason"], MAX_NOTE_CHARS)
+        grouped[f"{action}: {reason}"] = grouped.get(f"{action}: {reason}", 0) + 1
+    head = (
+        "1 action was not checked by Skylos because it errored. It was"
+        if count == 1
+        else f"{count} actions were not checked by Skylos because it errored. They were"
+    )
+    lines = [f"{head} allowed without a check:"]
+    shown = list(grouped.items())[:MAX_NOTES]
+    lines.extend(
+        f"- {text}" + (f" ({times} times)" if times > 1 else "")
+        for text, times in shown
+    )
+    listed = sum(times for _, times in shown)
+    if count > listed:
+        lines.append(f"- ...and {count - listed} more")
+    return "\n".join(lines)
 
 
 def _finding_key(finding: dict[str, Any], lines: list[str]) -> str:

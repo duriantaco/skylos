@@ -687,38 +687,266 @@ def test_check_install_command_statuses_without_network(tmp_path):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "event,client,expected",
-    [
-        ("post-edit", "claude", None),
-        ("pre-read", "claude", None),
-        ("pre-bash", "claude", None),
-        ("stop", "claude", {}),
-        ("stop", "codex", {}),
-        ("pre-read", "cursor", {"permission": "allow"}),
-        ("pre-bash", "cursor", {"permission": "allow"}),
-    ],
-)
-@pytest.mark.parametrize("raw", ["not json {", "", "[1, 2]", '{"tool_input": "oops"}'])
+FAIL_OPEN_CASES = [
+    ("post-edit", "claude", None),
+    ("pre-read", "claude", None),
+    ("pre-bash", "claude", None),
+    ("stop", "claude", {}),
+    ("stop", "codex", {}),
+    ("pre-read", "cursor", {"permission": "allow"}),
+    ("pre-bash", "cursor", {"permission": "allow"}),
+]
+FAIL_OPEN_ACTION = {"post-edit": "edit", "pre-read": "read", "pre-bash": "command"}
+
+
+def _fail_open_text(action, reason):
+    return (
+        f"Skylos could not check this {action}: {reason}. "
+        "It was allowed without a check."
+    )
+
+
+def _fail_open_state(tmp_path):
+    path = tmp_path / ".skylos" / "cache" / "hook-fail-open.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def _assert_visible_allow(out, client, event, text, capsys):
+    """Allowed (never denied/blocked), and the message reached the client."""
+    if client == "cursor":
+        assert out in ({"permission": "allow"}, {}, None)
+        assert text in capsys.readouterr().err
+        return
+    assert "decision" not in out
+    assert out["systemMessage"] == text
+    spec = out.get("hookSpecificOutput")
+    if client == "claude" and event != "stop":
+        assert "permissionDecision" not in spec  # normal permission flow
+        assert spec["additionalContext"] == text
+    else:
+        assert spec is None
+
+
+@pytest.mark.parametrize("event,client,expected", FAIL_OPEN_CASES)
+@pytest.mark.parametrize("raw", ["", "[1, 2]", '{"tool_input": "oops"}'])
 def test_malformed_input_fails_open(tmp_path, event, client, expected, raw):
     code, out, _ = _run(tmp_path, event, None, client=client, raw=raw)
     assert code == 0
     assert out == expected
 
 
+@pytest.mark.parametrize("event,client,expected", FAIL_OPEN_CASES)
+def test_unparseable_input_fails_open_visibly(
+    tmp_path, capsys, event, client, expected
+):
+    code, out, _ = _run(tmp_path, event, None, client=client, raw="not json {")
+    assert code == 0
+    action = FAIL_OPEN_ACTION.get(event, "stop")
+    text = _fail_open_text(action, "the hook input could not be read (JSONDecodeError)")
+    _assert_visible_allow(out, client, event, text, capsys)
+    if client == "cursor":
+        assert out == expected
+
+
 def test_internal_error_fails_open_and_is_logged(tmp_path):
     app = _write(tmp_path / "app.py", APP)
     verify = FakeVerify(error=RuntimeError("analyzer exploded"))
-    code, _, text = _run(
+    code, out, text = _run(
         tmp_path,
         "post-edit",
         _edit_payload(app, "os.system(cmd)"),
         client="claude",
         deps=HookDeps(verify=verify),
     )
-    assert code == 0 and text == ""
+    assert code == 0
+    assert "decision" not in out
+    assert out["systemMessage"] == _fail_open_text(
+        "edit", "internal error (RuntimeError)"
+    )
+    assert "analyzer exploded" not in text  # never the raw exception text
     entry = _log_lines(tmp_path)[-1]
     assert entry["outcome"] == "error" and entry["error"] == "RuntimeError"
+
+
+class _Boom:
+    def __call__(self, *args, **kwargs):
+        raise ValueError("raw detail: pip install secret-pkg")
+
+
+@pytest.mark.parametrize("client", ["claude", "codex", "cursor"])
+@pytest.mark.parametrize("event", ["post-edit", "pre-read", "pre-bash"])
+def test_check_exception_allows_visibly_and_records_event(
+    tmp_path, monkeypatch, capsys, client, event
+):
+    app = _write(tmp_path / "creds.py", SECRET_FILE)
+    deps = HookDeps(verify=_Boom(), install_checker=_Boom())
+    if event == "post-edit":
+        payload = _edit_payload(app, "return 1")
+        if client == "codex":
+            payload = {
+                "session_id": "s1",
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": f"*** Begin Patch\n*** Add File: {app}\n+x\n*** End Patch"
+                },
+            }
+        elif client == "cursor":
+            payload = {
+                "conversation_id": "s1",
+                "hook_event_name": "afterFileEdit",
+                "file_path": str(app),
+                "edits": [{"old_string": "", "new_string": "return 1"}],
+            }
+    elif event == "pre-read":
+        monkeypatch.setattr(hook_cmd, "_secret_findings", _Boom())
+        payload = _read_payload(app)
+        if client == "cursor":
+            payload = {"conversation_id": "s1", "file_path": str(app)}
+    else:
+        payload = _bash("pip install requests")
+        if client == "cursor":
+            payload = {"conversation_id": "s1", "command": "pip install requests"}
+
+    code, out, text = _run(tmp_path, event, payload, client=client, deps=deps)
+    assert code == 0
+    action = FAIL_OPEN_ACTION[event]
+    message = _fail_open_text(action, "internal error (ValueError)")
+    _assert_visible_allow(out, client, event, message, capsys)
+    assert "raw detail" not in text and "secret-pkg" not in text
+    if client == "cursor" and event != "post-edit":
+        assert out == {"permission": "allow"}
+    elif client == "cursor":
+        assert out is None
+
+    state = _fail_open_state(tmp_path)
+    assert state["sessions"]["s1"]["count"] == 1
+    assert state["sessions"]["s1"]["events"] == [
+        {"action": action, "reason": "internal error (ValueError)"}
+    ]
+    assert "raw detail" not in json.dumps(state)
+    assert _log_lines(tmp_path)[-1]["outcome"] == "error"
+
+
+@pytest.mark.parametrize("client", ["claude", "codex", "cursor"])
+def test_stop_reports_unchecked_actions_once_without_blocking(tmp_path, capsys, client):
+    app = _write(tmp_path / "app.py", APP)
+    broken = HookDeps(verify=_Boom(), install_checker=_Boom())
+    for event, payload in (
+        ("post-edit", _edit_payload(app, "os.system(cmd)")),
+        ("post-edit", _edit_payload(app, "return 1")),
+        ("pre-bash", _bash("pip install requests")),
+    ):
+        _run(tmp_path, event, payload, client="claude", deps=broken)
+    # Input that cannot be parsed has no session: the next stop reports it.
+    _run(tmp_path, "pre-read", None, client="claude", raw="not json {")
+    # Another session's failures are not this session's report.
+    _run(
+        tmp_path,
+        "pre-bash",
+        {**_bash("pip install requests"), "session_id": "other"},
+        client="claude",
+        deps=broken,
+    )
+    capsys.readouterr()
+
+    stop = {"session_id": "s1", "conversation_id": "s1", "status": "completed"}
+    code, out, _ = _run(tmp_path, "stop", stop, client=client)
+    assert code == 0
+    summary = (
+        "4 actions were not checked by Skylos because it errored. "
+        "They were allowed without a check:\n"
+        "- edit: internal error (ValueError) (2 times)\n"
+        "- command: internal error (ValueError)\n"
+        "- read: the hook input could not be read (JSONDecodeError)"
+    )
+    if client == "cursor":
+        assert out == {}
+        assert summary in capsys.readouterr().err
+    else:
+        assert out == {"systemMessage": summary}
+    assert _log_lines(tmp_path)[-1]["unchecked_actions"] == 4
+
+    # Reported once: the next stop is clean again, the other session is kept.
+    _, out, _ = _run(tmp_path, "stop", stop, client=client)
+    assert out == {}
+    assert _fail_open_state(tmp_path)["sessions"]["other"]["count"] == 1
+
+
+def test_stop_unchecked_warning_keeps_an_existing_block(tmp_path):
+    app = _write(tmp_path / "app.py", APP)
+    verify = FakeVerify({"app.py": [(5, "SKY-D212", "Possible command injection")]})
+    _, out, _ = _run(
+        tmp_path,
+        "post-edit",
+        _edit_payload(app, "os.system(cmd)"),
+        client="claude",
+        deps=HookDeps(verify=verify),
+    )
+    assert out["decision"] == "block"
+    _run(
+        tmp_path,
+        "pre-bash",
+        _bash("pip install requests"),
+        client="claude",
+        deps=HookDeps(install_checker=_Boom()),
+    )
+    _, out, _ = _run(
+        tmp_path,
+        "stop",
+        {"session_id": "s1"},
+        client="claude",
+        deps=HookDeps(verify=verify),
+    )
+    assert out["decision"] == "block"
+    assert "SKY-D212" in out["reason"]
+    assert out["systemMessage"].startswith(
+        "1 action was not checked by Skylos because it errored. It was allowed"
+    )
+
+
+def test_stop_failure_itself_is_visible_and_not_double_counted(tmp_path, monkeypatch):
+    _run(
+        tmp_path,
+        "pre-bash",
+        _bash("pip install requests"),
+        client="claude",
+        deps=HookDeps(install_checker=_Boom()),
+    )
+    monkeypatch.setitem(hook_cmd._HANDLERS, "stop", _Boom())
+    _, out, _ = _run(tmp_path, "stop", {"session_id": "s1"}, client="claude")
+    assert "decision" not in out
+    assert out["systemMessage"] == (
+        _fail_open_text("stop", "internal error (ValueError)")
+        + "\n1 action was not checked by Skylos because it errored. "
+        "It was allowed without a check:\n- command: internal error (ValueError)"
+    )
+
+
+@pytest.mark.parametrize("client", ["claude", "cursor"])
+def test_disabled_hooks_stay_silent_when_skylos_would_fail(tmp_path, capsys, client):
+    (tmp_path / ".git").mkdir()
+    app = _write(tmp_path / "creds.py", SECRET_FILE)
+    env = {"CLAUDE_PROJECT_DIR": str(tmp_path), "SKYLOS_HOOKS_DISABLE": "all"}
+    expected = {"pre-read": {"permission": "allow"}, "stop": {}}
+    for event, stdin in (
+        ("pre-read", "not json {"),
+        ("pre-read", json.dumps(_read_payload(app))),
+        ("stop", '{"session_id": "s1"}'),
+    ):
+        stdout = io.StringIO()
+        run_hook_command(
+            [event, "--client", client],
+            stdin=io.StringIO(stdin),
+            stdout=stdout,
+            deps=HookDeps(env=env, verify=_Boom(), install_checker=_Boom()),
+        )
+        text = stdout.getvalue().strip()
+        if client == "cursor" or event == "stop":
+            assert json.loads(text) == expected[event]
+        else:
+            assert text == ""
+    assert capsys.readouterr().err == ""
+    assert _fail_open_state(tmp_path) is None
 
 
 def test_unknown_event_and_bad_client_fail_open(tmp_path):
@@ -938,14 +1166,15 @@ def test_install_hooks_pure_functions_keep_foreign_entries():
 def test_system_exit_inside_analysis_still_fails_open(tmp_path):
     app = _write(tmp_path / "app.py", APP)
     verify = FakeVerify(error=SystemExit(2))
-    code, _, text = _run(
+    code, out, _ = _run(
         tmp_path,
         "post-edit",
         _edit_payload(app, "os.system(cmd)"),
         client="claude",
         deps=HookDeps(verify=verify),
     )
-    assert code == 0 and text == ""
+    assert code == 0 and "decision" not in out
+    assert "internal error (SystemExit)" in out["systemMessage"]
     assert _log_lines(tmp_path)[-1]["error"] == "SystemExit"
 
 
@@ -1433,7 +1662,10 @@ def test_runtime_verify_error_still_fails_open_with_valid_standards(tmp_path):
         client="claude",
         deps=HookDeps(verify=FakeVerify(error=RuntimeError("scan failed"))),
     )
-    assert out is None and text == ""
+    assert "decision" not in out and "scan failed" not in text
+    assert out["systemMessage"] == _fail_open_text(
+        "edit", "internal error (RuntimeError)"
+    )
     assert _log_lines(tmp_path)[-1]["outcome"] == "error"
 
 

@@ -121,12 +121,14 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Python | 是 | 是 | 是 | 覆盖最强，支持框架感知静态分析和可选运行时追踪 |
 | TypeScript / JavaScript | 是 | 是 | 是 | Tree-sitter 解析、包图可达性、框架约定 |
 | Java | 是 | 是 | 是 | Tree-sitter 解析和结构化安全流分析 |
-| Go | 是 | 部分 | 部分 | 死代码和部分安全基准覆盖 |
-| PHP | 是 | 是 | 部分 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
-| Rust | 是 | 是 | 部分 | Rust parser 覆盖，加上安全 sinks 和 sources |
-| Dart | 是 | 是 | 部分 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
+| Go | 是¹ | 部分¹ | 部分 | 死代码和部分安全基准覆盖 |
+| PHP | 是 | 是 | 否 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
+| Rust | 是 | 是 | 否 | Rust parser 覆盖，加上安全 sinks 和 sources |
+| Dart | 是 | 是 | 否 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
 | C# | 部分 | 部分 | 部分 | C# 符号、直接代码块中的不可达语句、部分安全汇入点及 NuGet 直接依赖清单 |
-| Shell | 否 | 是 | 部分 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
+| Shell | 否 | 是 | 否 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
+
+¹ Go 的死代码和安全检查需要单独构建的 `skylos-go` 引擎；PyPI 包不包含该引擎（官方 GitHub Action 会自动构建）。没有该引擎时只运行 Go 质量检查，扫描结果会被标记为不完整。
 
 C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，未被引用的 public
 类型和方法会作为低置信度候选项；库的公开 API、protected 成员及已知的框架或
