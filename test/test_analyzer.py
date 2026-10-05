@@ -5658,6 +5658,8 @@ class TestRepoPhantomReferences:
         assert error["affected_file_count"] == 1
         assert error["skipped_checks"] == ["dead_code", "security"]
         assert "Go engine binary not found" in error["message"]
+        assert ".." not in error["message"]
+        assert "SKYLOS_GO_BIN" in error["suggestion"]
         assert "python_version" not in error
 
     def test_analyze_fails_closed_once_when_available_go_engine_crashes(self, tmp_path):

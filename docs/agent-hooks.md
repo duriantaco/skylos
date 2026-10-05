@@ -252,6 +252,7 @@ Every hook exits `0` and signals through JSON on stdout.
 | post-edit pass | no output | no output |
 | stop, issues open | `{"decision": "block", "reason": "..."}` | `{"followup_message": "..."}` |
 | stop, clean | `{}` (Codex requires JSON from Stop) | `{}` |
+| Skylos error (fails open) | the allow/stop output above plus `"systemMessage": "..."`; Claude `pre-read`/`pre-bash`/`post-edit` also get `hookSpecificOutput.additionalContext` (no `permissionDecision`) | the allow/stop output above; the message goes to stderr |
 
 References:
 
@@ -264,7 +265,38 @@ References:
 
 Runtime hook failures fail open. If the JSON input is malformed, the event is
 unknown, the analyzer crashes or a lock is busy, Skylos allows the action and
-logs the error. An explicitly configured but invalid agent standards policy
+logs the error.
+
+A fail-open is never silent, so an unchecked action can't pass for a checked
+one. When Skylos errors on a read, command, edit, prompt or stop, it says so:
+
+```
+Skylos could not check this edit: internal error (RuntimeError). It was allowed without a check.
+```
+
+- **Claude Code:** `systemMessage` (shown to you) and, for `pre-read`,
+  `pre-bash` and `post-edit`, `additionalContext` (shown to the agent). No
+  `permissionDecision` is sent, so your normal permission prompt still applies.
+- **Codex:** `systemMessage`.
+- **Cursor:** stderr, which appears in Cursor's Hooks output channel (Cursor
+  shows no message on an allowed action).
+
+The reason names only the exception type, never its text. Each unchecked
+action is also recorded in `.skylos/cache/hook-fail-open.json`. At `stop`,
+Skylos reports the session's unchecked actions once, as a warning that never
+blocks:
+
+```
+3 actions were not checked by Skylos because it errored. They were allowed without a check:
+- edit: internal error (RuntimeError) (2 times)
+- command: internal error (OSError)
+```
+
+A hook turned off with `SKYLOS_HOOKS_DISABLE` stays silent and records
+nothing. Two other cases are still silent: an unknown hook name, and the shell
+wrapper's `|| exit 0` (a Skylos that is not installed or cannot start).
+
+An explicitly configured but invalid agent standards policy
 gives Claude Code and Codex a repair message at `post-edit` and reports the
 problem to all three agents at `stop`; `skylos hook recheck` exits 2. Hook
 timeouts set by the installer are 15 s (`pre-read`), 30 s

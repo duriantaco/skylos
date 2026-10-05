@@ -342,7 +342,9 @@ skylos agent install-hooks --cursor   # Cursor (.cursor/hooks.json)
 - **Before a package install:** blocks hallucinated or typosquatted packages.
 - **At stop:** blocks "done" while issues the agent added are still open.
 
-Hooks fail open, log to `.skylos/hook.log`, and merge with your existing hooks.
+Hooks fail open, but never silently: if Skylos errors, the agent and you are
+told the action was allowed without a check, and `stop` reports how many went
+unchecked. They log to `.skylos/hook.log` and merge with your existing hooks.
 `--uninstall` removes only the Skylos entries. See
 [Agent-loop hooks](./docs/agent-hooks.md) for the contract, latency, and
 limits.
@@ -637,14 +639,24 @@ or `--include-folder` to override an excluded folder.
 | Python | Yes | Yes | Yes | Supported | strongest coverage; framework-aware static analysis and optional tracing |
 | TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
-| Go | Yes | Partial | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
-| PHP | Yes | Yes | Partial | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
-| Rust | Yes | Yes | Partial | Unsupported | Rust parser coverage plus security sink/source checks |
-| Dart | Yes | Yes | Partial | Unsupported | Dart parser coverage plus selected security sinks and sources |
+| Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
+| PHP | Yes | Yes | No | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
+| Rust | Yes | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
+| Dart | Yes | Yes | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
-| Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
-| Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
+| Kotlin | Yes | No² | No | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
+| Shell | No | Yes | No | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
+
+¹ Go dead-code and security checks need the separately built `skylos-go`
+engine, which the PyPI package does not include (the official GitHub Action
+builds it). Without it only Go quality checks run and the scan is reported
+incomplete; see the Go engine note below.
+
+² No built-in Kotlin security rules; secret scanning still covers `.kt` and
+`.kts` files.
+
+"No" means Skylos has no built-in rules of that kind for the language.
 
 C# dead-code findings are conservative: in a complete executable or web
 application scan, unreferenced public types and methods are low-confidence

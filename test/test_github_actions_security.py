@@ -552,6 +552,25 @@ def test_release_please_updates_skylos_version_in_uv_lock():
     } in package_config["extra-files"]
 
 
+def test_release_please_keeps_mcp_server_json_version_in_sync():
+    extra_files = _release_please_config()["packages"]["."]["extra-files"]
+    for jsonpath in ("$.version", "$.packages[?(@.identifier=='skylos')].version"):
+        assert {
+            "type": "json",
+            "path": "server.json",
+            "jsonpath": jsonpath,
+        } in extra_files
+
+    server = json.loads(Path("server.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        Path("tools/release/.release-please-manifest.json").read_text(encoding="utf-8")
+    )
+    package = next(p for p in server["packages"] if p["identifier"] == "skylos")
+    assert server["version"] == package["version"] == manifest["."]
+    # The MCP registry schema caps the description at 100 characters.
+    assert 0 < len(server["description"]) <= 100
+
+
 def test_tests_workflow_pins_codecov_and_limits_permissions():
     workflow = _tests_workflow()
     assert workflow["permissions"] == {"contents": "read"}

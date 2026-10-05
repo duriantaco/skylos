@@ -1,20 +1,28 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.duriantaco/skylos",
-  "description": "MCP server for AI agents to run open-source code security and static analysis on Python, TypeScript, and Go. Detects dead code, secrets, vulnerabilities, and diff-aware security regressions.",
+  "description": "Dead code, security, secrets and quality scans; verifies AI code changes and agent guardrails.",
   "repository": {
     "url": "https://github.com/duriantaco/skylos",
     "source": "github"
   },
-  "version": "4.2.1",
+  "version": "4.44.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "skylos",
-      "version": "4.2.1",
+      "version": "4.44.0",
+      "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
       },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Start the MCP server (the skylos command alone is the CLI)."
+        }
+      ],
       "environmentVariables": [
         {
           "description": "Skylos API key. Required for every MCP tool except `analyze` (which works without a key, 5 calls/day). The local CLI (`skylos verify`, hooks) needs no key.",
