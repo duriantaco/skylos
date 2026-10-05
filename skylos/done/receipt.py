@@ -106,7 +106,7 @@ def build_receipt(
                         "line": f.line
                         if isinstance(f.line, int) and f.line >= 1
                         else None,
-                        "message": _clean_text(f.message, MAX_MESSAGE) or "finding",
+                        "message": _clean_text(_marked(f), MAX_MESSAGE) or "finding",
                     }
                     for f in findings[:MAX_FINDINGS]
                 ],
@@ -134,6 +134,15 @@ def build_receipt(
         "checks": checks,
         "unverified": _unverified(result),
     }
+
+
+def _marked(finding: Any) -> str:
+    """A finding that never decides its check reads "(advice) ...", so the
+    JSON (which has no blocking flag) tells it from one that blocks."""
+    message = str(finding.message)
+    if getattr(finding, "blocking", True) or message.startswith("(advice)"):
+        return message
+    return f"(advice) {message}"
 
 
 def _unverified(result: DoneResult) -> list[dict[str, Any]]:

@@ -417,6 +417,14 @@ def _is_pytest(argv: tuple[str, ...]) -> bool:
 
 
 def _looks_like_pytest_project(root: Path) -> bool:
+    return has_pytest_config(root) or any(
+        (root / name).is_dir() for name in ("tests", "test")
+    )
+
+
+def has_pytest_config(root: Path) -> bool:
+    """pytest settings or a conftest.py at the root (a test/ directory alone
+    is as likely to hold JavaScript tests)."""
     if any((root / name).is_file() for name in _PYTEST_CONFIG_FILES[:3]):
         return True
     pyproject = root / "pyproject.toml"
@@ -425,7 +433,7 @@ def _looks_like_pytest_project(root: Path) -> bool:
             return True
     except (OSError, UnicodeError):
         pass
-    return any((root / name).is_dir() for name in ("tests", "test"))
+    return False
 
 
 def _shown_command(invocation: _Invocation) -> str:

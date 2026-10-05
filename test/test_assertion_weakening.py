@@ -1,3 +1,5 @@
+import pytest
+
 from skylos.rules.ai_defect.assertion_weakening import detect_assertion_weakening
 
 
@@ -397,9 +399,7 @@ new file mode 100644
 +exports[`api response 2`] = `{"role":"user"}`;
 """
 
-    assert (
-        detect_assertion_weakening(diff, "tests/__snapshots__/test_api.snap") == []
-    )
+    assert detect_assertion_weakening(diff, "tests/__snapshots__/test_api.snap") == []
 
 
 def test_ignores_non_test_files():
@@ -414,3 +414,111 @@ index 1111111..2222222 100644
 """
 
     assert detect_assertion_weakening(diff, "app.py") == []
+
+
+def _hunk(path: str, removed: list[str], added: list[str]) -> str:
+    lines = [f"-{line}" for line in removed] + [f"+{line}" for line in added]
+    return (
+        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        f"@@ -3,{len(removed)} +3,{len(added)} @@\n" + "\n".join(lines) + "\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("removed", "added", "message"),
+    [
+        (
+            'expect(() => compile("{{")).toThrow("Unclosed tag");',
+            'expect(() => compile("{{")).not.toThrow();',
+            "Exception assertion now expects no error",
+        ),
+        (
+            'expect(() => compile("{{")).toThrowError("Unclosed tag");',
+            'expect(() => compile("{{")).toThrowError();',
+            "Exception assertion no longer checks which error is thrown",
+        ),
+        (
+            "await expect(load()).rejects.toThrow(/missing file/);",
+            "await expect(load()).rejects.toThrow(/./);",
+            "Exception assertion no longer checks which error is thrown",
+        ),
+        (
+            "expect(run).toThrow(TypeError);",
+            "expect(run).toThrow(Error);",
+            "Exception assertion no longer checks which error is thrown",
+        ),
+        (
+            "expect(run).toThrow();",
+            "expect(run).not.toThrow();",
+            "Exception assertion now expects no error",
+        ),
+    ],
+)
+def test_detects_loosened_js_throw_expectations(removed, added, message):
+    findings = detect_assertion_weakening(
+        _hunk("src/lib.test.js", [f"    {removed}"], [f"    {added}"]),
+        "src/lib.test.js",
+    )
+    assert [f["message"] for f in findings] == [f"AI defect: {message}"]
+    assert findings[0]["metadata"]["weakening_type"] == "exception_assertion_loosened"
+
+
+@pytest.mark.parametrize(
+    ("removed", "added", "message"),
+    [
+        (
+            'with pytest.raises(ValueError, match="Unclosed tag"):',
+            "with pytest.raises(ValueError):",
+            "pytest.raises no longer checks the error message",
+        ),
+        (
+            "with pytest.raises(ValueError):",
+            "with pytest.raises(Exception):",
+            "pytest.raises now accepts any exception",
+        ),
+        (
+            'with self.assertRaisesRegex(ValueError, "Unclosed"):',
+            "with self.assertRaises(ValueError):",
+            "assertRaisesRegex became assertRaises: the error message is no "
+            "longer checked",
+        ),
+    ],
+)
+def test_detects_loosened_python_exception_assertions(removed, added, message):
+    findings = detect_assertion_weakening(
+        _hunk("tests/test_lib.py", [f"    {removed}"], [f"    {added}"]),
+        "tests/test_lib.py",
+    )
+    assert [f["message"] for f in findings] == [f"AI defect: {message}"]
+
+
+@pytest.mark.parametrize(
+    ("path", "removed", "added"),
+    [
+        (
+            "src/lib.test.js",
+            'expect(f).toThrow("old message");',
+            'expect(f).toThrow("new");',
+        ),
+        ("src/lib.test.js", "expect(f).toThrow();", "expect(f).toThrow(/bad input/);"),
+        (
+            "tests/test_lib.py",
+            "with pytest.raises(ValueError):",
+            'with pytest.raises(ValueError, match="bad"):',
+        ),
+        (
+            "tests/test_lib.py",
+            'with pytest.raises(ValueError, match="a"):',
+            'with pytest.raises(KeyError, match="b"):',
+        ),
+    ],
+)
+def test_specific_or_stricter_exception_assertions_are_not_loosened(
+    path, removed, added
+):
+    assert (
+        detect_assertion_weakening(
+            _hunk(path, [f"    {removed}"], [f"    {added}"]), path
+        )
+        == []
+    )

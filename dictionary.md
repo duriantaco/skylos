@@ -536,15 +536,15 @@ use the `SKY-A` prefix.
 
 | ID | Severity | Name | Languages |
 |:---|:---|:---|:---|
-| A101 | MEDIUM | Test assertion weakening | Diff-aware tests |
+| A101 | MEDIUM | Test assertion weakening: a specific assertion replaced by a broad one, an exception assertion removed or loosened (`toThrow("message")` to `toThrow()`/`toThrow(/./)`/`not.toThrow()`, `pytest.raises` losing `match=` or widened to `Exception`, `assertRaisesRegex` to `assertRaises`), mocks or expected values broadened | Diff-aware tests |
 | A102 | LOW | High-risk change without tests | Diff-aware PR signal |
 | A103 | HIGH | CI permission expansion | GitHub Actions |
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | A105 | HIGH | Contract route guard missing | Python contract verify |
 | A106 | LOW | Suspicious dependency version bump | Python manifests and lock files in Git changes |
-| A110 | HIGH | Test deleted (`skylos done`): a test that existed at the base is gone and no test with the same body exists now | Python tests |
-| A111 | HIGH | Test newly skipped (`skylos done`): skip, skipif, xfail, `pytest.skip()`, `importorskip` or `skipTest` added to an existing test | Python tests |
-| A112 | HIGH | Test settings loosened (`skylos done`): pytest selection options, `conftest.py` hooks that drop tests or rewrite results, coverage floors, CI test steps that may fail | pytest, coverage, GitHub Actions |
+| A110 | HIGH | Test deleted (`skylos done`): a test that existed at the base is gone and no moved, renamed or rewritten test replaces it (a pasted copy of a test that is still there never does), it lost literal parametrize/`.each` cases, or it is left with no countable assertion. Advice: a test renamed or rewritten with a different body, fewer countable assertions, a new `return` before assertions, a deletion that goes with removed code (feature removal) | Python and JS/TS tests |
+| A111 | HIGH | Test newly skipped (`skylos done`): skip, skipif, xfail, `pytest.skip()`, `importorskip` or `skipTest` added to an existing test; for JS/TS `.skip`, `xit`/`xdescribe`, `.todo`, `.fixme`, `skipIf`/`runIf`, `.failing`/`.fails`, or a runtime skip, and any newly added focus (`.only`, `fit`, `fdescribe`), which stops the other tests in the file from running | Python and JS/TS tests (Jest, Vitest, Mocha, node:test, Playwright Test) |
+| A112 | HIGH | Test settings loosened (`skylos done`): pytest selection options, `conftest.py` hooks that drop tests or rewrite results, coverage floors, CI test steps that may fail; Jest/Vitest ignore, exclude, `testMatch`/`testRegex`/`roots`/`include`/`dir` and `projects` changes that stop running existing test files, `passWithNoTests`, lower coverage thresholds, package.json test scripts that filter tests, may fail or no longer run a test runner | pytest, coverage, Jest, Vitest, package.json, GitHub Actions |
 | A113 | HIGH | Tests fail when Skylos runs them (`skylos done`), or an expected Python test did not run | Any test command; JUnit XML for details |
 | A114 | HIGH | Skylos settings or hooks changed (`skylos done`): protected paths, `[tool.skylos]`, the CI workflow that runs Skylos | Repository files |
 | A120 | MEDIUM | Changed line not checked by tests (`skylos done`, advice by default): no test runs the line, or no test fails when Skylos deliberately changes it | Python with pytest |
