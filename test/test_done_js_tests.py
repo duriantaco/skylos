@@ -1862,8 +1862,11 @@ def test_renamed_and_weakened_test_gets_assertion_advice(js_repo: Path):
 
 
 def test_unreadable_changed_test_file_leaves_the_check_unfinished(js_repo: Path):
-    (js_repo / "src/__tests__/math.test.js").write_bytes(
-        MATH_TEST.encode() + b"// caf\xe9\n"
+    assert write_text_no_symlink(
+        js_repo / "src/__tests__/math.test.js",
+        (MATH_TEST.encode() + b"// caf\xe9\n").decode("latin1"),
+        encoding="latin1",
+        newline="",
     )
     result = done_checks.run_check(
         "test_tampering", CheckContext(open_comparison(js_repo, None), DoneConfig())
@@ -1873,8 +1876,11 @@ def test_unreadable_changed_test_file_leaves_the_check_unfinished(js_repo: Path)
 
 
 def test_unchanged_unreadable_test_file_is_left_out_with_advice(js_repo: Path):
-    (js_repo / "src/__tests__/latin1.test.js").write_bytes(
-        b"it('caf\xe9', () => { expect(1).toBe(1); });\n"
+    assert write_text_no_symlink(
+        js_repo / "src/__tests__/latin1.test.js",
+        b"it('caf\xe9', () => { expect(1).toBe(1); });\n".decode("latin1"),
+        encoding="latin1",
+        newline="",
     )
     _git(js_repo, "add", "-A")
     _git(js_repo, "commit", "-qm", "latin-1")
