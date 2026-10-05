@@ -4,7 +4,8 @@ A change can make failing tests "pass" without touching a test: select fewer
 tests in pytest options, ignore directories, add a conftest.py hook that
 drops tests or rewrites their outcomes (JUnit XML then reports the rewritten
 outcome too), lower a coverage floor, or let a CI test step fail quietly.
-Each loosening the change adds is one finding.
+Each loosening the change adds is one finding. Jest and Vitest settings are
+read by ``js_test_config.py``.
 """
 
 from __future__ import annotations
@@ -171,6 +172,9 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
         if _is_workflow(head_path):
             findings += _workflow(head_path, base, head)
     findings += _hook_dependency_changes(comparison)
+    from skylos.done.js_test_config import detect_loosened_js_test_config
+
+    findings += detect_loosened_js_test_config(comparison)
     return findings
 
 

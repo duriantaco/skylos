@@ -74,9 +74,7 @@ _STRICT_MOCK_RE = re.compile(
     r"\b(?:mock\.patch|mocker\.patch|patch|Mock|MagicMock)\s*\("
     r".*\b(?:autospec\s*=\s*True|spec_set\s*=|spec\s*=)"
 )
-_MOCK_CALL_RE = re.compile(
-    r"\b(?:mock\.patch|mocker\.patch|patch|Mock|MagicMock)\s*\("
-)
+_MOCK_CALL_RE = re.compile(r"\b(?:mock\.patch|mocker\.patch|patch|Mock|MagicMock)\s*\(")
 _PY_MOCK_ASSERT_TARGET_RE = re.compile(
     r"\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\.\s*assert_"
     r"(?:called_once_with|called_with|has_calls|called)\b"
@@ -198,6 +196,7 @@ def _finding_for_hunk(hunk: _Hunk, file_path: str) -> dict | None:
     return (
         _skip_finding(evidence, file_path)
         or _snapshot_churn_finding(hunk, file_path)
+        or _loosened_exception_finding(hunk, file_path)
         or _removed_exception_finding(hunk, evidence, file_path)
         or _removed_negative_test_finding(hunk, evidence, file_path)
         or _broadened_mock_assertion_finding(evidence, file_path)
@@ -208,6 +207,117 @@ def _finding_for_hunk(hunk: _Hunk, file_path: str) -> dict | None:
         or _behavior_to_existence_finding(hunk, file_path)
         or _specific_to_broad_finding(evidence, file_path)
     )
+
+
+# --- Loosened exception assertions -------------------------------------------
+
+_JS_THROW_RE = re.compile(
+    r"\.(?:(?:rejects|resolves)\.)?(?:(not)\.)?(?:(?:rejects|resolves)\.)?"
+    r"(toThrow(?:Error)?|toThrowErrorMatchingInlineSnapshot)\s*\("
+)
+# toThrow() arguments that accept any error.
+_ANY_ERROR_RE = re.compile(
+    r"^(?:|/\.[*+]?/[a-z]*|/\[\\s\\S\][*+]?/[a-z]*|(?:\"\"|''|``)|Error|"
+    r"expect\.anything\(\s*\)|expect\.any\(\s*Error\s*\))$"
+)
+_PYTEST_RAISES_ARGS_RE = re.compile(r"\bpytest\.raises\s*\(")
+_PY_BROAD_EXCEPTIONS = {"Exception", "BaseException"}
+
+
+def _js_throw_expectations(text: str) -> list[tuple[bool, str]]:
+    """``(negated, argument)`` for each ``.toThrow(...)`` on a line."""
+    found = []
+    for match in _JS_THROW_RE.finditer(text):
+        close = _matching_close_paren(text, match.end() - 1)
+        argument = text[match.end() : close] if close is not None else ""
+        found.append((bool(match.group(1)), argument.strip().rstrip(",")))
+    return found
+
+
+def _py_raises_calls(text: str) -> list[tuple[str, bool]]:
+    """``(exception, has match=)`` for each ``pytest.raises(...)`` on a line."""
+    found = []
+    for match in _PYTEST_RAISES_ARGS_RE.finditer(text):
+        close = _matching_close_paren(text, match.end() - 1)
+        inner = text[match.end() : close] if close is not None else text[match.end() :]
+        args = _split_top_level_args(inner)
+        exception = args[0].strip() if args else ""
+        has_match = any(re.match(r"\s*match\s*=", arg) for arg in args[1:])
+        found.append((exception, has_match))
+    return found
+
+
+def _loosened_exception_finding(hunk: _Hunk, file_path: str) -> dict | None:
+    """``toThrow("message")`` became ``toThrow()``, ``toThrow(/./)`` or
+    ``not.toThrow()``; ``pytest.raises(X, match=...)`` lost ``match=`` or
+    became ``pytest.raises(Exception)``; ``assertRaisesRegex`` became
+    ``assertRaises``."""
+    expected = [
+        (line, argument)
+        for line in hunk.removed
+        for negated, argument in _js_throw_expectations(line.text)
+        if not negated
+    ]
+    specific = [
+        line for line, argument in expected if not _ANY_ERROR_RE.match(argument)
+    ]
+    for line in hunk.added if expected else ():
+        for negated, argument in _js_throw_expectations(line.text):
+            if negated or (specific and _ANY_ERROR_RE.match(argument)):
+                return _make_finding(
+                    file_path,
+                    line.line_no,
+                    "Exception assertion now expects no error"
+                    if negated
+                    else "Exception assertion no longer checks which error is thrown",
+                    evidence_removed=(specific or [expected[0][0]])[0].text.strip(),
+                    evidence_added=line.text.strip(),
+                    weakening_type="exception_assertion_loosened",
+                    severity="MEDIUM",
+                )
+    removed_raises = [
+        (line, call) for line in hunk.removed for call in _py_raises_calls(line.text)
+    ]
+    for line in hunk.added:
+        for exception, has_match in _py_raises_calls(line.text):
+            for old_line, (old_exception, old_match) in removed_raises:
+                lost_match = old_match and not has_match
+                broadened = (
+                    exception in _PY_BROAD_EXCEPTIONS
+                    and old_exception not in _PY_BROAD_EXCEPTIONS
+                )
+                if lost_match or broadened:
+                    return _make_finding(
+                        file_path,
+                        line.line_no,
+                        "pytest.raises no longer checks the error message"
+                        if lost_match
+                        else "pytest.raises now accepts any exception",
+                        evidence_removed=old_line.text.strip(),
+                        evidence_added=line.text.strip(),
+                        weakening_type="exception_assertion_loosened",
+                        severity="MEDIUM",
+                    )
+    if any("assertRaisesRegex" in line.text for line in hunk.removed) and not any(
+        "assertRaisesRegex" in line.text for line in hunk.added
+    ):
+        for line in hunk.added:
+            if re.search(r"\bassertRaises\s*\(", line.text):
+                return _make_finding(
+                    file_path,
+                    line.line_no,
+                    "assertRaisesRegex became assertRaises: the error message is "
+                    "no longer checked",
+                    evidence_removed=next(
+                        item.text.strip()
+                        for item in hunk.removed
+                        if "assertRaisesRegex" in item.text
+                    ),
+                    evidence_added=line.text.strip(),
+                    weakening_type="exception_assertion_loosened",
+                    severity="MEDIUM",
+                )
+    return None
 
 
 # --- Weakened (not removed) assertions ---------------------------------------
@@ -661,8 +771,7 @@ def _is_skip_or_xfail(line: str) -> bool:
 def _is_negative_test_declaration(line: str) -> bool:
     stripped = line.strip()
     return bool(
-        _NEGATIVE_TEST_NAME_RE.search(stripped)
-        or _JS_NEGATIVE_TEST_RE.search(stripped)
+        _NEGATIVE_TEST_NAME_RE.search(stripped) or _JS_NEGATIVE_TEST_RE.search(stripped)
     )
 
 

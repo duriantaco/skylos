@@ -19,10 +19,20 @@ from typing import TYPE_CHECKING
 from skylos.done.base import Comparison, DoneError, _git_text
 from skylos.done.config import DoneConfig
 from skylos.done.inventory import (
+    RewrittenTest,
     TestItem,
     collect_tests,
     compare_inventories,
     is_pytest_file,
+)
+from skylos.done.js_inventory import (
+    FeatureRemoval,
+    JsInventory,
+    JsTestItem,
+    collect_js_tests,
+    is_js_test_file,
+    js_non_code_lines,
+    newly_focused,
 )
 
 if TYPE_CHECKING:
@@ -69,6 +79,8 @@ class CheckContext:
     # The tests_pass run, reused by the changed-lines check.
     test_run: TestRunResult | None = None
     _targets: list | None = None
+    _paths: tuple[list[str], list[str], set[str]] | None = None
+    _js_tests: tuple[JsInventory, JsInventory, list[str]] | None = None
 
     def change_targets(self) -> list:
         """Changed lines in non-test Python code that the tests should check."""
@@ -79,18 +91,9 @@ class CheckContext:
             self._targets = select_targets(self.comparison, {t.path for t in head})
         return self._targets
 
-    def tests(self) -> tuple[list[TestItem], list[TestItem]]:
-        """Complete static Python test inventories, including unchanged files.
-
-        Production code, plugins and helper changes can suppress existing
-        tests without editing their definitions.
-        """
-        if self._tests is None:
-            from skylos.done.runner import _is_pytest
-            from skylos.done.test_config import base_excluded_tests
-
-            base: list[TestItem] = []
-            head: list[TestItem] = []
+    def _repository_paths(self) -> tuple[list[str], list[str], set[str]]:
+        """Paths at the base, paths at head, and base paths gone at head."""
+        if self._paths is None:
             base_paths = _git_text(
                 self.comparison._context,
                 "ls-tree",
@@ -114,14 +117,32 @@ class CheckContext:
                 for item in self.comparison.changed
                 if item.status in {"deleted", "renamed"}
             }
+            self._paths = (
+                base_paths.split("\0"),
+                head_paths.split("\0"),
+                removed_head_paths,
+            )
+        return self._paths
+
+    def tests(self) -> tuple[list[TestItem], list[TestItem]]:
+        """Complete static Python test inventories, including unchanged files.
+
+        Production code, plugins and helper changes can suppress existing
+        tests without editing their definitions.
+        """
+        if self._tests is None:
+            from skylos.done.runner import _is_pytest
+            from skylos.done.test_config import base_excluded_tests
+
+            base: list[TestItem] = []
+            head: list[TestItem] = []
+            base_paths, head_paths, removed_head_paths = self._repository_paths()
             argv = self.config.test_command or ("pytest",)
             for paths, destination, read in (
                 (base_paths, base, self.comparison.base_text),
                 (head_paths, head, self.comparison.head_text),
             ):
-                python_paths = sorted(
-                    {path for path in paths.split("\0") if path.endswith(".py")}
-                )
+                python_paths = sorted({path for path in paths if path.endswith(".py")})
                 if len(python_paths) > 10000:
                     raise DoneError("the Python test inventory exceeds 10000 files")
                 for path in python_paths:
@@ -156,13 +177,106 @@ class CheckContext:
             self._tests = (base, head)
         return self._tests
 
+    def js_tests(self) -> tuple[JsInventory, JsInventory, list[str]]:
+        """JavaScript/TypeScript test inventories, including unchanged files,
+        and the test files left out because they cannot be read or parsed.
+
+        Kept apart from the Python inventories: the pytest run accounts for
+        those. A changed test file that cannot be read (not UTF-8, or over
+        the source-size limit) on either side, or that parsed at the base and
+        no longer does, cannot be compared, so the check cannot finish. An
+        unchanged unreadable file, or one that never parsed (Flow, syntax the
+        grammar lacks), is left out on both sides and reported.
+        """
+        if self._js_tests is None:
+            base_paths, head_paths, removed_head_paths = self._repository_paths()
+            changed = {
+                path
+                for item in self.comparison.changed
+                for path in (item.path, item.base_path)
+                if path
+            }
+            base_files = sorted({p for p in base_paths if is_js_test_file(p)})
+            head_files = sorted(
+                {
+                    p
+                    for p in head_paths
+                    if is_js_test_file(p) and p not in removed_head_paths
+                }
+            )
+            if max(len(base_files), len(head_files)) > 10000:
+                raise DoneError(
+                    "the JavaScript/TypeScript test inventory exceeds 10000 files"
+                )
+            head_sources = {
+                path: self.comparison.head_text(path) for path in head_files
+            }
+            # An unchanged file is the same at the base: read and parse it once.
+            base_sources = {
+                path: head_sources[path]
+                if path in head_sources and path not in changed
+                else self.comparison.base_text(path)
+                for path in base_files
+            }
+            unreadable = sorted(
+                {p for p, source in head_sources.items() if source is None}
+                | {p for p, source in base_sources.items() if source is None}
+            )
+            for path in unreadable:
+                if path in changed:
+                    raise DoneError(
+                        f"Cannot inventory {path}: the test file could not be read "
+                        "(not UTF-8, or over the source-size limit)"
+                    )
+            head_files_inv = {
+                path: collect_js_tests(path, source)
+                for path, source in head_sources.items()
+                if source is not None
+            }
+            base_files_inv = {
+                path: head_files_inv[path]
+                if path in head_files_inv and path not in changed
+                else collect_js_tests(path, source)
+                for path, source in base_sources.items()
+                if source is not None
+            }
+            unparsed = sorted(
+                {p for p, inv in head_files_inv.items() if not inv.clean}
+                | {p for p, inv in base_files_inv.items() if not inv.clean}
+            )
+            for path in unparsed:
+                head_inv = head_files_inv.get(path)
+                base_inv = base_files_inv.get(path)
+                if (
+                    head_inv is not None
+                    and not head_inv.clean
+                    and base_inv is not None
+                    and base_inv.clean
+                ):
+                    raise DoneError(
+                        f"Cannot inventory {path}: the test file no longer parses "
+                        "as JavaScript/TypeScript"
+                    )
+            base = JsInventory()
+            head = JsInventory()
+            for files, destination in (
+                (base_files_inv, base),
+                (head_files_inv, head),
+            ):
+                for path, inventory in files.items():
+                    if path not in unparsed:
+                        destination.extend(inventory)
+            self._js_tests = (base, head, sorted({*unparsed, *unreadable}))
+        return self._js_tests
+
 
 def _status(findings: list[Finding]) -> str:
     return "fail" if any(f.blocking for f in findings) else "pass"
 
 
 # ---------------------------------------------------------------------------
-# test_tampering: A110 deleted, A111 skipped, A112 loosened config, A101 advice
+# test_tampering: A110 deleted, A111 skipped or focused, A112 loosened config,
+# A101 advice. Python and JavaScript/TypeScript tests.
 # ---------------------------------------------------------------------------
 
 
@@ -170,7 +284,11 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
     from skylos.done.test_config import detect_loosened_test_config
 
     comparison = ctx.comparison
-    base_tests, head_tests = ctx.tests()
+    python_base, python_head = ctx.tests()
+    js_base, js_head, js_unparsed = ctx.js_tests()
+    # Paths never overlap, so one comparison covers both languages.
+    base_tests = [*python_base, *js_base.tests]
+    head_tests = [*python_head, *js_head.tests]
     renamed = {
         c.base_path: c.path
         for c in comparison.changed
@@ -178,18 +296,36 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
     }
     diff = compare_inventories(base_tests, head_tests, renamed)
     removed_modules = _removed_modules(comparison)
+    removal = FeatureRemoval(
+        comparison.base_text,
+        comparison.head_text,
+        {
+            item.base_path
+            for item in comparison.changed
+            if item.status == "deleted" and item.base_path
+        },
+        ctx._repository_paths()[0],
+    )
     findings: list[Finding] = []
 
     for deleted in diff.deleted:
         test = deleted.test
-        if _tests_removed_feature(comparison, test, removed_modules):
+        if isinstance(test, JsTestItem) and not test.has_body:
+            continue  # it.todo(title): nothing ran, so nothing was deleted
+        if isinstance(test, JsTestItem):
+            reason = removal.reason(test)
+        elif _tests_removed_feature(comparison, test, removed_modules):
+            reason = "it uses a module that was deleted"
+        else:
+            reason = None
+        if reason:
             findings.append(
                 Finding(
                     RULE_DELETED_TEST,
                     test.path,
                     test.line,
-                    f"{test.local_id} was deleted together with the module it imports "
-                    "(feature removal)",
+                    f"(advice) {test.local_id} was deleted together with the code "
+                    f"it tests (feature removal: {reason})",
                     blocking=False,
                 )
             )
@@ -202,14 +338,62 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
                 f"{test.local_id} was deleted; no test with the same body exists now",
             )
         )
+    for gutted in diff.gutted:
+        findings.append(
+            Finding(
+                RULE_DELETED_TEST,
+                gutted.test.path,
+                gutted.test.line,
+                f"{gutted.test.local_id} is left with no countable assertion (it "
+                f"had {gutted.before} at the base): it may no longer be able to fail",
+            )
+        )
+    for rewrite in diff.rewritten:
+        findings.append(
+            Finding(
+                RULE_DELETED_TEST,
+                rewrite.after.path,
+                rewrite.after.line,
+                f"(advice) {_rewrite_message(rewrite)}; check that it still tests "
+                "the same behaviour",
+                blocking=False,
+            )
+        )
+    for fewer in diff.fewer_assertions:
+        findings.append(
+            Finding(
+                RULE_DELETED_TEST,
+                fewer.test.path,
+                fewer.test.line,
+                f"(advice) {fewer.test.local_id} now has {fewer.after} countable "
+                f"assertion(s), had {fewer.before}",
+                blocking=False,
+            )
+        )
+    for early in diff.early_returns:
+        findings.append(
+            Finding(
+                RULE_DELETED_TEST,
+                early.test.path,
+                early.line,
+                f"(advice) {early.test.local_id} gained a return before some of its "
+                "assertions; check that they still run",
+                blocking=False,
+            )
+        )
     for dropped in diff.dropped_cases:
+        cases = (
+            "`.each` cases"
+            if isinstance(dropped.test, JsTestItem)
+            else ("parametrize cases")
+        )
         findings.append(
             Finding(
                 RULE_DELETED_TEST,
                 dropped.test.path,
                 dropped.test.line,
                 f"{dropped.test.local_id} went from {dropped.before} to "
-                f"{dropped.after} parametrize cases",
+                f"{dropped.after} {cases}",
             )
         )
     for skipped in diff.newly_skipped:
@@ -222,11 +406,33 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
                 f"({', '.join(sorted(skipped.added))})",
             )
         )
+    focused = newly_focused(js_base.focus, js_head.focus, renamed)
+    for site in focused:
+        findings.append(
+            Finding(
+                RULE_SKIPPED_TEST,
+                site.path,
+                site.line,
+                f"{site.call} focuses {' > '.join(site.scope)}: the other tests "
+                "in the file stop running",
+            )
+        )
+    if js_unparsed:
+        findings.append(
+            Finding(
+                RULE_DELETED_TEST,
+                js_unparsed[0],
+                None,
+                f"(advice) {len(js_unparsed)} JavaScript/TypeScript test file(s) "
+                "could not be read or parsed and were not compared",
+                blocking=False,
+            )
+        )
     config_findings = detect_loosened_test_config(comparison)
     for item in config_findings:
         findings.append(Finding(RULE_TEST_CONFIG, item.file, item.line, item.message))
 
-    weakened = _assertion_weakening(comparison, base_tests, head_tests, renamed)
+    weakened = _assertion_weakening(comparison, head_tests, diff.matched)
     findings += weakened
 
     blocking = [f for f in findings if f.blocking]
@@ -243,16 +449,28 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
         summary=summary,
         evidence={
             "tests_compared": len(base_tests),
-            "deleted": sum(
-                f.rule == RULE_DELETED_TEST and f.blocking for f in findings
-            ),
+            "deleted": sum(f.rule == RULE_DELETED_TEST and f.blocking for f in findings)
+            - len(diff.gutted),
+            "gutted": len(diff.gutted),
             "skipped": len(diff.newly_skipped),
+            "focused": len(focused),
             "config_loosened": len(config_findings),
+            "rewritten": len(diff.rewritten),
+            "thinned": len(diff.fewer_assertions) + len(diff.early_returns),
             "weakened_advice": len(weakened),
             "summary": summary[:120],
         },
         findings=findings,
     )
+
+
+def _rewrite_message(rewrite: RewrittenTest) -> str:
+    before, after = rewrite.before, rewrite.after
+    if rewrite.how == "renamed":
+        return f"{before.local_id} was renamed to {after.local_id} and edited"
+    if rewrite.how == "moved":
+        return f"{before.local_id} moved to {after.local_id} and was edited"
+    return f"{before.local_id} was rewritten in place as {after.local_id}"
 
 
 def _removed_modules(comparison: Comparison) -> set[str]:
@@ -370,24 +588,23 @@ def _reference_parts(node: ast.AST) -> tuple[str, ...]:
 
 def _assertion_weakening(
     comparison: Comparison,
-    base_tests: list[TestItem],
     head_tests: list[TestItem],
-    renamed: dict[str, str],
+    matched: dict[str, TestItem],
 ) -> list[Finding]:
     from skylos.rules.ai_defect.assertion_weakening import detect_assertion_weakening
 
     test_files = {t.path for t in head_tests}
-    base_ids = {
-        "::".join((renamed.get(t.path, t.path), *t.classes, t.name)) for t in base_tests
-    }
-    # Tests written in this change may do anything, skips included.
+    # Tests written in this change may do anything, skips included. A test
+    # matched to a base test (moved, renamed or rewritten) is not new.
     new_test_ranges: dict[str, list[tuple[int, int]]] = {}
     for test in head_tests:
-        if test.id not in base_ids:
+        if test.id not in matched:
             new_test_ranges.setdefault(test.path, []).append((test.line, test.end_line))
     findings = []
     for changed in comparison.changed:
-        if changed.status == "deleted" or changed.path not in test_files:
+        if changed.status == "deleted" or not (
+            changed.path in test_files or is_js_test_file(changed.path)
+        ):
             continue
         try:
             raw = detect_assertion_weakening(
@@ -398,11 +615,16 @@ def _assertion_weakening(
                 "assertion weakening failed for %s", changed.path, exc_info=True
             )
             continue
-        in_strings = _string_literal_lines(comparison.head_text(changed.path))
+        head_text = comparison.head_text(changed.path)
+        in_strings = (
+            js_non_code_lines(changed.path, head_text)
+            if is_js_test_file(changed.path)
+            else _string_literal_lines(head_text)
+        )
         for item in raw:
             line = _int(item.get("line"))
             if line in in_strings:
-                continue  # text inside a string literal, not test code
+                continue  # text inside a string literal or comment, not test code
             if line is not None and any(
                 start <= line <= end
                 for start, end in new_test_ranges.get(changed.path, ())
@@ -447,7 +669,7 @@ def _string_literal_lines(source: str | None) -> set[int]:
 
 
 def check_tests_pass(ctx: CheckContext) -> CheckResult:
-    from skylos.done.runner import run_tests
+    from skylos.done.runner import has_pytest_config, run_tests
 
     if not ctx.run_tests:
         return CheckResult(
@@ -458,6 +680,26 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
             evidence={"summary": "Tests not run (--no-tests)"},
         )
     base_tests, head_tests = ctx.tests()
+    js_files = _js_test_files(ctx)
+    if (
+        not ctx.config.test_command
+        and not head_tests
+        and js_files
+        and not has_pytest_config(ctx.comparison.root)
+    ):
+        # Running pytest because a test/ directory exists would only report
+        # "no tests ran" for a JavaScript project.
+        summary = (
+            "No test command for the JavaScript/TypeScript tests: set "
+            "test_command and junit_xml in [tool.skylos.done]"
+        )
+        return CheckResult(
+            id="tests_pass",
+            rule=RULE_TESTS_PASS,
+            status="skipped",
+            summary=summary,
+            evidence={"summary": summary[:120]},
+        )
     trace_targets = None
     if ctx.config.mode("changed_lines_checked") != "off":
         # Map the changed lines to the tests that run them in this same run.
@@ -535,6 +777,18 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         )
         for test, reason in result.unknown_cases
     ]
+    if result.auto_command and js_files:
+        findings.append(
+            Finding(
+                RULE_TESTS_PASS,
+                None,
+                None,
+                f"(advice) {len(js_files)} JavaScript/TypeScript test file(s) are "
+                "not run by the automatic pytest command; set test_command to "
+                "run them",
+                blocking=False,
+            )
+        )
     evidence: dict[str, str | int | float | bool] = {
         "run": result.run,
         "passed": result.passed,
@@ -558,6 +812,15 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         evidence=evidence,
         findings=findings,
     )
+
+
+def _js_test_files(ctx: CheckContext) -> set[str]:
+    """Head files holding JavaScript/TypeScript tests (empty when unknown)."""
+    try:
+        _, head, _ = ctx.js_tests()
+    except DoneError:
+        return set()  # test_tampering reports why
+    return {test.path for test in head.tests}
 
 
 # ---------------------------------------------------------------------------

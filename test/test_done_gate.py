@@ -350,6 +350,292 @@ def test_renamed_and_gutted_test_is_still_a_deletion():
     ]
 
 
+def test_assertions_are_counted_where_they_can_run():
+    items = _tests(
+        "tests/test_x.py",
+        """
+        import pytest
+        def _check_ok(response):
+            assert response.ok
+        def test_assert(): assert run() == 1
+        def test_empty(): pass
+        def test_constant(): assert True
+        def test_after_return():
+            return
+            assert run()
+        def test_if_false():
+            if False:
+                assert run()
+        def test_helper(): _check_ok(run())
+        def test_raises():
+            with pytest.raises(ValueError):
+                run()
+        class TestX:
+            def test_trivial(self): self.assertTrue(True)
+            def test_real(self): self.assertEqual(run(), 1)
+        """,
+    )
+    assert {t.name: t.assertions for t in items} == {
+        "test_assert": 1,
+        "test_empty": 0,
+        "test_constant": 0,
+        "test_after_return": 0,
+        "test_if_false": 0,
+        "test_helper": 1,
+        "test_raises": 1,
+        "test_trivial": 0,
+        "test_real": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "pass",
+        "assert True",
+        "return\n    assert run() == 1",
+        "if False:\n        assert run() == 1",
+    ],
+)
+def test_test_that_stops_asserting_is_gutted(body):
+    base = collect_tests("tests/test_a.py", "def test_run():\n    assert run() == 1\n")
+    head = collect_tests("tests/test_a.py", f"def test_run():\n    {body}\n")
+    diff = compare_inventories(base, head)
+    assert not diff.deleted
+    assert [(g.test.name, g.before) for g in diff.gutted] == [("test_run", 1)]
+
+
+def test_python_test_rewritten_in_place_is_paired():
+    base = collect_tests(
+        "tests/test_a.py",
+        "def test_first():\n    assert first() == 1\n"
+        "def test_rejects_expired_token():\n"
+        "    token = make_token(expired=True)\n"
+        "    with pytest.raises(Expired):\n        verify(token)\n"
+        "def test_last():\n    assert last() == 3\n",
+    )
+    head = collect_tests(
+        "tests/test_a.py",
+        "def test_first():\n    assert first() == 1\n"
+        "def test_rejects_expired_tokens_with_reason():\n"
+        "    response = client.post('/verify', json={'token': make_token(expired=True)})\n"
+        "    assert response.status_code == 401\n"
+        "    assert response.json()['reason'] == 'expired'\n"
+        "def test_last():\n    assert last() == 3\n",
+    )
+    diff = compare_inventories(base, head)
+    assert not diff.deleted
+    assert [(r.before.name, r.after.name) for r in diff.rewritten] == [
+        ("test_rejects_expired_token", "test_rejects_expired_tokens_with_reason")
+    ]
+
+
+def test_python_class_renamed_with_an_edited_method_is_not_a_deletion():
+    base = collect_tests(
+        "tests/test_a.py",
+        "class TestParser:\n"
+        "    def test_parses(self):\n        assert parse('1') == 1\n"
+        "    def test_rejects(self):\n        assert parse('x') is None\n",
+    )
+    head = collect_tests(
+        "tests/test_a.py",
+        "class TestStrictParser:\n"
+        "    def test_parses(self):\n        assert parse('1', strict=True) == 1\n"
+        "    def test_rejects(self):\n        assert parse('x') is None\n",
+    )
+    assert not compare_inventories(base, head).deleted
+
+
+PY_PAIR_BASE = (
+    "def test_parses_dates():\n"
+    "    result = parse('2026-01-02')\n"
+    "    assert result.year == 2026\n"
+    "def test_formats_dates():\n"
+    "    assert format_date(epoch()) == '1970-01-01'\n"
+    "def test_keeps_time_zones():\n"
+    "    assert zone('UTC') == 'UTC'\n"
+)
+PY_PARSES = (
+    "def test_parses_dates():\n"
+    "    result = parse('2026-01-02')\n"
+    "    assert result.year == 2026\n"
+)
+
+
+@pytest.mark.parametrize("in_place", [False, True])
+def test_python_renamed_copy_of_a_surviving_test_never_replaces_a_deleted_one(
+    in_place,
+):
+    copy = (
+        "def test_parses_date_strings():\n"
+        "    assert format_date(epoch()) == '1970-01-01'\n"
+    )
+    head = (
+        PY_PAIR_BASE.replace(PY_PARSES, copy)
+        if in_place
+        else PY_PAIR_BASE.replace(PY_PARSES, "") + copy
+    )
+    diff = compare_inventories(
+        collect_tests("tests/test_a.py", PY_PAIR_BASE),
+        collect_tests("tests/test_a.py", head),
+    )
+    assert [d.test.name for d in diff.deleted] == ["test_parses_dates"]
+
+
+def test_python_renamed_and_edited_needs_a_similar_title_and_is_reported():
+    edited = "    result = parse('2026-01-03')\n    assert result.year == 2026\n"
+    base = collect_tests("tests/test_a.py", PY_PAIR_BASE)
+    unrelated = PY_PAIR_BASE.replace(PY_PARSES, "") + (
+        "def test_handles_leap_years():\n" + edited
+    )
+    assert [
+        d.test.name
+        for d in compare_inventories(
+            base, collect_tests("tests/test_a.py", unrelated)
+        ).deleted
+    ] == ["test_parses_dates"]
+    renamed = PY_PAIR_BASE.replace(PY_PARSES, "") + (
+        "def test_parses_dates_in_utc():\n" + edited
+    )
+    diff = compare_inventories(base, collect_tests("tests/test_a.py", renamed))
+    assert not diff.deleted
+    assert [(r.before.name, r.after.name, r.how) for r in diff.rewritten] == [
+        ("test_parses_dates", "test_parses_dates_in_utc", "renamed")
+    ]
+
+
+def test_python_assertions_that_cannot_fail_or_never_run_are_not_counted():
+    items = _tests(
+        "tests/test_x.py",
+        """
+        from contextlib import suppress
+        def check_result(r):
+            return r
+        def check_ok(r):
+            assert r.ok
+        def verify_present(r):
+            if not r:
+                raise ValueError("missing")
+        def test_real(): assert run() == 1
+        def test_self_compare():
+            r = run()
+            assert r == r
+        def test_constant(): assert 1 == 1
+        def test_constant_false_condition():
+            if 1 > 2:
+                assert run() == 1
+        def test_tuple(): assert (run(), "message")
+        def test_noop_helper(): check_result(run())
+        def test_asserting_helper(): check_ok(run())
+        def test_raising_helper(): verify_present(run())
+        def test_imported_helper(): check_something(run())
+        def test_raises_assertion_error():
+            if run() != 1:
+                raise AssertionError("bad")
+        def test_swallowed():
+            try:
+                assert run() == 1
+            except AssertionError:
+                pass
+        def test_swallowed_by_exception():
+            try:
+                assert run() == 1
+            except Exception as error:
+                print(error)
+        def test_suppressed():
+            with suppress(AssertionError):
+                assert run() == 1
+        def test_other_exception():
+            try:
+                assert run() == 1
+            except ValueError:
+                pass
+        def test_reraised():
+            try:
+                assert run() == 1
+            except Exception:
+                cleanup()
+                raise
+        def test_uncalled_nested():
+            def check():
+                assert run() == 1
+        def test_called_nested():
+            def check():
+                assert run() == 1
+            check()
+        def test_after_if_true_return():
+            if True:
+                return
+            assert run() == 1
+        def test_after_guarded_return():
+            if not ready():
+                return
+            assert run() == 1
+        class TestX:
+            def test_equal_to_itself(self):
+                x = run()
+                self.assertEqual(x, x)
+            def test_true_whatever(self):
+                self.assertTrue(run() == run() or True)
+        """,
+    )
+    assert {t.name: t.assertions for t in items} == {
+        "test_real": 1,
+        "test_self_compare": 0,
+        "test_constant": 0,
+        "test_constant_false_condition": 0,
+        "test_tuple": 0,
+        "test_noop_helper": 0,
+        "test_asserting_helper": 1,
+        "test_raising_helper": 1,
+        "test_imported_helper": 1,
+        "test_raises_assertion_error": 1,
+        "test_swallowed": 0,
+        "test_swallowed_by_exception": 0,
+        "test_suppressed": 0,
+        "test_other_exception": 1,
+        "test_reraised": 1,
+        "test_uncalled_nested": 0,
+        "test_called_nested": 2,  # the call to an asserting helper, and its assert
+        "test_after_if_true_return": 0,
+        "test_after_guarded_return": 1,
+        "test_equal_to_itself": 0,
+        "test_true_whatever": 0,
+    }
+    assert {t.name for t in items if t.early_returns} == {
+        "test_after_if_true_return",
+        "test_after_guarded_return",
+    }
+
+
+def test_python_fewer_assertions_and_early_returns_are_reported(repo: Path):
+    _write(
+        repo,
+        "tests/test_calc.py",
+        TESTS.replace(
+            "    assert add(1, 2) == 3\n",
+            "    if os.environ.get('CI'):\n        return\n    assert add(1, 2) == 3\n",
+        ).replace("import pytest", "import os\nimport pytest"),
+    )
+    result = done_checks.check_test_tampering(_ctx(repo))
+    assert result.status == "pass"
+    assert [f.message for f in result.findings if f.rule == "SKY-A110"] == [
+        "(advice) test_add gained a return before some of its assertions; check "
+        "that they still run"
+    ]
+    base = collect_tests(
+        "tests/test_a.py",
+        "def test_run():\n    r = run()\n    assert r.code == 0\n    assert r.out == 'x'\n",
+    )
+    head = collect_tests(
+        "tests/test_a.py", "def test_run():\n    r = run()\n    assert r.code == 0\n"
+    )
+    assert [
+        (f.test.name, f.before, f.after)
+        for f in compare_inventories(base, head).fewer_assertions
+    ] == [("test_run", 2, 1)]
+
+
 # ---------------------------------------------------------------------------
 # base comparison
 # ---------------------------------------------------------------------------
