@@ -1804,7 +1804,9 @@ def _record_fail_open(root: Path, session_id: str, event: str, reason: str) -> N
                 return
             state = _load_fail_open_state(base)
             sessions = state["sessions"]
-            entry = sessions.get(session_id)
+            entry = sessions.get(  # skylos: ignore[SKY-D216] sessions is a JSON dict, not an HTTP client
+                session_id
+            )
             if not isinstance(entry, dict):
                 entry = {}
             events = entry.get("events")
