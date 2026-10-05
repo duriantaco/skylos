@@ -564,9 +564,11 @@ A missing PyPI project for an import name alone does not prove a hallucinated
 dependency. Source-only, private, dynamic, unsupported, unavailable, and unresolved
 version-range providers leave an import unverified; these reports use MEDIUM
 `SKY-D223`. An exact compatible pin with an unambiguous artifact inventory can
-support absence evidence. Editable-install inventories can use compatible wheel
-paths as positive evidence, but their incomplete RECORDs cannot prove that an
-import is absent, even with an exact pin. Provider inventories and registry
+support absence evidence. Compatible platform wheels can confirm import paths
+they contain, but cannot prove an import is absent, even with an exact pin.
+Editable-install inventories can use compatible wheel paths as positive
+evidence, but their incomplete RECORDs cannot prove that an import is absent,
+even with an exact pin. Provider inventories and registry
 answers are reused within the current analysis, and
 repository cache files are not accepted as trusted evidence. Provider checks do
 not resolve lockfiles into a deployed environment.

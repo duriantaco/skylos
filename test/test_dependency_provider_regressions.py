@@ -4,10 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+from packaging.tags import Tag
+from packaging.version import Version
 
 from skylos.rules.ai_defect import dependency_hallucination as dep
 from skylos.rules.ai_defect import pypi_wheel_modules
 from test.test_dependency_providers import _write
+from test.test_pypi_wheel_inventory import _file, _registry, _wheel
 
 
 def _inventory(*files, complete=True, version="1.0"):
@@ -131,6 +134,53 @@ def test_metadata_only_installed_record_uses_compatible_wheel(
     assert _scan(mode, repo, path, "mlx") == []
     if "mlx.core" in source:
         assert fetched == [("mlx", ">=1.0")]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+@pytest.mark.parametrize("submodule", ["core", "absent"])
+def test_editable_mlx_scan_reads_compatible_native_wheel(
+    monkeypatch, tmp_path, mode, submodule
+):
+    repo, path = _project(tmp_path, f"import mlx.{submodule}\n", "mlx>=0.32.3")
+    _isolate_with_installed_record(
+        monkeypatch,
+        tmp_path,
+        dist="mlx",
+        version="0.32.4.dev20261004+abc123",
+        editable_metadata=True,
+        editable_marker=True,
+    )
+    monkeypatch.setattr(
+        dep,
+        "_fetch_dist_modules",
+        lambda dist, *, specifier="": pypi_wheel_modules.fetch_distribution_modules(
+            dist, specifier=specifier
+        ),
+    )
+    tag = Tag("cp313", "cp313", "manylinux_2_28_x86_64")
+    monkeypatch.setattr(pypi_wheel_modules, "sys_tags", lambda: iter([tag]))
+    monkeypatch.setattr(pypi_wheel_modules, "_PYTHON_VERSION", Version("3.13"))
+    requests = _registry(
+        monkeypatch,
+        {
+            "0.32.3": (
+                _wheel(["mlx/__init__.py", "mlx/core.cpython-313-x86_64-linux-gnu.so"]),
+                _file("0.32.3", tag=str(tag), requires_python=">=3.10", dist="mlx"),
+            )
+        },
+        dist="mlx",
+    )
+
+    findings = _scan(mode, repo, path, "mlx")
+
+    if submodule == "core":
+        assert findings == []
+    else:
+        assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
+            (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "mlx")
+        ]
+        assert findings[0]["message"].startswith("Unverified import")
+    assert any(byte_range is not None for _url, byte_range, _max_bytes in requests)
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
