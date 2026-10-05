@@ -1,5 +1,17 @@
 ## Changelog
 
+## [4.45.0](https://github.com/duriantaco/skylos/compare/v4.44.0...v4.45.0) (2026-10-05)
+
+
+### Features
+
+* **agent:** check JS and TS tests in the done gate ([#939](https://github.com/duriantaco/skylos/issues/939)) ([81ce54a](https://github.com/duriantaco/skylos/commit/81ce54a11d3dd49058ae89ac349cc6203521cde7))
+
+
+### Bug Fixes
+
+* **agent:** report unchecked hook actions and start the MCP server wi… ([#940](https://github.com/duriantaco/skylos/issues/940)) ([77010d8](https://github.com/duriantaco/skylos/commit/77010d8f13a298208eb1ecd8f2c35df86b80ebd0))
+
 ## [4.44.0](https://github.com/duriantaco/skylos/compare/v4.43.2...v4.44.0) (2026-10-04)
 
 
