@@ -103,7 +103,8 @@ def fetch_distribution_modules(dist_name: str, *, specifier: str = "") -> dict:
     import paths), ``concrete_module_paths`` and ``namespace_paths``, plus the
     selected ``version``. ``complete_for_requirement`` only permits absence
     proof for an exact pin; one selected release cannot disprove providers in
-    other permitted releases. Unsupported artifacts are also unknown.
+    other permitted releases. Platform wheels provide positive paths only;
+    their inventories cannot prove absence. Unsupported artifacts are unknown.
 
     Raises LookupUnavailable when PyPI could not be asked; that result says
     nothing about the distribution and must not be cached.
@@ -157,6 +158,7 @@ def fetch_distribution_modules(dist_name: str, *, specifier: str = "") -> dict:
             version is not None
             and _exact_pin(declared)
             and len(candidates) == 1
+            and candidates[0][3]  # only portable wheels can support absence proof
             and not _has_site_path_loader(names)
         ),
     }
@@ -369,10 +371,9 @@ def _wheel_candidates(release_files, *, allow_yanked=False, expected_version=Non
 def _preferred_wheel(candidates):
     if not candidates:
         return None
-    rank, size, url, portable = candidates[0]
-    # Follow the installer's supported-tag order. A preferred platform wheel
-    # makes an arbitrary portable artifact insufficient provider evidence.
-    if rank == float("inf") or not portable:
+    rank, size, url, _portable = candidates[0]
+    # Follow the installer's supported-tag order, including platform wheels.
+    if rank == float("inf"):
         return None
     return url, size
 

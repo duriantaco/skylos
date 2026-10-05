@@ -21,8 +21,10 @@ def _wheel(names, *, comment=b""):
     return output.getvalue()
 
 
-def _file(version, *, requires_python=None, tag="py3-none-any", yanked=False):
-    filename = f"sample-{version}-{tag}.whl"
+def _file(
+    version, *, requires_python=None, tag="py3-none-any", yanked=False, dist="sample"
+):
+    filename = f"{dist}-{version}-{tag}.whl"
     return {
         "packagetype": "bdist_wheel",
         "filename": filename,
@@ -32,7 +34,7 @@ def _file(version, *, requires_python=None, tag="py3-none-any", yanked=False):
     }
 
 
-def _registry(monkeypatch, versions, *, data=None):
+def _registry(monkeypatch, versions, *, data=None, dist="sample"):
     """Serve only metadata and byte ranges of synthetic in-memory wheels."""
     bodies = {}
     releases = {}
@@ -52,7 +54,7 @@ def _registry(monkeypatch, versions, *, data=None):
     def fake_get(url, *, max_bytes, byte_range=None, expected_size=None):
         requests.append((url, byte_range, max_bytes))
         if byte_range is None:
-            assert url == "https://pypi.org/pypi/sample/json"
+            assert url == f"https://pypi.org/pypi/{dist}/json"
             return json.dumps(data).encode()
         body = bodies[url]
         assert expected_size == len(body)
@@ -173,7 +175,9 @@ def test_preferred_supported_tag_wins_over_smaller_portable_wheel(monkeypatch):
     )
 
 
-def test_preferred_platform_wheel_prevents_arbitrary_portable_inventory(monkeypatch):
+def test_preferred_platform_wheel_supplies_positive_paths_before_portable_wheel(
+    monkeypatch,
+):
     monkeypatch.setattr(
         wheel_modules,
         "sys_tags",
@@ -184,16 +188,63 @@ def test_preferred_platform_wheel_prevents_arbitrary_portable_inventory(monkeypa
         [
             (_wheel(["generic.py"]), _file("1.0")),
             (
-                _wheel(["native_provider.py"]),
+                _wheel(["native_provider.cp314-win_amd64.pyd"]),
                 _file("1.0", tag="cp314-cp314-win_amd64"),
             ),
         ],
     )
 
-    assert wheel_modules.fetch_distribution_modules("sample", specifier="==1.0") == {
-        "status": wheel_modules.STATUS_UNSUPPORTED
-    }
-    assert len(requests) == 1  # metadata only; neither artifact is read
+    result = wheel_modules.fetch_distribution_modules("sample", specifier="==1.0")
+
+    assert result["module_paths"] == ["native_provider"]
+    assert result["complete_for_requirement"] is False
+    ranges = [url for url, byte_range in requests if byte_range is not None]
+    assert ranges and all("cp314-cp314-win_amd64" in url for url in ranges)
+
+
+@pytest.mark.parametrize(
+    "python_version, tag, extension",
+    [
+        (
+            "3.13",
+            Tag("cp313", "cp313", "manylinux_2_28_x86_64"),
+            "core.cpython-313-x86_64-linux-gnu.so",
+        ),
+        (
+            "3.14",
+            Tag("cp314", "cp314", "macosx_14_0_arm64"),
+            "core.cpython-314-darwin.so",
+        ),
+        (
+            "3.14",
+            Tag("cp314", "cp314", "win_amd64"),
+            "core.cp314-win_amd64.pyd",
+        ),
+    ],
+    ids=["cp313-linux", "cp314-macos-arm", "cp314-windows"],
+)
+def test_lone_compatible_platform_wheel_proves_native_paths_but_not_absence(
+    monkeypatch, python_version, tag, extension
+):
+    monkeypatch.setattr(wheel_modules, "_PYTHON_VERSION", Version(python_version))
+    monkeypatch.setattr(wheel_modules, "sys_tags", lambda: iter([tag]))
+    requests = _registry(
+        monkeypatch,
+        {
+            "1.0": (
+                _wheel(["sample/__init__.py", f"sample/{extension}"]),
+                _file("1.0", tag=str(tag), requires_python=">=3.13"),
+            )
+        },
+    )
+
+    result = wheel_modules.fetch_distribution_modules("sample", specifier="==1.0")
+
+    assert result["module_paths"] == ["sample", "sample.core"]
+    assert result["concrete_module_paths"] == ["sample", "sample.core"]
+    assert result["version"] == "1.0"
+    assert result["complete_for_requirement"] is False
+    assert any(byte_range is not None for _url, byte_range, _max_bytes in requests)
 
 
 def test_other_platform_artifact_keeps_portable_exact_pin_absence_unverified(
@@ -448,6 +499,13 @@ def test_unsupported_declarations_never_query_public_registry(
 def test_platform_or_interpreter_incompatible_wheels_are_unknown(
     monkeypatch, tag, requires_python
 ):
+    monkeypatch.setattr(
+        wheel_modules,
+        "sys_tags",
+        lambda: iter(
+            [Tag("cp314", "cp314", "macosx_14_0_arm64"), Tag("py3", "none", "any")]
+        ),
+    )
     _registry(
         monkeypatch,
         {
