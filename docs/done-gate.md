@@ -2,8 +2,9 @@
 
 `skylos done` decides whether a change is finished, with evidence. It runs
 the tests itself, compares the tests and test settings with the base, looks
-for edits to Skylos's own settings and for added secrets and made-up imports,
-then writes a receipt.
+for edits to Skylos's own settings, for added secrets and made-up imports, and
+for code written to pass particular tests instead of being right, then writes
+a receipt.
 
 It gives no opinions and writes no style comments: each check passes or
 fails with evidence, the way CI does.
@@ -28,6 +29,7 @@ Skylos could not run (for example, the base is not fetched).
 | No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. |
 | Every package and import is real | SKY-D222, SKY-D225, SKY-D223 (advice) | advise | Added imports and dependencies resolve to real, declared packages. Names that only cannot be tied to a declared package are advice. |
 | Tests check the changed lines | SKY-A120 | advise | Each changed line in non-test Python code is run by a test, and a test fails when Skylos changes that line on purpose. Lines that fail either are listed on the receipt as unverified. See below. |
+| Code doesn't special-case the tests | SKY-A115, SKY-A116, SKY-A117 | yes | Added non-test Python and JS/TS code that answers a test's exact input with that test's expected value, asks whether a test runner is running it, reads the tests' own files, or rigs a comparison so it always passes. Weaker signals are advice. See below. |
 
 A deleted test that directly references a deleted production module is
 reported as a feature removal (advice). Renaming a module or deleting an
@@ -258,6 +260,7 @@ gate_tampering = "block"
 secrets = "block"
 unknown_imports = "advise"
 changed_lines_checked = "advise"
+test_special_casing = "block"
 ```
 
 `changed_lines_budget_seconds` (default 120, 10 to 1800) bounds the
@@ -395,6 +398,135 @@ Limits, reported and never counted as passing:
 Some lines are not worth a test, so the check advises by default. Its
 findings are suggestions for the agent, and the receipt's `unverified` list
 tells a reviewer where to look.
+
+## Code doesn't special-case the tests (SKY-A115, A116, A117)
+
+An agent that cannot make a test pass can change the tests (the checks above)
+or change the code so that it recognises the test instead of doing the work.
+Frontier models increasingly do the second. This check reads only lines the
+change added to non-test Python and JavaScript/TypeScript files; code that
+was already there at the base, including code moved between the changed
+files, never counts.
+
+**Hard-coded test answers (SKY-A115).** An added `if`/`elif`, conditional
+expression, `match` or `switch` case, or lookup table (`{3: 6}[n]`,
+`TABLE.get(n)`, `new Map([[3, 6]]).get(n)`, also through a key built just
+before: `key = (n, k); TABLE[key]`) that compares an input with a literal
+and returns, prints or assigns a literal (`a, m = 2, 7` answers "2 7" to a
+program whose output is checked). Skylos reads the
+assertions of the tests: `assert f(3) == 6`, `self.assertEqual`, pytest
+`parametrize` rows and `for` loops over literal rows, `expect(f(3)).toBe(6)`
+and its `toEqual`/`toStrictEqual`/Chai forms, `assert.equal`/`strictEqual`/
+`deepEqual`, `t.is`, `.each` tables, a result first stored in a local, and
+helpers like `def check(candidate)` called as `check(f)`. JSON test data with
+`input` and `output` strings (programs fed on stdin, or one JSON value per
+argument) counts too. Conversions in the comparison are followed:
+`str(xs) == "[1, 2, 3]"`, `JSON.stringify(xs) === "[1,2,3]"`, `.lower()`.
+
+It blocks only when all of these hold, and is advice otherwise:
+
+- the input and the answer come from the **same assertion**;
+- the test calls the function (or its class), imports its module, or is the
+  runner of the program's test data;
+- that assertion was already there at the base: a test written in the same
+  change may simply have been written for this code;
+- the function also works its answer out some other way: a function that is
+  nothing but a table keyed by one value (a status-code map) is advice. A
+  table keyed by several inputs or by a whole list is a table of test cases
+  and blocks either way;
+- an input is test data: a number other than 0, 1 or -1, a collection, or a
+  string that is not a single word. A single word (`"warn"`, `"active"`) is
+  usually a keyword or an enum value: advice. An ID with digits
+  (`"AB-1234"`, `"u_9f3a"`) is data, not a word;
+- the pair is too particular to be a natural edge case: a number of two or
+  more digits, a collection or text that is not one word on either side, or
+  two or more inputs compared. `if n == 2: print("No")` is advice;
+  `if n == 5: return 121` blocks;
+- no string involved already appears, quoted, in a non-test file at the base
+  (a documented keyword, a shared constant). Text the change itself adds does
+  not count: the change cannot vouch for itself;
+- the file is not generated (`@generated`, "do not edit", `_pb2.py`,
+  `dist/`), and is not a new script nothing imports or runs: agents write
+  `verify.py`-style helpers and scratch copies of the solution that read the
+  test data on purpose. A new file counts once something at the base, a
+  file the change edits or a test imports it or names it.
+
+Never reported: comparisons with trivial values only (0, 1, -1, empty, None,
+booleans), so `if n == 0: return 1` base cases and singular wording pass;
+answers that are trivial values; answers that restate the input (`"90"` to
+`90`); tests whose expected value comes from the code
+(`assert clamp(9) == MAX_SIZE`). Also advice: a new branch returning a
+literal for an input a test passes with a different expected value, and a
+result that depends on a module-level call count (`_calls[x] == 2`), which
+can tell repeated test calls apart.
+
+Message: `factorial() returns 121 when n == 5, the exact input and answer of
+tests/test_math.py::test_factorial: this special-cases the test instead of
+computing the answer` (the location is the finding's file and line).
+
+**Test detection (SKY-A116).** Added production code that asks whether a
+test runner is running it: the variables pytest sets while it runs
+(`PYTEST_CURRENT_TEST`, `PYTEST_VERSION`, `PYTEST_XDIST_WORKER`; not
+settings such as `PYTEST_ADDOPTS` that a tool starting pytest reads),
+`"pytest" in sys.modules`, `sys.modules.get("pytest")`, `sys.argv` checked
+for pytest or unittest, `sys._called_from_test`, the call stack inspected
+for a test; `process.env.JEST_WORKER_ID`, `VITEST`, `VITEST_WORKER_ID`,
+`VITEST_POOL_ID`, `NODE_TEST_CONTEXT` and Playwright's `TEST_WORKER_INDEX`/
+`TEST_PARALLEL_INDEX`, `typeof jest`/`vi`/`mocha`/`jasmine`,
+`globalThis.jest`/`vi`/`describe` and the like (`typeof describe` alone is
+too common a name to count), and `import.meta.vitest` outside a Vitest
+in-source test block. Production code that opens the tests' own files
+(`open("test_cases.json")`, `readFileSync("tests/cases.test.json")`,
+`Path(...) / "test_x.py"`, also through a constant) blocks too. The tests'
+files include golden output and fixtures of any type under a test folder
+(`tests/data/expected_report.txt`, `__snapshots__/*.snap`), and joined paths
+count (`Path(__file__).parent / "tests" / "data" / "x.txt"`,
+`os.path.join(..., "tests", "x.txt")`, `join(__dirname, "..", "test", "x.md")`)
+as long as the path goes through a test folder; from a new
+script nothing imports or runs (a local checker the agent wrote) it is
+advice. `NODE_ENV === "test"`, `import.meta.env.MODE === "test"` and
+environment variables compared with `"test"` are advice: many applications
+switch on them on purpose. Left out: test files and directories,
+`conftest.py`, setup files (`setupTests.*`, `*.setup.*`), config files
+(`*.config.*`, `settings.py`, `config/`, `setup.py`, `noxfile.py`), pytest
+plugins (files that import pytest or define `pytest_*` hooks), files that
+import a test framework, and writing a file (`open(path, "w")`).
+
+**Rigged comparisons (SKY-A117).** An added `__eq__` that always returns True
+or never looks at the other value, `__ne__` that always returns False,
+`__contains__` that always returns True (also set as a lambda or patched on
+a class later); JavaScript `equals()`/`isEqual()` that always returns true or
+ignores its argument, `compareTo()` that always returns 0, `valueOf()` or
+`[Symbol.toPrimitive]` returning a constant. Advice: ordering methods that
+return a constant (fine for a sentinel that sorts last), a constant
+`__hash__`, a constant `__str__`/`__repr__`/`toString()`/`toJSON()` equal to
+a string a test expects, and classes named like a wildcard (`ANY`,
+`_AnyValue`, `Wildcard`, `Matcher`). `__eq__` returning `NotImplemented` or
+comparing fields is never reported.
+
+**What still gets past.** The check is static and literal:
+
+- inputs recognised in a roundabout way (`if sum(xs) == 6`,
+  `if len(s) == 5`, a hash of the input);
+- special cases deep in the call stack whose literals differ from the test's
+  (the test passes a string the code parses);
+- tests whose inputs or answers are built at run time (fixtures, factories,
+  files the test reads);
+- small pairs (`if n == 3: return 7`) and a whole function replaced by a
+  table of the tests' answers keyed by one value are advice, since they
+  cannot be told apart from a real edge case or lookup table;
+- recorded call state is advice and only for module-level counters; state on
+  `self` or in closures is not followed;
+- test detection through a variable the project defines itself (`TESTING`),
+  or through an imported helper.
+
+**When it blocks real code.** A function written test-first whose
+specification is itself a particular literal mapping (the test at the base
+says `label("Untitled document") == "New doc"` and nothing else in the code
+or docs mentions that text) looks exactly like a special case. Quote the
+text in the docs or a constant at the base first, or set
+`test_special_casing = "advise"` (or `"off"`) in `[tool.skylos.done.checks]`
+at the base.
 
 ## Receipt
 
