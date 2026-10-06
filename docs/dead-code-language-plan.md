@@ -194,6 +194,10 @@ require copying a tool's execution model.
 - [x] PHP receiver, namespace and trait regressions and fix.
 - [x] Dart receiver and factory regressions and fix.
 - [x] Combined tests, real-project rescans and first-batch review.
+- [x] Second audit: confirmed Python, JS/TS, Java, Go, Dart and C# fixes,
+  source-reader/error hardening, and secret-scanner failure handling. See
+  [the hardening audit](analyzer-hardening-audit.md) for 13 pinned projects,
+  final validation and the remaining coverage gaps.
 - [ ] Later batches above.
 
 ## First-batch verification, 6 October 2026

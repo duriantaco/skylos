@@ -5675,7 +5675,7 @@ class TestRepoPhantomReferences:
         first_source.write_text("package demo\n", encoding="utf-8")
         second_source.write_text("package demo\n", encoding="utf-8")
 
-        def quality_finding(_root_node, _source, file_path):
+        def quality_finding(_root_node, _source, file_path, **_limits):
             return [
                 {
                     "rule_id": "SKY-Q301",
@@ -5711,7 +5711,7 @@ class TestRepoPhantomReferences:
                 side_effect=quality_finding,
             ),
         ):
-            parser_type.return_value.parse.return_value.root_node = object()
+            parser_type.return_value.parse.return_value.root_node = Mock(has_error=False)
             result = json.loads(
                 analyze(
                     str(tmp_path),

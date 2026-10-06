@@ -67,7 +67,46 @@ def demote_application_public_symbols(
         )
         if config_type_names is None:
             continue
-        _demote_project_symbols(project_definitions, config_type_names)
+        entrypoint_known, startup_object = _startup_object(root, project_file)
+        _demote_project_symbols(
+            project_definitions,
+            config_type_names,
+            entrypoint_known=entrypoint_known,
+            startup_object=startup_object,
+        )
+
+
+def _startup_object(root: Path, project_file: Path) -> tuple[bool, str | None]:
+    source = read_project_text_no_symlink(
+        root, project_file, max_bytes=_MAX_METADATA_BYTES, encoding="utf-8"
+    )
+    if source is None or _UNSAFE_XML_DECLARATION_RE.search(source):
+        return False, None
+    try:
+        project = ElementTree.fromstring(source)
+    except ElementTree.ParseError:
+        return False, None
+    values: set[str] = set()
+    pending = [(project, False)]
+    while pending:
+        element, inherited_condition = pending.pop()
+        name = element.tag.rsplit("}", 1)[-1]
+        conditional = (
+            inherited_condition
+            or any(key.rsplit("}", 1)[-1] == "Condition" for key in element.attrib)
+            or name in {"Choose", "When", "Otherwise"}
+        )
+        if name == "StartupObject":
+            value = (element.text or "").strip()
+            if conditional or not re.fullmatch(
+                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", value
+            ):
+                return False, None
+            values.add(value)
+        pending.extend((child, conditional) for child in element)
+    if len(values) > 1:
+        return False, None
+    return True, next(iter(values), None)
 
 
 def _projects_by_directory(root: Path, *, exclude_folders=None) -> dict[Path, str]:
@@ -183,12 +222,41 @@ def _configured_type_names(
     return names
 
 
-def _demote_project_symbols(definitions, config_type_names: set[str]) -> None:
+def _demote_project_symbols(
+    definitions,
+    config_type_names: set[str],
+    *,
+    entrypoint_known: bool = False,
+    startup_object: str | None = None,
+) -> None:
     types = {
         definition.name: definition
         for definition in definitions
         if definition.type == "class"
     }
+    if entrypoint_known:
+        entrypoint_methods = [
+            definition
+            for definition in definitions
+            if getattr(definition, "csharp_entrypoint_signature", False)
+            and not _entrypoint_task_is_project_type(definition, types)
+            and definition.name.rsplit(".", 1)[0] in types
+            and not getattr(
+                types[definition.name.rsplit(".", 1)[0]], "csharp_generic_type", False
+            )
+            and not any(
+                definition.name.startswith(name + ".")
+                and getattr(owner, "csharp_generic_type", False)
+                for name, owner in types.items()
+            )
+            and (
+                startup_object is None
+                or definition.name.rsplit(".", 1)[0] == startup_object
+            )
+        ]
+        if len(entrypoint_methods) == 1:
+            owner_name = entrypoint_methods[0].name.rsplit(".", 1)[0]
+            types[owner_name].references += 1
     extension_owners: set[str] = set()
     for definition in definitions:
         if getattr(definition, "csharp_is_extension", False):
@@ -258,6 +326,22 @@ def _demote_project_symbols(definitions, config_type_names: set[str]) -> None:
         definition.why_unused.append(
             "no local references in a complete C# application project scan"
         )
+
+
+def _entrypoint_task_is_project_type(definition, types: dict[str, object]) -> bool:
+    if getattr(definition, "csharp_entrypoint_return_type", None) not in {
+        "Task",
+        "Task<int>",
+    }:
+        return False
+    owner_parts = definition.name.rsplit(".", 1)[0].split(".")
+    candidates = {"Task"} | {
+        ".".join(owner_parts[:index]) + ".Task"
+        for index in range(1, len(owner_parts) + 1)
+    }
+    # The declaration may be in another file in the same executable project.
+    # A custom Task return must not displace the actual void/int entrypoint.
+    return any(name in types for name in candidates)
 
 
 def _resolve_base_type(definition, base: str, types: dict[str, object]):

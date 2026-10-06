@@ -364,8 +364,21 @@ def _scan_typescript_like_file(
     )
 
 
-def _scan_go_file(file, cfg, **_options):
-    return scan_go_file(file, cfg)
+def _scan_go_file(
+    file,
+    cfg,
+    *,
+    enable_quality_rules: bool,
+    enable_danger_rules: bool,
+    project_root=None,
+):
+    return scan_go_file(
+        file,
+        cfg,
+        enable_quality_rules=enable_quality_rules,
+        enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
+    )
 
 
 def _scan_java_like_file(
@@ -374,28 +387,36 @@ def _scan_java_like_file(
     *,
     enable_quality_rules: bool,
     enable_danger_rules: bool,
+    project_root=None,
 ):
     return scan_java_file(
         file,
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
     )
 
 
-def _scan_php_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_php_file(
+    file, cfg, *, enable_danger_rules: bool, project_root=None, **_options
+):
     return scan_php_file(
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
     )
 
 
-def _scan_rust_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_rust_file(
+    file, cfg, *, enable_danger_rules: bool, project_root=None, **_options
+):
     return scan_rust_file(
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
     )
 
 
@@ -407,11 +428,14 @@ def _scan_cpp_file(file, cfg, *, enable_danger_rules: bool, **_options):
     )
 
 
-def _scan_dart_file(file, cfg, *, enable_danger_rules: bool, **_options):
+def _scan_dart_file(
+    file, cfg, *, enable_danger_rules: bool, project_root=None, **_options
+):
     return scan_dart_file(
         file,
         cfg,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
     )
 
 
@@ -493,15 +517,26 @@ def scan_non_python_file(
     *,
     enable_quality_rules: bool = True,
     enable_danger_rules: bool = True,
+    project_root=None,
 ):
     file_name = str(file)
     for suffixes, scanner in NON_PYTHON_SCANNERS:
         if file_name.endswith(suffixes):
+            source_options = {}
+            if scanner in (
+                _scan_go_file,
+                _scan_java_like_file,
+                _scan_php_file,
+                _scan_rust_file,
+                _scan_dart_file,
+            ):
+                source_options["project_root"] = project_root
             out = scanner(
                 file,
                 cfg,
                 enable_quality_rules=enable_quality_rules,
                 enable_danger_rules=enable_danger_rules,
+                **source_options,
             )
             return _normalize_language_scan_output(out)
     return None

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 from skylos.analysis.control_flow import (
-    evaluate_static_condition,
+    evaluate_static_truth as evaluate_static_condition,
     extract_constant_string,
 )
 from skylos.analysis.implicit_refs import pattern_tracker

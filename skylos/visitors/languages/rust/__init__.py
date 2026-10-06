@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from skylos.analysis.errors import analysis_error_payload
+from skylos.analysis.language_errors import (
+    tree_sitter_analysis_error,
+    with_analysis_error,
+)
+from skylos.core.safe_cache_io import read_bytes_no_symlink
+
 from .core import RustCore
 from .danger import scan_danger
 
@@ -46,6 +53,7 @@ def scan_rust_file(
     config: dict | None = None,
     *,
     enable_danger_rules: bool = True,
+    project_root: str | Path | None = None,
 ) -> tuple:
     if config is None:
         config = {}
@@ -53,10 +61,19 @@ def scan_rust_file(
     try:
         path = Path(file_path)
         if path.suffix.lower() != ".rs":
-            raise ValueError("unsupported Rust path")
-        source = path.read_bytes()  # skylos: ignore[SKY-D215]
-    except Exception:
-        return _empty_result(config)
+            return _empty_result(config)
+        source = read_bytes_no_symlink(
+            path, max_bytes=2_000_000, project_root=project_root
+        )
+        if source is None:
+            raise OSError(
+                "Rust source is unreadable, unsafe, or exceeds the size limit"
+            )
+    except Exception as error:
+        return with_analysis_error(
+            _empty_result(config),
+            analysis_error_payload(file_path, error, kind="source_read_error"),
+        )
 
     core = RustCore(str(path), source)
     core.scan()
@@ -69,7 +86,7 @@ def scan_rust_file(
         scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
     )
 
-    return (
+    result = (
         core.defs,
         core.refs,
         set(),
@@ -83,6 +100,9 @@ def scan_rust_file(
         None,
         config,
         core.raw_imports,
+    )
+    return with_analysis_error(
+        result, tree_sitter_analysis_error(str(path), core.root_node, "rust")
     )
 
 

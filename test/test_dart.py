@@ -360,7 +360,7 @@ def test_dart_constructor_call_inside_class_still_references_type(tmp_path):
         "void main() { Active().create(); }",
     )
     assert "Active" in {name for name, _ in refs}
-    assert "Active.Active" not in {name for name, _ in refs}
+    assert "Active.Active" in {name for name, _ in refs}
 
 
 @pytest.mark.parametrize("grep_verify", [False, True])

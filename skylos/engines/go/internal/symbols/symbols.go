@@ -63,7 +63,11 @@ var defaultSkipDirs = map[string]bool{
 
 func Extract(root string) (*Result, error) {
 	fset := token.NewFileSet()
-	result := &Result{}
+	result := &Result{
+		Defs:      []Def{},
+		Refs:      []Ref{},
+		CallPairs: []CallPair{},
+	}
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	if rootErr != nil {
 		return nil, rootErr

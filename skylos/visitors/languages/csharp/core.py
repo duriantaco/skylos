@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from skylos.visitors.base import Definition
 from skylos.visitors.languages.csharp._lex import (
+    _TOKEN_RE,
     mask_comments_and_strings,
     matching_brace,
 )
@@ -33,6 +34,7 @@ _METHOD_RE = re.compile(
     r"\((?P<params>[^;{}]*)\)\s*"
     r"(?:where\s+[^{=>]+)?(?:\{|=>)"
 )
+_BODYLESS_METHOD_RE = re.compile(_METHOD_RE.pattern.removesuffix(r"(?:\{|=>)") + r";")
 _FIELD_RE = re.compile(
     _DECL_START
     + r"(?P<attrs>"
@@ -49,7 +51,7 @@ _PROPERTY_RE = re.compile(
     + r"(?:(?:public|private|protected|internal|static|virtual|override|"
     r"abstract|sealed|new|required|readonly)\s+)*"
     r"(?P<type>[A-Za-z_][\w.<>\[\],?]*)\s+"
-    r"[A-Za-z_]\w*\s*(?:\{|=>)"
+    r"(?P<name>[A-Za-z_]\w*)\s*(?:\{|=>)"
 )
 _CONSTRUCTOR_RE = re.compile(
     _DECL_START
@@ -70,6 +72,13 @@ _NAMESPACE_RE = re.compile(
 _TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 _GENERIC_ARGS_RE = re.compile(
     r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*<(?P<args>[^<>;{}]+)>"
+)
+_MEMBER_ACCESS_RE = re.compile(
+    r"\b(?P<name>(?:global::)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)"
+)
+_USING_ALIAS_RE = re.compile(
+    _DECL_START + r"(?:global\s+)?using\s+(?P<alias>[A-Za-z_]\w*)\s*=\s*"
+    r"(?P<target>(?:global::)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;"
 )
 _TypeRange = tuple[int, int, str, bool]
 _NamespaceRange = tuple[int, int, str]
@@ -114,6 +123,9 @@ class CSharpDefinition(Definition):
         "csharp_base_types",
         "csharp_interface_methods",
         "csharp_is_extension",
+        "csharp_entrypoint_signature",
+        "csharp_entrypoint_return_type",
+        "csharp_generic_type",
     )
 
     def __init__(self, name: str, kind: str, file_path: str, line: int) -> None:
@@ -128,6 +140,9 @@ class CSharpDefinition(Definition):
         self.csharp_base_types: tuple[str, ...] = ()
         self.csharp_interface_methods: frozenset[str] = frozenset()
         self.csharp_is_extension = False
+        self.csharp_entrypoint_signature = False
+        self.csharp_entrypoint_return_type: str | None = None
+        self.csharp_generic_type = False
 
 
 @dataclass
@@ -135,6 +150,8 @@ class _RefState:
     file_path: str
     refs: list[tuple[str, str]] = field(default_factory=list)
     seen: set[tuple[str, int]] = field(default_factory=set)
+    argument_source: str = ""
+    binding_cache: dict = field(default_factory=dict)
 
 
 def scan_symbols(
@@ -146,7 +163,14 @@ def scan_symbols(
     defs = _type_defs(file_path, source, masked, type_ranges, namespace_ranges)
     methods, method_decl_offsets = _method_defs(file_path, source, masked, type_ranges)
     fields = _field_defs(file_path, source, masked, type_ranges)
-    refs = _refs(file_path, masked, type_ranges, namespace_ranges, method_decl_offsets)
+    refs = _refs(
+        file_path,
+        masked,
+        type_ranges,
+        namespace_ranges,
+        method_decl_offsets,
+        argument_source=_argument_mask(source),
+    )
     return defs + methods + fields, refs, []
 
 
@@ -168,6 +192,7 @@ def _type_defs(
         definition.csharp_has_attributes = bool(match.group("attrs").strip())
         definition.csharp_type_kind = match.group("kind").split()[0]
         definition.csharp_base_types = _base_type_names(masked, match)
+        definition.csharp_generic_type = masked[match.end() :].lstrip().startswith("<")
         if definition.csharp_type_kind == "interface":
             definition.csharp_interface_methods = _interface_method_names(masked, match)
         definition.is_exported = _is_exported(match.group("mods"))
@@ -185,12 +210,17 @@ def _method_defs(
 ) -> tuple[list[Definition], set[int]]:
     defs: list[Definition] = []
     method_decl_offsets: set[int] = set()
+    namespace_ranges = _namespace_ranges(masked)
     for match in _METHOD_RE.finditer(masked):
         name = match.group("name")
         if name in _NON_CALL_KEYWORDS:
             continue
         owner_range = _containing_type_range(type_ranges, match.start())
         if owner_range and not _is_direct_member(masked, owner_range, match.start()):
+            continue
+        if owner_range and name == owner_range[2].rsplit(".", 1)[-1]:
+            # Optional modifiers can backtrack into the return-type regex and
+            # invent a method from a constructor such as `static Factory()`.
             continue
         method_decl_offsets.add(match.start("name"))
         line = _line_for_offset(source, match.start("name"))
@@ -199,6 +229,29 @@ def _method_defs(
             f"{owner}.{name}" if owner else name, "method", file_path, line
         )
         definition.csharp_modifiers = frozenset(match.group("mods").split())
+        definition.csharp_entrypoint_signature = _is_entrypoint_signature(match)
+        definition.csharp_entrypoint_return_type = match.group("rtype").strip()
+        if match.group("rtype").strip().startswith("Task"):
+            namespace = _namespace_at(namespace_ranges, match.start())
+            owner_parts = (owner or "").split(".")
+            task_names = {"Task"} | {
+                ".".join(owner_parts[:index]) + ".Task"
+                for index in range(1, len(owner_parts) + 1)
+            }
+            if any(item[2] in task_names for item in type_ranges) or any(
+                alias.group("alias") == "Task"
+                and alias.group("target").removeprefix("global::")
+                != "System.Threading.Tasks.Task"
+                and (
+                    not _namespace_at(namespace_ranges, alias.start())
+                    or namespace == _namespace_at(namespace_ranges, alias.start())
+                    or namespace.startswith(
+                        _namespace_at(namespace_ranges, alias.start()) + "."
+                    )
+                )
+                for alias in _USING_ALIAS_RE.finditer(masked)
+            ):
+                definition.csharp_entrypoint_signature = False
         definition.csharp_has_attributes = bool(match.group("attrs").strip())
         definition.csharp_is_extension = bool(
             re.match(r"\s*(?:\[[^\]]*\]\s*)*this\s+", match.group("params"))
@@ -218,6 +271,31 @@ def _method_defs(
     return defs, method_decl_offsets
 
 
+def _is_entrypoint_signature(match: re.Match[str]) -> bool:
+    if (
+        match.group("name") != "Main"
+        or "static" not in match.group("mods").split()
+        or match.group("generic")
+    ):
+        return False
+    return_type = match.group("rtype").strip()
+    if return_type not in {
+        "void",
+        "int",
+        "Task",
+        "Task<int>",
+        "System.Threading.Tasks.Task",
+        "System.Threading.Tasks.Task<int>",
+    }:
+        return False
+    if "async" in match.group("mods").split() and return_type in {"void", "int"}:
+        return False
+    parameters = match.group("params").strip()
+    return not parameters or bool(
+        re.fullmatch(r"(?:string|System\.String)\s*\[\]\s+[A-Za-z_]\w*", parameters)
+    )
+
+
 def _field_defs(
     file_path: str,
     source: str,
@@ -225,6 +303,16 @@ def _field_defs(
     type_ranges: list[_TypeRange],
 ) -> list[Definition]:
     defs: list[Definition] = []
+    parameter_ranges = [
+        declaration.span("params")
+        for owner_range in type_ranges
+        for declaration in _binding_declarations(masked, owner_range)
+        if _is_direct_member(masked, owner_range, declaration.start())
+    ]
+    parameter_ranges.extend(
+        declaration.span("params")
+        for declaration in _BODYLESS_METHOD_RE.finditer(masked)
+    )
     for match in _FIELD_RE.finditer(masked):
         owner_range = _containing_type_range(type_ranges, match.start())
         if (
@@ -232,6 +320,9 @@ def _field_defs(
             or owner_range[3]
             or match.group("attrs").strip()
             or not _is_direct_member(masked, owner_range, match.start())
+            or any(
+                start <= match.start("name") < end for start, end in parameter_ranges
+            )
         ):
             continue
         for name, offset in _field_declarators(masked, match):
@@ -294,7 +385,7 @@ def _parameter_shadow_ranges(
     masked: str, owner_range: _TypeRange, name: str
 ) -> list[tuple[int, int, int, int]]:
     ranges: list[tuple[int, int, int, int]] = []
-    for match in _METHOD_RE.finditer(masked, owner_range[0] + 1, owner_range[1]):
+    for match in _binding_declarations(masked, owner_range):
         if not _is_direct_member(masked, owner_range, match.start()):
             continue
         if name not in _parameter_names(match.group("params")):
@@ -314,7 +405,7 @@ def _local_shadow_ranges(
     masked: str, owner_range: _TypeRange, name: str
 ) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
-    for method in _METHOD_RE.finditer(masked, owner_range[0] + 1, owner_range[1]):
+    for method in _binding_declarations(masked, owner_range):
         if not _is_direct_member(masked, owner_range, method.start()):
             continue
         body_open = method.end() - 1
@@ -333,6 +424,18 @@ def _local_shadow_ranges(
                 if scope_end is not None:
                     ranges.append((offset, scope_end))
     return ranges
+
+
+def _binding_declarations(masked, owner_range):
+    declarations = list(_METHOD_RE.finditer(masked, owner_range[0] + 1, owner_range[1]))
+    declarations.extend(
+        match
+        for match in _CONSTRUCTOR_RE.finditer(
+            masked, owner_range[0] + 1, owner_range[1]
+        )
+        if match.group("name") == owner_range[2].rsplit(".", 1)[-1]
+    )
+    return declarations
 
 
 def _containing_block_end(masked: str, method_open: int, offset: int) -> int | None:
@@ -448,14 +551,25 @@ def _argument_arity(args: str) -> int:
     return len(_split_top_level(args))
 
 
+def _argument_mask(source: str) -> str:
+    chars = list(mask_comments_and_strings(source))
+    for token in _TOKEN_RE.finditer(source):
+        if not token.group().startswith(("//", "/*")):
+            # A literal is still one argument, including an empty string.
+            chars[token.start()] = "0"
+    return "".join(chars)
+
+
 def _refs(
     file_path: str,
     masked: str,
     type_ranges: list[_TypeRange],
     namespace_ranges: list[_NamespaceRange],
     method_decl_offsets: set[int],
+    *,
+    argument_source: str,
 ) -> list[tuple[str, str]]:
-    state = _RefState(file_path=file_path)
+    state = _RefState(file_path=file_path, argument_source=argument_source)
     type_names = {item[2].split(".")[-1] for item in type_ranges}
     _collect_call_refs(
         masked,
@@ -467,7 +581,197 @@ def _refs(
     )
     _collect_new_refs(masked, namespace_ranges, state)
     _collect_type_refs(masked, type_ranges, namespace_ranges, state)
+    _collect_member_owner_refs(masked, type_ranges, namespace_ranges, state)
     return state.refs
+
+
+def _collect_member_owner_refs(masked, type_ranges, namespace_ranges, state) -> None:
+    # A static member access consumes its containing type, even when the
+    # member is a constant/property rather than an invocation. Keep uncertain
+    # imports as one unresolved owner; guessing every using namespace causes
+    # the shared resolver to credit unrelated same-named types.
+    aliases = list(_USING_ALIAS_RE.finditer(masked))
+    headers = [
+        match.span()
+        for pattern in (_METHOD_RE, _TYPE_RE, _NAMESPACE_RE, _PROPERTY_RE)
+        for match in pattern.finditer(masked)
+    ]
+    headers.extend(
+        (match.start(), match.start("name")) for match in _FIELD_RE.finditer(masked)
+    )
+    for match in _MEMBER_ACCESS_RE.finditer(masked):
+        offset = match.start("name")
+        if any(start <= offset < end for start, end in headers):
+            continue
+        statement_start = (
+            max(
+                masked.rfind(";", 0, offset),
+                masked.rfind("{", 0, offset),
+                masked.rfind("}", 0, offset),
+            )
+            + 1
+        )
+        if re.match(
+            r"\s*(?:global\s+)?(?:using|namespace)\b", masked[statement_start:offset]
+        ):
+            continue
+        name = match.group("name")
+        explicit_global = name.startswith("global::")
+        name = name.removeprefix("global::")
+        receiver, _, _member = name.rpartition(".")
+        first = receiver.split(".", 1)[0]
+        if first in {"this", "base"}:
+            continue
+        containing = _containing_type_range(type_ranges, offset)
+        if (
+            not explicit_global
+            and containing
+            and _receiver_is_bound(
+                masked, containing, first, offset, state.binding_cache
+            )
+        ):
+            continue
+        namespace = _namespace_at(namespace_ranges, offset)
+        applicable = [
+            alias
+            for alias in aliases
+            if alias.group("alias") == first
+            and (
+                not _namespace_at(namespace_ranges, alias.start())
+                or namespace == _namespace_at(namespace_ranges, alias.start())
+                or namespace.startswith(
+                    _namespace_at(namespace_ranges, alias.start()) + "."
+                )
+            )
+        ]
+        if not explicit_global and applicable:
+            # The nearest namespace owns an alias with the same spelling.
+            alias = max(
+                applicable,
+                key=lambda item: len(_namespace_at(namespace_ranges, item.start())),
+            )
+            receiver = (
+                alias.group("target").removeprefix("global::") + receiver[len(first) :]
+            )
+        elif not explicit_global:
+            local = f"{namespace}.{receiver}" if namespace else receiver
+            if any(item[2] == local for item in type_ranges):
+                receiver = local
+        if containing and receiver == containing[2]:
+            # A dead type's own constant reads and recursive static calls do
+            # not establish an external consumer for that type.
+            continue
+        prefix = "@owner-type:" if "." in receiver or explicit_global else "@type:"
+        _append_ref(f"{prefix}{receiver}", offset, state)
+
+
+def _receiver_is_bound(masked, owner_range, name, offset, cache=None) -> bool:
+    key = (owner_range, name)
+    if cache is not None:
+        if key not in cache:
+            cache[key] = _receiver_binding_ranges(masked, owner_range, name)
+        member, ranges = cache[key]
+    else:
+        member, ranges = _receiver_binding_ranges(masked, owner_range, name)
+    return member or any(start <= offset < end for start, end in ranges)
+
+
+def _receiver_binding_ranges(masked, owner_range, name):
+    ranges = [
+        (method_start, method_end)
+        for _start, _end, method_start, method_end in _parameter_shadow_ranges(
+            masked, owner_range, name
+        )
+    ]
+    ranges.extend(_local_shadow_ranges(masked, owner_range, name))
+    ranges.extend(_additional_receiver_bindings(masked, owner_range, name))
+    for declaration in _FIELD_RE.finditer(masked, owner_range[0] + 1, owner_range[1]):
+        if _is_direct_member(masked, owner_range, declaration.start()) and any(
+            field_name == name
+            for field_name, _ in _field_declarators(masked, declaration)
+        ):
+            return True, ranges
+    for declaration in _PROPERTY_RE.finditer(
+        masked, owner_range[0] + 1, owner_range[1]
+    ):
+        if declaration.group("name") == name and _is_direct_member(
+            masked, owner_range, declaration.start()
+        ):
+            return True, ranges
+    return False, ranges
+
+
+def _binding_expression_end(masked: str, start: int, limit: int) -> int:
+    while start < limit and masked[start].isspace():
+        start += 1
+    if start < limit and masked[start] == "{":
+        close = matching_brace(masked, start)
+        return close + 1 if close >= 0 else limit
+    depths = {"(": 0, "[": 0, "{": 0}
+    closing = {")": "(", "]": "[", "}": "{"}
+    for offset in range(start, limit):
+        char = masked[offset]
+        if char in depths:
+            depths[char] += 1
+        elif char in closing:
+            if depths[closing[char]] == 0:
+                return offset
+            depths[closing[char]] -= 1
+        elif char in ",;" and not any(depths.values()):
+            return offset
+    return limit
+
+
+def _additional_receiver_bindings(masked, owner_range, name):
+    ranges = []
+    start, limit = owner_range[0] + 1, owner_range[1]
+    for match in re.finditer(
+        r"(?:\b(?P<single>[A-Za-z_]\w*)|\((?P<params>[^()]*)\))\s*=>",
+        masked[start:limit],
+    ):
+        parameters = match.group("single") or match.group("params")
+        if name in _parameter_names(parameters):
+            body_start = start + match.end()
+            ranges.append(
+                (
+                    start + match.start(),
+                    _binding_expression_end(masked, body_start, limit),
+                )
+            )
+    for match in re.finditer(
+        r"\b(?P<kind>foreach|for|catch)\s*\(", masked[start:limit]
+    ):
+        open_paren = start + match.end() - 1
+        close_paren = _matching_paren(masked, open_paren)
+        if close_paren is None or close_paren >= limit:
+            continue
+        header = masked[open_paren + 1 : close_paren]
+        kind = match.group("kind")
+        if kind == "foreach":
+            declaration = re.split(r"\bin\b", header, maxsplit=1)[0].strip()
+        elif kind == "for":
+            declaration = header.split(";", 1)[0].split("=", 1)[0].strip()
+        else:
+            declaration = header.strip()
+        if not re.fullmatch(
+            rf"[A-Za-z_][\w.<>\[\],?]*\s+{re.escape(name)}", declaration
+        ):
+            continue
+        body_start = close_paren + 1
+        following = masked[body_start:limit].lstrip()
+        if kind == "catch" and following.startswith("when"):
+            condition = masked.find("(", body_start, limit)
+            condition_end = (
+                _matching_paren(masked, condition) if condition >= 0 else None
+            )
+            if condition_end is None:
+                continue
+            body_start = condition_end + 1
+        binding_start = open_paren if kind in {"for", "catch"} else close_paren + 1
+        ranges.append(
+            (binding_start, _binding_expression_end(masked, body_start, limit))
+        )
+    return ranges
 
 
 def _collect_call_refs(
@@ -478,6 +782,11 @@ def _collect_call_refs(
     type_names: set[str],
     state: _RefState,
 ) -> None:
+    local_methods = set()
+    for declaration in _METHOD_RE.finditer(masked):
+        containing = _containing_type_range(type_ranges, declaration.start())
+        if containing and _is_direct_member(masked, containing, declaration.start()):
+            local_methods.add(f"{containing[2]}.{declaration.group('name')}")
     for match in _CALL_RE.finditer(masked):
         name = match.group("name")
         leaf = name.rsplit(".", 1)[-1]
@@ -503,7 +812,19 @@ def _collect_call_refs(
                 name = f"{namespace}.{name}"
         close_paren = _matching_paren(masked, match.end() - 1)
         if close_paren is not None:
-            params = masked[match.end() : close_paren]
+            params = state.argument_source[match.end() : close_paren]
+            if owner is not None:
+                for argument, offset in _split_top_level(params, match.end()):
+                    identifier = argument.strip()
+                    target = f"{owner[2]}.{identifier}"
+                    if (
+                        re.fullmatch(r"[A-Za-z_]\w*", identifier)
+                        and target in local_methods
+                        and not _receiver_is_bound(
+                            masked, owner, identifier, offset, state.binding_cache
+                        )
+                    ):
+                        _append_ref(target, offset, state)
             name = f"{name}#{_argument_arity(params)}"
         _append_ref(name, match.start("name"), state)
 

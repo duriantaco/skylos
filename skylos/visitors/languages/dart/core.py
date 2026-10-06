@@ -80,6 +80,7 @@ class DartCore:
         self._call_sites: dict[tuple[int, str | None], tuple] = {}
         self._callable_signatures: dict[str, object] = {}
         self._ambiguous_calls: set[tuple[str | None, str]] = set()
+        self._constructors: set[str] = set()
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -330,9 +331,11 @@ class DartCore:
                 node, "constant_constructor_signature"
             )
         if constructor is not None:
-            name_node = self._name_node(constructor)
+            names = self._children_of_type(constructor, "identifier")
+            name_node = names[-1] if names else self._name_node(constructor)
             constructor_name = self._node_name_text(name_node) or current_class
             qualified = f"{current_class}.{constructor_name}"
+            self._constructors.add(qualified)
             d = Definition(
                 qualified,
                 "method",
@@ -504,6 +507,15 @@ class DartCore:
             self.defs.append(d)
 
     def _scan_refs_in_node(self, node, *, current_callable: str | None) -> None:
+        if node.type == "identifier" and self._is_value_reference(node):
+            # Passing a function or method without parentheses is a tear-off,
+            # not an unused declaration. Resolve its owner exactly like a call.
+            local, _ = self._local_receiver_class(
+                self._node_name_text(node), node, current_callable, {}
+            )
+            if not local:
+                self._record_call(node, node.parent, None, current_callable)
+
         if node.type == "method_invocation":
             function = node.child_by_field_name("function")
             identifiers = (
@@ -532,7 +544,6 @@ class DartCore:
             if (
                 child.type == "selector"
                 and self._selector_name(child)
-                and self._selector_is_call(next_child)
             ):
                 ident = self._first_descendant_of_type(child, "identifier")
                 receiver = children[idx - 1] if idx else None
@@ -549,6 +560,25 @@ class DartCore:
                     self._record_call(ident, node, receiver, current_callable)
 
             self._scan_refs_in_node(child, current_callable=current_callable)
+
+    def _is_value_reference(self, node) -> bool:
+        parent = node.parent
+        if parent is None:
+            return False
+        if parent.type in {
+            "argument",
+            "named_argument",
+            "return_statement",
+            "function_body",
+            "conditional_expression",
+            "list_literal",
+        }:
+            return True
+        if parent.type == "initialized_variable_definition":
+            return parent.child_by_field_name("name") != node
+        if parent.type == "assignment_expression":
+            return parent.child_by_field_name("right") == node
+        return False
 
     def _record_call(self, called, node, receiver, current_callable) -> None:
         key = (called.start_byte, current_callable)
@@ -654,6 +684,13 @@ class DartCore:
             if receiver is None and name in classes:
                 # Constructor calls reference the type, even inside that type.
                 owner = None
+                constructor = f"{name}.{name}"
+                if node.type == "method_invocation" and constructor in self._constructors:
+                    self._add_ref(
+                        constructor,
+                        called.start_byte,
+                        current_callable=current_callable,
+                    )
             elif receiver is None and current_callable and "." in current_callable:
                 owner = current_callable.rsplit(".", 1)[0]
                 member = self._member_target(owner, name, classes, definitions)
@@ -684,7 +721,7 @@ class DartCore:
                     owner, receiver.start_byte, current_callable=current_callable
                 )
             self._add_ref(target, called.start_byte, current_callable=current_callable)
-            if owner and target != name:
+            if owner and target != name and target not in self._constructors:
                 # Dart methods dispatch virtually. A declared receiver type is
                 # not proof of its runtime subtype; keep known overriding
                 # members alive too, including implementations of abstract

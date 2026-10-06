@@ -114,6 +114,9 @@ _REFS_PATTERN = """
 (member_expression object: (identifier) @ref)
 (subscript_expression object: (identifier) @ref)
 (subscript_expression index: (identifier) @ref)
+(subscript_expression index: (string) @literal_prop_ref)
+(parenthesized_expression (identifier) @ref)
+(for_statement condition: (identifier) @ref)
 (pair value: (identifier) @ref)
 (unary_expression (identifier) @ref)
 (await_expression (identifier) @ref)
@@ -132,6 +135,7 @@ _REFS_PATTERN = """
 (extends_clause (identifier) @ref)
 (ternary_expression consequence: (identifier) @ref)
 (ternary_expression alternative: (identifier) @ref)
+(ternary_expression condition: (identifier) @ref)
 (as_expression (identifier) @ref)
 (satisfies_expression (identifier) @ref)
 (type_identifier) @type_ref
@@ -495,6 +499,16 @@ class TypeScriptCore:
         for node in c.get("prop_ref", []):
             name = self._get_text(node)
             if self._is_self_ref(node, name):
+                continue
+            self.refs.append((name, self.file_path))
+            self.refs.append((f"~.{name}", self.file_path))
+
+        # A literal bracket read has the same property evidence as `x.foo`.
+        # Only the actual subscript index contributes; unrelated strings and
+        # expressions such as `x["foo" + suffix]` do not identify a member.
+        for node in c.get("literal_prop_ref", []):
+            name = self._string_literal_value(node)
+            if not name or self._is_self_ref(node, name):
                 continue
             self.refs.append((name, self.file_path))
             self.refs.append((f"~.{name}", self.file_path))

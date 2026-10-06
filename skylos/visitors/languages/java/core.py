@@ -554,22 +554,23 @@ class JavaCore:
 
         for node in c.get("ref", []):
             name = self._get_text(node)
-            if not self._is_self_ref(node, name):
-                if node.parent and node.parent.type == "method_invocation":
-                    object_node = node.parent.child_by_field_name("object")
-                    if object_node is not None:
-                        object_name = self._get_text(object_node)
-                        if (
-                            object_name not in {"this", "super"}
-                            and self._is_class_like_receiver(object_name)
-                        ):
+            if node.parent and node.parent.type == "method_invocation":
+                object_node = node.parent.child_by_field_name("object")
+                if object_node is not None:
+                    object_name = self._get_text(object_node)
+                    if self._is_class_like_receiver(object_name):
+                        # A same-named method on another class is a call, not
+                        # self recursion in the containing method.
+                        owner = self._find_containing_class(node)
+                        method = self._find_containing_method(node)
+                        if object_name != owner or name != method:
                             qualified_ref = f"{object_name}.{name}"
                             key = (qualified_ref, node.start_byte)
                             if key not in seen:
                                 seen.add(key)
                                 self.refs.append((qualified_ref, self.file_path))
-                            continue
-
+                        continue
+            if not self._is_self_ref(node, name):
                 key = (name, node.start_byte)
                 if key not in seen:
                     seen.add(key)

@@ -34,6 +34,7 @@ from .safe_glob import (
     resolve_bounded_base,
     safe_glob_paths,
 )
+from .runner_entries import discover_test_tool_entries
 
 _NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
 _NEXTJS_CONVENTION_FILES = NEXTJS_CONVENTION_FILES
@@ -543,7 +544,7 @@ def _classify_entry_scope(file_path: str, kind: str, reason: str) -> str:
         return "prod"
     if reason.endswith("-config"):
         return "dev"
-    if reason.startswith("vitest-") or reason.startswith("playwright-"):
+    if reason.startswith(("vitest-", "playwright-", "ava-", "tsd-")):
         return "dev"
     return "prod"
 
@@ -1400,6 +1401,8 @@ def _token_file_candidate(package_root: str, token: str) -> str | None:
 
 def _discover_script_entry_candidates(
     package_root: str,
+    *,
+    test_commands: list[list[str]] | None = None,
 ) -> tuple[set[str], set[str], dict[str, tuple[str, str]]]:
     data = _read_json_file(os.path.join(package_root, "package.json"))
     scripts = data.get("scripts")
@@ -1425,6 +1428,11 @@ def _discover_script_entry_candidates(
 
         segments = _script_command_segments(tokens)
         allow_execution_proof = len(segments) == 1
+        allow_test_roots = not any(
+            token in {"cd", "pushd", "popd", "source", ".", "eval"}
+            for segment in segments
+            for token in segment
+        )
         for segment in segments:
             for token in segment:
                 file_candidate = _token_file_candidate(package_root, token)
@@ -1443,6 +1451,12 @@ def _discover_script_entry_candidates(
                 )
 
             tool = command_tokens[0]
+            if (
+                test_commands is not None
+                and allow_test_roots
+                and tool in {"ava", "tsd"}
+            ):
+                test_commands.append(command_tokens)
             if tool not in _RUNNER_CONFIG_TOOLS:
                 continue
             for index, token in enumerate(command_tokens[1:], 1):
@@ -1520,9 +1534,17 @@ def _iter_entry_discoveries(
                     )
                 )
 
+        test_commands: list[list[str]] = []
         script_entries, executable_entries, script_configs = (
-            _discover_script_entry_candidates(str(package_root))
+            _discover_script_entry_candidates(
+                str(package_root), test_commands=test_commands
+            )
         )
+        package = _read_json_file(os.path.join(str(package_root), "package.json"))
+        for entry_file, reason in discover_test_tool_entries(
+            str(package_root), package, ts_files, test_commands
+        ).items():
+            discoveries.append(_TsEntryDiscovery(entry_file, "config", reason, "dev"))
         for entry_file in script_entries:
             if entry_file in ts_files:
                 reason = "package-script"

@@ -18,6 +18,112 @@ PROJECT_CACHE_LOCK_POLL_SECONDS = 0.01
 PROJECT_CACHE_LOCK_STALE_SECONDS = 3600.0
 
 
+def read_bytes_no_symlink(
+    path: str | Path,
+    *,
+    max_bytes: int,
+    project_root: str | Path | None = None,
+) -> bytes | None:
+    """Read bounded original bytes through a trusted root without following children."""
+    if not isinstance(max_bytes, int) or max_bytes < 0:
+        return None
+    try:
+        candidate = Path(path).expanduser()
+        if project_root is None:
+            project_root = candidate.absolute().parent.resolve(strict=True)
+            candidate = project_root / candidate.name
+        project_path = _project_relative_path(project_root, candidate)
+    except (OSError, ValueError):
+        return None
+    if project_path is None:
+        return None
+    root, relative = project_path
+    if os.open not in os.supports_dir_fd:
+        return _read_project_bytes_fallback(root, relative, max_bytes=max_bytes)
+
+    directory_fd: int | None = None
+    descriptor: int | None = None
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        directory_fd = os.open(root, _directory_open_flags(follow_symlinks=True))
+        for part in relative.parts[:-1]:
+            next_fd = os.open(part, _directory_open_flags(), dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        initial = os.stat(
+            relative.parts[-1], dir_fd=directory_fd, follow_symlinks=False
+        )
+        if not stat.S_ISREG(initial.st_mode) or initial.st_size > max_bytes:
+            return None
+        descriptor = os.open(relative.parts[-1], flags, dir_fd=directory_fd)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size > max_bytes
+            or (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino)
+        ):
+            return None
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            source = handle.read(max_bytes + 1)
+        return source if len(source) <= max_bytes else None
+    except OSError:
+        return None
+    finally:
+        _close_file_descriptor(descriptor)
+        _close_file_descriptor(directory_fd)
+
+
+def _read_project_bytes_fallback(root: Path, relative: Path, *, max_bytes: int):
+    descriptor: int | None = None
+    try:
+        current = root
+        for part in relative.parts[:-1]:
+            current /= part
+            if current.is_symlink() or not current.is_dir():
+                return None
+        candidate = current / relative.parts[-1]
+        candidate.resolve(strict=True).relative_to(root)
+        initial = candidate.lstat()
+        if not stat.S_ISREG(initial.st_mode) or initial.st_size > max_bytes:
+            return None
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_NONBLOCK"):
+            flags |= os.O_NONBLOCK
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        descriptor = os.open(candidate, flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_size > max_bytes
+            or (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino)
+        ):
+            return None
+        candidate.resolve(strict=True).relative_to(root)
+        current = root
+        for part in relative.parts[:-1]:
+            current /= part
+            if current.is_symlink() or not current.is_dir():
+                return None
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            source = handle.read(max_bytes + 1)
+        return source if len(source) <= max_bytes else None
+    except (OSError, ValueError):
+        return None
+    finally:
+        _close_file_descriptor(descriptor)
+
+
 def read_text_no_symlink(
     path: str | Path,
     *,

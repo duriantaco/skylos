@@ -140,45 +140,63 @@ def _version_check_is_within_supported_range(
     return False
 
 
-def evaluate_static_condition(
+_UNKNOWN_VALUE = object()
+
+
+def evaluate_static_condition(node: ast.AST, file_path: Optional[str] = None):
+    """Return a known literal value, or None when it cannot be proved.
+
+    Boolean operations return their selected operand in Python. Keep that
+    value for comparisons, and distinguish literal None from an unknown name
+    internally. No target calls or attribute lookups are executed.
+    """
+    value = _evaluate_static_value(node, file_path)
+    return None if value is _UNKNOWN_VALUE else value
+
+
+def evaluate_static_truth(
     node: ast.AST, file_path: Optional[str] = None
 ) -> Optional[bool]:
+    """Evaluate an expression specifically as a branch condition."""
+    if isinstance(node, ast.BoolOp):
+        conjunction = isinstance(node.op, ast.And)
+        unknown = False
+        for operand in node.values:
+            truth = evaluate_static_truth(operand, file_path)
+            if truth is None:
+                unknown = True
+            elif truth is not conjunction:
+                return truth
+        return None if unknown else conjunction
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        truth = evaluate_static_truth(node.operand, file_path)
+        return None if truth is None else not truth
+    value = _evaluate_static_value(node, file_path)
+    return None if value is _UNKNOWN_VALUE else bool(value)
+
+
+def _evaluate_static_value(node: ast.AST, file_path: Optional[str] = None):
     if isinstance(node, ast.Constant):
         return node.value
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        val = evaluate_static_condition(node.operand, file_path)
-        if val is not None:
+        val = _evaluate_static_value(node.operand, file_path)
+        if val is not _UNKNOWN_VALUE:
             return not val
         else:
-            return None
+            return _UNKNOWN_VALUE
 
     if isinstance(node, ast.BoolOp):
-        values = []
-        for v in node.values:
-            values.append(evaluate_static_condition(v, file_path))
-
-        if isinstance(node.op, ast.And):
-            for v in values:
-                if v is False:
-                    return False
-
-            for v in values:
-                if v is None:
-                    return None
-
-            return True
-
-        if isinstance(node.op, ast.Or):
-            for v in values:
-                if v is True:
-                    return True
-
-            for v in values:
-                if v is None:
-                    return None
-
-            return False
+        value = _UNKNOWN_VALUE
+        for operand in node.values:
+            value = _evaluate_static_value(operand, file_path)
+            if value is _UNKNOWN_VALUE:
+                return _UNKNOWN_VALUE
+            if isinstance(node.op, ast.And) and not value:
+                return value
+            if isinstance(node.op, ast.Or) and value:
+                return value
+        return value
 
     if isinstance(node, ast.Compare):
         if len(node.ops) == 1 and len(node.comparators) == 1:
@@ -198,18 +216,32 @@ def evaluate_static_condition(
                 if _version_check_is_within_supported_range(
                     version_tuple, op_type, min_version, max_version
                 ):
-                    return None
+                    return _UNKNOWN_VALUE
 
-            left = evaluate_static_condition(node.left, file_path)
-            right = evaluate_static_condition(node.comparators[0], file_path)
+            left = _evaluate_static_value(node.left, file_path)
+            right = _evaluate_static_value(node.comparators[0], file_path)
 
-            if left is not None and right is not None and op_type in OPS:
+            if (
+                left is not _UNKNOWN_VALUE
+                and right is not _UNKNOWN_VALUE
+                and op_type in OPS
+            ):
+                if op_type in (ast.Is, ast.IsNot) and not any(
+                    value is None
+                    or value is True
+                    or value is False
+                    or value is Ellipsis
+                    for value in (left, right)
+                ):
+                    # Non-singleton literal identity depends on compilation
+                    # and interning, not just its source value.
+                    return _UNKNOWN_VALUE
                 try:
                     return OPS[op_type](left, right)
                 except Exception:
-                    return None
+                    return _UNKNOWN_VALUE
 
-    return None
+    return _UNKNOWN_VALUE
 
 
 def extract_constant_string(node: ast.AST) -> Optional[str]:

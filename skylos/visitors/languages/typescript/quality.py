@@ -57,6 +57,17 @@ _TERMINATOR_TYPES: set[str] = {
     "continue_statement",
 }
 
+_NON_EXECUTABLE_DECLARATIONS: frozenset[str] = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "function_signature",
+        "interface_declaration",
+        "type_alias_declaration",
+        "ambient_declaration",
+    }
+)
+
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FUNC_PATTERN = """
@@ -600,7 +611,20 @@ def _check_unreachable_code(
         if node.type == "statement_block":
             found_terminator = False
             for child in node.children:
-                if child.type in ("{", "}"):
+                if child.type in ("{", "}", "empty_statement"):
+                    continue
+                # Function declarations are hoisted, and TS type/ambient
+                # declarations are erased. Still visit their bodies below so
+                # real unreachable statements inside helpers are checked.
+                if child.type in _NON_EXECUTABLE_DECLARATIONS:
+                    continue
+                if child.type == "variable_declaration" and all(
+                    declarator.child_by_field_name("value") is None
+                    for declarator in child.named_children
+                    if declarator.type == "variable_declarator"
+                ):
+                    # `var x;` contributes its hoisted binding before execution;
+                    # `var x = ...` still contains an unreachable assignment.
                     continue
                 if found_terminator and child.type not in ("comment", "ERROR"):
                     findings.append(

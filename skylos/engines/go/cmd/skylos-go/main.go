@@ -101,32 +101,7 @@ func analyze(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning: symbol extraction encountered errors: %v\n", symErr)
 	}
 
-	var symData *output.SymbolData
-	if symResult != nil {
-		symData = &output.SymbolData{}
-		for _, d := range symResult.Defs {
-			symData.Defs = append(symData.Defs, output.SymbolDef{
-				Name:       d.Name,
-				Type:       d.Type,
-				File:       d.File,
-				Line:       d.Line,
-				IsExported: d.IsExported,
-				Receiver:   d.Receiver,
-			})
-		}
-		for _, r := range symResult.Refs {
-			symData.Refs = append(symData.Refs, output.SymbolRef{
-				Name: r.Name,
-				File: r.File,
-			})
-		}
-		for _, c := range symResult.CallPairs {
-			symData.CallPairs = append(symData.CallPairs, output.SymbolCallPair{
-				Caller: c.Caller,
-				Callee: c.Callee,
-			})
-		}
-	}
+	symData := symbolDataForResult(symResult)
 
 	out := output.EngineOutput{
 		Engine:   engineID,
@@ -147,4 +122,38 @@ func analyze(args []string) {
 	}
 
 	fmt.Println(string(b))
+}
+
+func symbolDataForResult(symResult *symbols.Result) *output.SymbolData {
+	if symResult == nil {
+		return nil
+	}
+	symData := &output.SymbolData{
+		Defs:      []output.SymbolDef{},
+		Refs:      []output.SymbolRef{},
+		CallPairs: []output.SymbolCallPair{},
+	}
+	for _, d := range symResult.Defs {
+		symData.Defs = append(symData.Defs, output.SymbolDef{
+			Name:       d.Name,
+			Type:       d.Type,
+			File:       d.File,
+			Line:       d.Line,
+			IsExported: d.IsExported,
+			Receiver:   d.Receiver,
+		})
+	}
+	for _, r := range symResult.Refs {
+		symData.Refs = append(symData.Refs, output.SymbolRef{
+			Name: r.Name,
+			File: r.File,
+		})
+	}
+	for _, c := range symResult.CallPairs {
+		symData.CallPairs = append(symData.CallPairs, output.SymbolCallPair{
+			Caller: c.Caller,
+			Callee: c.Callee,
+		})
+	}
+	return symData
 }

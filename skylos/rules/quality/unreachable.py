@@ -1,6 +1,8 @@
 import ast
 from skylos.rules.base import SkylosRule
-from skylos.analysis.control_flow import evaluate_static_condition
+from skylos.analysis.control_flow import (
+    evaluate_static_truth as evaluate_static_condition,
+)
 
 
 _BODY_NODE_TYPES = (
@@ -127,7 +129,8 @@ class UnreachableCodeRule(SkylosRule):
         if not isinstance(body, list):
             return findings
 
-        finding = self._first_unreachable_in_block(body, filename, basename)
+        marker = self._generator_marker(node)
+        finding = self._first_unreachable_in_block(body, filename, basename, marker)
         if finding:
             findings.append(finding)
 
@@ -150,11 +153,35 @@ class UnreachableCodeRule(SkylosRule):
             "col": int(col) if col is not None else 0,
         }
 
-    def _first_unreachable_in_block(self, stmts, filename, basename):
+    def _generator_marker(self, node):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        yields = []
+        pending = list(node.body)
+        boundaries = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        while pending:
+            current = pending.pop()
+            if isinstance(current, boundaries):
+                continue
+            if isinstance(current, (ast.Yield, ast.YieldFrom)):
+                yields.append(current)
+            pending.extend(ast.iter_child_nodes(current))
+        if len(yields) != 1 or not isinstance(yields[0], ast.Yield):
+            return None
+        value = yields[0].value
+        if value is None or isinstance(value, ast.Constant):
+            return yields[0]
+        return None
+
+    def _first_unreachable_in_block(self, stmts, filename, basename, marker=None):
         terminated_by = None
 
         for stmt in stmts:
             if terminated_by is not None:
+                if isinstance(stmt, ast.Expr) and stmt.value is marker:
+                    # A sole literal yield changes the function's generator
+                    # calling convention even when it follows raise/return.
+                    continue
                 return self._mk(
                     filename,
                     basename,

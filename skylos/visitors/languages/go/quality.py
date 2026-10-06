@@ -12,12 +12,8 @@ except Exception:
 COMPLEXITY_NODES: set[str] = {
     "if_statement",
     "for_statement",
-    "expression_switch_statement",
-    "type_switch_statement",
-    "select_statement",
     "expression_case",
     "type_case",
-    "default_case",
     "communication_case",
 }
 

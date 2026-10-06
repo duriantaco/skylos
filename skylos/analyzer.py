@@ -868,7 +868,11 @@ def _scan_secret_config_candidate(
             "tree": None,
         }
         return list(_secrets_scan_ctx(ctx))
-    except Exception:
+    except Exception as error:
+        if analysis_errors is not None:
+            analysis_errors.append(
+                _analysis_error_payload(resolved, error, kind="secret_scan_error")
+            )
         logger.debug("Secret scan failed for config file: %s", candidate, exc_info=True)
         return []
 
@@ -883,6 +887,8 @@ def _scan_secret_config_candidates(
     analysis_errors: list[dict] | None = None,
 ) -> list[dict]:
     if _secrets_scan_ctx is None:
+        if analysis_errors is not None:
+            analysis_errors.append(_secret_scanner_unavailable_error_payload(root))
         return []
     try:
         root = Path(root).resolve(strict=True)
@@ -904,6 +910,16 @@ def _scan_secret_config_candidates(
             )
         )
     return findings
+
+
+def _secret_scanner_unavailable_error_payload(path: Path) -> dict:
+    return _analysis_error_payload(
+        path,
+        RuntimeError(
+            "Secret scanner is unavailable; requested analysis could not complete"
+        ),
+        kind="secret_scanner_unavailable",
+    )
 
 
 def _secret_config_read_error_payload(path: Path) -> dict:
@@ -2588,6 +2604,13 @@ class Skylos:
             ref_family = _source_family(ref_file)
 
             if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
+                if ref.startswith("@owner-type:"):
+                    type_name = ref[len("@owner-type:") :]
+                    for definition in csharp_by_name.get(type_name, []):
+                        if definition.type == "class":
+                            definition.references += 1
+                    continue
+
                 if ref.startswith("@type:"):
                     type_name = ref[len("@type:") :]
                     matches = [
@@ -3887,6 +3910,8 @@ class Skylos:
         all_suppressed = []
         secret_scanned_files = set()
         analysis_errors = list(language_engine_errors)
+        if enable_secrets and _secrets_scan_ctx is None:
+            analysis_errors.append(_secret_scanner_unavailable_error_payload(root))
         empty_files = []
         file_contexts = []
         all_clone_fragments = []
@@ -4206,7 +4231,12 @@ class Skylos:
                                         )
                                     ]
                                 all_secrets.extend(findings)
-                        except Exception:
+                        except Exception as error:
+                            analysis_errors.append(
+                                _analysis_error_payload(
+                                    file, error, kind="secret_scan_error"
+                                )
+                            )
                             logger.debug("Secret scan failed for file", exc_info=True)
 
             if enable_secrets and _secrets_scan_ctx is not None:

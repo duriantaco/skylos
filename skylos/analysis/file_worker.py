@@ -557,4 +557,5 @@ def process_file(
         cfg,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        project_root=project_root,
     )
