@@ -315,6 +315,14 @@ class RustCore:
         self.root_namespace = _module_namespace_for_path(file_path)
         self.import_aliases: dict[str, set[str]] = {}
         self._module_scoped_callables: set[str] = set()
+        self._local_types: set[str] = set()
+        self._generic_types: set[str] = set()
+        self._deref_types: set[str] = set()
+        self._type_aliases: dict[str, tuple[str, object]] = {}
+        self._callable_context: dict[str, tuple[str, str | None]] = {}
+        self._callable_nodes: dict[str, object] = {}
+        self._return_types: dict[str, object] = {}
+        self._member_identifier_bytes: set[int] = set()
         self._seen_refs: set[tuple[str, int]] = set()
         self._trait_call_usage: tuple[set[str], set[tuple[str, str]]] | None = None
 
@@ -426,7 +434,17 @@ class RustCore:
         )
         if not ref_name or ref_name in {"self", "Self", "crate", "super"}:
             return
-        if current_callable and ref_name == current_callable.split(".")[-1]:
+        if current_callable and (
+            ref_name == current_callable
+            or (
+                not preserve_qualified
+                and current_callable in self._module_scoped_callables
+                and self._qualified_symbol(
+                    ref_name, self._callable_context[current_callable][0]
+                )
+                == current_callable
+            )
+        ):
             return
         self._record_ref(ref_name, start_byte, current_callable=current_callable)
 
@@ -471,12 +489,14 @@ class RustCore:
             return None
         if current_callable not in self._module_scoped_callables:
             return None
-        namespace = current_callable.rsplit(".", 1)[0]
+        namespace = self._callable_context[current_callable][0]
         return f"{namespace}.{ref_name}" if namespace else None
 
     def scan(self) -> None:
         if not self.root_node:
             return
+        self._collect_identity_items(self.root_node, self.root_namespace)
+        self._index_callable_context(self.root_node, self.root_namespace, None)
         self._scan_block(
             self.root_node,
             namespace=self.root_namespace,
@@ -485,6 +505,301 @@ class RustCore:
             pending_attrs=[],
         )
         self._build_call_graph()
+
+    def _collect_identity_items(self, node, namespace: str) -> None:
+        if node.type == "mod_item":
+            namespace = self._qualified_symbol(
+                self._node_name_text(node.child_by_field_name("name")), namespace
+            )
+        if node.type in _TYPE_ITEM_TYPES:
+            name = self._node_name_text(node.child_by_field_name("name"))
+            if name:
+                qualified = self._qualified_symbol(name, namespace)
+                self._local_types.add(qualified)
+                if node.child_by_field_name("type_parameters") is not None:
+                    self._generic_types.add(qualified)
+                if node.type == "type_item":
+                    self._type_aliases[qualified] = (
+                        namespace,
+                        node.child_by_field_name("type"),
+                    )
+        if node.type == "use_declaration":
+            source = self._node_name_text(node.child_by_field_name("argument"))
+            if "*" in source:
+                return
+            for local, original in self._extract_use_bindings(node):
+                target = self._qualify_use_import(
+                    source,
+                    local_name=local,
+                    original_name=original,
+                    namespace=namespace,
+                )
+                if target:
+                    self.import_aliases.setdefault(local, set()).add(target)
+            return
+        for child in node.named_children:
+            self._collect_identity_items(child, namespace)
+
+    def _impl_owner(self, node, namespace: str) -> str | None:
+        owner = node.child_by_field_name("type")
+        if owner is not None and owner.type == "generic_type":
+            owner = owner.child_by_field_name("type")
+        if owner is None:
+            return None
+        return self._resolve_type_name(
+            self._node_name_text(owner), None, namespace_override=namespace
+        )
+
+    def _index_callable_context(self, node, namespace: str, owner: str | None) -> None:
+        """Collect identities before references, independent of declaration order."""
+        if node.type == "mod_item":
+            namespace = self._qualified_symbol(
+                self._node_name_text(node.child_by_field_name("name")), namespace
+            )
+            owner = None
+        elif node.type in _TYPE_ITEM_TYPES:
+            name = self._node_name_text(node.child_by_field_name("name"))
+            if name and node.type == "trait_item":
+                owner = self._qualified_symbol(name, namespace)
+        elif node.type == "impl_item":
+            type_names = self._impl_header_type_names(node)
+            if type_names:
+                owner = self._impl_owner(node, namespace)
+                if any(child.type == "for" for child in node.children) and any(
+                    name in {"Deref", "DerefMut"} for name, _ in type_names[:-1]
+                ):
+                    self._deref_types.add(owner)
+        elif node.type in {"function_item", "function_signature_item"}:
+            name = self._node_name_text(node.child_by_field_name("name"))
+            qualified = self._qualified_symbol(name, owner or namespace)
+            self._callable_context[qualified] = (namespace, owner)
+            self._callable_nodes[qualified] = node
+            return_type = node.child_by_field_name("return_type")
+            if return_type is not None:
+                self._return_types[qualified] = return_type
+        for child in node.named_children:
+            self._index_callable_context(child, namespace, owner)
+
+    def _type_name(
+        self,
+        node,
+        current_callable: str | None,
+        *,
+        namespace: str | None = None,
+        seen_aliases: frozenset[str] = frozenset(),
+    ) -> str | None:
+        if node is None:
+            return None
+        if node.type == "generic_type":
+            owner = self._type_name(
+                node.child_by_field_name("type"),
+                current_callable,
+                namespace=namespace,
+                seen_aliases=seen_aliases,
+            )
+            # Local generic types only supply exact, declared member targets.
+            # External wrappers have no such local declaration evidence.
+            return owner if owner in self._generic_types else None
+        if node.type in {"reference_type", "bounded_type"}:
+            return self._type_name(
+                node.child_by_field_name("type"),
+                current_callable,
+                namespace=namespace,
+                seen_aliases=seen_aliases,
+            )
+        if node.type not in {"identifier", "type_identifier", "scoped_type_identifier"}:
+            return None
+        return self._resolve_type_name(
+            self._node_name_text(node),
+            current_callable,
+            namespace_override=namespace,
+            seen_aliases=seen_aliases,
+        )
+
+    def _resolve_type_alias(
+        self, name: str, seen_aliases: frozenset[str]
+    ) -> str | None:
+        alias = self._type_aliases.get(name)
+        if alias is None:
+            return name
+        if name in seen_aliases or len(seen_aliases) >= 12:
+            return None
+        namespace, rhs = alias
+        return self._type_name(
+            rhs,
+            None,
+            namespace=namespace,
+            seen_aliases=seen_aliases | {name},
+        )
+
+    def _resolve_type_name(
+        self,
+        name: str,
+        current_callable: str | None,
+        *,
+        namespace_override: str | None = None,
+        seen_aliases: frozenset[str] = frozenset(),
+    ) -> str | None:
+        namespace, owner = self._callable_context.get(
+            current_callable, (self.root_namespace, None)
+        )
+        if namespace_override is not None:
+            namespace = namespace_override
+        if name in {"Self", "self"}:
+            return owner
+        parts = name.split("::")
+        context_node = self._callable_nodes.get(current_callable)
+        while context_node is not None:
+            parameters = context_node.child_by_field_name("type_parameters")
+            if parameters is not None:
+                for parameter in parameters.named_children:
+                    if (
+                        self._node_name_text(parameter.child_by_field_name("name"))
+                        == parts[0]
+                    ):
+                        return None
+            if context_node.type == "impl_item":
+                break
+            context_node = context_node.parent
+        if parts[0] in {"crate", "self", "super"}:
+            resolved = [] if parts[0] == "crate" else namespace.split(".")
+            while parts and parts[0] in {"crate", "self", "super"}:
+                prefix = parts.pop(0)
+                if prefix == "super" and resolved:
+                    resolved.pop()
+            return self._resolve_type_alias(
+                ".".join(part for part in [*resolved, *parts] if part), seen_aliases
+            )
+        aliases = self.import_aliases.get(parts[0], set())
+        if len(aliases) > 1:
+            return None
+        if len(aliases) == 1:
+            return self._resolve_type_alias(
+                ".".join([next(iter(aliases)), *parts[1:]]), seen_aliases
+            )
+        relative = self._qualified_symbol(".".join(parts), namespace)
+        if relative in self._local_types:
+            return self._resolve_type_alias(relative, seen_aliases)
+        absolute = ".".join(parts)
+        if absolute in self._local_types or len(parts) > 1:
+            return self._resolve_type_alias(absolute, seen_aliases)
+        # A signature's explicit type remains useful even if its declaration is
+        # in another file. Do not substitute an unrelated local owner by name.
+        return relative
+
+    def _binding_type(self, name: str, node, current_callable, depth: int):
+        scope = node.parent
+        while scope is not None:
+            if scope.type == "block":
+                for child in reversed(scope.named_children):
+                    if (
+                        child.end_byte > node.start_byte
+                        or child.type != "let_declaration"
+                    ):
+                        continue
+                    pattern = child.child_by_field_name("pattern")
+                    if pattern is None or not any(
+                        item.type == "identifier" and self._node_name_text(item) == name
+                        for item in self._iter_nodes(pattern)
+                    ):
+                        continue
+                    if pattern.type != "identifier":
+                        return True, None
+                    annotation = child.child_by_field_name("type")
+                    if annotation is not None:
+                        return True, self._type_name(annotation, current_callable)
+                    return True, self._receiver_type(
+                        child.child_by_field_name("value"), current_callable, depth + 1
+                    )
+            if scope.type in {"function_item", "closure_expression"}:
+                parameters = scope.child_by_field_name("parameters")
+                if parameters is not None:
+                    for parameter in parameters.named_children:
+                        pattern = parameter.child_by_field_name("pattern")
+                        if pattern is not None and any(
+                            item.type == "identifier"
+                            and self._node_name_text(item) == name
+                            for item in self._iter_nodes(pattern)
+                        ):
+                            if pattern.type != "identifier":
+                                return True, None
+                            return True, self._type_name(
+                                parameter.child_by_field_name("type"), current_callable
+                            )
+                        if (
+                            parameter.type == "identifier"
+                            and self._node_name_text(parameter) == name
+                        ):
+                            return True, None
+                if scope.type == "function_item":
+                    break
+            scope = scope.parent
+        return False, None
+
+    def _receiver_type(self, node, current_callable: str | None, depth: int = 0):
+        if node is None or depth > 12:
+            return None
+        if node.type in {"identifier", "self"}:
+            name = self._node_name_text(node)
+            if name in {"self", "Self"}:
+                return self._resolve_type_name(name, current_callable)
+            found, owner = self._binding_type(name, node, current_callable, depth)
+            if found:
+                return owner
+            owner = self._resolve_type_name(name, current_callable)
+            return owner if owner in self._local_types else None
+        if node.type == "struct_expression":
+            return self._type_name(node.child_by_field_name("name"), current_callable)
+        if node.type in {"reference_expression", "parenthesized_expression"}:
+            return self._receiver_type(
+                node.named_children[-1], current_callable, depth + 1
+            )
+        if node.type == "call_expression":
+            callee = node.child_by_field_name("function")
+            target = self._qualified_callee(callee, current_callable, depth + 1)
+            return_type = self._return_types.get(target)
+            if return_type is not None:
+                return self._type_name(return_type, target)
+        return None
+
+    def _qualified_callee(self, node, current_callable: str | None, depth: int = 0):
+        if node is None or depth > 12:
+            return None
+        if node.type == "generic_function":
+            return self._qualified_callee(
+                node.child_by_field_name("function"), current_callable, depth + 1
+            )
+        if node.type == "field_expression":
+            owner = self._receiver_type(
+                node.child_by_field_name("value"), current_callable, depth + 1
+            )
+            member = self._node_name_text(node.child_by_field_name("field"))
+            return self._member_target(owner, member)
+        if node.type == "scoped_identifier":
+            text = self._node_name_text(node)
+            owner_text, separator, member = text.rpartition("::")
+            owner = (
+                self._resolve_type_name(owner_text, current_callable)
+                if separator
+                else None
+            )
+            target = f"{owner}.{member}" if owner else None
+            return (
+                target
+                if owner in self._local_types or target in self._callable_context
+                else None
+            )
+        return None
+
+    def _member_target(self, owner: str | None, member: str) -> str | None:
+        if not owner or not member:
+            return None
+        target = f"{owner}.{member}"
+        if (
+            owner in self._generic_types or owner in self._deref_types
+        ) and target not in self._callable_context:
+            return None
+        return target
 
     def _scan_block(
         self,
@@ -502,7 +817,7 @@ class RustCore:
                 continue
 
             if child.type == "use_declaration":
-                self._scan_use_imports(child)
+                self._scan_use_imports(child, namespace=namespace)
                 attrs = []
                 continue
 
@@ -709,7 +1024,9 @@ class RustCore:
                 current_callable=None,
             )
 
-        qualified_owner = self._qualified_symbol(owner, namespace)
+        qualified_owner = self._impl_owner(node, namespace)
+        if qualified_owner is None:
+            qualified_owner = self._qualified_symbol(owner, namespace)
         decl_list = self._child_by_type(node, "declaration_list")
         if decl_list is None:
             return
@@ -861,11 +1178,10 @@ class RustCore:
                 pending_attrs=[],
             )
 
-    def _scan_use_imports(self, node) -> None:
+    def _scan_use_imports(self, node, *, namespace: str) -> None:
         line = node.start_point[0] + 1
-        source = self._get_text(node).strip()
+        source = self._node_name_text(node.child_by_field_name("argument"))
         is_public_reexport = self._is_public(node)
-        source = source.removeprefix("use").strip().rstrip(";")
         if "*" in source:
             self.raw_imports.append({"source": source, "names": ["*"], "line": line})
             return
@@ -885,6 +1201,7 @@ class RustCore:
                 source,
                 local_name=local_name,
                 original_name=original_name,
+                namespace=namespace,
             )
             if qualified_import:
                 self.import_aliases.setdefault(local_name, set()).add(qualified_import)
@@ -915,6 +1232,15 @@ class RustCore:
         return self._dedupe_use_bindings(bindings)
 
     def _extract_use_as_binding(self, node) -> list[tuple[str, str]]:
+        path = node.child_by_field_name("path")
+        alias = node.child_by_field_name("alias")
+        if path is not None and alias is not None:
+            return [
+                (
+                    self._node_name_text(alias),
+                    self._node_name_text(path).split("::")[-1],
+                )
+            ]
         identifiers = [child for child in node.children if child.type == "identifier"]
         if len(identifiers) >= 2:
             original = self._get_text(identifiers[0]).strip()
@@ -954,6 +1280,7 @@ class RustCore:
         *,
         local_name: str,
         original_name: str,
+        namespace: str | None = None,
     ) -> str | None:
         target = source.strip()
         if "{" in target:
@@ -970,14 +1297,21 @@ class RustCore:
             return None
         if parts[-1] != original_name:
             parts.append(original_name)
-        qualified = self._resolve_rust_path(parts)
-        return qualified if qualified and "." in qualified else None
+        return self._resolve_rust_path(parts, namespace=namespace)
 
-    def _resolve_rust_path(self, parts: list[str]) -> str | None:
+    def _resolve_rust_path(
+        self, parts: list[str], *, namespace: str | None = None
+    ) -> str | None:
         if not parts:
             return None
 
-        namespace_parts = [part for part in self.root_namespace.split(".") if part]
+        namespace_parts = [
+            part
+            for part in (self.root_namespace if namespace is None else namespace).split(
+                "."
+            )
+            if part
+        ]
         resolved: list[str]
         index = 0
 
@@ -1043,7 +1377,9 @@ class RustCore:
         return "::".join(parts[:-1])
 
     def _source_matches_trait_spec(self, base: str, sources: tuple[str, ...]) -> bool:
-        return any(base == source or base.startswith(f"{source}::") for source in sources)
+        return any(
+            base == source or base.startswith(f"{source}::") for source in sources
+        )
 
     def _collect_trait_call_usage(self) -> tuple[set[str], set[tuple[str, str]]]:
         if self._trait_call_usage is not None:
@@ -1073,7 +1409,9 @@ class RustCore:
         parent = node.parent
         if parent is not None and parent.type == "generic_function":
             parent = parent.parent
-        return parent if parent is not None and parent.type == "call_expression" else None
+        return (
+            parent if parent is not None and parent.type == "call_expression" else None
+        )
 
     def _trait_method_name_from_node(self, node) -> str | None:
         if node.type != "field_expression" or self._call_parent(node) is None:
@@ -1102,6 +1440,31 @@ class RustCore:
             stack.extend(reversed(node.children))
 
     def _scan_refs_in_node(self, node, *, current_callable: str | None) -> None:
+        if node.type == "token_tree":
+            # Rust leaves macro arguments as tokens. Keep obvious method-call
+            # receivers without interpreting or executing the macro itself.
+            children = node.children
+            for index in range(2, len(children) - 1):
+                member = children[index]
+                if (
+                    member.type != "identifier"
+                    or children[index - 1].type != "."
+                    or children[index + 1].type != "token_tree"
+                    or not children[index + 1].children
+                    or children[index + 1].children[0].type != "("
+                ):
+                    continue
+                owner = self._receiver_type(children[index - 2], current_callable)
+                name = self._node_name_text(member)
+                self._add_ref(
+                    self._member_target(owner, name) or f"~.{name}",
+                    member.start_byte,
+                    current_callable=current_callable,
+                    preserve_qualified=True,
+                )
+                self._member_identifier_bytes.add(member.start_byte)
+            return
+
         if node.type == "call_expression":
             callee = node.children[0] if node.children else None
             self._add_callee_refs(callee, current_callable=current_callable)
@@ -1133,14 +1496,27 @@ class RustCore:
 
         if node.type == "field_expression":
             name_node = self._child_by_type(node, "field_identifier")
+            target = self._qualified_callee(node, current_callable)
+            name = self._node_name_text(name_node)
             self._add_ref(
-                self._node_name_text(name_node),
+                target or f"~.{name}",
                 node.start_byte,
                 current_callable=current_callable,
+                preserve_qualified=True,
             )
             return
 
         if node.type == "identifier" and self._is_reference_identifier(node):
+            if node.start_byte in self._member_identifier_bytes:
+                return
+            parent = node.parent
+            if (
+                parent is not None
+                and parent.type == "scoped_identifier"
+                and parent.child_by_field_name("name") == node
+                and self._qualified_callee(parent, current_callable)
+            ):
+                return
             self._add_ref(
                 self._node_name_text(node),
                 node.start_byte,
@@ -1159,7 +1535,9 @@ class RustCore:
         self, node, *, current_callable: str | None
     ) -> None:
         text = self._get_text(node)
-        for match in re.finditer(r"\b[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\b", text):
+        for match in re.finditer(
+            r"\b[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\b", text
+        ):
             name = match.group(0)
             if name in _RUST_KEYWORDS or name == self._node_name_text(
                 self._child_by_type(node, "identifier")
@@ -1175,6 +1553,12 @@ class RustCore:
     def _add_callee_refs(self, callee, *, current_callable: str | None) -> None:
         if callee is None:
             return
+        if callee.type == "generic_function":
+            self._add_callee_refs(
+                callee.child_by_field_name("function"),
+                current_callable=current_callable,
+            )
+            return
         if callee.type == "identifier":
             self._add_ref(
                 self._node_name_text(callee),
@@ -1183,6 +1567,15 @@ class RustCore:
             )
             return
         if callee.type == "scoped_identifier":
+            target = self._qualified_callee(callee, current_callable)
+            if target:
+                self._add_ref(
+                    target,
+                    callee.start_byte,
+                    current_callable=current_callable,
+                    preserve_qualified=True,
+                )
+                return
             full_name = self._node_name_text(callee)
             self._add_ref(
                 full_name,
@@ -1202,10 +1595,13 @@ class RustCore:
             return
         if callee.type == "field_expression":
             name_node = self._child_by_type(callee, "field_identifier")
+            target = self._qualified_callee(callee, current_callable)
+            name = self._node_name_text(name_node)
             self._add_ref(
-                self._node_name_text(name_node),
+                target or f"~.{name}",
                 callee.start_byte,
                 current_callable=current_callable,
+                preserve_qualified=True,
             )
 
     def _is_definition_name(self, node) -> bool:
@@ -1244,14 +1640,17 @@ class RustCore:
         return True
 
     def _build_call_graph(self) -> None:
-        name_to_def: dict[str, Definition] = {}
+        exact_defs: dict[str, list[Definition]] = {}
+        name_to_defs: dict[str, list[Definition]] = {}
         for d in self.defs:
-            name_to_def[d.name] = d
-            name_to_def.setdefault(d.simple_name, d)
+            exact_defs.setdefault(d.name, []).append(d)
+            name_to_defs.setdefault(d.simple_name, []).append(d)
 
         for caller, callee in self.call_pairs:
-            caller_def = name_to_def.get(caller)
-            callee_def = name_to_def.get(callee)
+            callers = exact_defs.get(caller, [])
+            callees = exact_defs.get(callee, []) or name_to_defs.get(callee, [])
+            caller_def = callers[0] if len(callers) == 1 else None
+            callee_def = callees[0] if len(callees) == 1 else None
             if caller_def and callee_def and caller_def is not callee_def:
                 caller_def.calls.add(callee_def.name)
                 callee_def.called_by.add(caller_def.name)

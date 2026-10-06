@@ -561,6 +561,25 @@ _CSHARP_SOURCE_EXTS = (".cs",)
 _KOTLIN_SOURCE_EXTS = (".kt", ".kts")
 _SHELL_SOURCE_EXTS = SHELL_SOURCE_EXTS
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
+_REFERENCE_LANGUAGE_FAMILIES = {
+    **dict.fromkeys(PYTHON_SIGNATURE_SUFFIXES, "python"),
+    **dict.fromkeys(_TS_JS_SOURCE_EXTS, "typescript"),
+    **dict.fromkeys(_CPP_SOURCE_EXTS, "cpp"),
+    **dict.fromkeys(_PHP_SOURCE_EXTS, "php"),
+    **dict.fromkeys(_RUST_SOURCE_EXTS, "rust"),
+    **dict.fromkeys(_DART_SOURCE_EXTS, "dart"),
+    **dict.fromkeys(_CSHARP_SOURCE_EXTS, "csharp"),
+    **dict.fromkeys(_KOTLIN_SOURCE_EXTS, "jvm"),
+    ".java": "jvm",
+    ".go": "go",
+}
+
+
+def _reference_language_family(filename):
+    if not isinstance(filename, (str, Path)):
+        return None
+    return _REFERENCE_LANGUAGE_FAMILIES.get(Path(filename).suffix.lower())
+
 
 _HTML_PARSER_CALLBACKS = {
     "handle_starttag",
@@ -2393,6 +2412,40 @@ class Skylos:
             progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
 
         import_to_original = {}
+        file_families = {}
+        family_candidates = {}
+
+        def _source_family(filename):
+            if not isinstance(filename, (str, Path)):
+                return None
+            file_name = str(filename)
+            if file_name not in file_families:
+                file_families[file_name] = _reference_language_family(file_name)
+            return file_families[file_name]
+
+        def _compatible_family(definition, ref_family):
+            definition_family = _source_family(definition.filename)
+            # Legacy callers can supply references without source filenames.
+            return (
+                ref_family is None
+                or definition_family is None
+                or definition_family == ref_family
+            )
+
+        def _candidates_in_family(definitions, ref_family):
+            if ref_family is None or not definitions:
+                return definitions
+            cache_key = (id(definitions), ref_family)
+            if cache_key not in family_candidates:
+                filtered = [
+                    definition
+                    for definition in definitions
+                    if _compatible_family(definition, ref_family)
+                ]
+                # Retain the source bucket so its id cannot be reused. Filtering
+                # preserves the sorted order required by _qualified_candidates.
+                family_candidates[cache_key] = (definitions, filtered)
+            return family_candidates[cache_key][1]
 
         non_import_defs = {k: v for k, v in self.defs.items() if v.type != "import"}
 
@@ -2419,13 +2472,18 @@ class Skylos:
             if not target_fqn:
                 return None
 
-            if target_fqn in non_import_defs:
+            ref_family = _source_family(import_def_obj.filename)
+            if target_fqn in non_import_defs and _compatible_family(
+                non_import_defs[target_fqn], ref_family
+            ):
                 return target_fqn
 
             for prefix in self._module_alias_prefix_values:
                 if target_fqn.startswith(prefix + "."):
                     stripped_target = target_fqn[len(prefix) + 1 :]
-                    if stripped_target in non_import_defs:
+                    if stripped_target in non_import_defs and _compatible_family(
+                        non_import_defs[stripped_target], ref_family
+                    ):
                         return stripped_target
 
             simple = target_fqn.split(".")[-1]
@@ -2434,7 +2492,8 @@ class Skylos:
             cands = [
                 key
                 for key in simple_to_keys.get(simple, [])
-                if "." in non_import_defs[key].name
+                if _compatible_family(non_import_defs[key], ref_family)
+                and "." in non_import_defs[key].name
                 and (
                     non_import_defs[key].name.endswith(f".{target_fqn}")
                     or target_fqn.endswith(f".{non_import_defs[key].name}")
@@ -2484,12 +2543,14 @@ class Skylos:
         def _matching_type_members(
             type_name: str, member_name: str, ref_file: str
         ) -> list:
+            ref_family = _source_family(ref_file)
             matches = [
                 member_def
                 for candidate_member_name, member_def in type_def_lookup.get(
                     type_name, []
                 )
                 if candidate_member_name == member_name
+                and _compatible_family(member_def, ref_family)
             ]
             if len(matches) <= 1:
                 return matches
@@ -2524,6 +2585,7 @@ class Skylos:
         for i, (ref, ref_file) in enumerate(self.refs, 1):
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
+            ref_family = _source_family(ref_file)
 
             if str(ref_file).endswith(_CSHARP_SOURCE_EXTS):
                 if ref.startswith("@type:"):
@@ -2594,7 +2656,9 @@ class Skylos:
                 # method of this name, so credit them all, then resolve the
                 # bare name normally for functions attached as properties.
                 ref = ref[2:]
-                for d in simple_name_lookup.get(ref, []):
+                for d in _candidates_in_family(
+                    simple_name_lookup.get(ref, []), ref_family
+                ):
                     if d.type == "method":
                         d.references += 1
 
@@ -2608,7 +2672,7 @@ class Skylos:
                         self.defs[original].references += 1
                 continue
 
-            if ref in self.defs:
+            if ref in self.defs and _compatible_family(self.defs[ref], ref_family):
                 self.defs[ref].references += 1
                 if ref in import_to_original:
                     original = import_to_original[ref]
@@ -2619,7 +2683,9 @@ class Skylos:
                 ref_mod, simple = ref.rsplit(".", 1)
             else:
                 ref_mod, simple = "", ref
-            candidates = simple_name_lookup.get(simple, [])
+            candidates = _candidates_in_family(
+                simple_name_lookup.get(simple, []), ref_family
+            )
             same_file_candidates = []
 
             if ref_mod:
@@ -2636,10 +2702,15 @@ class Skylos:
 
                 else:
                     candidates = _qualified_candidates(
-                        non_import_by_simple.get(simple, []), ref_mod
+                        _candidates_in_family(
+                            non_import_by_simple.get(simple, []), ref_family
+                        ),
+                        ref_mod,
                     )
             else:
-                candidates = non_import_by_simple.get(simple, [])
+                candidates = _candidates_in_family(
+                    non_import_by_simple.get(simple, []), ref_family
+                )
 
             if len(candidates) > 1:
                 if ref_mod in ("cls", "self"):
@@ -2678,7 +2749,12 @@ class Skylos:
                         member_def.references += 1
                     continue
 
-                resolved_type = self._global_type_map.get(ref_mod)
+                # This map comes from Python inference, not the other visitors.
+                resolved_type = (
+                    self._global_type_map.get(ref_mod)
+                    if ref_family in {None, "python"}
+                    else None
+                )
                 if resolved_type:
                     matched_members = _matching_type_members(
                         resolved_type, simple, ref_file
@@ -2688,7 +2764,27 @@ class Skylos:
                             member_def.references += 1
                         continue
 
-            non_import_defs_fallback = non_import_by_simple.get(simple, [])
+            non_import_defs_fallback = _candidates_in_family(
+                non_import_by_simple.get(simple, []), ref_family
+            )
+            if (
+                ref_mod
+                and ref_mod not in {"self", "cls"}
+                and ref_family
+                in {
+                    "php",
+                    "rust",
+                    "dart",
+                }
+            ):
+                # These visitors resolve known receiver owners. A missing
+                # Other.process must not become Dormant.process by leaf name.
+                # Keep PHP's namespaced-to-global free-function fallback.
+                non_import_defs_fallback = [
+                    definition
+                    for definition in non_import_defs_fallback
+                    if definition.type != "method"
+                ]
 
             if len(non_import_defs_fallback) == 1:
                 non_import_defs_fallback[0].references += 1
@@ -2743,6 +2839,8 @@ class Skylos:
 
         if used_attr_names:
             for defn in self.defs.values():
+                if not _compatible_family(defn, "python"):
+                    continue
                 if defn.references > 0:
                     continue
                 if defn.type == "method":
@@ -2771,6 +2869,8 @@ class Skylos:
                 context_by_attr[attr_name].append((mod, cls_ctx, line_no))
 
             for defn in self.defs.values():
+                if not _compatible_family(defn, "python"):
+                    continue
                 if defn.type in ("method", "function"):
                     pass
                 elif defn.type == "variable" and "." in defn.name:
@@ -3124,9 +3224,10 @@ class Skylos:
 
                     stack.extend(children_of.get(child, set()))
 
-    def _build_def_call_graph(self):
+    def _build_def_call_graph(self, definitions=None):
+        definitions = self.defs if definitions is None else definitions
         call_graph = defaultdict(set)
-        for defn in self.defs.values():
+        for defn in definitions.values():
             calls = getattr(defn, "calls", None)
             if calls and isinstance(calls, (set, list, frozenset)):
                 call_graph[defn.name].update(calls)
@@ -3145,9 +3246,10 @@ class Skylos:
             return False
         return defn.simple_name in ("main", "cli", "run", "app", "create_app")
 
-    def _entry_reachability_roots(self) -> set[str]:
+    def _entry_reachability_roots(self, definitions=None) -> set[str]:
+        definitions = self.defs if definitions is None else definitions
         entry_points = set()
-        for defn in self.defs.values():
+        for defn in definitions.values():
             if self._is_entry_reachability_root(defn):
                 entry_points.add(defn.name)
         return entry_points
@@ -3166,17 +3268,19 @@ class Skylos:
         return reachable
 
     def _mark_evidence_reachable_defs(
-        self, evidence_roots: set[str], call_graph
+        self, evidence_roots: set[str], call_graph, definitions=None
     ) -> None:
+        definitions = self.defs if definitions is None else definitions
         for name in self._walk_call_graph(evidence_roots, call_graph):
             if name in evidence_roots:
                 continue
-            defn = self.defs.get(name)
+            defn = definitions.get(name)
             if defn is not None:
                 _mark_evidence_ref(defn, "reachable_from_root")
 
-    def _mark_entry_reachable_defs(self, reachable: set[str]) -> None:
-        for name, defn in self.defs.items():
+    def _mark_entry_reachable_defs(self, reachable: set[str], definitions=None) -> None:
+        definitions = self.defs if definitions is None else definitions
+        for name, defn in definitions.items():
             if defn.type not in ("function", "method"):
                 continue
             if defn.references > 0:
@@ -3188,17 +3292,42 @@ class Skylos:
                 defn.references += 1
 
     def _apply_entry_reachability(self, evidence_root_names=None):
-        call_graph = self._build_def_call_graph()
-        entry_points = self._entry_reachability_roots()
-        evidence_roots = set(evidence_root_names or ())
-        if not entry_points and not evidence_roots:
-            return
+        definitions_by_family = defaultdict(dict)
+        for name, defn in self.defs.items():
+            family = _reference_language_family(defn.filename)
+            definitions_by_family[family][name] = defn
 
-        if evidence_roots:
-            self._mark_evidence_reachable_defs(evidence_roots, call_graph)
+        # Unknown filenames retain the wildcard behavior of legacy references.
+        # Real source files still resolve only within their language family.
+        unknown_definitions = definitions_by_family.pop(None, {})
+        if not definitions_by_family:
+            definitions_by_family[None] = unknown_definitions
+        elif unknown_definitions:
+            for definitions in definitions_by_family.values():
+                definitions.update(unknown_definitions)
 
-        reachable = self._walk_call_graph(entry_points, call_graph)
-        self._mark_entry_reachable_defs(reachable)
+        # Snapshot roots before marking shared legacy definitions, so group
+        # iteration order cannot turn a newly reached helper into another root.
+        groups = [
+            (
+                definitions,
+                self._build_def_call_graph(definitions),
+                self._entry_reachability_roots(definitions),
+            )
+            for definitions in definitions_by_family.values()
+        ]
+        for definitions, call_graph, entry_points in groups:
+            evidence_roots = set(evidence_root_names or ()).intersection(definitions)
+            if not entry_points and not evidence_roots:
+                continue
+
+            if evidence_roots:
+                self._mark_evidence_reachable_defs(
+                    evidence_roots, call_graph, definitions
+                )
+
+            reachable = self._walk_call_graph(entry_points, call_graph)
+            self._mark_entry_reachable_defs(reachable, definitions)
 
     def _discover_files(self, path, exclude_folders):
         """Discover and deduplicate files to analyze, return (files, root) or None."""

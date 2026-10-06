@@ -48,10 +48,10 @@ require 'bootstrap.php';
     assert "Bar" in def_names
     assert "Quux" in def_names
 
-    assert "helper" in ref_names
-    assert "fmt" in ref_names
-    assert "name" in ref_names
-    assert "trim" in ref_names
+    assert "App.Http.UserController.helper" in ref_names
+    assert "App.Http.UserController.fmt" in ref_names
+    assert "App.Http.UserController.name" in ref_names
+    assert "App.Http.trim" in ref_names
 
     assert "App.Http.UserController.__construct" in exported
     assert "App.Http.UserController.show" in exported
@@ -86,8 +86,8 @@ class Demo {
 
     assert "Demo.name" in def_names
     assert "Demo.fmt" in def_names
-    assert "name" in ref_names
-    assert "fmt" in ref_names
+    assert "Demo.name" in ref_names
+    assert "Demo.fmt" in ref_names
 
 
 def test_php_test_file_marks_phpunit_style_methods_as_test_related(tmp_path):
