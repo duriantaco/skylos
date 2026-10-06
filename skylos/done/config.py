@@ -22,6 +22,7 @@ CHECK_IDS = (
     "secrets",
     "unknown_imports",
     "changed_lines_checked",
+    "test_special_casing",
 )
 MODES = ("block", "advise", "shadow", "off")
 
@@ -37,6 +38,9 @@ DEFAULT_MODES = {
     # Some lines are not worth a test; the plan keeps this advisory until
     # partner reviews measure how often a missed line matters.
     "changed_lines_checked": "advise",
+    # Code that answers the tests' exact inputs, detects the test run or
+    # rigs its comparisons. Weaker signals inside it are advice.
+    "test_special_casing": "block",
 }
 # Skylos's own settings and the agent hook files that run it. Not all of
 # .claude/ or .cursor/: skills and rules there are ordinary project files.

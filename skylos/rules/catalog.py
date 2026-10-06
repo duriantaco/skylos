@@ -45,6 +45,11 @@ _RULES = (
     RuleCatalogEntry(
         "SKY-A114", "Skylos settings or hooks changed", "ai_defect", "HIGH"
     ),
+    RuleCatalogEntry("SKY-A115", "Test answer hard-coded in code", "ai_defect", "HIGH"),
+    RuleCatalogEntry("SKY-A116", "Code detects the test run", "ai_defect", "HIGH"),
+    RuleCatalogEntry(
+        "SKY-A117", "Comparison rigged to always pass", "ai_defect", "HIGH"
+    ),
     RuleCatalogEntry(
         "SKY-A120", "Changed line not checked by tests", "ai_defect", "MEDIUM"
     ),

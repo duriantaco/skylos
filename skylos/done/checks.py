@@ -1087,6 +1087,49 @@ def _check_changed_lines(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# test_special_casing: A115 hard-coded answers, A116 test detection,
+# A117 rigged comparisons. Python and JavaScript/TypeScript.
+# ---------------------------------------------------------------------------
+
+
+def check_test_special_casing(ctx: CheckContext) -> CheckResult:
+    from skylos.done.special_cases import (
+        RULE_HARDCODED,
+        RULE_RIGGED,
+        RULE_TEST_DETECTION,
+        find_special_cases,
+    )
+
+    outcome = find_special_cases(ctx)
+    findings = [
+        Finding(rule, file, line, message, blocking=blocking)
+        for rule, file, line, message, blocking in outcome.findings
+    ]
+    blocking = [f for f in findings if f.blocking]
+    summary = (
+        f"{len(blocking)} place(s) in the code special-case the tests"
+        if blocking
+        else f"No code special-cases the tests ({outcome.files} changed file(s) read)"
+    )
+    return CheckResult(
+        id="test_special_casing",
+        rule=next((f.rule for f in blocking), RULE_HARDCODED),
+        status=_status(findings),
+        summary=summary,
+        evidence={
+            "files_read": outcome.files,
+            "hardcoded_answers": sum(f.rule == RULE_HARDCODED for f in blocking),
+            "test_detection": sum(f.rule == RULE_TEST_DETECTION for f in blocking),
+            "rigged_comparisons": sum(f.rule == RULE_RIGGED for f in blocking),
+            "advice": len(findings) - len(blocking),
+            "unparsed_files": len(outcome.unparsed),
+            "summary": summary[:120],
+        },
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -1098,11 +1141,13 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "secrets": (check_secrets, "SKY-S101"),
     "unknown_imports": (check_unknown_imports, "SKY-D222"),
     "changed_lines_checked": (_check_changed_lines, "SKY-A120"),
+    "test_special_casing": (check_test_special_casing, "SKY-A115"),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
     "gate_tampering",
     "test_tampering",
+    "test_special_casing",
     "secrets",
     "unknown_imports",
     "tests_pass",

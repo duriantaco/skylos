@@ -94,6 +94,10 @@ COMMANDS = [
             "Blocks on deleted or newly skipped tests (SKY-A110/A111), loosened "
             "test settings (SKY-A112), failing tests (SKY-A113), edits to Skylos "
             "settings or hooks (SKY-A114) and added secrets",
+            "Blocks on code that special-cases the tests: an added branch or table "
+            "that answers a test's exact input with its expected value (SKY-A115), "
+            "code that detects the test runner or reads the tests' files "
+            "(SKY-A116), and comparisons rigged to always pass (SKY-A117)",
             "Advises on changed lines no test checks (SKY-A120): no test runs the "
             "line, or no test fails when Skylos deliberately changes it",
             "--base origin/main: compare a pull request with its merge base (CI)",
