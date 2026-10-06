@@ -6,6 +6,7 @@ from skylos.cicd.init_setup import DoneSetup, detect_done_setup
 from skylos.cicd.workflow import generate_workflow
 from skylos.cli_core.main_parser import build_main_parser
 from skylos.commands.done_cmd import build_parser as build_done_parser
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config.cicd.github_actions import scan_github_actions
 
 
@@ -148,16 +149,15 @@ def test_workflow_permissions():
 
 def test_generated_workflow_passes_skylos_actions_audit(tmp_path):
     workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
-    workflow.parent.mkdir(parents=True)
-    workflow.write_text(generate_workflow(), encoding="utf-8")
+    _write(workflow, generate_workflow())
 
     assert scan_github_actions(tmp_path) == []
 
 
 def test_generated_claude_workflow_passes_skylos_actions_audit(tmp_path):
     workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
-    workflow.parent.mkdir(parents=True)
-    workflow.write_text(
+    _write(
+        workflow,
         generate_workflow(
             use_upload=True,
             use_llm=True,
@@ -165,7 +165,6 @@ def test_generated_claude_workflow_passes_skylos_actions_audit(tmp_path):
             use_claude_security=True,
             model="gpt-4.1",
         ),
-        encoding="utf-8",
     )
 
     assert scan_github_actions(tmp_path) == []
@@ -372,17 +371,14 @@ def test_header_names_the_required_checks():
 
 def test_generated_minimal_workflow_passes_skylos_actions_audit(tmp_path):
     workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
-    workflow.parent.mkdir(parents=True)
-    workflow.write_text(
-        generate_workflow(use_upload=False, use_done=False), encoding="utf-8"
-    )
+    _write(workflow, generate_workflow(use_upload=False, use_done=False))
 
     assert scan_github_actions(tmp_path) == []
 
 
 def _write(path, text=""):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    assert write_text_no_symlink(path, text)
 
 
 def test_detect_done_setup_installs_package_with_test_extra(tmp_path):
