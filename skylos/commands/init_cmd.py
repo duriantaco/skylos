@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 
 
 def run_init_command() -> int:
@@ -106,4 +107,12 @@ strict = false
         path.write_text(template.strip(), encoding="utf-8")
 
     console.print("[good]✓ Configuration initialized![/good]")
+    console.print(
+        "Next: run [bold]skylos cicd init[/bold] to gate pull requests. "
+        + escape(
+            "Commit this file in its own pull request: Skylos Done fails a "
+            "pull request that changes [tool.skylos]."
+        ),
+        soft_wrap=True,
+    )
     return 0

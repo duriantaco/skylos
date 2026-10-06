@@ -172,14 +172,19 @@ skylos rules list --packs --json
 skylos cache stats
 ```
 
-Generate a GitHub Actions PR gate:
+Gate pull requests with GitHub Actions. No API key secret is needed:
 
 ```bash
+git checkout -b add-skylos-gate
 skylos cicd init
 git add .github/workflows/skylos.yml
-git commit -m "Add Skylos CI gate"
-git push
+git commit -m "Add Skylos pull request gate"
+git push -u origin add-skylos-gate
+gh pr create --fill
 ```
+
+[Your first Skylos-gated pull request](./docs/first-gated-pr.md) walks through
+it in about 8 minutes, including making the checks required.
 
 Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-reference).
 
@@ -257,7 +262,7 @@ facts through `skylos.preflight.run_preflight(...)`.
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI defense, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
-| PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
+| PR gate | `skylos cicd init` | Generates a GitHub Actions workflow that gates pull requests, runs `skylos done` when your tests can run, and uploads default-branch scans to Skylos Cloud with GitHub OIDC | [First gated PR](./docs/first-gated-pr.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
 | SPDX SBOM + license policy | `skylos sbom . --format spdx-json` / `license_deny = ["GPL-*"]` | SPDX 2.3 JSON with declared licenses; `SKY-SCA-LIC001` flags denied licenses in `-a` scans | [License compliance](./docs/license-compliance.md) |
@@ -883,13 +888,16 @@ A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
 Generate a GitHub Actions workflow from the CLI:
 
 ```bash
-skylos cicd init --upload
-skylos cicd init --upload --scan-path apps/api
+skylos cicd init
+skylos cicd init --scan-path apps/api
+skylos cicd init --no-upload
 ```
 
-The generated workflow reviews changed lines on pull requests and uploads full
-scans on pushes using GitHub OIDC. It supports monorepo subprojects through
-`--scan-path`.
+The generated workflow reviews changed lines on pull requests, adds a
+`skylos done` job when it finds your tests, and uploads full scans from
+default-branch pushes using GitHub OIDC. `--no-upload` leaves Skylos Cloud out.
+It supports monorepo subprojects through `--scan-path`. See
+[Your first Skylos-gated pull request](./docs/first-gated-pr.md).
 
 To scan a built image with the composite Action, install a pinned Trivy version
 in the caller's job and set `image` to a trusted `repository@sha256:<digest>`

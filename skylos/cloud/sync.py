@@ -420,6 +420,31 @@ class AuthError(Exception):
     pass
 
 
+def _cloud_reason(resp) -> str:
+    """Cloud's own explanation for a refused request, or "" if it gave none.
+
+    Only the structured ``error``/``hint``/``code`` fields are used, never the
+    raw body, and control characters are dropped: this text can end up in a
+    public CI log.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    parts = [
+        body[key].strip()
+        for key in ("error", "hint")
+        if isinstance(body.get(key), str) and body[key].strip()
+    ]
+    code = body.get("code")
+    if parts and isinstance(code, str) and code.strip():
+        parts.append(f"({code.strip()})")
+    text = "".join(ch for ch in " ".join(parts) if ch.isprintable())
+    return text[:500]
+
+
 def _auth_headers(token: str | None) -> dict[str, str]:
     if token and str(token).startswith("gitlab_oidc:"):
         from skylos.api import _build_auth_headers
@@ -448,7 +473,16 @@ def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
         raise AuthError("Request timed out")
 
     if resp.status_code == 401:
-        raise AuthError("Invalid API token")
+        reason = _cloud_reason(resp)
+        if token and str(token).startswith(("oidc:", "gitlab_oidc:")):
+            raise AuthError(reason or "Skylos Cloud rejected this CI identity token")
+        raise AuthError(reason or "Invalid API token")
+
+    if resp.status_code >= 400:
+        raise AuthError(
+            _cloud_reason(resp)
+            or f"Skylos Cloud refused {endpoint} (HTTP {resp.status_code})"
+        )
 
     resp.raise_for_status()
     return resp.json()
