@@ -81,6 +81,13 @@ class PhpCore:
         self.lang: Language | None = PHP_LANG
         self.is_test_file = _is_test_path(file_path)
         self._seen_refs: set[tuple[str, int]] = set()
+        self._unresolved_member_calls: list[tuple[str, str]] = []
+        self._trait_names: set[str] = set()
+        self._traits_by_owner: dict[str, list[str]] = {}
+        self._trait_aliases: dict[str, dict[str, set[str]]] = {}
+        self._trait_precedence: dict[str, dict[str, str]] = {}
+        self._trait_dispatch_refs: set[int] = set()
+        self._trait_dispatch_calls: set[tuple[str, str]] = set()
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -141,22 +148,123 @@ class PhpCore:
         return False
 
     def _add_ref(
-        self, name: str, start_byte: int, *, current_callable: str | None
+        self,
+        name: str,
+        start_byte: int,
+        *,
+        current_callable: str | None,
+        unresolved_member: bool = False,
+        trait_dispatch: bool = False,
     ) -> None:
         if not name:
             return
-        simple = name.split("\\")[-1].split(".")[-1].lstrip("$")
-        if not simple:
+        qualified = name.replace("\\", ".").lstrip(".$")
+        if not qualified:
             return
-        if current_callable and simple == current_callable.split(".")[-1]:
+        if current_callable and qualified == current_callable and not unresolved_member:
             return
-        key = (simple, start_byte)
+        key = (qualified, start_byte)
         if key in self._seen_refs:
             return
         self._seen_refs.add(key)
-        self.refs.append((simple, self.file_path))
+        if trait_dispatch:
+            self._trait_dispatch_refs.add(len(self.refs))
+        self.refs.append((qualified, self.file_path))
         if current_callable:
-            self.call_pairs.append((current_callable, simple))
+            if unresolved_member:
+                self._unresolved_member_calls.append((current_callable, qualified))
+            else:
+                self.call_pairs.append((current_callable, qualified))
+                if trait_dispatch:
+                    self._trait_dispatch_calls.add((current_callable, qualified))
+
+    def _resolve_name(
+        self,
+        name: str,
+        *,
+        namespace: str,
+        aliases: dict[tuple[str, str], str],
+        kind: str = "class",
+        start_byte: int,
+    ) -> str:
+        if not name:
+            return ""
+        if name.startswith("\\"):
+            return name.lstrip("\\").replace("\\", ".")
+        parts = name.split("\\")
+        if parts[0] == "namespace":
+            return self._qualified_symbol(".".join(parts[1:]), namespace)
+        alias_kind = "class" if len(parts) > 1 else kind
+        alias_name = next(
+            (
+                alias
+                for imported_kind, alias in aliases
+                if imported_kind == alias_kind
+                and (
+                    alias == parts[0]
+                    if alias_kind == "const"
+                    else alias.casefold() == parts[0].casefold()
+                )
+            ),
+            parts[0],
+        )
+        target = aliases.get((alias_kind, alias_name))
+        if target:
+            self._add_ref(alias_name, start_byte, current_callable=None)
+            return ".".join([target, *parts[1:]])
+        return self._qualified_symbol(".".join(parts), namespace)
+
+    def _member_owner(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> str | None:
+        if node is None:
+            return None
+        text = self._get_text(node).strip()
+        if node.type == "variable_name":
+            return current_class if text == "$this" else None
+        if node.type == "relative_scope":
+            if text in {"self", "static"}:
+                return current_class
+            if text == "parent" and len(class_bases) == 1:
+                return class_bases[0]
+            return None
+        if node.type == "parenthesized_expression":
+            named = node.named_children
+            if len(named) == 1:
+                return self._member_owner(
+                    named[0],
+                    namespace=namespace,
+                    current_class=current_class,
+                    class_bases=class_bases,
+                    aliases=aliases,
+                )
+            return None
+        if node.type == "object_creation_expression":
+            node = next(
+                (
+                    child
+                    for child in node.children
+                    if child.type in {"name", "qualified_name"}
+                ),
+                None,
+            )
+            if node is None:
+                return None
+            text = self._get_text(node)
+        elif node.type not in {"name", "qualified_name"}:
+            return None
+        return self._resolve_name(
+            text,
+            namespace=namespace,
+            aliases=aliases,
+            start_byte=node.start_byte,
+        )
 
     def _extract_literal_path(self, node) -> str | None:
         if node is None:
@@ -202,12 +310,28 @@ class PhpCore:
         current_class: str | None,
         current_callable: str | None,
         class_bases: list[str],
+        aliases: dict[tuple[str, str], str] | None = None,
     ) -> None:
+        if aliases is None:
+            aliases = {}
         active_namespace = namespace
         for child in node.children:
             if child.type == "namespace_definition":
                 ns_node = self._child_by_type(child, "namespace_name")
-                active_namespace = self._node_name_text(ns_node).replace("\\", ".")
+                child_namespace = self._node_name_text(ns_node).replace("\\", ".")
+                body = child.child_by_field_name("body")
+                if body is not None:
+                    self._scan_block(
+                        body,
+                        namespace=child_namespace,
+                        current_class=None,
+                        current_callable=None,
+                        class_bases=[],
+                        aliases={},
+                    )
+                else:
+                    active_namespace = child_namespace
+                    aliases = {}
                 continue
 
             if child.type in {
@@ -215,7 +339,9 @@ class PhpCore:
                 "interface_declaration",
                 "trait_declaration",
             }:
-                self._scan_class_like(child, namespace=active_namespace)
+                self._scan_class_like(
+                    child, namespace=active_namespace, aliases=aliases
+                )
                 continue
 
             if child.type == "enum_declaration":
@@ -232,26 +358,36 @@ class PhpCore:
                 continue
 
             if child.type == "function_definition":
-                self._scan_function(child, namespace=active_namespace)
+                self._scan_function(child, namespace=active_namespace, aliases=aliases)
                 continue
 
             if child.type == "namespace_use_declaration":
-                self._scan_use_imports(child)
+                self._scan_use_imports(child, aliases=aliases)
                 continue
 
             if child.type in _IMPORT_EXPR_TYPES:
                 self._scan_include_import(child)
 
-            self._scan_refs_in_node(child, current_callable=current_callable)
+            self._scan_refs_in_node(
+                child,
+                namespace=active_namespace,
+                current_class=current_class,
+                current_callable=current_callable,
+                class_bases=class_bases,
+                aliases=aliases,
+            )
             self._scan_block(
                 child,
                 namespace=active_namespace,
                 current_class=current_class,
                 current_callable=current_callable,
                 class_bases=class_bases,
+                aliases=aliases,
             )
 
-    def _scan_class_like(self, node, *, namespace: str) -> None:
+    def _scan_class_like(
+        self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
+    ) -> None:
         name_node = self._child_by_type(node, "name")
         class_name = self._node_name_text(name_node)
         if not class_name:
@@ -259,18 +395,30 @@ class PhpCore:
         qualified = self._qualified_symbol(class_name, namespace)
         line = name_node.start_point[0] + 1 if name_node else node.start_point[0] + 1
         class_def = Definition(qualified, "class", self.file_path, line)
+        if node.type == "trait_declaration":
+            self._trait_names.add(qualified)
 
         bases: list[str] = []
         for base_clause in self._children_of_type(node, "base_clause"):
             for child in base_clause.children:
                 if child.type in {"name", "qualified_name"}:
-                    base_name = self._node_name_text(child).replace("\\", ".")
+                    base_name = self._resolve_name(
+                        self._node_name_text(child),
+                        namespace=namespace,
+                        aliases=aliases,
+                        start_byte=child.start_byte,
+                    )
                     bases.append(base_name)
                     self._add_ref(base_name, child.start_byte, current_callable=None)
         for iface_clause in self._children_of_type(node, "class_interface_clause"):
             for child in iface_clause.children:
                 if child.type in {"name", "qualified_name"}:
-                    iface_name = self._node_name_text(child).replace("\\", ".")
+                    iface_name = self._resolve_name(
+                        self._node_name_text(child),
+                        namespace=namespace,
+                        aliases=aliases,
+                        start_byte=child.start_byte,
+                    )
                     bases.append(iface_name)
                     self._add_ref(iface_name, child.start_byte, current_callable=None)
 
@@ -283,13 +431,12 @@ class PhpCore:
 
         for child in declaration_list.children:
             if child.type == "use_declaration":
-                for name_child in child.children:
-                    if name_child.type in {"name", "qualified_name"}:
-                        self._add_ref(
-                            self._node_name_text(name_child),
-                            name_child.start_byte,
-                            current_callable=None,
-                        )
+                self._scan_trait_use(
+                    child,
+                    current_class=qualified,
+                    namespace=namespace,
+                    aliases=aliases,
+                )
                 continue
 
             if child.type == "property_declaration":
@@ -306,10 +453,76 @@ class PhpCore:
                 continue
 
             if child.type == "method_declaration":
-                self._scan_method(child, current_class=qualified, class_bases=bases)
+                self._scan_method(
+                    child,
+                    namespace=namespace,
+                    current_class=qualified,
+                    class_bases=bases,
+                    aliases=aliases,
+                )
                 continue
 
-            self._scan_refs_in_node(child, current_callable=None)
+            self._scan_refs_in_node(
+                child,
+                namespace=namespace,
+                current_class=qualified,
+                current_callable=None,
+                class_bases=bases,
+                aliases=aliases,
+            )
+
+    def _scan_trait_use(
+        self,
+        node,
+        *,
+        current_class: str,
+        namespace: str,
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        providers = self._traits_by_owner.setdefault(current_class, [])
+        for child in node.children:
+            if child.type in {"name", "qualified_name"}:
+                provider = self._resolve_name(
+                    self._node_name_text(child),
+                    namespace=namespace,
+                    aliases=aliases,
+                    start_byte=child.start_byte,
+                )
+                providers.append(provider)
+                self._add_ref(provider, child.start_byte, current_callable=None)
+
+        adaptations = self._child_by_type(node, "use_list")
+        if adaptations is None:
+            return
+        for clause in adaptations.named_children:
+            named = clause.named_children
+            if not named:
+                continue
+            source = named[0]
+            if source.type == "class_constant_access_expression":
+                owner_node, member_node = source.named_children[:2]
+                provider = self._resolve_name(
+                    self._node_name_text(owner_node),
+                    namespace=namespace,
+                    aliases=aliases,
+                    start_byte=owner_node.start_byte,
+                )
+                member = self._node_name_text(member_node)
+                targets = {f"{provider}.{member}"}
+            elif source.type == "name":
+                member = self._node_name_text(source)
+                targets = {f"{provider}.{member}" for provider in providers}
+            else:
+                continue
+            if clause.type == "use_instead_of_clause" and len(targets) == 1:
+                self._trait_precedence.setdefault(current_class, {})[member] = next(
+                    iter(targets)
+                )
+            elif clause.type == "use_as_clause":
+                alias_nodes = [child for child in named[1:] if child.type == "name"]
+                if alias_nodes:
+                    alias = self._node_name_text(alias_nodes[-1])
+                    self._trait_aliases.setdefault(current_class, {})[alias] = targets
 
     def _scan_enum(self, node, *, namespace: str) -> None:
         name_node = self._child_by_type(node, "name")
@@ -386,7 +599,15 @@ class PhpCore:
             d.is_exported = is_exported
             self.defs.append(d)
 
-    def _scan_method(self, node, *, current_class: str, class_bases: list[str]) -> None:
+    def _scan_method(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
         name_node = self._child_by_type(node, "name")
         method_name = self._node_name_text(name_node)
         if not method_name:
@@ -423,10 +644,11 @@ class PhpCore:
         if body is not None:
             self._scan_block(
                 body,
-                namespace="",
+                namespace=namespace,
                 current_class=current_class,
                 current_callable=qualified,
                 class_bases=class_bases,
+                aliases=aliases,
             )
 
     def _has_test_attribute(self, node, line: int) -> bool:
@@ -440,7 +662,9 @@ class PhpCore:
                 return True
         return False
 
-    def _scan_function(self, node, *, namespace: str) -> None:
+    def _scan_function(
+        self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
+    ) -> None:
         name_node = self._child_by_type(node, "name")
         func_name = self._node_name_text(name_node)
         if not func_name:
@@ -459,11 +683,16 @@ class PhpCore:
                 current_class=None,
                 current_callable=qualified,
                 class_bases=[],
+                aliases=aliases,
             )
 
-    def _scan_use_imports(self, node) -> None:
-        names: list[str] = []
-        line = node.start_point[0] + 1
+    def _use_aliases(self, node):
+        group_prefix = self._node_name_text(self._child_by_type(node, "namespace_name"))
+        declaration_kind = (
+            self._get_text(node.child_by_field_name("type"))
+            if node.child_by_field_name("type")
+            else "class"
+        )
         for clause in self._descendants_of_type(node, "namespace_use_clause"):
             target_node = (
                 clause.child_by_field_name("name")
@@ -472,9 +701,20 @@ class PhpCore:
             )
             alias_node = clause.child_by_field_name("alias")
             target = self._node_name_text(target_node)
+            if group_prefix:
+                target = f"{group_prefix}\\{target}"
             alias = self._node_name_text(alias_node) or target.split("\\")[-1]
             if not alias:
                 continue
+            type_node = clause.child_by_field_name("type")
+            kind = self._get_text(type_node) if type_node else declaration_kind
+            yield kind, alias, target.lstrip("\\").replace("\\", ".")
+
+    def _scan_use_imports(self, node, *, aliases: dict[tuple[str, str], str]) -> None:
+        names: list[str] = []
+        line = node.start_point[0] + 1
+        for kind, alias, target in self._use_aliases(node):
+            aliases[(kind, alias)] = target
             d = Definition(alias, "import", self.file_path, line)
             self.defs.append(d)
             self.imports.append(
@@ -505,22 +745,61 @@ class PhpCore:
             {"source": source_text, "names": [], "line": node.start_point[0] + 1}
         )
 
-    def _scan_refs_in_node(self, node, *, current_callable: str | None) -> None:
+    def _scan_refs_in_node(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        current_callable: str | None,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
         if node.type == "function_call_expression":
-            name_node = self._child_by_type(node, "name")
+            name_node = node.child_by_field_name("function")
+            if name_node is None or name_node.type not in {
+                "name",
+                "qualified_name",
+                "relative_name",
+            }:
+                return
             self._add_ref(
-                self._node_name_text(name_node),
+                self._resolve_name(
+                    self._node_name_text(name_node),
+                    namespace=namespace,
+                    aliases=aliases,
+                    kind="function",
+                    start_byte=name_node.start_byte,
+                ),
                 node.start_byte,
                 current_callable=current_callable,
             )
             return
 
         if node.type in {"member_call_expression", "scoped_call_expression"}:
-            name_node = self._child_by_type(node, "name")
+            name_node = node.child_by_field_name("name")
+            if name_node is None or name_node.type != "name":
+                return
+            owner_node = node.child_by_field_name(
+                "scope" if node.type == "scoped_call_expression" else "object"
+            )
+            owner = self._member_owner(
+                owner_node,
+                namespace=namespace,
+                current_class=current_class,
+                class_bases=class_bases,
+                aliases=aliases,
+            )
+            member = self._node_name_text(name_node)
+            if owner and node.type == "scoped_call_expression":
+                self._add_ref(owner, owner_node.start_byte, current_callable=None)
             self._add_ref(
-                self._node_name_text(name_node),
+                f"{owner}.{member}" if owner else member,
                 node.start_byte,
                 current_callable=current_callable,
+                unresolved_member=owner is None,
+                trait_dispatch=current_class in self._trait_names
+                and owner == current_class,
             )
             return
 
@@ -528,7 +807,12 @@ class PhpCore:
             for child in node.children:
                 if child.type in {"name", "qualified_name"}:
                     self._add_ref(
-                        self._node_name_text(child),
+                        self._resolve_name(
+                            self._node_name_text(child),
+                            namespace=namespace,
+                            aliases=aliases,
+                            start_byte=child.start_byte,
+                        ),
                         node.start_byte,
                         current_callable=None,
                     )
@@ -538,12 +822,36 @@ class PhpCore:
         if node.type in {
             "member_access_expression",
             "scoped_property_access_expression",
+            "class_constant_access_expression",
         }:
-            name_node = self._child_by_type(node, "name")
+            name_node = node.child_by_field_name("name")
+            if node.type == "class_constant_access_expression":
+                named = node.named_children
+                owner_node = named[0] if named else None
+                name_node = named[1] if len(named) > 1 else None
+            else:
+                owner_node = node.child_by_field_name(
+                    "scope"
+                    if node.type == "scoped_property_access_expression"
+                    else "object"
+                )
+            owner = self._member_owner(
+                owner_node,
+                namespace=namespace,
+                current_class=current_class,
+                class_bases=class_bases,
+                aliases=aliases,
+            )
+            member = self._node_name_text(name_node)
+            if owner and node.type != "member_access_expression":
+                self._add_ref(owner, owner_node.start_byte, current_callable=None)
             self._add_ref(
-                self._node_name_text(name_node),
+                f"{owner}.{member}" if owner and member else member,
                 node.start_byte,
-                current_callable=None,
+                current_callable=current_callable,
+                unresolved_member=owner is None,
+                trait_dispatch=current_class in self._trait_names
+                and owner == current_class,
             )
             return
 
@@ -551,20 +859,132 @@ class PhpCore:
             for child in node.children:
                 if child.type in {"name", "qualified_name"}:
                     self._add_ref(
-                        self._node_name_text(child),
+                        self._resolve_name(
+                            self._node_name_text(child),
+                            namespace=namespace,
+                            aliases=aliases,
+                            start_byte=child.start_byte,
+                        ),
                         child.start_byte,
                         current_callable=None,
                     )
 
     def _build_call_graph(self) -> None:
-        name_to_def: dict[str, Definition] = {}
-        for d in self.defs:
-            name_to_def[d.name] = d
-            name_to_def.setdefault(d.simple_name, d)
+        name_to_def = {d.name: d for d in self.defs if d.type != "import"}
+        classes = {d.name: d for d in self.defs if d.type == "class"}
+
+        def member_targets(name: str, seen: frozenset[str] = frozenset()) -> set[str]:
+            if name in name_to_def:
+                return {name}
+            if name in seen:
+                return set()
+            owner, separator, member = name.rpartition(".")
+            owner_def = classes.get(owner)
+            if not separator or owner_def is None:
+                return {name}
+
+            next_seen = seen | {name}
+            aliases = self._trait_aliases.get(owner, {}).get(member)
+            preferred = self._trait_precedence.get(owner, {}).get(member)
+            providers = self._traits_by_owner.get(owner, [])
+            trait_members = aliases or (
+                {preferred}
+                if preferred
+                else {f"{trait}.{member}" for trait in providers}
+            )
+            trait_matches: set[str] = set()
+            for target in trait_members:
+                trait_matches.update(member_targets(target, next_seen))
+            uncertain_traits = any(
+                target.rpartition(".")[0] not in classes for target in trait_members
+            )
+            if trait_matches and not uncertain_traits:
+                return trait_matches
+
+            inherited_matches: set[str] = set()
+            for base in owner_def.base_classes:
+                inherited_matches.update(member_targets(f"{base}.{member}", next_seen))
+            return trait_matches | inherited_matches
+
+        def uses_trait(owner: str, trait: str, seen: frozenset[str]) -> bool:
+            if owner in seen:
+                return False
+            providers = self._traits_by_owner.get(owner, [])
+            return trait in providers or any(
+                uses_trait(provider, trait, seen | {owner}) for provider in providers
+            )
+
+        def reference_targets(name: str, *, trait_dispatch: bool) -> set[str]:
+            if trait_dispatch:
+                owner, _, member = name.rpartition(".")
+                consumers = [
+                    candidate
+                    for candidate in classes
+                    if candidate not in self._trait_names
+                    and uses_trait(candidate, owner, frozenset())
+                ]
+                if consumers:
+                    targets: set[str] = set()
+                    for consumer in consumers:
+                        targets.update(member_targets(f"{consumer}.{member}"))
+                    return targets or {name}
+                # A trait body in another file has no known consuming class.
+                # Its $this dispatch may resolve to a class override, so keep
+                # the receiver uncertain rather than claiming trait ownership.
+                return (member_targets(name) or {name}) | {member}
+            return member_targets(name) or {name}
+
+        # Class declarations override traits, and traits override inherited
+        # members. An unavailable trait provider stays qualified and uncertain.
+        self.refs = [
+            (target, file)
+            for index, (name, file) in enumerate(self.refs)
+            for target in sorted(
+                reference_targets(
+                    name, trait_dispatch=index in self._trait_dispatch_refs
+                )
+            )
+        ]
+        resolved_calls = []
+        for caller, callee in self.call_pairs:
+            is_trait_dispatch = (caller, callee) in self._trait_dispatch_calls
+            for target in sorted(
+                reference_targets(callee, trait_dispatch=is_trait_dispatch)
+            ):
+                if is_trait_dispatch and "." not in target:
+                    self._unresolved_member_calls.append((caller, target))
+                else:
+                    resolved_calls.append((caller, target))
+        self.call_pairs = resolved_calls
+        member_candidates: dict[str, list[Definition]] = {}
+        for definition in self.defs:
+            if definition.type in {"method", "variable"}:
+                member_candidates.setdefault(definition.simple_name, []).append(
+                    definition
+                )
+
+        def add_edge(caller_def: Definition, callee_def: Definition) -> None:
+            if caller_def is not callee_def:
+                caller_def.calls.add(callee_def.name)
+                callee_def.called_by.add(caller_def.name)
 
         for caller, callee in self.call_pairs:
             caller_def = name_to_def.get(caller)
             callee_def = name_to_def.get(callee)
-            if caller_def and callee_def and caller_def is not callee_def:
-                caller_def.calls.add(callee_def.name)
-                callee_def.called_by.add(caller_def.name)
+            if caller_def and callee_def:
+                add_edge(caller_def, callee_def)
+            elif (
+                caller_def
+                and "." in callee
+                and callee.rpartition(".")[0] not in classes
+            ):
+                # Preserve qualified edges to explicit providers in other files.
+                caller_def.calls.add(callee)
+
+        # An unresolved receiver provides no basis to choose a declaration by
+        # source order. Keep all local candidate members conservatively live.
+        for caller, member in self._unresolved_member_calls:
+            caller_def = name_to_def.get(caller)
+            if caller_def is not None:
+                for candidate in member_candidates.get(member, []):
+                    add_edge(caller_def, candidate)

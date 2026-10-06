@@ -1826,11 +1826,13 @@ use crate::internal::stale_api;
         assert "public_api" not in unused_imports
         assert "stale_api" in unused_imports
 
-    def test_analyze_rust_namespaced_associated_constructor_is_live(self, tmp_path):
+    @pytest.mark.parametrize("exported_entry", [False, True])
+    def test_analyze_rust_namespaced_constructor_follows_caller_reachability(
+        self, tmp_path, exported_entry
+    ):
         src_dir = tmp_path / "src"
         src_dir.mkdir()
-        (src_dir / "tls.rs").write_text(
-            """
+        source = """
 struct VerifyCaCertVerifier;
 
 impl VerifyCaCertVerifier {
@@ -1840,17 +1842,18 @@ impl VerifyCaCertVerifier {
 fn build_verifier() {
     VerifyCaCertVerifier::new();
 }
-""",
-            encoding="utf-8",
-        )
+"""
+        if exported_entry:
+            source = source.replace("fn build_verifier", "pub fn build_verifier")
+        (src_dir / "tls.rs").write_text(source, encoding="utf-8")
 
         result_json = analyze(str(src_dir), conf=0, grep_verify=False)
         result = json.loads(result_json)
 
         unreachable = {item["full_name"] for item in result["unused_functions"]}
 
-        assert "tls.VerifyCaCertVerifier.new" not in unreachable
-        assert "tls.build_verifier" in unreachable
+        assert ("tls.VerifyCaCertVerifier.new" in unreachable) is not exported_entry
+        assert ("tls.build_verifier" in unreachable) is not exported_entry
 
     def test_analyze_rust_external_trait_import_methods_are_live(self, tmp_path):
         (tmp_path / "lib.rs").write_text(

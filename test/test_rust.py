@@ -47,7 +47,8 @@ fn stale() {}
     assert "stale" in def_names
 
     assert "h" in ref_names
-    assert "private_helper" in ref_names
+    assert "User.private_helper" in ref_names
+    assert "private_helper" not in ref_names
 
     assert "User" in exported
     assert "User.new" in exported
@@ -246,7 +247,8 @@ fn main() {
     ref_names = {r[0] for r in refs}
 
     assert "api.route" in ref_names
-    assert {"api", "route"} <= ref_names
+    assert "api" in ref_names
+    assert "route" not in ref_names
 
 
 def test_rust_use_imports_emit_project_qualified_refs(tmp_path):
@@ -411,7 +413,7 @@ fn run(widget: Widget) {
 
     ref_names = {r[0] for r in refs}
 
-    assert "next" in ref_names
+    assert "Widget.next" in ref_names
     assert "WidgetExt" not in ref_names
 
 
@@ -500,7 +502,7 @@ impl<T> Boxed<T> {
     ref_names = {r[0] for r in refs}
 
     assert impl_method.is_exported is True
-    assert {"Service", "Boxed", "helper"} <= ref_names
+    assert {"Service", "Boxed", "Boxed.helper"} <= ref_names
 
 
 def test_rust_trait_default_methods_are_collected_and_scanned(tmp_path):
@@ -595,7 +597,7 @@ fn run(value: Option<&serde_json::Value>, stream: &mut StatementStream) {
     assert {
         "parse_json_number",
         "refresh_and_collect_system_stats",
-        "next_statement",
+        "StatementStream.next_statement",
         "is_debug_mode",
         "close_devtools",
     } <= ref_names
