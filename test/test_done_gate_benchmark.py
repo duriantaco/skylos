@@ -3,15 +3,40 @@ and the replay rules. No network, Docker or dataset needed."""
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import io
+import json
+import os
+import pickle
 import random
+import subprocess
 import sys
+import tarfile
+import tempfile
+import threading
+import zlib
 from pathlib import Path
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
+
 SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent / "scripts" / "done_gate_benchmark.py"
+)
+requires_host_filesystem = pytest.mark.skipif(
+    not (
+        hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and all(
+            operation in os.supports_dir_fd
+            for operation in (os.open, os.mkdir, os.stat, os.unlink, os.rmdir)
+        )
+        and os.listdir in os.supports_fd
+        and os.stat in os.supports_follow_symlinks
+    ),
+    reason="benchmark host files require POSIX no-follow and directory-descriptor APIs",
 )
 
 
@@ -317,12 +342,21 @@ def test_python_changes_files(bench, code, writes):
 
 
 def test_editor_replay_follows_inspects_text_editor(bench, tmp_path):
-    helper = {}
-    exec(bench.HELPER_SOURCE.replace("\nmain()\n", "\n"), helper)  # noqa: S102 - our own helper
-    helper["HISTORY"] = str(tmp_path / "history.json")
+    with tempfile.TemporaryDirectory(dir=tmp_path) as helper_directory:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".py", dir=helper_directory, delete=False
+        ) as source:
+            source.write(bench.HELPER_SOURCE.replace("\nmain()\n", "\n"))
+        spec = importlib.util.spec_from_file_location(
+            "benchmark_replay_helper", source.name
+        )
+        assert spec is not None and spec.loader is not None
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+    helper.HISTORY = str(tmp_path / "history.json")
     target = tmp_path / "solution.py"
-    target.write_text("def solve():\n\treturn 1\n")
-    editor = helper["editor"]
+    _write_fixture(target, "def solve():\n\treturn 1\n")
+    editor = helper.editor
 
     editor(
         {
@@ -346,7 +380,7 @@ def test_editor_replay_follows_inspects_text_editor(bench, tmp_path):
     assert target.read_text().startswith("import sys\ndef solve():")
     editor({"command": "undo_edit", "path": str(target)})
     assert target.read_text() == "def solve():\n        return 2\n"
-    with pytest.raises(helper["EditorError"]):
+    with pytest.raises(helper.EditorError):
         editor(
             {
                 "command": "str_replace",
@@ -434,3 +468,439 @@ def test_source_signals_flag_test_literals(bench):
     assert bench.source_signals(reader, cases)["reads_test_files"] is True
     honest = "import sys\nprint(sum(map(int, sys.stdin.read().split()[1:])))\n"
     assert not any(bench.source_signals(honest, cases).values())
+
+
+def _write_fixture(path, text):
+    assert write_text_no_symlink(path, text)
+
+
+def _encoded_private_cases(payload):
+    return base64.b64encode(zlib.compress(payload)).decode("ascii")
+
+
+@pytest.mark.parametrize("protocol", range(6))
+def test_private_cases_decode_plain_json_string_pickle(bench, protocol):
+    cases = [{"input": "é\n3 4", "output": "7", "testtype": "stdin"}]
+    encoded = _encoded_private_cases(
+        pickle.dumps(json.dumps(cases, ensure_ascii=False), protocol)
+    )
+    assert bench._decode_private_test_cases(encoded) == cases
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"cbuiltins\nprint\n(S'pickle callback ran'\ntR.",
+        b"\x80\x04\x8c\x08builtins\x8c\x05print\x93\x8c\x13pickle callback ran\x85R.",
+    ],
+)
+def test_private_cases_reject_callable_pickle_without_executing(bench, capsys, payload):
+    with pytest.raises(ValueError):
+        bench._decode_private_test_cases(_encoded_private_cases(payload))
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"\x80\x04\x8c\x02[]",  # Missing STOP.
+        pickle.dumps("[]") + b"ignored trailing bytes",
+        pickle.dumps([{"input": "1", "output": "1"}]),
+        pickle.dumps("{}"),
+        pickle.dumps("[1]"),
+        pickle.dumps('[{"input": "1"}]'),
+        pickle.dumps('[{"input": "1", "output": 1}]'),
+        pickle.dumps("not JSON"),
+    ],
+)
+def test_private_cases_reject_invalid_pickle_or_case_shape(bench, payload):
+    with pytest.raises(ValueError):
+        bench._decode_private_test_cases(_encoded_private_cases(payload))
+
+
+@pytest.mark.parametrize(
+    "encoded", ["not base64!", base64.b64encode(b"not zlib").decode()]
+)
+def test_private_cases_reject_bad_encoding(bench, encoded):
+    with pytest.raises(ValueError):
+        bench._decode_private_test_cases(encoded)
+
+
+def test_private_cases_reject_decompression_bomb(bench, monkeypatch):
+    monkeypatch.setattr(bench, "MAX_TEST_CASE_BYTES", 128)
+    cases = [{"input": "x" * 1024, "output": "1"}]
+    encoded = _encoded_private_cases(pickle.dumps(json.dumps(cases)))
+    assert len(encoded) < 256
+    with pytest.raises(ValueError):
+        bench._decode_private_test_cases(encoded)
+
+
+def test_private_cases_reject_trailing_compressed_stream(bench):
+    compressed = zlib.compress(pickle.dumps("[]")) + zlib.compress(b"second stream")
+    with pytest.raises(ValueError):
+        bench._decode_private_test_cases(base64.b64encode(compressed).decode("ascii"))
+
+
+def test_build_base_rejects_callable_private_cases_before_reading_templates(
+    bench, tmp_path, capsys
+):
+    payload = b"cbuiltins\nprint\n(S'pickle callback ran'\ntR."
+    record = {"private_test_cases": _encoded_private_cases(payload)}
+    with pytest.raises(ValueError):
+        bench.build_base_files("lcb_x", {}, record, tmp_path, None, 42)
+    assert capsys.readouterr().out == ""
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("key", ["../escape", "nested/key", "..", ".git", ""])
+def test_ensure_base_rejects_unsafe_cache_key(bench, tmp_path, key):
+    with pytest.raises(ValueError):
+        bench.ensure_base(tmp_path / "cache", key, {"solution.py": "pass\n"})
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize(
+    "rel", ["../escape.py", "nested/../../escape.py", ".git/config"]
+)
+def test_ensure_base_rejects_unsafe_file_path(bench, tmp_path, rel):
+    with pytest.raises(ValueError):
+        bench.ensure_base(tmp_path / "cache", "lcb_x", {rel: "attacker text"})
+
+
+@requires_host_filesystem
+def test_ensure_base_rejects_absolute_file_path(bench, tmp_path):
+    escaped = tmp_path / "escaped.py"
+    with pytest.raises(ValueError):
+        bench.ensure_base(tmp_path / "cache", "lcb_x", {str(escaped): "attacker text"})
+    assert not escaped.exists()
+
+
+@requires_host_filesystem
+def test_ensure_base_rejects_symlinked_cache_parent(bench, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "bases").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError):
+        bench.ensure_base(cache, "lcb_x", {"solution.py": "attacker text"})
+    assert not (outside / "lcb_x").exists()
+
+
+@requires_host_filesystem
+def test_ensure_base_preserves_safe_nested_files_and_reuses_completed_cache(
+    bench, tmp_path
+):
+    files = {"solution.py": "pass\n", "nested/data.txt": "é\r\nexact text\n"}
+    root = bench.ensure_base(tmp_path / "cache", "lcb_x+policy", files)
+    for sub in ("files", "repo"):
+        for rel, text in files.items():
+            assert (root / sub / rel).read_bytes() == text.encode("utf-8")
+    assert bench.ensure_base(tmp_path / "cache", "lcb_x+policy", files) == root
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("position", ["leaf", "parent"])
+def test_write_json_rejects_symlinks_without_changing_outside_files(
+    bench, tmp_path, position
+):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "result.json"
+    _write_fixture(sentinel, "untouched")
+    if position == "leaf":
+        target = tmp_path / "result.json"
+        target.symlink_to(sentinel)
+    else:
+        parent = tmp_path / "linked"
+        parent.symlink_to(outside, target_is_directory=True)
+        target = parent / "result.json"
+    with pytest.raises(ValueError):
+        bench._write_json(target, {"attacker": "replacement"})
+    assert sentinel.read_text() == "untouched"
+
+
+@requires_host_filesystem
+def test_write_json_ignores_predictable_temporary_file_symlink(bench, tmp_path):
+    sentinel = tmp_path / "outside.json"
+    _write_fixture(sentinel, "untouched")
+    target = tmp_path / "result.json"
+    legacy_temp = target.with_name(
+        f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    legacy_temp.symlink_to(sentinel)
+    bench._write_json(target, {"safe": True})
+    assert json.loads(target.read_text()) == {"safe": True}
+    assert sentinel.read_text() == "untouched"
+
+
+@requires_host_filesystem
+def test_write_json_replaces_regular_file_in_new_nested_directory(bench, tmp_path):
+    target = tmp_path / "nested" / "result.json"
+    bench._write_json(target, {"first": True})
+    bench._write_json(target, {"updated": "é"})
+    assert json.loads(target.read_text()) == {"updated": "é"}
+    assert [path.name for path in target.parent.iterdir()] == ["result.json"]
+
+
+@requires_host_filesystem
+def test_remove_tree_unlinks_nested_symlinks_without_touching_targets(
+    bench, tmp_path, monkeypatch
+):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    _write_fixture(sentinel, "untouched")
+    cache = tmp_path / "cache"
+    tree = cache / "temporary"
+    nested = tree / "nested" / "deeper"
+    nested.mkdir(parents=True)
+    _write_fixture(nested / "owned.txt", "remove me")
+    (nested / "linked-file.txt").symlink_to(sentinel)
+    (tree / "linked-directory").symlink_to(outside, target_is_directory=True)
+
+    def unsupported_rmtree(*args, **kwargs):
+        pytest.fail("cleanup must also work on Python 3.10 without rmtree(dir_fd)")
+
+    monkeypatch.setattr(bench.shutil, "rmtree", unsupported_rmtree)
+    bench._remove_tree(cache, tree)
+    assert not tree.exists()
+    assert sentinel.read_text() == "untouched"
+    assert list(outside.iterdir()) == [sentinel]
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("position", ["leaf", "parent"])
+def test_download_rejects_symlinked_cache_path(bench, tmp_path, position):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "data.json"
+    _write_fixture(sentinel, "untouched")
+    if position == "leaf":
+        target = tmp_path / "data.json"
+        target.symlink_to(sentinel)
+    else:
+        parent = tmp_path / "linked"
+        parent.symlink_to(outside, target_is_directory=True)
+        target = parent / "data.json"
+    with pytest.raises(ValueError):
+        bench._download("https://example.invalid/data.json", target)
+    assert sentinel.read_text() == "untouched"
+
+
+@requires_host_filesystem
+def test_download_ignores_predictable_partial_file_symlink(
+    bench, tmp_path, monkeypatch
+):
+    sentinel = tmp_path / "outside.json"
+    _write_fixture(sentinel, "untouched")
+    target = tmp_path / "data.json"
+    target.with_name(target.name + ".part").symlink_to(sentinel)
+    monkeypatch.setattr(
+        bench.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(b'{"download": true}'),
+    )
+    assert bench._download("https://example.invalid/data.json", target) == target
+    assert json.loads(target.read_text()) == {"download": True}
+    assert sentinel.read_text() == "untouched"
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("text", ["attacker text", None])
+@pytest.mark.parametrize(
+    "rel", ["../escape.py", "nested/../../escape.py", ".git/config"]
+)
+def test_run_gate_rejects_unsafe_update_and_delete_paths(bench, tmp_path, rel, text):
+    base = bench.ensure_base(tmp_path / "cache", "lcb_x", {"solution.py": "pass\n"})
+    with pytest.raises(ValueError):
+        bench.run_gate(
+            base / "repo",
+            {rel: text},
+            python=sys.executable,
+            skylos_root=SCRIPT_PATH.parent.parent,
+            work_root=tmp_path / "work",
+            timeout=10,
+        )
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("text", ["attacker text", None])
+def test_run_gate_rejects_absolute_update_and_delete_paths(bench, tmp_path, text):
+    base = bench.ensure_base(tmp_path / "cache", "lcb_x", {"solution.py": "pass\n"})
+    escaped = tmp_path / "escaped.py"
+    _write_fixture(escaped, "untouched")
+    with pytest.raises(ValueError):
+        bench.run_gate(
+            base / "repo",
+            {str(escaped): text},
+            python=sys.executable,
+            skylos_root=SCRIPT_PATH.parent.parent,
+            work_root=tmp_path / "work",
+            timeout=10,
+        )
+    assert escaped.read_text() == "untouched"
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("position", ["leaf", "parent"])
+def test_run_gate_rejects_symlink_in_cloned_base(bench, tmp_path, position):
+    base = bench.ensure_base(tmp_path / "cache", "lcb_x", {"solution.py": "pass\n"})
+    repo = base / "repo"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "victim.py"
+    _write_fixture(sentinel, "untouched")
+    if position == "leaf":
+        (repo / "victim.py").symlink_to(sentinel)
+        rel = "victim.py"
+    else:
+        (repo / "linked").symlink_to(outside, target_is_directory=True)
+        rel = "linked/victim.py"
+    bench._git(["add", "-A"], repo)
+    bench._git(["commit", "-q", "-m", "tracked fixture symlink"], repo)
+    with pytest.raises(ValueError):
+        bench.run_gate(
+            repo,
+            {rel: "attacker text"},
+            python=sys.executable,
+            skylos_root=SCRIPT_PATH.parent.parent,
+            work_root=tmp_path / "work",
+            timeout=10,
+        )
+    assert sentinel.read_text() == "untouched"
+
+
+@requires_host_filesystem
+def test_run_gate_applies_safe_updates_and_deletes_before_scanning(
+    bench, tmp_path, monkeypatch
+):
+    base = bench.ensure_base(tmp_path / "cache", "lcb_x", {"solution.py": "pass\n"})
+    original_run = bench.subprocess.run
+    receipt = {"checks": [], "verdict": "pass"}
+
+    def run_with_fake_gate(argv, **kwargs):
+        if argv[0] != sys.executable:
+            return original_run(argv, **kwargs)
+        repo = kwargs["cwd"]
+        assert not (repo / "solution.py").exists()
+        assert (repo / "nested" / "module.py").read_bytes() == b"value = 2\r\n"
+        assert argv[1:3] == ["-I", "-c"]
+        assert argv[-1] == str(SCRIPT_PATH.parent.parent)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=json.dumps(receipt), stderr=""
+        )
+
+    monkeypatch.setattr(bench.subprocess, "run", run_with_fake_gate)
+    result = bench.run_gate(
+        base / "repo",
+        {"solution.py": None, "nested/module.py": "value = 2\r\n"},
+        python=sys.executable,
+        skylos_root=SCRIPT_PATH.parent.parent,
+        work_root=tmp_path / "work",
+        timeout=10,
+    )
+    assert result["exit_code"] == 0
+    assert result["receipt"] == receipt
+    assert list((tmp_path / "work").iterdir()) == []
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("rel", ["skylos.py", "skylos/__init__.py", "sitecustomize.py"])
+def test_run_gate_never_imports_replayed_shadow_modules(bench, tmp_path, rel):
+    trusted = tmp_path / "trusted"
+    (trusted / "skylos").mkdir(parents=True)
+    _write_fixture(trusted / "skylos" / "__init__.py", "")
+    receipt = {"checks": [], "verdict": "pass", "trusted_stub": True}
+    _write_fixture(
+        trusted / "skylos" / "cli.py",
+        f"import json\ndef main():\n    print(json.dumps({receipt!r}))\n    return 0\n",
+    )
+    marker = tmp_path / "replayed_module_ran"
+    malicious = (
+        "import os\n"
+        f"fd = os.open({str(marker)!r}, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)\n"
+        "os.write(fd, b'replayed code ran')\n"
+        "os.close(fd)\n"
+        "raise RuntimeError('replayed module imported')\n"
+    )
+    base = bench.ensure_base(tmp_path / "cache", "lcb_x", {"solution.py": "pass\n"})
+    result = bench.run_gate(
+        base / "repo",
+        {rel: malicious},
+        python=sys.executable,
+        skylos_root=trusted,
+        work_root=tmp_path / "work",
+        timeout=10,
+    )
+    assert not marker.exists()
+    assert result["exit_code"] == 0, result["stderr"]
+    assert result["receipt"] == receipt
+
+
+@requires_host_filesystem
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "traversal", "absolute"])
+def test_export_skylos_rejects_unsafe_archive_members(
+    bench, tmp_path, monkeypatch, kind
+):
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        member = tarfile.TarInfo("skylos/unsafe.py")
+        if kind == "symlink":
+            member.type = tarfile.SYMTYPE
+            member.linkname = str(tmp_path / "escaped.py")
+        elif kind == "hardlink":
+            member.type = tarfile.LNKTYPE
+            member.linkname = "../escaped.py"
+        elif kind == "traversal":
+            member.name = "../../escaped.py"
+        else:
+            member.name = str(tmp_path / "escaped.py")
+        archive.addfile(member)
+    sha = "a" * 40
+
+    def git_output(argv, **kwargs):
+        if argv[1] == "rev-parse":
+            return subprocess.CompletedProcess(argv, 0, stdout=sha + "\n")
+        assert argv[1] == "archive"
+        return subprocess.CompletedProcess(argv, 0, stdout=stream.getvalue())
+
+    monkeypatch.setattr(bench.subprocess, "run", git_output)
+    with pytest.raises(ValueError):
+        bench.export_skylos("main", tmp_path / "cache")
+    assert not (tmp_path / "escaped.py").exists()
+
+
+@requires_host_filesystem
+def test_export_skylos_preserves_regular_nested_archive_files(
+    bench, tmp_path, monkeypatch
+):
+    files = {
+        "pyproject.toml": b"[project]\n",
+        "skylos/done/__init__.py": b"value = 1\r\n",
+    }
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        for name in ("skylos", "skylos/done"):
+            directory = tarfile.TarInfo(name + "/")
+            directory.type = tarfile.DIRTYPE
+            archive.addfile(directory)
+        for name, data in files.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    sha = "a" * 40
+
+    def git_output(argv, **kwargs):
+        if argv[1] == "rev-parse":
+            return subprocess.CompletedProcess(argv, 0, stdout=sha + "\n")
+        assert argv[1] == "archive"
+        return subprocess.CompletedProcess(argv, 0, stdout=stream.getvalue())
+
+    monkeypatch.setattr(bench.subprocess, "run", git_output)
+    root = bench.export_skylos("main", tmp_path / "cache")
+    for rel, data in files.items():
+        assert (root / rel).read_bytes() == data
+    assert (root / ".complete").read_text() == sha
+    assert bench.export_skylos("main", tmp_path / "cache") == root

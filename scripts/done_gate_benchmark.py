@@ -18,6 +18,9 @@ Everything downloaded or computed is cached under --cache-dir, per run, so an
 interrupted run resumes. Gate results are keyed by a hash of the ``skylos``
 package source, so a new or changed check is measured on the next run without
 replaying anything. Method and numbers: docs/done-gate-benchmark.md.
+
+Host file operations require POSIX no-follow directory-descriptor support.
+Downloaded private tests are decoded as data; transcript code runs in Docker.
 """
 
 from __future__ import annotations
@@ -31,13 +34,16 @@ import io
 import json
 import math
 import os
-import pickle
+import pickletools
 import platform
 import random
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -47,6 +53,7 @@ import warnings
 import zlib
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -68,8 +75,9 @@ WORKSPACE = "/home/agent/workspace"
 TEST_FILES = ("test.py", "test_cases.json")
 NEW_FILE_MAX_BYTES = 256 * 1024
 MAX_NEW_FILES = 300
+MAX_TEST_CASE_BYTES = 64 * 1024 * 1024
 GATE_CODE = (
-    "import sys; from skylos.cli import main; "
+    "import sys; sys.path.insert(0, sys.argv[1]); from skylos.cli import main; "
     "sys.argv = ['skylos', 'done', '.', '--no-tests', '--format', 'json']; "
     "sys.exit(main())"
 )
@@ -557,20 +565,231 @@ def source_signals(solution: str | None, test_cases: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _safe_relative_path(root: Path, relative: str) -> Path:
+    """Keep dataset and replay names inside their root, away from metadata."""
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise ValueError("invalid benchmark relative path")
+    parts = relative.split("/")
+    if PurePosixPath(relative).is_absolute() or any(
+        not part or part.startswith(".") or ":" in part or "\0" in part
+        for part in parts
+    ):
+        raise ValueError("invalid benchmark relative path")
+    target = root.joinpath(*parts)
+    target.relative_to(root)
+    return target
+
+
+def _component(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.+-]*", value
+    ):
+        raise ValueError("invalid benchmark cache key")
+    return value
+
+
+@contextmanager
+def _open_directory(path: Path, *, create: bool = False):
+    """Walk directories through pinned descriptors without following links."""
+    if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+        raise ValueError("benchmark host files require no-follow directory support")
+    directory = Path(os.path.abspath(path))
+    directory.relative_to(Path(os.sep))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(os.sep, flags)
+    try:
+        for part in directory.parts[1:]:
+            if part in {"", ".", ".."}:
+                raise ValueError("invalid benchmark directory")
+            if create:
+                try:
+                    os.mkdir(os.path.basename(part), mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+            child = os.open(os.path.basename(part), flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    except (NotADirectoryError, OSError) as exc:
+        if isinstance(exc, FileNotFoundError):
+            raise
+        raise ValueError("unsafe benchmark directory") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _mkdir(path: Path) -> None:
+    with _open_directory(path, create=True):
+        pass
+
+
+def _regular_file(path: Path) -> bool:
+    try:
+        with _open_directory(path.parent) as parent_fd:
+            existing = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
+        raise ValueError("benchmark file must be regular with exactly one link")
+    return True
+
+
+@contextmanager
+def _open_input(path: Path, mode: str = "rb", **kwargs):
+    with _open_directory(path.parent) as parent_fd:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        fd = os.open(os.path.basename(path.name), flags, dir_fd=parent_fd)
+        try:
+            existing = os.fstat(fd)
+            if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
+                raise ValueError(
+                    "benchmark input must be regular with exactly one link"
+                )
+            handle = os.fdopen(fd, mode, **kwargs)
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            yield handle
+
+
+@contextmanager
+def _atomic_output(path: Path):
+    """Publish a private temporary file atomically in its no-follow parent."""
+    with _open_directory(path.parent, create=True) as parent_fd:
+        try:
+            existing = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and (
+            not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1
+        ):
+            raise ValueError(
+                "refusing to replace a linked or non-regular benchmark file"
+            )
+        temporary = f".benchmark-{secrets.token_hex(16)}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(temporary, flags, 0o600, dir_fd=parent_fd)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                yield handle
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+
+
+def _write_text(path: Path, text: str) -> None:
+    with _atomic_output(path) as handle:
+        handle.write(text.encode("utf-8"))
+
+
+def _remove_tree(root: Path, path: Path) -> None:
+    relative = path.relative_to(root)
+    if not relative.parts:
+        raise ValueError("cannot remove the benchmark root")
+    target = _safe_relative_path(root, relative.as_posix())
+
+    def remove_directory(parent_fd: int, name: str) -> None:
+        # shutil.rmtree(dir_fd=...) needs Python 3.11; these descriptor APIs
+        # also work on the supported Python 3.10 host interpreter.
+        name = os.path.basename(name)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory_fd = os.open(name, flags, dir_fd=parent_fd)
+        try:
+            for child in os.listdir(directory_fd):
+                child = os.path.basename(child)
+                entry = os.stat(child, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(entry.st_mode):
+                    remove_directory(directory_fd, child)
+                else:
+                    os.unlink(child, dir_fd=directory_fd)
+        finally:
+            os.close(directory_fd)
+        os.rmdir(name, dir_fd=parent_fd)
+
+    try:
+        with _open_directory(target.parent) as parent_fd:
+            existing = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(existing.st_mode):
+                raise ValueError("refusing to remove a linked benchmark directory")
+            remove_directory(parent_fd, target.name)
+    except FileNotFoundError:
+        pass
+
+
+def _delete_file(root: Path, relative: str) -> None:
+    target = _safe_relative_path(root, relative)
+    try:
+        with _open_directory(target.parent) as parent_fd:
+            existing = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISREG(existing.st_mode):
+                raise ValueError("refusing to delete a non-regular benchmark file")
+            os.unlink(os.path.basename(target.name), dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+
+
+def _decode_private_test_cases(encoded: str) -> list[dict]:
+    """Read the dataset's pickled JSON string without executing pickle code."""
+    if not isinstance(encoded, str) or len(encoded) > MAX_TEST_CASE_BYTES * 2:
+        raise ValueError("invalid private test data size")
+    try:
+        compressed = base64.b64decode(encoded, validate=True)
+        decompressor = zlib.decompressobj()
+        payload = decompressor.decompress(compressed, MAX_TEST_CASE_BYTES + 1)
+    except (ValueError, zlib.error) as exc:
+        raise ValueError("invalid encoded private test data") from exc
+    if (
+        len(payload) > MAX_TEST_CASE_BYTES
+        or not decompressor.eof
+        or decompressor.unused_data
+        or decompressor.unconsumed_tail
+    ):
+        raise ValueError("invalid or oversized private test data")
+    string_ops = {"UNICODE", "BINUNICODE", "SHORT_BINUNICODE", "BINUNICODE8"}
+    framing_ops = {"PROTO", "FRAME", "MEMOIZE", "PUT", "BINPUT", "LONG_BINPUT"}
+    text = None
+    stopped = False
+    for opcode, argument, position in pickletools.genops(payload):
+        if opcode.name in string_ops and text is None:
+            text = argument
+        elif opcode.name in framing_ops:
+            continue
+        elif opcode.name == "STOP" and position == len(payload) - 1:
+            stopped = True
+        else:
+            raise ValueError(
+                "private test data must contain only a pickled JSON string"
+            )
+    if not stopped or not isinstance(text, str):
+        raise ValueError("private test data must contain a JSON string")
+    cases = json.loads(text)
+    if not isinstance(cases, list) or any(
+        not isinstance(case, dict)
+        or not isinstance(case.get("input"), str)
+        or not isinstance(case.get("output"), str)
+        for case in cases
+    ):
+        raise ValueError("invalid private test cases")
+    return cases
+
+
 def _download(url: str, dest: Path) -> Path:
-    if dest.exists() and dest.stat().st_size > 0:
+    if _regular_file(dest) and dest.stat().st_size > 0:
         return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_name(dest.name + ".part")
     request = urllib.request.Request(
         url, headers={"User-Agent": "skylos-done-gate-benchmark"}
     )
     with (
         urllib.request.urlopen(request, timeout=300) as response,
-        part.open("wb") as fh,
+        _atomic_output(dest) as fh,
     ):
         shutil.copyfileobj(response, fh, 1 << 20)
-    part.replace(dest)
     return dest
 
 
@@ -581,20 +800,23 @@ def _hf_url(dataset: str, revision: str, path: str) -> str:
 def fetch_evilgenie(spec: dict, cache: Path, log) -> None:
     root = cache / "evilgenie"
     for path in [spec["labels_table"], *spec["transcripts"]]:
-        if not (root / path).exists():
+        dest = _safe_relative_path(root, path)
+        if not _regular_file(dest):
             log(f"downloading {path}")
-        _download(_hf_url(spec["dataset"], spec["revision"], path), root / path)
+        _download(_hf_url(spec["dataset"], spec["revision"], path), dest)
     code = spec["task_code"]
     for path in code["files"]:
         url = f"https://raw.githubusercontent.com/{code['repo']}/{code['revision']}/{path}"
-        _download(url, root / "code" / path)
+        _download(url, _safe_relative_path(root / "code", path))
 
 
 def fetch_test_cases(spec: dict, question_ids: set[str], cache: Path, log) -> None:
     """Keep only the LiveCodeBench problems the transcripts use (streamed)."""
     lcb = spec["test_cases"]
     root = cache / "lcb"
-    missing = {q for q in question_ids if not (root / f"{q}.json").exists()}
+    missing = {
+        q for q in question_ids if not _regular_file(root / f"{_component(q)}.json")
+    }
     for name in lcb["files"]:
         if not missing:
             break
@@ -612,10 +834,7 @@ def fetch_test_cases(spec: dict, question_ids: set[str], cache: Path, log) -> No
                 record = json.loads(raw)
                 qid = record.get("question_id")
                 if qid in missing:
-                    root.mkdir(parents=True, exist_ok=True)
-                    (root / f"{qid}.json").write_text(
-                        json.dumps(record), encoding="utf-8"
-                    )
+                    _write_json(root / f"{_component(qid)}.json", record)
                     missing.discard(qid)
                     needles.pop(qid, None)
                     if not missing:
@@ -671,11 +890,7 @@ def build_base_files(
     """The task's original workspace, checked against the hashes the run recorded."""
     qid = problem_id.removeprefix("lcb_")
     public = json.loads(lcb_record.get("public_test_cases") or "[]")
-    private = json.loads(
-        pickle.loads(
-            zlib.decompress(base64.b64decode(lcb_record["private_test_cases"]))
-        )
-    )
+    private = _decode_private_test_cases(lcb_record["private_test_cases"])
     visible, _ = split_test_cases(public + private, random.Random(f"{seed}:{qid}"))
     cases = [
         {"id": i, "input": t["input"], "output": t["output"], "type": "function"}
@@ -744,23 +959,25 @@ def _git(args: list[str], cwd: Path) -> None:
 
 def ensure_base(cache: Path, key: str, files: dict[str, str]) -> Path:
     """Write the base workspace and its one-commit git repo (cached)."""
-    root = cache / "bases" / key
+    root = cache / "bases" / _component(key)
+    # Validate every file before modifying any existing cached workspace.
+    for rel in files:
+        _safe_relative_path(root / "files", rel)
     done = root / ".complete"
-    if done.exists():
+    if _regular_file(done):
+        with _open_directory(root / "repo"):
+            pass
         return root
-    if root.exists():
-        shutil.rmtree(root)
+    _remove_tree(cache, root)
     for rel, text in files.items():
         for sub in ("files", "repo"):
-            target = root / sub / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("w", encoding="utf-8", newline="") as fh:
-                fh.write(text)
+            target = _safe_relative_path(root / sub, rel)
+            _write_text(target, text)
     repo = root / "repo"
     _git(["init", "-q", "-b", "main"], repo)
     _git(["add", "-A"], repo)
     _git(["commit", "-q", "-m", "task workspace"], repo)
-    done.write_text("ok", encoding="utf-8")
+    _write_text(done, "ok")
     return root
 
 
@@ -792,16 +1009,21 @@ class Run:
 def index_evilgenie(spec: dict, cache: Path) -> list[Run]:
     root = cache / "evilgenie"
     index_path = root / "index.json"
-    if index_path.exists():
-        cached = json.loads(index_path.read_text(encoding="utf-8"))
-        if cached.get("transcripts") == spec["transcripts"]:
-            return [Run(**{**r, "label": None}) for r in cached["runs"]]
+    cached = _read_json(index_path)
+    if cached and cached.get("transcripts") == spec["transcripts"]:
+        runs = [Run(**{**r, "label": None}) for r in cached["runs"]]
+        for run in runs:
+            _component(run.run_id)
+            _component(run.problem_id)
+            _safe_relative_path(root, run.transcript)
+        return runs
     runs: list[Run] = []
     for rel in spec["transcripts"]:
         offset = 0
-        with (root / rel).open("rb") as fh:
+        with _open_input(_safe_relative_path(root, rel)) as fh:
             for raw in fh:
                 record = json.loads(raw)
+                _component(record["problem_id"])
                 details = record.get("score_details") or {}
                 runs.append(
                     Run(
@@ -831,12 +1053,12 @@ def index_evilgenie(spec: dict, cache: Path) -> list[Run]:
         "transcripts": spec["transcripts"],
         "runs": [{**r.__dict__, "label": None} for r in runs],
     }
-    index_path.write_text(json.dumps(payload), encoding="utf-8")
+    _write_json(index_path, payload)
     return runs
 
 
 def load_transcript(cache: Path, run: Run) -> dict:
-    with (cache / "evilgenie" / run.transcript).open("rb") as fh:
+    with _open_input(_safe_relative_path(cache / "evilgenie", run.transcript)) as fh:
         fh.seek(run.offset)
         return json.loads(fh.read(run.length))
 
@@ -1297,12 +1519,13 @@ def export_skylos(ref: str, cache: Path) -> Path:
         capture_output=True,
         text=True,
     ).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+        raise ValueError("invalid Skylos commit hash")
     root = cache / "skylos-src" / sha
-    if (root / ".complete").exists() and (root / "pyproject.toml").exists():
+    if _regular_file(root / ".complete") and _regular_file(root / "pyproject.toml"):
         return root
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
+    _remove_tree(cache, root)
+    _mkdir(root)
     archive = subprocess.run(
         # pyproject.toml too: skylos reads its version from it.
         ["git", "archive", "--format=tar", sha, "skylos", "pyproject.toml"],
@@ -1310,8 +1533,22 @@ def export_skylos(ref: str, cache: Path) -> Path:
         check=True,
         capture_output=True,
     ).stdout
-    subprocess.run(["tar", "-x", "-C", str(root)], input=archive, check=True)
-    (root / ".complete").write_text(sha, encoding="utf-8")
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source:
+        for member in source:
+            target = _safe_relative_path(root, member.name.rstrip("/"))
+            if member.isdir():
+                _mkdir(target)
+            elif member.isreg():
+                with (
+                    source.extractfile(member) as content,
+                    _atomic_output(target) as output,
+                ):
+                    shutil.copyfileobj(content, output)
+            else:
+                raise ValueError(
+                    "Skylos archive may contain only regular files and directories"
+                )
+    _write_text(root / ".complete", sha)
     return root
 
 
@@ -1333,7 +1570,10 @@ def run_gate(
     work_root: Path,
     timeout: int,
 ) -> dict:
-    work_root.mkdir(parents=True, exist_ok=True)
+    # Reject every replay path before cloning or changing any workspace files.
+    for rel in changes:
+        _safe_relative_path(work_root, rel)
+    _mkdir(work_root)
     work = Path(tempfile.mkdtemp(prefix="gate-", dir=work_root))
     try:
         repo = work / "repo"
@@ -1344,13 +1584,11 @@ def run_gate(
             env={**os.environ, **_GIT_IDENTITY},
         )
         for rel, text in sorted(changes.items()):
-            target = repo / rel
+            target = _safe_relative_path(repo, rel)
             if text is None:
-                target.unlink(missing_ok=True)
+                _delete_file(repo, rel)
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("w", encoding="utf-8", newline="") as fh:
-                fh.write(text)
+            _write_text(target, text)
         env = {
             k: v
             for k, v in os.environ.items()
@@ -1361,7 +1599,7 @@ def run_gate(
         env["NO_COLOR"] = "1"
         started = time.monotonic()
         proc = subprocess.run(
-            [python, "-c", GATE_CODE],
+            [python, "-I", "-c", GATE_CODE, str(skylos_root)],
             cwd=repo,
             env=env,
             capture_output=True,
@@ -1382,7 +1620,7 @@ def run_gate(
             "stderr": "" if receipt is not None else proc.stderr[-2000:],
         }
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        _remove_tree(work_root, work)
 
 
 # ---------------------------------------------------------------------------
@@ -1392,16 +1630,17 @@ def run_gate(
 
 def _read_json(path: Path) -> dict | None:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        with _open_input(path) as handle:
+            raw = handle.read(MAX_TEST_CASE_BYTES + 1)
+        if len(raw) > MAX_TEST_CASE_BYTES:
+            raise ValueError("benchmark cache entry is too large")
+        return json.loads(raw)
     except (OSError, ValueError):
         return None
 
 
 def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(path)
+    _write_text(path, json.dumps(payload))
 
 
 def select_runs(
@@ -1428,6 +1667,8 @@ def select_runs(
 
 def process_run(run: Run, ctx: dict) -> dict:
     cache: Path = ctx["cache"]
+    _component(run.run_id)
+    _component(run.base_key)
     replay_path = cache / "replay" / f"{run.run_id}.json"
     replay = None if ctx["refresh_replay"] else _read_json(replay_path)
     if (
@@ -1492,7 +1733,7 @@ def process_run(run: Run, ctx: dict) -> dict:
 
 
 def load_labels_table(path: Path) -> dict[str, dict]:
-    with path.open(encoding="utf-8", newline="") as fh:
+    with _open_input(path, "r", encoding="utf-8", newline="") as fh:
         return {row["run_key"]: row for row in csv.DictReader(fh)}
 
 
@@ -1501,7 +1742,9 @@ def prepare(args, manifest: dict, log) -> tuple[list[Run], dict]:
     cache: Path = args.cache_dir
     fetch_evilgenie(spec, cache, log)
     runs = index_evilgenie(spec, cache)
-    table = load_labels_table(cache / "evilgenie" / spec["labels_table"])
+    table = load_labels_table(
+        _safe_relative_path(cache / "evilgenie", spec["labels_table"])
+    )
     for run in runs:
         run.label = label_run(run.score, table.get(run.run_key))
     fetch_test_cases(
@@ -1521,7 +1764,7 @@ def prepare(args, manifest: dict, log) -> tuple[list[Run], dict]:
         if run.base_key in bases:
             continue
         qid = run.problem_id.removeprefix("lcb_")
-        record = json.loads((cache / "lcb" / f"{qid}.json").read_text(encoding="utf-8"))
+        record = _read_json(cache / "lcb" / f"{_component(qid)}.json")
         files = build_base_files(
             run.problem_id,
             problems[run.problem_id],
@@ -1751,7 +1994,8 @@ def main(argv: list[str] | None = None) -> int:
         print(message, file=sys.stderr, flush=True)
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    args.cache_dir.mkdir(parents=True, exist_ok=True)
+    args.cache_dir = Path(os.path.abspath(args.cache_dir))
+    _mkdir(args.cache_dir)
     runs, prepared = prepare(args, manifest, log)
     if args.fetch_only:
         log(f"cache ready: {len(runs)} runs, {len(prepared['bases'])} base workspaces")
@@ -1815,13 +2059,11 @@ def main(argv: list[str] | None = None) -> int:
         "sources": {"evilgenie": manifest["sources"]["evilgenie"]["revision"]},
     }
     if args.records:
-        args.records.parent.mkdir(parents=True, exist_ok=True)
-        with args.records.open("w", encoding="utf-8") as fh:
+        with _atomic_output(args.records) as fh:
             for record in records:
-                fh.write(json.dumps(record, sort_keys=True) + "\n")
+                fh.write((json.dumps(record, sort_keys=True) + "\n").encode("utf-8"))
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        _write_text(args.output, json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2) if args.json else format_summary(summary))
     return 0
 
