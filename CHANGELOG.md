@@ -1,5 +1,17 @@
 ## Changelog
 
+## [4.47.0](https://github.com/duriantaco/skylos/compare/v4.46.0...v4.47.0) (2026-10-07)
+
+
+### Features
+
+* **agent:** report silenced checks and cut done-gate false blocks ([#949](https://github.com/duriantaco/skylos/issues/949)) ([a87069c](https://github.com/duriantaco/skylos/commit/a87069c819be712c8b631f3453ee95c2401fcedc))
+
+
+### Bug Fixes
+
+* **cloud:** upload even when the workspace has 0 credits ([#950](https://github.com/duriantaco/skylos/issues/950)) ([2d13c39](https://github.com/duriantaco/skylos/commit/2d13c39b3a04efb7ad928ba67cde46f4f9a6165a))
+
 ## [4.46.0](https://github.com/duriantaco/skylos/compare/v4.45.0...v4.46.0) (2026-10-06)
 
 
