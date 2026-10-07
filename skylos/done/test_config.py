@@ -135,6 +135,7 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
             for candidate in (f"{stem}.py", f"{stem}/__init__.py")
         )
 
+    existing = _ExistingTests(comparison)
     for changed in comparison.changed:
         head_path = changed.head_path
         if head_path is None:
@@ -152,8 +153,15 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
         head = comparison.head_text(head_path)
         if head is None:
             continue
+        # A brand-new config can only drop tests that already existed: one
+        # that leaves none of them out loosens nothing.
+        tests = (
+            existing.under(str(PurePosixPath(head_path).parent))
+            if base is None
+            else None
+        )
         if name == "pyproject.toml":
-            findings += _pyproject(head_path, base, head, local)
+            findings += _pyproject(head_path, base, head, local, tests)
         if name in _INI_FILES:
             base_options = (
                 _base_pytest_options(comparison)
@@ -161,7 +169,7 @@ def detect_loosened_test_config(comparison: Comparison) -> list[ConfigFinding]:
                 else None
             )
             findings += _pytest_ini(
-                head_path, base, head, _INI_FILES[name], local, base_options
+                head_path, base, head, _INI_FILES[name], local, base_options, tests
             )
         if name in _COVERAGE_INI_SECTIONS:
             findings += _coverage_ini(
@@ -182,13 +190,87 @@ def _is_workflow(path: str) -> bool:
     return path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
 
 
+class _ExistingTests:
+    """Python test files that existed at the base and still exist, relative
+    to a config file's directory: what a new collection setting can drop."""
+
+    def __init__(self, comparison: Comparison) -> None:
+        self.comparison = comparison
+        self._paths: list[str] | None = None
+
+    def under(self, directory: str) -> list[str] | None:
+        if self._paths is None:
+            listing = _git_text(
+                self.comparison._context,
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "-z",
+                self.comparison.base_sha,
+            )
+            if listing is None:
+                return None
+            gone = {
+                c.base_path
+                for c in self.comparison.changed
+                if c.status == "deleted" and c.base_path
+            }
+            moved = {
+                c.base_path: c.path
+                for c in self.comparison.changed
+                if c.status == "renamed" and c.base_path
+            }
+            self._paths = [
+                moved.get(path, path)
+                for path in listing.split("\0")
+                if path.endswith(".py")
+                and path not in gone
+                and _matches_any(
+                    PurePosixPath(path).name, _PYTEST_DEFAULT_COLLECTION["python_files"]
+                )
+            ]
+        if directory in {"", "."}:
+            return list(self._paths)
+        prefix = directory.rstrip("/") + "/"
+        return [p[len(prefix) :] for p in self._paths if p.startswith(prefix)]
+
+
+def _matches_any(name: str, patterns) -> bool:
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+
+
+def _in_directory(test: str, pattern: str) -> bool:
+    """A test file under a directory ``norecursedirs`` names (a basename
+    pattern, or a path pattern when it has a slash)."""
+    for parent in PurePosixPath(test).parents:
+        if str(parent) == ".":
+            continue
+        if "/" in pattern:
+            if fnmatch.fnmatchcase(str(parent), pattern) or fnmatch.fnmatchcase(
+                str(parent), "*/" + pattern
+            ):
+                return True
+        elif fnmatch.fnmatchcase(parent.name, pattern):
+            return True
+    return False
+
+
+def _dropped_by_testpaths(tests: list[str], head_paths, removed_paths) -> list[str]:
+    return [
+        test
+        for test in tests
+        if not any(_under_path(test, p) for p in head_paths)
+        and (not removed_paths or any(_under_path(test, p) for p in removed_paths))
+    ]
+
+
 # ---------------------------------------------------------------------------
 # pytest options
 # ---------------------------------------------------------------------------
 
 
 def _pyproject(
-    path: str, base: str | None, head: str, local: LocalModule
+    path: str, base: str | None, head: str, local: LocalModule, tests=None
 ) -> list[ConfigFinding]:
     head_data = _toml(head)
     if head_data is None:
@@ -200,6 +282,7 @@ def _pyproject(
         _toml_pytest_options(base_data),
         _toml_pytest_options(head_data),
         local,
+        tests,
     )
     findings += _compare_coverage(
         path,
@@ -211,7 +294,13 @@ def _pyproject(
 
 
 def _pytest_ini(
-    path, base, head, sections, local: LocalModule, base_options: dict | None = None
+    path,
+    base,
+    head,
+    sections,
+    local: LocalModule,
+    base_options: dict | None = None,
+    tests=None,
 ) -> list[ConfigFinding]:
     return _compare_pytest_options(
         path,
@@ -219,6 +308,7 @@ def _pytest_ini(
         _ini_options(base, sections) if base_options is None else base_options,
         _ini_options(head, sections),
         local,
+        tests,
     )
 
 
@@ -312,13 +402,27 @@ def _option_pairs(tokens: list[str]) -> set[tuple[str, str]]:
 
 
 def _compare_pytest_options(
-    path, head_text, base: dict, head: dict, local: LocalModule
+    path, head_text, base: dict, head: dict, local: LocalModule, tests=None
 ) -> list[ConfigFinding]:
+    """Settings that collect or run fewer tests. ``tests`` are the test files
+    that existed at the base, relative to the config's directory (None when
+    unknown): a path setting that leaves none of them out loosens nothing."""
     findings = []
+    default_files = _PYTEST_DEFAULT_COLLECTION["python_files"]
+    if set(base.get("python_files", default_files)) - set(default_files):
+        tests = None  # the existing tests were found by the default names
     line = _line_of(head_text, "addopts")
     base_pairs = _option_pairs(base.get("addopts", []))
     for flag, value in sorted(_option_pairs(head.get("addopts", [])) - base_pairs):
         what = None
+        if tests is not None and (
+            (flag == "--ignore" and not any(_under_path(t, value) for t in tests))
+            or (
+                flag == "--ignore-glob"
+                and not any(fnmatch.fnmatchcase(t, value) for t in tests)
+            )
+        ):
+            continue  # ignores a path that holds no existing test
         if flag in _SELECTION_FLAGS:
             what = _SELECTION_FLAGS[flag]
         elif flag == "-p" and value.startswith("no:"):
@@ -339,6 +443,8 @@ def _compare_pytest_options(
         - _PYTEST_DEFAULT_NORECURSE
     )
     for directory in sorted(added_dirs):
+        if tests is not None and not any(_in_directory(t, directory) for t in tests):
+            continue  # names no directory that holds an existing test
         findings.append(
             ConfigFinding(
                 path,
@@ -349,7 +455,16 @@ def _compare_pytest_options(
     base_paths = set(base.get("testpaths", []))
     head_paths = set(head.get("testpaths", []))
     removed_paths = base_paths - head_paths
-    if head_paths and (not base_paths or removed_paths):
+    if (
+        head_paths
+        and (not base_paths or removed_paths)
+        and (
+            tests is None
+            or _dropped_by_testpaths(
+                tests, head_paths, removed_paths if base_paths else ()
+            )
+        )
+    ):
         findings.append(
             ConfigFinding(
                 path,
@@ -364,6 +479,16 @@ def _compare_pytest_options(
     for key, defaults in _PYTEST_DEFAULT_COLLECTION.items():
         before = base.get(key, defaults)
         after = head.get(key, defaults)
+        if (
+            key == "python_files"
+            and tests is not None
+            and not any(
+                _matches_any(PurePosixPath(t).name, before)
+                and not _matches_any(PurePosixPath(t).name, after)
+                for t in tests
+            )
+        ):
+            continue  # every existing test file still matches
         if set(before) - set(after):
             findings.append(
                 ConfigFinding(
@@ -2007,11 +2132,16 @@ def _workflow(path: str, base: str | None, head: str) -> list[ConfigFinding]:
     if not head_steps:
         return []
     base_steps = _quiet_test_steps(base) if base else {}
+    base_runs = _test_step_runs(base) if base else {}
+    base_named = set(_test_step_runs(base, tests_only=False)) if base else set()
+    head_runs = _test_step_runs(head)
     findings = []
     for key, how in sorted(head_steps.items()):
         new = how - base_steps.get(key, set())
         if not new:
             continue
+        if key not in base_named and _added_step(key, base_runs, head_runs):
+            continue  # a new advisory step, not an existing check loosened
         job, step = key
         needle = "continue-on-error" if "continue-on-error" in new else None
         line = _line_of(head, needle) if needle else _first_swallow_line(head)
@@ -2026,7 +2156,56 @@ def _workflow(path: str, base: str | None, head: str) -> list[ConfigFinding]:
     return findings
 
 
+def _added_step(key, base_runs: dict, head_runs: dict) -> bool:
+    """A test step (or job) the base did not have: its commands are new, and
+    every test step the base job ran still runs. (The caller has checked
+    that no step or job of that name existed at the base.)"""
+    if key in base_runs:
+        return False
+    commands = head_runs.get(key, set())
+    if not commands or any(commands & runs for runs in base_runs.values()):
+        return False
+    job = key[0]
+    still_there = set().union(*head_runs.values()) if head_runs else set()
+    return all(
+        other in head_runs or runs <= still_there
+        for other, runs in base_runs.items()
+        if other[0] == job
+    )
+
+
+def _test_step_runs(
+    text: str | None, *, tests_only: bool = True
+) -> dict[tuple[str, str], set[str]]:
+    """Each test step (and each job with test steps, under step "") to the
+    commands it runs, whitespace collapsed; every step that runs a command
+    when ``tests_only`` is False."""
+    try:
+        data = yaml.safe_load(text or "")
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
+        return {}
+    runs: dict[tuple[str, str], set[str]] = {}
+    for job_id, job in data["jobs"].items():
+        steps = job.get("steps") if isinstance(job, dict) else None
+        for step in steps if isinstance(steps, list) else ():
+            if not (
+                isinstance(step, dict)
+                and isinstance(step.get("run"), str)
+                and (not tests_only or _TEST_STEP_RE.search(step["run"]))
+            ):
+                continue
+            command = " ".join(step["run"].split())
+            name = str(step.get("name") or step["run"].strip().splitlines()[0])[:80]
+            runs.setdefault((str(job_id), name), set()).add(command)
+            runs.setdefault((str(job_id), ""), set()).add(command)
+    return runs
+
+
 def _quiet_test_steps(text: str | None) -> dict[tuple[str, str], set[str]]:
+    from skylos.done.ci_checks import test_failure_swallowed
+
     try:
         data = yaml.safe_load(text or "")
     except yaml.YAMLError:
@@ -2057,7 +2236,7 @@ def _quiet_test_steps(text: str | None) -> dict[tuple[str, str], set[str]]:
             reasons = set()
             if _literal_true(step.get("continue-on-error")):
                 reasons.add("continue-on-error")
-            if _SWALLOW_RE.search(step["run"]):
+            if test_failure_swallowed(step["run"]):
                 reasons.add("failure swallowed in the script")
             if reasons:
                 quiet.setdefault(key, set()).update(reasons)

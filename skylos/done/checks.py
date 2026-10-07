@@ -281,6 +281,7 @@ def _status(findings: list[Finding]) -> str:
 
 
 def check_test_tampering(ctx: CheckContext) -> CheckResult:
+    from skylos.done.feature_removal import LostSubjects, SubjectRemoval
     from skylos.done.test_config import detect_loosened_test_config
 
     comparison = ctx.comparison
@@ -296,15 +297,17 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
     }
     diff = compare_inventories(base_tests, head_tests, renamed)
     removed_modules = _removed_modules(comparison)
+    subjects = SubjectRemoval(comparison)
     removal = FeatureRemoval(
-        comparison.base_text,
-        comparison.head_text,
+        subjects.base_text,
+        subjects.head_text,
         {
             item.base_path
             for item in comparison.changed
             if item.status == "deleted" and item.base_path
         },
         ctx._repository_paths()[0],
+        unused=subjects.stopped_using,
     )
     findings: list[Finding] = []
 
@@ -318,6 +321,7 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
             reason = "it uses a module that was deleted"
         else:
             reason = None
+        reason = reason or subjects.reason(test)
         if reason:
             findings.append(
                 Finding(
@@ -348,7 +352,24 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
                 f"had {gutted.before} at the base): it may no longer be able to fail",
             )
         )
+    lost = LostSubjects(base_tests, head_tests)
     for rewrite in diff.rewritten:
+        words = lost.of(rewrite) if rewrite.how == "in place" else None
+        words = subjects.still_in_code(words) if words else None
+        if words and not subjects.reason(rewrite.before):
+            findings.append(
+                Finding(
+                    RULE_DELETED_TEST,
+                    rewrite.after.path,
+                    rewrite.after.line,
+                    f"{rewrite.before.local_id} was overwritten in place by "
+                    f"{rewrite.after.local_id}, which tests something else: "
+                    "the code it tested is still there and no test at head uses "
+                    + ", ".join(repr(w) for w in sorted(words)[:3])
+                    + " any more",
+                )
+            )
+            continue
         findings.append(
             Finding(
                 RULE_DELETED_TEST,
@@ -434,6 +455,9 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
 
     weakened = _assertion_weakening(comparison, head_tests, diff.matched)
     findings += weakened
+    overwritten = sum(
+        f.blocking and "was overwritten in place" in f.message for f in findings
+    )
 
     blocking = [f for f in findings if f.blocking]
     status = _status(findings)
@@ -450,8 +474,10 @@ def check_test_tampering(ctx: CheckContext) -> CheckResult:
         evidence={
             "tests_compared": len(base_tests),
             "deleted": sum(f.rule == RULE_DELETED_TEST and f.blocking for f in findings)
-            - len(diff.gutted),
+            - len(diff.gutted)
+            - overwritten,
             "gutted": len(diff.gutted),
+            "overwritten": overwritten,
             "skipped": len(diff.newly_skipped),
             "focused": len(focused),
             "config_loosened": len(config_findings),
@@ -470,6 +496,8 @@ def _rewrite_message(rewrite: RewrittenTest) -> str:
         return f"{before.local_id} was renamed to {after.local_id} and edited"
     if rewrite.how == "moved":
         return f"{before.local_id} moved to {after.local_id} and was edited"
+    if rewrite.how == "merged":
+        return f"{before.local_id} was merged into {after.local_id}"
     return f"{before.local_id} was rewritten in place as {after.local_id}"
 
 
@@ -1130,6 +1158,77 @@ def check_test_special_casing(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# silenced_checks: A119 settings weakened, A121 CI weakened, A118 inline
+# suppressions (advice). Python, JS/TS, Go, Rust, Java/Kotlin, C#.
+# ---------------------------------------------------------------------------
+
+
+def check_silenced_checks(ctx: CheckContext) -> CheckResult:
+    from skylos.done.answer_sites import _is_generated, _is_test_code
+    from skylos.done.ci_checks import RULE_CI_CHECK, ci_weakening
+    from skylos.done.lint_config import RULE_LINT_CONFIG, detect_weakened_settings
+    from skylos.done.suppressions import new_suppressions
+
+    comparison = ctx.comparison
+    base_paths, head_paths, removed = ctx._repository_paths()
+    head_paths = [p for p in head_paths if p and p not in removed]
+
+    def is_test(path: str) -> bool:
+        return _is_test_code(path, set()) or path.endswith("_test.go")
+
+    findings = [
+        Finding(RULE_LINT_CONFIG, w.file, w.line, w.message, w.blocking)
+        for w in detect_weakened_settings(comparison, base_paths, head_paths, is_test)
+    ]
+    # Lint, type and scan steps; and test steps removed, disabled or quiet
+    # in ways the test check does not cover (quiet GitHub test steps are
+    # SKY-A112's).
+    findings += [
+        Finding(RULE_CI_CHECK, file, line, message)
+        for kind in ("check", "test")
+        for file, line, message in ci_weakening(comparison, kind)
+    ]
+    inline = new_suppressions(comparison, is_test, _is_generated)
+    findings += [
+        Finding(rule, file, line, message, blocking=blocking)
+        for rule, file, line, message, blocking in inline.findings
+    ]
+    blocking = [f for f in findings if f.blocking]
+    if blocking:
+        summary = (
+            f"{len(blocking)} change(s) weaken what a linter, type checker, "
+            "scanner or CI checks"
+        )
+    elif inline.added:
+        summary = (
+            f"No checks weakened; {inline.added} inline suppression(s) added, "
+            f"{inline.unexplained} without a reason"
+        )
+    else:
+        summary = "No linter, type-checker, scanner or CI settings weakened"
+    return CheckResult(
+        id="silenced_checks",
+        rule=next((f.rule for f in blocking), RULE_LINT_CONFIG),
+        status=_status(findings),
+        summary=summary,
+        evidence={
+            "settings_weakened": sum(
+                f.rule == RULE_LINT_CONFIG and f.blocking for f in findings
+            ),
+            "ci_weakened": sum(f.rule == RULE_CI_CHECK for f in findings),
+            "suppressions_added": inline.added,
+            "suppressions_no_reason": inline.unexplained,
+            "suppressions_whole_file": inline.whole_file,
+            "suppressions_in_tests": inline.in_tests,
+            "unused_var_tricks": inline.tricks,
+            "files_read": inline.files,
+            "summary": summary[:120],
+        },
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -1142,12 +1241,14 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "unknown_imports": (check_unknown_imports, "SKY-D222"),
     "changed_lines_checked": (_check_changed_lines, "SKY-A120"),
     "test_special_casing": (check_test_special_casing, "SKY-A115"),
+    "silenced_checks": (check_silenced_checks, "SKY-A119"),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
     "gate_tampering",
     "test_tampering",
     "test_special_casing",
+    "silenced_checks",
     "secrets",
     "unknown_imports",
     "tests_pass",

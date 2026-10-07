@@ -23,6 +23,7 @@ CHECK_IDS = (
     "unknown_imports",
     "changed_lines_checked",
     "test_special_casing",
+    "silenced_checks",
 )
 MODES = ("block", "advise", "shadow", "off")
 
@@ -41,6 +42,11 @@ DEFAULT_MODES = {
     # Code that answers the tests' exact inputs, detects the test run or
     # rigs its comparisons. Weaker signals inside it are advice.
     "test_special_casing": "block",
+    # Silenced linters, type checkers, scanners and CI. A study of 450 merged
+    # agent pull requests found no deliberate silencing, so it advises; with
+    # "block", weakened settings and CI block and inline suppressions stay
+    # advice.
+    "silenced_checks": "advise",
 }
 # Skylos's own settings and the agent hook files that run it. Not all of
 # .claude/ or .cursor/: skills and rules there are ordinary project files.

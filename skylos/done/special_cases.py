@@ -301,11 +301,20 @@ def find_special_cases(ctx) -> Outcome:
     loose = _loose_scripts(
         comparison, {p for p, _ in markers} | {s.path for s in sites}
     )
+    tooling = _repo_tooling(
+        comparison, {p for p, m in markers if m.key and m.key[0] == "reads"}
+    )
     for path, marker in markers:
         blocking = marker.blocking and path not in generated and path not in loose
         message = marker.message
         if marker.blocking and not blocking:
             message = f"(advice) {message} {_why_not(path, generated)}"
+        elif blocking and marker.key[0] == "reads" and path in tooling:
+            blocking = False
+            message = (
+                f"(advice) {message} (in repository tooling that checks the "
+                "tests, which no production code imports)"
+            )
         findings.append((marker.rule, path, marker.line, message, blocking))
 
     vocabulary = _Vocabulary(comparison, python_tests)
@@ -365,6 +374,57 @@ def _loose_scripts(comparison, paths: set[str]) -> set[str]:
         if not any(text and reference.search(text) for text in texts):
             loose.add(path)
     return loose
+
+
+# Repository tooling: validators and scripts that check the tests are meant to
+# read them.
+_TOOLING_DIRS = frozenset(
+    {"scripts", "script", "tools", "tooling", "bin", ".github", "ci", ".ci", "hack"}
+)
+_CHECKER_NAME_RE = re.compile(r"^(?:validate|verify|check|lint|audit)[-_.]", re.I)
+_CODE_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
+
+
+def _is_tooling_path(path: str) -> bool:
+    pure = PurePosixPath(path)
+    return bool(_TOOLING_DIRS.intersection(pure.parts[:-1])) or bool(
+        _CHECKER_NAME_RE.match(pure.name)
+    )
+
+
+def _repo_tooling(comparison, paths: set[str]) -> set[str]:
+    """Paths among ``paths`` that are repository tooling (under scripts/,
+    tools/, bin/, .github/, ... or named validate-*/check-*/verify-*) and
+    that no production code imports or names: a checker, not code the
+    tests exercise."""
+    tooling = set()
+    for path in sorted(p for p in paths if _is_tooling_path(p)):
+        stem = PurePosixPath(path).name.split(".")[0]
+        holders = _grep(comparison, [stem], None)
+        if holders is None:
+            continue  # Git could not say: keep the finding
+        holders |= {
+            c.head_path
+            for c in comparison.changed
+            if c.head_path and c.head_path != path
+        }
+        reference = _reference_pattern(path)
+        production = [
+            holder
+            for holder in sorted(holders)
+            if holder != path
+            and holder.endswith(_CODE_SUFFIXES)
+            and not _is_tooling_path(holder)
+            and not _is_test_code(holder, set())
+        ]
+        if not any(
+            reference.search(
+                comparison.head_text(holder) or comparison.base_text(holder) or ""
+            )
+            for holder in production[:50]
+        ):
+            tooling.add(path)
+    return tooling
 
 
 def _reference_pattern(path: str) -> re.Pattern:

@@ -38,7 +38,7 @@ from collections.abc import Callable
 from pathlib import PurePosixPath
 
 from skylos.done.base import Comparison, _git_text
-from skylos.done.js_inventory import JS_SUFFIXES
+from skylos.done.js_inventory import JS_SUFFIXES, is_js_test_file
 
 _JEST_CONFIGS = tuple(
     f"jest.config.{ext}" for ext in ("js", "ts", "mjs", "cjs", "mts", "cts", "json")
@@ -126,7 +126,7 @@ def detect_loosened_js_test_config(comparison: Comparison) -> list:
         for path, line, message in (
             *_jest(comparison, directory, files),
             *_vitest(comparison, directory, files),
-            *_scripts(comparison, directory),
+            *_scripts(comparison, directory, files),
         ):
             findings.append(ConfigFinding(path, line, message))
     return findings
@@ -826,7 +826,7 @@ def _split_top(text: str, separator: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _scripts(comparison: Comparison, directory: str):
+def _scripts(comparison: Comparison, directory: str, files: _Files | None = None):
     path = posixpath.join(directory, "package.json")
     head_text = comparison.head_text(path)
     head = _json_object(head_text) if head_text is not None else None
@@ -844,8 +844,9 @@ def _scripts(comparison: Comparison, directory: str):
     for name, script in after.items():
         if not isinstance(script, str):
             continue
-        # A new test:* script runs only if something calls it; "test" always does.
-        if not (name == "test" or (name.startswith("test:") and name in before)):
+        # A new test:* script runs only if something calls it; "test" always
+        # does, but a "test" script the base did not have ran nothing before.
+        if name not in before or not (name == "test" or name.startswith("test:")):
             continue
         old = before.get(name) if isinstance(before.get(name), str) else ""
         line = _line_of(head_text, f'"{name}"')
@@ -883,9 +884,108 @@ def _scripts(comparison: Comparison, directory: str):
                 )
             )
             continue
-        for what in _narrowed(old_runs.calls, new_runs.calls):
+        for what, runner, flag, value in _narrowed(old_runs.calls, new_runs.calls):
+            dropped = _script_drops(files, directory, runner, flag, value)
+            if dropped is not None and not dropped:
+                continue  # the filter leaves out no test file that existed
+            if dropped and _run_elsewhere(comparison, after, name, runner, flag, value):
+                continue  # those tests run in their own CI step
             findings.append((path, line, f"package.json script {name!r} now {what}"))
     return findings
+
+
+# Filters a script can add that leave test files out, by runner: how each
+# one's value matches a test file path ("regex", "glob", "substring"), and
+# whether a matching file is kept ("keep") or left out ("drop").
+_PATH_FILTERS = {
+    ("jest", "--testPathIgnorePatterns"): ("regex", "drop"),
+    ("jest", "--testPathPattern"): ("regex", "keep"),
+    ("jest", "--testPathPatterns"): ("regex", "keep"),
+    ("jest", "paths"): ("regex", "keep"),
+    ("vitest", "--exclude"): ("glob", "drop"),
+    ("vitest", "paths"): ("substring", "keep"),
+    ("mocha", "--ignore"): ("glob", "drop"),
+    ("mocha", "--exclude"): ("glob", "drop"),
+    ("mocha", "paths"): ("glob", "keep"),
+}
+
+
+def _script_drops(files, directory, runner, flag, value) -> list[str] | None:
+    """Test files that existed at the base and the new filter leaves out;
+    None when the filter cannot be evaluated against the repository."""
+    how = _PATH_FILTERS.get((runner, flag))
+    if files is None or not files.known or how is None:
+        return None
+    syntax, effect = how
+    patterns = list(value) if isinstance(value, tuple) else [value]
+    matchers = []
+    for pattern in patterns:
+        if syntax == "regex":
+            compiled = _js_regex(pattern)
+        elif syntax == "glob":
+            compiled = _glob(pattern if "/" in pattern else "**/" + pattern)
+        else:
+            compiled = re.compile(re.escape(pattern))
+        if compiled is None:
+            return None
+        matchers.append(compiled)
+    existing = [
+        path
+        for path in files.paths
+        if _under(path, directory)
+        and path not in files.gone
+        and is_js_test_file(path)
+        and not files._exempt(path)
+    ]
+    if not existing:
+        return None  # no test file to check the filter against
+    dropped = []
+    for path in existing:
+        relative = path[len(directory) + 1 :] if directory else path
+        target = relative if syntax == "glob" else "/" + relative
+        if any(m.search(target) for m in matchers) == (effect == "drop"):
+            dropped.append(path)
+    return dropped
+
+
+def _run_elsewhere(comparison, scripts: dict, name, runner, flag, value) -> bool:
+    """An ignore filter whose files another package.json script selects
+    (``"test:integration": "jest --testPathPattern=integration"``), and a CI
+    workflow at head runs that script: the tests moved to their own step."""
+    if _PATH_FILTERS.get((runner, flag), ("", ""))[1] != "drop":
+        return False
+    selectors = [
+        other
+        for other, script in scripts.items()
+        if other != name
+        and isinstance(script, str)
+        and isinstance(value, str)
+        and value in script
+        and _RUN_SCRIPT_RE.search(script) is None
+    ]
+    if not selectors:
+        return False
+    for changed in comparison.changed:
+        head_path = changed.head_path or ""
+        if not (
+            head_path.startswith(".github/workflows/")
+            and head_path.endswith((".yml", ".yaml"))
+        ):
+            continue
+        text = comparison.head_text(head_path) or ""
+        for other in selectors:
+            invoke = re.compile(
+                r"\b(?:npm\s+run|yarn(?:\s+run)?|pnpm(?:\s+run)?|bun\s+run)\s+"
+                + re.escape(other)
+                + r"(?![\w:-])"
+            )
+            if invoke.search(text):
+                return True
+    return False
+
+
+# A script that runs the ignored files only when nothing else excludes them.
+_RUN_SCRIPT_RE = re.compile(r"--testPathIgnorePatterns|--exclude|--ignore\b")
 
 
 # Per runner: options that take a value, and the options that select fewer
@@ -1287,9 +1387,10 @@ def _fallbacks(script: str) -> int:
     return count
 
 
-def _narrowed(before: list, after: list) -> list[str]:
+def _narrowed(before: list, after: list) -> list[tuple[str, str, str, object]]:
     """Filters the runners in ``after`` apply that ``before`` did not, as
-    "selects tests by name (-t) 'x'"; new or removed test-path arguments."""
+    ("selects tests by name (-t) 'x'", runner, flag, value); new or removed
+    test-path arguments as flag "paths" with a tuple of paths."""
     messages = []
     for runner in dict.fromkeys(name for name, _ in after):
         old_flags, old_paths = _filters(runner, before)
@@ -1297,18 +1398,28 @@ def _narrowed(before: list, after: list) -> list[str]:
         descriptions = _RUNNER_OPTIONS.get(runner, (frozenset(), {}))[1]
         for flag, value in sorted(new_flags - old_flags):
             shown = f" {value!r}" if value else ""
-            messages.append(f"{descriptions[flag]}{shown}")
+            messages.append((f"{descriptions[flag]}{shown}", runner, flag, value))
         if any(flag in {"--findRelatedTests", "related"} for flag, _ in new_flags):
             continue  # the paths name source files, reported with the option
         if new_paths and not old_paths:
             messages.append(
-                "runs only test files matching "
-                + ", ".join(repr(p) for p in sorted(new_paths))
+                (
+                    "runs only test files matching "
+                    + ", ".join(repr(p) for p in sorted(new_paths)),
+                    runner,
+                    "paths",
+                    tuple(sorted(new_paths)),
+                )
             )
         elif new_paths and old_paths - new_paths:
             messages.append(
-                "no longer runs test files matching "
-                + ", ".join(repr(p) for p in sorted(old_paths - new_paths))
+                (
+                    "no longer runs test files matching "
+                    + ", ".join(repr(p) for p in sorted(old_paths - new_paths)),
+                    runner,
+                    None,
+                    None,
+                )
             )
     return messages
 
