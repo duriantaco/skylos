@@ -193,7 +193,7 @@ _SOURCE_DIRECTORIES = frozenset({"src", "lib", "app", "server", "services"})
 
 
 def is_word_slug(token: str) -> bool:
-    """``What-is-the-build-volume-of-the-Form-3L``, ``INTRA-001-amendment-v2``:
+    """``build-guide-v2``, ``TEAM-001-v2``:
     three or more short, word-shaped parts. A random token has long mixed
     parts between its separators."""
     parts = [part for part in re.split(r"[-_]+", token) if part]
