@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.46.0](https://github.com/duriantaco/skylos/compare/v4.45.0...v4.46.0) (2026-10-06)
+
+
+### Features
+
+* **agent:** block code that special-cases the tests in the done gate ([#943](https://github.com/duriantaco/skylos/issues/943)) ([db69589](https://github.com/duriantaco/skylos/commit/db69589d1dd2d63d6a4037207ea9922f9700518b))
+* **ci:** generate a working gated-PR workflow with skylos cicd init ([#944](https://github.com/duriantaco/skylos/issues/944)) ([7bf292c](https://github.com/duriantaco/skylos/commit/7bf292c786b0259676deb14d11d1a7a2d1ff7dc3))
+
+
+### Bug Fixes
+
+* **scan:** resolve dead-code references by language and method owner ([#946](https://github.com/duriantaco/skylos/issues/946)) ([b8be9c4](https://github.com/duriantaco/skylos/commit/b8be9c4400d696b7abd5c81e13d98c11a76f618a))
+
 ## [4.45.0](https://github.com/duriantaco/skylos/compare/v4.44.0...v4.45.0) (2026-10-05)
 
 
