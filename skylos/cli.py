@@ -93,6 +93,7 @@ from skylos.ui.rich_report import (
 )
 
 from rich.console import Console
+from rich.markup import escape as _escape_markup
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress as Progress
@@ -3123,7 +3124,9 @@ def _run_pre_analysis_steps(args, project_root, console):
                     )
         except Exception as e:
             if args.verbose:
-                console.print(f"[warn]Could not load custom rules: {e}[/warn]")
+                console.print(
+                    f"[warn]Could not load custom rules: {_escape_markup(str(e))}[/warn]"
+                )
 
     changed_files = None
     if getattr(args, "diff_base", None):
@@ -3468,10 +3471,15 @@ def _explicit_prompt_templates_from_args(agent_args, console):
         try:
             resolved = path.resolve(strict=True)
         except OSError:
-            console.print(f"[bad]Prompt template not found: {raw_path}[/bad]")
+            console.print(
+                f"[bad]Prompt template not found: {_escape_markup(str(raw_path))}[/bad]"
+            )
             sys.exit(2)
         if not resolved.is_file():
-            console.print(f"[bad]Prompt template is not a file: {raw_path}[/bad]")
+            console.print(
+                "[bad]Prompt template is not a file: "
+                f"{_escape_markup(str(raw_path))}[/bad]"
+            )
             sys.exit(2)
 
         templates[kind] = str(resolved)
@@ -4054,9 +4062,13 @@ def main() -> None:
 
             def _print_agent_table(state, limit):
                 rendered = render_status_table(state, limit=limit)
-                console.print(f"[bold]{rendered['headline']}[/bold]")
+                console.print(
+                    f"[bold]{_escape_markup(str(rendered['headline']))}[/bold]"
+                )
                 if rendered["subtitle"]:
-                    console.print(f"[dim]{rendered['subtitle']}[/dim]")
+                    console.print(
+                        f"[dim]{_escape_markup(str(rendered['subtitle']))}[/dim]"
+                    )
 
                 actions = rendered["actions"]
                 if not actions:
@@ -4074,11 +4086,13 @@ def main() -> None:
                 for idx, action in enumerate(actions[:limit], 1):
                     table.add_row(
                         str(idx),
-                        str(action.get("severity", "")),
-                        str(action.get("category", "")),
-                        str(action.get("title", "")),
-                        f"{action.get('file', '?')}:{action.get('line', '?')}",
-                        str(action.get("reason", "")),
+                        _escape_markup(str(action.get("severity", ""))),
+                        _escape_markup(str(action.get("category", ""))),
+                        _escape_markup(str(action.get("title", ""))),
+                        _escape_markup(
+                            f"{action.get('file', '?')}:{action.get('line', '?')}"
+                        ),
+                        _escape_markup(str(action.get("reason", ""))),
                     )
                 console.print(table)
 
@@ -4724,7 +4738,9 @@ def main() -> None:
                 console.print(
                     f"[bold]Skylos Agent API[/bold] listening on http://{address[0]}:{address[1]}"
                 )
-                console.print(f"[dim]Repo:[/dim] {agent_args.path}")
+                console.print(
+                    f"[dim]Repo:[/dim] {_escape_markup(str(agent_args.path))}"
+                )
                 console.print("[dim]Auth header:[/dim] X-Skylos-Agent-Token")
                 console.print(f"[dim]Session token:[/dim] {token}")
                 try:
@@ -4779,7 +4795,9 @@ def main() -> None:
 
             audit_path = pathlib.Path(agent_args.path)
             if not audit_path.exists():
-                console.print(f"[bad]Path not found: {audit_path}[/bad]")
+                console.print(
+                    f"[bad]Path not found: {_escape_markup(str(audit_path))}[/bad]"
+                )
                 sys.exit(1)
 
             changed_files = None
@@ -5089,7 +5107,10 @@ def main() -> None:
                         f"  Uncertain verdicts: {revalidation_summary.uncertain}"
                     )
                 if ci_summary is not None:
-                    console.print(f"[brand]Deep audit CI:[/brand] {ci_summary.reason}")
+                    console.print(
+                        "[brand]Deep audit CI:[/brand] "
+                        f"{_escape_markup(str(ci_summary.reason))}"
+                    )
                 console.print(f"  Store: {store.project_dir}")
                 if workflow := payload.get("workflow"):
                     _print_security_deep_workflow(console, workflow)
@@ -5155,7 +5176,9 @@ def main() -> None:
             if getattr(agent_args, "security", False):
                 path = pathlib.Path(agent_args.path)
                 if not path.exists():
-                    console.print(f"[bad]Path not found: {path}[/bad]")
+                    console.print(
+                        f"[bad]Path not found: {_escape_markup(str(path))}[/bad]"
+                    )
                     sys.exit(1)
 
                 if path.is_file():
@@ -5270,7 +5293,7 @@ def main() -> None:
 
             path = pathlib.Path(agent_args.path)
             if not path.exists():
-                console.print(f"[bad]Path not found: {path}[/bad]")
+                console.print(f"[bad]Path not found: {_escape_markup(str(path))}[/bad]")
                 sys.exit(1)
 
             project_root = find_project_root(path)
@@ -5372,7 +5395,14 @@ def main() -> None:
                         file_rel = f.get("file", "?")
                         loc = f"{file_rel}:{f.get('line', '?')}"
 
-                        table.add_row(str(i), conf_style, source, cat, msg, loc)
+                        table.add_row(
+                            str(i),
+                            conf_style,
+                            _escape_markup(str(source)),
+                            _escape_markup(str(cat)),
+                            _escape_markup(str(msg)),
+                            _escape_markup(loc),
+                        )
 
                     console.print(table)
                 else:

@@ -4,6 +4,8 @@ from contextlib import nullcontext, redirect_stdout
 from types import ModuleType
 from typing import Sequence
 
+from rich.markup import escape
+
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
 
@@ -319,30 +321,34 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             machine_output or getattr(args, "format", "rich") == "pretty"
         )
 
-        if quiet_analysis_output:
-            analyzer_logger = logging.getLogger("Skylos")
-            analyzer_logger_level = analyzer_logger.level
+        # The analyzer logs progress ("Analyzing 7 files...") at INFO through
+        # the root logger, timestamps included; only --verbose shows it.
+        analyzer_logger = logging.getLogger("Skylos")
+        analyzer_logger_level = analyzer_logger.level
+        if quiet_analysis_output or not getattr(args, "verbose", False):
             analyzer_logger.setLevel(logging.WARNING)
-            try:
+        try:
+            if quiet_analysis_output:
                 with redirect_stdout(sys.stderr) if gitlab_output else nullcontext():
                     result_json = run_main_analysis_with_notice()
-            finally:
-                analyzer_logger.setLevel(analyzer_logger_level)
-        else:
-            with Progress(
-                SpinnerColumn(style="brand"),
-                TextColumn("[brand]Skylos[/brand] {task.description}"),
-                transient=True,
-                console=console,
-            ) as progress:
-                task = progress.add_task("analyzing..", total=None)
+            else:
+                with Progress(
+                    SpinnerColumn(style="brand"),
+                    TextColumn("[brand]Skylos[/brand] {task.description}"),
+                    transient=True,
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("analyzing..", total=None)
 
-                def update_progress(current, total, file):
-                    progress.update(
-                        task, description=f"[{current}/{total}] {file.name}"
-                    )
+                    def update_progress(current, total, file):
+                        progress.update(
+                            task,
+                            description=f"[{current}/{total}] {escape(file.name)}",
+                        )
 
-                result_json = run_main_analysis_with_notice(update_progress)
+                    result_json = run_main_analysis_with_notice(update_progress)
+        finally:
+            analyzer_logger.setLevel(analyzer_logger_level)
 
         result = json.loads(result_json)
 
@@ -611,9 +617,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     )
                 else:
                     msg = vresp.get("error") or "Verification unavailable."
-                    console.print(f"[warn]{msg}[/warn]")
+                    console.print(f"[warn]{escape(str(msg))}[/warn]")
             except Exception as e:
-                console.print(f"[warn]Verification failed: {e}[/warn]")
+                console.print(f"[warn]Verification failed: {escape(str(e))}[/warn]")
 
         prov_report = None
         result["provenance"] = None
@@ -1348,7 +1354,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 else "[bad]Scan did not pass --strict; Cloud upload was not started.[/bad]"
             )
             for reason in reasons:
-                console.print(f"[warn]{reason}[/warn]")
+                console.print(f"[warn]{escape(str(reason))}[/warn]")
             if reasons and result.get("analysis_errors"):
                 from skylos.ui.rich_report import _render_analysis_errors
 
@@ -1436,8 +1442,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             else:
                 style = "bold red"
 
-            console.print(f" [{style}]{status}[/{style}] {item['name']}")
-            console.print(f"    └─ {item['file']}:{item['line']}")
+            console.print(
+                f" [{style}]{escape(str(status))}[/{style}] {escape(str(item['name']))}"
+            )
+            console.print(f"    └─ {escape(str(item['file']))}:{item['line']}")
 
     if args.upload and not args.json:
         from skylos.api import get_project_token as _check_token

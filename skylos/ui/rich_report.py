@@ -270,7 +270,7 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
         s_str = f"[{s_style}]{s_val}[/{s_style}]"
         l_str = f"[{s_style}]{l_val}[/{s_style}]"
 
-        grade_table.add_row(display_name, s_str, l_str, w_pct, issue)
+        grade_table.add_row(display_name, s_str, l_str, w_pct, escape(issue))
 
     console.print(grade_table)
     badge_url = generate_badge_url(overall["letter"], o_score)
@@ -333,9 +333,9 @@ def _render_unused(console: Console, root_path, limit, title, items, name_key="n
 
     show, overflow = _display_cap(items, limit)
     for i, item in enumerate(show, 1):
-        nm = item.get(name_key) or item.get("simple_name") or "<?>"
+        nm = escape(str(item.get(name_key) or item.get("simple_name") or "<?>"))
         short = _shorten_path(item.get("file"), root_path)
-        loc = f"{short}:{item.get('line', '?')}"
+        loc = escape(f"{short}:{item.get('line', '?')}")
         conf_str = _format_confidence(item.get("confidence", "?"))
         row = [str(i), nm, loc, conf_str]
         if has_why:
@@ -374,9 +374,9 @@ def _render_unused_simple(
 
     show, overflow = _display_cap(items, limit)
     for i, item in enumerate(show, 1):
-        nm = item.get(name_key) or item.get("simple_name") or "<?>"
+        nm = escape(str(item.get(name_key) or item.get("simple_name") or "<?>"))
         short = _shorten_path(item.get("file"), root_path)
-        loc = f"{short}:{item.get('line', '?')}"
+        loc = escape(f"{short}:{item.get('line', '?')}")
         table.add_row(str(i), nm, loc)
 
     console.print(table)
@@ -484,7 +484,7 @@ def _render_quality(console: Console, limit, items):
         "[muted]  • Nesting — how deeply indented the code is (depth count)[/muted]\n"
         "[muted]  • Structure — line count of a function or argument count[/muted]\n"
         "[muted]  • Duplicate strings — how many times a literal appears[/muted]\n"
-        '[muted]  • "max N" / "(max N)" — the configured threshold; tune in [tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
+        '[muted]  • "max N" / "(max N)" — the configured threshold; tune in \\[tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
         + _RESULTS_DOCS_LINK
     )
 
@@ -508,7 +508,13 @@ def _render_circular_deps(console: Console, limit, items):
         length = str(cd.get("cycle_length", len(cycle)))
         sev = cd.get("severity", "MEDIUM")
         suggested = cd.get("suggested_break", "?")
-        table.add_row(str(i), cycle_str, length, sev, suggested)
+        table.add_row(
+            str(i),
+            escape(cycle_str),
+            escape(length),
+            escape(str(sev)),
+            escape(str(suggested)),
+        )
 
     console.print(table)
     if overflow:
@@ -545,7 +551,9 @@ def _render_custom_rules(console: Console, root_path, limit, items):
         msg = d.get("message") or "Custom rule violation"
         short = _shorten_path(d.get("file"), root_path)
         loc = f"{short}:{d.get('line', '?')}"
-        table.add_row(str(i), rule, sev, msg, loc)
+        table.add_row(
+            str(i), escape(str(rule)), escape(str(sev)), escape(str(msg)), escape(loc)
+        )
 
     console.print(table)
     if overflow:
@@ -579,12 +587,18 @@ def _render_secrets(console: Console, root_path, limit, items):
         prev = s.get("preview") or "****"
         short = _shorten_path(s.get("file"), root_path)
         loc = f"{short}:{s.get('line', '?')}"
-        row = [str(i), prov, msg, prev, loc]
+        row = [
+            str(i),
+            escape(str(prov)),
+            escape(str(msg)),
+            escape(str(prev)),
+            escape(loc),
+        ]
 
         if has_provenance:
             if s.get("ai_authored"):
                 agent = s.get("ai_agent") or "ai"
-                row.append(f"[red]{agent}[/red]")
+                row.append(f"[red]{escape(str(agent))}[/red]")
             else:
                 row.append("[muted]-[/muted]")
 
@@ -612,7 +626,7 @@ def _render_result_tree(console: Console, result, root_path=None):
                 continue
             line = u.get("line") or u.get("lineno") or 1
             name = u.get("name") or u.get("simple_name") or "<?>"
-            msg = f"Unused {kind}: {name}"
+            msg = f"Unused {kind}: {escape(str(name))}"
             by_file[file].append((line, "info", msg))
 
     def _add_findings(items, kind, default_sev="medium"):
@@ -623,9 +637,9 @@ def _render_result_tree(console: Console, result, root_path=None):
             line = f.get("line") or 1
             sev = (f.get("severity") or default_sev).lower()
             rule = f.get("rule_id")
-            msg = f.get("message") or kind
+            msg = escape(str(f.get("message") or kind))
             if rule:
-                msg = f"[{rule}] {msg}"
+                msg = f"{escape(f'[{rule}]')} {msg}"
             by_file[file].append((line, sev, msg))
 
     _add_unused(result.get("unused_functions"), "function")
@@ -656,11 +670,11 @@ def _render_result_tree(console: Console, result, root_path=None):
         return
 
     root_label = str(root_path) if root_path is not None else "Skylos results"
-    tree = Tree(f"[brand]{root_label}[/brand]")
+    tree = Tree(f"[brand]{escape(root_label)}[/brand]")
 
     for file in sorted(by_file.keys()):
         short = _shorten_path(file, root_path)
-        file_node = tree.add(f"[bold]{short}[/bold]")
+        file_node = tree.add(f"[bold]{escape(short)}[/bold]")
 
         for line, sev, msg in sorted(by_file[file], key=lambda t: t[0]):
             if sev == "high" or sev == "critical":
@@ -669,7 +683,7 @@ def _render_result_tree(console: Console, result, root_path=None):
                 style = "warn"
             else:
                 style = "muted"
-            file_node.add(f"[{style}]L{line}[/{style}] {msg}")
+            file_node.add(f"[{style}]L{escape(str(line))}[/{style}] {msg}")
 
     console.print(tree)
 
@@ -812,24 +826,31 @@ def _render_danger(
     for i, d in enumerate(show, 1):
         rule_id = d.get("rule_id") or "UNKNOWN"
         issue_name = _display_rule_name(rule_id)
-        issue_cell = f"{issue_name}\n[dim]{rule_id}[/dim]"
+        issue_cell = f"{escape(str(issue_name))}\n[dim]{escape(str(rule_id))}[/dim]"
         sev = (d.get("severity") or "UNKNOWN").title()
         msg = d.get("message") or "Issue detected"
         short = _shorten_path(d.get("file"), root_path)
         loc = f"{short}:{d.get('line', '?')}"
         symbol = d.get("symbol") or "<module>"
-        row = [str(i), issue_cell, sev, msg, loc, symbol]
+        row = [
+            str(i),
+            issue_cell,
+            escape(sev),
+            escape(str(msg)),
+            escape(loc),
+            escape(str(symbol)),
+        ]
 
         if has_provenance:
             if d.get("ai_authored"):
                 agent = d.get("ai_agent") or "ai"
-                row.append(f"[red]{agent}[/red]")
+                row.append(f"[red]{escape(str(agent))}[/red]")
             else:
                 row.append("[muted]-[/muted]")
 
         if has_verification:
             ver = (d.get("verification") or {}).get("verdict")
-            row.extend([_verification_label(ver), _verification_proof(d)])
+            row.extend([_verification_label(ver), escape(_verification_proof(d))])
 
         table.add_row(*row)
 
@@ -894,7 +915,15 @@ def _render_sca(console: Console, limit, items):
             reach = "[yellow]Inconclusive[/yellow]"
         else:
             reach = "[dim]-[/dim]"
-        table.add_row(str(i), pkg, vuln_id, sev, reach, msg, fix)
+        table.add_row(
+            str(i),
+            escape(pkg),
+            escape(str(vuln_id)),
+            escape(sev),
+            reach,
+            escape(str(msg)),
+            escape(str(fix)),
+        )
 
     console.print(table)
     if overflow:

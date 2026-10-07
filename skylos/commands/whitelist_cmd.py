@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 
 from skylos.config import load_config
 
@@ -23,13 +24,13 @@ def run_whitelist(pattern=None, reason=None, show=False):
         if names:
             console.print("[dim]names:[/dim]")
             for name in names:
-                console.print(f"  • {name}")
+                console.print(f"  • {escape(str(name))}")
 
         documented = cfg.get("whitelist_documented", {})
         if documented:
             console.print("\n[dim]documented:[/dim]")
             for name, rule_reason in documented.items():
-                console.print(f"  • {name} → {rule_reason}")
+                console.print(escape(f"  • {name} → {rule_reason}"))
 
         temporary = cfg.get("whitelist_temporary", {})
         if temporary:
@@ -37,7 +38,9 @@ def run_whitelist(pattern=None, reason=None, show=False):
             for name, conf in temporary.items():
                 rule_reason = conf.get("reason", "")
                 expires = conf.get("expires", "")
-                console.print(f"  • {name} → {rule_reason} (expires: {expires})")
+                console.print(
+                    escape(f"  • {name} → {rule_reason} (expires: {expires})")
+                )
 
         if not any([names, documented, temporary]):
             console.print("[muted]No whitelist entries yet.[/muted]")
@@ -64,7 +67,9 @@ def run_whitelist(pattern=None, reason=None, show=False):
             content += (
                 f'\n[tool.skylos.whitelist.documented]\n"{pattern}" = "{reason}"\n'
             )
-        console.print(f"[good]✓ Added '{pattern}' to whitelist.documented[/good]")
+        console.print(
+            f"[good]✓ Added '{escape(str(pattern))}' to whitelist.documented[/good]"
+        )
     else:
         match = re.search(
             r"(\[tool\.skylos\.whitelist\][^\[]*?)(names\s*=\s*\[)", content, re.DOTALL
@@ -80,7 +85,9 @@ def run_whitelist(pattern=None, reason=None, show=False):
             )
         else:
             content += f'\n[tool.skylos.whitelist]\nnames = [\n    "{pattern}",\n]\n'
-        console.print(f"[good]✓ Added '{pattern}' to whitelist.names[/good]")
+        console.print(
+            f"[good]✓ Added '{escape(str(pattern))}' to whitelist.names[/good]"
+        )
 
     path.write_text(content, encoding="utf-8")
     console.print("[muted]Run 'skylos whitelist --show' to see all entries[/muted]")
