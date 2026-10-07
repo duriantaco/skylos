@@ -419,7 +419,7 @@ Every request of one
 upload, including its retries, the large-scan `init`/`complete` calls and later
 resends, carries the same `Idempotency-Key` (a UUID v4) plus
 `X-Skylos-Upload-Contract: 1` and `X-Skylos-Cli-Version`, so Cloud can tell a
-retry from a new scan and never saves or charges it twice. Falling back from
+retry from a new scan and never saves it twice. Falling back from
 the large-scan path to the compact inline upload is a different request and
 gets a new key. When Cloud answers `Idempotent-Replayed: true`
 the CLI prints `Scan was already saved by an earlier attempt`.
@@ -428,7 +428,7 @@ the CLI prints `Scan was already saved by an earlier attempt`.
 to support, never as a raw response body:
 
 ```text
-Upload failed: No credits remaining. Buy more at skylos.dev/dashboard/billing, then upload again.
+Upload failed: Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.
 Upload failed: Skylos Cloud had a temporary problem (HTTP 503). The scan was saved; run 'skylos upload --retry' to send it. (ref: req_8f2c)
 ```
 

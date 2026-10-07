@@ -298,7 +298,7 @@ COMMANDS = [
         "desc": "Resend scans whose upload to Skylos Cloud did not finish",
         "details": [
             "Scans are saved in ~/.skylos/pending-uploads/ (signed, outside the repository) after a network error, timeout, server error, rate limit or interrupted upload",
-            "Each scan is resent with its original idempotency key, so Cloud never saves or charges it twice",
+            "Each scan is resent with its original idempotency key, so Cloud never saves it twice",
             "Use skylos upload --list to see saved scans; they expire after 7 days",
         ],
         "group": "Account",
