@@ -6,6 +6,8 @@ import pathlib
 from pathlib import Path
 from concurrent.futures import as_completed
 
+from rich.markup import escape
+
 from skylos.config import load_config
 from skylos.core.file_discovery import discover_source_files
 from skylos.llm.repo_activation import build_repo_activation_index
@@ -443,10 +445,12 @@ def run_pipeline(
 
     path = pathlib.Path(path)
     if not path.exists():
-        console.print(f"[bad]Path not found: {path}[/bad]")
+        console.print(f"[bad]Path not found: {escape(str(path))}[/bad]")
         sys.exit(1)
     if path.is_symlink():
-        console.print(f"[warn]Skipping symlinked pipeline path: {path}[/warn]")
+        console.print(
+            f"[warn]Skipping symlinked pipeline path: {escape(str(path))}[/warn]"
+        )
         return []
     root = path.resolve() if path.is_dir() else path.parent.resolve()
     try:
@@ -819,7 +823,9 @@ def run_pipeline(
                 api_ok, api_message = dead_code_agent.healthcheck()
 
                 if not api_ok:
-                    console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
+                    console.print(
+                        f"[bad]✗ LLM API test failed:[/bad] {escape(str(api_message))}"
+                    )
                     console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
                     console.print(
                         "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
@@ -828,9 +834,11 @@ def run_pipeline(
                     _2a_state["failed"] = True
                     dead_code_agent = None
                 else:
-                    console.print(f"[good]✓[/good] {api_message}")
+                    console.print(f"[good]✓[/good] {escape(str(api_message))}")
         except Exception as e:
-            console.print(f"[warn]LLM verification setup failed: {e}[/warn]")
+            console.print(
+                f"[warn]LLM verification setup failed: {escape(str(e))}[/warn]"
+            )
             skip_2a = True
             _2a_state["failed"] = True
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from rich.console import Console
+from rich.markup import escape
 from rich.prompt import Confirm, Prompt
 
 
@@ -61,7 +62,10 @@ def run_cmd(cmd_list, error_msg="Git command failed"):
         result = subprocess.run(cmd_list, check=True, capture_output=True, text=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        console.print(f"[bold red]Error:[/bold red] {error_msg}\n[dim]{e.stderr}[/dim]")
+        console.print(
+            f"[bold red]Error:[/bold red] {escape(str(error_msg))}\n"
+            f"[dim]{escape(str(e.stderr or ''))}[/dim]"
+        )
         return None
 
 
@@ -815,7 +819,7 @@ def _handle_passed_gate(console, command_to_run):
 def _handle_failed_gate(console, reasons, *, force, strict):
     console.print("\n[bold red] Quality Gate: FAILED[/bold red]")
     for reason in reasons or []:
-        console.print(f"   • {reason}")
+        console.print(f"   • {escape(str(reason))}")
 
     if force:
         console.print("[yellow] Forced pass (local only)[/yellow]")
@@ -839,7 +843,7 @@ def _handle_failed_gate(console, reasons, *, force, strict):
 def _handle_advisory_gate(console, reasons):
     console.print("\n[bold yellow]Quality Gate: ADVISORY[/bold yellow]")
     for reason in reasons or []:
-        console.print(f"   • {reason}")
+        console.print(f"   • {escape(str(reason))}")
     console.print("[yellow]Advisory mode enabled; CI is allowed to pass.[/yellow]")
     return 0
 
@@ -847,7 +851,7 @@ def _handle_advisory_gate(console, reasons):
 def _handle_incomplete_gate(console, reasons):
     console.print("\n[bold red]Analysis incomplete[/bold red]")
     for reason in reasons or []:
-        console.print(f"   • {reason}")
+        console.print(f"   • {escape(str(reason))}")
     console.print(
         "[red]The quality gate cannot pass because required analysis did not "
         "complete.[/red]"

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 
@@ -269,7 +270,10 @@ def _apply_edits(edits_by_file, scan_root, console):
                     applied += 1
             except Exception as e:
                 verb = "remove" if action == "remove" else "comment out"
-                console.print(f"  [red]Failed to {verb} {finding['name']}: {e}[/red]")
+                console.print(
+                    f"  [red]Failed to {verb} {escape(str(finding['name']))}: "
+                    f"{escape(str(e))}[/red]"
+                )
 
     return applied
 
@@ -289,11 +293,13 @@ def _print_dry_run_plan(console, findings, action):
     )
 
     for file_path, file_edits in _edits_by_file(findings, action).items():
-        console.print(f"\n[bold]{file_path}[/bold]")
+        console.print(f"\n[bold]{escape(str(file_path))}[/bold]")
         for finding, _action in sorted(file_edits, key=lambda x: x[0]["line"]):
             console.print(
-                f"  L{finding['line']} {finding['type']} "
-                f"{finding['name']} ({finding['confidence']}%)"
+                escape(
+                    f"  L{finding['line']} {finding['type']} "
+                    f"{finding['name']} ({finding['confidence']}%)"
+                )
             )
 
 
@@ -321,8 +327,9 @@ def _run_interactive_clean(console, findings, scan_root):
     for i, finding in enumerate(findings, 1):
         console.print(Rule(style="dim"))
         console.print(
-            f"[bold][{i}/{len(findings)}][/bold] Unused {finding['type']} "
-            f"[bold cyan]{finding['name']}[/bold cyan] at {finding['file']}:{finding['line']}"
+            f"[bold][{i}/{len(findings)}][/bold] Unused {escape(str(finding['type']))} "
+            f"[bold cyan]{escape(str(finding['name']))}[/bold cyan] at "
+            f"{escape(str(finding['file']))}:{finding['line']}"
         )
         console.print(f"         Confidence: [bold]{finding['confidence']}%[/bold]")
 
@@ -394,7 +401,7 @@ def run_clean_command(argv: list[str]) -> int:
     try:
         selected_types = _parse_types(args.types)
     except ValueError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{escape(str(exc))}[/red]")
         return 2
 
     path = args.path
@@ -414,7 +421,7 @@ def run_clean_command(argv: list[str]) -> int:
             border_style="blue",
         )
     )
-    console.print(f"Scanning [bold]{path}[/bold]...\n")
+    console.print(f"Scanning [bold]{escape(str(path))}[/bold]...\n")
 
     confidence = _effective_confidence(args, noninteractive)
     result = _analyze(path, confidence, exclude_folders)
