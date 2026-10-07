@@ -2354,6 +2354,61 @@ def test_explicit_rich_upload_shows_analysis_stages(monkeypatch):
     upload.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("in_ci", "destination"),
+    [(False, (True, False)), (True, (False, True))],
+    ids=["free-workspace", "ci-upload"],
+)
+def test_upload_with_zero_credits_still_uploads(monkeypatch, in_ci, destination):
+    """Uploads never cost credits, so a 0-credit workspace still uploads."""
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"]
+    )
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli._is_ci", return_value=in_ci),
+        patch("skylos.cli._print_upload_destination", return_value=destination),
+        patch("skylos.api.get_project_token", return_value="test-token"),
+        patch(
+            "skylos.api.get_credit_balance",
+            return_value={"plan": "free", "balance": 0},
+        ) as balance,
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": True, "scan_id": "scan123"},
+        ) as upload,
+    ):
+        cli.main()
+
+    upload.assert_called_once()
+    balance.assert_not_called()
+    printed = " ".join(
+        str(call.args[0])
+        for call in fake_logger.console.print.call_args_list
+        if call.args
+    )
+    assert "upload skipped" not in printed
+    assert "credits remaining" not in printed.lower()
+
+
 def test_explicit_rich_upload_interrupted_during_analysis_reports_no_upload(
     monkeypatch,
 ):

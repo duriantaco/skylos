@@ -97,7 +97,7 @@
   },
   "whole_upload_rejections": [
     "authentication or authorization failure",
-    "no credits / plan does not allow the upload",
+    "plan does not allow the upload (uploads never require credits)",
     "findings belong to a different project root than the selected project (PROJECT_ROOT_FINDING_MISMATCH)",
     "verified pull-request scan cannot be verified with GitHub",
     "request body malformed or over the size limit"
@@ -139,7 +139,7 @@
   "transport": {
     "idempotency_header": "Idempotency-Key",
     "idempotency_key_format": "UUID v4, generated once per upload and reused for every retry and resend of that upload",
-    "idempotent_replay": "Same key and same payload hash returns the original result with 200 and does not charge credits again. Same key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.",
+    "idempotent_replay": "Same key and same payload hash returns the original result with 200 and does not store the scan again. Same key with a different payload returns 409 IDEMPOTENCY_KEY_REUSED.",
     "contract_header": "X-Skylos-Upload-Contract",
     "retryable_statuses": [
       408,

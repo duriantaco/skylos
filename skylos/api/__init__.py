@@ -1452,7 +1452,7 @@ def _print_report_upload_success(
     if replayed:
         print(
             " done!\n✓ Scan was already saved by an earlier attempt; "
-            "it was not saved or charged twice."
+            "it was not saved twice."
         )
     else:
         print(" done!\n✓ Scan uploaded")
