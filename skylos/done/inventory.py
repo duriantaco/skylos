@@ -46,6 +46,24 @@ ASSERTION_HELPER_RE = re.compile(
 _PY_ASSERTION_CALLS = {"raises", "warns", "deprecated_call", "fail"}
 # Assertion calls that check their first argument is true.
 _PY_TRUTH_ASSERTIONS = {"assertTrue", "assert_", "failUnless"}
+# unittest.mock assertions: literal arguments are the expected call, not a
+# tautology, so mock.assert_called_once_with("a") is a real check.
+_PY_MOCK_ASSERTIONS = {
+    "assert_called",
+    "assert_called_once",
+    "assert_called_with",
+    "assert_called_once_with",
+    "assert_any_call",
+    "assert_has_calls",
+    "assert_not_called",
+    "assert_awaited",
+    "assert_awaited_once",
+    "assert_awaited_with",
+    "assert_awaited_once_with",
+    "assert_any_await",
+    "assert_has_awaits",
+    "assert_not_awaited",
+}
 # Exceptions that a failed assertion raises, and that swallow it when caught.
 _PY_ASSERTION_ERRORS = {"AssertionError", "Exception", "BaseException"}
 _TOKEN_RE = re.compile(r"\w+|[^\w\s]")
@@ -209,7 +227,9 @@ class RewrittenTest:
     after: TestItem
     # "renamed": a new title and an edited body, in the same class or
     # describe; "moved": the same title under a renamed class or describe,
-    # edited; "in place": written where the deleted test stood.
+    # edited; "in place": written where the deleted test stood; "merged":
+    # one of several deleted tests that one new test, written where they
+    # stood, replaces with at least as many assertions as they had together.
     how: str = "in place"
 
 
@@ -288,7 +308,7 @@ def compare_inventories(
             base, leftover, pairs, unmatched_new, renamed_paths, head_scopes, guard
         )
         how.update(dict.fromkeys(set(leftover) - set(remaining), "moved"))
-        for index, item in _rewritten_in_place(
+        for index, item, kind in _rewritten_in_place(
             base,
             remaining,
             pairs,
@@ -299,7 +319,7 @@ def compare_inventories(
             guard,
         ):
             pairs[index] = item
-            how[index] = "in place"
+            how[index] = kind
 
     result = InventoryDiff()
     for index, test in enumerate(base):
@@ -309,7 +329,7 @@ def compare_inventories(
             continue
         if index in how:
             result.rewritten.append(RewrittenTest(test, current, how[index]))
-        result.matched[current.id] = test
+        result.matched.setdefault(current.id, test)
         added = current.markers - test.markers
         if added:
             result.newly_skipped.append(NewlySkipped(current, frozenset(added)))
@@ -408,8 +428,11 @@ class _CopyGuard:
         return self._closest[item.id]
 
     def is_copy(self, item: TestItem, deleted: TestItem) -> bool:
+        # A tie (as close to the deleted test as to a survivor: the deleted
+        # test's input with a sibling's expected value) is an edit of the
+        # deleted test, not a pasted sibling.
         closest = self.closest(item)
-        return closest >= COPY_SIMILARITY and closest >= _body_ratio(item, deleted)
+        return closest >= COPY_SIMILARITY and closest > _body_ratio(item, deleted)
 
 
 def _renamed_and_edited(
@@ -495,19 +518,21 @@ def _rewritten_in_place(
     renamed: dict[str, str],
     base_scopes: set[tuple[str, tuple[str, ...]]],
     guard: _CopyGuard,
-) -> list[tuple[int, TestItem]]:
+) -> list[tuple[int, TestItem, str]]:
     """Deleted tests paired with the new test written in their place.
 
     Per file, base and head tests are aligned by the tests matched so far;
     a deleted test may pair with a new test in the same gap between
     surviving neighbours, in the same class or describe block (or across a
     block that was renamed or newly written), with a similar title or body.
+    Several deleted tests merge into one new test there only when it makes
+    at least as many assertions as they did together.
     """
     target = {
         index: renamed.get(base[index].path, base[index].path) for index in leftover
     }
     head_scopes = {(t.path, t.classes) for t in head}
-    result: list[tuple[int, TestItem]] = []
+    result: list[tuple[int, TestItem, str]] = []
     for path in sorted(set(target.values())):
         base_order = sorted(
             (
@@ -540,12 +565,54 @@ def _rewritten_in_place(
                 if index not in pairs and index in target
             ]
             new = [item for item in head_order[j1:j2] if item.id in candidates]
-            for index, item in _pair_gap(
-                base, gone, new, base_scopes, head_scopes, guard
-            ):
+            paired = _pair_gap(base, gone, new, base_scopes, head_scopes, guard)
+            for index, item in paired:
                 candidates.pop(item.id, None)
-                result.append((index, item))
+                result.append((index, item, "in place"))
+            for index, item in _merge_gap(base, gone, paired, guard):
+                result.append((index, item, "merged"))
     return result
+
+
+def _merge_gap(
+    base: list[TestItem],
+    gone: list[int],
+    paired: list[tuple[int, TestItem]],
+    guard: _CopyGuard,
+) -> list[tuple[int, TestItem]]:
+    """Deleted tests left in a gap whose new test replaced a neighbour and
+    makes at least as many assertions as all the tests it replaces."""
+    if not paired:
+        return []
+    used = {index for index, _ in paired}
+    load = {item.id: base[index].assertions for index, item in paired}
+    merged: list[tuple[int, TestItem]] = []
+    for index in gone:
+        if index in used:
+            continue
+        test = base[index]
+        best: tuple[float, TestItem] | None = None
+        for _, item in paired:
+            before = load.get(item.id)
+            if (
+                test.assertions is None
+                or before is None
+                or item.assertions is None
+                or item.assertions < before + test.assertions
+                or guard.is_copy(item, test)
+            ):
+                continue
+            score = max(
+                _title_ratio(test.name, item.name),
+                _token_ratio(test.body_dump, item.body_dump),
+            )
+            if score >= REWRITE_SIMILARITY and (best is None or score > best[0]):
+                best = (score, item)
+        if best is not None:
+            item = best[1]
+            load[item.id] = (load[item.id] or 0) + (test.assertions or 0)
+            merged.append((index, item))
+    return merged
 
 
 def _pair_gap(
@@ -864,11 +931,22 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _is_mock_receiver(node: ast.Call) -> bool:
+    """``x.assert_called_with(...)`` on anything but ``self``/``cls``."""
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    receiver = func.value
+    return not (isinstance(receiver, ast.Name) and receiver.id in {"self", "cls"})
+
+
 def _is_assertion_call(node: ast.Call, helpers, defined) -> bool:
     name = _call_name(node)
     if not name:
         return False
     if name in _PY_ASSERTION_CALLS or name in helpers:
+        return True
+    if name in _PY_MOCK_ASSERTIONS and _is_mock_receiver(node):
         return True
     if name in defined or not ASSERTION_HELPER_RE.match(name):
         return False

@@ -98,6 +98,11 @@ COMMANDS = [
             "that answers a test's exact input with its expected value (SKY-A115), "
             "code that detects the test runner or reads the tests' files "
             "(SKY-A116), and comparisons rigged to always pass (SKY-A117)",
+            "Advises on silenced checks: weakened linter, type-checker and "
+            "scanner settings (SKY-A119), CI checks that may now fail or no "
+            "longer run (SKY-A121) and added inline suppressions such as "
+            "# noqa, @ts-ignore and //nolint (SKY-A118); "
+            'silenced_checks = "block" makes A119/A121 block',
             "Advises on changed lines no test checks (SKY-A120): no test runs the "
             "line, or no test fails when Skylos deliberately changes it",
             "--base origin/main: compare a pull request with its merge base (CI)",

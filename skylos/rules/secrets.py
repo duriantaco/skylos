@@ -13,6 +13,8 @@ from html.parser import HTMLParser
 from math import log2
 from pathlib import PurePosixPath
 
+from skylos.rules import secret_shapes
+
 try:
     import yaml
 except ModuleNotFoundError:  # Keep non-YAML scans available in partial installs.
@@ -432,6 +434,12 @@ _ORDERED_ASCII_RUN_MIN_LENGTH = 8
 _ORDERED_CHARACTER_SET_PUNCTUATION = frozenset("-._~+/=")
 
 IS_TEST_PATH = re.compile(r"(^|/)(tests?(/|$)|test_[^/]+\.py$)")
+# JS/TS test files and fixtures (``*.test.ts``, ``__tests__/``): like Python
+# tests, they hold fixture tokens, so only provider-shaped secrets count.
+_JS_TEST_PATH = re.compile(
+    r"(^|/)(__tests__|__mocks__|__fixtures__)/"
+    r"|\.(test|spec)\.[cm]?[jt]sx?$"
+)
 
 
 def _entropy(s):
@@ -562,6 +570,21 @@ def _has_bare_token_charset_mix(s):
     return False
 
 
+def _keyed_match_name(match) -> str:
+    """The secret-sounding name of a ``name = "value"`` match."""
+    return match.group(0)[: match.start("val") - match.start()].strip(" \t'\":=")
+
+
+def _keyed_value_is_not_secret(key: str, value: str) -> bool:
+    """A reference to a secret kept elsewhere, a list of environment
+    variable names, or the key's own name in another case."""
+    return (
+        secret_shapes.is_reference(value)
+        or secret_shapes.is_env_name_list(value)
+        or secret_shapes.names_its_key(key, value)
+    )
+
+
 def _keyed_generic_candidates(line_content: str):
     candidates = []
     keyed_spans = []
@@ -569,7 +592,12 @@ def _keyed_generic_candidates(line_content: str):
         keyed_token = keyed_match.group("val")
         keyed_start = keyed_match.start("val")
         keyed_end = keyed_match.end("val")
+        key = _keyed_match_name(keyed_match)
+        if secret_shapes.is_location_value(key, keyed_token):
+            continue  # a URL: its own parts are scanned as bare tokens
         keyed_spans.append((keyed_start, keyed_end))
+        if _keyed_value_is_not_secret(key, keyed_token):
+            continue
         candidates.append((keyed_start, 0, keyed_token, False, keyed_end))
     return candidates, keyed_spans
 
@@ -696,7 +724,7 @@ def _integrity_field_candidates(
         group = _integrity_value_group(match)
         for value, start, end in _checksum_match_values(match, group, rel_name):
             value_spans.append((start, end))
-            if _is_covered_by_span(
+            if secret_shapes.is_prefixed_hex_digest(value) or _is_covered_by_span(
                 value, start, keyed_spans, context_spans, approved_spans
             ):
                 continue
@@ -2191,6 +2219,8 @@ def _yaml_checksum_context_spans(file_lines: list[str]):
             continue
         if kind == "hash" and _is_conventional_lowercase_hash(value.strip()):
             continue
+        if secret_shapes.is_prefixed_hex_digest(value):
+            continue
         single_line_contexts.append(context)
     return (
         _line_contexts(source, single_line_contexts),
@@ -2281,6 +2311,8 @@ class _ChecksumContextAccumulator:
         if field in {"hash", "checksum"} and _is_conventional_lowercase_hash(
             context[2]
         ):
+            return
+        if secret_shapes.is_prefixed_hex_digest(context[2]):
             return
         if len(self.generic_by_line) >= _MAX_JSON_CAPTURED_STRINGS:
             if self.incomplete_line is None:
@@ -3659,10 +3691,18 @@ def _looks_like_generic_key_value(value: str) -> bool:
     )
 
 
+# gcloud --set-secrets ENV=NAME:latest, Secret Manager NAME:3.
+_SECRET_VERSION_REFERENCE_RE = re.compile(
+    r"(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9-]*):(?:latest|[0-9]{1,6})"
+)
+
+
 def _is_placeholder_credential(value: str, *, user: str | None = None) -> bool:
     stripped = value.strip()
     lowered = stripped.lower()
     if lowered in _CREDENTIAL_PLACEHOLDER_VALUES:
+        return True
+    if _SECRET_VERSION_REFERENCE_RE.fullmatch(stripped):
         return True
     if user is not None and lowered == user.strip().lower():
         return True
@@ -3754,7 +3794,7 @@ def _config_credential_candidates(line_content: str):
             generic_key = True
         raw_value = match.group("val")
         value = _unquote_config_value(raw_value)
-        if _is_placeholder_credential(value):
+        if _is_placeholder_credential(value) or _keyed_value_is_not_secret(key, value):
             continue
         if generic_key:
             if not _looks_like_generic_key_value(value):
@@ -3776,6 +3816,54 @@ def _spans_overlap(findings, line_number: int, start: int, end: int) -> bool:
         if start < existing_end and existing_start < end:
             return True
     return False
+
+
+def _is_public_bare_token(file_lines, line_number, token, start, public_pem):
+    """A bare high-entropy token that is public by its structure."""
+    line = file_lines[line_number - 1]
+    end = start + len(token)
+    return (
+        secret_shapes.is_word_slug(token)
+        or secret_shapes.is_evm_address(token)
+        or secret_shapes.in_public_document_url(line, start, end)
+        or secret_shapes.in_ssh_public_key(line, start, end)
+        or secret_shapes.covered(public_pem.get(line_number, ()), start, end)
+        or secret_shapes.is_jwk_public_member(file_lines, line_number - 1, token)
+    )
+
+
+def _private_key_material(file_lines, line_number, match) -> str:
+    return secret_shapes.private_key_header_material(
+        file_lines[line_number - 1].rstrip("\n"),
+        match.end(),
+        file_lines[line_number : line_number + 2],
+    )
+
+
+def _extra_private_key_findings(file_lines, line_number, rel_path):
+    """PKCS#8, encrypted PKCS#8 and OpenPGP private keys: headers the
+    provider pattern does not match, reported when key data follows."""
+    line = file_lines[line_number - 1].rstrip("\n")
+    if "PRIVATE KEY" not in line:
+        return []
+    found = []
+    for match in secret_shapes.EXTRA_PRIVATE_KEY_HEADER_RE.finditer(line):
+        if _private_key_material(file_lines, line_number, match) != "key":
+            continue
+        found.append(
+            {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "provider": "private_key_block",
+                "message": "Potential private_key_block secret detected",
+                "file": rel_path,
+                "line": line_number,
+                "col": match.start(),
+                "end_col": match.end(),
+                "preview": _mask(match.group(0)),
+            }
+        )
+    return found
 
 
 def scan_ctx(
@@ -3847,6 +3935,11 @@ def scan_ctx(
         docstring_lines = _docstring_lines(syntax_tree)
 
     config_credential_file = _is_config_credential_file(rel_name)
+    public_pem = (
+        secret_shapes.public_pem_spans(file_lines)
+        if any("-----BEGIN " in line for line in file_lines)
+        else {}
+    )
 
     findings = []
     if context_incomplete_line is not None:
@@ -3886,6 +3979,12 @@ def scan_ctx(
 
                 if _is_obvious_placeholder(potential_secret):
                     continue
+                if (
+                    provider_name == "private_key_block"
+                    and _private_key_material(file_lines, line_number, regex_match)
+                    == "documentation"
+                ):
+                    continue
 
                 col_pos = regex_match.start()
 
@@ -3901,6 +4000,8 @@ def scan_ctx(
                     "preview": _mask(potential_secret),
                 }
                 findings.append(finding)
+
+        findings.extend(_extra_private_key_findings(file_lines, line_number, rel_path))
 
         decoded_provider_matches = set()
         decoded_contexts = decoded_context_spans.get(line_number, ())
@@ -4009,7 +4110,10 @@ def scan_ctx(
                     }
                     findings.append(aws_finding)
 
-        in_tests = bool(IS_TEST_PATH.search(rel_path.replace("\\", "/")))
+        in_tests = bool(
+            IS_TEST_PATH.search(rel_path.replace("\\", "/"))
+            or _JS_TEST_PATH.search(rel_path.replace("\\", "/"))
+        )
 
         if in_tests:
             generic_values = ()
@@ -4022,7 +4126,9 @@ def scan_ctx(
                 structural_contexts=structural_context_spans.get(line_number, ()),
                 rel_name=rel_name,
             )
-            if rel_name.lower().endswith((".html", ".htm", ".css", ".map")):
+            if rel_name.lower().endswith(
+                (".html", ".htm", ".css", ".map")
+            ) or secret_shapes.is_minified_bundle_line(rel_path, line_content):
                 # Client artifacts commonly contain SRI hashes, content hashes,
                 # generated asset IDs, and minifier/source-map symbols. Keep
                 # keyed/provider secrets, but do not interpret bare artifact
@@ -4042,6 +4148,10 @@ def scan_ctx(
 
             if is_bare and _is_generated_directory_identifier(
                 line_content, clean_token, rel_path
+            ):
+                continue
+            if is_bare and _is_public_bare_token(
+                file_lines, line_number, clean_token, col_pos, public_pem
             ):
                 continue
 

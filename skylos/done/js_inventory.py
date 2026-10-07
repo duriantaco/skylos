@@ -152,7 +152,7 @@ def collect_js_tests(path: str, source: str | None) -> JsInventory:
     root = _parse(path, source)
     if root is None:
         return JsInventory(clean=False)
-    collector = _Collector(path, *_assertion_helpers(root))
+    collector = _Collector(path, *_assertion_helpers(root), harness=_harness(root))
     collector.walk(root)
     inventory = collector.finish()
     inventory.clean = not root.has_error
@@ -221,15 +221,23 @@ class FeatureRemoval:
 
     A deleted test is a feature removal when the code it runs (its callback,
     the hooks of its describe blocks and the file's own helper functions it
-    calls) uses a name imported from a deleted module, or an export its
-    module no longer has; reads a file the change deleted (``readFileSync(
-    "src/x.tsx")``); or opens a route whose Next.js page or route file was
-    deleted (``page.goto("/x")``). Type-only uses never count.
+    calls) uses a name imported from a deleted module, an export its module
+    no longer has, or a member of an imported value its module no longer
+    mentions (``api.getLiveness()``); reads a file the change deleted
+    (``readFileSync("src/x.tsx")``, also through a top-level constant);
+    uses or reads a module whose last use the change removed (``unused``);
+    or opens a route whose Next.js page or route file was deleted
+    (``page.goto("/x")``). Type-only uses never count.
     """
 
-    def __init__(self, base_text, head_text, deleted: set[str], paths=()) -> None:
+    def __init__(
+        self, base_text, head_text, deleted: set[str], paths=(), unused=None
+    ) -> None:
         self.base_text = base_text
         self.head_text = head_text
+        # unused(path): the change removed the last use of a module that
+        # still exists (see feature_removal.SubjectRemoval.stopped_using).
+        self.unused = unused
         # Repository files at the base: workspace package.json files name the
         # local packages a test may import by package name.
         self.paths = paths
@@ -263,7 +271,8 @@ class FeatureRemoval:
                 for n in _descendants(root)
                 if n.type == "call_expression"
                 and n.start_point[0] + 1 == test.line
-                and (c := (_classify(n) or _classify(n, True))) is not None
+                and (c := (_classify(n, harness=info["harness"]) or _classify(n, True)))
+                is not None
                 and c[0] == "decl"
             ),
             None,
@@ -303,7 +312,9 @@ class FeatureRemoval:
                     {
                         "imports": _import_bindings(path, root),
                         "strings": _top_level_strings(root),
+                        "read_paths": _top_level_read_paths(root),
                         "functions": _top_level_functions(root),
+                        "harness": _harness(root),
                     },
                 )
             )
@@ -312,9 +323,15 @@ class FeatureRemoval:
     def _evidence(self, path: str, node, info) -> str | None:
         kind = node.type
         if kind in {"identifier", "shorthand_property_identifier"}:
+            for value in info["read_paths"].get(_text(node), ()):
+                why = self._deleted_read(path, value)
+                if why:
+                    return why
             binding = info["imports"].get(_text(node))
             if binding is not None:
-                return self._removed_name(path, _text(node), *binding)
+                return self._removed_name(
+                    path, _text(node), *binding
+                ) or self._unused_module(path, _text(node), binding[0])
         elif kind == "member_expression":
             target = node.child_by_field_name("object")
             prop = node.child_by_field_name("property")
@@ -327,6 +344,8 @@ class FeatureRemoval:
                 return self._removed_name(
                     path, f"{_text(target)}.{_text(prop)}", binding[0], _text(prop)
                 )
+            if binding is not None and prop is not None:
+                return self._removed_member(path, target, prop, binding[0])
         elif kind in {"string", "template_string"}:
             value = _string_constant(node, info["strings"])
             if value:
@@ -361,6 +380,22 @@ class FeatureRemoval:
             ):
                 return None  # renamed: the test should follow the new name
             return f"uses {shown}, which {module} no longer has"
+        return None
+
+    def _removed_member(self, path: str, target, prop, spec: str):
+        """``api.getLiveness()`` where ``api`` is imported by name from a
+        repository module that named ``getLiveness`` at the base and does not
+        mention it at all at head (an object member or method removed)."""
+        name = _text(prop)
+        word = re.compile(rf"(?<![\w$]){re.escape(name)}(?![\w$])")
+        for module in sorted(self._resolve(path, spec)):
+            before = self.base_text(module)
+            if before is None:
+                continue
+            after = self.head_text(module)
+            if after is None or not word.search(before) or word.search(after):
+                return None
+            return f"uses {_text(target)}.{name}, which {module} no longer has"
         return None
 
     def _module(self, path: str, *, base: bool):
@@ -454,15 +489,36 @@ class FeatureRemoval:
         return self._workspace
 
     def _deleted_read(self, path: str, value: str) -> str | None:
-        if not self.deleted or "/" not in value or "\n" in value:
+        if "/" not in value or "\n" in value:
             return None
         relative = value[2:] if value.startswith("./") else value
-        for candidate in (
+        candidates = (
             posixpath.normpath(relative),
             posixpath.normpath(posixpath.join(posixpath.dirname(path), value)),
-        ):
+        )
+        for candidate in candidates:
             if candidate in self.deleted:
                 return f"reads {candidate}, which was deleted"
+        for candidate in candidates:
+            if (
+                self.unused is not None
+                and candidate.endswith(JS_SUFFIXES)
+                and not candidate.startswith("..")
+                and self.unused(candidate)
+            ):
+                return f"reads {candidate}, which the change stopped using"
+        return None
+
+    def _unused_module(self, path: str, shown: str, spec: str) -> str | None:
+        """A value imported from a repository module whose last use outside
+        the tests the change removed."""
+        if self.unused is None:
+            return None
+        for module in sorted(self._resolve(path, spec)):
+            if self.base_text(module) is not None:
+                if self.unused(module):
+                    return f"uses {shown} from {module}, which the change stopped using"
+                return None
         return None
 
     def _route(self, call, strings) -> str | None:
@@ -764,6 +820,31 @@ def _top_level_strings(root) -> dict[str, str]:
     return strings
 
 
+def _top_level_read_paths(root) -> dict[str, list[str]]:
+    """``const form = await readFile(new URL("../src/Form.tsx", ...))`` at the
+    top of a file: name to the path-like strings its value is built from,
+    so a test that uses ``form`` reads that file."""
+    found: dict[str, list[str]] = {}
+    for node in root.named_children:
+        if node.type != "lexical_declaration":
+            continue
+        for declarator in node.named_children:
+            name = declarator.child_by_field_name("name")
+            value = declarator.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None:
+                continue
+            paths = [
+                _string_value(child)
+                for child in _descendants(value)
+                if child.type == "string" and "/" in _string_value(child)
+            ]
+            if paths and any(
+                child.type == "call_expression" for child in _descendants(value)
+            ):
+                found[_text(name)] = paths
+    return found
+
+
 def _top_level_functions(root) -> dict[str, list]:
     """Top-level function declarations and ``const f = () => ...``: name to
     bodies."""
@@ -884,9 +965,14 @@ def _require_spec(node) -> str | None:
 
 def _resolve(importer: str, spec: str) -> set[str]:
     """Repository paths a relative import (or the common ``@/`` alias for
-    ``src/`` or the repository root) may name."""
+    ``src/`` or the repository root, or for the ``src/`` directory of the
+    package the importer lives in) may name."""
     if spec.startswith("@/"):
         bases = {posixpath.normpath("src/" + spec[2:]), posixpath.normpath(spec[2:])}
+        parts = importer.split("/")
+        if "src" in parts[:-1]:
+            package_src = "/".join(parts[: parts.index("src") + 1])
+            bases.add(posixpath.normpath(f"{package_src}/{spec[2:]}"))
     elif spec.startswith("."):
         bases = {posixpath.normpath(posixpath.join(posixpath.dirname(importer), spec))}
     else:
@@ -1061,17 +1147,22 @@ class _Decl:
     callback: object | None
 
 
-def _classify(call, subtest_of: str | bool | None = None):
+def _classify(
+    call, subtest_of: str | bool | None = None, harness: frozenset[str] = frozenset()
+):
     """("decl", _Decl), ("modifier", marker) or None for other calls.
 
     With ``subtest_of``, only a node:test subtest counts: ``t.test(title,
-    fn)`` on that context name (on any name when it is True).
+    fn)`` on that context name (on any name when it is True). ``harness``
+    names the file's own test functions (``t(title, fn)``, see ``_harness``).
     """
     function = call.child_by_field_name("function")
     arguments = call.child_by_field_name("arguments")
     if function is None or arguments is None or arguments.type != "arguments":
         return None
     decoded = _callee(function)
+    if subtest_of is None and decoded and decoded[0] in harness and not decoded[1]:
+        decoded = ("test", [])
     if subtest_of is not None:
         if (
             decoded is None
@@ -1144,6 +1235,70 @@ def _classify(call, subtest_of: str | bool | None = None):
         title_text=_text(title_node) if title_node is not None else "",
         callback=callback,
     )
+
+
+def _harness(root) -> frozenset[str]:
+    """The file's own test functions: a top-level ``function t(name, fn)``
+    (or ``const t = (name, fn) => ...``) that calls its second parameter,
+    as a hand-written ``node:assert`` runner does. One that catches the
+    failure counts only when the file sets the exit code
+    (``process.exit``/``process.exitCode``): otherwise a failing test
+    could not fail the run."""
+    sets_exit = None
+    found = set()
+    for node in root.named_children:
+        for name, function in _top_level_function_nodes(node):
+            if name in _ROOTS or name in _HOOKS:
+                continue
+            params = function.child_by_field_name("parameters")
+            names = [
+                _text(p)
+                for p in (params.named_children if params is not None else ())
+                if p.type == "identifier"
+                or (p.type == "required_parameter" and p.named_children)
+            ]
+            names = [n.split(":", 1)[0].strip() for n in names]
+            if len(names) < 2:
+                continue
+            body = function.child_by_field_name("body")
+            if body is None or not _calls_name(body, names[1]):
+                continue
+            if any(n.type == "catch_clause" for n in _descendants(body)):
+                if sets_exit is None:
+                    text = _text(root)
+                    sets_exit = "process.exit" in text
+                if not sets_exit:
+                    continue
+            found.add(name)
+    return frozenset(found)
+
+
+def _top_level_function_nodes(node):
+    if node.type in {"function_declaration", "generator_function_declaration"}:
+        name = node.child_by_field_name("name")
+        if name is not None:
+            yield _text(name), node
+    elif node.type in {"lexical_declaration", "variable_declaration"}:
+        for declarator in node.named_children:
+            name = declarator.child_by_field_name("name")
+            value = declarator.child_by_field_name("value")
+            if (
+                name is not None
+                and name.type == "identifier"
+                and value is not None
+                and value.type in _FUNCTIONS
+            ):
+                yield _text(name), value
+
+
+def _calls_name(body, name: str) -> bool:
+    for node in _descendants(body):
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            if function is not None and function.type == "identifier":
+                if _text(function) == name:
+                    return True
+    return False
 
 
 def _stringish(node) -> bool:
@@ -1330,10 +1485,12 @@ class _Collector:
         path: str,
         helpers: set[str] | None = None,
         defined: set[str] | None = None,
+        harness: frozenset[str] = frozenset(),
     ) -> None:
         self.path = path
         self.helpers = helpers or set()
         self.defined = defined or set()
+        self.harness = harness
         self.records: list[tuple[_Scope, _Decl, object]] = []
         self.focus: list[FocusSite] = []
 
@@ -1356,7 +1513,7 @@ class _Collector:
             )
 
     def _call(self, node, scope: _Scope, this_scope, stack) -> bool:
-        classified = _classify(node)
+        classified = _classify(node, harness=self.harness)
         subtest = False
         if classified is None and scope.kind == "test":
             # node:test: t.test(title, fn) on the test's context is a subtest.

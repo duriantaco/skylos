@@ -2,9 +2,10 @@
 
 `skylos done` decides whether a change is finished, with evidence. It runs
 the tests itself, compares the tests and test settings with the base, looks
-for edits to Skylos's own settings, for added secrets and made-up imports, and
-for code written to pass particular tests instead of being right, then writes
-a receipt.
+for edits to Skylos's own settings, for added secrets and made-up imports, for
+code written to pass particular tests instead of being right, and for
+linters, type checkers, scanners and CI checks the change silenced, then
+writes a receipt.
 
 It gives no opinions and writes no style comments: each check passes or
 fails with evidence, the way CI does.
@@ -24,16 +25,34 @@ Skylos could not run (for example, the base is not fetched).
 | Check | Rules | Blocks by default | What it checks |
 |:--|:--|:--|:--|
 | Tests pass when Skylos runs them | SKY-A113 | yes | Skylos runs `test_command` and reads the JUnit XML. A test that fails twice fails the check; one that fails once and then passes is reported as flaky. Running out of `test_budget_seconds` is "unfinished", never "pass". An expected Python test producing no results is "unfinished" unless the trusted base's collection settings explain its exclusion. |
-| No tests deleted, skipped or weakened | SKY-A110, SKY-A111, SKY-A112, SKY-A101 (advice) | yes | Python and JavaScript/TypeScript tests. A test that existed at the base is gone (a moved, renamed or rewritten test is not; a pasted copy of a test that is still there is), lost parametrize or `.each` cases, is left with no countable assertion, or gained skip/xfail (`.skip`, `.todo`, `.fixme`, `skipIf` and the like for JS/TS); a JS/TS test file gained a focus (`.only`, `fit`, `fdescribe`). Test settings loosened: pytest `-k`/`-m`/`--deselect`/`--ignore`/`--lf`/`-p no:`, `norecursedirs`, `testpaths`, `conftest.py` hooks that can drop tests or rewrite results, `collect_ignore`, lower coverage floors, Jest/Vitest settings that stop running existing test files, `passWithNoTests`, lower Jest/Vitest coverage thresholds, package.json test scripts that filter tests, may now fail or no longer run a runner, and CI test steps that may now fail. Advice: weakened assertions (SKY-A101), tests renamed or rewritten with a different body, fewer countable assertions, a new `return` before assertions. |
+| No tests deleted, skipped or weakened | SKY-A110, SKY-A111, SKY-A112, SKY-A101 (advice) | yes | Python and JavaScript/TypeScript tests. A test that existed at the base is gone (a moved, renamed or rewritten test is not; a pasted copy of a test that is still there is), lost parametrize or `.each` cases, is left with no countable assertion, or gained skip/xfail (`.skip`, `.todo`, `.fixme`, `skipIf` and the like for JS/TS); a JS/TS test file gained a focus (`.only`, `fit`, `fdescribe`). Test settings loosened: pytest `-k`/`-m`/`--deselect`/`--ignore`/`--lf`/`-p no:`, `norecursedirs`, `testpaths`, `conftest.py` hooks that can drop tests or rewrite results, `collect_ignore`, lower coverage floors, Jest/Vitest settings that stop running existing test files, `passWithNoTests`, lower Jest/Vitest coverage thresholds, package.json test scripts that filter tests, may now fail or no longer run a runner, and CI test steps that may now fail (an unrelated command's `|| true` in the same step does not count). A test overwritten in place by a test of something else, while the code the old test exercised is still there, blocks. Not reported: a deleted test whose feature the change removed (see below), and settings that leave out no test that existed (a brand-new pytest config, a project's first `test` script, an ignore pattern that matches no existing test or whose tests run in their own CI step, a new advisory CI step). Advice: weakened assertions (SKY-A101), tests renamed, merged or rewritten with a different body, fewer countable assertions, a new `return` before assertions, deletions that are feature removals. |
 | Skylos settings and hooks left alone | SKY-A114 | yes | Edits to `protected_paths`, to `[tool.skylos]` in pyproject.toml, or to a CI workflow that runs Skylos. |
-| No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. |
+| No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. Values that are public by structure are not secrets: hex digests that name their algorithm, public keys and certificates, contract addresses, document ids in share URLs, references to secrets stored elsewhere (`${{ secrets.X }}`), URL slugs; see [dictionary.md](../dictionary.md) (S101). |
 | Every package and import is real | SKY-D222, SKY-D225, SKY-D223 (advice) | advise | Added imports and dependencies resolve to real, declared packages. Names that only cannot be tied to a declared package are advice. |
 | Tests check the changed lines | SKY-A120 | advise | Each changed line in non-test Python code is run by a test, and a test fails when Skylos changes that line on purpose. Lines that fail either are listed on the receipt as unverified. See below. |
 | Code doesn't special-case the tests | SKY-A115, SKY-A116, SKY-A117 | yes | Added non-test Python and JS/TS code that answers a test's exact input with that test's expected value, asks whether a test runner is running it, reads the tests' own files, or rigs a comparison so it always passes. Weaker signals are advice. See below. |
+| Linters, type checkers, scanners and CI not silenced | SKY-A119, SKY-A121, SKY-A118 | advise | Linter, type-checker and scanner settings weakened (rules ignored or turned off, source paths excluded, `strict` off, secrets allow-listed), CI lint, type-check, scan and test steps that may now fail or no longer run, and inline suppressions added to code (`# noqa`, `@ts-ignore`, `//nolint`, ...). With `block`, settings and CI findings block; inline suppressions stay advice. See below. |
 
-A deleted test that directly references a deleted production module is
-reported as a feature removal (advice). Renaming a module or deleting an
-unrelated module does not qualify.
+**Feature removal (advice).** A deleted test is a feature removal, reported
+as advice instead of a deletion, when the change removed what it tested:
+
+- a production module the test references directly was deleted;
+- (Python) a function, method, class, instance attribute or module-level
+  name the test uses was defined in changed non-test code at the base, is
+  defined in no changed file at head, appears in no non-test file at head
+  (`git grep -w`), and was not renamed (no definition with an 80%-similar
+  body was added under another name);
+- (JS/TS) see [JavaScript and TypeScript tests](#javascript-and-typescript-tests);
+- (both) text the test checks (a string, regular expression or static
+  template of 12 or more characters: UI copy, an error code, a prompt
+  section) was in changed non-test code at the base and is in no non-test
+  file at head, and the line that held it was removed rather than reworded
+  (`throw new Error("old message")` becoming `throw new Error("new
+  message")` is a reword: the deletion blocks).
+
+Renaming a module or a function, deleting an unrelated module, or rewording a
+message does not qualify. A deleted test whose code is still there blocks,
+even when other tests still call the same function.
 
 **How a base test is matched at head.** By the same id (file, class or
 `describe` blocks, name); else, once each, by a new test with the same body
@@ -49,11 +68,31 @@ reported as advice ("renamed ... and edited", "moved ... and was edited",
    block name or the body is at least 35% similar;
 3. rewritten in place: same file, in the gap between the same surviving
    neighbours, same class or `describe` (or across one that was renamed or
-   newly written), title or body at least 35% similar.
+   newly written), title or body at least 35% similar;
+4. merged: further deleted tests in such a gap, each at least 35% similar
+   to a new test written there, when that new test makes at least as many
+   countable assertions as all the tests it replaces together ("merged
+   into ...").
+
+**Overwritten by a test of something else (blocks).** A test rewritten in
+place stops being advice when its subject is gone from the tests but not
+from the code. The two titles must name different things (they share fewer
+than half of the shorter title's words). The old test's subject is the
+identifiers and strings its body uses that no other base test uses (at
+least two of them); when no head test uses any of them, and a non-test file
+at head still contains one that names code
+(camelCase, `snake_case`, `AWS::EC2::VPCEndpoint`-style qualified names, 8+
+characters), the old test was overwritten, as when a conflict resolution
+replaces a sibling's test with a new one:
+`test_cfn_vpc_endpoint ... was overwritten in place by test_cfn_appsync ...,
+which tests something else`. When that code was removed too, it is a
+feature removal (advice).
 
 A new test is never paired with a deleted one when it copies a test that is
 still there: a body identical to a surviving test anywhere, or at least 90%
-like one in the same file and closer to it than to the deleted test. So
+like one in the same file and closer to it than to the deleted test (one as
+close to the deleted test as to the survivor, such as the deleted test's
+input with a sibling's expected value, is an edit of the deleted test). So
 deleting a failing test and pasting a passing sibling under a similar name,
 in its place or anywhere else, is still a deletion. Passes 2 and 3 never
 pair a test with one that has no countable assertion. A new test with an
@@ -130,6 +169,24 @@ a marker or renaming a test cannot newly excuse its absence. Runtime
 deselection by a hook is insufficient evidence of a trusted exclusion;
 unexplained missing tests produce an unfinished result.
 
+**pytest settings (SKY-A112).** An existing `pyproject.toml`, `pytest.ini`,
+`tox.ini` or `setup.cfg` is compared setting by setting: newly set or
+narrowed `testpaths`, new `norecursedirs` entries, new `--ignore`/`-k`/`-m`
+options and changed `python_files` are reported. A brand-new config file
+(a new project, or a sub-project's own `pytest.ini`) can only leave out
+tests that already existed, so its `testpaths`, `norecursedirs`,
+`--ignore`/`--ignore-glob` and `python_files` are checked against the
+`test_*.py`/`*_test.py` files under its directory at the base, and reported
+only when one of them would no longer be collected. Name and marker
+selection (`-k`, `-m`) in a new config is still reported.
+
+**CI test steps (SKY-A112).** A test step (or job) that can now fail
+without failing the build (`continue-on-error`, `|| true`) is reported when
+it already ran at the base. A step the base did not have, whose commands
+are new and next to which every test step the job ran before still runs, is
+a new advisory step, not a loosened one. Renaming an existing step and
+making it quiet is still reported.
+
 ## JavaScript and TypeScript tests
 
 Jest, Vitest, Mocha, node:test and Playwright Test files are inventoried
@@ -150,15 +207,30 @@ files only by living in `test/` is not inventoried.
   deletes nothing. node:test subtests (`t.test(title, fn)` and
   `await t.test(...)` on the test's first parameter) are tests too,
   identified under their parent test's title; a subtest of a skipped test
-  is skipped. Their `{ only: true }` is not recorded as focus.
+  is skipped. Their `{ only: true }` is not recorded as focus. A
+  hand-written runner counts too: a top-level `function t(name, fn)` (or
+  `const t = (name, fn) => ...`) that calls its second parameter makes
+  each `t("title", () => ...)` a test, so porting Jest tests to a plain
+  `node:assert` script is not a deletion. A runner that catches failures
+  counts only when the file sets the exit code (`process.exit(...)`):
+  otherwise a failing test could not fail the run.
 - **Feature removal (advice).** A deleted test is a feature removal when the
   code it runs (its callback, the `beforeEach`/`beforeAll` hooks around it
   and the file's own functions it calls) uses a value imported from a module
   this change deleted, or one its module no longer defines (a function moved
-  under a new name with a similar body is a rename, not a removal); reads a
-  file this change deleted (`readFileSync("src/x.tsx")`, also through a
-  top-level string constant); or opens a route whose Next.js `page`/`route`
-  file (app or pages router) this change deleted (`page.goto("/x")`).
+  under a new name with a similar body is a rename, not a removal); uses a
+  member of a value imported by name (`api.getLiveness()`,
+  `COPY.mapHint`) when that module mentioned the member at the base and
+  does not mention it at all at head; checks text the change removed (see
+  above); reads a file this change deleted (`readFileSync("src/x.tsx")`,
+  also through a top-level string constant or a top-level
+  `const form = await readFile(new URL("../src/Form.tsx", ...))`); uses or
+  reads a module whose last use the change removed (a component no longer
+  rendered: a changed non-test file named it at the base and no non-test
+  file but the module itself names it at head; names shorter than five
+  characters never count); or opens a route whose Next.js `page`/`route`
+  file (app or pages router) this change deleted (`page.goto("/x")`). The `@/` alias resolves to the repository's `src/`,
+  its root, or the `src/` directory of the importing file's package.
   Type-only imports never count. Exports are read from `export`
   statements, from `module.exports = {...}` (also through a top-level
   constant: `const codes = {...}; module.exports = codes`) and
@@ -208,7 +280,8 @@ moving settings between those files is not a change. Reported (SKY-A112):
   (`coverageThreshold`, `coverage.thresholds`; the pre-1.0 Vitest
   `coverage.lines` keys count as `coverage.thresholds.lines`, so moving a
   threshold there is not a removal).
-- A package.json `test` (or existing `test:*`) script, followed through
+- A package.json `test` (or `test:*`) script that existed at the base,
+  followed through
   `npm run`/`pnpm`/`yarn`/`run-s`/`run-p` into the scripts it runs, that
   gains `--passWithNoTests`; a test filter its runner did not have, the
   counterpart of pytest `-k`/`--deselect`/`--lf` (Jest `-t`/
@@ -220,7 +293,17 @@ moving settings between those files is not a change. Reported (SKY-A112):
   fewer of them; `|| true` or any new `||` fallback (`|| exit 1` keeps a
   failure a failure); or that no longer runs a test runner at all (for
   example `echo ok`; a script that runs an unknown command such as
-  `node scripts/test.js` is given the benefit of the doubt).
+  `node scripts/test.js` is given the benefit of the doubt). Path filters
+  are evaluated against the test files that existed at the base, as for
+  the config settings above (Jest `--testPathIgnorePatterns`/
+  `--testPathPattern`/test paths as regular expressions, Vitest `--exclude`
+  as a glob and test paths as substrings, Mocha `--ignore`/`--exclude`/spec
+  paths as globs): one that leaves out no existing test file is not
+  reported. An ignore pattern whose files another package.json script
+  selects (`"test:integration": "jest --testPathPattern=integration"`) is
+  not reported when a CI workflow at head runs that script: the tests moved
+  to their own step. A `test` script the base did not have ran nothing
+  before, so it loosens nothing.
 
 A config exported as a function, spread from another object or built from
 values that cannot be resolved statically is skipped, never guessed. A
@@ -261,6 +344,7 @@ secrets = "block"
 unknown_imports = "advise"
 changed_lines_checked = "advise"
 test_special_casing = "block"
+silenced_checks = "advise"
 ```
 
 `changed_lines_budget_seconds` (default 120, 10 to 1800) bounds the
@@ -484,7 +568,12 @@ count (`Path(__file__).parent / "tests" / "data" / "x.txt"`,
 `os.path.join(..., "tests", "x.txt")`, `join(__dirname, "..", "test", "x.md")`)
 as long as the path goes through a test folder; from a new
 script nothing imports or runs (a local checker the agent wrote) it is
-advice. `NODE_ENV === "test"`, `import.meta.env.MODE === "test"` and
+advice, and so it is from repository tooling that checks the tests: a file
+under `scripts/`, `script/`, `tools/`, `tooling/`, `bin/`, `.github/`,
+`ci/`, `.ci/` or `hack/`, or named `validate-*`/`check-*`/`verify-*`/
+`lint-*`/`audit-*`, that no non-test, non-tooling source file imports or
+names (a validator that confirms a test file still has its required
+titles). Tooling that production code imports blocks like production code. `NODE_ENV === "test"`, `import.meta.env.MODE === "test"` and
 environment variables compared with `"test"` are advice: many applications
 switch on them on purpose. Left out: test files and directories,
 `conftest.py`, setup files (`setupTests.*`, `*.setup.*`), config files
@@ -527,6 +616,199 @@ or docs mentions that text) looks exactly like a special case. Quote the
 text in the docs or a constant at the base first, or set
 `test_special_casing = "advise"` (or `"off"`) in `[tool.skylos.done.checks]`
 at the base.
+
+## Linters, type checkers, scanners and CI not silenced (SKY-A118, A119, A121)
+
+The tests are one gate; linters, type checkers and scanners are others. An
+agent that cannot make one of them pass can tell it to look away instead of
+fixing the code: an inline `# noqa`, a rule turned off, a directory
+excluded, `strict` turned off, `|| true` on the CI step. This check compares
+the base and the head the same way for every tool. Only the change counts:
+added lines for inline suppressions, changed settings and CI files for the
+rest.
+
+The check advises by default. In a study of 450 merged pull requests by five
+coding agents, none silenced a check deliberately: every suppression,
+`continue-on-error`, coverage pragma and exclude had a visible reason or was
+conventional. Over those 450 pull requests it lists something for 51
+(0.34 findings per pull request, at most 20, almost all inline
+suppressions); over 160 recent commits of three projects, for 3. A team that
+wants the gate can set `silenced_checks = "block"` at the base: weakened
+settings (SKY-A119) and CI (SKY-A121) then block, and inline suppressions
+(SKY-A118) stay advice. At most 20 findings are listed; the rest are
+counted.
+
+**Settings weakened (SKY-A119).** Each tool's settings are read from
+every file it reads in one directory and compared as a whole, so moving
+settings between those files (`setup.cfg` to `pyproject.toml`, `mypy.ini` to
+`[tool.mypy]`, `.eslintrc.json` to `eslint.config.js`) is not a change.
+Reported:
+
+- a rule newly ignored or disabled: ruff, flake8 and pylint ignores and
+  per-file ignores, mypy `disable_error_code`, bandit `skips`,
+  golangci-lint `disable`; a rule dropped from ruff `select`, pylint
+  `enable`, mypy `enable_error_code`, golangci-lint `enable`, bandit
+  `tests`. Ignoring a ruff code no selected rule covers changes nothing and
+  is not reported; replacing a rule with a broader one (`I001` with `I`) is
+  not either;
+- a rule turned off or lowered (`error` to `warn`, `deny` to `allow`) in
+  ESLint (legacy and flat config, also per `files` block), Biome, pyright
+  `report*` settings and Cargo `[lints]`, and an ESLint preset dropped
+  (`plugin:x/recommended`, `tseslint.configs.recommended`; swapping it for
+  another preset of the same plugin is not reported);
+- strictness turned off: TypeScript `strict` and the flags it implies
+  (`noImplicitAny`, `strictNullChecks`, ...), `noUncheckedIndexedAccess`,
+  `noImplicitReturns`, `checkJs` and the like, followed through local
+  `extends`; `allowUnreachableCode` and other flags that stop checks turned
+  on; mypy `strict` and its flags, `ignore_errors` (also per module),
+  `follow_imports = skip`; pyright `typeCheckingMode` lowered; pylint
+  `fail-under` lowered; Biome's linter or recommended rules turned off;
+  golangci-lint `disable-all`, `default: none` or `issues.new`; SonarQube
+  `sonar.qualitygate.wait` turned off; CodeQL default queries disabled;
+  `skipLibCheck` is not a weakening, and `strict` going off is reported
+  once, not once per implied flag;
+- a path newly excluded or ignored (ruff, flake8, pylint, mypy, pyright,
+  bandit, tsconfig `exclude` and a narrower `include`, ESLint `ignores`/
+  `ignorePatterns`/`.eslintignore`, Biome, `sonar.exclusions` and
+  `sonar.coverage.exclusions`, `.semgrepignore`, CodeQL `paths-ignore`,
+  Snyk, golangci-lint, pre-commit `exclude`). Skylos matches the pattern
+  against the repository's files and names one that the tool no longer
+  checks. A pattern that matches nothing the tool checks, or only build
+  output, dependencies, generated or vendored files (`dist/`,
+  `node_modules/`, `*.min.js`, `*.d.ts`, `migrations/`, ...), is not
+  reported; one that matches only test files is advice;
+- a finding or secret allow-listed: a new line in `.gitleaksignore` or
+  `.trivyignore`, a new `[allowlist]` entry in `.gitleaks.toml`, a new secret
+  in detect-secrets' `.secrets.baseline` (keyed by its hash, so a known
+  secret on another line is not new), Snyk and OSV-Scanner ignores, SonarQube
+  `sonar.issue.ignore.*` criteria, CodeQL `query-filters` excludes,
+  golangci-lint exclusion rules, Checkstyle and SpotBugs suppression files,
+  pre-commit hooks removed or moved to `stages: [manual]`.
+
+Settings Skylos cannot read with confidence contribute nothing: a config
+exported as a function, built from a spread or from values it cannot
+resolve, or a file that does not parse. A value inherited from a package
+(`"extends": "@tsconfig/strictest"`) is never assumed. A tool's settings
+appearing in a directory that had none apply only to files that existed
+there at the base, and a rule a new config leaves off was never on; a new
+package (a directory with no code at the base) and its first settings
+weaken nothing.
+
+**CI weakened (SKY-A121).** In changed GitHub Actions workflows and
+GitLab CI files, a step is a check when it runs a linter, type checker,
+format check or scanner directly (`ruff`, `eslint`, `mypy`, `tsc`, `prettier
+--check`, `cargo clippy`, `golangci-lint`, `semgrep`, `gitleaks`, `npm
+audit`, ...), through a wrapper (`npx`, `uv run`, `poetry run`, `python
+-m`), through a script or target named for a check (`npm run lint`, `pnpm
+typecheck`, `make lint`, `just lint`, `tox -e lint`, `turbo run lint`, `nx
+run-many -t lint`, `deno task lint`, any `<tool> run <script>`; scripts of
+the root package.json are followed to the tools they run), or through a
+known action
+(`github/codeql-action/analyze`, `golangci/golangci-lint-action`,
+`astral-sh/ruff-action`, `pre-commit/action`, SonarQube, Snyk, Trivy,
+gitleaks, ...). A step that also runs tests is a test step (SKY-A112).
+Reported:
+
+- a check that can now fail without failing the build:
+  `continue-on-error: true` on the step or its job, the failure swallowed in
+  the script (`|| true`, `|| echo ...`, `; true`, `; exit 0`, `set +e`; an
+  unrelated command's `|| true` in the same step does not count),
+  `--exit-zero`, `--exit-code 0`, `--issues-exit-code=0`, `--max-warnings`
+  raised or dropped, `semgrep --error` dropped, a higher `npm audit` level,
+  new `--ignore`/`--skip` options, action inputs such as `fail-on-error:
+  false` or `soft_fail: true`; GitLab `allow_failure` and `when: manual`. A
+  check that is new in the change was never required, so adding it quietly
+  is not a weakening;
+- a check that no longer runs: its step or job removed, unless the same tool
+  still runs in any workflow, composite action or GitLab file at head (a
+  renamed step, a step moved to another workflow, a switch of package
+  manager and a check moved into a root package.json script are not
+  removals); `if: false` or `when: never`;
+- a workflow with checks that no longer runs on pull requests (or, without
+  pull-request triggers, on pushes);
+- an aggregate job (one that checks out no code, such as a single required
+  "all green" job) that no longer `needs` a job running checks.
+
+Only workflows that can decide a merge count: those that run on
+`pull_request`, `pull_request_target`, `merge_group`, `push` or
+`workflow_call`, plus composite actions. A scheduled or manual workflow
+(`schedule`, `workflow_dispatch`) never gated a change, so removing or
+quieting its steps is not reported, and its steps do not count as still
+running a check that left a gate. A step that cannot fail
+(`continue-on-error`, `|| true`) does not count as still running it either.
+
+Test steps get the same treatment here, as SKY-A121: removed, disabled, no
+longer triggered, no longer needed, and GitLab test jobs that may fail. A
+GitHub test step that may now fail stays SKY-A112 (test settings loosened,
+which blocks by default). A workflow that runs Skylos is also gate
+tampering (SKY-A114).
+
+**Inline suppressions (SKY-A118, advice).** A comment or attribute on an
+added line of non-test code that tells a tool to look away: `# noqa`,
+`# ruff: noqa`, `# type: ignore` (at the top of a module: the whole file),
+`# pyright: ignore`, `# mypy: ignore-errors`, `# pylint: disable`,
+`# nosec`, `NOSONAR`, `# pragma: no cover`, `nosemgrep`, `gitleaks:allow`,
+`pragma: allowlist secret`, `# skylos: ignore`; `eslint-disable`,
+`eslint-disable-line`, `eslint-disable-next-line`, `oxlint-disable`,
+`@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, `istanbul`/`c8`/`v8
+ignore`, `biome-ignore`; Go `//nolint`, `//lint:ignore`, `#nosec`; Rust
+`#[allow(...)]`/`#![allow(...)]`/`#[expect(...)]`; Java/Kotlin
+`@SuppressWarnings`, `@Suppress`, `@SuppressFBWarnings`, `NOPMD`,
+`CHECKSTYLE:OFF`; C# `#pragma warning disable`, `[SuppressMessage]`.
+Comments are read with Python's tokenizer, the TypeScript grammar, or a
+string-aware scanner for the other languages, so text in strings never
+counts. A suppression is new only when the file holds more of
+it (same directive, same rules) than at the base: moved, reindented and
+edited lines that keep their suppression are not reported. The finding says
+whether a reason is given (text after the directive, ESLint's `-- why`,
+Biome's `: why`, Rust `reason = "..."`, SpotBugs `justification`, or a plain
+comment on the line above; a placeholder such as `<explanation>` or `TODO`
+is no reason) and whether it covers a whole file. `# pragma: no cover` on
+`if TYPE_CHECKING:`, `if __name__ == "__main__":`, `raise
+NotImplementedError` and similar lines is how coverage is told about code
+that never runs, and is not reported. Also advice: `_ = x` (Python) and
+`void x;` (JS/TS) added where that is the only use of the variable, which
+hides an unused-variable warning instead of removing it.
+
+Inline suppressions are advice, with or without a reason: replayed on
+real projects' history, people add them routinely and mostly for good
+reasons (`void _scans;` after destructuring a field away,
+`eslint-disable-next-line @next/next/no-img-element` for a `data:` URL),
+and blocking them would block ordinary commits. The receipt counts them
+(`suppressions_added`, `suppressions_no_reason`, `suppressions_whole_file`)
+so a reviewer or Cloud policy can watch the trend.
+
+**Test files.** Suppressions in test files (the same test files as above,
+plus Go `_test.go`) are counted (`suppressions_in_tests`) but not listed:
+tests pass wrong types on purpose (`@ts-expect-error` is an assertion
+there), pytest fixtures trip linters, and a test that is weakened is the
+test checks' business. Settings and CI changes that exclude only test files
+are advice.
+
+**What still gets past.**
+
+- a suppression added while an identical one elsewhere in the same file is
+  removed (the count stays the same);
+- settings Skylos cannot read (see above), tools not listed here (detekt,
+  Psalm, PHPStan and RuboCop settings, `clippy.toml`, `.markdownlint`),
+  threshold settings (`max-line-length`, `max-complexity`, `max-args`), and
+  values inherited from a package;
+- a removed ESLint rule entry, which falls back to whatever a preset says
+  (only turning it off or lowering it is reported);
+- CI other than GitHub Actions and GitLab CI, composite actions' own steps
+  being weakened, matrix or expression values (`continue-on-error: ${{
+  matrix.experimental }}`), `paths`/`paths-ignore` filters on triggers, and
+  required status checks changed in branch protection (not in the
+  repository);
+- code written to dodge a rule without a suppression (renaming a variable to
+  `_unused`, `foo.accessed = 1`): only `_ = x` and `void x;` are recognised.
+
+**Known false alarms.** A lint step replaced by a command that Skylos cannot
+tie to the same tool (a script name the root package.json does not define,
+a wrapper it does not know) reads as the check being removed. Turning a
+rule off or excluding a directory on purpose is reported too: it is a
+policy change, and under `block` a person should make it (commit it to the
+base first, or use Skylos Cloud's "Merge anyway").
 
 ## Receipt
 
