@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from skylos.api._ai_detection import detect_ai_code
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.provenance import (
     ATTRIBUTION_AI,
     ATTRIBUTION_AUTOMATION,
@@ -286,11 +287,7 @@ def test_real_git_trailer_parsing(tmp_path):
     }
 
     def commit(path, msg, name, email):
-        (
-            tmp_path / path
-        ).write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal filenames in fresh pytest tmp_path
-            msg + "\n"
-        )
+        assert write_text_no_symlink(tmp_path / path, msg + "\n")
         env = {
             **base_env,
             "GIT_AUTHOR_NAME": name,

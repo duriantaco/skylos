@@ -8,6 +8,7 @@ import pytest
 from skylos.commands.hook_attribution import capture_after, capture_before
 from skylos.commands import hook_attribution
 from skylos.reporting import attribution_evidence as evidence
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.provenance import (
     analyze_provenance,
     annotate_findings_with_provenance,
@@ -31,7 +32,9 @@ def repository(tmp_path):
     git(tmp_path, "init", "-b", "main")
     git(tmp_path, "config", "user.name", "Test User")
     git(tmp_path, "config", "user.email", "test@example.com")
-    (tmp_path / "app.py").write_text("first = 1\nsecond = 2\nthird = 3\n")
+    assert write_text_no_symlink(
+        tmp_path / "app.py", "first = 1\nsecond = 2\nthird = 3\n"
+    )
     git(tmp_path, "add", "app.py")
     git(tmp_path, "commit", "-m", "initial")
     git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -100,7 +103,7 @@ def trace(
         record["vcs"] = {"type": "git", "revision": revision}
     directory = root / ".agent-trace"
     directory.mkdir(exist_ok=True)
-    (directory / filename).write_text(json.dumps(record))
+    assert write_text_no_symlink(directory / filename, json.dumps(record))
     return record
 
 
@@ -113,6 +116,25 @@ def payload(root, tool="Edit", tool_id="edit-1", **tool_input):
         "model_id": "anthropic/test-model",
         "tool_input": {"file_path": str(root / "app.py"), **tool_input},
     }
+
+
+def test_fixture_writer_refuses_symlink_file_and_parent(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "app.py"
+    assert write_text_no_symlink(victim, "original\n")
+
+    link = tmp_path / "linked.py"
+    link.symlink_to(victim)
+    assert not write_text_no_symlink(link, "overwritten\n")
+    assert victim.read_text() == "original\n"
+
+    parent = tmp_path / "linked-directory"
+    parent.symlink_to(outside, target_is_directory=True)
+    assert not write_text_no_symlink(parent / "app.py", "overwritten\n")
+    assert not write_text_no_symlink(parent / "new.py", "created\n")
+    assert victim.read_text() == "original\n"
+    assert not (outside / "new.py").exists()
 
 
 def test_git_ai_published_session_and_known_human_format():
@@ -195,7 +217,7 @@ def test_git_ai_note_is_bound_to_head_and_current_content(repository):
         report,
     )
     assert [f["ai_authored"] for f in findings] == [False, True, None]
-    (repository / "app.py").write_text("manually changed\n")
+    assert write_text_no_symlink(repository / "app.py", "manually changed\n")
     changed = analyze_provenance(repository)
     assert changed.agent_files == []
     assert changed.status["line_records_summary"]["stale_files"] == 1
@@ -207,7 +229,9 @@ def test_trace_content_hash_binding_and_commit_revision(repository):
     file = report.files["app.py"]
     assert file.agent_lines == [(2, 2)]
     assert file.revision == git(repository, "rev-parse", "HEAD")
-    (repository / "app.py").write_text("new line\nfirst = 1\nsecond = 2\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "new line\nfirst = 1\nsecond = 2\nthird = 3\n"
+    )
     assert analyze_provenance(repository).agent_files == []
 
 
@@ -235,16 +259,18 @@ def test_bad_range_and_range_hash_cannot_become_recorded(repository):
 
 def test_trace_rejects_symlink_source_and_parent(repository, tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
-    outside.write_text("first = 1\nsecond = 2\nthird = 3\n")
+    assert write_text_no_symlink(outside, "first = 1\nsecond = 2\nthird = 3\n")
     record = trace(repository)
     (repository / "app.py").unlink()
     (repository / "app.py").symlink_to(outside)
     assert analyze_provenance(repository).agent_files == []
     (repository / "app.py").unlink()
-    (repository / "app.py").write_text(outside.read_text())
+    assert write_text_no_symlink(repository / "app.py", outside.read_text())
     (repository / "linked").symlink_to(outside.parent, target_is_directory=True)
     record["files"][0]["path"] = f"linked/{outside.name}"
-    (repository / ".agent-trace/trace.json").write_text(json.dumps(record))
+    assert write_text_no_symlink(
+        repository / ".agent-trace/trace.json", json.dumps(record)
+    )
     assert analyze_provenance(repository).agent_files == []
 
 
@@ -266,7 +292,9 @@ def test_conflicting_agent_records_stay_unknown(repository):
 
 
 def test_declared_commit_does_not_claim_unchanged_context_or_line_ownership(repository):
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     git(repository, "add", "app.py")
     git(
         repository,
@@ -285,7 +313,9 @@ def test_declared_commit_does_not_claim_unchanged_context_or_line_ownership(repo
 
 
 def test_named_commit_and_other_agents_line_record_both_survive(repository):
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 30\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 30\n"
+    )
     git(repository, "add", "app.py")
     git(
         repository,
@@ -336,7 +366,9 @@ def test_named_commit_and_other_agents_line_record_both_survive(repository):
 def test_non_agent_line_records_cannot_erase_named_commit_policy_or_ai_hint(
     repository, record_type
 ):
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     git(repository, "add", "app.py")
     git(
         repository,
@@ -346,7 +378,9 @@ def test_non_agent_line_records_cannot_erase_named_commit_policy_or_ai_hint(
     )
     record = trace(repository, tool="cursor")
     record["files"][0]["conversations"][0]["contributor"] = {"type": record_type}
-    (repository / ".agent-trace/trace.json").write_text(json.dumps(record))
+    assert write_text_no_symlink(
+        repository / ".agent-trace/trace.json", json.dumps(record)
+    )
 
     report = analyze_provenance(repository)
     file = report.files["app.py"]
@@ -407,8 +441,8 @@ def test_non_agent_line_records_cannot_erase_named_commit_policy_or_ai_hint(
 
 def test_multiple_commit_declarations_survive_a_third_agents_line_record(repository):
     for agent, message in [("Claude", "first"), ("Codex", "second")]:
-        (repository / "app.py").write_text(
-            f"first = '{message}'\nsecond = 2\nthird = 3\n"
+        assert write_text_no_symlink(
+            repository / "app.py", f"first = '{message}'\nsecond = 2\nthird = 3\n"
         )
         git(repository, "add", "app.py")
         git(repository, "commit", "-m", f"Change\n\nGenerated-by: {agent}")
@@ -429,7 +463,7 @@ def test_multiple_commit_declarations_survive_a_third_agents_line_record(reposit
 
 
 def test_untagged_commits_are_unknown_not_human(repository):
-    (repository / "app.py").write_text("changed = 1\n")
+    assert write_text_no_symlink(repository / "app.py", "changed = 1\n")
     git(repository, "add", "app.py")
     git(repository, "commit", "-m", "ordinary unlabelled commit")
     report = analyze_provenance(repository)
@@ -440,7 +474,9 @@ def test_untagged_commits_are_unknown_not_human(repository):
 def test_hook_records_exact_diff_not_approximate_payload_ranges(repository):
     edit = payload(repository, old_string="second = 2", new_string="second = 20")
     assert capture_before(repository, "claude", edit)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     edit["tool_response"] = {"structuredPatch": [{"newStart": 99, "lines": ["+wrong"]}]}
     assert capture_after(repository, "claude", edit)
     file = analyze_provenance(repository).files["app.py"]
@@ -456,23 +492,27 @@ def test_hook_write_uses_actual_changed_lines_and_later_drift_invalidates(reposi
     after = "first = 1\nsecond = 20\nthird = 3\n"
     edit = payload(repository, tool="Write", content=after)
     capture_before(repository, "codex", edit)
-    (repository / "app.py").write_text(after)
+    assert write_text_no_symlink(repository / "app.py", after)
     capture_after(repository, "codex", edit)
     assert analyze_provenance(repository).files["app.py"].agent_lines == [(2, 2)]
-    (repository / "app.py").write_text("manual\n" + after)
+    assert write_text_no_symlink(repository / "app.py", "manual\n" + after)
     assert analyze_provenance(repository).agent_files == []
 
 
 def test_hook_retains_unique_unchanged_lines_across_another_agent_edit(repository):
     first = payload(repository, old_string="second = 2", new_string="second = 20")
     capture_before(repository, "claude", first)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     capture_after(repository, "claude", first)
     second = payload(
         repository, tool_id="edit-2", old_string="third = 3", new_string="third = 30"
     )
     capture_before(repository, "codex", second)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 30\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 30\n"
+    )
     capture_after(repository, "codex", second)
     report = analyze_provenance(repository)
     findings = annotate_findings_with_provenance(
@@ -482,10 +522,10 @@ def test_hook_retains_unique_unchanged_lines_across_another_agent_edit(repositor
 
 
 def test_hook_ambiguous_duplicate_edit_is_unknown(repository):
-    (repository / "app.py").write_text("duplicate\nduplicate\n")
+    assert write_text_no_symlink(repository / "app.py", "duplicate\nduplicate\n")
     edit = payload(repository, old_string="duplicate", new_string="new")
     capture_before(repository, "claude", edit)
-    (repository / "app.py").write_text("new\nduplicate\n")
+    assert write_text_no_symlink(repository / "app.py", "new\nduplicate\n")
     capture_after(repository, "claude", edit)
     assert analyze_provenance(repository).agent_files == []
 
@@ -496,7 +536,9 @@ def test_hook_missing_checkpoint_and_shell_changes_are_unknown(repository):
     assert analyze_provenance(repository).agent_files == []
     shell = payload(repository, tool="Bash", command="some script")
     capture_before(repository, "claude", shell, shell=True)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     capture_after(repository, "claude", shell, shell=True)
     report = analyze_provenance(repository)
     assert report.agent_files == []
@@ -510,7 +552,9 @@ def test_hook_validates_patch_bytes_before_recording_agent(repository):
         command="*** Begin Patch\n*** Update File: app.py\n@@\n first = 1\n-second = 2\n+second = 20\n third = 3\n*** End Patch",
     )
     capture_before(repository, "codex", edit)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     capture_after(repository, "codex", edit)
     assert analyze_provenance(repository).files["app.py"].agent_lines == [(2, 2)]
 
@@ -519,7 +563,9 @@ def test_hook_failed_tool_and_overlapping_checkpoint_do_not_record_ai(repository
     edit = payload(repository, old_string="second = 2", new_string="second = 20")
     capture_before(repository, "claude", edit)
     capture_before(repository, "claude", edit)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     capture_after(repository, "claude", edit)
     assert analyze_provenance(repository).agent_files == []
 
@@ -534,7 +580,9 @@ def test_distinct_parallel_tool_ids_on_same_file_are_unknown(repository):
     )
     capture_before(repository, "claude", first)
     capture_before(repository, "claude", second)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     capture_after(repository, "claude", first)
     capture_after(repository, "claude", second)
     assert analyze_provenance(repository).agent_files == []
@@ -543,7 +591,9 @@ def test_distinct_parallel_tool_ids_on_same_file_are_unknown(repository):
 def test_partial_failed_edit_captures_unknown_lines(repository):
     edit = payload(repository, old_string="second = 2", new_string="second = 20")
     capture_before(repository, "claude", edit)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     edit["hook_event_name"] = "PostToolUseFailure"
     capture_after(repository, "claude", edit)
     report = analyze_provenance(repository)
@@ -555,13 +605,17 @@ def test_current_trace_keeps_advancing_after_history_fills(repository, monkeypat
     monkeypatch.setattr(hook_attribution, "MAX_RECORDS", 2)
     first = payload(repository, old_string="second = 2", new_string="second = 20")
     capture_before(repository, "claude", first)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 3\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 3\n"
+    )
     assert capture_after(repository, "claude", first)
     second = payload(
         repository, tool_id="edit-2", old_string="third = 3", new_string="third = 30"
     )
     capture_before(repository, "codex", second)
-    (repository / "app.py").write_text("first = 1\nsecond = 20\nthird = 30\n")
+    assert write_text_no_symlink(
+        repository / "app.py", "first = 1\nsecond = 20\nthird = 30\n"
+    )
     assert capture_after(repository, "codex", second)
     assert len(list((repository / ".skylos/agent-traces").glob("*.json"))) == 2
     report = analyze_provenance(repository)
@@ -579,7 +633,9 @@ def test_same_agent_different_models_keep_separate_contributors(repository):
             "ranges": [{"start_line": 3, "end_line": 3}],
         }
     )
-    (repository / ".agent-trace/trace.json").write_text(json.dumps(record))
+    assert write_text_no_symlink(
+        repository / ".agent-trace/trace.json", json.dumps(record)
+    )
     contributors = analyze_provenance(repository).files["app.py"].contributors
     assert {c["model_id"] for c in contributors} == {
         "openai/test-model",
@@ -645,7 +701,9 @@ def test_malformed_trace_never_crashes_scan(repository, mutation):
         record["vcs"] = {"type": "git", "revision": []}
     elif mutation == "contributor_list":
         record["files"][0]["conversations"][0]["contributor"] = []
-    (repository / ".agent-trace/trace.json").write_text(json.dumps(record))
+    assert write_text_no_symlink(
+        repository / ".agent-trace/trace.json", json.dumps(record)
+    )
     report = analyze_provenance(repository)
     assert report.agent_files == []
     assert report.status["line_records_summary"]["rejected_records"] == 1
