@@ -1076,6 +1076,7 @@ def test_install_hooks_claude_merges_and_is_idempotent(tmp_path):
     assert {g["matcher"] for g in first["hooks"]["PreToolUse"]} == {
         "Read",
         "Bash|PowerShell",
+        "Edit|Write|MultiEdit",
     }
     assert [h["command"] for g in first["hooks"]["Stop"] for h in g["hooks"]] == [
         "say done",
@@ -1146,19 +1147,22 @@ def test_install_hooks_dry_run_and_custom_bin(tmp_path):
     assert not (tmp_path / ".claude" / "settings.json").exists()
     # Custom-bin entries are still recognised as ours on reinstall/uninstall.
     cleaned, removed = uninstall_hooks(config, "claude")
-    assert removed == 5 and cleaned == {}
+    assert removed == 9 and cleaned == {}
 
 
 def test_install_hooks_pure_functions_keep_foreign_entries():
     merged, removed, added = install_hooks(EXISTING_CLAUDE, "claude", "skylos")
-    assert (removed, added) == (0, 5)
+    assert (removed, added) == (0, 9)
     again, removed, added = install_hooks(merged, "claude", "skylos")
-    assert again == merged and (removed, added) == (5, 5)
+    assert again == merged and (removed, added) == (9, 9)
     assert hook_cmd.EVENTS == (
         "session-start",
+        "pre-edit",
         "post-edit",
         "pre-read",
         "pre-bash",
+        "post-bash",
+        "post-failure",
         "stop",
     )
 
@@ -1791,7 +1795,7 @@ def test_install_default_uses_current_interpreter(tmp_path):
     assert "-m skylos.entry hook stop --client claude" in command
     assert command.split()[0].strip("'") == sys.executable
     # Reinstall/uninstall still recognises the interpreter form as ours.
-    assert uninstall_hooks(json.loads(printed[-1]), "claude")[1] == 5
+    assert uninstall_hooks(json.loads(printed[-1]), "claude")[1] == 9
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell wrapper")

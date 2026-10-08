@@ -341,8 +341,53 @@ Upload applies to source scans (not `image:` scans) and uses
 
 ## Provenance Attribution
 
-`skylos provenance` counts a commit as AI-authored only from explicit agent
-signals:
+`skylos provenance` reads recorded contributions and declared commit
+associations. Neither source is a cryptographic proof of an AI writer; local
+metadata can be modified by its producer. Untagged code stays **unknown**.
+
+Recorded line evidence is read from:
+
+- Git AI `authorship/3.0.0` notes under `refs/notes/ai`, attached to HEAD.
+- Agent Trace `0.1.0` JSON records in `.agent-trace/*.json` or
+  `.skylos/agent-traces/*.json`. Agent Trace leaves storage to implementations.
+
+The reader accepts ranges only when the current file matches the recorded Git
+revision or a `sha256:` whole-file hash in
+`metadata["dev.skylos"].files[path].content_hash`. Git AI notes must match both
+HEAD and the current file. Shifted or modified files lose attribution until a
+recorder reconciles them; ranges are never relocated by ambiguous text searches.
+When current bytes match HEAD, the output includes HEAD as `revision`, allowing
+Cloud to validate the content independently. Uncommitted records have no revision
+and remain local assertions.
+
+Skylos does not fetch notes automatically. Fetch them explicitly in CI when
+your repository publishes them:
+
+```bash
+git fetch origin refs/notes/ai:refs/notes/ai
+```
+
+Reinstall `skylos agent install-hooks --claude` or `--codex` to enable before
+and after capture for edit tools. Durable Agent Trace records contain hashes,
+line ranges and tool/model/session identifiers, without source text or prompts.
+Temporary before-images remain in the ignored `.skylos/cache/` directory.
+Direct tool output must match its input before new lines receive agent
+attribution. Missing checkpoints, failed tools, overlapping capture, ambiguous
+duplicate lines, and shell-generated changes remain unknown. Cursor's existing
+after-file-edit hook lacks a matching before-image, so it cannot establish line
+ownership by itself. Capture is best effort: disabled hooks, missing clients,
+concurrent external editors, files outside the repository, binary or oversized
+files, and later manual edits limit coverage. The reader bounds record sizes,
+counts, ranges and paths and rejects symlink traversal. The local history is
+capped at 200 records. A valid `current.json` trace also retains the latest
+state of up to 1,000 files within a 2 MB limit, so new capture can continue when
+the history fills. These bounds are reported as partial coverage.
+
+The supported formats are described by the
+[Git AI specification](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md)
+and [Agent Trace specification](https://agent-trace.dev/).
+
+Commit metadata supplies **declared file associations**, using these signals:
 
 - a `Co-authored-by` trailer (or the commit author) whose identity is a known
   agent: Claude (`noreply@anthropic.com`, `claude[bot]`), Copilot
@@ -359,11 +404,34 @@ A person whose name contains "Claude" or "Cursor", web-UI commits using
 staff addresses at agent vendors are not AI. Dependabot, Renovate,
 github-actions, and other `[bot]` accounts are reported as automation in
 `automation_files` and `summary.automation_seen`, never as AI. The
-`agent_files`, `automation_files` and `human_files` lists (and
-`summary.agent_count`, `automation_count`, `human_count`) are disjoint: a file
-touched by any AI commit is AI, otherwise a file touched by a bot commit is
-automation, otherwise it is human. For "everything not AI-authored", combine
-`human_files` and `automation_files`.
+`agent_files` includes recorded agent contributions and declared associations.
+`human_files` contains recorded human contributions; it does not mean the entire
+file is human-written. `unknown_files` replaces the old assumption that every
+unmarked file was human-written. `summary.recorded_count` and `declared_count`
+count the two sources independently; a file can have both. Repeating a commit
+label does not strengthen its evidence or create line ownership.
+
+Each provenance file includes `evidence_source`, `attribution_level`
+(`recorded`, `declared`, `automation`, or `unknown`), `attribution_scope`
+(`line`, `file`, or `none`), `contributors`, `commit_contributors`,
+`content_hash`, and `revision`.
+Recorded contributors carry their own `agent_name` and `agent_lines`, so a file
+with multiple agents does not arbitrarily select one author. Conflicting records
+stay unknown. `commit_contributors` separately retains declared agents with
+empty line ranges, including when later line records name another agent, a
+human, or an unknown contributor. Such records do not erase commit declarations
+or turn them into line authorship. `status.line_records_summary` reports
+rejected and stale records, capture gaps, limits and partial coverage.
+
+Finding `ai_authored` is `true` only inside recorded agent ranges, `false` for
+recorded human ranges or automation, and `null` when authorship is unknown.
+Declared file associations use `ai_declared: true` instead of claiming the
+finding's line was written by that agent. `ai_declared_agents` names those
+declared agents independently of the recorded line's `ai_agent`. A finding
+outside recorded ranges can therefore have `ai_authored: null` and
+`ai_declared: true`. `ai_security_stats` exposes
+`unknown_findings`, `declared_ai_findings`, and `recorded_human_findings` alongside
+the recorded agent counts.
 
 ## Uploading To Skylos Cloud
 

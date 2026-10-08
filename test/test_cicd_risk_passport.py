@@ -25,6 +25,8 @@ def test_risk_passport_blocks_ai_authored_high_security_finding():
         "line": 10,
         "message": "eval() usage",
         "ai_authored": True,
+        "attribution_level": "recorded",
+        "attribution_scope": "line",
     }
 
     passport = build_risk_passport(
@@ -98,6 +100,7 @@ def test_risk_passport_warns_for_medium_ai_quality_finding():
                 "agent_authored": True,
                 "agent_lines": [[1, 20]],
                 "agent_name": "codex",
+                "attribution_level": "recorded",
             }
         },
         "summary": {"agents_seen": ["codex"]},
@@ -119,7 +122,13 @@ def test_risk_passport_warns_for_medium_ai_quality_finding():
 def test_risk_passport_blocks_failed_high_defense_on_ai_file():
     provenance = {
         "agent_files": ["app.py"],
-        "files": {"app.py": {"agent_authored": True, "agent_lines": [[1, 20]]}},
+        "files": {
+            "app.py": {
+                "agent_authored": True,
+                "agent_lines": [[1, 20]],
+                "attribution_level": "recorded",
+            }
+        },
         "summary": {},
         "confidence": "high",
     }
@@ -178,3 +187,56 @@ def test_format_risk_passport_markdown_renders_summary():
     assert "**Merge recommendation: WARN**" in body
     assert "Proven 1 / Likely 0 / Speculative 1" in body
     assert "output_validation" in body
+
+
+def test_commit_association_keeps_policy_conservative_without_claiming_line_authorship():
+    finding = {
+        "category": "danger",
+        "rule_id": "SKY-D201",
+        "severity": "HIGH",
+        "file": "app.py",
+        "line": 10,
+        "message": "eval() usage",
+        "ai_authored": None,
+        "ai_declared": True,
+        "attribution_level": "declared",
+    }
+    provenance = {
+        "agent_files": ["app.py"],
+        "files": {
+            "app.py": {
+                "agent_authored": True,
+                "agent_lines": [],
+                "attribution_level": "declared",
+            }
+        },
+        "confidence": "low",
+    }
+    passport = build_risk_passport(
+        all_findings=[finding], diff_findings=[finding], provenance=provenance
+    )
+    assert passport["recommendation"] == "BLOCK"
+    assert passport["ai_authored_files"] == 0
+    assert passport["declared_agent_files"] == 1
+    assert passport["high_risk_ai_files"] == []
+    assert passport["high_risk_agent_associated_files"] == ["app.py"]
+    assert passport["reasons"] == [
+        "Declared agent file association: proven HIGH security finding"
+    ]
+
+
+def test_legacy_ai_boolean_is_only_a_declaration_for_policy():
+    finding = {
+        "category": "danger",
+        "rule_id": "SKY-D201",
+        "severity": "HIGH",
+        "file": "app.py",
+        "line": 10,
+        "message": "eval() usage",
+        "ai_authored": True,
+    }
+    passport = build_risk_passport(all_findings=[finding], diff_findings=[finding])
+    assert passport["recommendation"] == "BLOCK"
+    assert passport["ai_authored_files"] == 0
+    assert passport["declared_agent_files"] == 1
+    assert "Declared agent file association" in passport["reasons"][0]
