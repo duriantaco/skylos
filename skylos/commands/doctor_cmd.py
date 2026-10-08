@@ -11,13 +11,15 @@ from skylos.config import load_config
 from skylos.constants import RIPGREP_INSTALL_URL
 
 
-def _rust_available() -> bool:
-    try:
-        import skylos_rust  # noqa: F401
+RUST_ACCELERATION_BUILD_URL = (
+    "https://github.com/duriantaco/skylos/blob/main/rust/README.md"
+)
 
-        return True
-    except ImportError:
-        return False
+
+def _rust_available() -> bool:
+    from skylos.core.fast import FAST_AVAILABLE
+
+    return FAST_AVAILABLE
 
 
 def _llm_available() -> bool:
@@ -82,7 +84,10 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
             "skylos": {"status": "ok", "version": str(skylos.__version__)},
             "go_engine": dict(go_status),
             "rust_acceleration": {
-                "status": "available" if rust_available else "unavailable"
+                "status": "available" if rust_available else "unavailable",
+                "module": "skylos_fast",
+                "optional": True,
+                "build_url": RUST_ACCELERATION_BUILD_URL,
             },
             "llm_support": {"status": "available" if llm_available else "unavailable"},
             "dart_support": (
@@ -132,13 +137,18 @@ def _print_runtime_status(
 
 
 def _print_optional_status(console: Console) -> None:
+    rust_available = _rust_available()
     _print_availability(
         console,
-        _rust_available(),
-        "  [green]OK[/green]  skylos\\[fast] installed (Rust acceleration)",
-        "  [yellow]--[/yellow]  skylos\\[fast] not installed "
-        "[dim](optional: pip install skylos\\[fast])[/dim]",
+        rust_available,
+        "  [green]OK[/green]  skylos_fast available (optional Rust acceleration)",
+        "  [yellow]--[/yellow]  Rust acceleration unavailable "
+        "[dim](optional; using Python fallbacks)[/dim]",
     )
+    if not rust_available:
+        console.print(
+            f"      [dim]Build from source: {RUST_ACCELERATION_BUILD_URL}[/dim]"
+        )
     _print_availability(
         console,
         _llm_available(),
