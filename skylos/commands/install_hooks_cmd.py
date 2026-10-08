@@ -23,7 +23,7 @@ AGENTS = ("claude", "codex", "cursor")
 MAX_CONFIG_BYTES = 2_000_000
 OUR_COMMAND_RE = re.compile(
     r"(?:^|[\s/\\'\"])skylos(?:\.exe|\.entry)?['\"]?\s+hook\s+"
-    r"(?:session-start|post-edit|pre-read|pre-bash|stop)\b"
+    r"(?:session-start|pre-edit|post-edit|pre-read|pre-bash|post-bash|post-failure|stop)\b"
 )
 PROBE_TIMEOUT_SECONDS = 30
 # Local hook state, never meant for version control. ``.skylos/`` itself also
@@ -33,6 +33,7 @@ GITIGNORE_ENTRIES = (
     ".skylos/agent-session.*",
     ".skylos/hook.log*",
     ".skylos/receipts/",
+    ".skylos/agent-traces/",
 )
 GITIGNORE_HEADER = "# Skylos agent hooks: local session state, log and cache"
 # What the wrapper prints when the Skylos command itself cannot run (missing,
@@ -53,14 +54,20 @@ CLAUDE_HOOKS = (
     ("UserPromptSubmit", None, "session-start", 30),
     ("PreToolUse", "Read", "pre-read", 15),
     ("PreToolUse", "Bash|PowerShell", "pre-bash", 30),
+    ("PreToolUse", "Edit|Write|MultiEdit", "pre-edit", 30),
     ("PostToolUse", "Edit|Write|MultiEdit", "post-edit", 120),
+    ("PostToolUse", "Bash|PowerShell", "post-bash", 30),
+    ("PostToolUseFailure", "Edit|Write|MultiEdit", "post-failure", 30),
+    ("PostToolUseFailure", "Bash|PowerShell", "post-failure", 30),
     ("Stop", None, "stop", STOP_TIMEOUT_SECONDS),
 )
 CODEX_HOOKS = (
     # Codex supports UserPromptSubmit; see https://learn.chatgpt.com/docs/hooks.
     ("UserPromptSubmit", None, "session-start", 30),
     ("PreToolUse", "^Bash$", "pre-bash", 30),
+    ("PreToolUse", "apply_patch|Edit|Write", "pre-edit", 30),
     ("PostToolUse", "apply_patch|Edit|Write", "post-edit", 120),
+    ("PostToolUse", "^Bash$", "post-bash", 30),
     ("Stop", None, "stop", STOP_TIMEOUT_SECONDS),
 )
 CURSOR_HOOKS = (
@@ -74,6 +81,9 @@ STATUS_MESSAGES = {
     "session-start": "Skylos: recording the starting checkout",
     "pre-read": "Skylos: checking file for secrets",
     "pre-bash": "Skylos: checking packages",
+    "pre-edit": "Skylos: capturing edit baseline",
+    "post-bash": "Skylos: recording command changes",
+    "post-failure": "Skylos: recording partial tool changes",
     "post-edit": "Skylos: verifying edit",
     "stop": "Skylos: checking session edits",
 }

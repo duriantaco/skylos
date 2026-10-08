@@ -13,6 +13,7 @@ from skylos.reporting.provenance import (
     ATTRIBUTION_AI,
     GIT_LOG_FORMAT,
     classify_commit,
+    _normalize_recorded_contributors,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ def _empty_ai_detection() -> dict:
         "indicators": [],
         "ai_files": [],
         "confidence": "low",
+        "attribution_level": "unknown",
+        "evidence_sources": [],
+        "coverage": "partial",
     }
 
 
@@ -83,11 +87,40 @@ def detect_ai_code(
     except (subprocess.SubprocessError, OSError):
         logger.debug("Failed to detect AI code from git log", exc_info=True)
 
+    from skylos.reporting.attribution_evidence import read_attribution_evidence
+
+    recorded, _ = read_attribution_evidence(git_root)
+    recorded = {
+        path: _normalize_recorded_contributors(contributors)
+        for path, contributors in recorded.items()
+    }
+    recorded_ai = {
+        path
+        for path, contributors in recorded.items()
+        if any(c["type"] == "ai" for c in contributors)
+    }
+    ai_files.update(recorded_ai)
+    sources = {
+        c["evidence_source"]
+        for contributors in recorded.values()
+        for c in contributors
+        if c["type"] == "ai"
+    }
+    if indicators:
+        sources.add("commit_metadata")
+
     return {
-        "detected": len(indicators) > 0,
+        "detected": bool(indicators or recorded_ai),
         "indicators": indicators[:20],
         "ai_files": sorted(ai_files)[:100],
-        "confidence": _confidence_for_indicators(indicators),
+        "confidence": "medium" if recorded_ai else "low",
+        "attribution_level": "recorded"
+        if recorded_ai
+        else "declared"
+        if indicators
+        else "unknown",
+        "evidence_sources": sorted(sources),
+        "coverage": "partial",
     }
 
 
@@ -109,6 +142,8 @@ def _append_ai_indicator(
             "type": attribution["type"],
             "commit": commit_sha[:7],
             "detail": attribution["detail"],
+            "evidence_source": "commit_metadata",
+            "attribution_level": "declared",
         }
     )
     return True
@@ -140,11 +175,3 @@ def _collect_ai_commit_files(
                 ai_files.add(file_path.strip())
     except (subprocess.SubprocessError, OSError):
         logger.debug("Failed to get git diff-tree for AI detection", exc_info=True)
-
-
-def _confidence_for_indicators(indicators: list[dict]) -> str:
-    if len(indicators) > 5:
-        return "high"
-    if indicators:
-        return "medium"
-    return "low"

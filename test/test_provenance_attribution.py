@@ -232,13 +232,14 @@ def test_analyze_provenance_separates_automation_from_ai():
     assert report.summary["agents_seen"] == ["claude"]
     assert report.automation_files == ["requirements.txt"]
     assert report.summary["automation_seen"] == ["dependabot"]
-    # Human, AI and automation buckets are disjoint.
-    assert report.human_files == ["human.py"]
-    assert report.summary["human_count"] == 1
+    # Missing metadata establishes unknown attribution, not human authorship.
+    assert report.human_files == []
+    assert report.unknown_files == ["human.py"]
+    assert report.summary["human_count"] == 0
     assert report.summary["agent_count"] == 1
     assert report.summary["automation_count"] == 1
     assert (
-        report.summary["human_count"]
+        report.summary["unknown_count"]
         + report.summary["agent_count"]
         + report.summary["automation_count"]
         == report.summary["total_files"]
@@ -285,7 +286,9 @@ def test_real_git_trailer_parsing(tmp_path):
     }
 
     def commit(path, msg, name, email):
-        (tmp_path / path).write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal filenames in fresh pytest tmp_path
+        (
+            tmp_path / path
+        ).write_text(  # skylos: ignore[SKY-D215,SKY-D324] literal filenames in fresh pytest tmp_path
             msg + "\n"
         )
         env = {
@@ -318,9 +321,11 @@ def test_real_git_trailer_parsing(tmp_path):
     report = analyze_provenance(str(tmp_path), base_ref="base")
     assert report.agent_files == ["agent.py"]
     assert report.automation_files == ["deps.txt"]
-    assert report.human_files == ["human.py"]
+    assert report.human_files == []
+    assert report.unknown_files == ["human.py"]
     assert "deps.txt" not in report.human_files
-    assert report.summary["human_count"] == 1
+    assert report.summary["human_count"] == 0
+    assert report.summary["unknown_count"] == 1
     assert report.summary["agents_seen"] == ["claude"]
 
 

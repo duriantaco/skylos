@@ -25,9 +25,35 @@ def build_risk_passport(
 ) -> dict[str, Any]:
     provenance_data = provenance if isinstance(provenance, dict) else {}
     ai_files = _agent_files(provenance_data)
+    files = provenance_data.get("files") or {}
+    recorded_files = (
+        {
+            path
+            for path, value in files.items()
+            if isinstance(value, dict)
+            and value.get("attribution_level") == "recorded"
+            and value.get("agent_authored") is True
+            and value.get("agent_lines")
+        }
+        if isinstance(files, dict)
+        else set()
+    )
+    declared_files = ai_files - recorded_files
+    if isinstance(files, dict):
+        declared_files.update(
+            path
+            for path, value in files.items()
+            if isinstance(value, dict)
+            and any(
+                isinstance(indicator, dict)
+                and indicator.get("attribution_level") == "declared"
+                for indicator in value.get("indicators") or []
+            )
+        )
     reasons: list[str] = []
     warning_reasons: list[str] = []
     high_risk_ai_files: set[str] = set()
+    high_risk_associated_files: set[str] = set()
     weakened_controls: set[str] = set()
 
     cards = build_evidence_cards(diff_findings)
@@ -36,6 +62,17 @@ def build_risk_passport(
     for finding, card in zip(diff_findings, cards):
         severity_score = _severity_score(finding.get("severity"))
         is_ai = _is_ai_authored_finding(finding, provenance_data, ai_files)
+        if finding.get("ai_authored") is True and not is_ai:
+            # Older reports supplied an unqualified boolean. Keep its policy
+            # association conservative without upgrading it to a line record.
+            legacy_path = _location_file(finding.get("file"))
+            if legacy_path:
+                declared_files.add(legacy_path)
+                ai_files.add(legacy_path)
+        associated_file = _matched_ai_file(
+            _location_file(finding.get("file")), declared_files
+        )
+        is_declared = finding.get("ai_declared") is True or associated_file is not None
         file_label = _display_file(finding.get("file"))
 
         if card.kind == "security_regression":
@@ -51,15 +88,20 @@ def build_risk_passport(
             continue
 
         if (
-            is_ai
+            (is_ai or is_declared)
             and card.kind == "security"
             and severity_score >= _SEVERITY_SCORE["HIGH"]
             and card.label in {"proven", "likely"}
         ):
             if file_label:
-                high_risk_ai_files.add(file_label)
+                high_risk_associated_files.add(file_label)
+                if is_ai:
+                    high_risk_ai_files.add(file_label)
             severity = str(finding.get("severity") or "HIGH").upper()
-            reasons.append(f"AI-authored {card.label} {severity} security finding")
+            label = (
+                "Recorded agent line" if is_ai else "Declared agent file association"
+            )
+            reasons.append(f"{label}: {card.label} {severity} security finding")
             continue
 
         if severity_score >= _SEVERITY_SCORE["HIGH"] and card.label == "speculative":
@@ -68,23 +110,29 @@ def build_risk_passport(
             )
             continue
 
-        if is_ai and severity_score > 0:
+        if (is_ai or is_declared) and severity_score > 0:
+            label = (
+                "Recorded agent line" if is_ai else "Declared agent file association"
+            )
             warning_reasons.append(
-                f"AI-authored changed-line finding in {file_label or 'unknown file'}"
+                f"{label}: changed-line finding in {file_label or 'unknown file'}"
             )
 
     missing_guardrails, defense_block_files, defense_warnings = _defense_risk(
         defense_report, ai_files
     )
-    high_risk_ai_files.update(defense_block_files)
+    high_risk_ai_files.update(defense_block_files & recorded_files)
+    high_risk_associated_files.update(defense_block_files)
     reasons.extend(
-        f"AI-authored LLM integration failed high-risk guardrail: {plugin_id}"
+        f"Agent-associated LLM integration failed high-risk guardrail: {plugin_id}"
         for plugin_id in missing_guardrails["blocking"]
     )
     warning_reasons.extend(defense_warnings)
 
     if provenance_data.get("confidence") == "low" and ai_files:
-        warning_reasons.append("AI provenance detected with low confidence")
+        warning_reasons.append(
+            "Agent commit declarations do not establish line authorship"
+        )
 
     recommendation: str
     if reasons:
@@ -99,11 +147,14 @@ def build_risk_passport(
 
     return {
         "recommendation": recommendation,
-        "ai_authored_files": len(ai_files),
+        "ai_authored_files": len(recorded_files),
+        "declared_agent_files": len(declared_files),
+        "agent_associated_files": len(ai_files),
         "ai_agents": sorted(str(agent) for agent in agents if str(agent).strip()),
         "provenance_confidence": provenance_data.get("confidence") or "unavailable",
         "changed_line_evidence": counts,
         "high_risk_ai_files": sorted(high_risk_ai_files),
+        "high_risk_agent_associated_files": sorted(high_risk_associated_files),
         "security_controls_weakened": sorted(weakened_controls),
         "missing_llm_guardrails": sorted(
             set(missing_guardrails["blocking"] + missing_guardrails["warning"])
@@ -132,12 +183,13 @@ def format_risk_passport_markdown(passport: dict[str, Any] | None) -> list[str]:
         "",
         "| Signal | Value |",
         "|--------|-------|",
-        f"| AI-authored files | {int(passport.get('ai_authored_files') or 0)} |",
+        f"| Files with recorded agent lines | {int(passport.get('ai_authored_files') or 0)} |",
+        f"| Files with declared agent association | {int(passport.get('declared_agent_files') or 0)} |",
         f"| Agents | {_join_values(passport.get('ai_agents'))} |",
         "| Provenance confidence | "
         f"{passport.get('provenance_confidence') or 'unavailable'} |",
         f"| Changed-line evidence | {evidence_text} |",
-        f"| High-risk AI files | {_join_values(passport.get('high_risk_ai_files'))} |",
+        f"| High-risk agent-associated files | {_join_values(passport.get('high_risk_agent_associated_files') or passport.get('high_risk_ai_files'))} |",
         "| Security controls weakened | "
         f"{_join_values(passport.get('security_controls_weakened'))} |",
         "| Missing LLM guardrails | "
@@ -196,7 +248,11 @@ def _defense_risk(
 def _is_ai_authored_finding(
     finding: dict[str, Any], provenance: dict[str, Any], ai_files: set[str]
 ) -> bool:
-    if finding.get("ai_authored") is True:
+    if (
+        finding.get("ai_authored") is True
+        and finding.get("attribution_level") == "recorded"
+        and finding.get("attribution_scope") == "line"
+    ):
         return True
     if finding.get("ai_authored") is False and not provenance:
         return False
@@ -207,15 +263,18 @@ def _is_ai_authored_finding(
 
     file_prov = _file_provenance(file_path, provenance)
     if file_prov is not None:
-        if not file_prov.get("agent_authored"):
+        if (
+            file_prov.get("agent_authored") is not True
+            or file_prov.get("attribution_level") != "recorded"
+        ):
             return False
         ranges = file_prov.get("agent_lines") or []
         line = _int_or_none(finding.get("line") or finding.get("line_number"))
         if ranges and line is not None:
             return _line_in_ranges(line, ranges)
-        return True
+        return False
 
-    return _matched_ai_file(file_path, ai_files) is not None
+    return False
 
 
 def _file_provenance(

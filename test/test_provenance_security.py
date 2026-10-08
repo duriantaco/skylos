@@ -16,6 +16,19 @@ def _make_report(files_dict=None):
             agent_lines=info.get("agent_lines", []),
             indicators=info.get("indicators", []),
             agent_name=info.get("agent_name"),
+            evidence_source="agent_trace" if info.get("agent_lines") else "none",
+            attribution_level="recorded" if info.get("agent_lines") else "unknown",
+            attribution_scope="line" if info.get("agent_lines") else "none",
+            contributors=[
+                {
+                    "type": "ai",
+                    "agent_name": info.get("agent_name"),
+                    "agent_lines": info["agent_lines"],
+                    "evidence_source": "agent_trace",
+                }
+            ]
+            if info.get("agent_lines")
+            else [],
         )
         report.files[path] = fp
         if fp.agent_authored:
@@ -44,7 +57,8 @@ class TestAnnotateFindings:
             },
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is True
+        assert result[0]["ai_authored"] is None
+        assert result[0]["ai_declared"] is True
         assert result[0]["ai_agent"] == "cursor"
 
     def test_finding_in_human_file_not_annotated(self):
@@ -64,7 +78,7 @@ class TestAnnotateFindings:
             },
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is False
+        assert result[0]["ai_authored"] is None
         assert result[0]["ai_agent"] is None
 
     def test_finding_line_range_check_in_range(self):
@@ -108,7 +122,7 @@ class TestAnnotateFindings:
             },
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is False
+        assert result[0]["ai_authored"] is None
         assert result[0]["ai_agent"] is None
 
     def test_no_provenance_data(self):
@@ -122,11 +136,11 @@ class TestAnnotateFindings:
             },
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is False
+        assert result[0]["ai_authored"] is None
         assert result[0]["ai_agent"] is None
 
     def test_file_level_attribution_no_line_ranges(self):
-        """When agent_lines is empty, file-level attribution applies."""
+        """An empty line list remains a file declaration, not line evidence."""
         report = _make_report(
             {
                 "src/handler.py": {
@@ -145,7 +159,8 @@ class TestAnnotateFindings:
             },
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is True
+        assert result[0]["ai_authored"] is None
+        assert result[0]["ai_declared"] is True
         assert result[0]["ai_agent"] == "claude"
 
     def test_finding_no_file_key(self):
@@ -156,12 +171,12 @@ class TestAnnotateFindings:
         )
         findings = [{"line": 5, "severity": "LOW", "message": "Something"}]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is False
+        assert result[0]["ai_authored"] is None
         assert result[0]["ai_agent"] is None
 
     def test_finding_no_line_with_ranges(self):
         """File is AI-authored with line ranges, but finding has no line number.
-        Should still attribute at file level."""
+        Without a location its writer is unknown."""
         report = _make_report(
             {
                 "src/x.py": {
@@ -173,8 +188,8 @@ class TestAnnotateFindings:
         )
         findings = [{"file": "src/x.py", "severity": "MEDIUM", "message": "Issue"}]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is True
-        assert result[0]["ai_agent"] == "devin"
+        assert result[0]["ai_authored"] is None
+        assert result[0]["ai_agent"] is None
 
     def test_multiple_findings_mixed(self):
         report = _make_report(
@@ -189,13 +204,14 @@ class TestAnnotateFindings:
             {"file": "src/c.py", "line": 1, "severity": "MEDIUM", "message": "Issue C"},
         ]
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is True
+        assert result[0]["ai_authored"] is None
+        assert result[0]["ai_declared"] is True
         assert result[0]["ai_agent"] == "copilot"
-        assert result[1]["ai_authored"] is False
-        assert result[2]["ai_authored"] is False
+        assert result[1]["ai_authored"] is None
+        assert result[2]["ai_authored"] is None
 
-    def test_suffix_matching(self):
-        """Provenance might use relative paths while findings use absolute paths."""
+    def test_absolute_matching_requires_repository_root(self):
+        """Absolute paths are matched only relative to a known repository root."""
         report = _make_report(
             {
                 "src/auth.py": {"agent_authored": True, "agent_name": "cursor"},
@@ -209,8 +225,10 @@ class TestAnnotateFindings:
                 "message": "Issue",
             },
         ]
+        report.scan_root = "/home/user/project"
         result = annotate_findings_with_provenance(findings, report)
-        assert result[0]["ai_authored"] is True
+        assert result[0]["ai_authored"] is None
+        assert result[0]["ai_declared"] is True
         assert result[0]["ai_agent"] == "cursor"
 
     def test_returns_same_list_object(self):

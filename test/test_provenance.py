@@ -187,7 +187,7 @@ def test_analyze_provenance_reports_status(monkeypatch):
     monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
     with patch("subprocess.check_output", side_effect=_mock_check_output):
         report = analyze_provenance("/fake/repo", base_ref="origin/main")
-    assert report.status == {
+    expected = {
         "ran": True,
         "reason": None,
         "base_ref": "origin/main",
@@ -196,6 +196,9 @@ def test_analyze_provenance_reports_status(monkeypatch):
         "shallow": False,
         "commits_analyzed": 2,
     }
+    assert {key: report.status[key] for key in expected} == expected
+    assert report.status["line_records_summary"]["coverage"] == "partial"
+    assert report.status["attribution_complete"] is False
     assert report.to_dict()["status"]["ran"] is True
 
 
@@ -288,7 +291,8 @@ def test_provenance_report_to_dict():
     assert d["human_files"] == ["bar.py"]
     assert d["confidence"] == "medium"
     assert d["files"]["foo.py"]["agent_authored"] is True
-    assert d["files"]["foo.py"]["agent_lines"] == [(1, 10)]
+    assert d["files"]["foo.py"]["agent_lines"] == []
+    assert d["files"]["foo.py"]["attribution_level"] == "declared"
     assert d["files"]["foo.py"]["agent_name"] == "claude"
     assert d["summary"]["agents_seen"] == ["claude"]
 
@@ -346,12 +350,13 @@ def test_analyze_provenance_detects_ai_commit():
         report = analyze_provenance("/fake/repo", base_ref="origin/main")
 
     assert "src/main.py" in report.agent_files
-    assert "README.md" in report.human_files
-    assert report.confidence == "medium"
+    assert "README.md" in report.unknown_files
+    assert report.human_files == []
+    assert report.confidence == "low"
     assert "claude" in report.summary["agents_seen"]
     assert report.files["src/main.py"].agent_authored is True
     assert report.files["src/main.py"].agent_name == "claude"
-    assert report.files["src/main.py"].agent_lines == [(10, 17)]
+    assert report.files["src/main.py"].agent_lines == []
 
 
 def test_analyze_provenance_no_ai_commits():
@@ -372,7 +377,7 @@ def test_analyze_provenance_no_ai_commits():
         report = analyze_provenance("/fake/repo")
 
     assert report.agent_files == []
-    assert "foo.py" in report.human_files
+    assert "foo.py" in report.unknown_files
     assert report.confidence == "low"
 
 
@@ -521,8 +526,8 @@ diff --git a/b.py b/b.py
     assert report.files["b.py"].agent_name == "copilot"
 
 
-def test_analyze_provenance_high_confidence():
-    """Many indicators should produce high confidence."""
+def test_repeated_declarations_do_not_strengthen_authorship_confidence():
+    """Many declarations still do not establish recorded line authorship."""
     lines = []
     for i in range(10):
         sha = f"sha{i:04d}full"
@@ -557,7 +562,8 @@ diff --git a/f{i}.py b/f{i}.py
     with patch("subprocess.check_output", side_effect=mock_output):
         report = analyze_provenance("/fake/repo")
 
-    assert report.confidence == "high"
+    assert report.confidence == "low"
+    assert report.summary["declared_count"] == 10
 
 
 def test_risk_intersection_to_dict():

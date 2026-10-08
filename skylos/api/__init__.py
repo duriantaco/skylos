@@ -1184,19 +1184,11 @@ def _provenance_not_run(reason: str) -> dict[str, Any]:
     }
 
 
-def _provenance_status(prov_report) -> dict[str, Any]:
-    status = getattr(prov_report, "status", None)
-    if isinstance(status, dict):
-        return dict(status)
-    return {"ran": False, "reason": "provenance status unavailable"}
-
-
 def _detect_report_provenance_data(git_root):
     """Provenance for the upload, always with its status.
 
-    With agent-written files the full report is sent. Without them only the
-    summary and status are sent (not every human file), which still tells
-    Skylos Cloud "checked, no agent code" apart from "could not check".
+    Recorded contributions, declarations and unknown files are all retained.
+    An absence of agent metadata is not evidence of human authorship.
     """
     try:
         from skylos.reporting.provenance import analyze_provenance
@@ -1207,19 +1199,7 @@ def _detect_report_provenance_data(git_root):
         return _provenance_not_run(
             f"provenance detection failed ({type(exc).__name__})"
         )
-    if prov_report.agent_files:
-        return prov_report.to_dict()
-    summary = getattr(prov_report, "summary", None)
-    confidence = getattr(prov_report, "confidence", None)
-    return {
-        "files": {},
-        "agent_files": [],
-        "human_files": [],
-        "automation_files": [],
-        "summary": summary if isinstance(summary, dict) else {},
-        "confidence": confidence if isinstance(confidence, str) else "low",
-        "status": _provenance_status(prov_report),
-    }
+    return prov_report.to_dict()
 
 
 def _scanned_checks(result_json: Any) -> list[str] | None:

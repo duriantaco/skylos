@@ -16,7 +16,7 @@ def run_provenance_command(
 ) -> int:
     prov_parser = argparse.ArgumentParser(
         prog="skylos provenance",
-        description="Detect AI-authored code provenance in PR changes",
+        description="Read recorded agent attribution and declared commit associations",
     )
     prov_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
     prov_parser.add_argument(
@@ -94,18 +94,26 @@ def run_provenance_command(
     table.add_column("Category", style="bold")
     table.add_column("Count", justify="right")
     table.add_row("Total files changed", str(summary.get("total_files", 0)))
-    table.add_row("[red]AI-authored[/red]", str(summary.get("agent_count", 0)))
-    table.add_row("[green]Human-only[/green]", str(summary.get("human_count", 0)))
+    table.add_row("Recorded agent lines (files)", str(summary.get("recorded_count", 0)))
+    table.add_row(
+        "Declared agent association (files)", str(summary.get("declared_count", 0))
+    )
+    table.add_row(
+        "Recorded human contribution (files)", str(summary.get("human_count", 0))
+    )
+    table.add_row("Unknown attribution (files)", str(summary.get("unknown_count", 0)))
     if summary.get("automation_count"):
         table.add_row("Automation (bots)", str(summary.get("automation_count", 0)))
     console.print(table)
 
     agents = summary.get("agents_seen", [])
     if agents:
-        console.print(f"\n[bold]Agents detected:[/bold] {', '.join(agents)}")
+        console.print(
+            f"\n[bold]Agents recorded or declared:[/bold] {', '.join(agents)}"
+        )
 
     if report.agent_files:
-        console.print("\n[bold]AI-authored files:[/bold]")
+        console.print("\n[bold]Files with agent evidence:[/bold]")
         for agent_file in report.agent_files:
             file_provenance = report.files.get(agent_file)
             agent_label = (
@@ -121,7 +129,8 @@ def run_provenance_command(
                         f"...+{len(file_provenance.agent_lines) - 5} more"
                     )
                 ranges = f" [{', '.join(range_strs)}]"
-            console.print(f"  [red]•[/red] {agent_file}{agent_label}{ranges}")
+            level = file_provenance.attribution_level if file_provenance else "unknown"
+            console.print(f"  [red]•[/red] {agent_file}{agent_label}{ranges} ({level})")
 
     if risk_data:
         console.print()

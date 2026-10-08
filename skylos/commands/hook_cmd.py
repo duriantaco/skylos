@@ -35,14 +35,26 @@ from skylos.commands.agent_standards_policy import (
 )
 from skylos.commands.hook_policy import dedupe_by_line
 
-EVENTS = ("session-start", "post-edit", "pre-read", "pre-bash", "stop")
+EVENTS = (
+    "session-start",
+    "pre-edit",
+    "post-edit",
+    "pre-read",
+    "pre-bash",
+    "post-bash",
+    "post-failure",
+    "stop",
+)
 CLIENTS = ("claude", "codex", "cursor")
 # What a fail-open message calls the action that went unchecked.
 FAIL_OPEN_ACTIONS = {
     "session-start": "prompt",
     "post-edit": "edit",
+    "pre-edit": "edit capture",
     "pre-read": "read",
     "pre-bash": "command",
+    "post-bash": "command capture",
+    "post-failure": "failed tool capture",
     "stop": "stop",
 }
 
@@ -169,10 +181,39 @@ def run_hook_command(
                 baseline = capture_session(
                     root,
                     _session_id(payload),
-                    before_edit=event in {"session-start", "pre-read", "pre-bash"},
+                    before_edit=event
+                    in {"session-start", "pre-edit", "pre-read", "pre-bash"},
                 )
                 record["done_configured"] = baseline is not None
                 record["done_capture_started"] = False
+                # Attribution failures leave a visible coverage gap, and must
+                # never replace the normal safety checks or their verdict.
+                try:
+                    from skylos.commands.hook_attribution import (
+                        capture_before,
+                        capture_after,
+                    )
+
+                    if event in {"pre-edit", "pre-bash"} and _state_root(root) == root:
+                        record["attribution_captured"] = capture_before(
+                            root, client, payload, shell=event == "pre-bash"
+                        )
+                    elif (
+                        event in {"post-edit", "post-bash", "post-failure"}
+                        and _state_root(root) == root
+                    ):
+                        record["attribution_captured"] = capture_after(
+                            root,
+                            client,
+                            payload,
+                            shell=event == "post-bash"
+                            or (
+                                event == "post-failure"
+                                and payload.get("tool_name") in {"Bash", "PowerShell"}
+                            ),
+                        )
+                except Exception:
+                    record["attribution_captured"] = False
                 if event in {"post-edit", "stop"}:
                     deps.standards_policy = load_agent_standards_policy(root)
                 handler = _HANDLERS[event]
@@ -394,7 +435,7 @@ def _parse_argv(argv: Sequence[str]) -> tuple[str, str | None]:
 
 def _usage() -> str:
     return (
-        "usage: skylos hook {session-start,post-edit,pre-read,pre-bash,stop} "
+        "usage: skylos hook {session-start,pre-edit,post-edit,pre-read,pre-bash,post-bash,post-failure,stop} "
         "[--client claude|codex|cursor]\n"
         "       skylos hook recheck FILE... [--range L1:L2]\n"
         "       skylos hook recheck --session\n\n"
@@ -2127,8 +2168,17 @@ def _log(root: Path | None, record: dict[str, Any]) -> None:
 
 _HANDLERS = {
     "session-start": _handle_session_start,
+    "pre-edit": lambda payload, root, client, deps, record: _allow_output(
+        "pre-edit", client
+    ),
     "post-edit": _handle_post_edit,
     "pre-read": _handle_pre_read,
     "pre-bash": _handle_pre_bash,
+    "post-bash": lambda payload, root, client, deps, record: _allow_output(
+        "post-bash", client
+    ),
+    "post-failure": lambda payload, root, client, deps, record: _allow_output(
+        "post-failure", client
+    ),
     "stop": _handle_stop,
 }

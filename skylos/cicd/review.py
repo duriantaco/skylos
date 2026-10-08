@@ -300,9 +300,7 @@ def get_changed_line_ranges(
     )
     if include_working_tree:
         for path in get_untracked_files(cwd):
-            ranges.append(
-                {"file": path, "start": 1, "end": _UNTRACKED_WHOLE_FILE_END}
-            )
+            ranges.append({"file": path, "start": 1, "end": _UNTRACKED_WHOLE_FILE_END})
     return ranges
 
 
@@ -698,8 +696,27 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
         target["confidence"] = confidence
 
     ai_authored = source.get("ai_authored")
-    if isinstance(ai_authored, bool):
+    if isinstance(ai_authored, bool) or (
+        "ai_authored" in source and ai_authored is None
+    ):
         target["ai_authored"] = ai_authored
+
+    if isinstance(source.get("ai_declared"), bool):
+        target["ai_declared"] = source["ai_declared"]
+    for key, allowed in {
+        "attribution_level": {"recorded", "declared", "automation", "unknown"},
+        "attribution_scope": {"line", "file", "none"},
+        "evidence_source": {
+            "git_ai",
+            "agent_trace",
+            "commit_metadata",
+            "multiple",
+            "none",
+        },
+    }.items():
+        value = source.get(key)
+        if isinstance(value, str) and value in allowed:
+            target[key] = value
 
     ai_agent = source.get("ai_agent")
     if isinstance(ai_agent, str):

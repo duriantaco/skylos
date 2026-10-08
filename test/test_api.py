@@ -148,9 +148,11 @@ class TestSkylosApi(unittest.TestCase):
                 check=True,
             )
             subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
-            fixture_commit = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=repo
-            ).decode().strip()
+            fixture_commit = (
+                subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo)
+                .decode()
+                .strip()
+            )
 
             sentinel = root / "git-helper-ran"
             helper = root / "git-helper"
@@ -290,7 +292,8 @@ class TestSkylosApi(unittest.TestCase):
         result = api.detect_ai_code()
 
         self.assertTrue(result["detected"])
-        self.assertEqual(result["confidence"], "medium")
+        self.assertEqual(result["confidence"], "low")
+        self.assertEqual(result["attribution_level"], "declared")
         self.assertEqual(result["ai_files"], ["app.py"])
         self.assertEqual(result["indicators"][0]["type"], "co-author")
         self.assertEqual(mock_git_root.call_count, 1)
@@ -1176,6 +1179,7 @@ class TestSkylosApi(unittest.TestCase):
     ):
         prov_report = MagicMock()
         prov_report.agent_files = []
+        prov_report.to_dict.return_value = {"files": {}, "status": {"ran": True}}
         mock_analyze_provenance.return_value = prov_report
         mock_exporter.return_value.generate.return_value = {
             "version": "2.1.0",
@@ -2550,9 +2554,7 @@ class TestProvenanceUploadStatus(unittest.TestCase):
         )
 
     @patch("skylos.reporting.provenance.analyze_provenance")
-    def test_no_agent_files_still_sends_status_without_human_file_list(
-        self, mock_analyze
-    ):
+    def test_no_agent_files_still_sends_unknown_files_and_status(self, mock_analyze):
         from skylos.reporting.provenance import ProvenanceReport
 
         status = {
@@ -2565,7 +2567,7 @@ class TestProvenanceUploadStatus(unittest.TestCase):
             "commits_analyzed": 4,
         }
         mock_analyze.return_value = ProvenanceReport(
-            human_files=["a.py", "b.py"],
+            unknown_files=["a.py", "b.py"],
             summary={"agent_count": 0},
             status=status,
         )
@@ -2574,6 +2576,7 @@ class TestProvenanceUploadStatus(unittest.TestCase):
         self.assertEqual(data["files"], {})
         self.assertEqual(data["agent_files"], [])
         self.assertEqual(data["human_files"], [])
+        self.assertEqual(data["unknown_files"], ["a.py", "b.py"])
         self.assertEqual(data["summary"], {"agent_count": 0})
 
     @patch("skylos.reporting.provenance.analyze_provenance")

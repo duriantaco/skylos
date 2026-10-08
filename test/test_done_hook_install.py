@@ -24,9 +24,9 @@ def _handlers(config, agent, event):
 @pytest.mark.parametrize(
     "agent,prompt_event,stop_event,count",
     [
-        ("claude", "UserPromptSubmit", "Stop", 5),
+        ("claude", "UserPromptSubmit", "Stop", 9),
         # UserPromptSubmit is a documented Codex event, with no matcher.
-        ("codex", "UserPromptSubmit", "Stop", 4),
+        ("codex", "UserPromptSubmit", "Stop", 6),
         ("cursor", "beforeSubmitPrompt", "stop", 5),
     ],
 )

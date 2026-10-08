@@ -758,6 +758,9 @@ def test_flatten_findings_preserves_ai_provenance_flags():
                     "message": "eval",
                     "ai_authored": True,
                     "ai_agent": "codex",
+                    "attribution_level": "recorded",
+                    "attribution_scope": "line",
+                    "evidence_source": "agent_trace",
                 }
             ]
         }
@@ -765,6 +768,8 @@ def test_flatten_findings_preserves_ai_provenance_flags():
 
     assert findings[0]["ai_authored"] is True
     assert findings[0]["ai_agent"] == "codex"
+    assert findings[0]["attribution_level"] == "recorded"
+    assert findings[0]["evidence_source"] == "agent_trace"
 
 
 def test_merge_llm_hypothesis_does_not_downgrade_static_finding_source():

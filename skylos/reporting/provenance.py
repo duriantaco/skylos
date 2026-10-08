@@ -208,7 +208,8 @@ def _parse_trailers(trailers):
 def classify_commit(author_name, author_email, subject, trailers):
     """Classify one commit's authorship.
 
-    Returns ``None`` for ordinary human commits, otherwise a dict with
+    Returns ``None`` when no explicit AI/automation signal is present (the
+    writer is then unknown), otherwise a dict with
     ``category`` ("ai" or "automation"), ``type``, ``agent_name`` and ``detail``.
     """
     for key, value in _parse_trailers(trailers):
@@ -282,6 +283,45 @@ class FileProvenance:
     automation_authored: bool = False
     automation_name: str | None = None
     automation_indicators: list = field(default_factory=list)
+    evidence_source: str = "none"
+    attribution_level: str = "unknown"
+    attribution_scope: str = "none"
+    contributors: list = field(default_factory=list)
+    content_hash: str | None = None
+    revision: str | None = None
+    commit_contributors: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.agent_authored and self.attribution_level == "unknown":
+            # Older callers supply only agent_authored. Their declarations do
+            # not gain line-record status by omission of the new fields.
+            self.evidence_source = "commit_metadata"
+            self.attribution_level = "declared"
+            self.attribution_scope = "file"
+            self.agent_lines = []
+        if self.attribution_level == "declared" and not self.commit_contributors:
+            self.commit_contributors = _declared_commit_contributors(
+                self.indicators, self.agent_name
+            )
+
+
+def _declared_commit_contributors(indicators, agent_name=None):
+    names = {
+        indicator.get("agent_name")
+        for indicator in indicators
+        if isinstance(indicator, dict) and indicator.get("agent_name")
+    }
+    if agent_name:
+        names.add(agent_name)
+    return [
+        {
+            "type": "ai",
+            "agent_name": name,
+            "agent_lines": [],
+            "evidence_source": "commit_metadata",
+        }
+        for name in sorted(names) or [None]
+    ]
 
 
 @dataclass
@@ -289,8 +329,10 @@ class ProvenanceReport:
     files: dict = field(default_factory=dict)
     agent_files: list = field(default_factory=list)
     human_files: list = field(default_factory=list)
+    unknown_files: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     confidence: str = "low"
+    scan_root: str | None = field(default=None, repr=False)
     automation_files: list = field(default_factory=list)
     # How complete the analysis was, so a consumer (Skylos Cloud) can tell
     # "no agent commits" apart from "could not look": ran, reason (when it
@@ -312,11 +354,19 @@ class ProvenanceReport:
                 "agent_name": fp.agent_name,
                 "automation_authored": fp.automation_authored,
                 "automation_name": fp.automation_name,
+                "evidence_source": fp.evidence_source,
+                "attribution_level": fp.attribution_level,
+                "attribution_scope": fp.attribution_scope,
+                "contributors": fp.contributors,
+                "commit_contributors": fp.commit_contributors,
+                "content_hash": fp.content_hash,
+                "revision": fp.revision,
             }
         return {
             "files": file_entries,
             "agent_files": self.agent_files,
             "human_files": self.human_files,
+            "unknown_files": self.unknown_files,
             "automation_files": self.automation_files,
             "summary": self.summary,
             "confidence": self.confidence,
@@ -481,6 +531,142 @@ def _git_is_shallow(git_root):
 
 
 def analyze_provenance(git_root, base_ref=None):
+    report = _analyze_commit_provenance(git_root, base_ref=base_ref)
+    if not git_root:
+        return report
+    report.scan_root = str(Path(git_root).resolve())
+    from skylos.reporting.attribution_evidence import read_attribution_evidence
+
+    recorded, coverage = read_attribution_evidence(git_root)
+    for path, contributors in recorded.items():
+        normalized = _normalize_recorded_contributors(contributors)
+        if not normalized:
+            continue
+        previous = report.files.get(path)
+        commit_contributors = previous.commit_contributors if previous else []
+        ai = [c for c in normalized if c["type"] == "ai"]
+        agents = {c.get("agent_name") for c in ai if c.get("agent_name")}
+        sources = {c["evidence_source"] for c in normalized}
+        report.files[path] = FileProvenance(
+            file_path=path,
+            # Keep the broad file association used by conservative policy;
+            # line authorship comes exclusively from recorded contributors.
+            agent_authored=bool(ai or commit_contributors),
+            agent_lines=_merge_ranges([r for c in ai for r in c["agent_lines"]]),
+            agent_name=next(iter(agents)) if len(agents) == 1 else None,
+            indicators=previous.indicators if previous else [],
+            automation_authored=previous.automation_authored if previous else False,
+            automation_name=previous.automation_name if previous else None,
+            automation_indicators=previous.automation_indicators if previous else [],
+            evidence_source=next(iter(sources)) if len(sources) == 1 else "multiple",
+            attribution_level="recorded",
+            attribution_scope="line",
+            contributors=normalized,
+            commit_contributors=commit_contributors,
+            content_hash=contributors[0].get("content_hash"),
+            revision=contributors[0].get("revision"),
+        )
+    report.status["line_records_summary"] = coverage
+    report.status["attribution_complete"] = False
+    report.status["scope"] = "available_records_and_commit_range"
+    report.agent_files = sorted(
+        path for path, fp in report.files.items() if fp.agent_authored
+    )
+    report.human_files = sorted(
+        path
+        for path, fp in report.files.items()
+        if any(c["type"] == "human" for c in fp.contributors)
+    )
+    # Even a file with some recorded human lines can contain unknown lines.
+    # human_files reports observed human contribution, never "human-only".
+    report.unknown_files = sorted(
+        path
+        for path, fp in report.files.items()
+        if fp.attribution_level == "unknown"
+        or any(c["type"] in {"unknown", "mixed"} for c in fp.contributors)
+    )
+    report.automation_files = sorted(
+        path for path, fp in report.files.items() if fp.automation_authored
+    )
+    report.summary.update(
+        {
+            "total_files": len(report.files),
+            "agent_count": len(report.agent_files),
+            "human_count": len(report.human_files),
+            "unknown_count": len(report.unknown_files),
+            "automation_count": len(report.automation_files),
+            "recorded_count": sum(
+                fp.attribution_level == "recorded"
+                and any(c["type"] == "ai" for c in fp.contributors)
+                for fp in report.files.values()
+            ),
+            "declared_count": sum(
+                bool(fp.commit_contributors) for fp in report.files.values()
+            ),
+            "agents_seen": sorted(
+                {
+                    c.get("agent_name")
+                    for fp in report.files.values()
+                    for c in fp.contributors
+                    if c["type"] == "ai" and c.get("agent_name")
+                }
+                | {
+                    c.get("agent_name")
+                    for fp in report.files.values()
+                    for c in fp.commit_contributors
+                    if c.get("agent_name")
+                }
+            ),
+        }
+    )
+    # More repeated labels are not stronger evidence of line authorship.
+    report.confidence = "medium" if report.summary["recorded_count"] else "low"
+    return report
+
+
+def _normalize_recorded_contributors(contributors):
+    """Resolve contradictory/overlapping records to unknown, using intervals."""
+    events = {}
+    for index, contributor in enumerate(contributors):
+        for start, end in contributor["agent_lines"]:
+            events.setdefault(start, []).append((index, 1))
+            events.setdefault(end + 1, []).append((index, -1))
+    active, grouped = {}, {}
+    positions = sorted(events)
+    for index, position in enumerate(positions[:-1]):
+        for identity, delta in events[position]:
+            active[identity] = active.get(identity, 0) + delta
+            if active[identity] == 0:
+                del active[identity]
+        if not active:
+            continue
+        values = [contributors[i] for i in active]
+        owners = {
+            (c["type"], c.get("agent_name") if c["type"] == "ai" else None)
+            for c in values
+        }
+        category, agent = next(iter(owners)) if len(owners) == 1 else ("unknown", None)
+        source_names = {c["evidence_source"] for c in values}
+        source = next(iter(source_names)) if len(source_names) == 1 else "multiple"
+        models = {c.get("model_id") for c in values}
+        model = next(iter(models)) if len(models) == 1 else None
+        key = (category, agent, source, model)
+        if key not in grouped:
+            grouped[key] = {
+                "type": category,
+                "agent_name": agent,
+                "model_id": model,
+                "evidence_source": source,
+                "agent_lines": [],
+            }
+        grouped[key]["agent_lines"].append((position, positions[index + 1] - 1))
+    result = list(grouped.values())
+    for contributor in result:
+        contributor["agent_lines"] = _merge_ranges(contributor["agent_lines"])
+    return result
+
+
+def _analyze_commit_provenance(git_root, base_ref=None):
     if not git_root:
         return ProvenanceReport(status={"ran": False, "reason": "not a git repository"})
 
@@ -514,7 +700,7 @@ def analyze_provenance(git_root, base_ref=None):
             )
 
     indicators_by_commit = {}
-    ai_commits = set()
+    ai_commits = []
     agents_seen = set()
     automation_commits = {}
     automation_seen = set()
@@ -562,7 +748,12 @@ def analyze_provenance(git_root, base_ref=None):
         if attribution is None:
             continue
         category = attribution.pop("category")
-        indicator = {"commit": commit_sha[:7], **attribution}
+        indicator = {
+            "commit": commit_sha[:7],
+            "evidence_source": "commit_metadata",
+            "attribution_level": "declared",
+            **attribution,
+        }
         if category == ATTRIBUTION_AUTOMATION:
             automation_commits[commit_sha] = indicator
             if indicator.get("agent_name"):
@@ -573,7 +764,7 @@ def analyze_provenance(git_root, base_ref=None):
             agents_seen.add(indicator["agent_name"])
 
         if is_ai_commit:
-            ai_commits.add(commit_sha)
+            ai_commits.append(commit_sha)
             indicators_by_commit[commit_sha] = indicator
 
     file_provenance = {}
@@ -601,13 +792,18 @@ def analyze_provenance(git_root, base_ref=None):
                     agent_name=indicator.get("agent_name"),
                 )
             fp = file_provenance[fpath]
-            fp.agent_lines.extend(ranges)
+            # Commit metadata associates a tool with a commit/file. Its patch
+            # cannot establish which changed lines that tool actually wrote.
+            fp.agent_lines = []
             fp.indicators.append(indicator)
             if not fp.agent_name and indicator.get("agent_name"):
                 fp.agent_name = indicator["agent_name"]
 
     for fp in file_provenance.values():
         fp.agent_lines = _merge_ranges(fp.agent_lines)
+        fp.commit_contributors = _declared_commit_contributors(
+            fp.indicators, fp.agent_name
+        )
 
     automation_by_file = {}
     for commit_sha, indicator in automation_commits.items():
@@ -642,15 +838,12 @@ def analyze_provenance(git_root, base_ref=None):
 
     agent_files = sorted(file_provenance.keys())
 
-    # Automation (Dependabot, Renovate, CI bots) is reported separately and is
-    # never counted as AI. The three buckets are disjoint: a file is AI when
-    # any AI commit touched it, otherwise automation when a bot commit touched
-    # it, otherwise human. (Before automation existed, bot commits were
-    # counted as AI, so ``human_files`` never contained bot-authored files.)
+    # Commit metadata is a file association. Unlabelled changes remain unknown;
+    # the enclosing reader adds any separately recorded line contributions.
     automation_files = sorted(set(automation_by_file) - set(agent_files))
-    human_files = sorted(all_pr_files - set(agent_files) - set(automation_files))
+    unknown_files = sorted(all_pr_files - set(agent_files) - set(automation_files))
 
-    for hf in human_files:
+    for hf in unknown_files:
         file_provenance[hf] = FileProvenance(file_path=hf, agent_authored=False)
 
     for af in automation_files:
@@ -658,6 +851,9 @@ def analyze_provenance(git_root, base_ref=None):
             af, FileProvenance(file_path=af, agent_authored=False)
         )
         fp.automation_authored = True
+        fp.evidence_source = "commit_metadata"
+        fp.attribution_level = "automation"
+        fp.attribution_scope = "file"
         fp.automation_indicators = automation_by_file[af]
         fp.automation_name = next(
             (
@@ -682,12 +878,14 @@ def analyze_provenance(git_root, base_ref=None):
     return ProvenanceReport(
         files=file_provenance,
         agent_files=agent_files,
-        human_files=human_files,
+        human_files=[],
+        unknown_files=unknown_files,
         automation_files=automation_files,
         summary={
             "total_files": total,
             "agent_count": agent_count,
-            "human_count": len(human_files),
+            "human_count": 0,
+            "unknown_count": len(unknown_files),
             "agents_seen": sorted(agents_seen),
             "automation_count": len(automation_files),
             "automation_seen": sorted(automation_seen),
@@ -748,37 +946,74 @@ def annotate_findings_with_provenance(
     findings: list[dict],
     provenance_report: "ProvenanceReport",
 ) -> list[dict]:
+    from skylos.reporting.attribution_evidence import safe_relative_path
+
     for finding in findings:
+        finding.update(
+            ai_authored=None,
+            ai_agent=None,
+            ai_declared=False,
+            ai_declared_agents=[],
+            evidence_source="none",
+            attribution_level="unknown",
+            attribution_scope="none",
+        )
         file_path = finding.get("file")
-        if not file_path:
-            finding["ai_authored"] = False
-            finding["ai_agent"] = None
+        if not isinstance(file_path, str):
             continue
-
-        file_prov = provenance_report.files.get(file_path)
-
+        if Path(file_path).is_absolute() and provenance_report.scan_root:
+            try:
+                file_path = (
+                    Path(file_path).relative_to(provenance_report.scan_root).as_posix()
+                )
+            except ValueError:
+                continue
+        # A filename suffix is ambiguous across folders; never assign another
+        # file's evidence just because its name happens to match.
+        path = safe_relative_path(file_path)
+        file_prov = provenance_report.files.get(path) if path else None
         if file_prov is None:
-            for prov_path, prov in provenance_report.files.items():
-                if file_path.endswith(prov_path) or prov_path.endswith(file_path):
-                    file_prov = prov
-                    break
-
-        if file_prov is None or not file_prov.agent_authored:
-            finding["ai_authored"] = False
-            finding["ai_agent"] = None
             continue
-
-        line = finding.get("line")
-        if file_prov.agent_lines and line is not None:
-            if _line_in_ranges(line, file_prov.agent_lines):
-                finding["ai_authored"] = True
-                finding["ai_agent"] = file_prov.agent_name
-            else:
+        # A current line record cannot erase an independent commit declaration.
+        finding["ai_declared"] = bool(file_prov.commit_contributors)
+        finding["ai_declared_agents"] = sorted(
+            {
+                contributor["agent_name"]
+                for contributor in file_prov.commit_contributors
+                if contributor.get("agent_name")
+            }
+        )
+        if file_prov.attribution_level in {"declared", "automation"}:
+            finding.update(
+                ai_agent=file_prov.agent_name if finding["ai_declared"] else None,
+                evidence_source=file_prov.evidence_source,
+                attribution_level=file_prov.attribution_level,
+                attribution_scope="file",
+            )
+            if file_prov.automation_authored:
                 finding["ai_authored"] = False
-                finding["ai_agent"] = None
-        else:
-            finding["ai_authored"] = True
-            finding["ai_agent"] = file_prov.agent_name
+            continue
+        line = finding.get("line")
+        if file_prov.attribution_level != "recorded" or type(line) is not int:
+            continue
+        for contributor in file_prov.contributors:
+            if not _line_in_ranges(line, contributor["agent_lines"]):
+                continue
+            category = contributor["type"]
+            finding.update(
+                ai_authored=True
+                if category == "ai"
+                else False
+                if category == "human"
+                else None,
+                ai_agent=contributor.get("agent_name") if category == "ai" else None,
+                evidence_source=contributor["evidence_source"],
+                attribution_level="recorded"
+                if category in {"ai", "human"}
+                else "unknown",
+                attribution_scope="line",
+            )
+            break
 
     return findings
 
@@ -819,15 +1054,19 @@ def compute_ai_security_stats(
         "total_findings": total,
         "ai_authored_findings": ai_count,
         "ai_authored_pct": round(pct, 1),
+        "unknown_findings": sum(f.get("ai_authored") is None for f in findings),
+        "declared_ai_findings": sum(bool(f.get("ai_declared")) for f in findings),
+        "recorded_human_findings": sum(
+            f.get("ai_authored") is False and f.get("attribution_level") == "recorded"
+            for f in findings
+        ),
         "by_agent": by_agent,
         "by_severity": by_severity,
         "by_category": by_category,
     }
 
 
-def compute_ai_security_stats_for_report(
-    report: dict, sections: Iterable[str]
-) -> dict:
+def compute_ai_security_stats_for_report(report: dict, sections: Iterable[str]) -> dict:
     """Count annotated findings by their top-level JSON result section."""
     findings = []
     for section in sections:
@@ -838,6 +1077,8 @@ def compute_ai_security_stats_for_report(
                 {
                     "ai_authored": finding.get("ai_authored"),
                     "ai_agent": finding.get("ai_agent"),
+                    "ai_declared": finding.get("ai_declared"),
+                    "attribution_level": finding.get("attribution_level"),
                     "severity": finding.get("severity"),
                     "category": section,
                 }
