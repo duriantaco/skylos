@@ -1,20 +1,16 @@
-import ast
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import yaml
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
 
 from skylos.rules.config.cicd.github_actions import scan_github_actions_file
 
@@ -469,6 +465,14 @@ def test_trusted_go_build_stops_on_failure(
 # Test-owned snippets of the pinned primer's interface. The real overlay runs
 # against these offline; no upstream imports, detector builds, or corpus code run.
 _PRIMER_CONTAINER_INTERFACE = r'''
+import hashlib
+import json
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+
 from liveness_primer.envcache import (
     fetch_records_for,
     parse_static_metadata,
@@ -512,9 +516,14 @@ def _run_dart_overlay(tmp_path: Path, source: str):
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("workflow shell checks require bash")
-    target = tmp_path / "_liveness_primer/liveness_primer/container.py"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source, encoding="utf-8")
+    workspace = Path(tempfile.mkdtemp(dir=tmp_path))
+    target = workspace / "_liveness_primer/liveness_primer/container.py"
+    target.parent.mkdir(parents=True)
+    if target.is_symlink():
+        raise ValueError("overlay fixture must be a regular file")
+    # Exclusive creation also rejects a symlink planted after the check.
+    with target.open("x", encoding="utf-8") as fixture:
+        fixture.write(source)
     step = next(
         step
         for step in _workflow()["jobs"]["blast-radius"]["steps"]
@@ -522,7 +531,7 @@ def _run_dart_overlay(tmp_path: Path, source: str):
     )
     result = subprocess.run(
         [bash, "-c", 'python() { "$OVERLAY_TEST_PYTHON" "$@"; }\n' + step["run"]],
-        cwd=tmp_path,
+        cwd=workspace,
         env={
             "PATH": os.defpath,
             "OVERLAY_TEST_PYTHON": sys.executable,
@@ -536,18 +545,27 @@ def _run_dart_overlay(tmp_path: Path, source: str):
     return result, target
 
 
-def _overlay_interface(source: str, **stubs):
-    # Execute only methods authored above, after the real workflow patches
-    # them. Ignore imports and other top-level code in the source fixture.
-    nodes = [
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-    ]
-    namespace = {"hashlib": hashlib, "json": json, "tomllib": tomllib, **stubs}
-    fixture = ast.Module(body=nodes, type_ignores=[])
-    exec(compile(fixture, "offline primer fixture", "exec"), namespace)
-    return SimpleNamespace(**namespace)
+def _overlay_interface(path: Path, monkeypatch: pytest.MonkeyPatch, **stubs):
+    # Import the test-owned fixture as a normal module. The upstream package
+    # is stubbed, so importing it never runs downloaded primer code.
+    package = ModuleType("liveness_primer")
+    package.__path__ = []
+    envcache = ModuleType("liveness_primer.envcache")
+    for name in (
+        "fetch_records_for",
+        "parse_static_metadata",
+        "resolve_pair_refs",
+        "resolve_paired_delta",
+        "_read_pyproject_text",
+    ):
+        setattr(envcache, name, stubs.get(name))
+    monkeypatch.setitem(sys.modules, "liveness_primer", package)
+    monkeypatch.setitem(sys.modules, "liveness_primer.envcache", envcache)
+    spec = importlib.util.spec_from_file_location("offline_primer_fixture", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_dart_overlay_runs_before_full_corpus_comparison():
@@ -565,7 +583,7 @@ def test_dart_overlay_runs_before_full_corpus_comparison():
 
 @pytest.mark.parametrize("dart_in_core", [True, False], ids=["old-core", "new-extra"])
 def test_dart_overlay_prefetches_selected_dart_without_other_extras(
-    tmp_path, dart_in_core
+    tmp_path, monkeypatch, dart_in_core
 ):
     result, target = _run_dart_overlay(tmp_path, _PRIMER_CONTAINER_INTERFACE)
     assert result.returncode == 0, result.stderr
@@ -599,7 +617,8 @@ def test_dart_overlay_prefetches_selected_dart_without_other_extras(
         return path.read_text(encoding="utf-8")
 
     patched = _overlay_interface(
-        target.read_text(encoding="utf-8"),
+        target,
+        monkeypatch,
         parse_static_metadata=validate,
         _read_pyproject_text=read_metadata,
     )
@@ -614,13 +633,15 @@ def test_dart_overlay_prefetches_selected_dart_without_other_extras(
     assert events == ["validate", "read"]
     assert '"/liveness/detector[dart]"' in target.read_text(encoding="utf-8")
     adapter = SimpleNamespace(build_recipe=SimpleNamespace(digest=lambda: "recipe"))
-    original = _overlay_interface(_PRIMER_CONTAINER_INTERFACE)
-    assert patched.container_fingerprint(adapter) != original.container_fingerprint(
-        adapter
-    )
+    original_fingerprint = hashlib.sha256(
+        json.dumps({"recipe": "recipe"}, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    assert patched.container_fingerprint(adapter) != original_fingerprint
 
 
-def test_dart_overlay_propagates_metadata_validation_before_reading(tmp_path):
+def test_dart_overlay_propagates_metadata_validation_before_reading(
+    tmp_path, monkeypatch
+):
     result, target = _run_dart_overlay(tmp_path, _PRIMER_CONTAINER_INTERFACE)
     assert result.returncode == 0, result.stderr
 
@@ -631,7 +652,8 @@ def test_dart_overlay_propagates_metadata_validation_before_reading(tmp_path):
         pytest.fail("overlay read metadata before existing validation completed")
 
     patched = _overlay_interface(
-        target.read_text(encoding="utf-8"),
+        target,
+        monkeypatch,
         parse_static_metadata=invalid_metadata,
         _read_pyproject_text=unexpected_read,
     )
