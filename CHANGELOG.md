@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.47.1](https://github.com/duriantaco/skylos/compare/v4.47.0...v4.47.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **output:** print finding text literally and keep analyzer logs out of normal runs ([#952](https://github.com/duriantaco/skylos/issues/952)) ([66e96df](https://github.com/duriantaco/skylos/commit/66e96df3c1bedc378313173324c43bfe94ea81b7))
+
 ## [4.47.0](https://github.com/duriantaco/skylos/compare/v4.46.0...v4.47.0) (2026-10-07)
 
 
