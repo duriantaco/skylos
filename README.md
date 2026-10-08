@@ -553,6 +553,9 @@ pip install "skylos[lint]"
 # Ed25519 verification for `skylos verify-verdict`
 pip install "skylos[verdict]"
 
+# Dart analysis (builds the Dart parser from source; needs a C compiler)
+pip install "skylos[dart]"
+
 # All published optional extras
 pip install "skylos[all]"
 ```
@@ -647,7 +650,7 @@ or `--include-folder` to override an excluded folder.
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
 | PHP | Yes | Yes | No | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
 | Rust | Yes | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
-| Dart | Yes | Yes | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
+| Dart | Yes³ | Yes³ | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |
 | C++ | Partial | No | No | Unsupported | conservative unused file-local functions in `.cpp`, `.cc`, `.cxx`; C++ headers are parsed for references |
 | Kotlin | Yes | No² | No | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
@@ -660,6 +663,12 @@ incomplete; see the Go engine note below.
 
 ² No built-in Kotlin security rules; secret scanning still covers `.kt` and
 `.kts` files.
+
+³ Dart checks need the optional `skylos[dart]` extra
+(`pip install "skylos[dart]"`). Its parser has no prebuilt wheels, so installing
+it needs a C compiler. Without it, a scan that includes `.dart` files reports
+`SKY-ANALYSIS-INCOMPLETE` and exits with code 2 instead of skipping them
+silently; `skylos doctor` shows whether Dart support is installed.
 
 "No" means Skylos has no built-in rules of that kind for the language.
 

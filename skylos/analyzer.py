@@ -1187,6 +1187,81 @@ def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
     }
 
 
+DART_SUPPORT_HINT = (
+    'Install Dart support: pip install "skylos[dart]" (it compiles a C '
+    "extension, so it needs a C compiler). `skylos doctor` shows whether Dart "
+    "support is installed."
+)
+DART_SKIPPED_CHECKS = ("dead_code", "security")
+
+
+def _dart_support_installed() -> bool:
+    from skylos.visitors.languages.dart.core import DART_LANG
+
+    return DART_LANG is not None
+
+
+def _dart_engine_analysis_report(files) -> dict | None:
+    """Dart files are scanned only with the optional `skylos[dart]` grammar."""
+    dart_file_count = sum(
+        1 for file_path in files if str(file_path).endswith(_DART_SOURCE_EXTS)
+    )
+    if not dart_file_count or _dart_support_installed():
+        return None
+    return {
+        "status": "partial",
+        "file_count": dart_file_count,
+        "engine": {
+            "status": "unavailable",
+            "reason": "Dart support is not installed",
+            "install": 'pip install "skylos[dart]"',
+        },
+        "completed_checks": [],
+        "skipped_checks": list(DART_SKIPPED_CHECKS),
+    }
+
+
+def _dart_engine_analysis_error(files, report: dict | None) -> dict | None:
+    if not isinstance(report, dict) or report.get("status") != "partial":
+        return None
+
+    dart_files = sorted(
+        (
+            Path(file_path)
+            for file_path in files
+            if str(file_path).endswith(_DART_SOURCE_EXTS)
+        ),
+        key=lambda path: str(path),
+    )
+    if not dart_files:
+        return None
+
+    skipped_checks = [
+        str(check)
+        for check in (report.get("skipped_checks") or [])
+        if str(check).strip()
+    ]
+    skipped_label = ", ".join(check.replace("_", " ") for check in skipped_checks)
+    message = "Dart analysis incomplete: Dart support is not installed."
+    if skipped_label:
+        message += f" Skipped checks: {skipped_label}."
+
+    return {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "severity": "HIGH",
+        "kind": "language_engine_unavailable",
+        "error_type": "DartGrammarUnavailable",
+        "message": message,
+        "file": str(dart_files[0]),
+        "line": 1,
+        "column": 1,
+        "language": "dart",
+        "affected_file_count": len(dart_files),
+        "skipped_checks": skipped_checks,
+        "suggestion": DART_SUPPORT_HINT,
+    }
+
+
 def _go_runtime_analysis_error(failure: dict, skipped_checks: list[str]):
     module_files = sorted(
         (
@@ -3543,6 +3618,12 @@ class Skylos:
             go_engine_error = _go_engine_analysis_error(files, go_engine_report)
             if go_engine_error is not None:
                 language_engine_errors.append(go_engine_error)
+        dart_engine_report = _dart_engine_analysis_report(files)
+        if dart_engine_report is not None:
+            self._language_engine_reports["dart"] = dart_engine_report
+            dart_engine_error = _dart_engine_analysis_error(files, dart_engine_report)
+            if dart_engine_error is not None:
+                language_engine_errors.append(dart_engine_error)
 
         from skylos.visitors.languages.typescript.workspace import (
             discover_workspace_inventory,

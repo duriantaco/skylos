@@ -26,9 +26,10 @@ COPY pyproject.toml README.md LICENSE ./
 COPY skylos ./skylos
 COPY --from=go-build /out/skylos-go ./skylos/engines/go/skylos-go
 
+# [dart] builds the Dart parser here, where gcc is available.
 RUN python -m pip install --upgrade pip build && \
     python -m build --wheel --outdir /dist && \
-    python -m pip wheel --wheel-dir /wheelhouse /dist/*.whl
+    python -m pip wheel --wheel-dir /wheelhouse "$(ls /dist/*.whl)[dart]"
 
 FROM python:${PYTHON_VERSION}-slim
 
@@ -47,7 +48,7 @@ WORKDIR /work
 COPY --from=build /wheelhouse /tmp/wheelhouse
 COPY --from=go-build /out/skylos-go /usr/local/bin/skylos-go
 
-RUN python -m pip install --no-index --find-links=/tmp/wheelhouse skylos && \
+RUN python -m pip install --no-index --find-links=/tmp/wheelhouse "skylos[dart]" && \
     rm -rf /tmp/wheelhouse
 
 ENTRYPOINT ["skylos"]

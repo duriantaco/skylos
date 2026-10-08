@@ -2453,7 +2453,6 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tree-sitter" },
     { name = "tree-sitter-cpp" },
-    { name = "tree-sitter-dart-orchard" },
     { name = "tree-sitter-go" },
     { name = "tree-sitter-java" },
     { name = "tree-sitter-php" },
@@ -2469,6 +2468,10 @@ all = [
     { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "tree-sitter-dart-orchard" },
+]
+dart = [
+    { name = "tree-sitter-dart-orchard" },
 ]
 lint = [
     { name = "ruff" },
@@ -2514,14 +2517,15 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
     { name = "tree-sitter", specifier = ">=0.25.2,<0.27" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4,<0.24" },
-    { name = "tree-sitter-dart-orchard", specifier = ">=0.3.2,<0.6" },
+    { name = "tree-sitter-dart-orchard", marker = "extra == 'all'", specifier = ">=0.3.2,<0.6" },
+    { name = "tree-sitter-dart-orchard", marker = "extra == 'dart'", specifier = ">=0.3.2,<0.6" },
     { name = "tree-sitter-go", specifier = ">=0.23.0,<0.26" },
     { name = "tree-sitter-java", specifier = ">=0.23.0,<0.24" },
     { name = "tree-sitter-php", specifier = ">=0.24.1,<0.25" },
     { name = "tree-sitter-rust", specifier = ">=0.24.2,<0.25" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2,<0.24" },
 ]
-provides-extras = ["llm", "lint", "test", "verdict", "all"]
+provides-extras = ["llm", "lint", "test", "verdict", "dart", "all"]
 
 [[package]]
 name = "sniffio"
