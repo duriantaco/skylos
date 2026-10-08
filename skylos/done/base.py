@@ -10,7 +10,9 @@ diff, textconv, filters or hooks): the repository under check is untrusted.
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +46,100 @@ def is_runtime_path(path: str) -> bool:
         or path in _RUNTIME_FILES
         or path.startswith(_RUNTIME_FILE_PREFIXES)
     )
+
+
+# Untracked folders that installing the project or running its tests creates.
+# Without this, `pip install -e .` (an `<name>.egg-info/` folder) or Skylos's own
+# pytest run (`.pytest_cache/`) makes a clean checkout's receipt dirty. Each is
+# limited to content that cannot change which code the tests run:
+# - `*.egg-info/` may hold only setuptools metadata files, and its entry points
+#   only console or GUI scripts. importlib.metadata finds an in-tree egg-info
+#   whenever the repository root is on sys.path, so any other group (`pytest11`
+#   above all) could load a plugin into the test run.
+# - `.pytest_cache/` steers selection only through --lf/--sw, which the test
+#   settings check reports; a changed test that does not run is reported missing.
+# - `htmlcov/` is report output that nothing reads.
+# Deliberately not listed: `__pycache__/` (Python loads an in-tree .pyc whose
+# recorded source mtime and size match, so it can replace a tracked module's
+# code), `.coverage*` (pytest-cov --cov-append reads it back), `.eggs/` (installed
+# build-dependency code), `.mypy_cache/` and `.ruff_cache/` (pytest plugins can
+# reuse them as results).
+_ARTIFACT_DIR_NAMES = frozenset({".pytest_cache", "htmlcov"})
+_EGG_INFO_SUFFIX = ".egg-info"
+_EGG_INFO_FILES = frozenset(
+    {
+        "PKG-INFO",
+        "SOURCES.txt",
+        "dependency_links.txt",
+        "top_level.txt",
+        "requires.txt",
+        "entry_points.txt",
+        "not-zip-safe",
+        "zip-safe",
+    }
+)
+_EGG_INFO_ENTRY_POINT_GROUPS = frozenset({"console_scripts", "gui_scripts"})
+_MAX_ENTRY_POINTS_BYTES = 256 * 1024
+
+
+def _artifact_root(path: str) -> str | None:
+    parts = path.rstrip("/").split("/")
+    for index, part in enumerate(parts):
+        if part in _ARTIFACT_DIR_NAMES or (
+            part.endswith(_EGG_INFO_SUFFIX) and len(part) > len(_EGG_INFO_SUFFIX)
+        ):
+            return "/".join(parts[: index + 1])
+    return None
+
+
+def is_untracked_build_artifact(root: Path, path: str) -> bool:
+    """Whether an untracked ``path`` lies in a generated folder that cannot
+    change the test run (see ``_ARTIFACT_DIR_NAMES``). Tracked paths never ask."""
+    artifact = _artifact_root(path)
+    if artifact is None:
+        return False
+    directory = root / artifact
+    try:
+        if not stat.S_ISDIR(directory.lstat().st_mode):
+            return False
+    except OSError:
+        return False
+    if not artifact.endswith(_EGG_INFO_SUFFIX):
+        return True
+    return _egg_info_is_metadata_only(root, artifact)
+
+
+def _egg_info_is_metadata_only(root: Path, artifact: str) -> bool:
+    try:
+        entries = list(os.scandir(root / artifact))
+    except OSError:
+        return False
+    for entry in entries:
+        if entry.name not in _EGG_INFO_FILES or not entry.is_file(
+            follow_symlinks=False
+        ):
+            return False
+    if "entry_points.txt" not in {entry.name for entry in entries}:
+        return True
+    text = read_project_text_no_symlink(
+        root,
+        f"{artifact}/entry_points.txt",
+        max_bytes=_MAX_ENTRY_POINTS_BYTES,
+    )
+    if text is None:
+        return False
+    group = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            group = line[1:-1].strip()
+            if group not in _EGG_INFO_ENTRY_POINT_GROUPS:
+                return False
+        elif group is None:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -288,7 +384,12 @@ def _changed_files(
     )
     untracked = set()
     for path in (untracked_out or "").split("\0"):
-        if path and path not in changed and head_tree is None:
+        if (
+            path
+            and path not in changed
+            and head_tree is None
+            and not is_untracked_build_artifact(context.root, path)
+        ):
             changed[path] = ChangedFile(path, "added", None)
             untracked.add(path)
 
@@ -302,9 +403,9 @@ def _changed_files(
 
 
 def _is_dirty(context: GitContext) -> bool:
-    out = _git_text(
-        context, "status", "--porcelain=v1", "-z", "--untracked-files=normal"
-    )
+    # Untracked files one by one (like _changed_files): a folder holding only
+    # Skylos runtime files or build artifacts must not show up as one dirty entry.
+    out = _git_text(context, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if out is None:
         return True
     entries = iter(out.split("\0"))
@@ -313,8 +414,12 @@ def _is_dirty(context: GitContext) -> bool:
             continue
         if entry[0] in "RC":
             next(entries, None)  # the rename's original path
-        if not is_runtime_path(entry[3:]):
-            return True
+        path = entry[3:]
+        if is_runtime_path(path):
+            continue
+        if entry[:2] == "??" and is_untracked_build_artifact(context.root, path):
+            continue
+        return True
     return False
 
 

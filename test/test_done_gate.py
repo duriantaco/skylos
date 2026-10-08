@@ -663,6 +663,87 @@ def test_comparison_covers_committed_uncommitted_and_untracked(repo: Path):
     assert comparison.base_text("app/new.py") is None
 
 
+EGG_INFO = {
+    "demo.egg-info/PKG-INFO": "Metadata-Version: 2.1\nName: demo\nVersion: 0.1.0\n",
+    "demo.egg-info/SOURCES.txt": "pyproject.toml\napp/calc.py\n",
+    "demo.egg-info/top_level.txt": "app\n",
+    "demo.egg-info/dependency_links.txt": "\n",
+}
+
+
+def _write_egg_info(root: Path, prefix: str = "", **extra: str) -> None:
+    for rel, text in {**EGG_INFO, **extra}.items():
+        _write(root, prefix + rel, text)
+
+
+def test_untracked_install_and_test_artifacts_keep_the_checkout_clean(repo: Path):
+    _write_egg_info(repo)
+    _write_egg_info(
+        repo,
+        "src/",
+        **{
+            "demo.egg-info/entry_points.txt": "[console_scripts]\ndemo = app.calc:add\n"
+        },
+    )
+    _write(repo, ".pytest_cache/v/cache/lastfailed", "{}")
+    _write(repo, "htmlcov/index.html", "<html></html>")
+    comparison = open_comparison(repo, "main")
+    assert not comparison.head_dirty
+    assert comparison.changed == ()
+
+
+@pytest.mark.parametrize(
+    "rel,text",
+    [
+        ("app/new.py", "VALUE = 1\n"),
+        (
+            "conftest.py",
+            "def pytest_collection_modifyitems(items):\n    items.clear()\n",
+        ),
+        ("sitecustomize.py", "import os\n"),
+        # Python loads a .pyc whose recorded source mtime and size match.
+        ("app/__pycache__/calc.cpython-312.pyc", "not really bytecode"),
+        (".coverage", "data"),
+        (".eggs/plugin-1.0.egg/plugin.py", "x = 1\n"),
+        # Registering a pytest plugin is not metadata.
+        ("demo.egg-info/entry_points.txt", "[pytest11]\nsneaky = app.calc\n"),
+        ("demo.egg-info/entry_points.txt", "sneaky = app.calc\n"),
+        ("demo.egg-info/plugin.py", "x = 1\n"),
+    ],
+)
+def test_untracked_code_and_test_inputs_still_make_the_checkout_dirty(
+    repo: Path, rel: str, text: str
+):
+    if rel.startswith("demo.egg-info/"):
+        _write_egg_info(repo)
+    _write(repo, rel, text)
+    assert open_comparison(repo, "main").head_dirty
+
+
+def test_tracked_edits_inside_artifact_folders_still_count(repo: Path):
+    _write_egg_info(repo)
+    _commit(repo, "egg-info committed by mistake")
+    _write(repo, "demo.egg-info/top_level.txt", "app\nother\n")
+    comparison = open_comparison(repo, "main")
+    assert comparison.head_dirty
+    assert "demo.egg-info/top_level.txt" in {c.path for c in comparison.changed}
+
+    _commit(repo, "settle")
+    _write(repo, "app/calc.py", CALC + "\n# touched\n")
+    assert open_comparison(repo, "main").head_dirty
+
+
+def test_session_snapshot_ignores_untracked_build_artifacts(repo: Path):
+    from skylos.done.session import capture_session, open_session_comparison
+
+    capture_session(repo, "artifacts")
+    _write_egg_info(repo)
+    _write(repo, ".pytest_cache/v/cache/lastfailed", "{}")
+    comparison = open_session_comparison(repo, "artifacts")
+    assert not comparison.head_dirty
+    assert comparison.changed == ()
+
+
 def test_comparison_errors_are_plain(repo: Path, tmp_path: Path):
     with pytest.raises(DoneError, match="cannot find base"):
         open_comparison(repo, "origin/nope")
