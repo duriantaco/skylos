@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
@@ -203,6 +204,58 @@ def _guarded_router_names(module: ast.AST) -> set[str]:
     return names
 
 
+_SIGNATURE_VERIFY_RE = re.compile(
+    r"^(?:verify|check|validate)_?(?:webhook_|request_|hmac_)?signature$"
+    r"|^construct_event$|^verify_webhook$|^verify_header$"
+)
+
+
+def _is_signature_check(call: ast.Call) -> bool:
+    """``hmac.compare_digest(...)``, ``verify_signature(...)``,
+    ``signature.verify(...)``, ``stripe.Webhook.construct_event(...)``."""
+    name = _dotted_name(call.func) or ""
+    parts = [part.lower() for part in name.split(".") if part]
+    if not parts:
+        return False
+    if parts[-2:] == ["hmac", "compare_digest"]:
+        return True
+    if _SIGNATURE_VERIFY_RE.match(parts[-1]):
+        return True
+    return parts[-1] == "verify" and any(
+        "signature" in part or "webhook" in part or "hmac" in part
+        for part in parts[:-1]
+    )
+
+
+def _body_verifies_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A webhook handler authenticates the sender by checking the request's
+    signature first. Only the handler's own top-level statements count (an
+    expression, assignment or ``if`` test, or the body of a top-level
+    ``try``), so a check buried in a branch or helper doesn't."""
+    statements = list(node.body)
+    candidates: list[ast.AST] = []
+    for stmt in statements:
+        if isinstance(stmt, ast.Try):
+            candidates.extend(stmt.body)
+        else:
+            candidates.append(stmt)
+    for stmt in candidates:
+        if isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign)):
+            target = stmt.value
+        elif isinstance(stmt, ast.If):
+            target = stmt.test
+        else:
+            continue
+        if target is None:
+            continue
+        for sub in ast.walk(target):
+            if isinstance(sub, ast.Await):
+                continue
+            if isinstance(sub, ast.Call) and _is_signature_check(sub):
+                return True
+    return False
+
+
 def _route_has_auth_guard(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     guarded_routers: set[str] | None = None,
@@ -242,7 +295,9 @@ def _route_has_auth_guard(
             _dotted_name(arg.annotation)
         ):
             return True
-    return any(_call_uses_auth(default) for default in defaults)
+    if any(_call_uses_auth(default) for default in defaults):
+        return True
+    return _body_verifies_signature(node)
 
 
 def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:

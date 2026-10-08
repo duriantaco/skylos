@@ -46,6 +46,9 @@ from skylos.analysis.known_patterns import (
     matches_pattern,
     has_base_class,
     PROTOCOL_METHOD_TO_BASES,
+    SQLALCHEMY_TYPE_ATTRS,
+    SQLALCHEMY_TYPE_BASES,
+    base_class_name,
 )
 from skylos.visitors.framework_aware import detect_framework_usage
 from pathlib import Path
@@ -339,10 +342,9 @@ def _class_base_names(simple_name, framework) -> set[str]:
 
     base_names: set[str] = set()
     for base in getattr(cls_node, "bases", []):
-        if isinstance(base, ast.Name):
-            base_names.add(base.id)
-        elif isinstance(base, ast.Attribute):
-            base_names.add(base.attr)
+        name = base_class_name(base)
+        if name:
+            base_names.add(name)
     return base_names
 
 
@@ -1089,6 +1091,25 @@ def _check_dependency_injected_parameter(def_obj, analyzer, framework):
     return None
 
 
+def _check_hook_override_parameters(def_obj, framework):
+    """A known framework hook keeps the signature its caller uses, so its
+    parameters stay even when the body ignores them (``emit(self, record)``
+    on a logging Handler, ``process_bind_param(self, value, dialect)`` on a
+    SQLAlchemy TypeDecorator)."""
+    if def_obj.type != "parameter" or "." not in def_obj.name:
+        return None
+    parts = def_obj.name.split(".")
+    if len(parts) < 3:
+        return None
+    method_name, class_name = parts[-2], parts[-3]
+    candidate_bases = PROTOCOL_METHOD_TO_BASES.get(method_name)
+    if not candidate_bases:
+        return None
+    if _class_base_names(class_name, framework) & candidate_bases:
+        return _suppress(def_obj, f"Parameter of the {method_name} hook")
+    return None
+
+
 def _check_base_class_parameters(def_obj):
     if def_obj.type != "parameter" or "." not in def_obj.name:
         return None
@@ -1144,6 +1165,15 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         class_bases = _class_base_names(parent_simple, framework)
         if any(base.endswith("Directive") for base in class_bases):
             return _suppress(def_obj, "docutils directive option")
+
+    if (
+        def_obj.type == "variable"
+        and "." in def_obj.name
+        and simple_name in SQLALCHEMY_TYPE_ATTRS
+    ):
+        parent_simple = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
+        if _class_base_names(parent_simple, framework) & SQLALCHEMY_TYPE_BASES:
+            return _suppress(def_obj, "SQLAlchemy column type option")
 
     if def_obj.type == "variable" and "." in def_obj.name:
         parts = def_obj.name.split(".")
@@ -1435,6 +1465,9 @@ def apply_penalties(
     result = _check_event_methods(def_obj)
     if isinstance(result, int):
         confidence += result
+
+    if _check_hook_override_parameters(def_obj, framework) is True:
+        return
 
     if _check_base_class_parameters(def_obj) is True:
         return

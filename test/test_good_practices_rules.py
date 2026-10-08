@@ -594,3 +594,61 @@ def test_repo_policy_cli_include_overrides_config_exclusion(
         if finding["rule_id"] == "SKY-R105"
     }
     assert r105_files == {str(package / "package.json")}
+
+
+def test_mutating_webhook_route_accepts_signature_verification():
+    findings = _run_rule(
+        FrameworkPracticeRule(),
+        """
+        from fastapi import APIRouter, Request
+
+        from app.webhooks import signature
+
+        router = APIRouter()
+
+        @router.post("/webhooks/processor")
+        async def processor_webhook(request: Request, sig: str) -> dict:
+            body = await request.body()
+            try:
+                signature.verify("secret", body, sig)
+            except signature.SignatureError:
+                raise
+            return {"received": True}
+
+        @router.post("/webhooks/billing")
+        async def billing_webhook(request: Request, sig: str) -> dict:
+            body = await request.body()
+            if not hmac.compare_digest(expected(body), sig):
+                raise ValueError("bad signature")
+            return {"received": True}
+        """,
+    )
+
+    assert findings == []
+
+
+def test_signature_check_hidden_in_a_branch_or_unrelated_verify_is_not_a_guard():
+    findings = _run_rule(
+        FrameworkPracticeRule(),
+        """
+        from fastapi import APIRouter, Request
+
+        router = APIRouter()
+
+        @router.post("/webhooks/branchy")
+        async def branchy_webhook(request: Request, sig: str, strict: bool) -> dict:
+            if strict:
+                verify_signature(sig)
+            return {"received": True}
+
+        @router.post("/users/confirm")
+        def confirm_user(email: str) -> dict:
+            verify_email(email)
+            return {"ok": True}
+        """,
+    )
+
+    assert sorted(f["name"] for f in findings if f["rule_id"] == "SKY-F102") == [
+        "branchy_webhook",
+        "confirm_user",
+    ]
