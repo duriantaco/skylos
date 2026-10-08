@@ -148,6 +148,8 @@ finding or policy failures in modes that enforce them, and `2` when required
 analysis could not complete. An unavailable native language engine is an
 incomplete analysis: Skylos emits a `SKY-ANALYSIS-INCOMPLETE` diagnostic, omits
 the grade and clean-code claim, and exits with status `2` in every output mode.
+The same applies to `.dart` files when the optional Dart parser is not
+installed (`pip install "skylos[dart]"`).
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 

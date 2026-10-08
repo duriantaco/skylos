@@ -41,9 +41,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # "." is the plain install (Dart tests skip without the grammar);
+        # the extras leg builds the optional Dart parser and runs them.
         install_target:
           - "."
-          - ".[llm]"
+          - ".[llm,dart]"
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -85,7 +87,7 @@ jobs:
           files: ./coverage.xml
           disable_search: true
           fail_ci_if_error: false
-          flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
+          flags: ${{ matrix.install_target == '.[llm,dart]' && 'llm-extra' || 'default-install' }}
 
   docker_smoke:
     name: docker-smoke (Python ${{ matrix.python-version }})

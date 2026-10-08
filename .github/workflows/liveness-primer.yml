@@ -95,6 +95,55 @@ jobs:
           python-version: "3.13"
           enable-cache: false
 
+      # v0.2.0 installs no extras. The full corpus includes Dart, whose parser
+      # newer Skylos revisions provide through skylos[dart]. Remove this
+      # compatibility overlay when the pinned primer supports named extras.
+      - name: Enable Dart support for the full corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("_liveness_primer/liveness_primer/container.py")
+          source = path.read_text(encoding="utf-8")
+          replacements = (
+              (
+                  "from liveness_primer.envcache import (\n",
+                  "from liveness_primer.envcache import (\n    _read_pyproject_text,\n",
+              ),
+              (
+                  "    --find-links /liveness/wheelhouse /liveness/detector\n",
+                  '    --find-links /liveness/wheelhouse "/liveness/detector[dart]"\n',
+              ),
+              (
+                  "            'recipe': adapter.build_recipe.digest(),\n",
+                  "            'recipe': adapter.build_recipe.digest(),\n"
+                  "            'selected_extras': ['dart'],\n",
+              ),
+              (
+                  "            Deduplicated declared dependencies and build requirements.\n"
+                  "            Extras are deliberately left out, exactly as in the host-venv\n"
+                  "            path: the offline install selects no extras (contract §3).\n",
+                  "            Deduplicated core, build, and named Dart-extra requirements.\n"
+                  "            Other optional dependencies remain excluded.\n",
+              ),
+              (
+                  "        return tuple(dict.fromkeys((*metadata.dependencies, *metadata.build_requires)))\n",
+                  "        project = tomllib.loads(_read_pyproject_text(checkout / 'pyproject.toml'))['project']\n"
+                  "        dart_requirements = project.get('optional-dependencies', {}).get('dart', [])\n"
+                  "        return tuple(dict.fromkeys((*metadata.dependencies, *metadata.build_requires, *dart_requirements)))\n",
+              ),
+          )
+          for before, after in replacements:
+              if source.count(before) != 1:
+                  raise SystemExit("Dart overlay does not match the pinned liveness-primer source")
+              source = source.replace(before, after, 1)
+          path.write_text(source, encoding="utf-8")
+          print("Comparison containers will install skylos[dart]; cache identity includes the selected extra.")
+          PY
+
       - name: Compare base with the pull request merge result
         env:
           SKYLOS_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}

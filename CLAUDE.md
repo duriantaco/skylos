@@ -17,6 +17,7 @@ editable from the repo root:
 ```bash
 pip install -e .            # core CLI + dependencies
 pip install -e ".[llm]"     # also enables `skylos agent` / `skylos defend`
+pip install -e ".[dart]"    # Dart parsing (needs a C compiler); test_dart*.py skip without it
 ```
 
 Then verify with `skylos --version` and `skylos doctor`.

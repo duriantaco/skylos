@@ -292,7 +292,7 @@ def test_workflow_rejects_scan_path_control_characters(control_char):
 def test_workflow_pins_installed_skylos_version():
     content = generate_workflow(skylos_version="4.9.0")
     # -I keeps files from the checked-out pull request off pip's sys.path.
-    assert "python -I -m pip install skylos==4.9.0" in content
+    assert "python -I -m pip install 'skylos[dart]==4.9.0'" in content
     assert "python -m pip" not in content
 
 

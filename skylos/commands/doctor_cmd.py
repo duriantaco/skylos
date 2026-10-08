@@ -38,6 +38,13 @@ def _interactive_available() -> bool:
         return False
 
 
+def _dart_available() -> bool:
+    """Whether the optional `skylos[dart]` grammar is installed."""
+    from skylos.visitors.languages.dart.core import DART_LANG
+
+    return DART_LANG is not None
+
+
 def _ripgrep_available() -> bool:
     """Whether scans here would use ripgrep (else the slower in-process search)."""
     from skylos.core.grep_verify_common import grep_backend_name
@@ -78,6 +85,11 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 "status": "available" if rust_available else "unavailable"
             },
             "llm_support": {"status": "available" if llm_available else "unavailable"},
+            "dart_support": (
+                {"status": "available"}
+                if _dart_available()
+                else {"status": "unavailable", "install": 'pip install "skylos[dart]"'}
+            ),
             "interactive": {
                 "status": "available" if interactive_available else "unavailable"
             },
@@ -133,6 +145,13 @@ def _print_optional_status(console: Console) -> None:
         "  [green]OK[/green]  LLM support available",
         "  [yellow]--[/yellow]  LLM support not available "
         "[dim](optional: pip install litellm)[/dim]",
+    )
+    _print_availability(
+        console,
+        _dart_available(),
+        "  [green]OK[/green]  Dart support installed",
+        "  [yellow]--[/yellow]  Dart support not installed "
+        '[dim](optional, needs a C compiler: pip install "skylos\\[dart]")[/dim]',
     )
     _print_availability(
         console,

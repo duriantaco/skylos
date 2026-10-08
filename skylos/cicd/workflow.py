@@ -64,11 +64,12 @@ def _installed_skylos_version() -> str | None:
 
 def _skylos_install_command(version: str | None = None) -> str:
     # -I keeps a pull request's own files (e.g. a top-level pip/ directory)
-    # off sys.path while pip runs after checkout.
+    # off sys.path while pip runs after checkout. [dart] keeps Dart files
+    # scanned; hosted runners have the C compiler its parser builds with.
     resolved = version if version is not None else _installed_skylos_version()
     if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
-        return f"python -I -m pip install {shlex.quote(f'skylos=={resolved}')}"
-    return "python -I -m pip install skylos"
+        return f"python -I -m pip install {shlex.quote(f'skylos[dart]=={resolved}')}"
+    return f"python -I -m pip install {shlex.quote('skylos[dart]')}"
 
 
 def _shell_path(path: str | Path | None) -> str:

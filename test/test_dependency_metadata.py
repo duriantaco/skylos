@@ -18,6 +18,15 @@ def _runtime_requirements():
     return requirements
 
 
+def _extra_requirements(extra):
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = {}
+    for value in metadata["project"]["optional-dependencies"][extra]:
+        requirement = Requirement(value)
+        requirements[requirement.name] = requirement
+    return requirements
+
+
 @pytest.mark.parametrize(
     ("package", "supported", "next_breaking"),
     [
@@ -28,7 +37,6 @@ def _runtime_requirements():
         ("tree-sitter-java", "0.23.5", "0.24.0"),
         ("tree-sitter-php", "0.24.1", "0.25.0"),
         ("tree-sitter-rust", "0.24.2", "0.25.0"),
-        ("tree-sitter-dart-orchard", "0.5.0", "0.6.0"),
     ],
 )
 def test_runtime_dependency_compatibility_bands(package, supported, next_breaking):
@@ -36,6 +44,17 @@ def test_runtime_dependency_compatibility_bands(package, supported, next_breakin
 
     assert Version(supported) in requirement.specifier
     assert Version(next_breaking) not in requirement.specifier
+
+
+@pytest.mark.parametrize("extra", ["dart", "all"])
+def test_dart_grammar_is_an_optional_extra(extra):
+    # tree-sitter-dart-orchard publishes no wheels, so a core install must not
+    # need a C compiler; Dart support is `pip install "skylos[dart]"`.
+    assert "tree-sitter-dart-orchard" not in _runtime_requirements()
+    requirement = _extra_requirements(extra)["tree-sitter-dart-orchard"]
+
+    assert Version("0.5.0") in requirement.specifier
+    assert Version("0.6.0") not in requirement.specifier
 
 
 @pytest.mark.parametrize(

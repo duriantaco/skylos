@@ -8,6 +8,10 @@ import pytest
 from skylos.analyzer import analyze, proc_file
 from skylos.visitors.languages.dart import scan_dart_file
 
+pytest.importorskip(
+    "tree_sitter_dart_orchard", reason='needs the optional "skylos[dart]" extra'
+)
+
 
 def _scan_dart(tmp_path: Path, code: str, filename: str = "lib/main.dart") -> tuple:
     file_path = tmp_path / filename

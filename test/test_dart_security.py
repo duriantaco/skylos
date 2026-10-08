@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skylos.visitors.languages.dart import scan_dart_file
+
+pytest.importorskip(
+    "tree_sitter_dart_orchard", reason='needs the optional "skylos[dart]" extra'
+)
 
 
 def _scan_dart_findings(tmp_path: Path, code: str) -> list[dict]:
