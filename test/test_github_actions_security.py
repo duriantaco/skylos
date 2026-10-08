@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 from skylos.analyzer import analyze
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.config import scan_config_files
 from skylos.rules.config.cicd.github_actions import (
     scan_github_actions,
@@ -889,7 +890,7 @@ jobs:
 def _pr_target_rule_ids(tmp_path, text):
     workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
-    workflow.write_text(text.lstrip(), encoding="utf-8")
+    assert write_text_no_symlink(workflow, text.lstrip(), encoding="utf-8")
     return _rule_ids(scan_github_actions_file(workflow))
 
 
