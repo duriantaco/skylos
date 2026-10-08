@@ -37,6 +37,7 @@ from skylos.done.base import (
     _git_text,
     _resolve_commit,
     is_runtime_path,
+    is_untracked_build_artifact,
     open_comparison,
 )
 from skylos.done.config import parse_done_config
@@ -512,7 +513,12 @@ def _snapshot_tree(comparison: Comparison) -> str:
         paths = set(tracked) | {p for p in current.decode("utf-8").split("\0") if p}
     except (UnicodeError, ValueError):
         raise DoneError("the session contains unsupported Git paths") from None
-    paths = {p for p in paths if not is_runtime_path(p)}
+    paths = {
+        p
+        for p in paths
+        if not is_runtime_path(p)
+        and (p in tracked or not is_untracked_build_artifact(comparison.root, p))
+    }
     if len(paths) > MAX_TREE_FILES:
         raise DoneError("the session tree exceeds 50000 files")
     entries = bytearray()
