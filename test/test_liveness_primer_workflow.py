@@ -521,6 +521,8 @@ def _run_dart_overlay(tmp_path: Path, source: str):
     target.parent.mkdir(parents=True)
     if target.is_symlink():
         raise ValueError("overlay fixture must be a regular file")
+    target = target.resolve()
+    target.relative_to(workspace.resolve())
     # Exclusive creation also rejects a symlink planted after the check.
     with target.open("x", encoding="utf-8") as fixture:
         fixture.write(source)
