@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from skylos.rules.config.container.dockerfile import scan_dockerfiles
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,6 +19,12 @@ def test_docker_runtime_includes_native_go_engine():
 
     assert "RUN go build -o /out/skylos-go ./cmd/skylos-go" in dockerfile
     assert "COPY --from=go-build /out/skylos-go /usr/local/bin/skylos-go" in dockerfile
+
+
+def test_container_build_has_no_broad_destructive_commands():
+    findings = scan_dockerfiles(ROOT / "Dockerfile")
+
+    assert not [finding for finding in findings if finding["rule_id"] == "SKY-D329"]
 
 
 def test_publish_workflow_pushes_versioned_python_runtime_tags():

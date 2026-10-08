@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import skylos.benchmarks.security as benchmark
 from skylos.benchmarks.security import (
     SECURITY_TAXONOMY,
@@ -102,10 +104,24 @@ def test_security_benchmark_does_not_inherit_parent_project_config(tmp_path):
     )
 
 
-def test_checked_in_security_benchmark_passes():
-    summary = run_manifest(MANIFEST_PATH)
+@pytest.mark.parametrize("language_group", ["core", "dart"])
+def test_checked_in_security_benchmark_passes(language_group):
+    if language_group == "dart":
+        pytest.importorskip(
+            "tree_sitter_dart_orchard",
+            reason='needs the optional "skylos[dart]" extra',
+        )
 
-    assert summary["case_count"] >= 6
+    cases = validate_manifest(load_manifest(MANIFEST_PATH), MANIFEST_PATH)
+    selected_cases = {
+        case["id"]
+        for case in cases
+        if ("dart" in case.get("languages", [])) == (language_group == "dart")
+    }
+    assert selected_cases
+    summary = run_manifest(MANIFEST_PATH, selected_cases=selected_cases)
+
+    assert summary["case_count"] == len(selected_cases)
     assert summary["failure_count"] == 0, format_summary(summary)
     assert summary["counts"]["false_positives"] == 0, format_summary(summary)
     assert summary["counts"]["false_negatives"] == 0, format_summary(summary)

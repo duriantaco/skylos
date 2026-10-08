@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 ARG PYTHON_VERSION=3.14
 
 FROM golang:1.22 AS go-build
@@ -45,11 +47,10 @@ LABEL org.opencontainers.image.python.version=${PYTHON_VERSION}
 
 WORKDIR /work
 
-COPY --from=build /wheelhouse /tmp/wheelhouse
 COPY --from=go-build /out/skylos-go /usr/local/bin/skylos-go
 
-RUN python -m pip install --no-index --find-links=/tmp/wheelhouse "skylos[dart]" && \
-    rm -rf /tmp/wheelhouse
+RUN --mount=type=bind,from=build,source=/wheelhouse,target=/tmp/wheelhouse \
+    python -m pip install --no-index --find-links=/tmp/wheelhouse "skylos[dart]"
 
 ENTRYPOINT ["skylos"]
 CMD ["--help"]
