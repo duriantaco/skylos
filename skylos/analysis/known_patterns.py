@@ -1,3 +1,4 @@
+import ast
 import fnmatch
 
 HARD_ENTRYPOINTS = {
@@ -565,6 +566,37 @@ PROTOCOL_METHODS = {
     # setuptools / hatch
     "Command": {"run", "initialize_options", "finalize_options"},
     "BuildHookInterface": {"initialize", "clean", "finalize"},
+    # SQLAlchemy custom column types: the engine calls these hooks.
+    "TypeDecorator": {
+        "process_bind_param",
+        "process_result_value",
+        "process_literal_param",
+        "load_dialect_impl",
+        "coerce_compared_value",
+        "bind_expression",
+        "column_expression",
+        "compare_values",
+        "copy",
+    },
+    "UserDefinedType": {
+        "get_col_spec",
+        "bind_processor",
+        "result_processor",
+        "literal_processor",
+        "bind_expression",
+        "column_expression",
+        "coerce_compared_value",
+    },
+}
+
+# Class attributes SQLAlchemy reads from custom column types.
+SQLALCHEMY_TYPE_BASES = {"TypeDecorator", "UserDefinedType"}
+SQLALCHEMY_TYPE_ATTRS = {
+    "impl",
+    "cache_ok",
+    "coerce_to_is_types",
+    "comparator_factory",
+    "should_evaluate_none",
 }
 
 PROTOCOL_METHOD_TO_BASES: dict[str, set[str]] = {}
@@ -594,6 +626,14 @@ def matches_pattern(name, pattern):
     return fnmatch.fnmatchcase(name, pattern)
 
 
+def base_class_name(base):
+    """Simple name of a class base: ``Thread``, ``threading.Thread`` and a
+    subscripted generic such as ``TypeDecorator[datetime]`` all count."""
+    while isinstance(base, ast.Subscript):
+        base = base.value
+    return getattr(base, "id", None) or getattr(base, "attr", None)
+
+
 def has_base_class(def_obj, required_bases, framework):
     if def_obj.type != "method":
         return False
@@ -612,8 +652,7 @@ def has_base_class(def_obj, required_bases, framework):
             continue
         cls_node = class_defs[part]
         for base in getattr(cls_node, "bases", []):
-            base_name = getattr(base, "id", None) or getattr(base, "attr", None)
-            if base_name in required_bases:
+            if base_class_name(base) in required_bases:
                 return True
 
     return False

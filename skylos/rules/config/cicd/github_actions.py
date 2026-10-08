@@ -697,6 +697,105 @@ def _is_pinned_uses(value: str) -> bool:
     return bool(FULL_SHA_RE.fullmatch(ref))
 
 
+# How a job reaches the pull request's own code under pull_request_target:
+# a checkout of the head or merge ref, or a git/gh command that fetches it.
+_PR_CODE_REF_RE = re.compile(
+    r"github\.event\.pull_request\.(?:head|merge_commit_sha)|github\.head_ref"
+    r"|refs/pull/|\bpull/\$\{\{",
+    re.IGNORECASE,
+)
+_PR_CODE_FETCH_RE = re.compile(
+    r"\bgh\s+pr\s+checkout\b|\bgit\s+(?:fetch|checkout|pull)\b[^\n]*\bpull/",
+    re.IGNORECASE,
+)
+_EVENT_NAME_RE = re.compile(
+    r"github\.event_name\s*==\s*['\"]([A-Za-z_]+)['\"]", re.IGNORECASE
+)
+
+
+def _job_events(job: dict[str, Any]) -> set[str] | None:
+    """Events a job's ``if`` limits it to, when it is only
+    ``github.event_name == '...'`` checks joined by ``||``; otherwise None."""
+    condition = job.get("if")
+    if not isinstance(condition, str):
+        return None
+    events = set(_EVENT_NAME_RE.findall(condition))
+    rest = _EVENT_NAME_RE.sub("", condition)
+    rest = re.sub(r"\$\{\{|\}\}|\|\||[()\s]", "", rest)
+    return events if events and not rest else None
+
+
+def _job_reads_pr_code(job: dict[str, Any]) -> bool:
+    for step in job.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        uses = step.get("uses")
+        if isinstance(uses, str) and _uses_matches(uses, "actions/checkout"):
+            with_block = step.get("with") if isinstance(step.get("with"), dict) else {}
+            target = " ".join(
+                str(with_block.get(key, "")) for key in ("ref", "repository")
+            )
+            if _PR_CODE_REF_RE.search(target):
+                return True
+        run = step.get("run")
+        if isinstance(run, str) and (
+            _PR_CODE_FETCH_RE.search(run) or _PR_CODE_REF_RE.search(run)
+        ):
+            return True
+    return False
+
+
+def _pull_request_target_is_isolated(data: dict[str, Any]) -> bool:
+    """True when no job that runs on pull_request_target can hand the pull
+    request's author anything worth taking.
+
+    The trigger is dangerous because it runs with the base repository's
+    token and secrets. A job is isolated when its permissions are declared
+    (an undeclared token may be read-write), it doesn't interpolate PR-
+    controlled context into commands, and, if it reads the PR's code, it does
+    so read-only: no write scope or OIDC token, no secrets, no persisted
+    checkout credentials and no shared cache to poison. Jobs that never read
+    the PR's code may hold privileges: they run the base branch's workflow.
+    """
+    workflow_permissions = data.get("permissions")
+    for _job_id, job in _jobs(data):
+        events = _job_events(job)
+        if events is not None and "pull_request_target" not in events:
+            continue
+        if _is_reusable_job(job):
+            return False
+        if "permissions" not in job and "permissions" not in data:
+            return False
+        steps = [step for step in job.get("steps") or [] if isinstance(step, dict)]
+        for step in steps:
+            if any(
+                TEMPLATE_EXPR_RE.search(text) for text in _iter_strings(step.get("run"))
+            ):
+                return False
+        if not _job_reads_pr_code(job):
+            continue
+        permissions = job.get("permissions", workflow_permissions)
+        if _effective_permissions_write(job, workflow_permissions):
+            return False
+        if isinstance(permissions, str) and permissions != "read-all":
+            return False
+        job_text = "\n".join(_iter_strings(job))
+        if re.search(r"\bsecrets\.|\bgithub\.token\b|\bGITHUB_TOKEN\b", job_text):
+            return False
+        for step in steps:
+            uses = step.get("uses")
+            if not isinstance(uses, str):
+                continue
+            with_block = step.get("with") if isinstance(step.get("with"), dict) else {}
+            if _cache_action_enabled(uses, with_block):
+                return False
+            if _uses_matches(uses, "actions/checkout") and (
+                _actions_bool(with_block.get("persist-credentials")) is not False
+            ):
+                return False
+    return True
+
+
 def _scan_triggers(
     data: dict[str, Any],
     path: Path,
@@ -720,7 +819,11 @@ def _scan_triggers(
                 uses_value, "actions/labeler"
             )
 
-    if _trigger_contains(trigger, "pull_request_target") and not labeler_only:
+    if (
+        _trigger_contains(trigger, "pull_request_target")
+        and not labeler_only
+        and not _pull_request_target_is_isolated(data)
+    ):
         _add_finding(
             findings,
             lines,

@@ -577,3 +577,84 @@ def test_literal_plugin_registry_requires_importlib_getattr_flow(tmp_path):
     result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
 
     assert "plugins.payments.charge_card" in _unused_function_names(result)
+
+
+def _unused_names(result, kind):
+    return {item.get("full_name") or item.get("name") for item in result.get(kind, [])}
+
+
+def test_sqlalchemy_type_decorator_hooks_and_options_are_live(tmp_path):
+    _write(
+        tmp_path / "types.py",
+        """
+        from datetime import UTC, datetime
+
+        from sqlalchemy import DateTime, Dialect
+        from sqlalchemy.types import TypeDecorator
+
+        class UTCDateTime(TypeDecorator[datetime]):
+            impl = DateTime(timezone=True)
+            cache_ok = True
+
+            def process_bind_param(self, value, dialect: Dialect):
+                return value
+
+            def process_result_value(self, value, dialect: Dialect):
+                return value
+
+        column_type = UTCDateTime()
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+    assert not {
+        "types.UTCDateTime.process_bind_param",
+        "types.UTCDateTime.process_result_value",
+    } & _unused_function_names(result)
+    assert not {"impl", "cache_ok"} & {
+        name.rsplit(".", 1)[-1] for name in _unused_names(result, "unused_variables")
+    }
+    assert "dialect" not in {
+        name.rsplit(".", 1)[-1] for name in _unused_names(result, "unused_parameters")
+    }
+
+
+def test_unused_hook_parameter_on_a_plain_class_is_still_reported(tmp_path):
+    _write(
+        tmp_path / "plain.py",
+        """
+        class Converter:
+            def process_bind_param(self, value, dialect):
+                return value
+
+        Converter().process_bind_param(1, None)
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+    assert "dialect" in {
+        name.rsplit(".", 1)[-1] for name in _unused_names(result, "unused_parameters")
+    }
+
+
+def test_protocol_override_parameters_are_part_of_the_hook_signature(tmp_path):
+    _write(
+        tmp_path / "handlers.py",
+        """
+        from logging import Handler
+
+        class QuietHandler(Handler):
+            def emit(self, record):
+                return None
+
+        handler = QuietHandler()
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+    assert "record" not in {
+        name.rsplit(".", 1)[-1] for name in _unused_names(result, "unused_parameters")
+    }

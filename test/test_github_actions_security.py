@@ -840,3 +840,96 @@ jobs:
         _rule_ids(result["danger"])
     )
     assert result["analysis_summary"]["danger_count"] == len(result["danger"])
+
+
+_ISOLATED_PR_TARGET = """
+name: Skylos
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  policy:
+    if: github.event_name == 'pull_request_target' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - run: echo "reads trusted policy with the base branch's workflow"
+  scan:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/head
+          path: pr-source
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - run: skylos . --json -o report.json
+  publish:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    needs: scan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - run: python publish.py
+"""
+
+
+def _pr_target_rule_ids(tmp_path, text):
+    workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(text.lstrip(), encoding="utf-8")
+    return _rule_ids(scan_github_actions_file(workflow))
+
+
+def test_isolated_pull_request_target_workflow_is_not_a_dangerous_trigger(tmp_path):
+    assert "SKY-D290" not in _pr_target_rule_ids(tmp_path, _ISOLATED_PR_TARGET)
+
+
+def test_pull_request_target_reading_pr_code_with_privileges_is_still_flagged(tmp_path):
+    variants = {
+        "write token": _ISOLATED_PR_TARGET.replace(
+            "      contents: read\n      actions: read\n",
+            "      contents: write\n      actions: read\n",
+        ),
+        "oidc token": _ISOLATED_PR_TARGET.replace(
+            "      contents: read\n      actions: read\n",
+            "      contents: read\n      id-token: write\n",
+        ),
+        "persisted credentials": _ISOLATED_PR_TARGET.replace(
+            "          persist-credentials: false\n", ""
+        ),
+        "shared cache": _ISOLATED_PR_TARGET.replace(
+            "          python-version: '3.11'\n",
+            "          python-version: '3.11'\n          cache: pip\n",
+        ),
+        "secrets": _ISOLATED_PR_TARGET.replace(
+            "      - run: skylos . --json -o report.json\n",
+            "      - run: skylos . --json -o report.json\n"
+            "        env:\n          TOKEN: ${{ secrets.DEPLOY_TOKEN }}\n",
+        ),
+        "undeclared permissions": _ISOLATED_PR_TARGET.replace(
+            "permissions: {}\n", ""
+        ).replace("    permissions:\n      contents: read\n      actions: read\n", ""),
+        "untrusted template": _ISOLATED_PR_TARGET.replace(
+            'echo "reads trusted policy with the base branch\'s workflow"',
+            'echo "${{ github.event.pull_request.title }}"',
+        ),
+        "gh pr checkout": _ISOLATED_PR_TARGET.replace(
+            "      - run: python publish.py\n",
+            "      - run: gh pr checkout ${{ github.event.number }} && make build\n",
+        ),
+    }
+    for label, text in variants.items():
+        assert "SKY-D290" in _pr_target_rule_ids(tmp_path, text), label
