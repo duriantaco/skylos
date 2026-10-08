@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.47.2](https://github.com/duriantaco/skylos/compare/v4.47.1...v4.47.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* **agent:** stop pip install -e build metadata from marking the done receipt dirty ([#955](https://github.com/duriantaco/skylos/issues/955)) ([5fe7843](https://github.com/duriantaco/skylos/commit/5fe7843e4b894248302ece7cba6e906056846cc8))
+* **scan:** stop false positives on SQLAlchemy types and signed webhooks ([#954](https://github.com/duriantaco/skylos/issues/954)) ([ac0bb51](https://github.com/duriantaco/skylos/commit/ac0bb513467a889ece4d4897f55c71684eff8f82))
+
 ## [4.47.1](https://github.com/duriantaco/skylos/compare/v4.47.0...v4.47.1) (2026-10-07)
 
 
