@@ -25,6 +25,7 @@ from skylos.security.command_guard import (
 )
 from .calls import (
     DANGEROUS_CALLS,
+    _call_severity,
     _matches_rule,
     _declares_non_security_use,
     _kw_equals,
@@ -171,7 +172,7 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 self.findings.append(
                     {
                         "rule_id": rule_id,
-                        "severity": severity,
+                        "severity": _call_severity(node, severity, opts),
                         "message": message,
                         "file": str(self.file_path),
                         "line": node.lineno,
@@ -427,9 +428,7 @@ def _constant_str(node: ast.AST | None) -> str | None:
 
 def _call_kw_is_true(node: ast.Call, name: str) -> bool:
     return any(
-        kw.arg == name
-        and isinstance(kw.value, ast.Constant)
-        and kw.value.value is True
+        kw.arg == name and isinstance(kw.value, ast.Constant) and kw.value.value is True
         for kw in node.keywords
     )
 
@@ -448,7 +447,9 @@ def _http_payload_contains_sensitive_data(
 def _contains_os_environ(node: ast.AST, aliases: dict[str, str]) -> bool:
     if _is_os_environ_reference(node, aliases):
         return True
-    return any(_contains_os_environ(child, aliases) for child in ast.iter_child_nodes(node))
+    return any(
+        _contains_os_environ(child, aliases) for child in ast.iter_child_nodes(node)
+    )
 
 
 def _is_os_environ_reference(node: ast.AST, aliases: dict[str, str]) -> bool:
@@ -585,6 +586,37 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
 
 
+_SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+
+def dedupe_findings(findings: list[dict]) -> list[dict]:
+    """One report per rule and source location; keep the most severe one.
+
+    Several checkers can reach the same sink. Distinct calls on one line
+    retain their separate columns and security evidence.
+    """
+    kept: dict[tuple, int] = {}
+    deduped: list[dict] = []
+    for finding in findings:
+        key = (
+            finding.get("rule_id"),
+            str(finding.get("file")),
+            finding.get("line"),
+            finding.get("col"),
+        )
+        index = kept.get(key)
+        if index is None:
+            kept[key] = len(deduped)
+            deduped.append(finding)
+            continue
+        current = deduped[index]
+        if _SEVERITY_RANK.get(str(finding.get("severity")).upper(), 0) > (
+            _SEVERITY_RANK.get(str(current.get("severity")).upper(), 0)
+        ):
+            deduped[index] = finding
+    return deduped
+
+
 def _scan_file(file_path: Path, findings):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
     _scan_trojan_source_text(src, file_path, findings)
@@ -608,4 +640,4 @@ def scan_ctx(_, files):
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
 
-    return findings
+    return dedupe_findings(findings)
