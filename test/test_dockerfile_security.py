@@ -39,6 +39,41 @@ def test_dockerfile_apt_index_cleanup_is_not_destructive(tmp_path: Path):
     assert "SKY-D329" not in _rule_ids(findings)
 
 
+def test_dockerfile_cache_cleanup_is_not_destructive(tmp_path: Path):
+    # testdrivenio/fastapi-crud-async src/Dockerfile
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.11.0-alpine\n"
+        "RUN set -eux \\\n"
+        "    && apk add --no-cache --virtual .build-deps build-base \\\n"
+        "         openssl-dev libffi-dev gcc musl-dev python3-dev \\\n"
+        "        postgresql-dev bash \\\n"
+        "    && pip install --upgrade pip setuptools wheel \\\n"
+        "    && pip install -r /usr/src/app/requirements.txt \\\n"
+        "    && rm -rf /root/.cache/pip\n"
+        "RUN npm ci && rm -rf ~/.npm /tmp/* /var/cache/apk/*\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_dockerfiles(tmp_path)
+
+    assert "SKY-D329" not in _rule_ids(findings)
+
+
+def test_dockerfile_broad_rm_still_flags(tmp_path: Path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python:3.12\n"
+        "WORKDIR /app\n"
+        "RUN pip install -r requirements.txt && rm -rf /root/.cache/pip /app\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_dockerfiles(tmp_path)
+
+    assert "SKY-D329" in _rule_ids(findings)
+
+
 def test_dockerfile_run_secret_env_upload_flags(tmp_path: Path):
     dockerfile = tmp_path / "Dockerfile"
     dockerfile.write_text(

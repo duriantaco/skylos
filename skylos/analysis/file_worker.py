@@ -202,7 +202,7 @@ def _danger_findings(
     danger_linter.visit(prepared.tree)
     findings = danger_linter.findings
 
-    from skylos.rules.danger.danger import scan_file_with_tree
+    from skylos.rules.danger.danger import dedupe_findings, scan_file_with_tree
 
     taint_findings = []
     analysis_error = None
@@ -221,7 +221,7 @@ def _danger_findings(
             kind="security_scan_error",
         )
     findings.extend(taint_findings)
-    return findings, analysis_error
+    return dedupe_findings(findings), analysis_error
 
 
 def _custom_findings(tree, file, extra_visitors: Iterable[type] | None) -> list:

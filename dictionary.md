@@ -163,6 +163,11 @@ itself. Explicit authentication-qualified names (such as `authSessionId`) and
 direct member expressions with authentication or cookie-qualified paths remain
 findings. D270 storage checks are unchanged.
 
+For Python D203, `os.system` with a fixed command string (no dynamic formatting
+or Python/shell variables) is LOW: there is no input to inject. It stays
+CRITICAL when the fixed command itself deletes broadly, exfiltrates data,
+pipes a remote script into a shell, or reads host credentials.
+
 For Python D207/D208, `hashlib.md5` / `hashlib.sha1` remain findings when
 their purpose is unclear; names such as `cache_key` do not prove the digest
 is unrelated to security. An explicit `usedforsecurity=False` suppresses the
@@ -173,9 +178,17 @@ For Python D211, a query executed on a chained connection or cursor call
 `engine.connect().execute(q)`, `get_db().executescript(q)`) is reported only
 when `q` carries data from a real untrusted source: a web-route, CLI or MCP
 tool parameter, `request.*`, `input()`, `sys.argv`, `sys.stdin` or the
-environment. Bound parameters, `text("... :id")` over a constant, and
-SQLAlchemy/SQLModel `select`/`insert`/`update`/`delete` constructs are not
-findings.
+environment. On any receiver, bound parameters, `text("... :id")` over a
+constant (also with `.bindparams(...)`), SQLAlchemy/SQLModel
+`select`/`insert`/`update`/`delete` constructs, and statements built from a
+locally proven SQLAlchemy Table object (`notes.insert().values(...)`,
+`notes.delete().where(...)`) are not findings. A Table constructor must resolve
+to an unshadowed SQLAlchemy import; unresolved application imports and
+function parameters retain findings. A construct with a string-built clause
+(`.where(f"id = {x}")`) or a raw `request.*` value as a clause is still a
+finding. Formatted values passed to `.values(...)` remain bound parameters.
+A tainted `text()` inside `execute()` is reported once, on the
+`text()` call.
 
 For Python D215, Starlette/FastAPI `FileResponse` and Flask/Werkzeug
 `send_file` are path sinks. `send_from_directory` is a sink only for its
@@ -277,6 +290,14 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D347 | MEDIUM | Unsafe logging config listener | Python |
 | D348 | HIGH | Insecure temporary filename | Python |
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source) | Python |
+
+D329 flags `rm -rf` of `/`, `~`, `$HOME`, `.`, `*`, `.git`, any other absolute
+path, and `$VAR/` or `$VAR/*` (an empty variable makes it `/`). Removing
+package-manager caches and scratch space is not a finding: `/tmp/...`,
+`/var/tmp/...`, `/var/cache/...`, `/var/lib/apt/lists/...`, and `.cache` or
+`.npm` under `/root`, `~` or `$HOME`. Cleanup targets containing parent traversal
+or expansions after the cache prefix retain findings because they can escape
+that directory.
 
 ### Config And Deployment Security
 

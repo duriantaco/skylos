@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Iterator
 
 from skylos.security.command_guard_parse import (
     command_name,
+    shell_tokens,
     split_option,
     tokens_start_with,
 )
@@ -106,16 +108,32 @@ REVERSE_SHELL_PATTERNS = (
 )
 DESTRUCTIVE_PATTERNS = (
     re.compile(
-        r"\brm\s+"
-        r"(?:-[A-Za-z]*r[A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*r[A-Za-z]*)"
-        r"\s+(?:/|~(?:/|\s|$)|\$HOME(?:/|\s|$)|\.git(?:/|\s|$))",
-        re.I,
+        r"\bgit\s+clean\s+-(?=[A-Za-z]*f)(?=[A-Za-z]*d)(?=[A-Za-z]*x)[A-Za-z]+\b", re.I
     ),
-    re.compile(r"\bgit\s+clean\s+-(?=[A-Za-z]*f)(?=[A-Za-z]*d)(?=[A-Za-z]*x)[A-Za-z]+\b", re.I),
     re.compile(r"\bgit\s+reset\s+--hard\b", re.I),
 )
-_APT_LIST_CLEANUP_RE = re.compile(
-    r"\brm\s+-rf\s+/var/lib/apt/lists/\*(?=\s*(?:;|&&|\|\||$))"
+# ``rm -rf <targets>`` up to the end of that shell statement.
+RM_RECURSIVE_FORCE_RE = re.compile(
+    r"\brm\s+"
+    r"(?:-[A-Za-z]*r[A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*r[A-Za-z]*)"
+    r"(?P<targets>[^;&|\n]*)",
+    re.I,
+)
+REDIRECT_RE = re.compile(r"\d*(?:>>?|<)")
+# Wiping the working directory: ``rm -rf .``, ``rm -rf *``, ``rm -rf ./*``.
+CWD_WIPE_TARGETS = {".", "./", "..", "../", "*", ".*", "./*", "../*"}
+# ``$DIR/`` or ``${DIR}/*``: an empty variable turns it into ``/`` or ``/*``.
+EMPTY_VAR_ROOT_RE = re.compile(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/\**$")
+HOME_PREFIXES = ("/root/", "~/", "$HOME/", "${HOME}/")
+# Package-manager caches and scratch space that builds remove to slim an
+# image (``pip install ... && rm -rf /root/.cache/pip``).
+CACHE_DIRS_UNDER_HOME = (".cache", ".npm")
+DISPOSABLE_ROOTS = (
+    "/tmp/",
+    "/var/tmp/",
+    "/var/cache/",
+    "/var/lib/apt/lists/",
+    "/usr/local/share/.cache/",
 )
 
 
@@ -124,10 +142,9 @@ def command_risks(command: str) -> Iterator[CommandRisk]:
         yield REMOTE_SCRIPT_RULE
     if any(pattern.search(command) for pattern in REVERSE_SHELL_PATTERNS):
         yield DATA_EXFIL_RULE
-    # Removing apt's downloaded package indexes is a bounded Docker/build
-    # cleanup, even though the literal path begins at the filesystem root.
-    destructive_command = _APT_LIST_CLEANUP_RE.sub("", command)
-    if any(pattern.search(destructive_command) for pattern in DESTRUCTIVE_PATTERNS):
+    if _has_broad_rm(command) or any(
+        pattern.search(command) for pattern in DESTRUCTIVE_PATTERNS
+    ):
         yield DESTRUCTIVE_RULE
 
 
@@ -140,6 +157,78 @@ def pipeline_risks(pipeline: list[list[str]]) -> Iterator[CommandRisk]:
         yield DATA_EXFIL_RULE
     if any(_network_sink_sends_secret_env(tokens) for tokens in pipeline):
         yield DATA_EXFIL_RULE
+
+
+def _has_broad_rm(command: str) -> bool:
+    return any(
+        _is_broad_rm_target(target)
+        for match in RM_RECURSIVE_FORCE_RE.finditer(command)
+        for target in _rm_targets(match.group("targets"))
+    )
+
+
+def _rm_targets(text: str) -> list[str]:
+    targets: list[str] = []
+    options_done = False
+    skip_next = False
+    try:
+        tokens = shlex.split(text, comments=True, posix=True)
+    except ValueError:
+        tokens = shell_tokens(text)
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        redirect = REDIRECT_RE.match(token)
+        if redirect:
+            # ``> /dev/null`` names the redirect target in the next token.
+            skip_next = redirect.end() == len(token)
+            continue
+        token = token.strip("'\"`()")
+        if not token:
+            continue
+        if not options_done and token == "--":
+            options_done = True
+            continue
+        if not options_done and token.startswith("-"):
+            continue
+        targets.append(token)
+    return targets
+
+
+def _is_broad_rm_target(target: str) -> bool:
+    if target in CWD_WIPE_TARGETS or EMPTY_VAR_ROOT_RE.match(target):
+        return True
+    if _is_disposable_path(target):
+        return False
+    return (
+        target.startswith("/")
+        or target in {"~", "$HOME", "${HOME}", ".git"}
+        or target.startswith(("~/", "$HOME/", "${HOME}/", ".git/"))
+    )
+
+
+def _is_disposable_path(target: str) -> bool:
+    # An expansion can introduce parent traversal even below a literal cache
+    # prefix (e.g. TARGET=../.. in /tmp/$TARGET). Only HOME itself is allowed
+    # to expand in the explicitly supported home-cache roots.
+    literal = target
+    for home in ("$HOME/", "${HOME}/"):
+        if literal.startswith(home):
+            literal = literal[len(home) :]
+            break
+    if any(marker in literal for marker in ("$", "`", "{")):
+        return False
+    if ".." in target.split("/"):
+        return False
+    if any(
+        target.startswith(root) and len(target) > len(root) for root in DISPOSABLE_ROOTS
+    ):
+        return True
+    for home in HOME_PREFIXES:
+        if target.startswith(home):
+            return target[len(home) :].split("/", 1)[0] in CACHE_DIRS_UNDER_HOME
+    return False
 
 
 def _pipeline_has_data_exfil(pipeline: list[list[str]]) -> bool:
@@ -264,12 +353,17 @@ def _is_env_dump_source(name: str, tokens: list[str]) -> bool:
 
 def _is_token_source(tokens: list[str]) -> bool:
     if tokens_start_with(tokens, ("aws", "configure", "get")):
-        return any("secret" in token.lower() or "token" in token.lower() for token in tokens[3:])
+        return any(
+            "secret" in token.lower() or "token" in token.lower()
+            for token in tokens[3:]
+        )
     return any(tokens_start_with(tokens, prefix) for prefix in TOKEN_COMMAND_PREFIXES)
 
 
 def _reads_sensitive_path(name: str, tokens: list[str]) -> bool:
-    return name in SENSITIVE_READERS and any(is_sensitive_path(token) for token in tokens[1:])
+    return name in SENSITIVE_READERS and any(
+        is_sensitive_path(token) for token in tokens[1:]
+    )
 
 
 def _curl_reads_sensitive_file(tokens: list[str]) -> bool:
