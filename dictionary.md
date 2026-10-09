@@ -292,7 +292,8 @@ Skylos does not execute pytest or load `conftest.py` to resolve these values.
 | D349 | CRITICAL | Server-side template injection (request data compiled as Jinja template source) | Python |
 
 D329 flags `rm -rf` of `/`, `~`, `$HOME`, `.`, `*`, `.git`, any other absolute
-path, and `$VAR/` or `$VAR/*` (an empty variable makes it `/`). Removing
+path, and `$VAR/` or `$VAR/*` (an empty variable makes it `/`). Split flags
+(`-r -f`) and `--recursive --force` receive the same checks. Removing
 package-manager caches and scratch space is not a finding: `/tmp/...`,
 `/var/tmp/...`, `/var/cache/...`, `/var/lib/apt/lists/...`, and `.cache` or
 `.npm` under `/root`, `~` or `$HOME`. Cleanup targets containing parent traversal

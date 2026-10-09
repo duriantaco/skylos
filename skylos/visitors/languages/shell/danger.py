@@ -223,6 +223,12 @@ def _iter_statements(source: str) -> list[tuple[int, str]]:
 
         line = _strip_inline_comment(raw).rstrip()
         if not line:
+            # The newline ending a blank/comment-only physical line is not
+            # escaped. It terminates any command continued onto that line.
+            if pending:
+                for statement in _split_shell_statements(pending):
+                    statements.append((pending_line, statement))
+                pending = ""
             continue
 
         marker = _heredoc_marker(line)

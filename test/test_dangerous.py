@@ -94,6 +94,42 @@ def test_os_system_dangerous_constant_command_stays_critical(tmp_path):
     assert _d203_severity_by_line(_scan_dangerous_calls_rule(code)) == expected
 
 
+@pytest.mark.parametrize(
+    ("command", "severity"),
+    [
+        ("rm -r -f /srv/payments", "CRITICAL"),
+        ("rm --recursive --force /srv/payments", "CRITICAL"),
+        ('"rm" -rf /srv/payments', "CRITICAL"),
+        ("sh -c 'rm -r -f /srv/payments'", "CRITICAL"),
+        ('rm -rf /tmp/"a;b" /srv/payments', "CRITICAL"),
+        (r"rm -rf /tmp/a\;b /srv/payments", "CRITICAL"),
+        ("rm -rf /tmp/build \\\n /srv/payments", "CRITICAL"),
+        ("rm -r -f /root/.cache/pip", "LOW"),
+        ("rm --recursive --force /var/cache/apt/archives/*.deb", "LOW"),
+        ('"rm" -rf /tmp/"a;b"', "LOW"),
+        ("sh -c 'rm -r -f /root/.cache/pip'", "LOW"),
+        ("printf '%s' 'rm -rf /srv/payments'", "LOW"),
+        ("echo rm -rf /srv/payments", "LOW"),
+        ("printf '%s' sh -c 'rm -rf /srv/payments'", "LOW"),
+        ("rm -rf /tmp/build # && rm -rf /srv/payments", "LOW"),
+        ("rm -rf /tmp/build#literal /srv/payments", "CRITICAL"),
+        ("env MODE=manual rm -r -f /srv/payments", "CRITICAL"),
+        ("sudo -u root rm --recursive --force /srv/payments", "CRITICAL"),
+        (r"echo '/tmp/foo\' ; rm -rf /srv/payments", "CRITICAL"),
+        ("echo ok & rm -rf /srv/payments", "CRITICAL"),
+        ("{ rm -rf /srv/payments; }", "CRITICAL"),
+        ("echo '$(rm -rf /srv/payments)'", "LOW"),
+        (r'echo "\$(rm -rf /srv/payments)"', "LOW"),
+        (r'echo "\`rm -rf /srv/payments\`"', "LOW"),
+    ],
+)
+def test_os_system_rm_options_and_shell_boundaries(tmp_path, command, severity):
+    code = f"import os\nos.system({command!r})\n"
+    expected = {2: severity}
+    assert _d203_severity_by_line(_scan_one(tmp_path, "cleanup.py", code)) == expected
+    assert _d203_severity_by_line(_scan_dangerous_calls_rule(code)) == expected
+
+
 def test_danger_findings_dedupe_by_rule_file_and_line():
     from skylos.rules.danger.danger import dedupe_findings
 

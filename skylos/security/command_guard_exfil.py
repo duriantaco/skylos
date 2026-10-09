@@ -5,6 +5,7 @@ import shlex
 from collections.abc import Iterator
 
 from skylos.security.command_guard_parse import (
+    _split_shell_on,
     command_name,
     shell_tokens,
     split_option,
@@ -112,13 +113,6 @@ DESTRUCTIVE_PATTERNS = (
     ),
     re.compile(r"\bgit\s+reset\s+--hard\b", re.I),
 )
-# ``rm -rf <targets>`` up to the end of that shell statement.
-RM_RECURSIVE_FORCE_RE = re.compile(
-    r"\brm\s+"
-    r"(?:-[A-Za-z]*r[A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*r[A-Za-z]*)"
-    r"(?P<targets>[^;&|\n]*)",
-    re.I,
-)
 REDIRECT_RE = re.compile(r"\d*(?:>>?|<)")
 # Wiping the working directory: ``rm -rf .``, ``rm -rf *``, ``rm -rf ./*``.
 CWD_WIPE_TARGETS = {".", "./", "..", "../", "*", ".*", "./*", "../*"}
@@ -159,22 +153,306 @@ def pipeline_risks(pipeline: list[list[str]]) -> Iterator[CommandRisk]:
         yield DATA_EXFIL_RULE
 
 
-def _has_broad_rm(command: str) -> bool:
-    return any(
-        _is_broad_rm_target(target)
-        for match in RM_RECURSIVE_FORCE_RE.finditer(command)
-        for target in _rm_targets(match.group("targets"))
-    )
+def _has_broad_rm(command: str, *, _depth: int = 0) -> bool:
+    # Keep quoted/escaped separators inside their operand, and join shell
+    # continuations before deciding whether a cache path is bounded.
+    command = _rm_without_comments(command).replace("\\\n", "")
+    if any(
+        _rm_nested_risk(script, _depth) for script in _rm_substituted_scripts(command)
+    ):
+        return True
+    for statement in _split_shell_on(
+        command, {";", "&&", "&", "||", "|", "\n", "(", ")"}
+    ):
+        try:
+            tokens = shlex.split(statement, comments=False, posix=True)
+        except ValueError:
+            tokens = shell_tokens(statement)
+        tokens = _rm_executable_tokens(tokens)
+        if not tokens:
+            continue
+        name = _rm_known_command_name(tokens[0])
+        if tokens[0].rsplit("/", 1)[-1] == "rm":
+            name = "rm"
+        if name == "rm":
+            recursive = forced = False
+            options_done = False
+            for option in tokens[1:]:
+                if options_done:
+                    continue
+                if option == "--":
+                    options_done = True
+                elif option == "--recursive":
+                    recursive = True
+                elif option == "--force":
+                    forced = True
+                elif option.startswith("-") and not option.startswith("--"):
+                    recursive |= "r" in option or "R" in option
+                    forced |= "f" in option
+            if (
+                recursive
+                and forced
+                and any(
+                    _is_broad_rm_target(target) for target in _rm_targets(tokens[1:])
+                )
+            ):
+                return True
+        elif name == "find":
+            for offset, token in enumerate(tokens):
+                if token not in {"-exec", "-execdir"}:
+                    continue
+                end = offset + 1
+                while end < len(tokens) and tokens[end] not in {";", "+"}:
+                    end += 1
+                if _rm_nested_risk(shlex.join(tokens[offset + 1 : end]), _depth):
+                    return True
+        elif name in {"bash", "dash", "ksh", "sh", "zsh", "eval"}:
+            # A quoted script has its own shell parse. Its operands must
+            # receive the same cache-boundary checks as a direct command.
+            script = None
+            if name == "eval" and len(tokens) > 1:
+                script = " ".join(tokens[1:])
+            else:
+                offset = 1
+                while offset < len(tokens) - 1:
+                    option = tokens[offset]
+                    if option == "--":
+                        break
+                    if option in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
+                        offset += 2
+                    elif (
+                        option.startswith("-")
+                        and not option.startswith("--")
+                        and "c" in option
+                    ):
+                        script = tokens[offset + 1]
+                        break
+                    elif option.startswith(("-", "+")):
+                        offset += 1
+                    else:
+                        break
+            if script is not None and (_rm_nested_risk(script, _depth)):
+                return True
+        elif name not in {"echo", "printf"}:
+            # Unknown executables may run their arguments. Preserve embedded
+            # command evidence unless this is a positively identified printer.
+            for offset, token in enumerate(tokens[1:], 1):
+                if token.rsplit("/", 1)[-1] in {
+                    "rm",
+                    "bash",
+                    "dash",
+                    "ksh",
+                    "sh",
+                    "zsh",
+                    "eval",
+                    "find",
+                }:
+                    script = shlex.join(tokens[offset:])
+                elif re.search(r"\brm\s+", token):
+                    script = token
+                else:
+                    continue
+                if _rm_nested_risk(script, _depth):
+                    return True
+    return False
 
 
-def _rm_targets(text: str) -> list[str]:
+def _rm_nested_risk(script: str, depth: int) -> bool:
+    if depth < 8:
+        return _has_broad_rm(script, _depth=depth + 1)
+    # At the inspection bound, retain actual rm evidence. Deeply nested
+    # harmless scripts alone do not justify a destructive-command finding.
+    return bool(re.search(r"\brm\b", script))
+
+
+def _rm_substituted_scripts(command: str) -> Iterator[str]:
+    """Inspect executed substitutions; single-quoted text remains literal."""
+    quote = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            index += 1
+            continue
+        if char == "\\":
+            index += 2
+            continue
+        if command.startswith("$(", index) or char == "`":
+            backtick = char == "`"
+            start = index + (1 if backtick else 2)
+            end = start
+            depth = 1
+            inner_quote = None
+            while end < len(command):
+                current = command[end]
+                if inner_quote == "'":
+                    if current == "'":
+                        inner_quote = None
+                elif current == "\\":
+                    end += 2
+                    continue
+                elif backtick and current == "`":
+                    break
+                elif inner_quote:
+                    if current == inner_quote:
+                        inner_quote = None
+                elif current in {"'", '"'}:
+                    inner_quote = current
+                elif not backtick and current == "(":
+                    depth += 1
+                elif not backtick and current == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                end += 1
+            yield command[start:end]
+            index = end + 1
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        index += 1
+
+
+def _rm_without_comments(command: str) -> str:
+    kept: list[str] = []
+    quote = None
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "#" and (index == 0 or command[index - 1] in " \t\r\n;|&()<>"):
+            end = command.find("\n", index)
+            if end == -1:
+                break
+            index = end
+            continue
+        kept.append(char)
+        index += 1
+    return "".join(kept)
+
+
+_RM_COMMAND_PREFIXES = {"command", "env", "exec", "nohup", "sudo", "time", "xargs"}
+_RM_PREFIX_VALUE_OPTIONS = {
+    "exec": {"-a"},
+    "env": {"-C", "--chdir", "-u", "--unset"},
+    "sudo": {"-C", "-g", "-h", "-p", "-T", "-u", "--user", "--group"},
+    "time": {"-o", "--output", "-f", "--format"},
+    "xargs": {
+        "-a",
+        "--arg-file",
+        "-d",
+        "--delimiter",
+        "-E",
+        "--eof",
+        "-I",
+        "--replace",
+        "-L",
+        "--max-lines",
+        "-n",
+        "--max-args",
+        "-P",
+        "--max-procs",
+        "-s",
+        "--max-chars",
+    },
+}
+
+
+def _rm_known_command_name(token: str) -> str:
+    if token.startswith(("/bin/", "/usr/bin/")):
+        name = token.rsplit("/", 1)[-1]
+        if token in {f"/bin/{name}", f"/usr/bin/{name}"}:
+            return name
+    return token
+
+
+def _rm_executable_tokens(tokens: list[str]) -> list[str]:
+    """Resolve common execution prefixes without treating printed argv as code."""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        name = _rm_known_command_name(token)
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or token in {
+            "!",
+            "if",
+            "then",
+            "elif",
+            "else",
+            "do",
+            "while",
+            "until",
+            "{",
+        }:
+            index += 1
+        elif name in _RM_COMMAND_PREFIXES:
+            index += 1
+            while index < len(tokens):
+                option = tokens[index]
+                if option in {"--help", "--version"}:
+                    return []
+                if name == "env" and option.startswith("--split-string="):
+                    return _rm_executable_tokens(
+                        shell_tokens(option.split("=", 1)[1]) + tokens[index + 1 :]
+                    )
+                if (
+                    name == "env"
+                    and option in {"-S", "--split-string"}
+                    and index + 1 < len(tokens)
+                ):
+                    return _rm_executable_tokens(
+                        shell_tokens(tokens[index + 1]) + tokens[index + 2 :]
+                    )
+                if option == "--":
+                    index += 1
+                    break
+                if option.startswith("-") and not option.startswith("--"):
+                    value_flags = {
+                        flag[1]
+                        for flag in _RM_PREFIX_VALUE_OPTIONS.get(name, set())
+                        if len(flag) == 2
+                    }
+                    flags = set()
+                    takes_next = False
+                    for offset, flag in enumerate(option[1:], 1):
+                        flags.add(flag)
+                        if flag in value_flags:
+                            takes_next = offset == len(option) - 1
+                            break
+                    if (name == "command" and flags.intersection("vV")) or (
+                        name == "sudo" and flags.intersection("lvV")
+                    ):
+                        return []
+                    index += 2 if takes_next else 1
+                    continue
+                if option in _RM_PREFIX_VALUE_OPTIONS.get(name, set()):
+                    index += 2
+                elif option.startswith("-"):
+                    index += 1
+                else:
+                    break
+        else:
+            return tokens[index:]
+    return []
+
+
+def _rm_targets(tokens: list[str]) -> list[str]:
     targets: list[str] = []
     options_done = False
     skip_next = False
-    try:
-        tokens = shlex.split(text, comments=True, posix=True)
-    except ValueError:
-        tokens = shell_tokens(text)
     for token in tokens:
         if skip_next:
             skip_next = False

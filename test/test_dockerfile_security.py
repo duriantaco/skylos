@@ -74,6 +74,19 @@ def test_dockerfile_broad_rm_still_flags(tmp_path: Path):
     assert "SKY-D329" in _rule_ids(findings)
 
 
+def test_dockerfile_rm_flags_and_quoted_operands_preserve_boundaries(tmp_path: Path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.12\n"
+        "RUN rm --recursive --force /root/.cache/pip\n"
+        "RUN rm -r -f /srv/payments\n"
+        'RUN rm -rf /tmp/"a;b" /srv/payments\n'
+        'RUN "rm" -rf /srv/payments\n',
+        encoding="utf-8",
+    )
+    findings = scan_dockerfiles(tmp_path)
+    assert [f["line"] for f in findings if f["rule_id"] == "SKY-D329"] == [3, 4, 5]
+
+
 def test_dockerfile_run_secret_env_upload_flags(tmp_path: Path):
     dockerfile = tmp_path / "Dockerfile"
     dockerfile.write_text(
