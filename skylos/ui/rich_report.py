@@ -1,4 +1,5 @@
 import logging
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -88,6 +89,50 @@ def _dead_code_evidence_pill(result):
 def _display_cap(items, limit):
     cap = limit or len(items)
     return items[:cap], max(0, len(items) - cap)
+
+
+# A message column narrower than this wraps to a word or two per line, so
+# less useful columns fold into the message cell instead.
+_MIN_MESSAGE_WIDTH = 30
+# Longer locations wrap inside their column rather than crowd the message.
+_MAX_LOCATION_WIDTH = 48
+# Custom rule IDs may be arbitrarily long; fold them without consuming the report.
+_MAX_RULE_WIDTH = 24
+
+
+def _text_width(values, *, floor=1, cap=None):
+    width = max([len(value) for value in values] + [floor])
+    return min(width, cap) if cap else width
+
+
+def _message_room(console, side_widths):
+    """Width left for the message column beside ``side_widths``.
+
+    Each Rich column also takes two padding spaces and one border. None when
+    the console has no known width (a test double).
+    """
+    width = getattr(console, "width", None)
+    if not isinstance(width, int):
+        return None
+    return width - sum(side_widths) - 3 * (len(side_widths) + 1) - 1
+
+
+def _fit_side_columns(console, fixed_widths, optional):
+    """Return the optional columns that leave the message column readable.
+
+    ``fixed_widths`` are the columns that always show, ``optional`` is
+    ``[(key, width)]`` from most to least useful. Callers fold the columns
+    left out into the message cell. A console without a known width keeps
+    every column.
+    """
+    shown = list(optional)
+    while shown:
+        widths = [*fixed_widths, *(column_width for _, column_width in shown)]
+        room = _message_room(console, widths)
+        if room is None or room >= _MIN_MESSAGE_WIDTH:
+            break
+        shown.pop()
+    return {key for key, _ in shown}
 
 
 def _analysis_error_affected_file_count(error):
@@ -323,23 +368,42 @@ def _render_unused(console: Console, root_path, limit, title, items, name_key="n
     console.rule(f"[bold]{title}")
 
     has_why = any(_dead_code_why(item) for item in items if isinstance(item, dict))
+    show, overflow = _display_cap(items, limit)
+    locations = [
+        f"{_shorten_path(item.get('file'), root_path)}:{item.get('line', '?')}"
+        for item in show
+    ]
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    optional = [("location", location_width)]
+    if has_why:
+        optional.append(("evidence", 42))
+    columns = _fit_side_columns(console, [3, 6], optional)
+
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Name", style="bold")
-    table.add_column("Location", style="muted", overflow="fold")
+    table.add_column("Name", overflow="fold")
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
     table.add_column("Conf", style="yellow", width=6, justify="right")
-    if has_why:
+    if "evidence" in columns:
         table.add_column("Evidence", style="muted", width=42, overflow="fold")
 
-    show, overflow = _display_cap(items, limit)
-    for i, item in enumerate(show, 1):
+    for i, (item, location) in enumerate(zip(show, locations), 1):
         nm = escape(str(item.get(name_key) or item.get("simple_name") or "<?>"))
-        short = _shorten_path(item.get("file"), root_path)
-        loc = escape(f"{short}:{item.get('line', '?')}")
-        conf_str = _format_confidence(item.get("confidence", "?"))
-        row = [str(i), nm, loc, conf_str]
-        if has_why:
-            row.append(_dead_code_why(item) or "-")
+        name_cell = f"[bold]{nm}[/bold]"
+        why = _dead_code_why(item)
+        if "location" not in columns:
+            name_cell += f"\n[muted]{escape(location)}[/muted]"
+        if why and has_why and "evidence" not in columns:
+            name_cell += f"\n[muted]{why}[/muted]"
+        row = [str(i), name_cell]
+        if "location" in columns:
+            row.append(escape(location))
+        row.append(_format_confidence(item.get("confidence", "?")))
+        if "evidence" in columns:
+            row.append(why or "-")
         table.add_row(*row)
 
     console.print(table)
@@ -393,19 +457,34 @@ def _render_unused_files(console: Console, root_path, limit, items):
 
     console.rule("[bold]Unused Files")
 
+    show, overflow = _display_cap(items, limit)
+    rules = [str(item.get("rule_id") or "SKY-E002") for item in show]
+    locations = [
+        f"{_shorten_path(item.get('file'), root_path)}:{item.get('line', 1)}"
+        for item in show
+    ]
+    rule_width = _text_width(rules, floor=10, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    columns = _fit_side_columns(
+        console, [3, rule_width], [("location", location_width)]
+    )
+
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Rule", style="bold", width=10)
+    table.add_column("Rule", style="bold", width=rule_width, overflow="fold")
     table.add_column("Message", overflow="fold")
-    table.add_column("Location", style="muted", overflow="fold")
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
 
-    show, overflow = _display_cap(items, limit)
-    for index, item in enumerate(show, 1):
-        rule = escape(str(item.get("rule_id") or "SKY-E002"))
+    for index, (item, rule, location) in enumerate(zip(show, rules, locations), 1):
         message = escape(str(item.get("message") or "Unused file"))
-        short = escape(_shorten_path(item.get("file"), root_path))
-        location = f"{short}:{item.get('line', 1)}"
-        table.add_row(str(index), rule, message, location)
+        if "location" in columns:
+            table.add_row(str(index), escape(rule), message, escape(location))
+        else:
+            message += f"\n[muted]{escape(location)}[/muted]"
+            table.add_row(str(index), escape(rule), message)
 
     console.print(table)
     if overflow:
@@ -415,21 +494,58 @@ def _render_unused_files(console: Console, root_path, limit, items):
     console.print(_RESULTS_DOCS_LINK)
 
 
+_CLONE_KINDS = {
+    "type1": "exact copy",
+    "type2": "same structure",
+    "type3": "near copy",
+    "type4": "same logic",
+}
+
+
+def _clone_detail(value):
+    """``"type2 1.00"`` -> ``"same structure, 100% similar"``."""
+    clone_type, _, similarity = str(value or "").partition(" ")
+    words = _CLONE_KINDS.get(clone_type, "similar code")
+    try:
+        score = float(similarity)
+        if math.isfinite(score) and 0 <= score <= 1:
+            return f"{words}, {round(score * 100)}% similar"
+    except ValueError:
+        pass
+    return words
+
+
+def _structure_detail(quality, value, limit):
+    rule_id = quality.get("rule_id")
+    if rule_id == "SKY-C303":
+        message = str(quality.get("message") or "")
+        noun = "parameters" if "total parameters" in message else "arguments"
+        return f"{value} {noun}{limit}"
+    if rule_id == "SKY-C304":
+        return f"{value} lines{limit}"
+    if rule_id == "SKY-L028":
+        return f"{value} return statements{limit}"
+    return str(quality.get("message") or f"{value}{limit}")
+
+
 def _quality_detail(quality):
     raw_kind = quality.get("kind") or quality.get("metric") or "quality"
     func = quality.get("name") or quality.get("simple_name") or "<?>"
-    value = quality.get("value") or quality.get("complexity")
+    value = quality.get("value")
+    if value is None:
+        value = quality.get("complexity")
     thr = quality.get("threshold")
     length = quality.get("length")
     qtype = quality.get("type", "")
+    limit = f" (limit {thr})" if thr is not None else ""
 
-    if qtype == "string":
-        detail = f"repeated {value}×"
-        if thr is not None:
-            detail += f" (max {thr})"
+    if value is None:
+        detail = str(quality.get("message") or "Measurement unavailable")
+    elif qtype == "string":
+        detail = f"repeated {value}×{limit}"
         func = f'"{func}"'
     elif qtype == "dependency":
-        detail = str(value)
+        detail = "declared but never imported" if value == "unused" else str(value)
     elif raw_kind in {
         "typing",
         "framework",
@@ -437,18 +553,22 @@ def _quality_detail(quality):
         "repo_policy",
     }:
         detail = quality.get("message") or str(value)
+    elif raw_kind == "clone":
+        detail = _clone_detail(value)
+    elif quality.get("rule_id") == "SKY-L029":
+        detail = "true/false positional parameter; make it keyword-only"
     elif raw_kind == "nesting":
-        detail = f"Deep nesting: depth {value}"
+        detail = f"Nesting depth {value}{limit}"
     elif raw_kind == "structure":
-        detail = f"Line count: {value}"
+        detail = _structure_detail(quality, value, limit)
     elif raw_kind == "complexity":
-        detail = f"Complexity: {value}"
-        if thr is not None:
-            detail += f" (max {thr})"
+        detail = f"Complexity: {value}{limit}"
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        detail = f"{value}{limit}"
     else:
-        detail = f"{value}"
-        if thr is not None:
-            detail += f" (max {thr})"
+        # Rules that report a label ("disabled", "bare", a parameter name)
+        # rather than a measurement say what they found in the message.
+        detail = quality.get("message") or str(value)
     if length is not None:
         detail += f", {length} lines"
 
@@ -460,18 +580,57 @@ def _render_quality(console: Console, limit, items):
         return
 
     console.rule("[bold red]Quality Issues")
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Type", style="yellow", width=12)
-    table.add_column("Name", style="bold")
-    table.add_column("Detail")
-    table.add_column("Location", style="muted", width=36)
 
     show, overflow = _display_cap(items, limit)
-    for i, quality in enumerate(show, 1):
+    locations = []
+    for quality in show:
+        file_path = quality.get("file")
+        short = _shorten_path(file_path) if file_path else quality.get("basename")
+        locations.append(f"{short or '?'}:{quality.get('line', '?')}")
+    rule_ids = [str(quality.get("rule_id") or "") for quality in show]
+    names = [_quality_detail(quality)[1] for quality in show]
+    rule_width = _text_width(rule_ids, floor=18, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    name_width = _text_width(names, floor=8, cap=30)
+    columns = _fit_side_columns(
+        console,
+        [3, rule_width],
+        [("location", location_width), ("name", name_width)],
+    )
+    if "name" in columns:
+        # Long test names read better whole; give them what the detail spares.
+        room = _message_room(console, [3, rule_width, location_width, name_width])
+        if room is not None:
+            spare = max(0, room - _MIN_MESSAGE_WIDTH)
+            name_width = min(_text_width(names), name_width + spare)
+
+    table = Table(expand=True)
+    table.add_column("#", style="muted", width=3)
+    table.add_column("Rule", style="yellow", width=rule_width, overflow="fold")
+    if "name" in columns:
+        table.add_column("Name", style="bold", width=name_width, overflow="fold")
+    table.add_column("Detail", overflow="fold")
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
+
+    for i, (quality, rule_id, location) in enumerate(zip(show, rule_ids, locations), 1):
         kind, func, detail = _quality_detail(quality)
-        loc = f"{quality.get('basename', '?')}:{quality.get('line', '?')}"
-        table.add_row(str(i), escape(kind), escape(func), escape(detail), escape(loc))
+        rule_cell = escape(_display_rule_name(rule_id, default=kind))
+        if rule_id:
+            rule_cell += f"\n[dim]{escape(rule_id)}[/dim]"
+        detail_cell = escape(detail)
+        if "name" not in columns:
+            detail_cell = f"[bold]{escape(func)}[/bold]\n{detail_cell}"
+        row = [str(i), rule_cell]
+        if "name" in columns:
+            row.append(escape(func))
+        if "location" in columns:
+            row.extend([detail_cell, escape(location)])
+        else:
+            row.append(f"{detail_cell}\n[muted]{escape(location)}[/muted]")
+        table.add_row(*row)
 
     console.print(table)
     if overflow:
@@ -480,11 +639,9 @@ def _render_quality(console: Console, limit, items):
         )
     console.print(
         "[muted]Reading the table:[/muted]\n"
-        "[muted]  • Complexity — number of branches/loops in a function (lower = easier to test)[/muted]\n"
-        "[muted]  • Nesting — how deeply indented the code is (depth count)[/muted]\n"
-        "[muted]  • Structure — line count of a function or argument count[/muted]\n"
-        "[muted]  • Duplicate strings — how many times a literal appears[/muted]\n"
-        '[muted]  • "max N" / "(max N)" — the configured threshold; tune in \\[tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
+        "[muted]  • Rule — what was checked, with its rule ID[/muted]\n"
+        "[muted]  • Detail — what Skylos found; for clones, an exact copy, the same structure with different names, or a near copy of another class or function[/muted]\n"
+        '[muted]  • "(limit N)" — the configured threshold; tune in \\[tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
         + _RESULTS_DOCS_LINK
     )
 
@@ -537,23 +694,44 @@ def _render_custom_rules(console: Console, root_path, limit, items):
         return
 
     console.rule("[bold magenta]Custom Rules")
+    show, overflow = _display_cap(custom, limit)
+    rules = [str(d.get("rule_id") or "CUSTOM") for d in show]
+    locations = [
+        f"{_shorten_path(d.get('file'), root_path)}:{d.get('line', '?')}" for d in show
+    ]
+    rule_width = _text_width(rules, floor=18, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    columns = _fit_side_columns(
+        console,
+        [3, rule_width],
+        [("location", location_width), ("severity", 10)],
+    )
+
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Rule", style="magenta", width=18)
-    table.add_column("Severity", width=10)
+    table.add_column("Rule", style="magenta", width=rule_width, overflow="fold")
+    if "severity" in columns:
+        table.add_column("Severity", width=10)
     table.add_column("Message", overflow="fold")
-    table.add_column("Location", style="muted", width=36)
-
-    show, overflow = _display_cap(custom, limit)
-    for i, d in enumerate(show, 1):
-        rule = d.get("rule_id") or "CUSTOM"
-        sev = d.get("severity") or "MEDIUM"
-        msg = d.get("message") or "Custom rule violation"
-        short = _shorten_path(d.get("file"), root_path)
-        loc = f"{short}:{d.get('line', '?')}"
-        table.add_row(
-            str(i), escape(str(rule)), escape(str(sev)), escape(str(msg)), escape(loc)
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
         )
+
+    for i, (d, rule, loc) in enumerate(zip(show, rules, locations), 1):
+        sev = str(d.get("severity") or "MEDIUM")
+        msg = escape(str(d.get("message") or "Custom rule violation"))
+        rule_cell = escape(rule)
+        row = [str(i)]
+        if "severity" in columns:
+            row.extend([rule_cell, escape(sev)])
+        else:
+            row.append(f"{rule_cell}\n[dim]{escape(sev)}[/dim]")
+        if "location" in columns:
+            row.extend([msg, escape(loc)])
+        else:
+            row.append(f"{msg}\n[muted]{escape(loc)}[/muted]")
+        table.add_row(*row)
 
     console.print(table)
     if overflow:
@@ -568,39 +746,54 @@ def _render_secrets(console: Console, root_path, limit, items):
         return
 
     console.rule("[bold red]Secrets")
-    has_provenance = any(s.get("ai_authored") is not None for s in (items or []))
+    has_provenance = any(s.get("ai_authored") for s in (items or []))
+
+    show, overflow = _display_cap(items, limit)
+    locations = [
+        f"{_shorten_path(s.get('file'), root_path)}:{s.get('line', '?')}" for s in show
+    ]
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    optional = [("location", location_width), ("preview", 18)]
+    if has_provenance:
+        optional.append(("ai", 12))
+    columns = _fit_side_columns(console, [3, 14], optional)
 
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
     table.add_column("Provider", style="yellow", width=14)
-    table.add_column("Message")
-    table.add_column("Preview", style="muted", width=18)
-    table.add_column("Location", style="muted", overflow="fold")
-
-    if has_provenance:
+    table.add_column("Message", overflow="fold")
+    if "preview" in columns:
+        table.add_column("Preview", style="muted", width=18)
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
+    if "ai" in columns:
         table.add_column("AI", width=12)
 
-    show, overflow = _display_cap(items, limit)
-    for i, s in enumerate(show, 1):
+    for i, (s, loc) in enumerate(zip(show, locations), 1):
         prov = s.get("provider") or "generic"
         msg = s.get("message") or "Secret detected"
         prev = s.get("preview") or "****"
-        short = _shorten_path(s.get("file"), root_path)
-        loc = f"{short}:{s.get('line', '?')}"
-        row = [
-            str(i),
-            escape(str(prov)),
-            escape(str(msg)),
-            escape(str(prev)),
-            escape(loc),
-        ]
-
-        if has_provenance:
-            if s.get("ai_authored"):
-                agent = s.get("ai_agent") or "ai"
-                row.append(f"[red]{escape(str(agent))}[/red]")
-            else:
-                row.append("[muted]-[/muted]")
+        if s.get("ai_authored"):
+            agent = f"[red]{escape(str(s.get('ai_agent') or 'ai'))}[/red]"
+        else:
+            agent = "[muted]-[/muted]"
+        message_cell = escape(str(msg))
+        folded = [] if "location" in columns else [escape(loc)]
+        if "preview" not in columns:
+            folded.append(escape(str(prev)))
+        if folded:
+            message_cell += f"\n[muted]{' · '.join(folded)}[/muted]"
+        if "ai" not in columns and has_provenance and s.get("ai_authored"):
+            message_cell += f"\nAI: {agent}"
+        row = [str(i), escape(str(prov)), message_cell]
+        if "preview" in columns:
+            row.append(escape(str(prev)))
+        if "location" in columns:
+            row.append(escape(loc))
+        if "ai" in columns:
+            row.append(agent)
 
         table.add_row(*row)
 
@@ -688,10 +881,10 @@ def _render_result_tree(console: Console, result, root_path=None):
     console.print(tree)
 
 
-def _display_rule_name(rule_id):
+def _display_rule_name(rule_id, default="Security issue"):
     from skylos.rules.catalog import get_rule_name
 
-    return get_rule_name(rule_id)
+    return get_rule_name(rule_id, default)
 
 
 def _verification_proof(danger_finding):
@@ -741,22 +934,39 @@ def _render_ai_defects(console: Console, root_path, limit, items):
 
     console.rule("[bold magenta]AI Defects")
 
+    show, overflow = _display_cap(items, limit)
+    rule_ids = [str(defect.get("rule_id") or "UNKNOWN") for defect in show]
+    locations = [
+        f"{_shorten_path(defect.get('file'), root_path)}:{defect.get('line', '?')}"
+        for defect in show
+    ]
+    defect_width = _text_width(rule_ids, floor=18, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    columns = _fit_side_columns(
+        console,
+        [3, defect_width],
+        [("location", location_width), ("severity", 8)],
+    )
+
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Defect", style="yellow", width=18)
-    table.add_column("Severity", width=8)
+    table.add_column("Defect", style="yellow", width=defect_width, overflow="fold")
+    if "severity" in columns:
+        table.add_column("Severity", width=8)
     table.add_column("Message", overflow="fold")
-    table.add_column("Location", style="muted", width=18, overflow="fold")
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
 
-    show, overflow = _display_cap(items, limit)
-    for i, defect in enumerate(show, 1):
-        rule_id = str(defect.get("rule_id") or "UNKNOWN")
+    for i, (defect, rule_id, location) in enumerate(zip(show, rule_ids, locations), 1):
         defect_name = str(_display_rule_name(rule_id))
-        defect_cell = f"{escape(defect_name)}\n[dim]{escape(rule_id)}[/dim]"
         severity = str(defect.get("severity") or "UNKNOWN").title()
+        rule_line = escape(rule_id)
+        if "severity" not in columns:
+            rule_line += f" · {escape(severity)}"
+        defect_cell = f"{escape(defect_name)}\n[dim]{rule_line}[/dim]"
         message = str(defect.get("message") or "AI defect detected")
-        short = _shorten_path(defect.get("file"), root_path)
-        location = f"{short}:{defect.get('line', '?')}"
         symbol = (
             defect.get("symbol")
             or defect.get("name")
@@ -766,13 +976,15 @@ def _render_ai_defects(console: Console, root_path, limit, items):
         message_cell = escape(message)
         if symbol != "<module>":
             message_cell += f"\n[muted]Symbol: {escape(str(symbol))}[/muted]"
-        table.add_row(
-            str(i),
-            defect_cell,
-            escape(severity),
-            message_cell,
-            escape(location),
-        )
+        if "location" not in columns:
+            message_cell += f"\n[muted]{escape(location)}[/muted]"
+        row = [str(i), defect_cell]
+        if "severity" in columns:
+            row.append(escape(severity))
+        row.append(message_cell)
+        if "location" in columns:
+            row.append(escape(location))
+        table.add_row(*row)
 
     console.print(table)
     if overflow:
@@ -805,52 +1017,91 @@ def _render_danger(
         isinstance(d.get("verification"), dict) and d["verification"].get("verdict")
         for d in (items or [])
     )
-    has_provenance = any(d.get("ai_authored") is not None for d in (items or []))
+    # A column of "-" says nothing; show it once something was AI-written.
+    has_provenance = any(d.get("ai_authored") for d in (items or []))
+
+    show, overflow = _display_cap(items, limit)
+    rule_ids = [str(d.get("rule_id") or "UNKNOWN") for d in show]
+    locations = [
+        f"{_shorten_path(d.get('file'), root_path)}:{d.get('line', '?')}" for d in show
+    ]
+    symbols = [str(d.get("symbol") or "<module>") for d in show]
+    issue_width = _text_width(rule_ids, floor=20, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
+    symbol_width = _text_width(symbols, floor=8, cap=20)
+    optional = [("location", location_width), ("severity", 9)]
+    if has_verification:
+        optional.append(("verified", 9))
+    if has_provenance:
+        optional.append(("ai", 12))
+    optional.append(("symbol", symbol_width))
+    if has_verification:
+        optional.append(("proof", 30))
+    columns = _fit_side_columns(console, [3, issue_width], optional)
 
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Issue", style="yellow", width=20)
-    table.add_column("Severity", width=9)
+    table.add_column("Issue", style="yellow", width=issue_width, overflow="fold")
+    if "severity" in columns:
+        table.add_column("Severity", width=9)
     table.add_column("Message", overflow="fold")
-    table.add_column("Location", style="muted", width=20, overflow="fold")
-    table.add_column("Symbol", style="muted", width=10, overflow="fold")
-
-    if has_provenance:
+    if "location" in columns:
+        table.add_column(
+            "Location", style="muted", width=location_width, overflow="fold"
+        )
+    if "symbol" in columns:
+        table.add_column("Symbol", style="muted", width=symbol_width, overflow="fold")
+    if "ai" in columns:
         table.add_column("AI", width=12)
-
-    if has_verification:
+    if "verified" in columns:
         table.add_column("Verified", width=9)
-        table.add_column("Proof", overflow="fold")
+    if "proof" in columns:
+        table.add_column("Proof", width=30, overflow="fold")
 
-    show, overflow = _display_cap(items, limit)
-    for i, d in enumerate(show, 1):
-        rule_id = d.get("rule_id") or "UNKNOWN"
+    for i, (d, rule_id, loc, symbol) in enumerate(
+        zip(show, rule_ids, locations, symbols), 1
+    ):
         issue_name = _display_rule_name(rule_id)
-        issue_cell = f"{escape(str(issue_name))}\n[dim]{escape(str(rule_id))}[/dim]"
         sev = (d.get("severity") or "UNKNOWN").title()
+        rule_line = escape(rule_id)
+        if "severity" not in columns:
+            rule_line += f" · {escape(sev)}"
+        issue_cell = f"{escape(str(issue_name))}\n[dim]{rule_line}[/dim]"
         msg = d.get("message") or "Issue detected"
-        short = _shorten_path(d.get("file"), root_path)
-        loc = f"{short}:{d.get('line', '?')}"
-        symbol = d.get("symbol") or "<module>"
-        row = [
-            str(i),
-            issue_cell,
-            escape(sev),
-            escape(str(msg)),
-            escape(loc),
-            escape(str(symbol)),
-        ]
+        if d.get("ai_authored"):
+            agent = f"[red]{escape(str(d.get('ai_agent') or 'ai'))}[/red]"
+        else:
+            agent = "[muted]-[/muted]"
+        ver = (d.get("verification") or {}).get("verdict")
 
-        if has_provenance:
-            if d.get("ai_authored"):
-                agent = d.get("ai_agent") or "ai"
-                row.append(f"[red]{escape(str(agent))}[/red]")
-            else:
-                row.append("[muted]-[/muted]")
+        # Columns that did not fit keep their facts, one muted line each.
+        message_cell = escape(str(msg))
+        where = [] if "location" in columns else [escape(loc)]
+        if "symbol" not in columns and symbol != "<module>":
+            where.append(f"in {escape(symbol)}")
+        if where:
+            message_cell += f"\n[muted]{' '.join(where)}[/muted]"
+        if "ai" not in columns and d.get("ai_authored"):
+            message_cell += f"\nAI: {agent}"
+        if has_verification and "verified" not in columns:
+            message_cell += f"\nVerified: {_verification_label(ver)}"
+        if has_verification and "proof" not in columns and _verification_proof(d):
+            message_cell += f"\n[muted]{escape(_verification_proof(d))}[/muted]"
 
-        if has_verification:
-            ver = (d.get("verification") or {}).get("verdict")
-            row.extend([_verification_label(ver), escape(_verification_proof(d))])
+        row = [str(i), issue_cell]
+        if "severity" in columns:
+            row.append(escape(sev))
+        row.append(message_cell)
+        if "location" in columns:
+            row.append(escape(loc))
+        if "symbol" in columns:
+            row.append(escape(symbol))
+        if "ai" in columns:
+            row.append(agent)
+        if "verified" in columns:
+            row.append(_verification_label(ver))
+        if "proof" in columns:
+            row.append(escape(_verification_proof(d)))
 
         table.add_row(*row)
 
@@ -889,14 +1140,22 @@ def _render_sca(console: Console, limit, items):
         return
 
     console.rule("[bold red]Dependency Vulnerabilities (SCA)")
+    columns = _fit_side_columns(
+        console,
+        [3, 22, 18],
+        [("fix", 14), ("severity", 9), ("reachability", 14)],
+    )
     table = Table(expand=True)
     table.add_column("#", style="muted", width=3)
-    table.add_column("Package", style="yellow", width=22)
-    table.add_column("Vuln ID", width=18)
-    table.add_column("Severity", width=9)
-    table.add_column("Reachability", width=14)
+    table.add_column("Package", style="yellow", width=22, overflow="fold")
+    table.add_column("Vuln ID", width=18, overflow="fold")
+    if "severity" in columns:
+        table.add_column("Severity", width=9)
+    if "reachability" in columns:
+        table.add_column("Reachability", width=14)
     table.add_column("Message", overflow="fold")
-    table.add_column("Fix", style="good", width=14, overflow="fold")
+    if "fix" in columns:
+        table.add_column("Fix", style="good", width=14, overflow="fold")
 
     show, overflow = _display_cap(items, limit)
     for i, v in enumerate(show, 1):
@@ -915,15 +1174,22 @@ def _render_sca(console: Console, limit, items):
             reach = "[yellow]Inconclusive[/yellow]"
         else:
             reach = "[dim]-[/dim]"
-        table.add_row(
-            str(i),
-            escape(pkg),
-            escape(str(vuln_id)),
-            escape(sev),
-            reach,
-            escape(str(msg)),
-            escape(str(fix)),
-        )
+        message_cell = escape(str(msg))
+        if "severity" not in columns:
+            message_cell += f"\n[muted]Severity: {escape(sev)}[/muted]"
+        if "reachability" not in columns and rv:
+            message_cell += f"\nReachability: {reach}"
+        if "fix" not in columns:
+            message_cell += f"\n[good]Fix: {escape(str(fix))}[/good]"
+        row = [str(i), escape(pkg), escape(str(vuln_id))]
+        if "severity" in columns:
+            row.append(escape(sev))
+        if "reachability" in columns:
+            row.append(reach)
+        row.append(message_cell)
+        if "fix" in columns:
+            row.append(escape(str(fix)))
+        table.add_row(*row)
 
     console.print(table)
     if overflow:
@@ -1053,6 +1319,11 @@ def render_results(
             if part
         )
     )
+    if _architecture_advisory_pill(result):
+        console.print(
+            "[muted]Architecture advisories are advice only: they don't change "
+            "the grade or the gate. To list them, add --format concise.[/muted]"
+        )
     console.print()
 
     _render_analysis_errors(

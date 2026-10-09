@@ -26,7 +26,7 @@ from skylos.core.safe_cache_io import (
     write_text_no_symlink,
 )
 from skylos.done.base import Comparison
-from skylos.done.engine import DoneResult
+from skylos.done.engine import WAITING_SUMMARY, DoneResult
 
 SCHEMA = "skylos.done-receipt/v1"
 RECEIPTS_DIR = Path(".skylos") / "receipts"
@@ -62,6 +62,30 @@ LABELS = {
     "changed_lines_checked": "Tests check the changed lines",
     "test_special_casing": "Code doesn't special-case the tests",
     "silenced_checks": "Linters, type checkers, scanners and CI not silenced",
+}
+# What went wrong when a check fails, for the verdict line.
+PROBLEMS = {
+    "agent_edits": "recorded session edits still have findings",
+    "tests_pass": "the tests did not pass when Skylos ran them",
+    "test_tampering": "tests were deleted, skipped or weakened",
+    "gate_tampering": "Skylos settings or hooks were changed",
+    "secrets": "a secret was added",
+    "unknown_imports": "an import or package does not exist",
+    "changed_lines_checked": "no test checks some changed lines",
+    "test_special_casing": "code special-cases the tests",
+    "silenced_checks": "linters, type checkers, scanners or CI were silenced",
+}
+# What an unfinished check could not do.
+UNCHECKED = {
+    "agent_edits": "the session edits were not rechecked",
+    "tests_pass": "the tests did not run",
+    "test_tampering": "test changes were not checked",
+    "gate_tampering": "Skylos settings and hooks were not checked",
+    "secrets": "the change was not checked for secrets",
+    "unknown_imports": "imports and packages were not checked",
+    "changed_lines_checked": "changed lines were not checked against the tests",
+    "test_special_casing": "the code was not checked for test special-casing",
+    "silenced_checks": "linter, type-checker, scanner and CI settings were not checked",
 }
 FIXES = {
     "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
@@ -495,17 +519,54 @@ def _headline(receipt: dict[str, Any]) -> str:
 
 
 def _verdict_line(receipt: dict[str, Any]) -> str:
+    """Name what blocks the change, e.g. "FAIL: 4 of 149 tests failed when
+    Skylos ran them". Checks skipped because an earlier one blocked are
+    mentioned once at the end rather than listed as failures."""
+    verdict = receipt["verdict"]
+    if verdict == "pass":
+        return "Verdict: PASS"
     blocking = [
         c
         for c in receipt["checks"]
         if c.get("mode") == "block" and c.get("status") in {"fail", "incomplete"}
     ]
-    verdict = receipt["verdict"]
-    if verdict == "pass":
-        return "Verdict: PASS"
+    waiting = [
+        c
+        for c in blocking
+        if c.get("status") == "incomplete"
+        and (c.get("evidence") or {}).get("summary") == WAITING_SUMMARY
+    ]
+    problems = [_problem(c) for c in blocking if c not in waiting]
     word = "FAIL" if verdict == "fail" else "UNFINISHED"
-    names = ", ".join(LABELS.get(c["id"], c["id"]) for c in blocking)
-    return f"Verdict: {word} ({names})"
+    line = f"Verdict: {word}"
+    if problems:
+        line += f": {'; '.join(problems)}"
+    if waiting and problems:
+        if any(check.get("id") == "tests_pass" for check in waiting):
+            line += ". The tests were not run because of this"
+        else:
+            line += ". Changed lines were not checked because of this"
+    return line
+
+
+def _problem(check: dict[str, Any]) -> str:
+    check_id = check.get("id")
+    if check.get("status") != "fail":
+        return UNCHECKED.get(check_id, f"{LABELS.get(check_id, check_id)}: not checked")
+    evidence = check.get("evidence") or {}
+    failed, run = evidence.get("failed"), evidence.get("run")
+    if (
+        check_id == "tests_pass"
+        and _is_count(failed)
+        and _is_count(run)
+        and 0 < failed <= run
+    ):
+        return f"{failed} of {run} tests failed when Skylos ran them"
+    return PROBLEMS.get(check_id, f"{LABELS.get(check_id, check_id)}: failed")
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _visible(receipt: dict[str, Any]) -> list[dict[str, Any]]:

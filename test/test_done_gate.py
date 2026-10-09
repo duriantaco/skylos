@@ -981,6 +981,62 @@ def test_runner_without_junit_uses_exit_code(repo: Path):
     assert (ok.status, bad.status, missing.status) == ("pass", "fail", "incomplete")
 
 
+def test_verdict_names_the_failed_tests_plainly(repo: Path):
+    _write(repo, "app/calc.py", CALC.replace("return a - b", "return a + b"))
+    result = run(repo, base_ref="main")
+    tests = next(c for c in result.checks if c.result.id == "tests_pass").result
+    failed, ran = tests.evidence["failed"], tests.evidence["run"]
+    assert result.verdict == "fail" and failed >= 1
+
+    receipt = build_receipt(result)
+    verdict = render_text(receipt).splitlines()[-1]
+    assert verdict == (
+        f"Verdict: FAIL: {failed} of {ran} tests failed when Skylos ran them"
+    )
+    assert f"**{verdict}**" in render_markdown(receipt)
+
+
+def test_verdict_for_unrun_tests_says_they_did_not_run(repo: Path):
+    result = run(repo, base_ref="main", run_tests=False)
+    assert result.verdict == "incomplete"
+    verdict = render_text(build_receipt(result)).splitlines()[-1]
+    assert verdict == "Verdict: UNFINISHED: the tests did not run"
+
+
+def test_runner_says_plainly_when_pytest_is_not_installed(repo: Path, monkeypatch):
+    import skylos.done.runner as runner
+
+    real_find_spec = runner.importlib.util.find_spec
+    monkeypatch.setattr(
+        runner.importlib.util,
+        "find_spec",
+        lambda name, *a: None if name == "pytest" else real_find_spec(name, *a),
+    )
+
+    result = run_tests(open_comparison(repo, "main"), DoneConfig(), changed_tests=[])
+
+    assert result.status == "skipped"
+    assert result.reason.startswith("pytest isn't installed in this environment")
+    assert "pip install pytest" in result.reason
+    assert "test_command" in result.reason
+    assert "no pytest project was found" not in result.reason
+    # The receipt keeps 120 characters of a check summary.
+    assert len(result.reason) <= 120
+
+
+def test_runner_without_a_pytest_project_asks_for_a_test_command(
+    repo: Path, monkeypatch
+):
+    import skylos.done.runner as runner
+
+    monkeypatch.setattr(runner, "_looks_like_pytest_project", lambda root: False)
+
+    result = run_tests(open_comparison(repo, "main"), DoneConfig(), changed_tests=[])
+
+    assert result.status == "skipped"
+    assert "no pytest project was found" in result.reason
+
+
 def test_runner_strips_pytest_addopts_from_the_environment(repo: Path, monkeypatch):
     monkeypatch.setenv("PYTEST_ADDOPTS", "-k test_add")
     _write(repo, "app/calc.py", CALC.replace("return a - b", "return a + b"))
@@ -993,6 +1049,34 @@ def test_runner_strips_pytest_addopts_from_the_environment(repo: Path, monkeypat
 # ---------------------------------------------------------------------------
 # engine, receipt, command
 # ---------------------------------------------------------------------------
+
+
+def test_failed_test_verdict_does_not_claim_the_tests_were_not_run():
+    from skylos.done.engine import WAITING_SUMMARY
+    from skylos.done.receipt import _verdict_line
+
+    receipt = {
+        "verdict": "fail",
+        "checks": [
+            {
+                "id": "tests_pass",
+                "mode": "block",
+                "status": "fail",
+                "evidence": {"failed": 4, "run": 149},
+            },
+            {
+                "id": "changed_lines_checked",
+                "mode": "block",
+                "status": "incomplete",
+                "evidence": {"summary": WAITING_SUMMARY},
+            },
+        ],
+    }
+
+    assert _verdict_line(receipt) == (
+        "Verdict: FAIL: 4 of 149 tests failed when Skylos ran them. "
+        "Changed lines were not checked because of this"
+    )
 
 
 def test_clean_change_passes_with_a_valid_receipt(repo: Path):
@@ -1045,7 +1129,13 @@ def test_tampering_change_fails_every_relevant_check(repo: Path):
     rules = {f.rule for f in by_id["test_tampering"].findings if f.blocking}
     assert rules == {"SKY-A110", "SKY-A112"}
     assert by_id["secrets"].status == "fail"
-    assert validate_receipt(build_receipt(result)) == []
+    receipt = build_receipt(result)
+    assert validate_receipt(receipt) == []
+    verdict = render_text(receipt).splitlines()[-1]
+    assert verdict == (
+        "Verdict: FAIL: tests were deleted, skipped or weakened; a secret was "
+        "added. The tests were not run because of this"
+    )
 
 
 def test_settings_come_from_the_base_not_the_change(repo: Path):

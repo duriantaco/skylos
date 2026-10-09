@@ -156,13 +156,18 @@ def run_tests(
     root = comparison.root
     invocation = _invocation(root, config)
     if invocation is None:
-        return TestRunResult(
-            status="skipped",
-            reason=(
+        if _looks_like_pytest_project(root):
+            # A pytest project, but the Python running Skylos has no pytest.
+            reason = (
+                "pytest isn't installed in this environment; install it "
+                "(pip install pytest) or set test_command in [tool.skylos.done]"
+            )
+        else:
+            reason = (
                 "no test command: set test_command in [tool.skylos.done] "
                 "(no pytest project was found to run automatically)"
-            ),
-        )
+            )
+        return TestRunResult(status="skipped", reason=reason)
     from skylos.done.test_config import base_excluded_tests, computed_case_changes
 
     excluded = (

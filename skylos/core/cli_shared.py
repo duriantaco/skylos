@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import pathlib
 import shlex
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from skylos.core.ci_env import github_or_ci_base_ref
 
@@ -53,6 +55,22 @@ _SAFE_ADDOPTS_CHOICES = {
     "--format": {"rich", "pretty", "json", "llm", "github", "gitlab", "concise"},
     "--severity": {"critical", "high", "medium", "low"},
 }
+
+
+@contextmanager
+def quiet_analyzer_logs():
+    """Hide the analyzer's INFO progress lines ("Analyzing 7 files...").
+
+    They go through the root logger with timestamps; commands that print a
+    report of their own keep only warnings and errors.
+    """
+    analyzer_logger = logging.getLogger("Skylos")
+    previous_level = analyzer_logger.level
+    analyzer_logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        analyzer_logger.setLevel(previous_level)
 
 
 def _coerce_addopts(addopts) -> list[str]:

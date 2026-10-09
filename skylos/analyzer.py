@@ -5820,7 +5820,7 @@ if __name__ == "__main__":
         print(f"Found {total_dead} dead code items. Add this badge to your README:")
     print("```markdown")
     print(
-        f"![Dead Code: {total_dead}](https://img.shields.io/badge/Dead_Code-{total_dead}_detected-orange?logo=codacy&logoColor=red)"
+        f"[![Dead Code: {total_dead}](https://img.shields.io/badge/Dead_Code-{total_dead}_detected-orange)](https://github.com/duriantaco/skylos)"
     )
     print("```")
 

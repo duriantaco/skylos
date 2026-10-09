@@ -9,6 +9,7 @@ from rich.rule import Rule
 
 from skylos.config import load_config
 from skylos.constants import parse_exclude_folders
+from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.remediation.codemods import (
     comment_out_unused_function_cst,
     comment_out_unused_import_cst,
@@ -424,7 +425,9 @@ def run_clean_command(argv: list[str]) -> int:
     console.print(f"Scanning [bold]{escape(str(path))}[/bold]...\n")
 
     confidence = _effective_confidence(args, noninteractive)
-    result = _analyze(path, confidence, exclude_folders)
+    # The analyzer logs progress at INFO; keep it out of the cleanup screen.
+    with quiet_analyzer_logs():
+        result = _analyze(path, confidence, exclude_folders)
     all_findings = _collect_all_findings(result)
 
     if not all_findings:
