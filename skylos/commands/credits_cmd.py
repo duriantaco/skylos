@@ -1,6 +1,20 @@
+import math
+
 from rich.console import Console
+from rich.markup import escape
 
 from skylos.api import BASE_URL, get_project_token, print_credit_status
+
+# Cloud stores the paid plan as "pro"; customers see it as "Workspace".
+PLAN_DISPLAY_NAMES = {"free": "Free", "pro": "Workspace", "enterprise": "Enterprise"}
+
+
+def _is_credit_amount(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and (not isinstance(value, float) or math.isfinite(value))
+    )
 
 
 def run_credits_command() -> int:
@@ -10,30 +24,46 @@ def run_credits_command() -> int:
         console.print("[red]Not connected.[/red] Run [bold]skylos login[/bold] first.")
         return 1
 
-    data = print_credit_status(token)
-    if data is None:
+    data = print_credit_status(token, quiet=True)
+    if not isinstance(data, dict) or not data:
         console.print("[red]Could not fetch credit balance.[/red]")
         return 1
 
-    balance = data.get("balance", 0)
+    balance = data.get("balance")
     plan = data.get("plan", "free")
     org_name = data.get("org_name", "")
+    recent = data.get("recent_transactions", [])
+    if recent is None:
+        recent = []
+    if (
+        not _is_credit_amount(balance)
+        or not isinstance(plan, str)
+        or not isinstance(recent, list)
+        or any(
+            not isinstance(tx, dict) or not _is_credit_amount(tx.get("amount"))
+            for tx in recent
+        )
+    ):
+        console.print("[red]Could not fetch credit balance: invalid response.[/red]")
+        return 1
 
     console.print()
     if org_name:
-        console.print(f"[bold]{org_name}[/bold] ({plan} plan)")
+        plan_name = PLAN_DISPLAY_NAMES.get(plan, str(plan).title())
+        console.print(f"[bold]{escape(str(org_name))}[/bold] ({escape(plan_name)} plan)")
     if plan == "enterprise":
         console.print("[green]Unlimited credits[/green]")
     else:
         console.print(f"Balance: [bold]{balance:,}[/bold] credits")
+        if balance < 10:
+            console.print("[yellow]Low credits![/yellow]")
 
-    recent = data.get("recent_transactions", [])
     if recent:
         console.print()
         console.print("[bold]Recent activity:[/bold]")
         for tx in recent[:5]:
             amt = tx.get("amount", 0)
-            desc = tx.get("description", "")
+            desc = escape(str(tx.get("description", "")))
 
             if amt > 0:
                 sign = "+"

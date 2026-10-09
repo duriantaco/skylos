@@ -26,7 +26,7 @@ pip install skylos
 skylos --version
 ```
 
-Expected: `skylos 4.45.0` or newer.
+Expected: `skylos 4.46.0` or newer.
 
 ## 2. Generate the workflow (1 minute)
 
