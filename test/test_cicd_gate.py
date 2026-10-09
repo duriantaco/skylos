@@ -68,7 +68,7 @@ def test_gate_fails_on_dependency_vulnerability(clean_results):
     passed, reasons = check_gate(clean_results, {})
 
     assert passed is False
-    assert "1 dependency vulnerabilities (max: 0)" in reasons
+    assert "1 dependency vulnerability (max: 0)" in reasons
 
 
 def test_gate_fails_closed_on_incomplete_language_engine(clean_results):
@@ -256,17 +256,17 @@ def test_summary_markdown_mixed_output_is_stable():
     assert md == (
         "## Skylos Analysis Results\n"
         "\n"
-        "| Category | Count | Status |\n"
-        "|----------|-------|--------|\n"
-        "| Security (critical) | 1 | ❌ |\n"
-        "| Security (high) | 6 | ⚠️ |\n"
-        "| Security (total) | 11 | ⚠️ |\n"
-        "| Reliability | 0 | ✅ |\n"
-        "| AI defects | 0 | ✅ |\n"
-        "| Quality | 11 | ⚠️ |\n"
-        "| Secrets | 1 | ❌ |\n"
-        "| Dependency vulnerabilities | 1 | ❌ |\n"
-        "| Dead Code | 3 | ℹ️ |\n"
+        "| Category | Count |\n"
+        "|----------|-------|\n"
+        "| Security (critical) | 1 |\n"
+        "| Security (high) | 6 |\n"
+        "| Security (total) | 11 |\n"
+        "| Reliability | 0 |\n"
+        "| AI defects | 0 |\n"
+        "| Quality | 11 |\n"
+        "| Secrets | 1 |\n"
+        "| Dependency vulnerabilities | 1 |\n"
+        "| Dead Code | 3 |\n"
         "\n"
         "**Result: ❌ FAILED**\n"
         "\n"
@@ -276,7 +276,7 @@ def test_summary_markdown_mixed_output_is_stable():
     )
 
 
-def test_summary_markdown_marks_reliability_findings_as_blocking():
+def test_summary_markdown_keeps_reliability_count_and_overall_verdict():
     results = {
         "reliability": [
             {
@@ -289,4 +289,5 @@ def test_summary_markdown_marks_reliability_findings_as_blocking():
 
     md = build_summary_markdown(results, False, ["1 reliability issue(s)"])
 
-    assert "| Reliability | 1 | ❌ |" in md
+    assert "| Reliability | 1 |" in md
+    assert "**Result: ❌ FAILED**" in md

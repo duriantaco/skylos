@@ -1165,6 +1165,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             strict=bool(args.strict),
             force=bool(args.force),
             summary=bool(getattr(args, "summary", False)),
+            provenance=prov_report,
         )
         sys.exit(exit_code)
 

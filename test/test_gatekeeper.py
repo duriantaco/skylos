@@ -244,7 +244,7 @@ def test_check_gate_strict_counts_reliability_findings():
     passed, reasons = gk.check_gate(results, {}, strict=True)
 
     assert passed is False
-    assert reasons == ["Strict mode: 1 issue(s) found"]
+    assert reasons == ["Strict mode: 1 issue found"]
 
 
 def test_check_gate_strict_counts_unused_files():
@@ -257,7 +257,7 @@ def test_check_gate_strict_counts_unused_files():
     passed, reasons = gk.check_gate(results, {}, strict=True)
 
     assert passed is False
-    assert reasons == ["Strict mode: 1 issue(s) found"]
+    assert reasons == ["Strict mode: 1 issue found"]
 
 
 def test_check_gate_strict_counts_circular_dependencies_but_not_advisory_quality():
@@ -272,7 +272,7 @@ def test_check_gate_strict_counts_circular_dependencies_but_not_advisory_quality
     passed, reasons = gk.check_gate(results, {}, strict=True)
 
     assert passed is False
-    assert reasons == ["Strict mode: 2 issue(s) found"]
+    assert reasons == ["Strict mode: 2 issues found"]
 
 
 def test_circular_dependencies_do_not_change_ordinary_gate_thresholds():
@@ -338,7 +338,7 @@ def test_reliability_has_dedicated_gate_threshold():
     )
 
     assert passed is False
-    assert reasons == ["1 reliability issues (max: 0)"]
+    assert reasons == ["1 reliability issue (max: 0)"]
 
 
 def test_reliability_blocks_the_default_release_gate():
@@ -354,7 +354,7 @@ def test_reliability_blocks_the_default_release_gate():
     passed, reasons = gk.check_gate(results, {})
 
     assert passed is False
-    assert reasons == ["1 reliability issues (max: 0)"]
+    assert reasons == ["1 reliability issue (max: 0)"]
 
 
 def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
@@ -390,7 +390,7 @@ def test_check_gate_ai_defects_default_to_quality_threshold_for_compatibility():
     passed, reasons = gk.check_gate(results, config)
 
     assert passed is False
-    assert reasons == ["1 AI-defect issues (max: 0)"]
+    assert reasons == ["1 AI-defect issue (max: 0)"]
 
 
 def test_check_gate_ai_defects_can_use_dedicated_threshold():
@@ -437,8 +437,8 @@ def test_check_gate_project_config_cannot_relax_critical_or_secrets():
 
     assert passed is False
     assert reasons == [
-        "1 critical security issue(s)",
-        "1 secrets issues (max: 0)",
+        "1 critical security issue",
+        "1 secret (max: 0)",
     ]
 
 
@@ -496,9 +496,9 @@ def test_check_gate_invalid_project_threshold_types_use_defaults():
 
     assert passed is False
     assert reasons == [
-        "11 total security issues (max: 10)",
+        "11 security issues (max: 10)",
         "11 quality issues (max: 10)",
-        "1 secrets issues (max: 0)",
+        "1 secret (max: 0)",
     ]
 
 
@@ -513,7 +513,7 @@ def test_check_gate_project_config_can_make_thresholds_stricter():
     passed, reasons = gk.check_gate(results, config)
 
     assert passed is False
-    assert reasons == ["1 high severity issues (max: 0)"]
+    assert reasons == ["1 high severity issue (max: 0)"]
 
 
 def test_check_gate_agent_stricter_threshold():
@@ -532,6 +532,92 @@ def test_check_gate_agent_stricter_threshold():
     passed, reasons = gk.check_gate(results, config, provenance=prov)
     assert passed is False
     assert any("Agent gate" in r and "high" in r for r in reasons)
+
+
+def test_check_gate_agent_matches_absolute_analyzer_paths(tmp_path, monkeypatch):
+    import json
+
+    from skylos.analyzer import analyze
+    from skylos.reporting.provenance import ProvenanceReport
+
+    source = tmp_path / "pkg" / "ai.py"
+    source.parent.mkdir()
+    source.write_text('eval("1+1")\n')
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    results = json.loads(analyze(str(tmp_path), enable_danger=True, grep_verify=False))
+    assert any(
+        issue["file"] == str(source) and issue["severity"].lower() == "high"
+        for issue in results.get("danger", [])
+    ), results
+    provenance = ProvenanceReport(
+        agent_files=["pkg/ai.py"], scan_root=str(tmp_path)
+    )
+
+    passed, reasons = gk.check_gate(
+        results, {"gate": {"agent": {"max_high": 0}}}, provenance=provenance
+    )
+
+    assert passed is False
+    agent_reasons = [reason for reason in reasons if reason.startswith("Agent gate:")]
+    assert agent_reasons
+    assert any(
+        issue["file"] == str(source)
+        for reason in agent_reasons
+        for issue in reason.issues
+    )
+
+
+def test_check_gate_agent_path_matching_uses_provenance_root(tmp_path, monkeypatch):
+    from skylos.reporting.provenance import ProvenanceReport
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    provenance = ProvenanceReport(agent_files=["pkg/ai.py"], scan_root=str(repo))
+    local = {"file": str(repo / "pkg/ai.py"), "severity": "high"}
+    outside = {"file": str(elsewhere / "pkg/ai.py"), "severity": "high"}
+    sibling = {"file": str(repo / "other/ai.py"), "severity": "high"}
+
+    passed, reasons = gk.check_gate(
+        {"danger": [local, outside, sibling]},
+        {"gate": {"agent": {"max_high": 0}}},
+        provenance=provenance,
+    )
+
+    assert passed is False
+    assert reasons == ["Agent gate: 1 high severity issue in AI-authored files (max: 0)"]
+    assert reasons[0].issues == [local]
+
+
+def test_synced_gate_policy_cannot_be_weakened_by_project_agent_limits(tmp_path):
+    from skylos.config import load_config
+    from skylos.reporting.provenance import ProvenanceReport
+
+    synced = tmp_path / ".skylos"
+    synced.mkdir()
+    (synced / "config.yaml").write_text(
+        "gate:\n  max_high: 0\n  agent:\n    max_high: 0\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.skylos.gate]\nmax_high = 99\n"
+        "[tool.skylos.gate.agent]\nmax_high = 99\n"
+    )
+    config = load_config(tmp_path)
+    issue = {"file": str(tmp_path / "ai.py"), "severity": "high"}
+
+    passed, reasons = gk.check_gate(
+        {"danger": [issue]},
+        config,
+        provenance=ProvenanceReport(agent_files=["ai.py"], scan_root=str(tmp_path)),
+    )
+
+    assert passed is False
+    assert reasons == [
+        "1 high severity issue (max: 0)",
+        "Agent gate: 1 high severity issue in AI-authored files (max: 0)",
+    ]
 
 
 def test_check_gate_agent_critical():
@@ -659,7 +745,7 @@ def test_check_gate_agent_no_agent_config_skips():
     prov = FakeProvenance(agent_files=["ai.py"])
     passed, reasons = gk.check_gate(results, config, provenance=prov)
     assert passed is False
-    assert reasons == ["1 critical security issue(s)"]
+    assert reasons == ["1 critical security issue"]
 
 
 def test_check_gate_agent_no_agent_files_skips():
@@ -705,8 +791,8 @@ def test_check_gate_both_gates_can_fail():
     passed, reasons = gk.check_gate(results, config, provenance=prov)
     assert passed is False
     assert reasons == [
-        "2 critical security issue(s)",
-        "Agent gate: 1 critical issue(s) in AI-authored files (max: 0)",
+        "2 critical security issues",
+        "Agent gate: 1 critical issue in AI-authored files (max: 0)",
     ]
 
 
@@ -732,7 +818,431 @@ def test_check_gate_fail_on_critical_skips_max_critical_reason():
 
     assert passed is False
     assert reasons == [
-        "1 critical security issue(s)",
-        "1 high severity issues (max: 0)",
-        "2 total security issues (max: 0)",
+        "1 critical security issue",
+        "1 high severity issue (max: 0)",
+        "2 security issues (max: 0)",
     ]
+
+
+def _workflow_finding(rule_id, line, severity="HIGH", file=".github/workflows/pr.yml"):
+    return {
+        "rule_id": rule_id,
+        "severity": severity,
+        "file": file,
+        "line": line,
+        "message": f"{rule_id} message",
+    }
+
+
+def _security_results(danger):
+    return {
+        "analysis_summary": {"grade_categories": ["security", "dead_code"]},
+        "danger": danger,
+    }
+
+
+def _gate_output(capsys, **kwargs):
+    rc = gk.run_gate_interaction(**kwargs)
+    return rc, capsys.readouterr().out
+
+
+def test_passed_gate_names_limits_and_high_issues_let_through(capsys):
+    danger = [_workflow_finding(f"SKY-D29{i}", i + 1) for i in range(3)]
+
+    rc, out = _gate_output(capsys, result=_security_results(danger), config={})
+
+    assert rc == 0
+    assert (
+        "Quality Gate: PASSED: 0 critical (limit 0), 3 high (limit 5), "
+        "3 security (limit 10)\n"
+    ) in out
+    assert (
+        "3 high issues are allowed by the default limits. To block them, set "
+        "max_high = 0 under [tool.skylos.gate] in pyproject.toml."
+    ) in out
+
+
+def test_passed_gate_hint_uses_singular_for_one_high_issue(capsys):
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results([_workflow_finding("SKY-D290", 2)]),
+        config={},
+    )
+
+    assert rc == 0
+    assert "1 high issue is allowed by the default limits. To block it," in out
+
+
+def test_passed_gate_has_no_hint_without_high_issues(capsys):
+    danger = [_workflow_finding("SKY-D313", 6, severity="LOW")]
+
+    rc, out = _gate_output(capsys, result=_security_results(danger), config={})
+
+    assert rc == 0
+    assert "0 critical (limit 0), 0 high (limit 5), 1 security (limit 10)" in out
+    assert "allowed by the default limits" not in out
+
+
+def test_passed_gate_has_no_hint_when_max_high_is_configured(capsys):
+    danger = [_workflow_finding("SKY-D290", 2)]
+
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results(danger),
+        config={"gate": {"max_high": 3}},
+    )
+
+    assert rc == 0
+    assert "1 high (limit 3)" in out
+    assert "allowed by the default limits" not in out
+
+
+def test_passed_gate_invalid_max_high_still_gets_default_hint(capsys):
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results([_workflow_finding("SKY-D290", 2)]),
+        config={"gate": {"max_high": "0"}},
+    )
+
+    assert rc == 0
+    assert "1 high (limit 5)" in out
+    assert "allowed by the default limits" in out
+
+
+def test_passed_gate_lists_other_categories_only_when_something_got_through(capsys):
+    results = _security_results([])
+    results["analysis_summary"]["grade_categories"].append("quality")
+    results["quality"] = [{"rule_id": "SKY-Q301", "file": "a.py", "line": 1}]
+    results["secrets"] = []
+
+    rc, out = _gate_output(capsys, result=results, config={})
+
+    assert rc == 0
+    assert (
+        "PASSED: 0 critical (limit 0), 0 high (limit 5), 0 security (limit 10), "
+        "1 quality (limit 10)\n"
+    ) in out
+    assert "secrets" not in out
+
+
+def test_passed_gate_says_when_security_was_not_scanned(capsys):
+    results = {
+        "analysis_summary": {"grade_categories": ["dead_code"]},
+        "unused_functions": [{"name": "f", "file": "a.py", "line": 1}],
+    }
+
+    rc, out = _gate_output(capsys, result=results, config={})
+
+    assert rc == 0
+    assert "Quality Gate: PASSED: security not scanned (add -a)" in out
+    assert "critical" not in out
+
+
+def test_passed_gate_shows_gated_dead_code(capsys):
+    results = {
+        "analysis_summary": {"grade_categories": ["dead_code"]},
+        "unused_functions": [{"name": "f", "file": "a.py", "line": 1}],
+    }
+
+    rc, out = _gate_output(
+        capsys, result=results, config={"gate": {"max_dead_code": 2}}
+    )
+
+    assert rc == 0
+    assert "PASSED: 1 dead code (limit 2), security not scanned (add -a)" in out
+
+
+def test_passed_gate_strict_reports_zero_limits(capsys):
+    rc, out = _gate_output(capsys, result=_security_results([]), config={}, strict=True)
+
+    assert rc == 0
+    assert "PASSED: 0 critical (limit 0), 0 high (limit 0), 0 security (limit 0)" in out
+
+
+def test_passed_gate_falls_back_to_result_keys_without_grade_categories(capsys):
+    rc, out = _gate_output(capsys, result={"danger": []}, config={})
+
+    assert rc == 0
+    assert (
+        "PASSED: 0 critical (limit 0), 0 high (limit 5), 0 security (limit 10)" in out
+    )
+
+
+def test_failed_gate_lists_the_issues_behind_each_reason(capsys, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    danger = [
+        _workflow_finding(
+            "SKY-D290", 2, file=str(tmp_path / ".github/workflows/pr.yml")
+        )
+    ]
+
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results(danger),
+        config={"gate": {"max_security": 0}},
+        strict=False,
+        force=True,
+    )
+
+    assert rc == 0
+    assert "Quality Gate: FAILED\n   • 1 security issue (max: 0)\n" in out
+    assert "       SKY-D290  .github/workflows/pr.yml:2  SKY-D290 message\n" in out
+    assert str(tmp_path) not in out
+
+
+def test_failed_gate_shows_ten_issues_then_how_many_more(capsys):
+    danger = [_workflow_finding(f"SKY-D{i:03d}", i + 1) for i in range(12)]
+
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results(danger),
+        config={"gate": {"max_high": 99}},
+        force=True,
+    )
+
+    assert rc == 0
+    assert "   • 12 security issues (max: 10)\n" in out
+    assert "SKY-D009  .github/workflows/pr.yml:10" in out
+    assert "SKY-D010" not in out
+    assert "       and 2 more\n" in out
+
+
+def test_advisory_gate_lists_issues(capsys):
+    rc, out = _gate_output(
+        capsys,
+        result=_security_results([_workflow_finding("SKY-D290", 2)]),
+        config={"gate": {"max_high": 0}},
+        advisory=True,
+    )
+
+    assert rc == 0
+    assert "   • 1 high severity issue (max: 0)\n" in out
+    assert "SKY-D290  .github/workflows/pr.yml:2  SKY-D290 message" in out
+
+
+def test_check_gate_reasons_carry_counted_issues():
+    critical = _workflow_finding("SKY-D212", 7, severity="CRITICAL", file="app.py")
+    high = _workflow_finding("SKY-D290", 2)
+    secret = {"rule_id": "SKY-S101", "file": "app.py", "line": 3}
+
+    passed, reasons = gk.check_gate(
+        {"danger": [critical, high], "secrets": [secret]},
+        {"gate": {"max_high": 0, "max_security": 0}},
+    )
+
+    assert passed is False
+    assert reasons == [
+        "1 critical security issue",
+        "1 high severity issue (max: 0)",
+        "2 security issues (max: 0)",
+        "1 secret (max: 0)",
+    ]
+    assert [reason.issues for reason in reasons] == [
+        [critical],
+        [high],
+        [critical, high],
+        [secret],
+    ]
+
+
+def test_check_gate_reason_plurals():
+    results = {
+        "danger": [
+            {"severity": "medium", "file": "a.py"},
+            {"severity": "medium", "file": "b.py"},
+        ],
+        "secrets": [{"file": "a.py"}, {"file": "b.py"}],
+        "dependency_vulnerabilities": [{"file": "requirements.txt"}] * 2,
+        "unused_functions": [{"name": "f", "file": "a.py", "line": 1}],
+    }
+
+    passed, reasons = gk.check_gate(
+        results, {"gate": {"max_security": 1, "max_dead_code": 0}}
+    )
+
+    assert passed is False
+    assert reasons == [
+        "2 security issues (max: 1)",
+        "2 secrets (max: 0)",
+        "2 dependency vulnerabilities (max: 0)",
+        "1 dead code issue (max: 0)",
+    ]
+
+
+def test_check_gate_strict_reason_carries_every_issue():
+    secret = {"rule_id": "SKY-S101", "file": "a.py", "line": 1}
+    unused = {"name": "f", "type": "function", "file": "a.py", "line": 4}
+
+    passed, reasons = gk.check_gate(
+        {"secrets": [secret], "unused_functions": [unused]}, {}, strict=True
+    )
+
+    assert passed is False
+    assert reasons == ["Strict mode: 2 issues found"]
+    assert reasons[0].issues == [secret, unused]
+    assert gk._issue_line(unused) == "a.py:4  unused function f"
+
+
+def test_check_gate_agent_reason_carries_agent_issues():
+    ai_issue = {"rule_id": "SKY-D201", "severity": "high", "file": "ai.py", "line": 3}
+    results = {"danger": [ai_issue, {"severity": "high", "file": "human.py"}]}
+    config = {"gate": {"agent": {"max_high": 0}}}
+
+    passed, reasons = gk.check_gate(
+        results, config, provenance=FakeProvenance(agent_files=["ai.py"])
+    )
+
+    assert passed is False
+    assert reasons == [
+        "Agent gate: 1 high severity issue in AI-authored files (max: 0)"
+    ]
+    assert reasons[0].issues == [ai_issue]
+
+
+def test_check_gate_invalid_dependency_limit_uses_default():
+    results = {"dependency_vulnerabilities": [{"file": "requirements.txt"}]}
+
+    passed, reasons = gk.check_gate(
+        results, {"gate": {"max_dependency_vulnerabilities": "99"}}
+    )
+
+    assert passed is False
+    assert reasons == ["1 dependency vulnerability (max: 0)"]
+
+
+def test_issue_line_shortens_long_messages():
+    first = "Workflow-level permission contents: write is broad."
+    issue = {
+        "rule_id": "SKY-D291",
+        "file": "w.yml",
+        "line": 4,
+        "message": first
+        + " Prefer granting write access only on the job that needs it.",
+    }
+    long_issue = {"rule_id": "SKY-D290", "message": "word " * 40}
+
+    assert gk._issue_line(issue) == f"SKY-D291  w.yml:4  {first}"
+    shortened = gk._issue_line(long_issue)
+    assert shortened.endswith("word…")
+    assert len(shortened) <= len("SKY-D290  ") + gk.GATE_ISSUE_MESSAGE_CHARS
+
+
+def test_summary_markdown_lists_issues_as_literal_code():
+    reason = gk.GateReason(
+        "1 security issue (max: 0)",
+        [
+            {
+                "rule_id": "SKY-D290",
+                "file": "[x](http://e)`.yml",
+                "line": 2,
+                "message": "m",
+            }
+        ],
+    )
+
+    md = gk.build_summary_markdown({}, False, [reason])
+
+    assert "- 1 security issue (max: 0)\n  - `SKY-D290  [x](http://e)'.yml:2  m`" in md
+
+
+def test_check_gate_custom_quality_threshold_carries_exact_finding():
+    finding = {
+        "rule_id": "CUSTOM-PAYMENTS-001",
+        "file": "payments/api.py",
+        "line": 17,
+        "message": "Missing payment authorization",
+    }
+
+    passed, reasons = gk.check_gate(
+        {"custom_rules": [finding]}, {"gate": {"max_quality": 0}}
+    )
+
+    assert passed is False
+    assert reasons == ["1 quality issue (max: 0)"]
+    assert reasons[0].issues == [finding]
+    assert "CUSTOM-PAYMENTS-001  payments/api.py:17" in gk._issue_line(finding)
+
+
+def test_check_gate_custom_quality_limit_does_not_double_count_shared_findings():
+    finding = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3, "col": 4}
+    results = {"quality": [finding], "custom_rules": [dict(finding), dict(finding)]}
+
+    assert gk.check_gate(results, {"gate": {"max_quality": 1}}) == (True, [])
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+    assert "| Quality | 1 |" in gk.build_summary_markdown(results, passed, reasons)
+
+
+def test_check_gate_distinct_custom_sinks_on_one_line_stay_separate():
+    first = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3, "col": 4}
+    second = {**first, "col": 24}
+
+    passed, reasons = gk.check_gate(
+        {"custom_rules": [first, second]}, {"gate": {"max_quality": 1}}
+    )
+
+    assert passed is False
+    assert reasons == ["2 quality issues (max: 1)"]
+    assert reasons[0].issues == [first, second]
+
+
+def test_check_gate_strict_counts_custom_only_findings():
+    finding = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3}
+
+    passed, reasons = gk.check_gate({"custom_rules": [finding]}, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+
+
+def test_check_gate_custom_agent_quality_uses_absolute_path_and_provenance_root(
+    tmp_path,
+):
+    from skylos.reporting.provenance import ProvenanceReport
+
+    authored = {"rule_id": "CUSTOM-1", "file": str(tmp_path / "pkg/ai.py"), "line": 3}
+    other = {**authored, "file": str(tmp_path / "other/ai.py")}
+    results = {"custom_rules": [authored, other]}
+
+    passed, reasons = gk.check_gate(
+        results,
+        {"gate": {"max_quality": 2, "agent": {"max_quality": 0}}},
+        provenance=ProvenanceReport(agent_files=["pkg/ai.py"], scan_root=str(tmp_path)),
+    )
+
+    assert passed is False
+    assert reasons == ["Agent gate: 1 quality issue in AI-authored files (max: 0)"]
+    assert reasons[0].issues == [authored]
+
+
+def test_check_gate_custom_findings_cannot_claim_builtin_advisory_exemption():
+    finding = {"rule_id": "SKY-Q802", "file": "api.py", "advisory": True}
+    results = {"quality": [finding], "custom_rules": [dict(finding)]}
+
+    assert gk.check_gate(results, {"gate": {"max_quality": 0}})[0] is False
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+
+
+def test_summary_markdown_does_not_guess_status_from_default_thresholds():
+    findings = [
+        {"rule_id": "SKY-D201", "severity": "HIGH", "file": "api.py", "line": line}
+        for line in (2, 3, 4)
+    ]
+    results = {"danger": findings}
+    passed, reasons = gk.check_gate(results, {"gate": {"max_high": 2}})
+
+    md = gk.build_summary_markdown(results, passed, reasons)
+
+    assert "| Category | Count |" in md
+    assert "| Security (high) | 3 |" in md
+    assert "Status" not in md
+    assert "| Security (high) | 3 | ✅ |" not in md
+    assert "**Result: ❌ FAILED**" in md
+    assert "3 high severity issues (max: 2)" in md
+    assert "SKY-D201  api.py:4" in md
