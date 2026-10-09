@@ -400,6 +400,39 @@ def test_uncommitted_edit_does_not_narrow_full_scan_config_rules(
     assert _workflow_rule_ids(str(repo)) == committed
 
 
+@pytest.mark.parametrize("has_source", [False, True], ids=["config-only", "with-source"])
+def test_directory_config_scan_stays_inside_selected_target(tmp_path, monkeypatch, has_source):
+    repo = tmp_path / "source"
+    selected = repo / "selected"
+    workflows = {
+        folder / ".github" / "workflows" / "pr.yml"
+        for folder in (repo, selected, repo / "sibling")
+    }
+    _write(repo / "pyproject.toml", "[tool.skylos]\n")
+    for workflow in workflows:
+        _write(workflow, _PR_TARGET_WORKFLOW)
+    if has_source:
+        _write(selected / "app.py", _ORIGINAL)
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+
+    def reported_workflows(target):
+        payload = json.loads(analyze(target, enable_danger=True, grep_verify=False))
+        assert "error" not in payload, payload
+        return {
+            Path(finding["file"]).resolve()
+            for finding in payload.get("danger", [])
+            if finding.get("rule_id") == "SKY-D290"
+        }
+
+    assert reported_workflows(str(selected)) == {
+        selected / ".github" / "workflows" / "pr.yml"
+    }
+    assert reported_workflows(str(repo)) == workflows
+    if has_source:
+        # File lists retain repository-wide configuration contracts.
+        assert reported_workflows([str(selected / "app.py")]) == workflows
+
+
 def test_dirty_full_scan_keeps_unmodified_injection_and_parse_errors(
     tmp_path, monkeypatch
 ):

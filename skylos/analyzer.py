@@ -4591,7 +4591,9 @@ class Skylos:
                 elif _first.is_file():
                     scan_target = _first
                 else:
-                    scan_target = project_root
+                    # Import and policy resolution can use an enclosing project,
+                    # but a directory scan must keep config findings in that directory.
+                    scan_target = _first
 
                 config_findings = scan_config_files(
                     scan_target,
