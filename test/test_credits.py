@@ -293,7 +293,11 @@ class TestCreditsCommandPlanName:
         monkeypatch.setattr(
             credits_cmd,
             "print_credit_status",
-            lambda token: {"balance": 40, "plan": plan, "org_name": "Acme"},
+            lambda token, quiet=False: {
+                "balance": 40,
+                "plan": plan,
+                "org_name": "Acme",
+            },
         )
         console_class = credits_cmd.Console
         monkeypatch.setattr(credits_cmd, "Console", lambda: console_class(width=200))
@@ -312,7 +316,7 @@ class TestCreditsCommandPlanName:
         monkeypatch.setattr(
             credits_cmd,
             "print_credit_status",
-            lambda token: {
+            lambda token, quiet=False: {
                 "balance": 40,
                 "plan": "[bold]custom",
                 "org_name": "[bold]Acme",
@@ -320,3 +324,52 @@ class TestCreditsCommandPlanName:
         )
         assert credits_cmd.run_credits_command() == 0
         assert "[bold]Acme ([Bold]Custom plan)" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            [],
+            {"plan": "pro"},
+            {"balance": "40", "plan": "pro"},
+            {"balance": True, "plan": "pro"},
+            {"balance": float("nan"), "plan": "pro"},
+            {"balance": 40, "plan": {"tier": "pro"}},
+            {"balance": 40, "recent_transactions": ["invalid"]},
+            {"balance": 40, "recent_transactions": [{"amount": "2"}]},
+        ],
+    )
+    def test_invalid_credit_response_fails_without_showing_a_balance(
+        self, payload, monkeypatch, capsys
+    ):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd, "print_credit_status", lambda token, quiet=False: payload
+        )
+
+        assert credits_cmd.run_credits_command() == 1
+        output = capsys.readouterr().out
+        assert "Could not fetch credit balance" in output
+        assert "Balance:" not in output
+
+    def test_transaction_description_is_printed_literally(self, monkeypatch, capsys):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd,
+            "print_credit_status",
+            lambda token, quiet=False: {
+                "balance": 40,
+                "plan": "pro",
+                "org_name": "Acme",
+                "recent_transactions": [
+                    {"amount": -2, "description": "charge [/red] customer"}
+                ],
+            },
+        )
+
+        assert credits_cmd.run_credits_command() == 0
+        assert "charge [/red] customer" in capsys.readouterr().out
