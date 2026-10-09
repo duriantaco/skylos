@@ -751,6 +751,40 @@ def test_workflow_skips_symlinked_backup_and_rejects_changed_destination(tmp_pat
     assert not (path.parent / "skylos.yml.bak3").exists()
 
 
+@pytest.mark.parametrize("missing", ["open", "mkdir", "link", "unlink", "rename"])
+def test_workflow_refuses_platforms_without_safe_directory_operations(
+    tmp_path, monkeypatch, missing
+):
+    import skylos.cicd.workflow as workflow
+
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(
+        workflow.os,
+        "supports_dir_fd",
+        workflow.os.supports_dir_fd - {getattr(workflow.os, missing)},
+    )
+
+    with pytest.raises(OSError, match="no-follow directory descriptors"):
+        workflow.write_workflow("name: Generated\n", str(path))
+
+    assert path.read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(path.parent.glob("*.bak*"))
+    assert not list(path.parent.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("missing", ["O_DIRECTORY", "O_NOFOLLOW"])
+def test_workflow_refuses_platforms_without_no_follow_flags(tmp_path, monkeypatch, missing):
+    import skylos.cicd.workflow as workflow
+
+    path = tmp_path / ".github" / "workflows" / "skylos.yml"
+    monkeypatch.delattr(workflow.os, missing, raising=False)
+
+    with pytest.raises(OSError, match="no-follow directory descriptors"):
+        workflow.write_workflow("name: Generated\n", str(path))
+
+    assert not (tmp_path / ".github").exists()
+
+
 def test_cicd_init_force_replaces_without_asking_and_never_overwrites_a_copy(
     tmp_path, monkeypatch
 ):

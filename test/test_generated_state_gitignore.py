@@ -8,6 +8,7 @@ import pytest
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
     save_project_json_cache,
+    write_text_no_symlink,
 )
 
 
@@ -43,7 +44,7 @@ def test_generated_state_does_not_show_in_git_status(repo, cache_path):
 def test_files_people_commit_in_skylos_dir_stay_visible(repo):
     assert save_project_json_cache(repo, ".skylos/cache/grep_results.json", {})
     for name in ("config.yaml", "baseline.json", "ai-contract.yml"):
-        (repo / ".skylos" / name).write_text("x\n")
+        assert write_text_no_symlink(repo / ".skylos" / name, "x\n")
 
     status = _git(repo, "status", "--porcelain", "--untracked-files=all")
 
@@ -58,7 +59,7 @@ def test_files_people_commit_in_skylos_dir_stay_visible(repo):
 def test_existing_ignore_file_is_left_alone(repo):
     cache = repo / ".skylos" / "cache"
     cache.mkdir(parents=True)
-    (cache / ".gitignore").write_text("# mine\n*.json\n")
+    assert write_text_no_symlink(cache / ".gitignore", "# mine\n*.json\n")
 
     assert save_project_json_cache(repo, ".skylos/cache/x.json", {})
 

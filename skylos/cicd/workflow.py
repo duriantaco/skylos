@@ -561,46 +561,51 @@ def workflow_backup_path(path: Path) -> Path:
 @contextmanager
 def _workflow_parent(path: Path, *, create: bool):
     """Anchor writes to a directory opened without following symlinks."""
-    if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        directory = os.open(path.anchor, flags)
-        try:
-            for part in path.parent.parts[1:]:
-                if create:
-                    try:
-                        os.mkdir(part, dir_fd=directory)
-                    except FileExistsError:
-                        pass
-                next_directory = os.open(part, flags, dir_fd=directory)
-                os.close(directory)
-                directory = next_directory
-            yield directory
-        finally:
-            os.close(directory)
-    else:
-        current = Path(path.anchor)
-        for part in path.parent.parts[1:]:
-            current /= part
-            if current.is_symlink():
-                raise OSError("Workflow parent directories must not be symlinks")
-            if create:
-                current.mkdir(exist_ok=True)
-            if not current.is_dir():
-                raise FileNotFoundError(str(current))
-        yield None
-
-
-def _workflow_name(path: Path, name: str, directory: int | None):
-    return name if directory is not None else str(path.with_name(name))
-
-
-def _read_workflow_bytes(path: Path, directory: int | None) -> bytes | None:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    name = _workflow_name(path, path.name, directory)
-    if directory is None and path.is_symlink():
-        raise OSError("Workflow must be a regular file, not a symlink")
+    # os.replace uses the same renameat capability as os.rename; Python
+    # lists only os.rename in supports_dir_fd.
+    required = {os.open, os.mkdir, os.link, os.unlink, os.rename}
+    if not (
+        required <= os.supports_dir_fd
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    ):
+        raise OSError("Safe workflow initialization requires no-follow directory descriptors")
+    if not path.is_absolute() or not path.name or ".." in path.parts:
+        raise OSError("Workflow path must be an absolute path without parent traversal")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory = os.open(  # skylos: ignore[SKY-D215] absolute filesystem anchor, not a filename
+        path.anchor, flags
+    )
     try:
-        descriptor = os.open(name, flags, dir_fd=directory)
+        for part in path.parent.parts[1:]:
+            # Only a single component can be opened beneath the anchored descriptor.
+            component = _workflow_name(part)
+            if create:
+                try:
+                    os.mkdir(component, dir_fd=directory)
+                except FileExistsError:
+                    pass
+            next_directory = os.open(component, flags, dir_fd=directory)
+            os.close(directory)
+            directory = next_directory
+        yield directory
+    finally:
+        os.close(directory)
+
+
+def _workflow_name(name: str) -> str:
+    if name in {"", ".", ".."} or Path(name).name != name:
+        raise OSError("Workflow filename must be a single path component")
+    return name
+
+
+def _read_workflow_bytes(path: Path, directory: int) -> bytes | None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    name = _workflow_name(path.name)
+    try:
+        descriptor = os.open(  # skylos: ignore[SKY-D215] validated basename under no-follow parent descriptor
+            name, flags, dir_fd=directory
+        )
     except FileNotFoundError:
         return None
     with os.fdopen(descriptor, "rb") as handle:
@@ -620,10 +625,12 @@ def read_workflow_text(output_path: str) -> str | None:
 
 
 @contextmanager
-def _workflow_temp(path: Path, directory: int | None, data: bytes):
-    name = _workflow_name(path, f".{path.name}.{uuid4().hex}.tmp", directory)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(name, flags, 0o600, dir_fd=directory)
+def _workflow_temp(path: Path, directory: int, data: bytes):
+    name = _workflow_name(f".{path.name}.{uuid4().hex}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(  # skylos: ignore[SKY-D215] exclusive validated basename under no-follow parent descriptor
+        name, flags, 0o600, dir_fd=directory
+    )
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
@@ -632,7 +639,9 @@ def _workflow_temp(path: Path, directory: int | None, data: bytes):
         yield name
     finally:
         try:
-            os.unlink(name, dir_fd=directory)
+            os.unlink(  # skylos: ignore[SKY-D215] same validated temporary basename and anchored descriptor
+                name, dir_fd=directory
+            )
         except FileNotFoundError:
             pass
 
@@ -667,7 +676,7 @@ def write_workflow(
             if existing != expected_existing:
                 raise OSError("Workflow changed during initialization; run the command again")
         with _workflow_temp(path, directory, content.encode("utf-8")) as temporary:
-            destination = _workflow_name(path, path.name, directory)
+            destination = _workflow_name(path.name)
             if previous is None:
                 # Publishing a new file must not overwrite one that appeared meanwhile.
                 os.link(
@@ -682,7 +691,7 @@ def write_workflow(
                         try:
                             os.link(
                                 old_temporary,
-                                _workflow_name(path, backup.name, directory),
+                                _workflow_name(backup.name),
                                 src_dir_fd=directory,
                                 dst_dir_fd=directory,
                             )
