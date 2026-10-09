@@ -1,6 +1,10 @@
 from rich.console import Console
+from rich.markup import escape
 
 from skylos.api import BASE_URL, get_project_token, print_credit_status
+
+# Cloud stores the paid plan as "pro"; customers see it as "Workspace".
+PLAN_DISPLAY_NAMES = {"free": "Free", "pro": "Workspace", "enterprise": "Enterprise"}
 
 
 def run_credits_command() -> int:
@@ -21,7 +25,8 @@ def run_credits_command() -> int:
 
     console.print()
     if org_name:
-        console.print(f"[bold]{org_name}[/bold] ({plan} plan)")
+        plan_name = PLAN_DISPLAY_NAMES.get(plan, str(plan).title())
+        console.print(f"[bold]{escape(str(org_name))}[/bold] ({escape(plan_name)} plan)")
     if plan == "enterprise":
         console.print("[green]Unlimited credits[/green]")
     else:
