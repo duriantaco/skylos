@@ -9,7 +9,6 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-[![Astronomer Trust](https://img.shields.io/badge/Astronomer%20Trust-A-brightgreen?style=flat&logo=github&logoColor=white)](#star-authenticity-audit)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [官网](https://skylos.dev) |
@@ -145,25 +144,10 @@ C# 死代码检查采用保守策略：完整扫描可执行或 Web 应用时，
 
 ## 基准测试快照
 
-Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。这些是严格的回归门控，不代表任何工具在所有场景下都是绝对 SOTA。
+Skylos 有已提交的死代码、安全、质量、Agent 审查和 AI 代码错误回归套件。
+这些是回归门控，不是独立的准确率基准。用例数量会随套件更新；请以各套件的 manifest 为准。
 
-| 套件 | 当前 Skylos 结果 | 基线 |
-|:---|:---|:---|
-| 死代码回归 | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67；最新本地重跑未安装 Vulture |
-| 安全回归 | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit 在 Python 适用 cases 上 score 47.14 |
-| 质量回归 | 13 cases, score 100.0 | 仅作为回归门控 |
-| Agent 审查 | 25 cases, score 100.0 | 仅作为回归门控 |
-
-冻结的 `golden-v0.2` 重点结果：
-
-| 冻结套件 | Skylos 结果 | 注意事项 |
-|:---|:---|:---|
-| Dead code seeded dev | overall score 96.28；TS/JS/Go/Java score 100.0；Python score 93.33 | Python 剩余项属于标签复核问题 |
-| Security seeded dev | overall score 96.52；完整召回，剩一个 Python `urljoin` false positive | 标签应复核 |
-| OWASP Java security dev | TP=105 FP=0 FN=15 TN=120, score 94.37 | request-wrapper、LDAP、XPath、property weak-hash 仍有缺口 |
-| Quality seeded dev | TP=1 FP=0 FN=0 TN=1, score 100.0 | 目前只有一个 seeded case |
-
-方法论、命令、竞品行和 caveats 请看 [BENCHMARK.md](../../BENCHMARK.md)。
+方法论、注明日期的结果、对比数据和限制请看 [BENCHMARK.md](../../BENCHMARK.md)。
 
 ## 项目证据
 
@@ -172,15 +156,9 @@ Skylos 辅助的死代码清理 PR 已被
 [NetworkX](https://github.com/networkx/networkx/pull/8572)、
 [Optuna](https://github.com/optuna/optuna/pull/6547)、
 [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136)、
-[pypdf](https://github.com/py-pdf/pypdf/pull/3685)、
-[beets](https://github.com/beetbox/beets/pull/6473) 和
-[Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953) 合并。这些是已被接受的清理 PR，不代表相关项目背书。详见
+[pypdf](https://github.com/py-pdf/pypdf/pull/3685)
+和 [beets](https://github.com/beetbox/beets/pull/6473) 合并。这些是已被接受的清理 PR，不代表相关项目背书。详见
 [Real-World Results](../../REAL_WORLD_RESULTS.md)。
-
-<a id="star-authenticity-audit"></a>
-
-2026 年 4 月 26 日，本地 Astronomer 扫描统计 420 个 stargazer，返回
-**overall trust: A**。StarGuard 同时报告 **low fake-star risk**。
 
 ## 集成
 
