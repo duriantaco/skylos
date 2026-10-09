@@ -1143,3 +1143,106 @@ def test_summary_markdown_lists_issues_as_literal_code():
     md = gk.build_summary_markdown({}, False, [reason])
 
     assert "- 1 security issue (max: 0)\n  - `SKY-D290  [x](http://e)'.yml:2  m`" in md
+
+
+def test_check_gate_custom_quality_threshold_carries_exact_finding():
+    finding = {
+        "rule_id": "CUSTOM-PAYMENTS-001",
+        "file": "payments/api.py",
+        "line": 17,
+        "message": "Missing payment authorization",
+    }
+
+    passed, reasons = gk.check_gate(
+        {"custom_rules": [finding]}, {"gate": {"max_quality": 0}}
+    )
+
+    assert passed is False
+    assert reasons == ["1 quality issue (max: 0)"]
+    assert reasons[0].issues == [finding]
+    assert "CUSTOM-PAYMENTS-001  payments/api.py:17" in gk._issue_line(finding)
+
+
+def test_check_gate_custom_quality_limit_does_not_double_count_shared_findings():
+    finding = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3, "col": 4}
+    results = {"quality": [finding], "custom_rules": [dict(finding), dict(finding)]}
+
+    assert gk.check_gate(results, {"gate": {"max_quality": 1}}) == (True, [])
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+    assert "| Quality | 1 |" in gk.build_summary_markdown(results, passed, reasons)
+
+
+def test_check_gate_distinct_custom_sinks_on_one_line_stay_separate():
+    first = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3, "col": 4}
+    second = {**first, "col": 24}
+
+    passed, reasons = gk.check_gate(
+        {"custom_rules": [first, second]}, {"gate": {"max_quality": 1}}
+    )
+
+    assert passed is False
+    assert reasons == ["2 quality issues (max: 1)"]
+    assert reasons[0].issues == [first, second]
+
+
+def test_check_gate_strict_counts_custom_only_findings():
+    finding = {"rule_id": "CUSTOM-1", "file": "api.py", "line": 3}
+
+    passed, reasons = gk.check_gate({"custom_rules": [finding]}, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+
+
+def test_check_gate_custom_agent_quality_uses_absolute_path_and_provenance_root(
+    tmp_path,
+):
+    from skylos.reporting.provenance import ProvenanceReport
+
+    authored = {"rule_id": "CUSTOM-1", "file": str(tmp_path / "pkg/ai.py"), "line": 3}
+    other = {**authored, "file": str(tmp_path / "other/ai.py")}
+    results = {"custom_rules": [authored, other]}
+
+    passed, reasons = gk.check_gate(
+        results,
+        {"gate": {"max_quality": 2, "agent": {"max_quality": 0}}},
+        provenance=ProvenanceReport(agent_files=["pkg/ai.py"], scan_root=str(tmp_path)),
+    )
+
+    assert passed is False
+    assert reasons == ["Agent gate: 1 quality issue in AI-authored files (max: 0)"]
+    assert reasons[0].issues == [authored]
+
+
+def test_check_gate_custom_findings_cannot_claim_builtin_advisory_exemption():
+    finding = {"rule_id": "SKY-Q802", "file": "api.py", "advisory": True}
+    results = {"quality": [finding], "custom_rules": [dict(finding)]}
+
+    assert gk.check_gate(results, {"gate": {"max_quality": 0}})[0] is False
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+    assert reasons[0].issues == [finding]
+
+
+def test_summary_markdown_does_not_guess_status_from_default_thresholds():
+    findings = [
+        {"rule_id": "SKY-D201", "severity": "HIGH", "file": "api.py", "line": line}
+        for line in (2, 3, 4)
+    ]
+    results = {"danger": findings}
+    passed, reasons = gk.check_gate(results, {"gate": {"max_high": 2}})
+
+    md = gk.build_summary_markdown(results, passed, reasons)
+
+    assert "| Category | Count |" in md
+    assert "| Security (high) | 3 |" in md
+    assert "Status" not in md
+    assert "| Security (high) | 3 | ✅ |" not in md
+    assert "**Result: ❌ FAILED**" in md
+    assert "3 high severity issues (max: 2)" in md
+    assert "SKY-D201  api.py:4" in md

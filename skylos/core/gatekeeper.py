@@ -1,5 +1,6 @@
 import importlib  # skylos: ignore[SKY-Q502] legacy gate flow module is being split incrementally
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -221,6 +222,22 @@ def _gate_quality_findings(quality):
     return [finding for finding in quality if not _is_advisory_quality_finding(finding)]
 
 
+def _quality_findings_with_custom_rules(results, *, gate_only=False):
+    quality = list(results.get("quality", []) or [])
+    if gate_only:
+        quality = _gate_quality_findings(quality)
+    seen = {json.dumps(finding, sort_keys=True, default=str) for finding in quality}
+    # Custom rules are quality findings, but are reported in a separate array.
+    # Only built-in advisory rules may opt out of the gate. A custom rule must
+    # still count if it reuses an advisory rule ID or advisory metadata.
+    for finding in results.get("custom_rules", []) or []:
+        key = json.dumps(finding, sort_keys=True, default=str)
+        if key not in seen:
+            quality.append(finding)
+            seen.add(key)
+    return quality
+
+
 def _count_noun(count, singular, plural=None):
     return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
@@ -424,7 +441,7 @@ def _check_strict_gate(
         *dependencies,
         *reliability,
         *ai_defects,
-        *_gate_quality_findings(quality),
+        *quality,
         *circular_dependencies,
         *dead_code,
     ]
@@ -473,7 +490,7 @@ def _gate_findings(results):
         "danger": results.get("danger", []) or [],
         "reliability": results.get("reliability", []) or [],
         "ai_defects": results.get("ai_defects", []) or [],
-        "quality": _gate_quality_findings(results.get("quality", []) or []),
+        "quality": _quality_findings_with_custom_rules(results, gate_only=True),
         "secrets": results.get("secrets", []) or [],
         "dependencies": results.get("dependency_vulnerabilities", []) or [],
         "dead_code": _collect_dead_code_items(results),
@@ -691,18 +708,15 @@ def _build_summary_rows(
     dead_code_count,
 ):
     return [
-        f"| Security (critical) | {critical_count} | {'✅' if critical_count == 0 else '❌'} |",
-        f"| Security (high) | {high_count} | {'✅' if high_count <= 5 else '⚠️'} |",
-        f"| Security (total) | {security_count} | {'✅' if security_count <= 10 else '⚠️'} |",
-        f"| Reliability | {reliability_count} | {'✅' if reliability_count == 0 else '❌'} |",
-        f"| AI defects | {ai_defects_count} | {'✅' if ai_defects_count <= 10 else '⚠️'} |",
-        f"| Quality | {quality_count} | {'✅' if quality_count <= 10 else '⚠️'} |",
-        f"| Secrets | {secrets_count} | {'✅' if secrets_count == 0 else '❌'} |",
-        (
-            f"| Dependency vulnerabilities | {dependency_count} | "
-            f"{'✅' if dependency_count == 0 else '❌'} |"
-        ),
-        f"| Dead Code | {dead_code_count} | ℹ️ |",
+        f"| Security (critical) | {critical_count} |",
+        f"| Security (high) | {high_count} |",
+        f"| Security (total) | {security_count} |",
+        f"| Reliability | {reliability_count} |",
+        f"| AI defects | {ai_defects_count} |",
+        f"| Quality | {quality_count} |",
+        f"| Secrets | {secrets_count} |",
+        f"| Dependency vulnerabilities | {dependency_count} |",
+        f"| Dead Code | {dead_code_count} |",
     ]
 
 
@@ -727,7 +741,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     danger = results.get("danger", []) or []
     reliability = results.get("reliability", []) or []
     ai_defects = results.get("ai_defects", []) or []
-    quality = results.get("quality", []) or []
+    quality = _quality_findings_with_custom_rules(results)
     secrets = results.get("secrets", []) or []
     dependencies = results.get("dependency_vulnerabilities", []) or []
     critical_issues, high_issues = _split_danger_by_severity(danger)
@@ -745,8 +759,8 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     lines = [
         "## Skylos Analysis Results",
         "",
-        "| Category | Count | Status |",
-        "|----------|-------|--------|",
+        "| Category | Count |",
+        "|----------|-------|",
         *_build_summary_rows(
             critical_count=critical_count,
             high_count=high_count,
