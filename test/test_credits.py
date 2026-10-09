@@ -335,7 +335,12 @@ class TestCreditsCommandPlanName:
             {"balance": True, "plan": "pro"},
             {"balance": float("nan"), "plan": "pro"},
             {"balance": 40, "plan": {"tier": "pro"}},
+            {"balance": 40, "recent_transactions": {}},
+            {"balance": 40, "recent_transactions": ""},
+            {"balance": 40, "recent_transactions": 0},
+            {"balance": 40, "recent_transactions": False},
             {"balance": 40, "recent_transactions": ["invalid"]},
+            {"balance": 40, "recent_transactions": [{}]},
             {"balance": 40, "recent_transactions": [{"amount": "2"}]},
         ],
     )

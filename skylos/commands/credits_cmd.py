@@ -32,13 +32,15 @@ def run_credits_command() -> int:
     balance = data.get("balance")
     plan = data.get("plan", "free")
     org_name = data.get("org_name", "")
-    recent = data.get("recent_transactions") or []
+    recent = data.get("recent_transactions", [])
+    if recent is None:
+        recent = []
     if (
         not _is_credit_amount(balance)
         or not isinstance(plan, str)
         or not isinstance(recent, list)
         or any(
-            not isinstance(tx, dict) or not _is_credit_amount(tx.get("amount", 0))
+            not isinstance(tx, dict) or not _is_credit_amount(tx.get("amount"))
             for tx in recent
         )
     ):
