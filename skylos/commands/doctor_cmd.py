@@ -7,6 +7,7 @@ import skylos
 from rich.console import Console
 from rich.panel import Panel
 
+from skylos.cloud.plan_names import plan_display_name
 from skylos.config import load_config
 from skylos.constants import RIPGREP_INSTALL_URL
 
@@ -192,11 +193,12 @@ def _print_credit_status(console: Console, token: str) -> None:
         return
     plan = balance_data.get("plan", "free")
     balance = balance_data.get("balance", 0)
+    plan_name = plan_display_name(plan)
     if plan == "enterprise":
-        console.print(f"  [green]OK[/green]  Plan: {plan} (unlimited credits)")
+        console.print(f"  [green]OK[/green]  Plan: {plan_name} (unlimited credits)")
         return
     color = "green" if balance > 0 else "red"
-    console.print(f"  [{color}]OK[/{color}]  Plan: {plan} | Credits: {balance:,}")
+    console.print(f"  [{color}]OK[/{color}]  Plan: {plan_name} | Credits: {balance:,}")
 
 
 def _print_cloud_status(console: Console) -> None:

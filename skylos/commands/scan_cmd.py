@@ -612,9 +612,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
                 vresp = verify_report(result, quiet=False)
                 if vresp.get("success"):
-                    console.print(
-                        "[good]✓ Verified evidence attached (Skylos Pro)[/good]"
-                    )
+                    console.print("[good]✓ Verified evidence attached[/good]")
                 else:
                     msg = vresp.get("error") or "Verification unavailable."
                     console.print(f"[warn]{escape(str(msg))}[/warn]")

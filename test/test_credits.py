@@ -275,3 +275,25 @@ class TestUploadReportCredits:
         result = upload_report(self.MINIMAL_RESULT, quiet=True)
         assert result["success"] is True
         assert result["credits_warning"] is True
+
+
+class TestCreditsCommandPlanName:
+    @patch("skylos.commands.credits_cmd.print_credit_status")
+    @patch("skylos.commands.credits_cmd.get_project_token", return_value="tok")
+    def test_credits_shows_workspace_for_pro_plan(
+        self, mock_token, mock_status, capsys
+    ):
+        from skylos.commands.credits_cmd import run_credits_command
+
+        mock_status.return_value = {
+            "balance": 42,
+            "plan": "pro",
+            "org_name": "Test Org",
+            "recent_transactions": [],
+        }
+
+        assert run_credits_command() == 0
+
+        output = capsys.readouterr().out
+        assert "Test Org (Workspace plan)" in output
+        assert "pro plan" not in output.lower()

@@ -9,10 +9,15 @@ import subprocess
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
+from skylos.cloud.plan_names import (
+    PAID_PLAN_NAME,
+    PRICING_URL,
+    plan_display_name,
+)
 from skylos.cloud.sync_setup import (
     build_pre_push_hook as _sync_setup_build_pre_push_hook,
     collect_setup_choices as _collect_setup_choices,
-    create_precommit_config,
+    create_precommit_config as create_precommit_config,
     install_pre_push_hook as _install_pre_push_hook,
     install_selected_setup_features as _install_selected_setup_features,
     print_free_plan_setup_summary as _print_free_plan_setup_summary,
@@ -580,7 +585,7 @@ def cmd_connect(token_arg: str | None = None) -> None:
     print("\n✓ Connected!\n")
     print(f"  Project:      {project.get('name', UNKNOWN_LABEL)}")
     print(f"  Organization: {org.get('name', UNKNOWN_LABEL)}")
-    print(f"  Plan:         {plan.capitalize()}")
+    print(f"  Plan:         {plan_display_name(plan)}")
 
     project_id = context["project_id"]
     if not project_id:
@@ -629,7 +634,7 @@ def cmd_status() -> None:
     print("\n✓ Connected\n")
     print(f"  Project:      {project.get('name', UNKNOWN_LABEL)}")
     print(f"  Organization: {org.get('name', UNKNOWN_LABEL)}")
-    print(f"  Plan:         {plan.capitalize()}")
+    print(f"  Plan:         {plan_display_name(plan)}")
 
 
 def cmd_disconnect() -> None:
@@ -908,7 +913,7 @@ def cmd_setup(token_arg: str | None = None) -> None:
 
     print("✓ Connected!\n")
     print(f"  Project: {project.get('name', UNKNOWN_LABEL)}")
-    print(f"  Plan: {plan.capitalize()}\n")
+    print(f"  Plan: {plan_display_name(plan)}\n")
 
     is_pro = plan in PRO_PLANS
 
@@ -921,7 +926,7 @@ def cmd_setup(token_arg: str | None = None) -> None:
         _print_free_plan_setup_summary(has_git=has_git)
         return
 
-    print("🎉 Pro plan detected!\n")
+    print(f"{plan_display_name(plan)} plan detected.\n")
     print("Let's set up your blocking features:\n")
 
     if not has_git:
@@ -974,13 +979,15 @@ def cmd_upgrade() -> None:
         return
 
     if plan not in PRO_PLANS:
-        print(f"\nCurrent plan: {plan.capitalize()}")
-        print("Upgrade to Pro first!")
-        print("Visit: https://skylos.dev/pricing\n")
+        print(f"\nCurrent plan: {plan_display_name(plan)}")
+        print(
+            f"This needs the {PAID_PLAN_NAME} plan. Buying any credit pack turns it on."
+        )
+        print(f"See: {PRICING_URL}\n")
         return
 
-    print("✓ Pro plan detected!\n")
-    print("Installing Pro features...\n")
+    print(f"✓ {plan_display_name(plan)} plan detected.\n")
+    print("Installing blocking features...\n")
 
     git_dir = Path(".git")
     if git_dir.exists():
@@ -1017,7 +1024,7 @@ def main(args: Sequence[str] | None = None) -> None:
         print("  disconnect       Remove saved credentials")
         print("  pull             Pull config and suppressions")
         print("  setup [token]    One-command setup")
-        print("  upgrade          Add Pro features after upgrading")
+        print(f"  upgrade          Add {PAID_PLAN_NAME} plan features after upgrading")
         return
 
     cmd = args[0].lower()

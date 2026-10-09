@@ -1,6 +1,7 @@
 from rich.console import Console
 
 from skylos.api import BASE_URL, get_project_token, print_credit_status
+from skylos.cloud.plan_names import plan_display_name
 
 
 def run_credits_command() -> int:
@@ -21,7 +22,7 @@ def run_credits_command() -> int:
 
     console.print()
     if org_name:
-        console.print(f"[bold]{org_name}[/bold] ({plan} plan)")
+        console.print(f"[bold]{org_name}[/bold] ({plan_display_name(plan)} plan)")
     if plan == "enterprise":
         console.print("[green]Unlimited credits[/green]")
     else:
