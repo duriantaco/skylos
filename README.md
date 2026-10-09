@@ -90,6 +90,10 @@ pip install skylos
 skylos .
 ```
 
+Optional Rust acceleration can be [built from source](./rust/README.md).
+The standard installation uses Python fallbacks. See the build guide for
+accelerated operations and possible differences in findings.
+
 The default scan focuses on dead code. Run every main source analyzer,
 including security, secrets, quality, dependency, and AI-defect checks, with
 `-a`:

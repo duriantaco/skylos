@@ -6,8 +6,9 @@ mod visitor; // future: AST visitor acceleration (stub — not yet wired)
 mod coupling;
 mod cycles;
 
-/// Rust accelerator for Skylos — drop-in replacement for hot paths.
-/// Install via `pip install skylos[fast]`.
+/// Optional Rust accelerator for Skylos hot paths.
+/// Build from source with `python -m pip install ./rust` from the repository root.
+/// See rust/README.md for requirements and result differences.
 #[pymodule]
 fn skylos_fast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(file_discovery::discover_files, m)?)?;

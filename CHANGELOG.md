@@ -1236,7 +1236,8 @@
 - SKY-Q306: Cognitive complexity (SonarQube S3776)
 - SKY-L027 (duplicate strings), SKY-L028 (too many returns), SKY-L029 (boolean trap)
 - Go quality rules (Q301, Q302, C303, C304) via tree-sitter-go
-- `skylos[fast]` — optional Rust accelerator
+- Optional Rust accelerator (available through the [source build](./rust/README.md);
+  the `skylos[fast]` pip extra was not shipped)
 - `skylos provenance` — detect AI-authored code in PRs
 - Agent-aware quality gate (`[tool.skylos.gate.agent]`)
 - `skylos agent watch`, `agent pre-commit`, `agent verify --fix --pr`
