@@ -2558,6 +2558,8 @@ def _formatted_output_gate_exit_code(
     if incomplete_exit_code:
         return incomplete_exit_code
 
+    from contextlib import redirect_stdout
+
     from skylos.core.gatekeeper import (
         build_summary_markdown,
         check_gate,
@@ -2570,7 +2572,10 @@ def _formatted_output_gate_exit_code(
     passed, reasons = check_gate(result, config, strict=strict, provenance=provenance)
 
     if bool(getattr(args, "summary", False)):
-        write_github_summary(build_summary_markdown(result, passed, reasons))
+        # Without $GITHUB_STEP_SUMMARY the markdown is printed; keep it off the
+        # machine-readable report on stdout.
+        with redirect_stdout(sys.stderr):
+            write_github_summary(build_summary_markdown(result, passed, reasons))
 
     if passed or bool(getattr(args, "force", False)):
         return 0

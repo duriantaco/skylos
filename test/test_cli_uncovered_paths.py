@@ -828,6 +828,101 @@ def test_main_gate_exits_with_run_gate_interaction_code(monkeypatch):
     gate.assert_called_once()
 
 
+def test_main_gate_passes_agent_provenance_to_the_gate(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+    }
+    provenance = Mock(summary={}, agent_files=["ai.py"])
+    provenance.to_dict.return_value = {}
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--gate", "--no-upload"])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={"gate": {}}),
+        patch("skylos.api.get_git_root", return_value="."),
+        patch(
+            "skylos.reporting.provenance.analyze_provenance",
+            return_value=provenance,
+        ),
+        patch("skylos.reporting.provenance.annotate_findings_with_provenance"),
+        patch(
+            "skylos.reporting.provenance.compute_ai_security_stats_for_report",
+            return_value={},
+        ),
+        patch("skylos.cli.run_gate_interaction", return_value=0) as gate,
+        patch("builtins.print"),
+    ):
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+
+    assert e.value.code == 0
+    assert gate.call_args.kwargs["provenance"] is provenance
+
+
+def test_formatted_gate_summary_stays_off_machine_stdout(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    result = {"danger": [{"rule_id": "SKY-D290", "severity": "HIGH", "file": "w.yml"}]}
+    args = Mock(strict=False, summary=True, force=False)
+
+    code = cli._formatted_output_gate_exit_code(result, {"gate": {"max_high": 0}}, args)
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "1 high severity issue (max: 0)" in captured.err
+    assert "SKY-D290  w.yml" in captured.err
+
+
+@pytest.mark.parametrize("output_flags", [[], ["--json"]])
+def test_main_agent_gate_enforces_absolute_finding_paths(
+    monkeypatch, tmp_path, capsys, output_flags
+):
+    from skylos.reporting.provenance import ProvenanceReport
+
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "danger": [
+            {"rule_id": "SKY-D201", "file": str(tmp_path / "ai.py"), "severity": "HIGH"}
+        ],
+    }
+    provenance = ProvenanceReport(agent_files=["ai.py"], scan_root=str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", ".", "--gate", "--no-upload", *output_flags]
+    )
+    logger = Mock()
+    logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={"gate": {"agent": {"max_high": 0}}}),
+        patch("skylos.api.get_git_root", return_value=str(tmp_path)),
+        patch("skylos.reporting.provenance.analyze_provenance", return_value=provenance),
+        patch("skylos.cli._is_tty", return_value=False),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 1
+    if output_flags:
+        assert json.loads(capsys.readouterr().out)["danger"][0]["file"] == str(
+            tmp_path / "ai.py"
+        )
+
+
 def test_main_gate_does_not_upload_without_upload_flag(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},

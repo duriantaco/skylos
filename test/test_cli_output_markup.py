@@ -14,7 +14,13 @@ from rich.console import Console
 import skylos.cli as cli
 from skylos.cli import _skylos_console_theme
 from skylos.commands.clean_cmd import _print_dry_run_plan
-from skylos.core.gatekeeper import _handle_advisory_gate, _handle_incomplete_gate
+from skylos.core.gatekeeper import (
+    GateReason,
+    _handle_advisory_gate,
+    _handle_failed_gate,
+    _handle_incomplete_gate,
+    _handle_passed_gate,
+)
 from skylos.ui.rich_report import render_results
 from skylos.ui.terminal_report import render_pretty_results
 
@@ -133,6 +139,27 @@ def test_gate_reasons_print_literally(handler):
     handler(console, [MESSAGE])
 
     assert MESSAGE in console.export_text()
+
+
+def test_gate_issue_lines_print_literally():
+    console = _console()
+    issue = {"rule_id": "SKY-D211", "file": PATH, "line": 3, "message": MESSAGE}
+
+    _handle_failed_gate(
+        console, [GateReason(MESSAGE, [issue])], force=True, strict=False
+    )
+
+    assert f"SKY-D211  {PATH}:3  {MESSAGE}" in console.export_text()
+
+
+def test_passed_gate_hint_prints_literally():
+    console = _console()
+
+    _handle_passed_gate(console, None, details=NAME, hint=MESSAGE)
+
+    text = console.export_text()
+    assert f"Quality Gate: PASSED: {NAME}" in text
+    assert MESSAGE in text
 
 
 def test_clean_dry_run_prints_names_and_paths_literally():

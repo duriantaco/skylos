@@ -68,7 +68,7 @@ def test_gate_fails_on_dependency_vulnerability(clean_results):
     passed, reasons = check_gate(clean_results, {})
 
     assert passed is False
-    assert "1 dependency vulnerabilities (max: 0)" in reasons
+    assert "1 dependency vulnerability (max: 0)" in reasons
 
 
 def test_gate_fails_closed_on_incomplete_language_engine(clean_results):
