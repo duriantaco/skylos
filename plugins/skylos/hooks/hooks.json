@@ -1,0 +1,72 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook help 2>&1 | grep -q session-start || echo '{\"systemMessage\":\"Skylos plugin: the full supported hook set is unavailable. Install or upgrade to skylos 4.44.0 or newer on PATH with: pip install -U skylos. Some checks may still run with an older CLI.\"}'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook session-start --client claude || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook pre-read --client claude || exit 0",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook pre-bash --client claude || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook post-edit --client claude || exit 0",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "skylos hook stop --client claude || echo '{}'",
+            "timeout": 5460
+          }
+        ]
+      }
+    ]
+  }
+}

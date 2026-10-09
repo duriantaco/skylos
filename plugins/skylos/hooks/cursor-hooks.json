@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "skylos hook help 2>&1 | grep -q session-start && echo '{}' || echo '{\"additional_context\":\"Skylos plugin: the full supported hook set is unavailable. Tell the user to install or upgrade to skylos 4.44.0 or newer on PATH with: pip install -U skylos. Some checks may still run with an older CLI.\"}'",
+        "timeout": 15
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "skylos hook session-start --client cursor | grep . || echo '{\"continue\":true}'",
+        "timeout": 30
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "skylos hook pre-read --client cursor || echo '{\"permission\":\"allow\"}'",
+        "timeout": 15
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "skylos hook pre-bash --client cursor || echo '{\"permission\":\"allow\"}'",
+        "timeout": 30
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "skylos hook post-edit --client cursor || exit 0",
+        "timeout": 120
+      }
+    ],
+    "stop": [
+      {
+        "command": "skylos hook stop --client cursor || echo '{}'",
+        "timeout": 5460,
+        "loop_limit": 10
+      }
+    ]
+  }
+}

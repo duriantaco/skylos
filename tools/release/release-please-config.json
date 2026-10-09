@@ -21,6 +21,16 @@
           "type": "json",
           "path": "server.json",
           "jsonpath": "$.packages[?(@.identifier=='skylos')].version"
+        },
+        {
+          "type": "json",
+          "path": "plugins/skylos/.claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "plugins/skylos/.cursor-plugin/plugin.json",
+          "jsonpath": "$.version"
         }
       ]
     }

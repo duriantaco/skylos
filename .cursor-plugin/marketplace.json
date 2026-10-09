@@ -1,0 +1,11 @@
+{
+  "name": "skylos",
+  "owner": { "name": "duriantaco" },
+  "plugins": [
+    {
+      "name": "skylos",
+      "source": "plugins/skylos",
+      "description": "Local Skylos checks on every Cursor agent edit, file read, shell install and stop."
+    }
+  ]
+}

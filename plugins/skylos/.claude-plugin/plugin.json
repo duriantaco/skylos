@@ -1,0 +1,27 @@
+{
+  "name": "skylos",
+  "displayName": "Skylos",
+  "version": "4.47.2",
+  "description": "Runs the local Skylos CLI in the agent loop: checks the lines each edit changed for security issues, secrets and made-up imports, blocks reads of files with hard-coded secrets and installs of packages that don't exist or look like typosquats, and holds the stop while issues the agent added are still open. Needs the skylos command, 4.44.0 or newer, on PATH (pip install skylos).",
+  "author": {
+    "name": "Aaron Oh",
+    "url": "https://github.com/duriantaco"
+  },
+  "homepage": "https://github.com/duriantaco/skylos/tree/main/plugins/skylos",
+  "repository": "https://github.com/duriantaco/skylos",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "static-analysis",
+    "hooks",
+    "secrets",
+    "supply-chain",
+    "dead-code",
+    "code-review"
+  ],
+  "icon": "./assets/logo.png",
+  "documentationUrl": "https://github.com/duriantaco/skylos/blob/main/docs/agent-hooks.md",
+  "supportUrl": "https://github.com/duriantaco/skylos/issues",
+  "privacyPolicyUrl": "https://skylos.dev/privacy",
+  "termsOfServiceUrl": "https://skylos.dev/terms"
+}

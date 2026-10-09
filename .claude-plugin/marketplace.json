@@ -1,0 +1,12 @@
+{
+  "name": "skylos",
+  "description": "Skylos plugins for coding agents.",
+  "owner": { "name": "duriantaco" },
+  "plugins": [
+    {
+      "name": "skylos",
+      "source": "./plugins/skylos",
+      "description": "Local Skylos checks on every Claude Code edit, file read, package install and stop."
+    }
+  ]
+}
