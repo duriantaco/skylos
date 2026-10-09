@@ -362,3 +362,30 @@ def test_clean_command_apply_comment_out_uses_comment_transform(tmp_path):
     assert exit_code == 0
     comment_out.assert_called_once_with(original, "unused", 1)
     assert target.read_text(encoding="utf-8") == "# SKYLOS DEADCODE\npass\n"
+
+
+def test_clean_command_keeps_analyzer_progress_logs_off_the_screen(
+    tmp_path, monkeypatch, caplog
+):
+    import logging
+
+    analyzer_logger = logging.getLogger("Skylos")
+    monkeypatch.setattr(analyzer_logger, "level", logging.NOTSET)
+    levels = []
+
+    def analyze(*_args, **_kwargs):
+        levels.append(analyzer_logger.getEffectiveLevel())
+        analyzer_logger.info("Analyzing 1 files...")
+        return json.dumps({})
+
+    with (
+        caplog.at_level(logging.INFO),
+        patch("skylos.commands.clean_cmd.Console", return_value=Mock()),
+        patch("skylos.commands.clean_cmd.run_analyze", side_effect=analyze),
+    ):
+        exit_code = clean_cmd.run_clean_command([str(tmp_path), "--dry-run"])
+
+    assert exit_code == 0
+    assert levels == [logging.WARNING]
+    assert "Analyzing" not in caplog.text
+    assert analyzer_logger.level == logging.NOTSET

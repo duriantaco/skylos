@@ -234,7 +234,9 @@ def _print_text(console: Console, receipt: dict) -> None:
         if word in _STATUS_STYLES:
             text.stylize(_STATUS_STYLES[word], 0, len(word))
         elif line.startswith("Verdict:"):
-            text.stylize("bold green" if "PASS" in line else "bold red")
+            text.stylize(
+                "bold green" if line.startswith("Verdict: PASS") else "bold red"
+            )
         elif line.startswith("Skylos done"):
             text.stylize("bold")
         console.print(text, soft_wrap=True)

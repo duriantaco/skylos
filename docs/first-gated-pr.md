@@ -63,6 +63,10 @@ Two choices to make here:
 Check the `Install project test dependencies` step in the file. Skylos Done
 runs your whole test suite with what that step installs.
 
+If `.github/workflows/skylos.yml` already exists and is different, Skylos asks
+before replacing it and keeps the old file as `skylos.yml.bak`. Without a
+terminal (a script or an agent), it writes nothing unless you add `--force`.
+
 ## 3. Open the pull request (1 minute)
 
 ```bash

@@ -373,6 +373,74 @@ class TestPrintBadge:
         assert "orange" in badge_call
 
 
+class TestBadgeSummary:
+    def _printed(self, logger):
+        return [
+            call.args[0] for call in logger.console.print.call_args_list if call.args
+        ]
+
+    def test_counts_use_singular_and_plural(self):
+        logger = Mock()
+        logger.console = Mock()
+
+        print_badge(
+            1,
+            logger,
+            danger_enabled=True,
+            danger_count=1,
+            quality_enabled=True,
+            quality_count=7,
+            show_badge=False,
+        )
+
+        printed = self._printed(logger)
+        assert "Found 1 dead-code item, 1 security issue and 7 quality issues." in (
+            printed
+        )
+
+    @pytest.mark.parametrize("dead_code", [0, 6])
+    def test_no_second_badge_after_the_grade_badge(self, dead_code):
+        logger = Mock()
+        logger.console = Mock()
+
+        print_badge(dead_code, logger, show_badge=False)
+
+        printed = self._printed(logger)
+        assert not any(isinstance(item, cli.Panel) for item in printed)
+        assert not any("img.shields.io" in str(item) for item in printed)
+
+    @pytest.mark.parametrize("dead_code", [0, 6])
+    def test_badge_is_skylos_branded(self, dead_code):
+        logger = Mock()
+        logger.console = Mock()
+
+        print_badge(dead_code, logger)
+
+        badges = [p for p in self._printed(logger) if "img.shields.io" in str(p)]
+        assert len(badges) == 1
+        assert "codacy" not in badges[0] and "logo=" not in badges[0]
+        assert badges[0].endswith("(https://github.com/duriantaco/skylos)")
+
+    @pytest.mark.parametrize(("graded", "show_badge"), [(True, False), (False, True)])
+    def test_scan_offers_a_badge_once(self, monkeypatch, graded, show_badge):
+        result = {"analysis_summary": {"total_files": 1}, "quality": []}
+        if graded:
+            result["grade"] = {"overall": {"letter": "A", "score": 95}}
+        monkeypatch.setattr(cli.sys, "argv", ["skylos", "."])
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli.print_badge") as badge,
+            patch("skylos.cli._is_tty", return_value=False),
+        ):
+            cli.main()
+
+        assert badge.call_args.kwargs["show_badge"] is show_badge
+
+
 class TestMainFunction:
     @pytest.fixture
     def mock_skylos_result(self):
@@ -4026,6 +4094,73 @@ class TestDiffFlag:
         assert "no diff findings" in output
         assert "100% dead-code free" not in output
         assert "Clean codebase" not in output
+
+    @pytest.mark.parametrize(
+        ("argv", "git_stdout", "clean_line", "command"),
+        [
+            (
+                ["--diff", "origin/main"],
+                "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n"
+                "+++ b/src/app.py\n@@ -0,0 +1,2 @@\n+x = 1\n+y = 2\n",
+                "No issues found on changed lines.",
+                "skylos done --base origin/main",
+            ),
+            (
+                ["--diff-base", "release/2.0"],
+                "src/app.py\n",
+                "No issues found in changed files.",
+                "skylos done --base release/2.0",
+            ),
+        ],
+    )
+    def test_diff_scan_points_to_skylos_done_with_the_users_ref(
+        self, monkeypatch, capsys, argv, git_stdout, clean_line, command
+    ):
+        from skylos.ui import nudge
+
+        monkeypatch.setattr(nudge, "_is_ci", lambda: False)
+        monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", *argv])
+        result = {"analysis_summary": {"total_files": 1}}
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+            patch("skylos.cli.subprocess.run") as git_name_only,
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli._is_tty", return_value=False),
+        ):
+            git_diff.side_effect = _fake_git(git_stdout)
+            git_name_only.side_effect = _fake_git(git_stdout)
+            cli.main()
+
+        output = " ".join(capsys.readouterr().out.split())
+        assert clean_line in output
+        assert (
+            "To check a branch an AI agent wrote (deleted tests, loosened CI, "
+            f"test-only shortcuts), run: {command}"
+        ) in output
+
+    def test_machine_readable_diff_scan_has_no_done_tip(self, monkeypatch, capsys):
+        from skylos.ui import nudge
+
+        monkeypatch.setattr(nudge, "_is_ci", lambda: False)
+        monkeypatch.setattr(
+            cli.sys, "argv", ["skylos", ".", "--diff", "origin/main", "--json"]
+        )
+        result = {"analysis_summary": {"total_files": 1}}
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run") as git_diff,
+        ):
+            git_diff.side_effect = _fake_git()
+            cli.main()
+
+        assert "skylos done" not in capsys.readouterr().out
 
     def test_diff_without_changed_lines_reports_retained_prerequisite(
         self, monkeypatch, capsys
