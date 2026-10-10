@@ -8,7 +8,9 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from skylos.analysis.errors import analysis_result_incomplete
 from skylos_mcp.auth import (
@@ -960,26 +962,116 @@ def tool_description(fn) -> str:
     return f"{doc}\n\n{note}" if doc else note
 
 
+# Parameter descriptions published in each tool's input schema. MCP clients
+# show them to the model, and directories such as Glama score them.
+PathParam = Annotated[
+    str,
+    Field(
+        description=(
+            "Directory or file to scan. A relative path resolves against the "
+            "MCP server's working directory."
+        )
+    ),
+]
+RepoPathParam = Annotated[
+    str,
+    Field(
+        description=(
+            "Project directory. A relative path resolves against the MCP "
+            "server's working directory."
+        )
+    ),
+]
+ConfidenceParam = Annotated[
+    int,
+    Field(
+        description=(
+            "Minimum confidence (0-100) for dead-code findings. Higher values "
+            "report fewer, surer candidates; 60 is the CLI default."
+        )
+    ),
+]
+ExcludeListParam = Annotated[
+    list[str] | None,
+    Field(
+        description=(
+            'Folder names to skip, e.g. ["migrations", "scripts"]. When '
+            "given, this list replaces the default excludes (node_modules, "
+            ".venv, build, dist and similar); omit it to keep the defaults."
+        )
+    ),
+]
+ExcludeCsvParam = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Extra folder names to skip, comma-separated (e.g. "
+            '"migrations,scripts"). Added to the default excludes.'
+        )
+    ),
+]
+ModelParam = Annotated[
+    str,
+    Field(
+        description=(
+            "LLM model name passed to the provider (e.g. gpt-4.1 or a Claude "
+            "model). Configure the provider's credentials in the MCP server's "
+            "environment when required by that provider."
+        )
+    ),
+]
+
+
 def _register_tools(mcp):
     """Register all MCP tools and resources. Called inside main() after FastMCP is created."""
 
-    def _tool():
+    def _tool(
+        title: str | None = None,
+        *,
+        read_only: bool = True,
+        destructive: bool = False,
+        open_world: bool = False,
+    ):
         def decorate(fn):
             # FastMCP publishes the docstring as the tool description.
             fn.__doc__ = tool_description(fn)
-            return mcp.tool()(fn)
+            try:
+                from mcp.types import ToolAnnotations
+
+                register = mcp.tool(
+                    title=title,
+                    annotations=ToolAnnotations(
+                        title=title,
+                        readOnlyHint=read_only,
+                        destructiveHint=destructive,
+                        openWorldHint=open_world,
+                    ),
+                )
+            except (ImportError, TypeError):
+                # Older mcp releases (and test doubles) take no annotations.
+                register = mcp.tool()
+            return register(fn)
 
         return decorate
 
     ## all of these look like dead but they're all registered inside `_register_tools()` which is
     ## called from main() .. please ignore the "unused function" warnings for these --- IGNORE ---
-    @_tool()
+    @_tool("Find dead code")
     def analyze(
-        path: str,
-        confidence: int = 60,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Find dead code (unused functions, classes, imports, variables) in a path."""
+        """Find dead code: unused functions, classes, imports, variables, parameters and files.
+
+        Use this to list cleanup candidates in a project. Returns JSON with a
+        summary and per-category findings (file, line, name, confidence) plus
+        `_run_id`; the full result is stored locally and can be read from the
+        `skylos://results/{run_id}` resource. Read-only: it never edits code.
+        Findings are candidates: before deleting one, check for dynamic use
+        (getattr, string dispatch, entry points, framework decorators, tests).
+        A non-empty `analysis_errors` means analysis or verification was
+        incomplete; do not treat the findings as a complete scan."""
         gate_err = _gate("analyze")
         if gate_err:
             return gate_err
@@ -997,13 +1089,18 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool("Scan for security issues")
     def security_scan(
-        path: str,
-        confidence: int = 60,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Scan a path for dangerous code patterns (injection, eval, unsafe deserialization, etc.)."""
+        """Scan source code for security issues such as SQL and command injection, SSRF, path traversal, eval/exec and unsafe deserialization.
+
+        Returns JSON with findings (rule ID, severity, file, line, message) and
+        `_run_id`. Read-only; the scan runs locally and does not upload code. Use
+        `secrets_scan` for hard-coded credentials and `validate_code_change`
+        to check a diff before it lands."""
         gate_err = _gate("security_scan")
         if gate_err:
             return gate_err
@@ -1019,13 +1116,16 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool("Check code quality")
     def quality_check(
-        path: str,
-        confidence: int = 60,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Scan a path for code-quality issues (complexity, nesting, maintainability)."""
+        """Report code-quality issues: high complexity, deep nesting, long functions, duplicate branches and similar maintainability findings.
+
+        Returns JSON with findings (rule ID, file, line, message) and
+        `_run_id`. Read-only and local."""
         gate_err = _gate("quality_check")
         if gate_err:
             return gate_err
@@ -1041,13 +1141,16 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool("Check architecture")
     def architecture_check(
-        path: str,
-        confidence: int = 60,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Report architecture findings (coupling, cohesion, circular dependencies) for a path."""
+        """Report architecture findings for a project: module coupling, cohesion and circular dependencies.
+
+        Returns JSON with the architecture findings and `_run_id`. Read-only
+        and local. Use `quality_check` for function-level issues."""
         gate_err = _gate("architecture_check")
         if gate_err:
             return gate_err
@@ -1063,16 +1166,26 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool("Grade codebase health")
     def health_score(
-        path: str,
-        confidence: int = 60,
-        include_security: bool = True,
-        include_secrets: bool = True,
-        include_quality: bool = True,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        include_security: Annotated[
+            bool, Field(description="Include security findings in the grade.")
+        ] = True,
+        include_secrets: Annotated[
+            bool, Field(description="Include hard-coded secret findings in the grade.")
+        ] = True,
+        include_quality: Annotated[
+            bool, Field(description="Include code-quality findings in the grade.")
+        ] = True,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Compute an overall codebase health grade across dead code, security, secrets and quality."""
+        """Compute an overall health grade (A-F and a 0-100 score) for a project from dead code, security, secrets and quality findings.
+
+        Use it for a one-number summary or to compare runs; use the specific
+        scan tools to see the findings themselves. Returns JSON with the grade,
+        per-category scores and `_run_id`. Read-only and local."""
         gate_err = _gate("health_score")
         if gate_err:
             return gate_err
@@ -1090,13 +1203,16 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool("Find hard-coded secrets")
     def secrets_scan(
-        path: str,
-        confidence: int = 60,
-        exclude_folders: list[str] | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        exclude_folders: ExcludeListParam = None,
     ) -> str:
-        """Scan a path for hard-coded secrets and credentials (values are redacted)."""
+        """Find hard-coded secrets and credentials (API keys, tokens, private keys, passwords) in source and config files.
+
+        Returns JSON with findings (provider, file, line) and `_run_id`. Secret
+        values are redacted in the output. Read-only and local."""
         gate_err = _gate("secrets_scan")
         if gate_err:
             return gate_err
@@ -1112,16 +1228,52 @@ def _register_tools(mcp):
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 
-    @_tool()
+    @_tool(
+        "Plan or apply LLM fixes", read_only=False, destructive=True, open_world=True
+    )
     def remediate(
-        path: str,
-        max_fixes: int = 5,
-        dry_run: bool = True,
-        model: str = "gpt-4.1",
-        test_cmd: str | None = None,
-        severity: str | None = None,
+        path: PathParam,
+        max_fixes: Annotated[
+            int, Field(description="Maximum number of findings to fix in this run.")
+        ] = 5,
+        dry_run: Annotated[
+            bool,
+            Field(
+                description=(
+                    "True (default) only plans the fixes. False writes the "
+                    "generated edits to files in `path`."
+                )
+            ),
+        ] = True,
+        model: ModelParam = "gpt-4.1",
+        test_cmd: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Not supported over MCP; non-empty values are rejected. Run tests "
+                    "yourself after reviewing the fixes."
+                )
+            ),
+        ] = None,
+        severity: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Only fix findings at this severity or above: critical, "
+                    "high, medium or low."
+                )
+            ),
+        ] = None,
     ) -> str:
-        """Plan (dry_run=True, default) or apply LLM-generated fixes for findings; needs an LLM provider key."""
+        """Plan or apply LLM-generated fixes for Skylos findings in a project.
+
+        With dry_run=True (default), static analysis returns a remediation
+        plan without calling a model or changing files. With dry_run=False,
+        it generates fixes and can edit files in place: this needs the
+        `skylos[llm]` extra and provider configuration (including credentials
+        when required), and sends affected code to that provider. It does not
+        run your tests.
+        Review every change and run trusted tests before keeping it."""
         gate_err = _gate("remediate")
         if gate_err:
             return gate_err
@@ -1156,16 +1308,41 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Verify dead code with an LLM", open_world=True)
     def verify_dead_code(
-        path: str,
-        confidence: int = 60,
-        model: str = "gpt-4.1",
-        max_verify: int = 30,
-        max_challenge: int = 10,
-        exclude_folders: str | None = None,
+        path: PathParam,
+        confidence: ConfidenceParam = 60,
+        model: ModelParam = "gpt-4.1",
+        max_verify: Annotated[
+            int,
+            Field(
+                description=(
+                    "Maximum findings in the main LLM verification pass. "
+                    "Entry discovery, prefiltering and challenges can make "
+                    "additional model calls."
+                )
+            ),
+        ] = 30,
+        max_challenge: Annotated[
+            int,
+            Field(
+                description=(
+                    "Maximum number of surviving findings the model re-checks "
+                    "in a second pass."
+                )
+            ),
+        ] = 10,
+        exclude_folders: ExcludeCsvParam = None,
     ) -> str:
-        """Run LLM-assisted verification of dead-code findings to remove false positives; needs an LLM provider key."""
+        """Ask an LLM to review selected unused function, class, import and variable candidates, with its reasoning.
+
+        Use it after `analyze` when you need fewer false positives before
+        deleting code. Sends code snippets and search results to the chosen
+        model provider, so it needs the `skylos[llm]` extra and provider
+        configuration, including credentials when required. Candidates outside
+        the review limits, or whose use remains uncertain, can remain
+        unverified. Does not edit files.
+        Refuses to run when the static analysis was incomplete."""
         gate_err = _gate("verify_dead_code")
         if gate_err:
             return gate_err
@@ -1187,9 +1364,7 @@ def _register_tools(mcp):
                 return json.dumps(
                     {
                         "error": "Cannot verify dead code from incomplete analysis.",
-                        "analysis_errors": static_result.get(
-                            "analysis_errors", []
-                        ),
+                        "analysis_errors": static_result.get("analysis_errors", []),
                         "incomplete_languages": static_result.get(
                             "analysis_summary", {}
                         ).get("incomplete_languages", []),
@@ -1231,9 +1406,27 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
-    def provenance_scan(path: str, diff_base: str | None = None) -> str:
-        """Attribute changed files to AI agents, automation bots or humans from git history."""
+    @_tool("Attribute changes to agents or humans")
+    def provenance_scan(
+        path: RepoPathParam,
+        diff_base: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Git ref to compare against. Omit to use the CI base branch "
+                    "when one is set, otherwise origin/main."
+                )
+            ),
+        ] = None,
+    ) -> str:
+        """Report available evidence of AI-agent, bot and human contributions.
+
+        Combines git signals since the base (agent bot accounts,
+        Co-authored-by and AI declaration trailers, agent-named commit
+        subjects) with recorded local attribution evidence. Returns JSON
+        with per-file attribution, evidence and coverage status. Commit
+        declarations do not establish line authorship; missing evidence
+        remains unknown. Read-only and local."""
         gate_err = _gate("provenance_scan")
         if gate_err:
             return gate_err
@@ -1251,14 +1444,43 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Generate a dead-code removal patch", read_only=False, destructive=True)
     def generate_fix(
-        path: str,
-        mode: str = "delete",
-        min_safety: float = 0.0,
-        apply: bool = False,
+        path: PathParam,
+        mode: Annotated[
+            str,
+            Field(
+                description=(
+                    '"delete" removes dead code; "comment" comments it out instead.'
+                )
+            ),
+        ] = "delete",
+        min_safety: Annotated[
+            float,
+            Field(
+                description=(
+                    "Skip findings whose safety score (0.0-1.0; imports score "
+                    "highest, methods lowest) is below this value."
+                )
+            ),
+        ] = 0.0,
+        apply: Annotated[
+            bool,
+            Field(
+                description=(
+                    "False (default) previews the unified diff. True also "
+                    "writes changes when patch validation succeeds."
+                )
+            ),
+        ] = False,
     ) -> str:
-        """Generate (and optionally apply) a removal patch for verified dead code."""
+        """Build a unified-diff patch that removes (or comments out) dead code found by static analysis, after grep verification drops findings that are still referenced.
+
+        Returns the diff, patch summary, validation errors and applied status.
+        With apply=False (default) it previews changes; with apply=True it
+        edits files if patch validation succeeds. Refuses to run when the
+        analysis or grep verification was incomplete. Review the diff and run
+        trusted tests before keeping it."""
         gate_err = _gate("generate_fix")
         if gate_err:
             return gate_err
@@ -1286,9 +1508,7 @@ def _register_tools(mcp):
             static_result = json.loads(raw) if isinstance(raw, str) else raw
             analysis_errors = static_result.get("analysis_errors") or []
             incomplete_languages = (
-                static_result.get("analysis_summary", {}).get(
-                    "incomplete_languages"
-                )
+                static_result.get("analysis_summary", {}).get("incomplete_languages")
                 or []
             )
             if analysis_result_incomplete(static_result):
@@ -1366,13 +1586,21 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Record a triage decision", read_only=False)
     def learn_triage(
-        path: str,
-        action_id: str,
-        action: str,
+        path: RepoPathParam,
+        action_id: Annotated[
+            str,
+            Field(description="The finding's `fingerprint` from a scan result."),
+        ],
+        action: Annotated[
+            str,
+            Field(description='"accept" (real issue) or "dismiss" (false positive).'),
+        ],
     ) -> str:
-        """Record a triage action for a finding (action_id is its fingerprint) so future suggestions learn from it."""
+        """Record whether a finding was accepted or dismissed so `get_triage_suggestions` can learn from it.
+
+        Writes the decision to the project's local Skylos state."""
         gate_err = _gate("learn_triage")
         if gate_err:
             return gate_err
@@ -1387,11 +1615,15 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Suggest triage decisions")
     def get_triage_suggestions(
-        path: str,
+        path: RepoPathParam,
     ) -> str:
-        """Suggest triage decisions for current findings based on recorded history."""
+        """Suggest accept or dismiss for current findings, based on decisions recorded with `learn_triage` in this project.
+
+        Returns JSON suggestions with finding fingerprints, suggested actions
+        and confidence, plus the number of learned patterns. Read-only and
+        local."""
         gate_err = _gate("get_triage_suggestions")
         if gate_err:
             return gate_err
@@ -1406,12 +1638,41 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Check a diff before it lands", open_world=True)
     def validate_code_change(
-        diff: str,
-        path: str = ".",
-        policy: str | None = None,
-        check_dependencies: bool = True,
+        diff: Annotated[
+            str,
+            Field(description="Unified diff text, e.g. the output of `git diff`."),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                description=(
+                    "Project root the diff applies to; used to find dependency "
+                    "manifests. Relative paths resolve against the MCP server's "
+                    "working directory."
+                )
+            ),
+        ] = ".",
+        policy: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional policy path. Accepted for compatibility but "
+                    "currently not applied to the result."
+                )
+            ),
+        ] = None,
+        check_dependencies: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Look up newly added imports and manifest entries in the "
+                    "package registries (PyPI, npm, Go proxy). False skips "
+                    "these network calls."
+                )
+            ),
+        ] = True,
     ) -> str:
         """Validate a code diff for security regressions and issues before it lands.
 
@@ -1419,12 +1680,11 @@ def _register_tools(mcp):
         - Security control regressions (auth, CSRF, TLS, rate limiting removal)
         - New dangerous patterns (eval, exec, SQL injection, etc.)
         - Secrets in added code
-        - AI defense issues in added code
         - Hallucinated or undeclared dependencies in added imports and manifest
           entries (requirements*.txt, pyproject.toml, package.json, go.mod),
           verified against the package registries. The "registry" field reports
-          "ok", "unreachable" (lookups incomplete — do not treat pass as clean),
-          or "skipped".
+          "ok", "unreachable" or "error" (lookups incomplete — do not treat
+          pass as clean), or "skipped".
 
         Returns pass/fail with findings.
         """
@@ -1439,18 +1699,72 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Verify an edited file or range", open_world=True)
     def verify_change(
-        path: str = ".",
-        file: str | None = None,
-        line_range: str | None = None,
-        confidence: int = 60,
-        project_context: bool = False,
-        include_dependency_hallucinations: bool = True,
-        exclude_folders: str | None = None,
-        contract_path: str | None = None,
-        contract_enabled: bool = True,
-        include_security_findings: bool = True,
+        path: Annotated[
+            str,
+            Field(description="Project root, or a single file to check."),
+        ] = ".",
+        file: Annotated[
+            str | None,
+            Field(description="File inside `path` to check; omit to check `path`."),
+        ] = None,
+        line_range: Annotated[
+            str | None,
+            Field(
+                description=(
+                    'Lines to check in `file`, as "START:END" or "START-END" '
+                    '(e.g. "10:40"), or one line number.'
+                )
+            ),
+        ] = None,
+        confidence: ConfidenceParam = 60,
+        project_context: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Also load the rest of the project to resolve cross-file "
+                    "references (slower; may reduce unresolved-reference findings)."
+                )
+            ),
+        ] = False,
+        include_dependency_hallucinations: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Check imported packages against the package registries. "
+                    "False skips these network calls."
+                )
+            ),
+        ] = True,
+        exclude_folders: ExcludeCsvParam = None,
+        contract_path: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Path to a repo-specific AI-code contract file; omit to use "
+                    "the project's default contract if it has one."
+                )
+            ),
+        ] = None,
+        contract_enabled: Annotated[
+            bool,
+            Field(
+                description=(
+                    "False disables contract discovery and checks. Omit "
+                    "contract_path when False; combining them is rejected."
+                )
+            ),
+        ] = True,
+        include_security_findings: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Include high and critical security findings and "
+                    "hard-coded secrets in the verdict."
+                )
+            ),
+        ] = True,
     ) -> str:
         """Verify a changed file/range for AI-code defects and security bugs.
 
@@ -1485,14 +1799,44 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Verify an AI agent's guardrails")
     def verify_agent(
-        path: str = ".",
-        fail_on: str | None = None,
-        min_score: int | None = None,
-        owasp_framework: str = "llm",
-        owasp_version: str | None = None,
-        exclude_folders: str | None = None,
+        path: Annotated[
+            str,
+            Field(description="Directory of the LLM application or agent to check."),
+        ] = ".",
+        fail_on: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Fail the gate if any failed check is at this severity or "
+                    "above: critical, high, medium or low."
+                )
+            ),
+        ] = None,
+        min_score: Annotated[
+            int | None,
+            Field(description="Fail the gate if the defense score (0-100) is lower."),
+        ] = None,
+        owasp_framework: Annotated[
+            str,
+            Field(
+                description=(
+                    'OWASP list to map results to: "llm" (Top 10 for LLM '
+                    'Applications) or "agentic".'
+                )
+            ),
+        ] = "llm",
+        owasp_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Version of that OWASP list; omit for the default (2025 for "
+                    "llm, 2026 for agentic)."
+                )
+            ),
+        ] = None,
+        exclude_folders: ExcludeCsvParam = None,
     ) -> str:
         """Statically verify an AI agent's guardrails before deployment.
 
@@ -1501,8 +1845,9 @@ def _register_tools(mcp):
         dangerous sinks, tool scope, output validation, PII filtering, cost
         controls), and returns scores, failed checks with remediation, OWASP
         LLM/Agentic coverage, and a reproducible attestation digest. No model
-        is involved in the verdict and no code leaves the machine. Optional
-        gate: set fail_on (severity) and/or min_score (0-100).
+        is involved in the verdict and the analysis runs locally; source code
+        is not sent to Skylos Cloud. Optional gate: set fail_on (severity)
+        and/or min_score (0-100).
         """
         gate_err = _gate("verify_agent")
         if gate_err:
@@ -1524,11 +1869,14 @@ def _register_tools(mcp):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @_tool()
+    @_tool("Summarize security context")
     def get_security_context(
-        path: str,
+        path: RepoPathParam,
     ) -> str:
-        """Summarize a project's security context (frameworks, auth, headers, rate limiting, input validation, policy)."""
+        """Summarize a project's security setup: detected web frameworks, auth decorators and middleware, security headers, rate limiting, input validation and a supported Skylos YAML policy file.
+
+        Use it before reviewing or writing security-sensitive code to learn the
+        project's conventions. Returns JSON. Read-only and local."""
         gate_err = _gate("get_security_context")
         if gate_err:
             return gate_err
@@ -1544,6 +1892,7 @@ def _register_tools(mcp):
 
     @mcp.resource("skylos://results/latest")
     def get_latest_result() -> str:
+        """Full JSON result of the most recent stored Skylos tool run."""
         data = _load_result("latest")
         if data is None:
             return json.dumps({"error": "No analysis has been run yet."})
@@ -1551,6 +1900,7 @@ def _register_tools(mcp):
 
     @mcp.resource("skylos://results/{run_id}")
     def get_result_by_id(run_id: str) -> str:
+        """Full JSON result of a stored run; find its run_id in skylos://results or a scan's `_run_id`."""
         data = _load_result(run_id)
         if data is None:
             return json.dumps({"error": f"Run '{run_id}' not found."})
@@ -1558,6 +1908,7 @@ def _register_tools(mcp):
 
     @mcp.resource("skylos://results")
     def list_results() -> str:
+        """List stored tool runs with run_id, tool, path and timestamp."""
         return json.dumps(_list_runs(), indent=2)
 
 
