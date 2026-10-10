@@ -2455,6 +2455,9 @@ class Skylos:
                 self.refs,
                 getattr(self, "_project_root", Path(".")),
                 files,
+                exclude_folders=getattr(self, "_analysis_scope", {}).get(
+                    "excluded_folders"
+                ),
             )
             self._dead_code_liveness_report = report
             if report.rescued:
