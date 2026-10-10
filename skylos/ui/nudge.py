@@ -3,6 +3,8 @@ import shlex
 from pathlib import Path
 import stat
 
+from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
+
 NUDGE_PYPROJECT_MAX_BYTES = 512 * 1024
 
 
@@ -180,6 +182,8 @@ def pick_nudge(result, args, project_root=None):
         return "[dim]Auto-remediate:[/dim] [bold]skylos agent remediate .[/bold]"
 
     if total == 0:
-        return "[dim]Clean codebase! Share it:[/dim] [bold]skylos badge[/bold]"
+        if dead_code_uncertainty_summary(result)["count"]:
+            return "[dim]Some symbols have uncertain usage. Review the scan evidence before removing them.[/dim]"
+        return "[dim]No findings at current settings. Share the scan grade:[/dim] [bold]skylos badge[/bold]"
 
     return None

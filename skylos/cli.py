@@ -1526,6 +1526,7 @@ def print_badge(
     quality_enabled=False,
     quality_count=0,
     show_badge=True,
+    uncertainty_count=0,
 ):
     """Print the closing count line, plus a README badge unless one was shown.
 
@@ -1541,18 +1542,27 @@ def print_badge(
     has_quality = quality_enabled and quality_count > 0
 
     if not has_dead_code and not has_danger and not has_reliability and not has_quality:
+        headline = "No dead-code candidates found at current settings."
+        if uncertainty_count:
+            noun = "symbol" if uncertainty_count == 1 else "symbols"
+            headline += f" Usage remains uncertain for {uncertainty_count} {noun}."
         if not show_badge:
-            console.print("[good]Your code is 100% dead-code free![/good]")
+            console.print(headline)
             return
         console.print(
             Panel.fit(
-                "[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:",
-                border_style="good",
+                f"{headline}\nAdd this scan badge to your README:",
+                border_style="warn" if uncertainty_count else "good",
             )
         )
         console.print("```markdown")
+        badge_value = "0_candidates"
+        badge_color = "brightgreen"
+        if uncertainty_count:
+            badge_value += f"%2C_{uncertainty_count}_uncertain"
+            badge_color = "yellow"
         console.print(
-            "[![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen)](https://github.com/duriantaco/skylos)"
+            f"[![Skylos dead-code scan](https://img.shields.io/badge/Dead_Code-{badge_value}-{badge_color})](https://github.com/duriantaco/skylos)"
         )
         console.print("```")
         return

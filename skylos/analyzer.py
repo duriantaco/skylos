@@ -2291,10 +2291,11 @@ class Skylos:
     def _retain_reachability_uncertainty(self, report):
         for key in report.protected_keys:
             defn = self.defs.get(key)
-            if defn is not None and defn.references <= 0:
+            if defn is not None:
                 # Possible dynamic dispatch is retention evidence, not proof
                 # that this callable has an actual reachable invocation.
-                defn.references = 1
+                defn.references = max(1, defn.references)
+                defn.heuristic_refs.pop("dynamic_pattern", None)
                 defn.heuristic_refs["unresolved_receiver"] = 1.0
         for key in report.protected_callback_keys:
             defn = self.defs.get(key)
@@ -2316,6 +2317,9 @@ class Skylos:
             attribute_hints = max(0, getattr(defn, "_attr_name_ref_count", 0))
             has_references = defn.references > attribute_hints or bool(defn.called_by)
             defn.references = 0
+            # A compatibility name-pattern hint cannot override a complete
+            # source graph that proved this callable has no reachable use.
+            defn.heuristic_refs.pop("dynamic_pattern", None)
             if not has_references:
                 continue
             defn.heuristic_refs["unreachable_group"] = 1.0
@@ -2342,7 +2346,8 @@ class Skylos:
                 continue
             defn.references = max(1, defn.references)
             defn.heuristic_refs.pop("unreachable_group", None)
-            defn.heuristic_refs["reachable_from_root"] = 1.0
+            if key in report.proven_reachable_keys:
+                defn.heuristic_refs["reachable_from_root"] = 1.0
             reason = previous_reasons.get(key)
             if reason in defn.why_unused:
                 defn.why_unused.remove(reason)

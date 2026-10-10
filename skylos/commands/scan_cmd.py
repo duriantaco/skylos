@@ -8,6 +8,7 @@ from rich.markup import escape
 
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.constants import RIPGREP_INSTALL_URL
+from skylos.ui.dead_code_evidence import dead_code_uncertainty_summary
 
 
 _DIFF_FINDING_CATEGORIES = (
@@ -1324,6 +1325,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             reliability_count=reliability_count,
             quality_enabled=bool(quality_count),
             quality_count=quality_count,
+            uncertainty_count=dead_code_uncertainty_summary(result)["count"],
             # The grade panel above already offered the Skylos grade badge.
             show_badge=not (
                 output_result.get("grade") and not args.upload and not args.tui
@@ -1434,10 +1436,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             _print_upload_cta(console, project_root)
         elif not getattr(args, "diff", None) and changed_files is None:
             console.print()
-            console.print(
-                "[good]✨ Clean codebase! No issues found.[/good]\n"
-                "[dim]💡 Show others you maintain quality code: [/dim][bold cyan]skylos badge[/bold cyan]"
-            )
+            console.print("[good]No findings reported at current settings.[/good]")
+            if not dead_code_uncertainty_summary(result)["count"]:
+                console.print(
+                    "[dim]Share this scan grade: [/dim][bold cyan]skylos badge[/bold cyan]"
+                )
             from skylos.ui.nudge import pick_nudge
 
             nudge = pick_nudge(result, args, project_root)

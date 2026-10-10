@@ -290,14 +290,26 @@ class EvidenceLedger:
 
     def summary(self) -> dict[str, Any]:
         counts: dict[str, int] = {}
+        uncertainty_reasons: dict[str, int] = {}
         for symbol in self.events_by_symbol:
             classification = self.classify(symbol).value
             counts[classification] = counts.get(classification, 0) + 1
-        return {
+            if classification == CandidateClassification.UNCERTAIN.value:
+                reasons = {
+                    event.reason
+                    for event in self.events(symbol)
+                    if event.kind == EvidenceKind.UNCERTAINTY
+                }
+                for reason in reasons:
+                    uncertainty_reasons[reason] = uncertainty_reasons.get(reason, 0) + 1
+        summary = {
             "symbol_count": len(self.events_by_symbol),
             "classification_policy": CLASSIFICATION_POLICY,
             "classifications": counts,
         }
+        if uncertainty_reasons:
+            summary["uncertainty_reasons"] = dict(sorted(uncertainty_reasons.items()))
+        return summary
 
     def to_dict(
         self,
@@ -586,6 +598,20 @@ def _add_uncertainty_evidence(
 
 def _event_from_heuristic_ref(key: str, confidence: Any) -> EvidenceEvent | None:
     value = _confidence_float(confidence)
+
+    if key in {"unresolved_receiver", "unresolved_callback"}:
+        reason = (
+            "Unresolved receiver may expose this symbol"
+            if key == "unresolved_receiver"
+            else "Unresolved callback may invoke this symbol"
+        )
+        return EvidenceEvent(
+            kind=EvidenceKind.UNCERTAINTY,
+            reason=reason,
+            source="reachability",
+            confidence=value,
+            details={"retention_reason": key},
+        )
 
     if key == "grep_verify":
         return EvidenceEvent(

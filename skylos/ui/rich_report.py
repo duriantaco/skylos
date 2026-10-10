@@ -12,6 +12,8 @@ from rich.tree import Tree
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
+    dead_code_uncertainty_summary,
+    dead_code_uncertainty_text,
 )
 
 
@@ -79,11 +81,17 @@ def _dead_code_evidence_pill(result):
     counts = dead_code_candidate_counts(result)
     rescued = counts.get("rescued", 0)
     abstained = counts.get("abstained", 0)
-    if not rescued and not abstained:
+    uncertainty = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
+    if not rescued and not abstained and not uncertainty:
         return None
-    return (
-        f"[good]Evidence rescued: {rescued}[/good] [warn]abstained: {abstained}[/warn]"
-    )
+    parts = []
+    if rescued or abstained:
+        parts.append(
+            f"[good]Evidence rescued: {rescued}[/good] [warn]abstained: {abstained}[/warn]"
+        )
+    if uncertainty:
+        parts.append(f"[warn]{escape(uncertainty)}[/warn]")
+    return " ".join(parts)
 
 
 def _display_cap(items, limit):

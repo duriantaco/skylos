@@ -173,6 +173,8 @@ class ReferenceGraph:
         default_factory=lambda: defaultdict(set)
     )
     opaque_owners: set[str] = field(default_factory=set)
+    opaque_receiver_root: bool = False
+    opaque_receiver_owners: set[str] = field(default_factory=set)
     roots: set[str] = field(default_factory=set)
     uncertain_roots: set[str] = field(default_factory=set)
     receiver_roots: set[str] = field(default_factory=set)

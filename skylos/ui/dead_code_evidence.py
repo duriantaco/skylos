@@ -131,6 +131,43 @@ def dead_code_candidate_counts(result: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def dead_code_uncertainty_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary = result.get("analysis_summary") or {}
+    if not isinstance(summary, dict):
+        return {"count": 0, "reasons": {}}
+    evidence = summary.get("dead_code_evidence") or {}
+    if not isinstance(evidence, dict):
+        return {"count": 0, "reasons": {}}
+    classifications = evidence.get("classifications") or {}
+    if not isinstance(classifications, dict):
+        classifications = {}
+    count = max(0, _safe_int(classifications.get("uncertain")))
+    reasons = evidence.get("uncertainty_reasons") or {}
+    if not isinstance(reasons, dict):
+        reasons = {}
+    reasons = {
+        str(reason): _safe_int(n) for reason, n in reasons.items() if _safe_int(n) > 0
+    }
+    return {"count": count, "reasons": reasons}
+
+
+def dead_code_uncertainty_text(summary: dict[str, Any]) -> str:
+    count = summary.get("count", 0)
+    if not count:
+        return ""
+    noun = "symbol" if count == 1 else "symbols"
+    text = f"Usage remains uncertain for {count} {noun}."
+    reasons = summary.get("reasons") or {}
+    visible = sorted(reasons, key=lambda reason: (-_safe_int(reasons[reason]), reason))[
+        :3
+    ]
+    if visible:
+        text += " " + "; ".join(str(reason) for reason in visible) + "."
+    else:
+        text += " Their usage could not be confirmed."
+    return text
+
+
 def _ordered_events(item: dict[str, Any], classification: str) -> list[dict[str, Any]]:
     raw_events = item.get("dead_code_evidence")
     if not isinstance(raw_events, list):
