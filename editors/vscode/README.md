@@ -1,6 +1,6 @@
 # Skylos for VS Code
 
-> Bring dead code detection, security scanning, and AI-assisted remediation into VS Code for Python, TypeScript, JavaScript, and Go. Catch risky code, AI-generated defects, and unused code without leaving the editor.
+> Python dead code, security and secrets checks in VS Code, from the open-source [Skylos](https://github.com/duriantaco/skylos) CLI. TypeScript and JavaScript get narrower checks. Findings show the file, line and evidence; optional AI chat and fixes send code to your configured provider when you invoke them.
 
 <img src="media/vsce.gif" alt="Skylos VS Code Extension — inline dead code detection, security scanning, and CodeLens actions" width="800" />
 
@@ -12,17 +12,17 @@
 * **Optional Automation Activity**: Repo-level background triage fed by Skylos automation state when you explicitly use it
 * **AI Security Copilot Chat**: Sidebar chat panel to ask questions about findings, get explanations, and apply fixes from code blocks
 * **Auto-Remediation**: One-click "Fix All" with severity picker, progress tracking, and dry-run preview mode
-* **Optional Real-Time AI Assist**: Opt-in bug detection as you type using GPT, Claude, or a local model
+* **Optional Edit-Time Verification**: Opt-in CLI verification of changed functions after you pause typing
 * **Multi-Provider Support**: OpenAI, Anthropic, or any OpenAI-compatible local server (Ollama, LM Studio, LocalAI, vLLM)
 * **CodeLens Buttons**: Contextual "Fix with AI Assist", "Preview Engine Fix", "Ignore", and "Dismiss" actions appear on relevant lines
-* **Smart Caching**: Only re-analyzes functions that actually changed
-* **Multi-Language**: Python, TypeScript, JavaScript, TSX, JSX, Go
+* **Function Caching**: Reuses recent verification results for unchanged functions
+* **Multi-Language**: Python (deepest), TypeScript, JavaScript, TSX and JSX. Go dead-code and security checks need the separately built `skylos-go` engine, which `pip install skylos` does not include
 * **Engine-backed cleanup previews**: Safe cleanup actions are previewed from Skylos engine output when an engine patch is available
 * **Framework-Aware Detection**: Handles Flask, Django, FastAPI routes and decorators
 * **Secrets Scanning**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
-* **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
+* **Dangerous Patterns**: Flags risky uses of `eval/exec`, command execution, `pickle.load/loads`, `yaml.load` without SafeLoader, and weak hashes. See the [rules reference](https://docs.skylos.dev/rules-reference).
 
-Static analysis runs locally on your machine. AI Assist features are optional; they only send code to a configured provider when you explicitly use AI Assist commands or enable real-time AI Assist.
+Analysis runs through your local Skylos CLI. AI chat and fixes are optional and send code to your configured provider when invoked. CLI network lookups and Cloud sync follow your CLI configuration.
 
 ## How it works
 
@@ -33,17 +33,19 @@ skylos <workspace-folder> --json -c <confidence> [--secrets] [--danger] [--quali
 ```
 
 **Optional AI Assist**
-Manual AI Assist commands and chat use your configured provider. Real-time AI Assist is off by default; when enabled, the extension waits for idle, extracts changed functions, and sends them to the configured AI provider.
+Manual AI Assist commands and chat use your configured provider. Optional edit-time verification is off by default; when enabled, the extension waits for idle and runs `skylos verify --stdin` with the unsaved file and changed-function line range. That edit-time path uses the CLI verifier and does not call a model provider.
 
 ## Requirements
 
 1. Python 3.10+
 2. Skylos engine installed (`pip install skylos`) and available on `PATH`, or set an explicit path via `skylos.path`
-3. (Optional) OpenAI or Anthropic API key for cloud AI features, or a local AI server for fully offline analysis
+3. (Optional) OpenAI or Anthropic API key for AI chat and fixes, or an OpenAI-compatible local server
 
 ## Installation
 
-Install `Skylos` for VS Code from the marketplace.
+Install [Skylos](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension) (`oha.skylos-vscode-extension`) from the Visual Studio Marketplace.
+
+An Open VSX listing has not been published yet. In editors that use Open VSX, install a Skylos `.vsix` package using **Extensions: Install from VSIX**. The contributing section below explains how to package one locally.
 
 Make sure skylos runs in a terminal:
 ```bash
@@ -69,24 +71,21 @@ Open the VS Code walkthrough **Get Started with Skylos** or run:
 
 ### Basic
 
-- **Save any file** → Skylos CLI refreshes findings for that file
-- **Type and pause** → nothing leaves your machine unless `skylos.enableRealtimeAI` is enabled
+- **Save a supported file** → Skylos CLI refreshes findings for that file
+- **Type and pause** → optional edit-time verification runs only when `skylos.enableRealtimeAI` is enabled
 - **Click "Fix with AI Assist"** on any error line to auto-fix
 - **Command Palette** → `Skylos: Scan Workspace` for a full project scan
 
-### Optional Real-Time AI Assist
+### Optional Edit-Time Verification
 
-Real-time AI is off by default so normal static scans do not make network calls. To enable it:
+Edit-time verification is off by default. To enable it:
 
 1. Set `skylos.enableRealtimeAI` to `true`
-2. Configure an AI Assist provider or local OpenAI-compatible server
-3. Optionally set `skylos.streamingInline` to `true` for ghost-text streaming
+2. Make sure your Skylos CLI supports `skylos verify --stdin`
 
-When enabled, typing in a supported file starts analysis after the idle delay. If streaming inline is also enabled, `analyzing...` ghost text appears on function lines and streamed findings are rendered inline until normal diagnostics take over.
+When enabled in a trusted workspace, typing in a supported file starts CLI verification after the idle delay. Findings appear in the Review Queue and editor diagnostics. No model provider or API key is needed for this path; CLI dependency checks may query package registries.
 
-If you start typing again during analysis, the previous stream is cancelled and a new one starts.
-
-To disable all automatic AI Assist, keep `skylos.enableRealtimeAI` set to `false`.
+Keep `skylos.enableRealtimeAI` set to `false` to disable edit-time verification. You can still invoke AI chat and fixes manually.
 
 ### AI Security Copilot Chat
 
@@ -128,16 +127,16 @@ Fix multiple findings at once:
 4. No files are modified
 
 **Safety:**
-- Dead code findings are skipped unless Skylos provides an engine-backed cleanup patch
+- Fix All skips dead code findings; use the separate engine-backed cleanup preview for dead code
 - Capped at 50 findings per run (change with `skylos.autoFixMaxFindings`)
 - 200ms delay between API calls to avoid rate limits
 - Cancellable via the progress notification
-- Preview-first mode (`skylos.fixPreviewFirst`, on by default) — always shows a diff before applying
-- Optional post-fix validation command (`skylos.postFixCommand`) — runs your tests/linter after each fix, with one-click undo if it fails
+
+For individual **Fix Issue with AI Assist** actions, `skylos.fixPreviewFirst` shows a diff before applying and `skylos.postFixCommand` can run your tests or linter afterwards. Fix All does not use those settings; use Dry Run to review its proposed changes first.
 
 ### Local AI (Ollama, LM Studio, etc.)
 
-You can use any OpenAI-compatible local server instead of a cloud API. No API key needed — everything stays on your machine.
+You can use an OpenAI-compatible local server instead of a cloud API. No API key is needed for the extension's local provider. AI requests stay on your machine when the configured server runs there.
 
 **Setup:**
 
@@ -165,7 +164,7 @@ You can use any OpenAI-compatible local server instead of a cloud API. No API ke
 }
 ```
 
-That's it — 3 lines. All AI features (inline analysis, chat, auto-fix) work with local models. No API key, no cloud, everything stays on your machine.
+AI chat and fixes use this server. Optional edit-time verification continues to use the Skylos CLI.
 
 ### Review Queue Filters
 
@@ -234,9 +233,9 @@ Open Settings → Extensions → Skylos (or settings.json):
 |---------|------|---------|-------------|
 | `skylos.path` | string | `"skylos"` | Path to the Skylos executable |
 | `skylos.confidence` | number | `80` | Confidence threshold (0-100) |
-| `skylos.excludeFolders` | string[] | `["venv",".venv","build","dist",".git","__pycache__"]` | Exclude these folders |
+| `skylos.excludeFolders` | string[] | `["venv",".venv","build","dist",".git","__pycache__","node_modules",".next"]` | Exclude these folders |
 | `skylos.runOnSave` | boolean | `true` | Run Skylos on save |
-| `skylos.scanOnOpen` | boolean | `true` | Auto scan the first supported file opened in the session |
+| `skylos.scanOnOpen` | boolean | `false` | Auto scan the first supported file opened in the session |
 | `skylos.enableSecrets` | boolean | `true` | Include secrets scanning |
 | `skylos.enableDanger` | boolean | `true` | Include dangerous-pattern checks |
 | `skylos.enableDeadCode` | boolean | `true` | Show dead code findings (functions, imports, classes, variables) |
@@ -245,7 +244,7 @@ Open Settings → Extensions → Skylos (or settings.json):
 | `skylos.showPopup` | boolean | `true` | Show toast notification after scans |
 | `skylos.editorSignalLevel` | string | `"quiet"` | Editor visual noise: `quiet`, `balanced`, or `verbose` |
 | `skylos.codeLensMode` | string | `"highValue"` | CodeLens frequency: `off`, `activeLine`, `highValue`, or `all` |
-| `skylos.enableRealtimeAI` | boolean | `false` | Automatically run AI Assist as you edit |
+| `skylos.enableRealtimeAI` | boolean | `false` | Run CLI verification after the edit idle delay |
 | `skylos.aiProvider` | string | `"openai"` | AI Assist provider: `"openai"`, `"anthropic"`, or `"local"` |
 | `skylos.openaiBaseUrl` | string | `"https://api.openai.com"` | Base URL for OpenAI API |
 | `skylos.openaiApiKey` | string | `""` | OpenAI API key |
@@ -254,13 +253,12 @@ Open Settings → Extensions → Skylos (or settings.json):
 | `skylos.localModel` | string | `""` | Model name on your local server (e.g. `llama3.1`) |
 | `skylos.anthropicApiKey` | string | `""` | Anthropic API key |
 | `skylos.anthropicModel` | string | `"claude-sonnet-4-20250514"` | Anthropic model for analysis |
-| `skylos.idleMs` | number | `1000` | Milliseconds to wait before optional real-time AI Assist |
+| `skylos.idleMs` | number | `1000` | Milliseconds to wait before optional edit-time verification |
 | `skylos.popupCooldownMs` | number | `8000` | Cooldown between AI popups (ms) |
-| `skylos.streamingInline` | boolean | `false` | Show streaming ghost text when real-time AI Assist is enabled |
 | `skylos.autoFixMaxFindings` | number | `50` | Max findings to auto-fix per run (1-200) |
 | `skylos.diffBase` | string | `"origin/main"` | Git ref for delta mode base |
-| `skylos.fixPreviewFirst` | boolean | `true` | Always show diff preview before applying AI Assist fixes |
-| `skylos.postFixCommand` | string | `""` | Shell command to run after AI Assist fix (e.g. `npm test`, `pytest -x`) |
+| `skylos.fixPreviewFirst` | boolean | `true` | Show a diff before applying individual AI Assist fixes |
+| `skylos.postFixCommand` | string | `""` | Shell command after an individual AI Assist fix (e.g. `npm test`, `pytest -x`) |
 
 ## Keyboard Shortcuts
 
@@ -290,11 +288,12 @@ Open Settings → Extensions → Skylos (or settings.json):
 
 ## Privacy
 
-- Static analysis runs entirely on your machine
-- AI features send only changed function code to your configured provider (OpenAI/Anthropic/local server)
-- Chat messages are sent to your configured provider — no third parties
-- With a local AI server, all AI Assist analysis stays entirely on your machine
-- No telemetry, no data collection
+- Analysis executes through your local Skylos CLI; registry lookups and Cloud uploads depend on CLI settings
+- Manual AI fixes send the finding and enclosing function or nearby code to your configured provider
+- Chat sends your messages, recent conversation history, and the selected finding's file path and surrounding code to that provider
+- Recent chat history is saved locally in VS Code workspace state; **Clear Chat** removes it
+- AI requests stay on your machine when the configured model server is local
+- The extension does not add telemetry
 
 ## Contributing
 

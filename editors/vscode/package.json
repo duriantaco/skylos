@@ -1,28 +1,28 @@
 {
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
-  "description": "VS Code extension for dead code detection, Python SAST, security scanning, and AI code review for Python, TypeScript, JavaScript, and Go.",
-  "version": "0.6.0",
+  "description": "Python dead code, security and secrets checks in VS Code from the open-source Skylos CLI; narrower checks for TypeScript and JavaScript. Optional AI chat and fixes send code to your configured provider when invoked.",
+  "version": "0.6.1",
   "publisher": "oha",
   "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/duriantaco/skylos" },
-  "homepage": "https://docs.skylos.dev",
+  "homepage": "https://skylos.dev/vscode",
+  "galleryBanner": { "color": "#f6f8f9", "theme": "light" },
   "bugs": { "url": "https://github.com/duriantaco/skylos/issues" },
   "license": "Apache-2.0",
   "engines": { "vscode": "^1.87.0" },
   "categories": ["Linters"],
   "keywords": [
     "python",
-    "typescript",
-    "javascript",
-    "go",
-    "sast",
-    "security",
     "dead-code",
-    "static-analysis",
+    "unused-code",
+    "security",
+    "sast",
     "secrets-detection",
-    "ai-code-review",
-    "vscode"
+    "static-analysis",
+    "linter",
+    "typescript",
+    "javascript"
   ],
   "activationEvents": [
     "onStartupFinished",
@@ -223,9 +223,9 @@
           {
             "id": "skylos.setup.privacy",
             "title": "Choose AI privacy settings",
-            "description": "Static analysis runs locally and does not need AI. Optional AI features only run when you explicitly use AI commands or enable `skylos.enableRealtimeAI`.\n[Open Skylos AI Settings](command:workbench.action.openSettings?%5B%22skylos.enableRealtimeAI%22%5D)",
+            "description": "Scans use your local Skylos CLI. AI chat and fixes send code to your configured provider when invoked. Optional edit-time verification uses the CLI; CLI networking and Cloud sync follow its settings.\n[Open Skylos AI Settings](command:workbench.action.openSettings?%5B%22skylos.aiProvider%22%5D)",
             "completionEvents": [
-              "onSettingChanged:skylos.enableRealtimeAI"
+              "onSettingChanged:skylos.aiProvider"
             ]
           }
         ]
@@ -382,7 +382,7 @@
           "type": "number",
           "default": 1000,
           "minimum": 200,
-          "description": "Milliseconds of idle time before optional real-time AI Assist starts"
+          "description": "Milliseconds of idle time before optional CLI edit-time verification starts"
         },
         "skylos.popupCooldownMs": {
           "type": "number",
@@ -400,13 +400,13 @@
             "Anthropic (cloud)",
             "Local AI server (Ollama, LM Studio, LocalAI, vLLM — any OpenAI-compatible endpoint)"
           ],
-          "description": "AI Assist provider for optional analysis and fixes"
+          "description": "AI provider for optional chat and fixes"
         },
         "skylos.enableRealtimeAI": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "description": "Run AI Assist automatically as you edit. Static scans, Review Queue, and engine-backed findings work with this off."
+          "description": "Run Skylos CLI verification automatically after you pause editing. This path does not call a model provider. Static scans and manual AI chat/fixes work with this off."
         },
         "skylos.openaiBaseUrl": {
           "type": "string",
@@ -454,7 +454,7 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "description": "Show streaming inline ghost text when optional real-time AI Assist is enabled"
+          "description": "Reserved for streaming AI output; CLI edit-time verification currently uses normal diagnostics instead."
         },
         "skylos.enableDeadCode": {
           "type": "boolean",
@@ -481,13 +481,13 @@
         "skylos.fixPreviewFirst": {
           "type": "boolean",
           "default": true,
-          "description": "Always show a diff preview before applying AI Assist fixes"
+          "description": "Show a diff preview before applying individual AI Assist fixes. Fix All uses its separate Dry Run command."
         },
         "skylos.postFixCommand": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Shell command to run after applying an AI Assist fix (e.g. 'npm test', 'pytest -x'). Leave empty to skip."
+          "description": "Shell command after an individual AI Assist fix (e.g. 'npm test', 'pytest -x'). Fix All does not run this command. Leave empty to skip."
         }
       }
     }
@@ -496,7 +496,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "test": "npm run compile && node --test test/*.test.js",
-    "package": "vsce package"
+    "package": "vsce package --baseContentUrl https://github.com/duriantaco/skylos/blob/main/editors/vscode --baseImagesUrl https://github.com/duriantaco/skylos/raw/main/editors/vscode"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
