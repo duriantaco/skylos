@@ -11,6 +11,8 @@ from skylos.api._snippets import _resolve_snippet_path
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
+    dead_code_uncertainty_summary,
+    dead_code_uncertainty_text,
 )
 
 
@@ -120,6 +122,9 @@ def render_pretty_results(
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
+    uncertainty = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
+    if uncertainty:
+        console.print(Text(_sanitize_terminal_text(uncertainty), style="yellow"))
     _print_architecture_advisory_status(console, result)
     _print_publisher_review_status(console, result)
     _print_directory_rollups(console, result)

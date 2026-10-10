@@ -355,7 +355,7 @@ class TestPrintBadge:
 
         calls = [c.args[0] for c in mock_logger.console.print.call_args_list]
         badge_call = next(
-            (c for c in calls if isinstance(c, str) and "Dead_Code-Free" in c),
+            (c for c in calls if isinstance(c, str) and "Dead_Code-0_candidates" in c),
             None,
         )
         assert badge_call is not None

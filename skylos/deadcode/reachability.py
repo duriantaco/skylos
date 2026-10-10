@@ -108,6 +108,13 @@ class PythonReachabilityReport:
             uncertainty=False,
         ).intersection(candidates)
         exposed_receivers = set(self.graph.receiver_roots)
+        # An opaque reachable lookup can access arbitrary project callables.
+        # Preserve those as uncertainty, rather than leaving zero references
+        # that would be reported as unused despite conservative graph retention.
+        if self.graph.opaque_receiver_root or reached.intersection(
+            self.graph.opaque_receiver_owners
+        ):
+            exposed_receivers.update(candidates)
         for owner in reached:
             exposed_receivers.update(self.graph.receiver_edges.get(owner, ()))
         self.protected_keys = (

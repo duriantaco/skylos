@@ -391,7 +391,7 @@ def test_pyproject_entrypoint_is_reported_as_package_evidence(tmp_path):
     assert _event_kinds(by_name["app.main"]) >= {"package_entrypoint"}
 
 
-def test_dynamic_pattern_evidence_is_reported_from_analyzer(tmp_path):
+def test_receiver_pattern_does_not_imply_module_function_liveness(tmp_path):
     (tmp_path / "app.py").write_text(
         "\n".join(
             [
@@ -415,10 +415,12 @@ def test_dynamic_pattern_evidence_is_reported_from_analyzer(tmp_path):
     )
     by_name = _entries_by_name(result)
 
-    assert by_name["app.handle_login"]["classification"] == "alive"
-    assert _event_kinds(by_name["app.handle_login"]) >= {"dynamic_pattern"}
+    # Box has no handle_login member. Its lookup cannot call this unrelated
+    # module-level function merely because the attribute spelling matches.
+    assert by_name["app.handle_login"]["classification"] == "likely_dead"
+    assert "dynamic_pattern" not in _event_kinds(by_name["app.handle_login"])
     assert "reachable_from_root" not in _event_kinds(by_name["app.handle_login"])
-    assert "app.handle_login" not in _unused_full_names(result, "unused_functions")
+    assert "app.handle_login" in _unused_full_names(result, "unused_functions")
 
 
 def test_unverified_attribute_name_match_is_context_not_liveness(tmp_path):
