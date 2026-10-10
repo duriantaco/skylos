@@ -3708,6 +3708,26 @@ class Skylos:
                 result["analysis_summary"]["review_context"] = dict(
                     self._review_context
                 )
+            if (enable_quality or enable_danger) and not first_is_symlink:
+                from skylos.security.contracts import resolve_diff_base_ref
+                from skylos.security.regression_gate import collect_control_regressions
+
+                diff_base = resolve_diff_base_ref(root)
+                if diff_base:
+                    try:
+                        comparison_base = (
+                            _working_tree_diff_start(GitContext.from_path(root), diff_base)
+                            or diff_base
+                        )
+                        result["quality"] = collect_control_regressions(
+                            path, project_cfg, comparison_base
+                        )
+                        result["analysis_summary"]["quality_count"] = len(result["quality"])
+                    except Exception as exc:
+                        result["analysis_errors"].append(_analysis_error_payload(
+                            root, exc, kind="security_regression_unavailable"
+                        ))
+                        result["analysis_summary"]["analysis_error_count"] = len(result["analysis_errors"])
             if first_is_symlink and required_config_rules:
                 result["analysis_errors"].append(
                     _analysis_error_payload(
@@ -4378,7 +4398,11 @@ class Skylos:
         ):
             try:
                 detected_changes = set()
-                for revision in ("HEAD", "--cached"):
+                from skylos.security.contracts import resolve_diff_base_ref
+
+                signal_base = resolve_diff_base_ref(root)
+                merge_base = _working_tree_diff_start(git_context, signal_base)
+                for revision in (merge_base or "HEAD", "--cached"):
                     diff_result = git_context.run(
                         "diff", "--name-only", "--no-relative", "-z", revision
                     )
@@ -4411,52 +4435,51 @@ class Skylos:
             for candidate in _scoped_changed_paths(root, path, diff_signal_files)
             if not should_exclude_path(candidate, project_root, regression_excludes)
         }
-        # Generic control-removal heuristics only apply to surviving source
-        # files. Explicit contracts can also describe deleted source files.
-        source_regression_files = (
-            scoped_changes.intersection(Path(file).resolve() for file in files)
-            if enable_quality and scoped_changes
-            else set()
-        )
         if (
-            source_regression_files
-            and enable_quality
+            diff_signal_files
+            and (enable_quality or enable_danger)
             and "SKY-L021" not in project_ignore
         ):
-            from skylos.rules.quality.regression import detect_security_regressions
             from skylos.security.contracts import resolve_diff_base_ref
+            from skylos.security.regression_diff import (
+                SOURCE_SUFFIXES,
+                changed_sources,
+                compare_source_controls,
+            )
 
             try:
                 diff_base = resolve_diff_base_ref(root)
-
-                for cf in sorted(source_regression_files):
-                    rel_cf = git_context.relative_path(cf)
-                    if rel_cf is None:
+                comparison_base = (
+                    _working_tree_diff_start(git_context, diff_base)
+                    or diff_base or "HEAD"
+                )
+                signaled = {
+                    (Path(item) if Path(item).is_absolute() else Path(root) / item).resolve()
+                    for item in diff_signal_files
+                }
+                for change in changed_sources(git_context, comparison_base).values():
+                    cf = git_context.root / change.path
+                    old_cf = git_context.root / (change.base_path or change.path)
+                    if not {cf, old_cf}.intersection(signaled):
                         continue
-                    merge_base = _working_tree_diff_start(git_context, diff_base)
-                    if merge_base:
-                        diff_cmd = ["diff", merge_base]
-                    elif diff_base:
-                        diff_cmd = ["diff", f"{diff_base}...HEAD"]
-                    else:
-                        diff_cmd = ["diff", "HEAD"]
-                    diff_options = [
-                        "--no-relative",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "--",
-                        f":(literal){rel_cf}",
-                    ]
-                    diff_result = git_context.run(*diff_cmd, *diff_options)
-                    if diff_result.returncode != 0 and diff_base:
-                        diff_result = git_context.run("diff", "HEAD", *diff_options)
-                    if diff_result.returncode == 0 and diff_result.stdout.strip():
-                        reg_findings = detect_security_regressions(
-                            diff_result.stdout,
-                            str(cf),
+                    if old_cf.suffix.lower() not in SOURCE_SUFFIXES:
+                        continue
+                    if not _scoped_changed_paths(root, path, (cf, old_cf)):
+                        continue
+                    if should_exclude_path(old_cf, project_root, regression_excludes):
+                        continue
+                    try:
+                        all_quality.extend(
+                            compare_source_controls(git_context, comparison_base, change)
                         )
-                        all_quality.extend(reg_findings)
-            except Exception:
+                    except Exception as exc:
+                        analysis_errors.append(_analysis_error_payload(
+                            cf, exc, kind="security_regression_unavailable"
+                        ))
+            except Exception as exc:
+                analysis_errors.append(_analysis_error_payload(
+                    root, exc, kind="security_regression_unavailable"
+                ))
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 

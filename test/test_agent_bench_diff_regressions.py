@@ -125,13 +125,15 @@ def test_removed_ownership_check_flask():
     assert "update_user" in findings[0]["message"]
 
 
-def test_ownership_check_replaced_by_helper_is_ignored():
+def test_ownership_check_replaced_by_unproven_helper_is_reported():
     new = FA_ITEMS_OLD.replace(
         "    if not current_user.is_superuser and (item.owner_id != current_user.id):\n"
         '        raise HTTPException(status_code=403, detail="Not enough permissions")\n',
         "    ensure_item_owner(item, current_user)\n",
     )
-    assert _l021(FA_ITEMS_OLD, new, "backend/app/api/routes/items.py") == []
+    findings = _l021(FA_ITEMS_OLD, new, "backend/app/api/routes/items.py")
+    assert len(findings) == 1
+    assert findings[0]["control_type"] == "permission"
 
 
 def test_not_found_check_removal_is_not_ownership():

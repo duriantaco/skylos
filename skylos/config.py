@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
+POLICY_BASE_ENV_VAR = "SKYLOS_POLICY_BASE"
 
 
 class ConfigError(ValueError):
@@ -175,6 +176,20 @@ def load_config(start_path, config_file=None) -> dict:
         current = current.parent
 
     explicit_config = resolve_config_file_path(config_file)
+    policy_base = os.environ.get(POLICY_BASE_ENV_VAR)
+    if policy_base:
+        from skylos.cicd.policy import load_base_policy
+
+        user_cfg, synced_cfg = load_base_policy(current, policy_base)
+        # An explicitly supplied operator file remains supported. Repository
+        # discovery and synced policy come exclusively from the selected base.
+        if explicit_config is not None:
+            user_cfg = _load_toml_user_config(explicit_config, explicit=True)
+        final_cfg = _merge_user_config(copy.deepcopy(DEFAULTS), synced_cfg)
+        final_cfg = _merge_user_config(final_cfg, user_cfg)
+        return _finalize_loaded_config(
+            _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
+        )
     if explicit_config is None:
         root_config, sync_config = _find_config_paths(current)
     else:
@@ -378,6 +393,10 @@ def _load_synced_config(sync_config: Path) -> dict:
     if not isinstance(raw, dict):
         return {}
 
+    return _normalize_synced_config(raw)
+
+
+def _normalize_synced_config(raw: dict) -> dict:
     normalized = dict(raw)
     alias_map = {
         "complexity_threshold": "complexity",

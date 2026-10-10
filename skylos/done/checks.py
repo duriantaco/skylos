@@ -1232,6 +1232,13 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
 # Registry
 # ---------------------------------------------------------------------------
 
+
+def _check_security_controls(ctx: CheckContext) -> CheckResult:
+    from skylos.done.security_controls import check_security_controls
+
+    return check_security_controls(ctx)
+
+
 CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     # id: (function, rule shown when the check is skipped or off)
     "tests_pass": (check_tests_pass, RULE_TESTS_PASS),
@@ -1242,6 +1249,7 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "changed_lines_checked": (_check_changed_lines, "SKY-A120"),
     "test_special_casing": (check_test_special_casing, "SKY-A115"),
     "silenced_checks": (check_silenced_checks, "SKY-A119"),
+    "security_controls": (_check_security_controls, "SKY-L021"),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
@@ -1249,6 +1257,7 @@ RUN_ORDER = (
     "test_tampering",
     "test_special_casing",
     "silenced_checks",
+    "security_controls",
     "secrets",
     "unknown_imports",
     "tests_pass",

@@ -9,6 +9,7 @@ and permission checks.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from skylos.constants import get_non_library_dir_kind
 
@@ -152,14 +153,36 @@ def _removed_csrf_protection(line: str) -> str | None:
 def detect_security_regressions(
     diff_text: str,
     file_path: str,
+    *,
+    old_source: str | None = None,
+    new_source: str | None = None,
+    project_root: str | Path | None = None,
 ) -> list[dict]:
     if _is_test_file(file_path):
         return []
 
     findings: list[dict] = []
     current_line = 0
+    current_old_line = 0
+    auth_changes = None
+    handled_auth_lines = set()
+    handled_auth_decorators = set()
+    if str(file_path).lower().endswith(".py"):
+        from skylos.security.auth_regressions import python_auth_changes
+
+        auth_changes = python_auth_changes(
+            diff_text, old_source, new_source, _AUTH_DECORATORS,
+            allow_django_proofs=not _project_shadows_django(project_root, file_path),
+        )
+        if auth_changes is not None:
+            changes, handled_auth_lines, handled_auth_decorators = auth_changes
+            findings.extend(
+                _make_finding(file_path, line, message, control_type="auth")
+                for line, message in changes
+            )
 
     removed_lines: list[tuple[int, str]] = []
+    removed_old_lines = []
     added_lines: list[tuple[int, str]] = []
 
     for raw_line in diff_text.splitlines():
@@ -167,17 +190,22 @@ def detect_security_regressions(
             match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw_line)
             if match:
                 current_line = int(match.group(1)) - 1
+                old_match = re.match(r"@@ -(\d+)", raw_line)
+                current_old_line = int(old_match.group(1)) - 1
             continue
 
         if raw_line.startswith("-") and not raw_line.startswith("---"):
+            current_old_line += 1
             removed_lines.append((current_line, raw_line[1:]))
+            removed_old_lines.append(current_old_line)
         elif raw_line.startswith("+") and not raw_line.startswith("+++"):
             current_line += 1
             added_lines.append((current_line, raw_line[1:]))
         else:
             current_line += 1
+            current_old_line += 1
 
-    for line_no, line in removed_lines:
+    for removed_index, (line_no, line) in enumerate(removed_lines):
         m = _DECORATOR_RE.match("-" + line.lstrip())
         if not m:
             stripped = line.strip()
@@ -190,7 +218,10 @@ def detect_security_regressions(
 
         base_name = dec_name.split(".")[-1]
 
-        if base_name in _AUTH_DECORATORS:
+        if (
+            base_name in _AUTH_DECORATORS
+            and removed_old_lines[removed_index] not in handled_auth_decorators
+        ):
             findings.append(
                 _make_finding(
                     file_path,
@@ -436,9 +467,31 @@ def detect_security_regressions(
             )
 
     findings.extend(
-        _detect_route_guard_regressions(diff_text, file_path, findings)
+        _detect_route_guard_regressions(
+            diff_text, file_path, findings, handled_auth_lines=handled_auth_lines
+        )
     )
     return findings
+
+
+def _project_shadows_django(project_root, file_path):
+    if project_root is None:
+        return False
+    root = Path(project_root).resolve()
+    source = Path(file_path)
+    source = source if source.is_absolute() else root / source
+    roots = {root, root / "src"}
+    current = source.parent.resolve()
+    while current.is_relative_to(root):
+        roots.add(current)
+        if current == root:
+            break
+        current = current.parent
+    return any(
+        (directory / name).exists() or (directory / name).is_symlink()
+        for directory in roots
+        for name in ("django.py", "django")
+    )
 
 
 def _make_finding(
@@ -510,10 +563,6 @@ _DENY_RE = re.compile(
     r"(?:raise|throw|return)\b.*\b40[13]\b|"
     r"Not enough permissions|permission denied)",
     re.IGNORECASE,
-)
-_GUARD_HELPER_RE = re.compile(
-    r"(?i)\b(?:\w*owner\w*|\w*permission\w*|authori[sz]e\w*|can_\w+|"
-    r"ensure_\w+|require_\w+|check_\w+|assert_\w+|verify_\w+)\s*\("
 )
 
 
@@ -622,7 +671,7 @@ def _route_guard_finding(file_path, line, message, control_type="auth") -> dict:
 
 
 def _detect_route_guard_regressions(
-    diff_text: str, file_path: str, existing: list[dict]
+    diff_text: str, file_path: str, existing: list[dict], *, handled_auth_lines=()
 ) -> list[dict]:
     entries = _parse_diff_entries(diff_text)
     if not entries:
@@ -648,7 +697,9 @@ def _detect_route_guard_regressions(
     if lower_path.endswith(_JS_SUFFIXES):
         _express_middleware_regressions(entries, add)
     if lower_path.endswith((".py", *_JS_SUFFIXES)):
-        _ownership_check_regressions(entries, deleted_blocks, add)
+        _ownership_check_regressions(
+            entries, deleted_blocks, add, handled_auth_lines=handled_auth_lines
+        )
     return findings
 
 
@@ -803,21 +854,21 @@ def _ownership_guards(entries, kinds: set[str]):
     return guards
 
 
-def _ownership_check_regressions(entries, deleted_blocks, add) -> None:
+def _ownership_check_regressions(
+    entries, deleted_blocks, add, *, handled_auth_lines=()
+) -> None:
     removed = [
         (index, entry, span)
         for index, entry, span in _ownership_guards(entries, {" ", "-"})
-        if entry[0] == "-" and all(item[0] == "-" for item in span)
+        if entry[0] == "-"
+        and entry[1] not in handled_auth_lines
+        and all(item[0] == "-" for item in span)
     ]
     if not removed:
         return
-    added_guards = [g for g in _ownership_guards(entries, {"+"})]
-    added_helper = any(
-        kind == "+" and _GUARD_HELPER_RE.search(text)
-        for kind, _, text, _, _ in entries
-    )
-    if added_guards or added_helper:
-        return
+    # A similarly named helper or a guard elsewhere in the file is not proof
+    # that this handler still rejects unauthorized callers. Proven direct
+    # Django replacements are handled above with complete before/after ASTs.
     for index, entry, _ in removed:
         _, line, text, block, _ = entry
         if block in deleted_blocks:

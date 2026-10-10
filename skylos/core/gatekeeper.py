@@ -238,6 +238,29 @@ def _quality_findings_with_custom_rules(results, *, gate_only=False):
     return quality
 
 
+def _security_control_regressions(results):
+    """Control removals cannot spend the ordinary quality/high issue allowance."""
+    regressions = []
+    seen = set()
+    for category in ("quality", "danger"):
+        for finding in results.get(category, []) or []:
+            if not isinstance(finding, dict):
+                continue
+            if not (
+                (
+                    finding.get("rule_id") == "SKY-L021"
+                    or finding.get("kind") == "security_regression"
+                )
+                and str(finding.get("severity", "")).upper() in {"HIGH", "CRITICAL"}
+            ):
+                continue
+            key = json.dumps(finding, sort_keys=True, default=str)
+            if key not in seen:
+                regressions.append(finding)
+                seen.add(key)
+    return regressions
+
+
 def _count_noun(count, singular, plural=None):
     return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
@@ -573,6 +596,16 @@ def check_gate(results, config, strict=False, provenance=None):
         )
 
     passed = _apply_gate_thresholds(reasons, gate_config, _gate_issue_groups(**found))
+    regressions = _security_control_regressions(results)
+    if regressions:
+        reasons.append(
+            GateReason(
+                _count_noun(len(regressions), "security control regression")
+                + " (security controls must be preserved)",
+                regressions,
+            )
+        )
+        passed = False
 
     # Agent-aware gating: apply stricter thresholds to AI-authored files
     agent_cfg = gate_config.get("agent")
@@ -706,11 +739,17 @@ def _build_summary_rows(
     secrets_count,
     dependency_count,
     dead_code_count,
+    security_regression_count=0,
 ):
     return [
         f"| Security (critical) | {critical_count} |",
         f"| Security (high) | {high_count} |",
         f"| Security (total) | {security_count} |",
+        *(
+            [f"| Security control regressions | {security_regression_count} |"]
+            if security_regression_count
+            else []
+        ),
         f"| Reliability | {reliability_count} |",
         f"| AI defects | {ai_defects_count} |",
         f"| Quality | {quality_count} |",
@@ -771,6 +810,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
             secrets_count=len(secrets),
             dependency_count=len(dependencies),
             dead_code_count=dead_code_count,
+            security_regression_count=len(_security_control_regressions(results)),
         ),
         "",
         f"**Result: {icon} {status}**",

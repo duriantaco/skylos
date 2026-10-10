@@ -45,7 +45,12 @@ def _cicd_load_results(args, *, console_factory, load_config_func):
         include_review_context, include_review_proofs = review_scan_requirements(
             project_root
         )
-        analyze_kwargs = {"exclude_folders": sorted(exclude_folders)}
+        analyze_kwargs = {
+            "exclude_folders": sorted(exclude_folders),
+            "enable_danger": True,
+            "enable_quality": True,
+            "enable_secrets": True,
+        }
         if config_file is not None:
             analyze_kwargs["config_file"] = config_file
         if include_review_context:
@@ -422,7 +427,7 @@ def run_cicd_command(
     p_ci_gate.add_argument(
         "--diff-base",
         default=None,
-        help="Base ref for provenance detection (default: auto-detect)",
+        help="Compare security controls and use policy from this base ref (default: auto-detect in PR CI)",
     )
 
     p_ci_ann = cicd_sub.add_parser("annotate", help="Emit GitHub Actions annotations")
@@ -472,37 +477,67 @@ def run_cicd_command(
         return _run_cicd_init(cicd_args, console)
 
     if cicd_args.cicd_cmd == "gate":
-        results, exit_code = _cicd_load_results(
-            cicd_args,
-            console_factory=console_factory,
-            load_config_func=load_config_func,
+        from skylos.cicd.policy import base_policy_context
+        from skylos.core.ci_env import github_or_ci_base_ref
+        from skylos.security.contracts import resolve_diff_base_ref
+
+        # CI supplies the comparison ref; repository TOML/YAML cannot choose it.
+        cicd_args.diff_base = cicd_args.diff_base or resolve_diff_base_ref(
+            cicd_args.path
         )
-        if exit_code:
-            return exit_code
+        if not cicd_args.diff_base:
+            ci_base = github_or_ci_base_ref()
+            if ci_base:
+                cicd_args.diff_base = (
+                    ci_base if ci_base.startswith("origin/") else f"origin/{ci_base}"
+                )
+        try:
+            with base_policy_context(cicd_args.path, cicd_args.diff_base):
+                results, exit_code = _cicd_load_results(
+                    cicd_args,
+                    console_factory=console_factory,
+                    load_config_func=load_config_func,
+                )
+                if exit_code:
+                    return exit_code
+                config_path = (
+                    cicd_args.path
+                    if cicd_args.diff_base
+                    else results.get("project_root", ".")
+                )
+                config = load_config_func(config_path)
+                if cicd_args.input_file and cicd_args.diff_base:
+                    from skylos.security.regression_gate import (
+                        recheck_control_regressions,
+                    )
 
-        config = load_config_func(results.get("project_root", "."))
+                    results = recheck_control_regressions(
+                        results, cicd_args.path, config
+                    )
+                gate_cfg = config.get("gate", {})
+                prov_report = None
+                if gate_cfg.get("agent"):
+                    try:
+                        from skylos.api import get_git_root
+                        from skylos.reporting.provenance import analyze_provenance
 
-        gate_cfg = config.get("gate", {})
-        prov_report = None
-        if gate_cfg.get("agent"):
-            try:
-                from skylos.api import get_git_root
-                from skylos.reporting.provenance import analyze_provenance
-
-                git_root = get_git_root() or results.get("project_root", ".")
-                diff_base = getattr(cicd_args, "diff_base", None)
-                prov_report = analyze_provenance(git_root, base_ref=diff_base)
-            except Exception:
-                pass
-
-        return run_gate_interaction_func(
-            result=results,
-            config=config,
-            strict=cicd_args.strict,
-            summary=cicd_args.summary,
-            provenance=prov_report,
-            advisory=cicd_args.advisory,
-        )
+                        git_root = get_git_root() or results.get("project_root", ".")
+                        prov_report = analyze_provenance(
+                            git_root, base_ref=cicd_args.diff_base
+                        )
+                    except Exception:
+                        pass
+                return run_gate_interaction_func(
+                    result=results,
+                    config=config,
+                    strict=cicd_args.strict,
+                    summary=cicd_args.summary,
+                    provenance=prov_report,
+                    advisory=cicd_args.advisory,
+                )
+        except Exception as exc:
+            console.print(f"[bold red]PR gate failed: {escape(str(exc))}[/bold red]")
+            return 1
 
     if cicd_args.cicd_cmd == "annotate":
         results, exit_code = _cicd_load_results(
