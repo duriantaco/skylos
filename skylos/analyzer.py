@@ -2947,9 +2947,13 @@ class Skylos:
                     defn._attr_name_ref_count += 1
 
         if used_attr_context:
-            context_by_attr = defaultdict(list)
-            for attr_name, mod, cls_ctx, line_no in used_attr_context:
-                context_by_attr[attr_name].append((mod, cls_ctx, line_no))
+            from skylos.analysis.attribute_refs import AttributeContextIndex
+
+            attribute_contexts = AttributeContextIndex(
+                used_attr_context,
+                definitions=self.defs,
+                compatible_family=_compatible_family,
+            )
 
             for defn in self.defs.values():
                 if not _compatible_family(defn, "python"):
@@ -2961,35 +2965,7 @@ class Skylos:
                 else:
                     continue
 
-                contexts = context_by_attr.get(defn.simple_name)
-                if not contexts:
-                    continue
-
-                if "." in defn.name:
-                    defn_mod = defn.name.rsplit(".")[0]
-                else:
-                    defn_mod = ""
-
-                if defn_mod:
-                    defn_pkg = defn_mod.split(".")[0]
-                else:
-                    defn_pkg = ""
-
-                for ctx_mod, ctx_cls, ctx_line in contexts:
-                    ctx_pkg = ctx_mod.split(".")[0] if ctx_mod else ""
-
-                    if ctx_mod == defn_mod:
-                        defn.heuristic_refs["same_file_attr"] = defn.heuristic_refs.get(
-                            "same_file_attr", 0.0
-                        ) + _heuristic_weights.get("same_file_attr", 1.0)
-                    elif ctx_pkg and defn_pkg and ctx_pkg == defn_pkg:
-                        defn.heuristic_refs["same_pkg_attr"] = defn.heuristic_refs.get(
-                            "same_pkg_attr", 0.0
-                        ) + _heuristic_weights.get("same_pkg_attr", 0.3)
-                    else:
-                        defn.heuristic_refs["global_attr"] = defn.heuristic_refs.get(
-                            "global_attr", 0.0
-                        ) + _heuristic_weights.get("global_attr", 0.1)
+                attribute_contexts.mark(defn, _heuristic_weights)
 
     def _mark_call_arg_method_refs(self):
         param_method_refs = getattr(self, "_param_method_refs", {})
