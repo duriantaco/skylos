@@ -8,6 +8,7 @@ import pytest
 
 import skylos.cli as cli
 from skylos.commands.scan_cmd import _build_ci_json_payload
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _report():
@@ -43,7 +44,9 @@ def _report():
 def _configure(monkeypatch, tmp_path, output_format, *, upload=False):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
-    (tmp_path / "app.py").write_text("def unused():\n    return 1\n", encoding="utf-8")
+    assert write_text_no_symlink(
+        tmp_path / "app.py", "def unused():\n    return 1\n", encoding="utf-8"
+    )
     argv = [
         "skylos",
         str(tmp_path),
