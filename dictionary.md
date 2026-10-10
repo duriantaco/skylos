@@ -731,6 +731,14 @@ uses project ignores, not inline comments, consistently across supported files.
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | varies | Circular dependency | Python |
 
+SKY-L009 does not assume ordinary `print()` or `pprint()` output is debugging.
+It reports explicit `DEBUG:`/`DBG:` labels, raw `locals()`/`globals()`/`vars()`
+or `.__dict__` dumps, and source-confirmed f-string debug expressions such as
+`f"{value=}"` as LOW advisories to review. Status messages, JSON, stderr output
+and ordinary representation formatting are accepted. Unlabelled prints such
+as `print(value)` can still be debugging, but intent cannot be established
+from that call alone. Debugger calls remain HIGH in CLI, script and test files.
+
 Architecture metrics include scanned TS/JS modules and use `package.json`
 workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
 interfaces, abstract classes, concrete classes, and functions as a file-level
