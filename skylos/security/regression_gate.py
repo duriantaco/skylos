@@ -10,6 +10,7 @@ from skylos.core.file_discovery import should_exclude_path
 from skylos.core.git_context import GitContext
 from skylos.security.regression_diff import (
     SOURCE_SUFFIXES,
+    _lexical_repository_path,
     changed_sources,
     compare_source_controls,
 )
@@ -47,16 +48,31 @@ def _merge_findings(result, generated):
     return merged
 
 
-def collect_control_regressions(path, config, base):
+def collect_control_regressions(path, config, base, *, changed_files=None):
     """Read changed controls even when a rename leaves no discoverable source."""
     if "SKY-L021" in (config.get("ignore") or []):
         return []
     requested = path if isinstance(path, (list, tuple)) else [path]
     targets = [Path(item).expanduser().resolve() for item in requested]
     context = GitContext.from_path(targets[0])
+    signaled = (
+        {
+            # Git identifies the tracked path, not a symlink's current target.
+            # Keep it selected so the guarded source reader can reject it.
+            _lexical_repository_path(context.root, item)
+            for item in changed_files
+        }
+        if changed_files is not None
+        else None
+    )
     excludes = parse_exclude_folders(config_exclude_folders=config.get("exclude"))
     generated = []
     for change in changed_sources(context, base).values():
+        if signaled is not None and not {
+            context.root / change.path,
+            context.root / (change.base_path or change.path),
+        }.intersection(signaled):
+            continue
         if _selected_change(change, context.root, targets, excludes):
             generated.extend(compare_source_controls(context, base, change))
     return generated

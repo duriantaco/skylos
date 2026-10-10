@@ -406,9 +406,11 @@ def rename_auth_repo(tmp_path):
     "destination, retained",
     [
         ("handlers.py", False),
+        ("handlers.vue", False),
         ("tests/test_handlers.py", False),
         (".venv/handlers.py", False),
         ("handlers.py", True),
+        ("handlers.vue", True),
         (None, False),
     ],
 )

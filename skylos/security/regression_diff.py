@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import difflib
+import os
 from pathlib import Path, PurePosixPath
 
 from skylos.cicd.policy import _base_text
@@ -33,6 +34,24 @@ class SourceChange:
     path: str
     base_path: str | None
     deleted: bool = False
+
+
+def _lexical_repository_path(root, path):
+    """Resolve a repository alias without following paths inside that repository."""
+    root = Path(root).resolve()
+    candidate = Path(path).expanduser()
+    candidate = Path(os.path.abspath(
+        candidate if candidate.is_absolute() else root / candidate
+    ))
+    if candidate.is_relative_to(root):
+        return candidate
+    for ancestor in (*reversed(candidate.parents), candidate):
+        try:
+            if ancestor.resolve() == root:
+                return root / candidate.relative_to(ancestor)
+        except (OSError, RuntimeError):
+            continue
+    return candidate
 
 
 def _valid_path(path):
@@ -82,7 +101,18 @@ def changed_sources(context, base):
 
 def compare_source_controls(context, base, change):
     """Classify at the old path; report at the surviving implementation's path."""
-    if change.deleted or change.base_path is None:
+    if change.deleted:
+        # Git can mark a tracked child deleted after its directory becomes a
+        # symlink. Reject that surviving path before accepting genuine removal.
+        current = context.root
+        for component in PurePosixPath(_valid_path(change.path)).parts:
+            current = current / component
+            if current.is_symlink():
+                raise ConfigError(
+                    "Compared security source must be readable, bounded and symlink-free"
+                )
+        return []
+    if change.base_path is None:
         return []
     before = _base_text(context, base, change.base_path)
     current = read_project_text_no_symlink(

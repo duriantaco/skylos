@@ -120,6 +120,48 @@ def test_vue_only_directory_and_file_list_have_no_analyzed_sources(tmp_path, as_
     assert result["analysis_summary"]["total_files"] == 0
 
 
+@pytest.mark.parametrize("suffix", [".vue", ".py"])
+@pytest.mark.parametrize("base", [None, "HEAD", "missing-base"])
+def test_nongit_changed_scan_only_skips_unrequested_unsupported_comparison(
+    tmp_path, monkeypatch, suffix, base
+):
+    if base is None:
+        monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    else:
+        monkeypatch.setenv("SKYLOS_DIFF_BASE", base)
+    source = VUE_COMPONENTS[2] if suffix == ".vue" else "def helper():\n    return 42\n"
+    changed = _write(tmp_path, f"App{suffix}", source)
+
+    _, result = _scan(str(tmp_path), changed_files={str(changed)})
+
+    errors = result.get("analysis_errors", [])
+    if suffix == ".vue" and base is None:
+        assert errors == []
+    else:
+        assert len(errors) == 1
+        assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert errors[0]["kind"] == "security_regression_unavailable"
+
+
+@pytest.mark.parametrize("marker", ["file", "dangling-symlink", "parent-symlink"])
+def test_vue_changed_scan_keeps_broken_git_history_visible(
+    tmp_path, monkeypatch, marker
+):
+    monkeypatch.delenv("SKYLOS_DIFF_BASE", raising=False)
+    root = tmp_path / "pkg" if marker == "parent-symlink" else tmp_path
+    component = _write(root, "App.vue", VUE_COMPONENTS[2])
+    _write(root, "app.py", "def helper():\n    return 42\n")
+    if marker == "file":
+        _write(tmp_path, ".git", "gitdir: missing-git-directory\n")
+    else:
+        (tmp_path / ".git").symlink_to(tmp_path / "missing-git-directory")
+
+    _, result = _scan(str(root), changed_files={str(component)})
+
+    assert len(result["analysis_errors"]) == 1
+    assert result["analysis_errors"][0]["kind"] == "security_regression_unavailable"
+
+
 @pytest.mark.parametrize(
     "suffix",
     sorted(
