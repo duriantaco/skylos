@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
+import math
 from pathlib import Path, PosixPath, WindowsPath
 import struct
 from typing import Any, Iterable
@@ -274,6 +275,11 @@ class AttributeContextIndex:
             if (
                 type(initial) not in _BUILTIN_NUMBERS
                 or type(weight) not in _BUILTIN_NUMBERS
+                # Different interpreter/compiler addition paths can propagate
+                # different NaN payloads. Preserve the original expression for
+                # nonfinite operands, without converting arbitrary-size ints.
+                or (type(initial) is float and not math.isfinite(initial))
+                or (type(weight) is float and not math.isfinite(weight))
             ):
                 return None
             values.append((marker, initial, weight, count))
