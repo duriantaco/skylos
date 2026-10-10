@@ -298,6 +298,7 @@ def generate_workflow(
         [
             '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
             '            pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
+            '            export SKYLOS_POLICY_BASE="$(git merge-base "$pr_base_ref" HEAD)"',
             (
                 f"            skylos {scan_target}{analysis_flags}{baseline_flag} "
                 '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
@@ -358,6 +359,16 @@ def generate_workflow(
     # The upload job owns default-branch pushes; the gate job covers the rest.
     gate_condition = "\n    if: github.event_name != 'push'" if upload_job else ""
     gate_advisory_flag = " --advisory" if advisory_gate else ""
+    gate_run = "\n".join(
+        [
+            '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
+            '            pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
+            f'            skylos cicd gate {scan_target} --input skylos-results.json --diff-base "$pr_base_ref" --summary{gate_advisory_flag}',
+            "          else",
+            f"            skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}",
+            "          fi",
+        ]
+    )
 
     header = _header_comment(
         gate_on_pr="pull_request" in triggers,
@@ -403,7 +414,8 @@ jobs:
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
-        run: skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}
+        run: |
+{gate_run}
 
       - name: GitHub Annotations
         if: always()

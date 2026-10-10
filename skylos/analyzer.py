@@ -389,16 +389,25 @@ def _relative_changed_file(root, changed_file):
         return str(changed_path)
 
 
-def _scoped_changed_paths(root, scan_paths, changed_files):
+def _scoped_changed_paths(root, scan_paths, changed_files, *, resolve_symlinks=True):
     """Keep changed paths inside the requested files/directories, even if deleted."""
     targets = scan_paths if isinstance(scan_paths, (list, tuple)) else [scan_paths]
-    targets = [Path(target).resolve() for target in targets]
+
+    def normalize(value):
+        value = Path(value).expanduser()
+        if resolve_symlinks:
+            return value.resolve()
+        from skylos.security.regression_diff import _lexical_repository_path
+
+        return _lexical_repository_path(root, Path(os.path.abspath(value)))
+
+    targets = [normalize(target) for target in targets]
     selected = set()
     for changed_file in changed_files or ():
         candidate = Path(changed_file)
-        candidate = (
+        candidate = normalize(
             candidate if candidate.is_absolute() else Path(root) / candidate
-        ).resolve()
+        )
         for target in targets:
             if candidate == target or (
                 target.is_dir() and candidate.is_relative_to(target)
@@ -442,6 +451,23 @@ def _working_tree_diff_start(context, diff_base):
         return (result.stdout or "").strip() or None
 
     return run_memo(("git-merge-base", str(context.root), diff_base), compute)
+
+
+def _requires_security_control_history(context, diff_base, changed_files):
+    from skylos.security.regression_diff import SOURCE_SUFFIXES
+
+    # Git history can contain supported source behind an unsupported rename.
+    # A damaged marker must remain visible rather than look like a non-Git scan.
+    return bool(
+        diff_base
+        or find_git_root(context.root) is not None
+        or context.env.get("GIT_DIR")
+        or any(
+            (directory / ".git").is_symlink()
+            for directory in (context.root, *context.root.parents)
+        )
+        or any(Path(item).suffix.lower() in SOURCE_SUFFIXES for item in changed_files)
+    )
 
 
 def _compute_git_diff_for_changed_file(root, rel_file, diff_base):
@@ -3692,6 +3718,65 @@ class Skylos:
                 result["analysis_summary"]["review_context"] = dict(
                     self._review_context
                 )
+            if (enable_quality or enable_danger) and not first_is_symlink:
+                from skylos.security.contracts import resolve_diff_base_ref
+                from skylos.security.regression_gate import collect_control_regressions
+
+                try:
+                    context = GitContext.from_path(root)
+                    diff_base = resolve_diff_base_ref(root)
+                    signals = changed_files
+                    if signals is None and not diff_base:
+                        detected = context.run(
+                            "diff", "--name-only", "--no-relative", "-z", "HEAD"
+                        )
+                        if detected.returncode == 0:
+                            signals = {
+                                str(context.root / name)
+                                for name in detected.stdout.split("\0") if name
+                            }
+                        elif _requires_security_control_history(context, None, ()):
+                            # A new Git repository has no HEAD to compare yet.
+                            # Existing or damaged history must fail visibly.
+                            repository = context.run("rev-parse", "--git-dir")
+                            history = context.run("rev-list", "--all", "--max-count=1")
+                            if (
+                                repository.returncode != 0
+                                or history.returncode != 0
+                                or history.stdout.strip()
+                            ):
+                                from skylos.config import ConfigError
+
+                                raise ConfigError(
+                                    "Could not inspect compared security controls"
+                                )
+                    if (diff_base or signals) and _requires_security_control_history(
+                        context, diff_base, signals or ()
+                    ):
+                        comparison_base = (
+                            _working_tree_diff_start(context, diff_base)
+                            or diff_base or "HEAD"
+                        )
+                        result["quality"] = collect_control_regressions(
+                            path,
+                            (
+                                {**project_cfg, "exclude": exclude_folders}
+                                if exclude_folders is not None else project_cfg
+                            ),
+                            comparison_base,
+                            changed_files=(
+                                _scoped_changed_paths(
+                                    root, path, signals, resolve_symlinks=False
+                                )
+                                if signals is not None else None
+                            ),
+                        )
+                        result["analysis_summary"]["quality_count"] = len(result["quality"])
+                except Exception as exc:
+                    result["analysis_errors"].append(_analysis_error_payload(
+                        root, exc, kind="security_regression_unavailable"
+                    ))
+                    result["analysis_summary"]["analysis_error_count"] = len(result["analysis_errors"])
             if first_is_symlink and required_config_rules:
                 result["analysis_errors"].append(
                     _analysis_error_payload(
@@ -4362,13 +4447,17 @@ class Skylos:
         ):
             try:
                 detected_changes = set()
-                for revision in ("HEAD", "--cached"):
+                from skylos.security.contracts import resolve_diff_base_ref
+
+                signal_base = resolve_diff_base_ref(root)
+                merge_base = _working_tree_diff_start(git_context, signal_base)
+                for revision in (merge_base or "HEAD", "--cached"):
                     diff_result = git_context.run(
                         "diff", "--name-only", "--no-relative", "-z", revision
                     )
                     if diff_result.returncode == 0:
                         detected_changes.update(
-                            str((git_context.root / name).resolve())
+                            str(git_context.root / name)
                             for name in diff_result.stdout.split("\0")
                             if name
                         )
@@ -4376,7 +4465,7 @@ class Skylos:
                     diff_signal_files = {
                         str(candidate)
                         for candidate in _scoped_changed_paths(
-                            root, path, detected_changes
+                            root, path, detected_changes, resolve_symlinks=False
                         )
                     }
             except Exception:
@@ -4395,52 +4484,57 @@ class Skylos:
             for candidate in _scoped_changed_paths(root, path, diff_signal_files)
             if not should_exclude_path(candidate, project_root, regression_excludes)
         }
-        # Generic control-removal heuristics only apply to surviving source
-        # files. Explicit contracts can also describe deleted source files.
-        source_regression_files = (
-            scoped_changes.intersection(Path(file).resolve() for file in files)
-            if enable_quality and scoped_changes
-            else set()
-        )
         if (
-            source_regression_files
-            and enable_quality
+            diff_signal_files
+            and (enable_quality or enable_danger)
             and "SKY-L021" not in project_ignore
         ):
-            from skylos.rules.quality.regression import detect_security_regressions
             from skylos.security.contracts import resolve_diff_base_ref
+            from skylos.security.regression_diff import (
+                SOURCE_SUFFIXES,
+                _lexical_repository_path,
+                changed_sources,
+                compare_source_controls,
+            )
 
             try:
                 diff_base = resolve_diff_base_ref(root)
-
-                for cf in sorted(source_regression_files):
-                    rel_cf = git_context.relative_path(cf)
-                    if rel_cf is None:
+                comparison_base = (
+                    _working_tree_diff_start(git_context, diff_base)
+                    or diff_base or "HEAD"
+                )
+                signaled = {
+                    _lexical_repository_path(root, item)
+                    for item in diff_signal_files
+                }
+                source_changes = {}
+                if _requires_security_control_history(git_context, diff_base, signaled):
+                    source_changes = changed_sources(git_context, comparison_base)
+                for change in source_changes.values():
+                    cf = git_context.root / change.path
+                    old_cf = git_context.root / (change.base_path or change.path)
+                    if not {cf, old_cf}.intersection(signaled):
                         continue
-                    merge_base = _working_tree_diff_start(git_context, diff_base)
-                    if merge_base:
-                        diff_cmd = ["diff", merge_base]
-                    elif diff_base:
-                        diff_cmd = ["diff", f"{diff_base}...HEAD"]
-                    else:
-                        diff_cmd = ["diff", "HEAD"]
-                    diff_options = [
-                        "--no-relative",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "--",
-                        f":(literal){rel_cf}",
-                    ]
-                    diff_result = git_context.run(*diff_cmd, *diff_options)
-                    if diff_result.returncode != 0 and diff_base:
-                        diff_result = git_context.run("diff", "HEAD", *diff_options)
-                    if diff_result.returncode == 0 and diff_result.stdout.strip():
-                        reg_findings = detect_security_regressions(
-                            diff_result.stdout,
-                            str(cf),
+                    if old_cf.suffix.lower() not in SOURCE_SUFFIXES:
+                        continue
+                    if not _scoped_changed_paths(
+                        root, path, (cf, old_cf), resolve_symlinks=False
+                    ):
+                        continue
+                    if should_exclude_path(old_cf, project_root, regression_excludes):
+                        continue
+                    try:
+                        all_quality.extend(
+                            compare_source_controls(git_context, comparison_base, change)
                         )
-                        all_quality.extend(reg_findings)
-            except Exception:
+                    except Exception as exc:
+                        analysis_errors.append(_analysis_error_payload(
+                            cf, exc, kind="security_regression_unavailable"
+                        ))
+            except Exception as exc:
+                analysis_errors.append(_analysis_error_payload(
+                    root, exc, kind="security_regression_unavailable"
+                ))
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 

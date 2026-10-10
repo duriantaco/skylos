@@ -4434,6 +4434,9 @@ class TestDiffFlag:
 
     def test_diff_keeps_selected_gpu_contract_prerequisite(self, monkeypatch):
         monkeypatch.setattr(
+            "skylos.cicd.policy.resolve_policy_base", lambda _path, _ref: "a" * 40
+        )
+        monkeypatch.setattr(
             cli.sys,
             "argv",
             [
@@ -4497,6 +4500,9 @@ class TestDiffFlag:
         assert [item["rule_id"] for item in output["reliability"]] == ["SKY-GPU000"]
 
     def test_diff_base_keeps_selected_gpu_contract_prerequisite(self, monkeypatch):
+        monkeypatch.setattr(
+            "skylos.cicd.policy.resolve_policy_base", lambda _path, _ref: "a" * 40
+        )
         monkeypatch.setattr(
             cli.sys,
             "argv",

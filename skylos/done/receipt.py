@@ -62,6 +62,7 @@ LABELS = {
     "changed_lines_checked": "Tests check the changed lines",
     "test_special_casing": "Code doesn't special-case the tests",
     "silenced_checks": "Linters, type checkers, scanners and CI not silenced",
+    "security_controls": "Security controls checked for removals",
 }
 # What went wrong when a check fails, for the verdict line.
 PROBLEMS = {
@@ -74,6 +75,7 @@ PROBLEMS = {
     "changed_lines_checked": "no test checks some changed lines",
     "test_special_casing": "code special-cases the tests",
     "silenced_checks": "linters, type checkers, scanners or CI were silenced",
+    "security_controls": "security controls were removed",
 }
 # What an unfinished check could not do.
 UNCHECKED = {
@@ -86,6 +88,7 @@ UNCHECKED = {
     "changed_lines_checked": "changed lines were not checked against the tests",
     "test_special_casing": "the code was not checked for test special-casing",
     "silenced_checks": "linter, type-checker, scanner and CI settings were not checked",
+    "security_controls": "security control changes were not checked",
 }
 FIXES = {
     "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
@@ -97,6 +100,7 @@ FIXES = {
     "changed_lines_checked": "Add a test assertion that fails when the listed line changes.",
     "test_special_casing": "Remove the code that answers the tests' exact inputs, detects the test run or rigs comparisons, and make the general code right.",
     "silenced_checks": "Put back the linter, type-checker, scanner and CI settings, and fix what they report instead. A person should change them.",
+    "security_controls": "Restore the removed security controls or use a proven authentication boundary that rejects unauthorized callers before the handler runs.",
 }
 
 

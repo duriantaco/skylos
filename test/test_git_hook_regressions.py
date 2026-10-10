@@ -82,7 +82,10 @@ def _commit(repo, *paths):
 
 
 @pytest.fixture(params=["ordinary", "linked"])
-def git_checkout(tmp_path, request):
+def git_checkout(tmp_path, request, monkeypatch):
+    # These hook fixtures compare local edits with their committed baseline.
+    # The CI runner's PR base can predate later fixture commits in a linked tree.
+    monkeypatch.setenv("SKYLOS_DIFF_BASE", "HEAD")
     repo = tmp_path / "source"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -97,6 +100,48 @@ def git_checkout(tmp_path, request):
         _git(repo, "worktree", "add", "-q", "-b", "scan-checkout", str(checkout))
         return checkout
     return repo
+
+
+def test_git_hook_ci_base_still_checks_committed_auth_removal(
+    git_checkout, monkeypatch
+):
+    repo = git_checkout
+    main_checkout = repo if repo.name == "source" else repo.parent / "source"
+    protected = (
+        "from django.contrib.auth.decorators import login_required\n\n"
+        "@login_required\n"
+        "def customer_export(request):\n"
+        "    return request.customer_data\n"
+    )
+    _write(main_checkout / "pkg" / "app.py", protected)
+    _commit(main_checkout, "pkg/app.py")
+    if repo == main_checkout:
+        _git(repo, "checkout", "-q", "-b", "auth-pr")
+    else:
+        _git(repo, "merge", "--ff-only", "main")
+    monkeypatch.delenv("SKYLOS_DIFF_BASE")
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    _hook_environment(repo, monkeypatch)
+    assert _regressions(".") == []
+
+    app = repo / "pkg" / "app.py"
+    _write(app, protected.replace("@login_required\n", ""))
+    _commit(repo, "pkg/app.py")
+
+    findings = _regressions(".")
+
+    assert {Path(finding["file"]).resolve() for finding in findings} == {
+        app.resolve()
+    }
+    assert any(
+        finding["severity"] == "HIGH" and finding["control_type"] == "auth"
+        for finding in findings
+    )
+    # A HEAD comparison is clean; only the committed PR base exposes this loss.
+    monkeypatch.setenv("SKYLOS_DIFF_BASE", "HEAD")
+    assert _regressions(".") == []
 
 
 def _hook_environment(repo, monkeypatch):

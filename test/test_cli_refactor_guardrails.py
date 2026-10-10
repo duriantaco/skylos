@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tomllib
 import types
@@ -14,6 +15,7 @@ import skylos.cli as cli
 from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
 from skylos.cli_core.main_parser import build_main_parser
 from skylos.commands.scan_cmd import run_scan_command
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
 from skylos.ui.help import COMMANDS
 
@@ -1396,24 +1398,55 @@ def test_provenance_command_json_output_prints_report(tmp_path):
     assert json.loads(mock_print.call_args.args[0])["summary"]["total_files"] == 0
 
 
-def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path):
+@pytest.mark.parametrize("gate_exit", [0, 1])
+def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path, gate_exit):
+    # A compared gate needs its own tracked base; CI's checkout is unrelated
+    # to this dispatch fixture and must not become its policy/security scope.
+    assert write_text_no_symlink(tmp_path / "example.py", "ANSWER = 42\n")
+    for arguments in (
+        ("init", "-q"),
+        ("add", "example.py"),
+        (
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--no-gpg-sign",
+            "-qm",
+            "gate fixture base",
+        ),
+    ):
+        subprocess.run(
+            ["git", *arguments], cwd=tmp_path, check=True, capture_output=True
+        )
     results_path = tmp_path / "results.json"
-    results_path.write_text(json.dumps({"project_root": str(tmp_path), "danger": []}))
+    result = {"project_root": str(tmp_path), "danger": [], "quality": []}
+    assert write_text_no_symlink(results_path, json.dumps(result))
     from skylos.commands.cicd_cmd import run_cicd_command
 
-    mock_gate = Mock(return_value=0)
+    mock_gate = Mock(return_value=gate_exit)
 
     exit_code = run_cicd_command(
-        ["gate", "--input", str(results_path), "--strict"],
+        [
+            "gate",
+            str(tmp_path),
+            "--input",
+            str(results_path),
+            "--strict",
+            "--diff-base",
+            "HEAD",
+        ],
         console_factory=lambda: Mock(),
         load_config_func=lambda path: {},
         run_gate_interaction_func=mock_gate,
         emit_github_annotations_func=Mock(),
     )
 
-    assert exit_code == 0
+    assert exit_code == gate_exit
+    mock_gate.assert_called_once()
     assert mock_gate.call_args.kwargs["strict"] is True
-    assert mock_gate.call_args.kwargs["result"]["project_root"] == str(tmp_path)
+    assert mock_gate.call_args.kwargs["result"] == result
 
 
 def test_cicd_init_rejects_control_characters_in_scan_path(tmp_path):

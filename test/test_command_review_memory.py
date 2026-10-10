@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+import pytest
 
 import skylos
 import skylos.cli as cli
@@ -12,6 +16,7 @@ from skylos.commands import baseline_cmd, cicd_cmd, scan_cmd
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 from skylos.core import baseline as baseline_store
 from skylos.core import review_decisions
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _scan_result(project_root: Path) -> dict:
@@ -151,9 +156,32 @@ def test_baseline_avoids_review_analysis_overhead_without_active_v2_state(
     assert "include_review_proofs" not in captured
 
 
-def test_cicd_direct_scan_projects_reviews_before_gate(tmp_path, monkeypatch):
+@pytest.mark.parametrize("gate_exit", [0, 1])
+def test_cicd_direct_scan_projects_reviews_before_gate(
+    tmp_path, monkeypatch, gate_exit
+):
     project = tmp_path / "repo"
     project.mkdir()
+    # Keep review projection mocked, but resolve real policy from this Git
+    # fixture rather than inheriting the surrounding CI checkout's base.
+    assert write_text_no_symlink(project / "example.py", "ANSWER = 42\n")
+    for arguments in (
+        ("init", "-q"),
+        ("add", "example.py"),
+        (
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--no-gpg-sign",
+            "-qm",
+            "gate fixture base",
+        ),
+    ):
+        subprocess.run(
+            ["git", *arguments], cwd=project, check=True, capture_output=True
+        )
     raw = _scan_result(project)
     projected = _project_first_finding(raw)
     events: list[str] = []
@@ -162,6 +190,7 @@ def test_cicd_direct_scan_projects_reviews_before_gate(tmp_path, monkeypatch):
     def fake_analyze(path, **kwargs):
         events.append("analyze")
         analyze_call.update({"path": path, "kwargs": kwargs})
+        assert os.environ["SKYLOS_DIFF_BASE"] == "HEAD"
         return json.dumps(raw)
 
     def fake_apply(result, project_root, **kwargs):
@@ -174,7 +203,7 @@ def test_cicd_direct_scan_projects_reviews_before_gate(tmp_path, monkeypatch):
     def fake_gate(**kwargs):
         events.append("gate")
         assert kwargs["result"] == projected
-        return 0
+        return gate_exit
 
     monkeypatch.setattr(skylos, "analyze", fake_analyze)
     monkeypatch.setattr(
@@ -189,14 +218,14 @@ def test_cicd_direct_scan_projects_reviews_before_gate(tmp_path, monkeypatch):
         return {"exclude": ["generated"], "gate": {}}
 
     exit_code = cicd_cmd.run_cicd_command(
-        ["gate", str(project)],
+        ["gate", str(project), "--diff-base", "HEAD"],
         console_factory=Mock,
         load_config_func=load_config,
         run_gate_interaction_func=fake_gate,
         emit_github_annotations_func=Mock(),
     )
 
-    assert exit_code == 0
+    assert exit_code == gate_exit
     assert events == ["analyze", "project", "gate"]
     kwargs = analyze_call["kwargs"]
     assert kwargs["include_review_context"] is True

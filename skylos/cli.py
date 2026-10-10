@@ -3165,6 +3165,12 @@ def _run_pre_analysis_steps(args, project_root, console):
                 )
 
     changed_files = None
+    if getattr(args, "diff", None) and not getattr(args, "diff_base", None):
+        signal_base = args.diff
+        if signal_base == "auto":
+            signal_base = auto_diff_base_ref()
+        if signal_base:
+            os.environ["SKYLOS_DIFF_BASE"] = signal_base
     if getattr(args, "diff_base", None):
         try:
             from skylos.core.file_discovery import find_git_root

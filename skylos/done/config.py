@@ -24,6 +24,7 @@ CHECK_IDS = (
     "changed_lines_checked",
     "test_special_casing",
     "silenced_checks",
+    "security_controls",
 )
 MODES = ("block", "advise", "shadow", "off")
 
@@ -47,6 +48,7 @@ DEFAULT_MODES = {
     # "block", weakened settings and CI block and inline suppressions stay
     # advice.
     "silenced_checks": "advise",
+    "security_controls": "block",
 }
 # Skylos's own settings and the agent hook files that run it. Not all of
 # .claude/ or .cursor/: skills and rules there are ordinary project files.

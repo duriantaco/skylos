@@ -139,6 +139,43 @@ def _verify_security_findings(result: dict, args, console, *, project_root, mach
 
 
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
+    """Keep a compared gate on base policy for the complete scan lifecycle."""
+    import os
+
+    from skylos.cicd.policy import base_policy_context
+
+    parser = cli_module._build_main_parser()
+    args = cli_module._parse_main_cli_args(parser, argv)
+    base = (
+        (getattr(args, "diff_base", None) or getattr(args, "diff", None))
+        if getattr(args, "gate", False)
+        else None
+    )
+    if base == "auto":
+        base = cli_module.auto_diff_base_ref()
+    previous_diff = os.environ.get("SKYLOS_DIFF_BASE")
+    try:
+        with base_policy_context(
+            cli_module._resolve_main_project_root(args.path), base
+        ):
+            if base:
+                args.danger = True
+                args.quality = True
+            return _run_scan_command(
+                argv, cli_module=cli_module, parser=parser, args=args
+            )
+    except cli_module.ConfigError as exc:
+        parser.error(str(exc))
+    finally:
+        if previous_diff is None:
+            os.environ.pop("SKYLOS_DIFF_BASE", None)
+        else:
+            os.environ["SKYLOS_DIFF_BASE"] = previous_diff
+
+
+def _run_scan_command(
+    argv: Sequence[str], *, cli_module: ModuleType, parser, args
+) -> None:
     """
     Run the main scan command after top-level CLI dispatch.
 
@@ -156,7 +193,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     _apply_display_filters = cli_module._apply_display_filters
     _apply_rule_selection = cli_module._apply_rule_selection
     _attach_upload_project_context = cli_module._attach_upload_project_context
-    _build_main_parser = cli_module._build_main_parser
     _build_main_scan_context = cli_module._build_main_scan_context
     _concise_scan_exit_code = cli_module._concise_scan_exit_code
     _emit_github_annotations = cli_module._emit_github_annotations
@@ -167,7 +203,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     _is_ci = cli_module._is_ci
     _is_main_machine_output = cli_module._is_main_machine_output
     _is_tty = cli_module._is_tty
-    _parse_main_cli_args = cli_module._parse_main_cli_args
     _precommit_finding_targets_report_file = (
         cli_module._precommit_finding_targets_report_file
     )
@@ -199,8 +234,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     sys = cli_module.sys
     upload_report = cli_module.upload_report
 
-    parser = _build_main_parser()
-    args = _parse_main_cli_args(parser, argv)
     if getattr(args, "scan_publisher_changes", False):
         args.sca = True
     if args.upload and (args.diff or args.diff_base):
@@ -555,6 +588,12 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                         item
                         for item in items
                         if id(item) in diff_finding_ids
+                        # These findings describe removed controls; their
+                        # deletion anchor need not be an added source line.
+                        or (
+                            item.get("rule_id") == "SKY-L021"
+                            and item.get("kind") == "security_regression"
+                        )
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
                     ]
