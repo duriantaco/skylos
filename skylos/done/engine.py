@@ -10,6 +10,9 @@ from skylos.done.base import Comparison, open_comparison
 from skylos.done.checks import CHECKS, RUN_ORDER, CheckContext, CheckResult, run_check
 from skylos.done.config import CHECK_IDS, DoneConfig, parse_done_config
 
+# Summary of a check that waits for the earlier required checks to pass.
+WAITING_SUMMARY = "Earlier required checks failed or were incomplete"
+
 
 @dataclass
 class CheckOutcome:
@@ -77,9 +80,7 @@ def run(
                 CHECKS[check_id][1],
                 "incomplete",
                 "Not run because an earlier required check needs attention",
-                evidence={
-                    "summary": "Earlier required checks failed or were incomplete"
-                },
+                evidence={"summary": WAITING_SUMMARY},
             )
         elif (
             check_id == "tests_pass"

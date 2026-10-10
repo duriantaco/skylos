@@ -1525,7 +1525,13 @@ def print_badge(
     reliability_count=0,
     quality_enabled=False,
     quality_count=0,
+    show_badge=True,
 ):
+    """Print the closing count line, plus a README badge unless one was shown.
+
+    The grade panel already offers the Skylos grade badge; ``show_badge=False``
+    keeps a second badge prompt out of the same scan.
+    """
     console: Console = logger.console
     console.print(Rule(style="muted"))
 
@@ -1535,6 +1541,9 @@ def print_badge(
     has_quality = quality_enabled and quality_count > 0
 
     if not has_dead_code and not has_danger and not has_reliability and not has_quality:
+        if not show_badge:
+            console.print("[good]Your code is 100% dead-code free![/good]")
+            return
         console.print(
             Panel.fit(
                 "[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:",
@@ -1543,26 +1552,38 @@ def print_badge(
         )
         console.print("```markdown")
         console.print(
-            "![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)"
+            "[![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen)](https://github.com/duriantaco/skylos)"
         )
         console.print("```")
         return
 
-    headline = f"Found {dead_code_count} dead-code items"
+    counts = [_plural_count(dead_code_count, "dead-code item")]
     if danger_enabled:
-        headline += f" and {danger_count} security issues"
+        counts.append(_plural_count(danger_count, "security issue"))
     if reliability_enabled:
-        headline += f" and {reliability_count} reliability issues"
+        counts.append(_plural_count(reliability_count, "reliability issue"))
     if quality_enabled:
-        headline += f" and {quality_count} quality issues"
-    headline += ". Add this badge to your README:"
+        counts.append(_plural_count(quality_count, "quality issue"))
+    if len(counts) > 1:
+        headline = f"Found {', '.join(counts[:-1])} and {counts[-1]}."
+    else:
+        headline = f"Found {counts[0]}."
 
-    console.print(Panel.fit(headline, border_style="warn"))
+    if not show_badge:
+        console.print(headline)
+        return
+    console.print(
+        Panel.fit(f"{headline} Add this badge to your README:", border_style="warn")
+    )
     console.print("```markdown")
     console.print(
-        f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)"
+        f"[![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange)](https://github.com/duriantaco/skylos)"
     )
     console.print("```")
+
+
+def _plural_count(count, noun):
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 _DISPLAY_FILTER_SEVERITY_RANK = {
@@ -2558,6 +2579,8 @@ def _formatted_output_gate_exit_code(
     if incomplete_exit_code:
         return incomplete_exit_code
 
+    from contextlib import redirect_stdout
+
     from skylos.core.gatekeeper import (
         build_summary_markdown,
         check_gate,
@@ -2570,7 +2593,10 @@ def _formatted_output_gate_exit_code(
     passed, reasons = check_gate(result, config, strict=strict, provenance=provenance)
 
     if bool(getattr(args, "summary", False)):
-        write_github_summary(build_summary_markdown(result, passed, reasons))
+        # Without $GITHUB_STEP_SUMMARY the markdown is printed; keep it off the
+        # machine-readable report on stdout.
+        with redirect_stdout(sys.stderr):
+            write_github_summary(build_summary_markdown(result, passed, reasons))
 
     if passed or bool(getattr(args, "force", False)):
         return 0

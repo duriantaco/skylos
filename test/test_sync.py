@@ -1,9 +1,11 @@
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import pytest
 import skylos.cloud.sync as syncmod
+from skylos.cloud.plan_names import plan_display_name
 import builtins
 
 
@@ -471,7 +473,7 @@ def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, cap
     assert "✓ Connected!" in out
     assert "Project:" in out and "Proj" in out
     assert "Organization:" in out and "Org" in out
-    assert "Plan:" in out and "Pro" in out
+    assert "Plan:         Workspace" in out
 
     _, creds_file = isolated_creds
     assert creds_file.exists()
@@ -1156,3 +1158,94 @@ def test_cmd_upgrade_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, ca
     assert "SKYLOS_COMMIT" in workflow
     assert "SKYLOS_BRANCH" in workflow
     assert "SKYLOS_TOKEN" not in workflow
+
+
+@pytest.mark.parametrize(
+    ("plan", "name"),
+    [
+        ("free", "Free"),
+        ("pro", "Workspace"),
+        ("PRO", "Workspace"),
+        ("enterprise", "Enterprise"),
+        ("beta", "Beta"),
+        (None, "Free"),
+    ],
+)
+def test_plan_display_name_matches_cloud_plan_names(plan, name):
+    assert plan_display_name(plan) == name
+
+
+def test_cmd_status_shows_workspace_for_pro_plan(isolated_creds, monkeypatch, capsys):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "project": {"name": "MyProj"},
+            "organization": {"name": "MyOrg"},
+            "plan": "pro",
+        },
+    )
+
+    syncmod.cmd_status()
+
+    out = capsys.readouterr().out
+    assert "Plan:         Workspace" in out
+    assert not re.search(r"\bPro\b", out)
+
+
+def test_cmd_upgrade_on_free_plan_links_the_pricing_section(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {"/api/sync/whoami": {"plan": "free"}}[endpoint],
+    )
+
+    syncmod.cmd_upgrade()
+
+    out = capsys.readouterr().out
+    assert "Current plan: Free" in out
+    assert "This needs the Workspace plan." in out
+    assert "https://skylos.dev/#pricing" in out
+    assert "skylos.dev/pricing" not in out
+    assert not re.search(r"\bPro\b", out)
+    assert not (tmp_path / ".github").exists()
+
+
+def test_cmd_upgrade_on_pro_plan_says_workspace(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {"/api/sync/whoami": {"plan": "pro"}}[endpoint],
+    )
+
+    syncmod.cmd_upgrade()
+
+    out = capsys.readouterr().out
+    assert "Workspace plan detected." in out
+    assert not re.search(r"\bPro\b", out)
+
+
+def test_cli_source_never_names_a_pro_plan_or_the_missing_pricing_page():
+    package_root = Path(syncmod.__file__).resolve().parents[1]
+    banned = re.compile(
+        r"Skylos Pro\b|\bPro plan|Upgrade to Pro\b|\bPro [Ff]eatures"
+        r"|skylos\.dev/pricing"
+    )
+    hits = [
+        f"{path.relative_to(package_root)}:{number}"
+        for path in sorted(package_root.rglob("*.py"))
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if banned.search(line)
+    ]
+    assert hits == []

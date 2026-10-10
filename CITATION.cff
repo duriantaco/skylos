@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use Skylos in research, benchmarks, or tooling comparisons, please cite it using this metadata."
 title: "Skylos"
 type: software
-version: "4.2.1"
-abstract: "Open-source AI code security and static analysis for Python, TypeScript, and Go. Skylos finds dead code, secrets, vulnerabilities, and diff-aware regressions."
+version: "4.47.2"
+abstract: "Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-request gate. It finds dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes. Coverage is deepest in Python, TypeScript/JavaScript and Java."
 license: "Apache-2.0"
 authors:
   - family-names: "Oh"

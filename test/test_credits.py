@@ -275,3 +275,126 @@ class TestUploadReportCredits:
         result = upload_report(self.MINIMAL_RESULT, quiet=True)
         assert result["success"] is True
         assert result["credits_warning"] is True
+
+
+class TestCreditsCommandPlanName:
+    @patch("skylos.commands.credits_cmd.print_credit_status")
+    @patch("skylos.commands.credits_cmd.get_project_token", return_value="tok")
+    def test_credits_shows_workspace_for_pro_plan(
+        self, mock_token, mock_status, capsys
+    ):
+        from skylos.commands.credits_cmd import run_credits_command
+
+        mock_status.return_value = {
+            "balance": 42,
+            "plan": "pro",
+            "org_name": "Test Org",
+            "recent_transactions": [],
+        }
+
+        assert run_credits_command() == 0
+
+        output = capsys.readouterr().out
+        assert "Test Org (Workspace plan)" in output
+        assert "pro plan" not in output.lower()
+
+    @pytest.mark.parametrize(
+        ("plan", "shown"),
+        [
+            ("pro", "Workspace plan"),
+            ("free", "Free plan"),
+            ("enterprise", "Enterprise plan"),
+        ],
+    )
+    def test_shows_customer_plan_name(self, plan, shown, monkeypatch, capsys):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd,
+            "print_credit_status",
+            lambda token, quiet=False: {
+                "balance": 40,
+                "plan": plan,
+                "org_name": "Acme",
+            },
+        )
+        console_class = credits_cmd.Console
+        monkeypatch.setattr(credits_cmd, "Console", lambda: console_class(width=200))
+
+        assert credits_cmd.run_credits_command() == 0
+        out = capsys.readouterr().out
+        assert f"Acme ({shown})" in out
+        assert "pro plan" not in out
+
+    def test_customer_organization_and_unknown_plan_are_printed_literally(
+        self, monkeypatch, capsys
+    ):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd,
+            "print_credit_status",
+            lambda token, quiet=False: {
+                "balance": 40,
+                "plan": "[bold]custom",
+                "org_name": "[bold]Acme",
+            },
+        )
+        assert credits_cmd.run_credits_command() == 0
+        assert "[bold]Acme ([bold]custom plan)" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            [],
+            {"plan": "pro"},
+            {"balance": "40", "plan": "pro"},
+            {"balance": True, "plan": "pro"},
+            {"balance": float("nan"), "plan": "pro"},
+            {"balance": 40, "plan": {"tier": "pro"}},
+            {"balance": 40, "recent_transactions": {}},
+            {"balance": 40, "recent_transactions": ""},
+            {"balance": 40, "recent_transactions": 0},
+            {"balance": 40, "recent_transactions": False},
+            {"balance": 40, "recent_transactions": ["invalid"]},
+            {"balance": 40, "recent_transactions": [{}]},
+            {"balance": 40, "recent_transactions": [{"amount": "2"}]},
+        ],
+    )
+    def test_invalid_credit_response_fails_without_showing_a_balance(
+        self, payload, monkeypatch, capsys
+    ):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd, "print_credit_status", lambda token, quiet=False: payload
+        )
+
+        assert credits_cmd.run_credits_command() == 1
+        output = capsys.readouterr().out
+        assert "Could not fetch credit balance" in output
+        assert "Balance:" not in output
+
+    def test_transaction_description_is_printed_literally(self, monkeypatch, capsys):
+        from skylos.commands import credits_cmd
+
+        monkeypatch.setattr(credits_cmd, "get_project_token", lambda: "test-token")
+        monkeypatch.setattr(
+            credits_cmd,
+            "print_credit_status",
+            lambda token, quiet=False: {
+                "balance": 40,
+                "plan": "pro",
+                "org_name": "Acme",
+                "recent_transactions": [
+                    {"amount": -2, "description": "charge [/red] customer"}
+                ],
+            },
+        )
+
+        assert credits_cmd.run_credits_command() == 0
+        assert "charge [/red] customer" in capsys.readouterr().out

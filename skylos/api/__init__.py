@@ -1513,7 +1513,7 @@ def _print_quality_gate_result(
         print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
     if plan == "free":
         print("\n⚠️  Quality gate failed but continuing (Free plan)")
-        print("💡 Upgrade to Pro to automatically block commits/CI on failures")
+        print("💡 The Workspace plan blocks commits and CI on a failed gate")
         print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
 
 
@@ -3128,7 +3128,8 @@ def verify_report(result_json, quiet=False) -> dict:
     if not _token_allows_verification(token):
         return {
             "success": False,
-            "error": "Verification requires Skylos Pro. Upgrade to enable --verify.",
+            "error": "Verification requires the Workspace plan. "
+            "Buying any credit pack turns it on.",
         }
 
     commit, branch, actor, ci = get_git_info()
@@ -3206,7 +3207,7 @@ def _verification_error_response(response) -> dict | None:
     if response.status_code == 402:
         return {
             "success": False,
-            "error": "Verification requires Skylos Pro (payment required).",
+            "error": "Verification requires the Workspace plan (payment required).",
         }
     if response.status_code != 200:
         return {

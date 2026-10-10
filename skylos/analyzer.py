@@ -4369,7 +4369,11 @@ class Skylos:
                 )
 
         git_context = GitContext.from_path(root)
-        if changed_files is None and (
+        # Diff-based signals also read uncommitted work during a full scan.
+        # Keep those files separate: they must not narrow the full scan's
+        # config, injection or completeness checks to the edited files.
+        diff_signal_files = changed_files
+        if diff_signal_files is None and (
             enable_quality or enable_danger or enable_ai_defects
         ):
             try:
@@ -4385,7 +4389,7 @@ class Skylos:
                             if name
                         )
                 if detected_changes:
-                    changed_files = {
+                    diff_signal_files = {
                         str(candidate)
                         for candidate in _scoped_changed_paths(
                             root, path, detected_changes
@@ -4404,7 +4408,7 @@ class Skylos:
         )
         scoped_changes = {
             candidate
-            for candidate in _scoped_changed_paths(root, path, changed_files)
+            for candidate in _scoped_changed_paths(root, path, diff_signal_files)
             if not should_exclude_path(candidate, project_root, regression_excludes)
         }
         # Generic control-removal heuristics only apply to surviving source
@@ -4587,7 +4591,9 @@ class Skylos:
                 elif _first.is_file():
                     scan_target = _first
                 else:
-                    scan_target = project_root
+                    # Import and policy resolution can use an enclosing project,
+                    # but a directory scan must keep config findings in that directory.
+                    scan_target = _first
 
                 config_findings = scan_config_files(
                     scan_target,
@@ -5078,7 +5084,7 @@ class Skylos:
                                 exc_info=True,
                             )
 
-            if changed_files and "SKY-A101" not in project_ignore:
+            if diff_signal_files and "SKY-A101" not in project_ignore:
                 try:
                     from skylos.rules.ai_defect.assertion_weakening import (
                         detect_assertion_weakening,
@@ -5086,7 +5092,7 @@ class Skylos:
                     from skylos.security.contracts import resolve_diff_base_ref
 
                     diff_base = resolve_diff_base_ref(root)
-                    for cf in changed_files:
+                    for cf in diff_signal_files:
                         rel_cf = (
                             str(Path(cf).resolve().relative_to(root))
                             if Path(cf).is_absolute()
@@ -5114,7 +5120,7 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Assertion weakening scan failed", exc_info=True)
 
-            if changed_files and "SKY-A102" not in project_ignore:
+            if diff_signal_files and "SKY-A102" not in project_ignore:
                 try:
                     from skylos.rules.ai_defect.test_impact import (
                         detect_test_impact_gaps,
@@ -5123,7 +5129,7 @@ class Skylos:
 
                     diff_base = resolve_diff_base_ref(root)
                     changed_file_diffs = {}
-                    for cf in changed_files:
+                    for cf in diff_signal_files:
                         rel_cf = _relative_changed_file(root, cf)
                         diff_text = _git_diff_for_changed_file(root, rel_cf, diff_base)
                         if diff_text:
@@ -5131,7 +5137,7 @@ class Skylos:
 
                     test_impact_findings = detect_test_impact_gaps(
                         root,
-                        changed_files,
+                        diff_signal_files,
                         changed_file_diffs=changed_file_diffs,
                     )
                     _extend_unsuppressed_ai_defect_findings(
@@ -5160,13 +5166,13 @@ class Skylos:
                     )
                 )
 
-            if changed_files and (
+            if diff_signal_files and (
                 "SKY-A103" not in project_ignore or "SKY-A104" not in project_ignore
             ):
                 try:
                     _scan_ai_defect_diff_signals(
                         root,
-                        changed_files,
+                        diff_signal_files,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
                         per_file_ignore_rules=per_file_ignore_rules,
@@ -5499,7 +5505,7 @@ class Skylos:
             for config in effective_file_configs.values()
         ):
             resolution_scope_limited = True
-        refresh_review_context(changed_files)
+        refresh_review_context(diff_signal_files)
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )
@@ -5820,7 +5826,7 @@ if __name__ == "__main__":
         print(f"Found {total_dead} dead code items. Add this badge to your README:")
     print("```markdown")
     print(
-        f"![Dead Code: {total_dead}](https://img.shields.io/badge/Dead_Code-{total_dead}_detected-orange?logo=codacy&logoColor=red)"
+        f"[![Dead Code: {total_dead}](https://img.shields.io/badge/Dead_Code-{total_dead}_detected-orange)](https://github.com/duriantaco/skylos)"
     )
     print("```")
 

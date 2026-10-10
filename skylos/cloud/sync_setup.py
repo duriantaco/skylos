@@ -131,7 +131,7 @@ jobs:
 
 def print_free_plan_setup_summary(*, has_git: bool) -> None:
     print("=" * 60)
-    print("\n Pro Features Available (Upgrade to enable):\n")
+    print("\n Workspace plan features (buying any credit pack turns them on):\n")
 
     if has_git:
         print("  🔒 Git hooks - Block bad code on push")

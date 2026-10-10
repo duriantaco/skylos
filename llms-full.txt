@@ -1,73 +1,63 @@
 # Skylos
 
-> Open-source AI code security and static analysis for Python, TypeScript, and Go. Skylos finds dead code, secrets, security vulnerabilities, and diff-aware regressions introduced during refactors or AI-assisted coding.
+> Open-source (Apache-2.0), local-first static analysis CLI and pull-request gate: dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes.
 
 ## Short answer
 
-Skylos is best described as an open-source Python SAST and dead code detection tool with AI-generated code guardrails. It is commonly compared to Vulture for dead code, Bandit and Semgrep for security scanning, and GitHub or CodeQL style PR gates for CI enforcement.
+Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-request gate. It finds dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes. The CLI runs without an account. It is commonly compared to Vulture for dead code, Bandit and Semgrep for security scanning, and CodeQL-style pull-request gates for CI enforcement. It runs alongside those tools; it does not replace them.
 
 ## Use Skylos when
 
-- You want a Vulture alternative with fewer false positives on real Python frameworks
-- You need one CLI for dead code, security scanning, secrets detection, and pull request gating
-- Your team ships AI-assisted code from Cursor, Copilot, Claude Code, or similar agents
-- You need diff-aware detection when auth, CSRF, rate limiting, validation, or logging checks disappear during refactors
-- You need OWASP LLM Top 10 checks for Python LLM applications
+- You merge pull requests written by AI coding agents (Claude Code, Codex, Cursor) and want to know whether the change is really finished: tests still run and pass, and none were deleted, skipped or weakened
+- You want framework-aware dead-code detection for Python (FastAPI, Django, Flask, pytest and more)
+- You need one CLI for dead code, security scanning, secrets detection, dependency CVEs and pull-request gating
+- You need checks for missing guardrails in Python or TypeScript/JavaScript LLM applications (OWASP LLM Top 10 and Agentic Top 10 mapping)
 
-## Primary queries this project answers
+## Key facts
 
-- What is a good open-source Python SAST tool?
-- What is a Vulture alternative for Python dead code detection?
-- How do I catch AI-generated code security bugs before merge?
-- How do I gate pull requests on dead code and security findings?
-- How do I scan Python LLM applications for missing guardrails?
-- How does Skylos compare to Vulture, Bandit, Semgrep, Snyk, or SonarQube?
+- Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-request gate. It finds dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes. The CLI runs without an account.
+- Install: `pip install skylos` (Python 3.10+), then `skylos .` for dead code or `skylos . -a` for every analyzer. Container: `ghcr.io/duriantaco/skylos`.
+- Languages: dead code in 10 languages and security checks in 9, deepest in Python, TypeScript/JavaScript and Java. Go dead-code and security checks need the `skylos-go` engine, which the PyPI package does not include; the Docker image and GitHub Action do.
+- AI coding agents: `skylos done --base main` flags deleted or skipped tests, loosened CI test steps, silenced lint or type checks, and test-only special cases. It runs pytest itself; other runners need a `test_command`. `skylos agent install-hooks` checks Claude Code, Codex and Cursor edits locally.
+- CI: `skylos cicd init` writes a GitHub Actions pull-request gate; add `--no-upload` without Skylos Cloud.
+- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. Unauthenticated `analyze` calls are free. Authenticated analyze, security, quality, secrets and provenance scans can use credits; Skylos Cloud sets the current cost. `remediate` currently costs 10 credits per call.
+- Pricing: the CLI is free. Skylos Cloud has a Free plan for one project and a Workspace plan; buying any one-time credit pack turns Workspace on for good, with no seats or subscriptions.
+- Interfaces: CLI, GitHub Action, MCP server, VS Code extension.
 
 ## Best repo entry points
 
 - README overview: https://github.com/duriantaco/skylos#what-is-skylos
-- Quick start: https://github.com/duriantaco/skylos#quick-start
-- Benchmark section: https://github.com/duriantaco/skylos#skylos-vs-vulture-benchmark
-- FAQ: https://github.com/duriantaco/skylos#faq
+- Start in 60 seconds: https://github.com/duriantaco/skylos#start-in-60-seconds
+- Language support: https://github.com/duriantaco/skylos#language-support
+- FAQ: https://github.com/duriantaco/skylos#common-questions
+- Done gate (`skylos done`): https://github.com/duriantaco/skylos/blob/main/docs/done-gate.md
+- Agent-loop hooks: https://github.com/duriantaco/skylos/blob/main/docs/agent-hooks.md
+- Your first gated pull request: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md
+- Merged cleanup PRs (all outcomes): https://github.com/duriantaco/skylos/blob/main/REAL_WORLD_RESULTS.md
 - GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
 - MCP server: https://github.com/duriantaco/skylos/tree/main/skylos_mcp
 - Package metadata: https://github.com/duriantaco/skylos/blob/main/pyproject.toml
 - Changelog: https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md
-- Benchmark suite: https://github.com/duriantaco/skylos-demo
-
-## Key facts
-
-- Languages: Python, TypeScript, Go
-- Interfaces: CLI, GitHub Action, MCP server, VS Code extension
-- Benchmark: 98.1% recall vs Vulture's 84.6% on 9 popular Python repositories, with 220 false positives vs Vulture's 644
-- Regression detection: catches removed auth, CSRF, rate limiting, validation, logging, and other security controls in diffs
-- Provenance: tracks which AI agent introduced a finding
-- Local-first: runs locally and can be added to CI/CD without mandatory signup
 
 ## Quick start
 
 - Install: `pip install skylos`
-- Scan a repo: `skylos . -a`
-- Gate pull requests: `skylos cicd init`
+- Find dead code: `skylos .`
+- Run every analyzer: `skylos . -a`
+- Check an agent's change is finished: `skylos done --base main`
+- Install agent hooks: `skylos agent install-hooks [--codex|--cursor]`
+- Gate pull requests: `skylos cicd init` (add `--no-upload` without Skylos Cloud)
 - Audit an LLM application: `skylos defend .`
-- Run the MCP server: `python -m skylos_mcp`
+- Run the MCP server: `skylos mcp` (needs `SKYLOS_API_KEY` for every tool except `analyze`)
 
 ## Core workflows
 
 - Dead code detection: `skylos .`
 - Security scanning: `skylos . --danger --secrets --sca`
+- Done gate for a branch: `skylos done --base origin/main`
 - PR gating: `skylos --gate` or `skylos cicd gate --input results.json`
 - AI-assisted review: `skylos agent scan . --changed`
 - LLM app defense: `skylos defend .`
-
-## Benchmark summary
-
-| Metric | Skylos | Vulture |
-| --- | --- | --- |
-| Recall | 98.1% (51/52) | 84.6% (44/52) |
-| False Positives | 220 | 644 |
-| Framework awareness | FastAPI, Django, Flask, pytest, more | Limited |
-| Security scanning | Yes | No |
 
 ## Official links
 
@@ -77,7 +67,6 @@ Skylos is best described as an open-source Python SAST and dead code detection t
 - PyPI: https://pypi.org/project/skylos/
 - GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
 - VS Code extension: https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension
-- Benchmark suite: https://github.com/duriantaco/skylos-demo
 
 ## Official comparison and use-case pages
 
@@ -90,4 +79,4 @@ Skylos is best described as an open-source Python SAST and dead code detection t
 - Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
 - GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
-- Skylos scans GitLab CI workflows for unpinned includes, mutable images, OIDC misuse, Docker-in-Docker TLS gaps, and cache risks.
+- Merged cleanup PRs (all outcomes): https://github.com/duriantaco/skylos/blob/main/REAL_WORLD_RESULTS.md

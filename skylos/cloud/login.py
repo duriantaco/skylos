@@ -10,6 +10,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
+from skylos.cloud.plan_names import plan_display_name
+
 DEFAULT_BASE_URL = "https://skylos.dev"
 CALLBACK_PATH = "/callback"
 TIMEOUT_SECONDS = 300
@@ -318,7 +320,7 @@ def _print_connected_result(result, console=None):
         console.print("\n[good]Connected to Skylos Cloud![/good]")
         console.print(f"  Project:      {result.project_name}")
         console.print(f"  Organization: {result.org_name}")
-        console.print(f"  Plan:         {result.plan.capitalize()}")
+        console.print(f"  Plan:         {plan_display_name(result.plan)}")
         if result.repo_subpath:
             console.print(f"  Project root: {result.repo_subpath}")
         console.print("\n  Scans will auto-upload on every run.")
@@ -328,7 +330,7 @@ def _print_connected_result(result, console=None):
         print("\nConnected to Skylos Cloud!")
         print(f"  Project:      {result.project_name}")
         print(f"  Organization: {result.org_name}")
-        print(f"  Plan:         {result.plan.capitalize()}")
+        print(f"  Plan:         {plan_display_name(result.plan)}")
         if result.repo_subpath:
             print(f"  Project root: {result.repo_subpath}")
         print("\n  Scans will auto-upload on every run.")

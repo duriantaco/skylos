@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
+
+from rich.markup import escape
 
 REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
 
@@ -172,6 +175,7 @@ def _run_cicd_init(cicd_args, console) -> int:
     from skylos.cicd.init_setup import detect_done_setup, print_init_next_steps
     from skylos.cicd.workflow import (
         FALLBACK_DEFAULT_BRANCHES,
+        display_path,
         generate_workflow,
         write_workflow,
     )
@@ -200,7 +204,29 @@ def _run_cicd_init(cicd_args, console) -> int:
         console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
         return 1
     output_path = cicd_args.output or _default_workflow_output()
-    write_workflow(yaml_content, output_path)
+    try:
+        existing = _existing_workflow_text(output_path)
+        if existing == yaml_content:
+            console.print(
+                f"[green]Workflow already up to date: {escape(display_path(output_path))}[/green]",
+                soft_wrap=True,
+            )
+        else:
+            if (
+                existing is not None
+                and not cicd_args.force
+                and not _confirm_workflow_replace(console, output_path)
+            ):
+                return 1
+            write_workflow(
+                yaml_content, output_path, out=console, expected_existing=existing
+            )
+    except OSError as exc:
+        console.print(
+            f"[bold red]Could not write workflow: {escape(str(exc))}[/bold red]",
+            soft_wrap=True,
+        )
+        return 1
     if use_done and not done_setup.enabled:
         done_setup = dataclasses.replace(
             done_setup, enabled=True, reason="added with --done"
@@ -220,6 +246,42 @@ def _run_cicd_init(cicd_args, console) -> int:
         branch_detected=bool(default_branch),
     )
     return 0
+
+
+def _existing_workflow_text(output_path: str) -> str | None:
+    from skylos.cicd.workflow import read_workflow_text
+
+    return read_workflow_text(output_path)
+
+
+def _confirm_workflow_replace(console, output_path: str) -> bool:
+    """Ask before replacing a workflow someone may have written by hand."""
+    from skylos.cicd.workflow import display_path, workflow_backup_path
+
+    shown = escape(display_path(output_path))
+    backup = escape(display_path(workflow_backup_path(Path(output_path))))
+    console.print(
+        f"[yellow]{shown} already exists and is different from the workflow "
+        "Skylos would write.[/yellow]",
+        soft_wrap=True,
+    )
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        console.print(
+            "Nothing was written. To replace it, run the same command with "
+            f"--force; the old file is kept as {backup}.",
+            soft_wrap=True,
+        )
+        return False
+    try:
+        answer = console.input(
+            f"Replace it? The old file is kept as {backup}. {escape('[y/N]')} "
+        )
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if str(answer).strip().lower() in {"y", "yes"}:
+        return True
+    console.print("Kept the existing workflow; nothing was written.")
+    return False
 
 
 def run_cicd_command(
@@ -331,6 +393,14 @@ def run_cicd_command(
         "-o",
         default=None,
         help="Output path (default: repo-root .github/workflows/skylos.yml)",
+    )
+    p_ci_init.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Replace an existing workflow without asking; the old file is kept "
+            "next to it as <name>.bak"
+        ),
     )
 
     p_ci_gate = cicd_sub.add_parser("gate", help="Check quality gate (CI exit code)")

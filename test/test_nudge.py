@@ -88,3 +88,33 @@ def test_nudges_enabled_defaults_true_for_oversized_pyproject(tmp_path, monkeypa
     monkeypatch.setattr(nudge, "NUDGE_PYPROJECT_MAX_BYTES", 4)
 
     assert nudge._nudges_enabled(tmp_path) is True
+
+
+@pytest.mark.parametrize(
+    ("ref", "command"),
+    [
+        ("origin/main", "skylos done --base origin/main"),
+        ("HEAD", "skylos done"),
+        (None, "skylos done --base main"),
+        ("feature branch", "skylos done --base 'feature branch'"),
+    ],
+)
+def test_done_tip_names_the_users_ref(tmp_path, monkeypatch, ref, command):
+    monkeypatch.setattr(nudge, "_is_ci", lambda: False)
+
+    tip = nudge.done_tip(ref, tmp_path)
+
+    assert tip.startswith("To check a branch an AI agent wrote")
+    assert "deleted tests, loosened CI, test-only shortcuts" in tip
+    assert tip.endswith(f"run: {command}")
+
+
+def test_done_tip_is_quiet_in_ci_and_when_nudges_are_off(tmp_path, monkeypatch):
+    monkeypatch.setattr(nudge, "_is_ci", lambda: True)
+    assert nudge.done_tip("origin/main", tmp_path) is None
+
+    monkeypatch.setattr(nudge, "_is_ci", lambda: False)
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.skylos]\nnudges = false\n", encoding="utf-8"
+    )
+    assert nudge.done_tip("origin/main", tmp_path) is None

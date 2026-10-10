@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skylos.analyzer import analyze
+from skylos.security.command_guard import scan_shell_command
 from skylos.visitors.languages.shell import scan_shell_file
 from skylos.visitors.languages.shell.danger import scan_danger
 
@@ -342,6 +345,163 @@ def test_apt_index_cleanup_is_not_broad_destructive_rm(tmp_path):
     assert "SKY-D329" in _rule_ids(unsafe)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /",
+        "rm -rf /*",
+        "rm -rf ~",
+        "rm -rf $HOME",
+        "rm -rf ${HOME}/",
+        "rm -rf .",
+        "rm -rf ./*",
+        "rm -rf *",
+        "rm -rf .git",
+        "rm -rf /app",
+        "rm -rf /usr/src/app",
+        "rm -rf /root/.ssh",
+        "rm -rf build /etc",
+        "rm -rf -- /",
+        "rm -rf --no-preserve-root /",
+        "rm -rf /tmp/../etc",
+        "rm -rf /tmp/$TARGET",
+        "rm -rf /root/.cache/${TARGET}",
+        "rm -rf $HOME/.cache/$TARGET",
+        "rm -rf /tmp/$(printf ../etc)",
+        "rm -rf /tmp/{build,../etc}",
+        "rm -rf /tmp/build '#literal' /etc",
+        'rm -rf "$STEAMROOT/"*',
+        "rm -rf $DIR/",
+        "sudo rm -rf /var/lib",
+        'bash -c "rm -rf /"',
+        "rm -r -f /srv/payments",
+        "rm -f -r /srv/payments",
+        "rm --recursive --force /srv/payments",
+        '"rm" -rf /srv/payments',
+        "/bin/rm -Rf /srv/payments",
+        "sh -c 'rm -r -f /srv/payments'",
+        'rm -rf /tmp/"a;b" /srv/payments',
+        r"rm -rf /tmp/a\;b /srv/payments",
+        'rm -rf /tmp/"a|b" /srv/payments',
+        'rm -rf /tmp/"a&b" /srv/payments',
+        'rm -rf /tmp/build ";" /srv/payments',
+        "rm -rf /tmp/build \\\n /srv/payments",
+        "rm -rf /tmp/..\\\n/etc",
+        "env MODE=manual rm -r -f /srv/payments",
+        "sudo -u root rm --recursive --force /srv/payments",
+        "env -S 'rm -r -f /srv/payments'",
+        "xargs -n 1 rm -rf /srv/payments",
+        r"find /tmp -exec rm -rf /srv/payments \;",
+        "rm -rf /tmp/build#literal /srv/payments",
+        "rm -rf /tmp/build # comment \\\nrm -rf /srv/payments",
+        "sh -c \"bash -xc 'rm -r -f /srv/payments'\"",
+        r"echo '/tmp/foo\' ; rm -rf /srv/payments",
+        r"echo '/tmp/foo\' && rm -rf /srv/payments",
+        "echo ok & rm -rf /srv/payments",
+        'echo "$(rm -rf /srv/payments)"',
+        "echo `rm -rf /srv/payments`",
+        'echo "`rm -rf /srv/payments`"',
+        "{ rm -rf /srv/payments; }",
+        "rm -rf /tmp/build 2>&1 /srv/payments",
+        "exec -a benign rm -rf /srv/payments",
+        "xargs --max-args 1 rm -rf /srv/payments",
+        "xargs --max-procs 2 rm -rf /srv/payments",
+        "env --split-string='rm -rf /srv/payments'",
+        r"find /tmp -exec echo '{}' \; -exec rm -rf /srv/payments \;",
+        "busybox rm -rf /srv/payments",
+        "toybox rm -rf /srv/payments",
+        "./helper rm -rf /srv/payments",
+        "./printf rm -r -f /srv/payments",
+        "/opt/custom/echo rm -r -f /srv/payments",
+        "sudo -ualice rm -rf /srv/payments",
+        "sudo -gdevelopers rm -rf /srv/payments",
+        "sudo -pvalue rm -rf /srv/payments",
+    ],
+)
+def test_broad_rm_targets_flag(command):
+    assert "SKY-D329" in {risk.rule_id for risk in scan_shell_command(command)}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pip install -r requirements.txt && rm -rf /root/.cache/pip",
+        "rm -rf /root/.cache",
+        "rm -rf ~/.cache/pip",
+        "rm -rf $HOME/.cache/pip ~/.npm",
+        "apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*",
+        "rm -rf /var/cache/apk/* /var/cache/apt/archives/*.deb",
+        "rm -rf /tmp/* /var/tmp/*",
+        "rm -rf /tmp/build > /dev/null",
+        "rm -rf /tmp/build # /etc is only a comment",
+        "rm -rf /usr/local/share/.cache/yarn",
+        'rm -rf "${BUILD_DIR:?}"/*',
+        "rm -rf build dist",
+        "rm -r -f /root/.cache/pip",
+        "rm --recursive --force /var/cache/apt/archives/*.deb",
+        '"rm" -rf /tmp/"a;b"',
+        "sh -c 'rm -r -f /root/.cache/pip'",
+        'rm -rf /tmp/build ";"',
+        "printf '%s' 'rm -rf /srv/payments'",
+        "echo rm -rf /srv/payments",
+        'printf "%s" rm -rf /srv/payments',
+        "printf '%s' sh -c 'rm -rf /srv/payments'",
+        "rm -rf /tmp/build # && rm -rf /srv/payments",
+        "sudo -u root env MODE=manual rm --recursive --force /root/.cache/pip",
+        "rm -- -rf /srv/payments",
+        "sh -c \"bash -xc 'rm -r -f /root/.cache/pip'\"",
+        "echo '$(rm -rf /srv/payments)'",
+        "echo '`rm -rf /srv/payments`'",
+        r'echo "\$(rm -rf /srv/payments)"',
+        r'echo "\`rm -rf /srv/payments\`"',
+        'echo "{ rm -rf /srv/payments; }"',
+        "command -v rm -r -f /srv/payments",
+        "env --help rm -r -f /srv/payments",
+        "sudo -l rm -r -f /srv/payments",
+        "exec -a rm printf '%s' -r -f /srv/payments",
+        "sh -- -c 'rm -r -f /srv/payments'",
+        "exec -la rm printf '%s' -r -f /srv/payments",
+        "sudo -nu rm printf '%s' -r -f /srv/payments",
+    ],
+)
+def test_cache_and_temp_cleanup_is_not_broad_rm(command):
+    assert "SKY-D329" not in {risk.rule_id for risk in scan_shell_command(command)}
+
+
+def test_deep_shell_nesting_does_not_invent_destructive_evidence():
+    import shlex
+
+    safe = "printf hello"
+    unsafe = "rm -rf /srv/payments"
+    quoted_unsafe = '"rm" -rf /srv/payments'
+    for _ in range(10):
+        safe = "sh -c " + shlex.quote(safe)
+        unsafe = "sh -c " + shlex.quote(unsafe)
+        quoted_unsafe = "sh -c " + shlex.quote(quoted_unsafe)
+    assert "SKY-D329" not in {risk.rule_id for risk in scan_shell_command(safe)}
+    assert "SKY-D329" in {risk.rule_id for risk in scan_shell_command(unsafe)}
+    assert "SKY-D329" in {risk.rule_id for risk in scan_shell_command(quoted_unsafe)}
+
+
+@pytest.mark.parametrize("terminator", ["# ignore this", "", "    # comment"])
+def test_comment_or_blank_line_ends_pending_continuation(tmp_path, terminator):
+    source = "#!/bin/sh\necho \\\n" + terminator + "\nrm -rf /srv/payments\n"
+    findings = _scan_shell_findings(tmp_path, source)
+    assert [
+        (f["rule_id"], f["line"]) for f in findings if f["rule_id"] == "SKY-D329"
+    ] == [("SKY-D329", 4)]
+
+
+def test_uninterrupted_continuation_keeps_printed_argv_inert(tmp_path):
+    source = "#!/bin/sh\necho \\\n    \\\nrm -rf /srv/payments\n"
+    assert "SKY-D329" not in _rule_ids(_scan_shell_findings(tmp_path, source))
+
+
+def test_comment_ended_continuation_keeps_cache_cleanup_bounded(tmp_path):
+    source = "#!/bin/sh\necho \\\n# ignore this\nrm -rf /root/.cache/pip\n"
+    assert "SKY-D329" not in _rule_ids(_scan_shell_findings(tmp_path, source))
+
+
 def test_curl_fixed_host_with_tainted_path_is_not_ssrf(tmp_path):
     findings = _scan_shell_findings(
         tmp_path,
@@ -371,10 +531,10 @@ cat "/srv/backups/$backup_name"
 def test_here_string_is_not_a_filesystem_redirection(tmp_path):
     findings = _scan_shell_findings(
         tmp_path,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 address="$1"
 IFS=. read -r -a octets <<<"${address}"
-''',
+""",
     )
 
     assert "SKY-D215" not in _rule_ids(findings)
@@ -394,12 +554,12 @@ def test_real_file_redirections_still_flag_path_traversal(tmp_path):
 def test_heredoc_body_is_skipped_but_later_file_redirection_is_checked(tmp_path):
     findings = _scan_shell_findings(
         tmp_path,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 cat <<'TEXT'
 cat "$1"
 TEXT
 cat < "$1"
-''',
+""",
     )
 
     traversal_lines = [
@@ -444,33 +604,33 @@ def test_function_positional_args_from_constant_call_sites_are_not_ssrf():
     # agent-pr-bench real-10: download() is only called with URLs the script
     # itself defines, so its "$1" is not user input.
     source = (
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'WIKI_URL="https://huggingface.co/datasets/x/resolve/main/wiki.jsonl.gz"\n'
-        'download() {\n'
+        "download() {\n"
         '    local url="$1"\n'
         '    local output="$2"\n'
         '    curl -L --fail -o "$output" "$url"\n'
         '    wget -O "$output" "$url"\n'
-        '}\n'
+        "}\n"
         'download "$WIKI_URL" wiki.jsonl.gz\n'
     )
-    assert [f for f in scan_danger("data.sh", source) if f["rule_id"] == "SKY-D216"] == []
+    assert [
+        f for f in scan_danger("data.sh", source) if f["rule_id"] == "SKY-D216"
+    ] == []
 
 
 def test_function_positional_args_from_script_arguments_stay_tainted():
-    source = (
-        '#!/usr/bin/env bash\n'
-        'fetch() {\n'
-        '    curl "$1"\n'
-        '}\n'
-        'fetch "$1"\n'
-    )
-    lines = [f["line"] for f in scan_danger("fetch.sh", source) if f["rule_id"] == "SKY-D216"]
+    source = '#!/usr/bin/env bash\nfetch() {\n    curl "$1"\n}\nfetch "$1"\n'
+    lines = [
+        f["line"] for f in scan_danger("fetch.sh", source) if f["rule_id"] == "SKY-D216"
+    ]
     assert lines == [3]
 
 
 def test_uncalled_function_positional_args_stay_tainted():
     # Library scripts are sourced by other code: callers are unknown.
     source = 'fetch() {\n    curl "$1"\n}\n'
-    lines = [f["line"] for f in scan_danger("lib.sh", source) if f["rule_id"] == "SKY-D216"]
+    lines = [
+        f["line"] for f in scan_danger("lib.sh", source) if f["rule_id"] == "SKY-D216"
+    ]
     assert lines == [2]

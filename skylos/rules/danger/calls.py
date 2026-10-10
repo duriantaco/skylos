@@ -1,11 +1,35 @@
 import ast
 import re
 from skylos.rules.base import SkylosRule
+from skylos.security.command_guard import scan_shell_command
+from skylos.security.command_guard_types import (
+    DATA_EXFIL_RULE,
+    DESTRUCTIVE_RULE,
+    REMOTE_SCRIPT_RULE,
+    SCOPE_VIOLATION_RULE,
+)
+
+# Command-guard risks that make even a fixed shell command dangerous:
+# exfiltration, remote script execution, broad deletion, credential reads.
+_DANGEROUS_COMMAND_RULES = frozenset(
+    risk.rule_id
+    for risk in (
+        DATA_EXFIL_RULE,
+        REMOTE_SCRIPT_RULE,
+        DESTRUCTIVE_RULE,
+        SCOPE_VIOLATION_RULE,
+    )
+)
 
 DANGEROUS_CALLS = {
     "eval": ("SKY-D201", "HIGH", "Use of eval()"),
     "exec": ("SKY-D202", "HIGH", "Use of exec()"),
-    "os.system": ("SKY-D203", "CRITICAL", "Use of os.system()"),
+    "os.system": (
+        "SKY-D203",
+        "CRITICAL",
+        "Use of os.system()",
+        {"constant_command_severity": "LOW"},
+    ),
     "pickle.load": (
         "SKY-D204",
         "CRITICAL",
@@ -197,6 +221,68 @@ def _declares_non_security_use(node: ast.Call) -> bool:
         ):
             return True
     return False
+
+
+def _constant_str_value(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        parts = [_constant_str_value(value) for value in node.values]
+        return None if None in parts else "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _constant_str_value(node.left)
+        right = _constant_str_value(node.right)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def _has_shell_expansion(command: str) -> bool:
+    # A quoted script passed to a shell/eval can expand on its second parse.
+    if re.search(r"\b(?:eval|bash|dash|ksh|sh|zsh)\b", command) and any(
+        marker in command for marker in ("$", "`")
+    ):
+        return True
+    quote = None
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+        elif quote == "'":
+            if char == "'":
+                quote = None
+        elif char == "\\":
+            escaped = True
+        elif char in {"$", "`"}:
+            return True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in {"'", '"'}:
+            quote = char
+    return False
+
+
+def _call_severity(node: ast.Call, severity: str, opts) -> str:
+    """``os.system("twine upload dist/*")``: a fixed command string has no
+    input to inject, so it is reported at the lower severity the rule sets.
+    Formatted, concatenated or variable commands, and fixed commands that
+    delete broadly, exfiltrate or run remote scripts, keep the rule severity."""
+    lowered = opts.get("constant_command_severity") if opts else None
+    if not lowered or len(node.args) > 1:
+        return severity
+    command = node.args[0] if node.args else None
+    if command is None:
+        for kw in node.keywords:
+            if kw.arg == "command":
+                command = kw.value
+    text = _constant_str_value(command)
+    if text is None or _has_shell_expansion(text):
+        return severity
+    if any(
+        risk.rule_id in _DANGEROUS_COMMAND_RULES for risk in scan_shell_command(text)
+    ):
+        return severity
+    return lowered
 
 
 def _kw_equals(node: ast.Call, requirements):
@@ -393,7 +479,9 @@ def _is_flask_style_debug_run(node: ast.Call, name: str | None, filename) -> boo
         callee_name = (
             callee.attr
             if isinstance(callee, ast.Attribute)
-            else callee.id if isinstance(callee, ast.Name) else ""
+            else callee.id
+            if isinstance(callee, ast.Name)
+            else ""
         )
         return callee_name in _FLASK_APP_FACTORIES
     return False
@@ -511,7 +599,7 @@ class DangerousCallsRule(SkylosRule):
             findings.append(
                 {
                     "rule_id": rule_id,
-                    "severity": severity,
+                    "severity": _call_severity(node, severity, opts),
                     "message": message,
                     "file": context.get("filename"),
                     "line": node.lineno,

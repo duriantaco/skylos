@@ -183,6 +183,42 @@ def test_command_overview_distinguishes_source_artifact_and_image_checks():
     assert "100% accuracy" not in output
 
 
+def test_command_overview_leads_with_scan_done_and_ci():
+    from skylos.ui.help import print_command_overview
+
+    console = Console(record=True, width=100, color_system=None)
+
+    print_command_overview(console)
+
+    output = console.export_text()
+    start = output.index("Start here")
+    more = output.index("More commands")
+    common = [
+        output.index("skylos . -a"),
+        output.index("skylos done --base main"),
+        output.index("skylos cicd init"),
+    ]
+    assert start < min(common) and max(common) < more
+    assert "an AI agent wrote" in output
+    assert more < output.index("skylos preflight [ARTIFACT]")
+    assert more < output.index("skylos image scan IMAGE")
+
+
+def test_command_map_shows_the_common_path_before_every_command():
+    from skylos.ui.help import print_flat_commands
+
+    console = Console(record=True, width=120, color_system=None)
+
+    print_flat_commands(console)
+
+    output = console.export_text()
+    assert output.index("Start here") < output.index("skylos done --base main")
+    assert output.index("skylos done --base main") < output.index("All commands")
+    assert "skylos agent audit [path]" in output
+    done = next(c for c in COMMANDS if c["name"].startswith("skylos done "))
+    assert "AI agent" in done["desc"]
+
+
 def test_preflight_help_names_scope_configuration_and_exit_codes(
     monkeypatch, capsys
 ):

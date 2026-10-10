@@ -9,7 +9,6 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-[![Astronomer Trust](https://img.shields.io/badge/Astronomer%20Trust-A-brightgreen?style=flat&logo=github&logoColor=white)](#star-authenticity-audit)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [Website](https://skylos.dev) |
@@ -232,27 +231,12 @@ Regelfamilien und Scanner-Scope stehen in der
 
 ## Benchmark-Snapshot
 
-Skylos enthält Regression-Benchmarks für Dead Code, Security, Quality und
-Agent Review. Diese sind strikte Regression-Gates, kein umfassender Beweis,
-dass ein Tool in jeder Situation State of the Art ist.
+Skylos enthält eingecheckte Regression-Suites für Dead Code, Security,
+Quality, Agent Review und AI-Code-Fehler. Diese sind Regression-Gates, keine
+unabhängigen Genauigkeitsbenchmarks. Die Fallzahlen ändern sich; die
+jeweiligen Manifeste sind die aktuelle Quelle.
 
-| Suite | Aktuelles Skylos-Ergebnis | Baseline |
-|:---|:---|:---|
-| Dead-code regression | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67; Vulture im letzten lokalen Rerun nicht installiert |
-| Security regression | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit score 47.14 auf Python-anwendbaren Cases |
-| Quality regression | 13 cases, score 100.0 | nur Regression-Gate |
-| Agent review | 25 cases, score 100.0 | nur Regression-Gate |
-
-Highlights aus `golden-v0.2`:
-
-| Frozen Suite | Skylos-Ergebnis | Hinweis |
-|:---|:---|:---|
-| Dead code seeded dev | overall score 96.28; TS/JS/Go/Java score 100.0; Python score 93.33 | Python-Restpunkte sind Label-Review-Themen |
-| Security seeded dev | overall score 96.52; vollständige Recall mit einem Python-`urljoin`-False-Positive | Label sollte geprüft werden |
-| OWASP Java security dev | TP=105 FP=0 FN=15 TN=120, score 94.37 | request-wrapper-, LDAP-, XPath- und property-weak-hash-Lücken bleiben |
-| Quality seeded dev | TP=1 FP=0 FN=0 TN=1, score 100.0 | aktuell nur ein seeded case |
-
-Methodik, Befehle, Vergleichszeilen und Caveats stehen in
+Methodik, datierte Ergebnisse, Vergleichszeilen und Grenzen stehen in
 [BENCHMARK.md](../../BENCHMARK.md).
 
 ## Projektnachweise
@@ -262,16 +246,10 @@ Skylos-unterstützte Dead-Code-Cleanup-PRs wurden in
 [NetworkX](https://github.com/networkx/networkx/pull/8572),
 [Optuna](https://github.com/optuna/optuna/pull/6547),
 [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136),
-[pypdf](https://github.com/py-pdf/pypdf/pull/3685),
-[beets](https://github.com/beetbox/beets/pull/6473) und
-[Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953) gemerged. Das
+[pypdf](https://github.com/py-pdf/pypdf/pull/3685) und
+[beets](https://github.com/beetbox/beets/pull/6473) gemerged. Das
 sind akzeptierte Cleanup-PRs, keine Empfehlungen oder Endorsements dieser
 Projekte. Siehe [Real-World Results](../../REAL_WORLD_RESULTS.md).
-
-<a id="star-authenticity-audit"></a>
-
-Ein lokaler Astronomer-Scan vom 26. April 2026 zählte 420 Stargazer und gab
-**overall trust: A** zurück. StarGuard meldete außerdem **low fake-star risk**.
 
 ## Integrationen
 

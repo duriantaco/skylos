@@ -96,7 +96,9 @@ def cli():
 
 def test_chained_sql_sinks_flagged_with_rule_and_line(tmp_path):
     findings = _scan(tmp_path, SQL_POSITIVE)
-    assert _hits(findings, "SKY-D211") == [14, 20, 25, 30, 30, 35, 45, 49]
+    # Line 30 is ``session.execute(text("..." + x))``: one report, on the
+    # text() call, not a second one for the execute() around it.
+    assert _hits(findings, "SKY-D211") == [14, 20, 25, 30, 35, 45, 49]
     chained = [f for f in findings if f["rule_id"] == "SKY-D211" and f["line"] == 14]
     assert chained[0]["severity"] == "CRITICAL"
     assert chained[0]["symbol"] == "chained"
