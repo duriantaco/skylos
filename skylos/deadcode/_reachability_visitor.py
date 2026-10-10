@@ -237,29 +237,7 @@ class SourceVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if self._visit_getattr_lookup(node):
             return
-        if (
-            self._builtin_getattr(node)
-            and node.args
-            and not self._importlib_module_lookup(node.args[0])
-        ):
-            if self.owner is None:
-                self.graph.opaque_receiver_root = True
-            else:
-                self.graph.opaque_receiver_owners.add(self.owner)
-        unbound_method = self._unbound_method(node.func)
-        if unbound_method is not None:
-            receiver = (
-                self.index.resolve(node.args[0], self.module, self.local)
-                if node.args
-                else None
-            )
-            class_key = self.index.method_classes[unbound_method]
-            if (
-                not receiver
-                or receiver[0] not in RECEIVER_BINDINGS
-                or receiver[1] != class_key
-            ):
-                self._unknown_method_receiver(unbound_method)
+        self._mark_unknown_call_receivers(node)
         for argument in [*node.args, *(kw.value for kw in node.keywords)]:
             self._protect_value(argument)
         constructor = self.index.resolve(node.func, self.module, self.local)
@@ -278,6 +256,32 @@ class SourceVisitor(ast.NodeVisitor):
             for identity in self.module.names:
                 self._protect_binding((MODULE_BINDING, identity))
         self.generic_visit(node)
+
+    def _mark_unknown_call_receivers(self, node: ast.Call) -> None:
+        if (
+            self._builtin_getattr(node)
+            and node.args
+            and not self._importlib_module_lookup(node.args[0])
+        ):
+            if self.owner is None:
+                self.graph.opaque_receiver_root = True
+            else:
+                self.graph.opaque_receiver_owners.add(self.owner)
+
+        unbound_method = self._unbound_method(node.func)
+        if unbound_method is not None:
+            receiver = (
+                self.index.resolve(node.args[0], self.module, self.local)
+                if node.args
+                else None
+            )
+            class_key = self.index.method_classes[unbound_method]
+            if (
+                not receiver
+                or receiver[0] not in RECEIVER_BINDINGS
+                or receiver[1] != class_key
+            ):
+                self._unknown_method_receiver(unbound_method)
 
     def _unknown_method_receiver(self, method: str) -> None:
         self.graph.opaque_owners.add(method)
@@ -421,47 +425,7 @@ class SourceVisitor(ast.NodeVisitor):
         binding = self._getattr_receiver(node)
         if binding is None:
             return False
-        if binding[0] in RECEIVER_BINDINGS:
-            # fnmatch compiles wildcard runs using bounded matching rather
-            # than repeated arbitrary regex groups that can backtrack badly.
-            attribute_name = self._attribute_expression(node.args[1])
-            pattern = re.compile(
-                fnmatch.translate(self._attribute_pattern(attribute_name))
-            )
-            targets = {
-                key
-                for name, key in self.index.classes[binding[1]].methods.items()
-                if pattern.fullmatch(name)
-            }
-            if binding[0] == CLASS_BINDING:
-                for key in targets:
-                    self._unknown_method_receiver(key)
-            # The earlier compatibility visitor registers module-wide name
-            # hints for reflection. Account for those hints here so they do
-            # not become independent roots outside this proven receiver.
-            for key in self.module.functions.values():
-                definition = self.index.candidates.get(key)
-                if definition and pattern.fullmatch(definition.simple_name):
-                    markers = definition.heuristic_refs
-                    if "dynamic_pattern" in markers or isinstance(
-                        attribute_name, ast.Constant
-                    ):
-                        hints = 1
-                        if attribute_name is not node.args[1] and isinstance(
-                            attribute_name, ast.JoinedStr
-                        ):
-                            # The legacy assignment finalizer and implicit
-                            # reference pass each add this same pattern hint.
-                            hints += 1
-                        self.graph.observed[key] += hints
-        else:
-            # Modules can re-export objects under arbitrary names. Retaining
-            # their known exports is conservative without retaining the entire
-            # project solely because a module attribute name is dynamic.
-            targets = self.index.escaped_symbols(binding)
-            for key in targets:
-                if key in self.index.method_classes:
-                    self._unknown_method_receiver(key)
+        targets = self._getattr_targets(node, binding)
         self.graph.protect(targets, self.owner)
         destination = (
             self.graph.receiver_roots
@@ -478,6 +442,50 @@ class SourceVisitor(ast.NodeVisitor):
             self._protect_value(argument)
             self.visit(argument)
         return True
+
+    def _getattr_targets(self, node: ast.Call, binding: Binding) -> set[str]:
+        if binding[0] not in RECEIVER_BINDINGS:
+            # Modules can re-export objects under arbitrary names. Retaining
+            # known exports avoids keeping the entire project for reflection.
+            targets = self.index.escaped_symbols(binding)
+            for key in targets:
+                if key in self.index.method_classes:
+                    self._unknown_method_receiver(key)
+            return targets
+        # fnmatch compiles wildcard runs using bounded matching rather
+        # than repeated arbitrary regex groups that can backtrack badly.
+        attribute_name = self._attribute_expression(node.args[1])
+        pattern = re.compile(fnmatch.translate(self._attribute_pattern(attribute_name)))
+        targets = {
+            key
+            for name, key in self.index.classes[binding[1]].methods.items()
+            if pattern.fullmatch(name)
+        }
+        if binding[0] == CLASS_BINDING:
+            for key in targets:
+                self._unknown_method_receiver(key)
+        self._account_getattr_hints(pattern, attribute_name, node.args[1])
+        return targets
+
+    def _account_getattr_hints(
+        self, pattern: re.Pattern[str], attribute_name: ast.AST, original: ast.AST
+    ) -> None:
+        # The earlier compatibility visitor registers module-wide name
+        # hints for reflection. Account for those hints here so they do
+        # not become independent roots outside this proven receiver.
+        hints = 1
+        if attribute_name is not original and isinstance(attribute_name, ast.JoinedStr):
+            # The assignment finalizer and implicit reference pass each add
+            # this same pattern hint.
+            hints += 1
+        for key in self.module.functions.values():
+            definition = self.index.candidates.get(key)
+            if not definition or not pattern.fullmatch(definition.simple_name):
+                continue
+            if "dynamic_pattern" in definition.heuristic_refs or isinstance(
+                attribute_name, ast.Constant
+            ):
+                self.graph.observed[key] += hints
 
     def _visit_constructor(self, node: ast.Call, class_key: str) -> None:
         info = self.index.classes[class_key]
