@@ -16,8 +16,13 @@ the agent makes it, instead of waiting for CI:
 - **When the agent says it is done**, Skylos holds the stop while issues the
   agent added in this session are still open.
 
-It also adds a skill that shows the agent how to run Skylos on its changes,
-read the JSON output and run `skylos done` before calling a change finished.
+It also adds two skills. `skylos` shows the agent how to run Skylos on its
+changes, read the JSON output and run `skylos done` before calling a change
+finished. `skylos-dead-code` walks the agent through finding dead code in a
+Python project, proving each candidate unused, and removing it in small
+batches with your approval; it runs `skylos . --no-upload` and
+`skylos clean --dry-run`, then applies an approved batch or edits reviewed
+candidates manually when the cleanup command would include others.
 
 The plugin contains no analysis code. Every hook calls the `skylos` command
 installed on your machine.
@@ -27,6 +32,8 @@ installed on your machine.
 - The `skylos` command, **version 4.44.0 or newer**, on the PATH that your
   agent runs hooks with. Check with `skylos --version`.
 - Use **4.47.1 or newer** for the full Done check set described in the skill.
+- Hook command strings require a POSIX shell and `grep`, as on macOS/Linux
+  or Git Bash on Windows. A PowerShell-only hook environment is unsupported.
 - Install it with `pip install skylos` (or `pipx install skylos`, which puts
   it on PATH outside any virtual environment).
 
@@ -61,7 +68,16 @@ Run `/hooks` to see the Skylos entries.
 **Cursor**: install Skylos from the Cursor Marketplace once it is listed. To
 try it locally, copy this folder to `~/.cursor/plugins/local/skylos`, run
 **Developer: Reload Window**, and check that **Customize** lists the hooks and
-the skill.
+both skills. Your organization must allow local plugin imports; an installed
+marketplace plugin with the same name takes precedence over the local copy.
+
+For skills without hooks, use the explicit consumer-skill directory with the
+[skills CLI](https://github.com/vercel-labs/skills). This avoids selecting the
+repository's maintenance skill, which also has the name `skylos`:
+
+```bash
+npx skills add https://github.com/duriantaco/skylos/tree/main/plugins/skylos/skills --skill skylos --skill skylos-dead-code
+```
 
 ## Don't also run `skylos agent install-hooks`
 
@@ -152,8 +168,8 @@ plugin, add them yourself:
   the packages in an install command exist, and edit checks can do the same
   for newly added imports. These lookups send package names and versions.
   Install commands that use a private index skip these lookups. The skill's
-  `skylos . -a` command also queries OSV.dev for known vulnerabilities in your
-  dependencies.
+  `skylos . -a --no-upload` command also queries OSV.dev for known
+  vulnerabilities in your dependencies.
 - **Stores:** `.skylos/agent-session.json` (file paths and hashed issue
   identities, never source text), `.skylos/hook.log` (event, outcome, counts and timing; never
   file contents, secrets or commands), caches under `.skylos/cache/`, and done

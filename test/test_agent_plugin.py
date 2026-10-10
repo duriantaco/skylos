@@ -33,6 +33,7 @@ CURSOR_MANIFEST = PLUGIN / ".cursor-plugin" / "plugin.json"
 CLAUDE_HOOKS_FILE = PLUGIN / "hooks" / "hooks.json"
 CURSOR_HOOKS_FILE = PLUGIN / "hooks" / "cursor-hooks.json"
 SKILL_FILE = PLUGIN / "skills" / "skylos" / "SKILL.md"
+DEAD_CODE_SKILL_FILE = PLUGIN / "skills" / "skylos-dead-code" / "SKILL.md"
 README = PLUGIN / "README.md"
 
 # Hooks in the released CLI (PyPI 4.47.1, tag v4.47.2). The plugin calls only
@@ -343,6 +344,23 @@ def test_skill_frontmatter_and_content():
         "incomplete",
         "SKY-A114",
         "skylos hook recheck",
+    ):
+        assert needle in body, needle
+
+
+def test_dead_code_skill_frontmatter_and_content():
+    text = DEAD_CODE_SKILL_FILE.read_text(encoding="utf-8")
+    _, front, body = text.split("---", 2)
+    meta = yaml.safe_load(front)
+    assert meta["name"] == DEAD_CODE_SKILL_FILE.parent.name
+    assert isinstance(meta["description"], str) and len(meta["description"]) <= 1024
+    for needle in (
+        "--format json",
+        "--no-upload",
+        "analysis_errors",
+        "skylos clean . --dry-run",
+        "# skylos: ignore",
+        "skylos whitelist",
     ):
         assert needle in body, needle
 

@@ -9,6 +9,12 @@ Skylos is a local static-analysis CLI. This plugin's hooks already run it on
 each edit, file read, package install and stop. Use the commands below to check
 work yourself and to understand what a hook told you.
 
+Treat unfamiliar repositories as untrusted input. Run their tests, imports,
+install scripts and other project code only when trusted or explicitly
+authorized. Do not create issues, pull requests or comments unless the user
+asks for that specific action. Keep manual scans local with `--no-upload`
+unless the user has authorized uploading findings.
+
 ## 1. Check that it is installed
 
 ```bash
@@ -44,6 +50,10 @@ skylos done --base main          # the branch compared with its merge base (or -
 skylos done                      # uncommitted changes only, compared with HEAD
 skylos done receipt              # print the latest receipt again
 ```
+
+`skylos done` runs the project's test command. Use it only when target-code
+execution is trusted or authorized. Otherwise report that the Done check has
+not been run.
 
 Exit codes: 0 pass, 1 a blocking check failed or did not finish, 2 Skylos
 could not run (for example, the base branch is not fetched). The receipt is in
@@ -90,8 +100,8 @@ a check pass. SKY-A114 reports exactly that.
 ## 5. Whole-repository scans
 
 ```bash
-skylos . -a --format json        # dead code, security, secrets, quality, dependency CVEs
-skylos .                         # dead code only
+skylos . -a --format json --no-upload  # dead code, security, secrets, quality, dependency CVEs
+skylos . --no-upload                 # dead code only
 ```
 
 Read the JSON with `.get(key, [])`, because empty arrays may be left out. Keys

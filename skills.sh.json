@@ -1,0 +1,10 @@
+{
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Use Skylos",
+      "description": "Run the Skylos CLI on your own code: check agent changes, and find and remove dead code.",
+      "skills": ["skylos-dead-code", "skylos"]
+    }
+  ]
+}
