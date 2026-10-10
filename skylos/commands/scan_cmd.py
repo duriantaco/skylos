@@ -351,6 +351,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             analyzer_logger.setLevel(analyzer_logger_level)
 
         result = json.loads(result_json)
+        del result_json
 
         grep_report = (result.get("analysis_summary") or {}).get("grep_verify") or {}
         if (
@@ -501,7 +502,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     ]
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result)
-            result_json = json.dumps(result)
 
         if getattr(args, "diff", None):
             from skylos.analyzer import _split_outside_diff_analysis_errors
@@ -561,7 +561,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             # the findings visible in a diff-scoped report.
             result.pop("unused_fixtures_counts", None)
             result = _apply_display_filters(result)
-            result_json = json.dumps(result)
             if not changed_ranges and not machine_output:
                 if any(result.get(category) for category in _DIFF_FINDING_CATEGORIES):
                     console.print(
@@ -600,11 +599,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 git_root=health_root,
                 base_commit=resolve_merge_base(code_health_base, health_root),
             )
-            result_json = json.dumps(result)
 
         if getattr(args, "select", None):
             result = _apply_rule_selection(result, args.select)
-            result_json = json.dumps(result)
 
         if args.verify and not machine_output:
             try:
@@ -699,8 +696,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result["provenance_summary"] = prov_report.summary
                 result["provenance"] = prov_report.to_dict()
 
-                result_json = json.dumps(result)
-
                 if not machine_output:
                     ai_count = ai_stats["ai_authored_findings"]
                     ai_pct = ai_stats["ai_authored_pct"]
@@ -792,13 +787,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 result, args, console, project_root=project_root, machine_output=machine_output
             )
 
-        json_result = dict(result)
-        json_result.pop("provenance_status", None)
-        if _skip_provenance and json_result.get("provenance") is None:
-            json_result.pop("provenance", None)
-        result_json = json.dumps(json_result)
         output_result = result
-        json_output_result = json.loads(result_json)
         _cli_severity = getattr(args, "severity", None)
         _cli_category = getattr(args, "category", None)
         _cli_file_filter = getattr(args, "file_filter", None)
@@ -809,16 +798,25 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 category=_cli_category,
                 file_filter=_cli_file_filter,
             )
-            json_output_result = _apply_display_filters(
-                json_output_result,
-                severity=_cli_severity,
-                category=_cli_category,
-                file_filter=_cli_file_filter,
-            )
-        display_payload = json_output_result
-        if getattr(args, "json_ci", False):
-            display_payload = _build_ci_json_payload(json_output_result)
-        output_result_json = json.dumps(display_payload)
+        if args.json:
+            # Only JSON output consumes this normalized, independent snapshot.
+            # Other formats render output_result and upload the complete result.
+            json_result = dict(result)
+            json_result.pop("provenance_status", None)
+            if _skip_provenance and json_result.get("provenance") is None:
+                json_result.pop("provenance", None)
+            json_output_result = json.loads(json.dumps(json_result))
+            if _cli_severity or _cli_category or _cli_file_filter:
+                json_output_result = _apply_display_filters(
+                    json_output_result,
+                    severity=_cli_severity,
+                    category=_cli_category,
+                    file_filter=_cli_file_filter,
+                )
+            display_payload = json_output_result
+            if getattr(args, "json_ci", False):
+                display_payload = _build_ci_json_payload(json_output_result)
+            output_result_json = json.dumps(display_payload)
 
         def upload_formatted_result() -> None:
             if not args.upload:
