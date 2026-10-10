@@ -107,6 +107,8 @@ def apply_dead_code_liveness(
     refs: Iterable[tuple[str, Any]],
     project_root: str | Path,
     files: Iterable[str | Path] | None = None,
+    *,
+    exclude_folders: Iterable[str] | None = None,
 ) -> LivenessReport:
 
     report = LivenessReport()
@@ -133,7 +135,7 @@ def apply_dead_code_liveness(
     _rescue_protocol_overrides(classes, class_methods, report)
     _rescue_registration_methods(classes, class_methods, report)
     for target, reason in find_framework_entrypoint_targets(
-        definitions, parsed_files, root
+        definitions, parsed_files, root, exclude_folders=exclude_folders
     ):
         _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
@@ -300,6 +302,8 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
     refs = getattr(defn, "heuristic_refs", None)
     if refs is not None:
         refs[f"dead_code_liveness:{reason}"] = 1.0
+        if reason.startswith(("flask_web_", "django_web_")):
+            refs["framework_root"] = 1.0
     signals = getattr(defn, "framework_signals", None)
     if signals is not None and reason not in signals:
         signals.append(reason)

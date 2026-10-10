@@ -23,6 +23,8 @@ def find_framework_entrypoint_targets(
     definitions: dict[str, Any],
     parsed_files: Iterable[ParsedPythonFile],
     root: Path,
+    *,
+    exclude_folders=None,
 ) -> list[tuple[Any, str]]:
     """Return definitions used by proven imports, without executing target code."""
     parsed = []
@@ -41,6 +43,12 @@ def find_framework_entrypoint_targets(
         scanner = _FrameworkScanner(module, index)
         for definition, reason in scanner.collect():
             found[(id(definition), reason)] = (definition, reason)
+    from skylos.deadcode.web_framework_liveness import find_web_framework_targets
+
+    for definition, reason in find_web_framework_targets(
+        index, parsed, root, exclude_folders=exclude_folders
+    ):
+        found[(id(definition), reason)] = (definition, reason)
     return list(found.values())
 
 
@@ -97,6 +105,8 @@ class _DefinitionIndex:
         self.parameters = defaultdict(dict)
         self.modules = {}
         self.shadowed = set()
+        self.all_by_name = defaultdict(list)
+        self.all_by_location = defaultdict(list)
         for module in parsed:
             path = self._resolve_path(module.path)
             self.modules[path] = _module_name(path, root)
@@ -106,7 +116,7 @@ class _DefinitionIndex:
                 if relative[0] in _SOURCE_ROOTS and len(relative) > 1
                 else relative[0]
             )
-            for framework in ("django", "celery"):
+            for framework in ("django", "celery", "flask"):
                 if first in {framework, f"{framework}.py"} or (
                     root.name == framework and relative[0] == "__init__.py"
                 ):
@@ -127,6 +137,15 @@ class _DefinitionIndex:
                     self.by_location[(path, node.lineno)] = definition
                     self.by_name[definition.name].append(definition)
                     self.modules[path] = definition.name.rsplit(".", 1)[0]
+        if any(
+            name.split(".", 1)[0] in {"django", "flask"} - self.shadowed
+            for _, name in self.imports
+        ):
+            for definition in definitions.values():
+                path = self._resolve_path(Path(definition.filename))
+                if path in self.modules:
+                    self.all_by_name[definition.name].append(definition)
+                    self.all_by_location[(path, definition.line)].append(definition)
         # A dotted setting names the module's final binding, not a stale function.
         for module in parsed:
             path = self._resolve_path(module.path)
