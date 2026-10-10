@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path, PosixPath, WindowsPath
 import struct
 from typing import Any, Iterable
+
+from skylos.visitors.base import Definition
 
 _DEFAULT_WEIGHTS = {
     "same_file_attr": 1.0,
@@ -15,6 +18,10 @@ _DEFAULT_WEIGHTS = {
 _BUILTIN_NUMBERS = (int, float)
 _ADDITION_CACHE_LIMIT = 4096
 _MIN_CONTEXTS_TO_INDEX = 32
+_SMALL_INDEX_MAX_CONTEXTS = 128
+_SMALL_INDEX_MIN_USES = 6
+_MIN_INDEX_USES = 4
+_PLAIN_FILENAMES = (str, Path, PosixPath, WindowsPath)
 
 
 def _numeric_key(value: int | float) -> tuple[type, Any]:
@@ -120,14 +127,80 @@ def _original_updates(definition, contexts, weights, module, package):
             ) + weights.get("global_attr", 0.1)
 
 
+def _plain_definition(definition):
+    if type(definition) is not Definition:
+        return False
+    try:
+        return (
+            type(definition.name) is str
+            and type(definition.simple_name) is str
+            and type(definition.type) is str
+            and type(definition.filename) in _PLAIN_FILENAMES
+        )
+    except AttributeError:
+        return False
+
+
+def _eligible_kind(definition):
+    return definition.type in ("function", "method") or (
+        definition.type == "variable" and "." in definition.name
+    )
+
+
+def _eligible_use_counts(counts, definitions, compatible_family):
+    for definition in definitions.values():
+        if not _plain_definition(definition):
+            return None
+        attribute = definition.simple_name
+        if attribute not in counts or not _eligible_kind(definition):
+            continue
+        if compatible_family is None or compatible_family(definition, "python"):
+            counts[attribute] += 1
+    return counts
+
+
+def _indexing_candidates(contexts, definitions, compatible_family):
+    # Inspect only native slotted definitions: a census must never trigger
+    # custom properties, mapping iteration, or filename conversions early.
+    if type(definitions) is not dict:
+        return None
+    if any(type(attribute) is not str for attribute in contexts):
+        return None
+    counts = {
+        attribute: 0
+        for attribute, rows in contexts.items()
+        if len(rows) > _MIN_CONTEXTS_TO_INDEX
+    }
+    if not counts:
+        return set()
+    counts = _eligible_use_counts(counts, definitions, compatible_family)
+    if counts is None:
+        return None
+    return {
+        attribute
+        for attribute, uses in counts.items()
+        if uses
+        >= (
+            _SMALL_INDEX_MIN_USES
+            if len(contexts[attribute]) <= _SMALL_INDEX_MAX_CONTEXTS
+            else _MIN_INDEX_USES
+        )
+    }
+
+
 class AttributeContextIndex:
-    def __init__(self, contexts: Iterable[tuple]):
+    def __init__(
+        self, contexts: Iterable[tuple], *, definitions=None, compatible_family=None
+    ):
         self.by_attribute = defaultdict(list)
         self.indexed_attributes = {}
         self.seen_attributes = set()
         self.addition = _ExactAddition()
         for attribute, module, owner, line in contexts:
             self.by_attribute[attribute].append((module, owner, line))
+        self.indexing_candidates = _indexing_candidates(
+            self.by_attribute, definitions, compatible_family
+        )
 
     def mark(self, definition: Any, weights: dict) -> None:
         attribute = definition.simple_name
@@ -138,6 +211,10 @@ class AttributeContextIndex:
         indexed = (
             self._index_for(attribute, contexts)
             if len(contexts) > _MIN_CONTEXTS_TO_INDEX
+            and (
+                self.indexing_candidates is None
+                or attribute in self.indexing_candidates
+            )
             else None
         )
         if indexed is None:

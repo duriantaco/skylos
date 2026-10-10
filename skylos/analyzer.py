@@ -2941,7 +2941,11 @@ class Skylos:
         if used_attr_context:
             from skylos.analysis.attribute_refs import AttributeContextIndex
 
-            attribute_contexts = AttributeContextIndex(used_attr_context)
+            attribute_contexts = AttributeContextIndex(
+                used_attr_context,
+                definitions=self.defs,
+                compatible_family=_compatible_family,
+            )
 
             for defn in self.defs.values():
                 if not _compatible_family(defn, "python"):
