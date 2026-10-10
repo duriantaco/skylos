@@ -1,6 +1,10 @@
 ---
 name: skylos
 description: Run, interpret, or modify Skylos safely. Use when the user asks to scan code with Skylos, explain SKY-* findings, triage dead-code false positives, audit security/secrets/SCA/LLM behavior, update Skylos rules/docs/CI, benchmark analyzer behavior, or change this repository safely.
+metadata:
+  # Repo-maintainer skill: hidden from `npx skills add duriantaco/skylos`
+  # (set INSTALL_INTERNAL_SKILLS=1 to install it anyway).
+  internal: true
 ---
 
 # Skylos
