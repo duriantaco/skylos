@@ -608,7 +608,7 @@ class TestDebugLeftoverFindings:
             pytest.param(
                 """
                 from pprint import pprint
-                pprint(data)
+                pprint(locals())
                 """,
                 "test.py",
                 None,
