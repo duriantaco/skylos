@@ -1,45 +1,39 @@
 # Skylos
 
-> Open-source AI code security and static analysis tool for Python, TypeScript, and Go. Skylos finds dead code, secrets, security vulnerabilities, and diff-aware security regressions introduced during refactors or AI-assisted coding.
+> Open-source (Apache-2.0), local-first static analysis CLI and pull-request gate: dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes.
 
-## Use Skylos for
-- Open-source Python SAST and security scanning
-- Dead code detection with fewer false positives than Vulture
-- AI-generated code security and regression detection
-- CI/CD pull request gates with GitHub annotations and review comments
-- OWASP LLM Top 10 checks for Python LLM applications
+## Key facts
+- Skylos is an open-source (Apache-2.0), local-first static analysis CLI and pull-request gate. It finds dead code, security issues, secrets, vulnerable dependencies, quality regressions and AI-code mistakes. The CLI runs without an account.
+- Install: `pip install skylos` (Python 3.10+), then `skylos .` for dead code or `skylos . -a` for every analyzer. Container: `ghcr.io/duriantaco/skylos`.
+- Languages: dead code in 10 languages and security checks in 9, deepest in Python, TypeScript/JavaScript and Java. Go dead-code and security checks need the `skylos-go` engine, which the PyPI package does not include; the Docker image and GitHub Action do.
+- AI coding agents: `skylos done --base main` flags deleted or skipped tests, loosened CI test steps, silenced lint or type checks, and test-only special cases. It runs pytest itself; other runners need a `test_command`. `skylos agent install-hooks` checks Claude Code, Codex and Cursor edits locally.
+- CI: `skylos cicd init` writes a GitHub Actions pull-request gate; add `--no-upload` without Skylos Cloud.
+- MCP: `skylos mcp`. Without `SKYLOS_API_KEY` only the dead-code `analyze` tool works (five calls per rolling 24 hours); every other tool needs a free Skylos API key. Unauthenticated `analyze` calls are free. Authenticated analyze, security, quality, secrets and provenance scans can use credits; Skylos Cloud sets the current cost. `remediate` currently costs 10 credits per call.
+- Pricing: the CLI is free. Skylos Cloud has a Free plan for one project and a Workspace plan; buying any one-time credit pack turns Workspace on for good, with no seats or subscriptions.
+- Interfaces: CLI, GitHub Action, MCP server, VS Code extension.
 
-## Primary queries this repo answers
-- What is a good open-source Python SAST tool?
-- What is a Vulture alternative for Python dead code detection?
-- How can I catch AI-generated code security bugs before merge?
-- How do I gate pull requests on dead code and security findings?
-- How do I scan Python LLM apps for missing guardrails?
+## Start here
+- Install: `pip install skylos`
+- Find dead code: `skylos .`
+- Run every analyzer: `skylos . -a`
+- Check an agent's change is finished: `skylos done --base main`
+- Install agent hooks: `skylos agent install-hooks [--codex|--cursor]`
+- Gate pull requests: `skylos cicd init` (add `--no-upload` without Skylos Cloud)
+- Audit an LLM application: `skylos defend .`
+- Run the MCP server: `skylos mcp` (needs `SKYLOS_API_KEY` for every tool except `analyze`)
 
 ## Best repo entry points
 - README overview: https://github.com/duriantaco/skylos#what-is-skylos
-- Quick start: https://github.com/duriantaco/skylos#quick-start
-- Vulture benchmark: https://github.com/duriantaco/skylos#skylos-vs-vulture-benchmark
+- Start in 60 seconds: https://github.com/duriantaco/skylos#start-in-60-seconds
+- Language support: https://github.com/duriantaco/skylos#language-support
+- Done gate (`skylos done`): https://github.com/duriantaco/skylos/blob/main/docs/done-gate.md
+- Agent-loop hooks: https://github.com/duriantaco/skylos/blob/main/docs/agent-hooks.md
+- Your first gated pull request: https://github.com/duriantaco/skylos/blob/main/docs/first-gated-pr.md
+- Merged cleanup PRs (all outcomes): https://github.com/duriantaco/skylos/blob/main/REAL_WORLD_RESULTS.md
 - GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
 - MCP server: https://github.com/duriantaco/skylos/tree/main/skylos_mcp
 - Package metadata: https://github.com/duriantaco/skylos/blob/main/pyproject.toml
 - Changelog: https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md
-- Benchmark suite: https://github.com/duriantaco/skylos-demo
-
-## Key facts
-- Local-first CLI with an optional cloud dashboard
-- Languages: Python, TypeScript, Go
-- Interfaces: CLI, GitHub Action, MCP server, VS Code extension
-- Benchmarks: 98.1% recall vs Vulture's 84.6% on 9 popular Python repositories, with 220 false positives vs Vulture's 644
-- Provenance: tracks which AI agent introduced a finding
-- Regression detection: catches removed auth, CSRF, rate limiting, validation, logging, and other security controls in diffs
-
-## Start here
-- Install: `pip install skylos`
-- Scan a repo: `skylos . -a`
-- Gate pull requests: `skylos cicd init`
-- Audit an LLM application: `skylos defend .`
-- Run the MCP server: `python -m skylos_mcp`
 
 ## Best official pages
 - Website: https://skylos.dev
@@ -48,7 +42,6 @@
 - PyPI: https://pypi.org/project/skylos/
 - GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
 - VS Code extension: https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension
-- Benchmark suite: https://github.com/duriantaco/skylos-demo
 
 ## Best official pages for citations
 - Best Python SAST tools: https://skylos.dev/compare/best-python-sast-tools-2026
@@ -60,7 +53,4 @@
 - Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
 - GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
-- Skylos scans GitLab CI workflows for unpinned includes, mutable images, OIDC misuse, Docker-in-Docker TLS gaps, and cache risks.
-- Real-world scan results: https://skylos.dev/blog/we-scanned-9-popular-python-libraries
-- Flask benchmark: https://skylos.dev/blog/flask-dead-code-case-study
-- Merged cleanup PR case study: https://skylos.dev/blog/3-merged-prs-dead-code-in-black-flagsmith-pypdf
+- Merged cleanup PRs (all outcomes): https://github.com/duriantaco/skylos/blob/main/REAL_WORLD_RESULTS.md

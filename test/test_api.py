@@ -2476,7 +2476,8 @@ class TestVerifyReport(unittest.TestCase):
         result = verify_report({})
 
         self.assertFalse(result["success"])
-        self.assertIn("Pro", result["error"])
+        self.assertIn("Workspace plan", result["error"])
+        self.assertNotIn("Pro", result["error"])
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_project_info")

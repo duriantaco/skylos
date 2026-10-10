@@ -103,7 +103,8 @@ The evaluation does not need to introduce a second developer dashboard.
 SonarQube accepts third-party SARIF reports, so a Sonar customer can run:
 
 ```bash
-skylos . -a --format sarif -o .skylos/skylos.sarif
+mkdir -p .skylos
+skylos . -a --sarif .skylos/skylos.sarif
 sonar-scanner -Dsonar.sarifReportPaths=.skylos/skylos.sarif
 ```
 
@@ -111,7 +112,7 @@ Keep Skylos as an advisory external analyzer during the evaluation. Sonar's
 SARIF import has its own category and issue-management limitations, so native
 Skylos policy and triage should remain authoritative if the check is later
 promoted to blocking. See Sonar's
-[SARIF import documentation](https://docs.sonarsource.com/sonarqube-cloud/enriching/importing-issues-from-sarif-reports).
+[SARIF import documentation](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/importing-external-issues/importing-issues-from-sarif-reports).
 
 ## Supported Incumbent Reports
 

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "4.47.2"
 requires-python = ">=3.10"
-description = "Open-source, local-first static analysis and PR gates for Python, TypeScript/JavaScript, Go, Java, Kotlin, PHP, Rust, Dart, C#, C++, and Shell. Finds dead code, security issues, secrets, quality regressions, and AI-code mistakes."
+description = "Open-source, local-first static analysis and PR gates. Finds dead code, security issues, secrets, quality regressions and AI-code mistakes, and checks whether an AI agent's change is really finished. Deepest in Python, TypeScript/JavaScript and Java; narrower checks for Go, PHP, Rust, Dart, C#, Kotlin, C++ and Shell."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -40,6 +40,8 @@ keywords = [
     "ai-agent",
     "ai-tool",
     "coding-agent",
+    "test-tampering",
+    "pull-request-gate",
     "vulture-alternative",
     "bandit-alternative",
     "semgrep-alternative",
