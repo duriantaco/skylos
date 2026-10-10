@@ -1163,6 +1163,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             strict=bool(args.strict),
             force=bool(args.force),
             summary=bool(getattr(args, "summary", False)),
+            provenance=prov_report,
         )
         sys.exit(exit_code)
 
@@ -1323,6 +1324,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             reliability_count=reliability_count,
             quality_enabled=bool(quality_count),
             quality_count=quality_count,
+            # The grade panel above already offered the Skylos grade badge.
+            show_badge=not (
+                output_result.get("grade") and not args.upload and not args.tui
+            ),
         )
 
     if (
@@ -1339,6 +1344,19 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         and not any(result.get(category) for category in _DIFF_FINDING_CATEGORIES)
     ):
         console.print("[good]No issues found in changed files.[/good]")
+
+    diff_ref = getattr(args, "diff", None) or getattr(args, "diff_base", None)
+    if diff_ref and not args.tui and not result.get("analysis_errors"):
+        from skylos.ui.nudge import done_tip
+
+        if diff_ref == "auto":
+            from skylos.core.ci_env import auto_diff_base_ref
+
+            diff_ref = auto_diff_base_ref()
+        tip = done_tip(diff_ref, project_root)
+        if tip:
+            # One unbroken line, so the command copies cleanly.
+            console.print(f"[dim]{escape(tip)}[/dim]", soft_wrap=True)
 
     strict_exit_code = _strict_scan_exit_code(result, args)
     if strict_exit_code:

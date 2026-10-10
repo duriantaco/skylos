@@ -1,4 +1,6 @@
+import io
 import shlex
+import sys
 
 import pytest
 import yaml
@@ -455,7 +457,7 @@ def test_detect_done_setup_survives_invalid_pyproject(tmp_path):
     )
 
 
-def _run_cicd_init(tmp_path, monkeypatch, *argv, git=None):
+def _run_cicd_init(tmp_path, monkeypatch, *argv, git=None, console=None):
     from unittest.mock import Mock
 
     import skylos.commands.cicd_cmd as cicd_cmd
@@ -463,7 +465,7 @@ def _run_cicd_init(tmp_path, monkeypatch, *argv, git=None):
     git = git or {}
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cicd_cmd, "_git_output", lambda *args: git.get(args, ""))
-    console = Mock()
+    console = console or Mock()
     output = tmp_path / ".github" / "workflows" / "skylos.yml"
     exit_code = cicd_cmd.run_cicd_command(
         ["init", "--output", str(output), *argv],
@@ -514,7 +516,9 @@ def test_cicd_init_done_and_upload_flags(tmp_path, monkeypatch):
     assert "GitHub OIDC" not in printed
 
     _write(tmp_path / "conftest.py")
-    _, workflow, _ = _run_cicd_init(tmp_path, monkeypatch, "--no-done", "--upload")
+    _, workflow, _ = _run_cicd_init(
+        tmp_path, monkeypatch, "--no-done", "--upload", "--force"
+    )
     assert set(workflow["jobs"]) == {"skylos", "cloud-upload"}
 
 
@@ -532,12 +536,12 @@ def test_cicd_init_uses_origin_head_as_default_branch(tmp_path, monkeypatch):
     assert "Pushes to trunk" in printed
     assert "No origin/HEAD" not in printed
 
-    _, workflow, printed = _run_cicd_init(tmp_path, monkeypatch)
+    _, workflow, printed = _run_cicd_init(tmp_path, monkeypatch, "--force")
     assert workflow["on"]["push"] == {"branches": ["main", "master"]}
     assert "No origin/HEAD" in printed
 
     _, workflow, _ = _run_cicd_init(
-        tmp_path, monkeypatch, "--default-branch", "release/2026", git=git
+        tmp_path, monkeypatch, "--default-branch", "release/2026", "--force", git=git
     )
     assert workflow["on"]["push"] == {"branches": ["release/2026"]}
 
@@ -563,6 +567,259 @@ def test_cicd_init_ignores_unsafe_origin_head(tmp_path, monkeypatch):
     exit_code, workflow, _ = _run_cicd_init(tmp_path, monkeypatch, git=git)
     assert exit_code == 0
     assert workflow["on"]["push"] == {"branches": ["main", "master"]}
+
+
+HAND_WRITTEN_WORKFLOW = "name: Hand-written\non: push\n"
+
+
+class _Terminal(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def _existing_workflow(tmp_path):
+    path = tmp_path / ".github" / "workflows" / "skylos.yml"
+    _write(path, HAND_WRITTEN_WORKFLOW)
+    return path
+
+
+def _answering_console(answer):
+    from unittest.mock import Mock
+
+    console = Mock()
+    console.input.return_value = answer
+    return console
+
+
+def test_cicd_init_refuses_to_replace_a_workflow_without_a_terminal(
+    tmp_path, monkeypatch
+):
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    console = _answering_console("y")
+
+    exit_code, _, printed = _run_cicd_init(tmp_path, monkeypatch, console=console)
+
+    assert exit_code == 1
+    assert path.read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(path.parent.glob("*.bak*"))
+    console.input.assert_not_called()
+    assert "already exists" in printed
+    assert "Nothing was written" in printed and "--force" in printed
+    assert "skylos.yml.bak" in printed
+
+
+@pytest.mark.parametrize("answer", ["n", "", "no"])
+def test_cicd_init_keeps_the_workflow_when_the_user_says_no(
+    tmp_path, monkeypatch, answer
+):
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Terminal())
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    console = _answering_console(answer)
+
+    exit_code, _, printed = _run_cicd_init(tmp_path, monkeypatch, console=console)
+
+    assert exit_code == 1
+    assert path.read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(path.parent.glob("*.bak*"))
+    prompt = console.input.call_args.args[0]
+    assert "Replace it?" in prompt and "y/N" in prompt
+    assert "nothing was written" in printed
+
+
+def test_cicd_init_replaces_the_workflow_after_yes_and_keeps_a_copy(
+    tmp_path, monkeypatch
+):
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(sys, "stdin", _Terminal())
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    console = _answering_console("y")
+
+    exit_code, workflow, printed = _run_cicd_init(
+        tmp_path, monkeypatch, console=console
+    )
+
+    assert exit_code == 0
+    assert "jobs" in workflow
+    backup = path.parent / "skylos.yml.bak"
+    assert backup.read_text() == HAND_WRITTEN_WORKFLOW
+    assert "Kept the old workflow as" in printed and "skylos.yml.bak" in printed
+
+
+@pytest.mark.parametrize("dangling", [False, True])
+def test_cicd_init_force_refuses_workflow_symlinks(tmp_path, monkeypatch, dangling):
+    outside = tmp_path / "outside.yml"
+    if not dangling:
+        outside.write_text(HAND_WRITTEN_WORKFLOW)
+    path = tmp_path / ".github" / "workflows" / "skylos.yml"
+    path.parent.mkdir(parents=True)
+    path.symlink_to(outside)
+
+    exit_code, _, printed = _run_cicd_init(tmp_path, monkeypatch, "--force")
+
+    assert exit_code == 1
+    assert "Could not write workflow" in printed
+    assert path.is_symlink()
+    assert not list(path.parent.glob("*.bak*"))
+    if dangling:
+        assert not outside.exists()
+    else:
+        assert outside.read_text() == HAND_WRITTEN_WORKFLOW
+
+
+@pytest.mark.parametrize("parent", [".github", ".github/workflows"])
+def test_cicd_init_force_refuses_symlinked_parents(tmp_path, monkeypatch, parent):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if parent == ".github":
+        (outside / "workflows").mkdir()
+        victim = outside / "workflows" / "skylos.yml"
+    else:
+        victim = outside / "skylos.yml"
+    victim.write_text(HAND_WRITTEN_WORKFLOW)
+    link = tmp_path / parent
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside, target_is_directory=True)
+
+    exit_code, _, printed = _run_cicd_init(tmp_path, monkeypatch, "--force")
+
+    assert exit_code == 1
+    assert "Could not write workflow" in printed
+    assert victim.read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(victim.parent.glob("*.bak*"))
+
+
+def test_workflow_replacement_is_atomic_and_backup_preserves_bytes(tmp_path, monkeypatch):
+    import skylos.cicd.workflow as workflow
+
+    path = tmp_path / "skylos.yml"
+    original = b"# handwritten\r\n# \xff\r\nname: Example\r\n"
+    path.write_bytes(original)
+    replacement = "name: Generated\n"
+    real_replace = workflow.os.replace
+    observed = []
+
+    def inspect_replace(source, destination, **kwargs):
+        assert path.read_bytes() == original
+        assert (path.parent / "skylos.yml.bak").read_bytes() == original
+        observed.append(True)
+        return real_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(workflow.os, "replace", inspect_replace)
+    workflow.write_workflow(replacement, str(path))
+
+    assert observed == [True]
+    assert path.read_text() == replacement
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_workflow_replace_failure_keeps_original_complete(tmp_path, monkeypatch):
+    import skylos.cicd.workflow as workflow
+
+    path = _existing_workflow(tmp_path)
+
+    def fail_replace(*args, **kwargs):
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr(workflow.os, "replace", fail_replace)
+    exit_code, _, printed = _run_cicd_init(tmp_path, monkeypatch, "--force")
+
+    assert exit_code == 1
+    assert "simulated replacement failure" in printed
+    assert "Workflow written" not in printed
+    assert path.read_text() == HAND_WRITTEN_WORKFLOW
+    assert (path.parent / "skylos.yml.bak").read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(path.parent.glob(".*.tmp"))
+
+
+def test_workflow_skips_symlinked_backup_and_rejects_changed_destination(tmp_path):
+    from skylos.cicd.workflow import write_workflow
+
+    path = _existing_workflow(tmp_path)
+    outside = tmp_path / "outside.yml"
+    outside.write_text("keep me\n")
+    (path.parent / "skylos.yml.bak").symlink_to(outside)
+    backup = write_workflow("name: Generated\n", str(path))
+    assert backup == path.parent / "skylos.yml.bak2"
+    assert backup.read_text() == HAND_WRITTEN_WORKFLOW
+    assert outside.read_text() == "keep me\n"
+
+    with pytest.raises(OSError, match="changed during initialization"):
+        write_workflow("name: Another\n", str(path), expected_existing=None)
+    assert path.read_text() == "name: Generated\n"
+    assert not (path.parent / "skylos.yml.bak3").exists()
+
+
+@pytest.mark.parametrize("missing", ["open", "mkdir", "link", "unlink", "rename"])
+def test_workflow_refuses_platforms_without_safe_directory_operations(
+    tmp_path, monkeypatch, missing
+):
+    import skylos.cicd.workflow as workflow
+
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(
+        workflow.os,
+        "supports_dir_fd",
+        workflow.os.supports_dir_fd - {getattr(workflow.os, missing)},
+    )
+
+    with pytest.raises(OSError, match="no-follow directory descriptors"):
+        workflow.write_workflow("name: Generated\n", str(path))
+
+    assert path.read_text() == HAND_WRITTEN_WORKFLOW
+    assert not list(path.parent.glob("*.bak*"))
+    assert not list(path.parent.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("missing", ["O_DIRECTORY", "O_NOFOLLOW"])
+def test_workflow_refuses_platforms_without_no_follow_flags(tmp_path, monkeypatch, missing):
+    import skylos.cicd.workflow as workflow
+
+    path = tmp_path / ".github" / "workflows" / "skylos.yml"
+    monkeypatch.delattr(workflow.os, missing, raising=False)
+
+    with pytest.raises(OSError, match="no-follow directory descriptors"):
+        workflow.write_workflow("name: Generated\n", str(path))
+
+    assert not (tmp_path / ".github").exists()
+
+
+def test_cicd_init_force_replaces_without_asking_and_never_overwrites_a_copy(
+    tmp_path, monkeypatch
+):
+    path = _existing_workflow(tmp_path)
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    console = _answering_console("n")
+
+    exit_code, workflow, _ = _run_cicd_init(
+        tmp_path, monkeypatch, "--force", "--no-upload", console=console
+    )
+    assert exit_code == 0
+    assert "cloud-upload" not in workflow["jobs"]
+    console.input.assert_not_called()
+
+    exit_code, workflow, _ = _run_cicd_init(tmp_path, monkeypatch, "--force")
+    assert exit_code == 0
+    assert "cloud-upload" in workflow["jobs"]
+    # The first copy still holds the hand-written workflow.
+    assert (path.parent / "skylos.yml.bak").read_text() == HAND_WRITTEN_WORKFLOW
+    assert "cloud-upload" not in (path.parent / "skylos.yml.bak2").read_text()
+
+
+def test_cicd_init_leaves_an_identical_workflow_alone(tmp_path, monkeypatch):
+    _run_cicd_init(tmp_path, monkeypatch)
+    console = _answering_console("n")
+
+    exit_code, workflow, printed = _run_cicd_init(
+        tmp_path, monkeypatch, console=console
+    )
+
+    assert exit_code == 0
+    assert "jobs" in workflow
+    assert "already up to date" in printed
+    console.input.assert_not_called()
+    assert not list((tmp_path / ".github" / "workflows").glob("*.bak*"))
 
 
 def test_skylos_init_points_to_the_pull_request_gate(tmp_path, monkeypatch):

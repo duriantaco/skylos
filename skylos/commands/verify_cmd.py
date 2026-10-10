@@ -6,6 +6,7 @@ import sys
 from typing import Any, Sequence
 
 from skylos.constants import parse_exclude_folders
+from skylos.core.cli_shared import quiet_analyzer_logs
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.verify_change import (
     verify_change_diff,
@@ -27,19 +28,23 @@ def run_verify_command(
     exclude_folders = _exclude_folders(args, parse_exclude_folders_func)
 
     try:
-        payload = _run_from_args(
-            args,
-            parser,
-            exclude_folders,
-            verify_change_path_func,
-            verify_change_stdin_payload_func,
-            verify_change_diff_func,
-        )
+        # The analyzer logs progress at INFO; keep it out of the report.
+        with quiet_analyzer_logs():
+            payload = _run_from_args(
+                args,
+                parser,
+                exclude_folders,
+                verify_change_path_func,
+                verify_change_stdin_payload_func,
+                verify_change_diff_func,
+            )
         _write_payload(
             payload,
             args.output,
             machine_output=args.stdin,
             output_format=args.output_format,
+            diff_ref=args.diff,
+            project_path=args.path,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -320,6 +325,8 @@ def _write_payload(
     *,
     machine_output: bool = False,
     output_format: str = "auto",
+    diff_ref: str | None = None,
+    project_path: str | None = None,
 ) -> None:
     if output_format == "short" and not output_path:
         print(render_short(payload))
@@ -340,8 +347,20 @@ def _write_payload(
         from skylos.verification.render import render_verify_report
 
         print(render_verify_report(payload))
+        _print_done_tip(diff_ref, project_path)
         return
     print(output)
+
+
+def _print_done_tip(diff_ref: str | None, project_path: str | None) -> None:
+    from rich.console import Console
+    from rich.text import Text
+
+    from skylos.ui.nudge import done_tip
+
+    tip = done_tip(diff_ref, project_path)
+    if tip:
+        Console(highlight=False).print(Text(tip, style="dim"), soft_wrap=True)
 
 
 MAX_SHORT_FINDINGS = 25

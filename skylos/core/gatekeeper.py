@@ -1,8 +1,10 @@
 import importlib  # skylos: ignore[SKY-Q502] legacy gate flow module is being split incrementally
 import importlib.util
+import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from rich.console import Console
 from rich.markup import escape
@@ -54,7 +56,38 @@ BASELINE_GATE_CONFIG = {
     "max_dependency_vulnerabilities": 0,
     "max_dead_code": None,
 }
+# (gate key, noun used in failure reasons, its plural, label in the PASSED line)
+GATE_LIMITS = (
+    ("max_critical", "critical issue", None, "critical"),
+    ("max_high", "high severity issue", None, "high"),
+    ("max_security", "security issue", None, "security"),
+    ("max_reliability", "reliability issue", None, "reliability"),
+    ("max_quality", "quality issue", None, "quality"),
+    ("max_ai_defects", "AI-defect issue", None, "AI defects"),
+    ("max_secrets", "secret", None, "secrets"),
+    (
+        "max_dependency_vulnerabilities",
+        "dependency vulnerability",
+        "dependency vulnerabilities",
+        "dependency vulnerabilities",
+    ),
+    ("max_dead_code", "dead code issue", None, "dead code"),
+)
+SECURITY_GATE_KEYS = ("max_critical", "max_high", "max_security")
+GATE_ISSUE_LIST_LIMIT = 10
+GATE_ISSUE_MESSAGE_CHARS = 80
 ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
+
+
+class GateReason(str):
+    """A gate failure reason that also carries the issues counted toward it."""
+
+    issues = ()
+
+    def __new__(cls, text, issues=()):
+        reason = super().__new__(cls, text)
+        reason.issues = list(issues)
+        return reason
 
 
 def run_cmd(cmd_list, error_msg="Git command failed"):
@@ -189,11 +222,60 @@ def _gate_quality_findings(quality):
     return [finding for finding in quality if not _is_advisory_quality_finding(finding)]
 
 
-def _append_threshold_reason(reasons, *, count, limit, message_template):
+def _quality_findings_with_custom_rules(results, *, gate_only=False):
+    quality = list(results.get("quality", []) or [])
+    if gate_only:
+        quality = _gate_quality_findings(quality)
+    seen = {json.dumps(finding, sort_keys=True, default=str) for finding in quality}
+    # Custom rules are quality findings, but are reported in a separate array.
+    # Only built-in advisory rules may opt out of the gate. A custom rule must
+    # still count if it reuses an advisory rule ID or advisory metadata.
+    for finding in results.get("custom_rules", []) or []:
+        key = json.dumps(finding, sort_keys=True, default=str)
+        if key not in seen:
+            quality.append(finding)
+            seen.add(key)
+    return quality
+
+
+def _count_noun(count, singular, plural=None):
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+
+
+def _append_threshold_reason(
+    reasons,
+    *,
+    issues,
+    limit,
+    noun,
+    plural=None,
+    template="{counted} (max: {limit})",
+):
+    count = len(issues)
     if isinstance(limit, int) and count > limit:
-        reasons.append(message_template.format(count=count, limit=limit))
+        counted = _count_noun(count, noun, plural)
+        reasons.append(
+            GateReason(template.format(counted=counted, limit=limit), issues)
+        )
         return False
     return True
+
+
+def _gate_issue_groups(
+    *, danger, reliability, ai_defects, quality, secrets, dead_code, dependencies=()
+):
+    critical_issues, high_issues = _split_danger_by_severity(danger)
+    return {
+        "max_critical": critical_issues,
+        "max_high": high_issues,
+        "max_security": danger,
+        "max_reliability": reliability,
+        "max_quality": quality,
+        "max_ai_defects": ai_defects,
+        "max_secrets": secrets,
+        "max_dependency_vulnerabilities": dependencies,
+        "max_dead_code": dead_code,
+    }
 
 
 def _safe_gate_limit(value, default):
@@ -224,6 +306,7 @@ def _effective_gate_config(config):
         "max_security",
         "max_reliability",
         "max_quality",
+        "max_dependency_vulnerabilities",
         "max_dead_code",
     ):
         effective[key] = _safe_gate_limit(
@@ -247,166 +330,85 @@ def _agent_gate_reason(message):
     return f"{AGENT_GATE_PREFIX}{message}"
 
 
-def _collect_agent_findings(findings_lists, agent_file_set):
-    agent_danger = []
-    agent_reliability = []
-    agent_ai_defects = []
-    agent_quality = []
-    agent_secrets = []
-    agent_dead_code = 0
+def _agent_file_key(path, scan_root=None):
+    if not isinstance(path, (str, Path)) or not str(path):
+        return None
+    if not isinstance(scan_root, (str, Path)) or not str(scan_root):
+        return str(Path(path))
+    try:
+        root = Path(scan_root).resolve()
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        return candidate.resolve().relative_to(root).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _collect_agent_findings(findings_lists, agent_file_set, scan_root=None):
     buckets = {
-        "danger": agent_danger,
-        "reliability": agent_reliability,
-        "ai_defects": agent_ai_defects,
-        "quality": agent_quality,
-        "secrets": agent_secrets,
+        "danger": [],
+        "reliability": [],
+        "ai_defects": [],
+        "quality": [],
+        "secrets": [],
+        "dead_code": [],
     }
 
+    # Analyzer findings use absolute paths; provenance uses Git-root-relative
+    # paths. Match within the provenance root, without ambiguous basename matches.
+    agent_file_set = {
+        key
+        for path in agent_file_set
+        if (key := _agent_file_key(path, scan_root)) is not None
+    }
     for category, items in findings_lists.items():
+        bucket = buckets.get(category)
+        if bucket is None:
+            continue
         for finding in items:
-            fpath = _get_finding_file(finding)
-            if fpath not in agent_file_set:
-                continue
-            bucket = buckets.get(category)
-            if bucket is not None:
+            if _agent_file_key(_get_finding_file(finding), scan_root) in agent_file_set:
                 bucket.append(finding)
-            elif category == "dead_code":
-                agent_dead_code += 1
 
-    return (
-        agent_danger,
-        agent_reliability,
-        agent_ai_defects,
-        agent_quality,
-        agent_secrets,
-        agent_dead_code,
-    )
+    return buckets
 
 
-def _apply_agent_thresholds(
-    reasons,
-    agent_cfg,
-    *,
-    critical_count,
-    high_count,
-    security_count,
-    reliability_count,
-    ai_defects_count,
-    quality_count,
-    secrets_count,
-    dead_code_count,
-):
+def _apply_agent_thresholds(reasons, agent_cfg, groups):
     agent_passed = True
+    limits = dict(agent_cfg)
+    limits.setdefault("max_ai_defects", agent_cfg.get("max_quality"))
 
-    if not _append_threshold_reason(
-        reasons,
-        count=critical_count,
-        limit=agent_cfg.get("max_critical"),
-        message_template=_agent_gate_reason(
-            "{count} critical issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=high_count,
-        limit=agent_cfg.get("max_high"),
-        message_template=_agent_gate_reason(
-            "{count} high severity issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=security_count,
-        limit=agent_cfg.get("max_security"),
-        message_template=_agent_gate_reason(
-            "{count} security issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=reliability_count,
-        limit=agent_cfg.get("max_reliability"),
-        message_template=_agent_gate_reason(
-            "{count} reliability issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=quality_count,
-        limit=agent_cfg.get("max_quality"),
-        message_template=_agent_gate_reason(
-            "{count} quality issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    max_ai_defects = agent_cfg.get("max_ai_defects", agent_cfg.get("max_quality"))
-    if not _append_threshold_reason(
-        reasons,
-        count=ai_defects_count,
-        limit=max_ai_defects,
-        message_template=_agent_gate_reason(
-            "{count} AI-defect issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=secrets_count,
-        limit=agent_cfg.get("max_secrets"),
-        message_template=_agent_gate_reason(
-            "{count} secret(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=dead_code_count,
-        limit=agent_cfg.get("max_dead_code"),
-        message_template=_agent_gate_reason(
-            "{count} dead code issue(s) in AI-authored files (max: {limit})"
-        ),
-    ):
-        agent_passed = False
+    for key, noun, plural, _label in GATE_LIMITS:
+        if key == "max_dependency_vulnerabilities":
+            # Dependency findings point at manifests, not authored code.
+            continue
+        if not _append_threshold_reason(
+            reasons,
+            issues=groups[key],
+            limit=limits.get(key),
+            noun=noun,
+            plural=plural,
+            template=_agent_gate_reason(
+                "{counted} in AI-authored files (max: {limit})"
+            ),
+        ):
+            agent_passed = False
 
     return agent_passed
 
 
-def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
+def _check_agent_gate(
+    findings_lists, agent_file_set, agent_cfg, reasons, scan_root=None
+):
     """Evaluate agent-specific thresholds against findings in AI-authored files.
 
     Returns False if any agent threshold is exceeded.
     """
-    (
-        agent_danger,
-        agent_reliability,
-        agent_ai_defects,
-        agent_quality,
-        agent_secrets,
-        agent_dead_code,
-    ) = _collect_agent_findings(findings_lists, agent_file_set)
-    agent_critical, agent_high = _split_danger_by_severity(agent_danger)
+    agent_findings = _collect_agent_findings(findings_lists, agent_file_set, scan_root)
     agent_passed = _apply_agent_thresholds(
         reasons,
         agent_cfg,
-        critical_count=len(agent_critical),
-        high_count=len(agent_high),
-        security_count=len(agent_danger),
-        reliability_count=len(agent_reliability),
-        ai_defects_count=len(agent_ai_defects),
-        quality_count=len(agent_quality),
-        secrets_count=len(agent_secrets),
-        dead_code_count=agent_dead_code,
+        _gate_issue_groups(**agent_findings),
     )
 
     min_defend = agent_cfg.get("min_defend_score")
@@ -424,7 +426,7 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
 
 def _check_strict_gate(
     *,
-    total_findings,
+    dead_code,
     danger,
     reliability,
     ai_defects,
@@ -433,132 +435,64 @@ def _check_strict_gate(
     secrets,
     dependencies,
 ):
-    gate_quality = _gate_quality_findings(quality)
-    total_issues = (
-        total_findings
-        + len(danger)
-        + len(reliability)
-        + len(ai_defects)
-        + len(gate_quality)
-        + len(circular_dependencies)
-        + len(secrets)
-        + len(dependencies)
-    )
-    if total_issues > 0:
-        return False, [f"Strict mode: {total_issues} issue(s) found"]
+    issues = [
+        *secrets,
+        *danger,
+        *dependencies,
+        *reliability,
+        *ai_defects,
+        *quality,
+        *circular_dependencies,
+        *dead_code,
+    ]
+    if issues:
+        return False, [
+            GateReason(
+                f"Strict mode: {_count_noun(len(issues), 'issue')} found", issues
+            )
+        ]
     return True, []
 
 
-def _apply_gate_thresholds(
-    reasons,
-    *,
-    fail_on_critical,
-    critical_count,
-    max_critical,
-    high_count,
-    max_high,
-    security_count,
-    max_security,
-    reliability_count,
-    max_reliability,
-    ai_defects_count,
-    max_ai_defects,
-    quality_count,
-    max_quality,
-    secrets_count,
-    max_secrets,
-    dependency_count,
-    max_dependency_vulnerabilities,
-    dead_code_count,
-    max_dead_code,
-):
+def _apply_gate_thresholds(reasons, gate_config, groups):
     passed = True
 
-    if fail_on_critical and critical_count > 0:
+    critical_issues = groups["max_critical"]
+    critical_blocks = bool(
+        gate_config.get("fail_on_critical", True) and critical_issues
+    )
+    if critical_blocks:
         passed = False
-        reasons.append(f"{critical_count} critical security issue(s)")
-    elif not _append_threshold_reason(
-        reasons,
-        count=critical_count,
-        limit=max_critical,
-        message_template="{count} critical issues (max: {limit})",
-    ):
-        passed = False
+        reasons.append(
+            GateReason(
+                _count_noun(len(critical_issues), "critical security issue"),
+                critical_issues,
+            )
+        )
 
-    if not _append_threshold_reason(
-        reasons,
-        count=high_count,
-        limit=max_high,
-        message_template="{count} high severity issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=security_count,
-        limit=max_security,
-        message_template="{count} total security issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=reliability_count,
-        limit=max_reliability,
-        message_template="{count} reliability issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=quality_count,
-        limit=max_quality,
-        message_template="{count} quality issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=ai_defects_count,
-        limit=max_ai_defects,
-        message_template="{count} AI-defect issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=secrets_count,
-        limit=max_secrets,
-        message_template="{count} secrets issues (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=dependency_count,
-        limit=max_dependency_vulnerabilities,
-        message_template="{count} dependency vulnerabilities (max: {limit})",
-    ):
-        passed = False
-
-    if not _append_threshold_reason(
-        reasons,
-        count=dead_code_count,
-        limit=max_dead_code,
-        message_template="{count} dead code issue(s) (max: {limit})",
-    ):
-        passed = False
+    for key, noun, plural, _label in GATE_LIMITS:
+        if key == "max_critical" and critical_blocks:
+            continue
+        if not _append_threshold_reason(
+            reasons,
+            issues=groups[key],
+            limit=gate_config.get(key),
+            noun=noun,
+            plural=plural,
+        ):
+            passed = False
 
     return passed
 
 
-def _build_findings_lists(results, danger, reliability, quality, secrets):
+def _gate_findings(results):
     return {
-        "danger": danger,
-        "reliability": reliability,
+        "danger": results.get("danger", []) or [],
+        "reliability": results.get("reliability", []) or [],
         "ai_defects": results.get("ai_defects", []) or [],
-        "quality": quality,
-        "secrets": secrets,
+        "quality": _quality_findings_with_custom_rules(results, gate_only=True),
+        "secrets": results.get("secrets", []) or [],
+        "dependencies": results.get("dependency_vulnerabilities", []) or [],
         "dead_code": _collect_dead_code_items(results),
     }
 
@@ -629,75 +563,136 @@ def check_gate(results, config, strict=False, provenance=None):
     if reasons:
         return False, reasons
 
-    total_findings = _count_dead_code_findings(results)
-    danger = results.get("danger", []) or []
-    reliability = results.get("reliability", []) or []
-    ai_defects = results.get("ai_defects", []) or []
-    quality = results.get("quality", []) or []
-    gate_quality = _gate_quality_findings(quality)
-    secrets = results.get("secrets", []) or []
-    dependencies = results.get("dependency_vulnerabilities", []) or []
+    found = _gate_findings(results)
     gate_config = _effective_gate_config(config)
 
     if strict:
         return _check_strict_gate(
-            total_findings=total_findings,
-            danger=danger,
-            reliability=reliability,
-            ai_defects=ai_defects,
-            quality=gate_quality,
+            **found,
             circular_dependencies=results.get("circular_dependencies", []) or [],
-            secrets=secrets,
-            dependencies=dependencies,
         )
 
-    critical_issues, high_issues = _split_danger_by_severity(danger)
-    passed = _apply_gate_thresholds(
-        reasons,
-        fail_on_critical=gate_config.get("fail_on_critical", True),
-        critical_count=len(critical_issues),
-        max_critical=gate_config.get("max_critical", 0),
-        high_count=len(high_issues),
-        max_high=gate_config.get("max_high", 5),
-        security_count=len(danger),
-        max_security=gate_config.get("max_security", 10),
-        reliability_count=len(reliability),
-        max_reliability=gate_config.get("max_reliability", 0),
-        ai_defects_count=len(ai_defects),
-        max_ai_defects=gate_config.get("max_ai_defects", 10),
-        quality_count=len(gate_quality),
-        max_quality=gate_config.get("max_quality", 10),
-        secrets_count=len(secrets),
-        max_secrets=gate_config.get("max_secrets", None),
-        dependency_count=len(dependencies),
-        max_dependency_vulnerabilities=gate_config.get(
-            "max_dependency_vulnerabilities",
-            0,
-        ),
-        dead_code_count=total_findings,
-        max_dead_code=gate_config.get("max_dead_code", None),
-    )
+    passed = _apply_gate_thresholds(reasons, gate_config, _gate_issue_groups(**found))
 
     # Agent-aware gating: apply stricter thresholds to AI-authored files
     agent_cfg = gate_config.get("agent")
     if provenance and agent_cfg and provenance.agent_files:
-        agent_file_set = set(provenance.agent_files)
         agent_passed = _check_agent_gate(
-            _build_findings_lists(
-                results,
-                danger,
-                reliability,
-                gate_quality,
-                secrets,
-            ),
-            agent_file_set,
+            found,
+            set(provenance.agent_files),
             agent_cfg,
             reasons,
+            scan_root=getattr(provenance, "scan_root", None),
         )
         if not agent_passed:
             passed = False
 
     return passed, reasons
+
+
+def _display_path(path):
+    raw = Path(str(path))
+    if not raw.is_absolute():
+        return str(path)
+    try:
+        return raw.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _short_message(message):
+    message = " ".join(str(message).split())
+    if len(message) <= GATE_ISSUE_MESSAGE_CHARS:
+        return message
+    first_sentence = message.split(". ", 1)[0] + "."
+    if len(first_sentence) <= GATE_ISSUE_MESSAGE_CHARS:
+        return first_sentence
+    cut = message[: GATE_ISSUE_MESSAGE_CHARS - 1]
+    return (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,;:") + "…"
+
+
+def _issue_line(issue):
+    if not isinstance(issue, dict):
+        return str(issue)
+
+    parts = []
+    rule_id = issue.get("rule_id") or issue.get("rule")
+    if rule_id:
+        parts.append(str(rule_id))
+
+    file_path = _get_finding_file(issue)
+    if file_path:
+        line = issue.get("line") or issue.get("line_number")
+        location = _display_path(file_path)
+        parts.append(f"{location}:{line}" if line else location)
+
+    message = issue.get("message") or issue.get("msg") or issue.get("detail")
+    if not message:
+        name = issue.get("name") or issue.get("simple_name")
+        kind = issue.get("type")
+        # Dead-code items carry no rule ID or message, only a kind and a name.
+        message = f"unused {kind} {name}" if kind and name and not rule_id else name
+    if message:
+        parts.append(_short_message(message))
+
+    return "  ".join(parts)
+
+
+def _listed_gate_issues(reason):
+    """Return the issue lines to show under a reason and how many are left out."""
+    issues = list(getattr(reason, "issues", ()) or ())
+    shown = [_issue_line(issue) for issue in issues[:GATE_ISSUE_LIST_LIMIT]]
+    return shown, len(issues) - len(shown)
+
+
+def _security_scanned(results):
+    summary = results.get("analysis_summary")
+    categories = summary.get("grade_categories") if isinstance(summary, dict) else None
+    if isinstance(categories, list):
+        return "security" in categories
+    return "danger" in results or "reliability" in results
+
+
+def _passed_gate_summary(results, config, *, strict):
+    """Say which limits a passing scan was held to and what they let through."""
+    results = results if isinstance(results, dict) else {}
+    config = config if isinstance(config, dict) else {}
+    gate_config = _effective_gate_config(config)
+    groups = _gate_issue_groups(**_gate_findings(results))
+    security_scanned = _security_scanned(results)
+
+    parts = []
+    for key, _noun, _plural, label in GATE_LIMITS:
+        limit = 0 if strict else gate_config.get(key)
+        count = len(groups[key])
+        if not isinstance(limit, int):
+            continue
+        if key in SECURITY_GATE_KEYS:
+            if not security_scanned:
+                continue
+        elif not count:
+            continue
+        parts.append(f"{count} {label} (limit {limit})")
+    if not security_scanned:
+        parts.append("security not scanned (add -a)")
+
+    hint = None
+    high_count = len(groups["max_high"])
+    raw_gate = config.get("gate")
+    high_configured = (
+        isinstance(raw_gate, dict)
+        and _safe_gate_limit(raw_gate.get("max_high"), None) is not None
+    )
+    if high_count and not strict and not high_configured:
+        one = high_count == 1
+        hint = (
+            f"{_count_noun(high_count, 'high issue')} {'is' if one else 'are'} "
+            "allowed by the default limits. "
+            f"To block {'it' if one else 'them'}, set max_high = 0 under "
+            "[tool.skylos.gate] in pyproject.toml."
+        )
+
+    return ", ".join(parts), hint
 
 
 def _build_summary_rows(
@@ -713,18 +708,15 @@ def _build_summary_rows(
     dead_code_count,
 ):
     return [
-        f"| Security (critical) | {critical_count} | {'✅' if critical_count == 0 else '❌'} |",
-        f"| Security (high) | {high_count} | {'✅' if high_count <= 5 else '⚠️'} |",
-        f"| Security (total) | {security_count} | {'✅' if security_count <= 10 else '⚠️'} |",
-        f"| Reliability | {reliability_count} | {'✅' if reliability_count == 0 else '❌'} |",
-        f"| AI defects | {ai_defects_count} | {'✅' if ai_defects_count <= 10 else '⚠️'} |",
-        f"| Quality | {quality_count} | {'✅' if quality_count <= 10 else '⚠️'} |",
-        f"| Secrets | {secrets_count} | {'✅' if secrets_count == 0 else '❌'} |",
-        (
-            f"| Dependency vulnerabilities | {dependency_count} | "
-            f"{'✅' if dependency_count == 0 else '❌'} |"
-        ),
-        f"| Dead Code | {dead_code_count} | ℹ️ |",
+        f"| Security (critical) | {critical_count} |",
+        f"| Security (high) | {high_count} |",
+        f"| Security (total) | {security_count} |",
+        f"| Reliability | {reliability_count} |",
+        f"| AI defects | {ai_defects_count} |",
+        f"| Quality | {quality_count} |",
+        f"| Secrets | {secrets_count} |",
+        f"| Dependency vulnerabilities | {dependency_count} |",
+        f"| Dead Code | {dead_code_count} |",
     ]
 
 
@@ -734,6 +726,13 @@ def _append_failure_reasons(lines, reasons, *, heading="Failure Reasons"):
         lines.append(f"### {heading}")
         for reason in reasons:
             lines.append(f"- {reason}")
+            shown, more = _listed_gate_issues(reason)
+            for issue_line in shown:
+                # A code span keeps repository paths and messages literal.
+                literal = issue_line.replace("`", "'")
+                lines.append(f"  - `{literal}`")
+            if more:
+                lines.append(f"  - and {more} more")
 
 
 def build_summary_markdown(results, passed, reasons, *, advisory=False):
@@ -742,7 +741,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     danger = results.get("danger", []) or []
     reliability = results.get("reliability", []) or []
     ai_defects = results.get("ai_defects", []) or []
-    quality = results.get("quality", []) or []
+    quality = _quality_findings_with_custom_rules(results)
     secrets = results.get("secrets", []) or []
     dependencies = results.get("dependency_vulnerabilities", []) or []
     critical_issues, high_issues = _split_danger_by_severity(danger)
@@ -760,8 +759,8 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     lines = [
         "## Skylos Analysis Results",
         "",
-        "| Category | Count | Status |",
-        "|----------|-------|--------|",
+        "| Category | Count |",
+        "|----------|-------|",
         *_build_summary_rows(
             critical_count=critical_count,
             high_count=high_count,
@@ -806,8 +805,23 @@ def _resolve_gate_check(results, config, strict, provenance):
         return check_gate(results, config)
 
 
-def _handle_passed_gate(console, command_to_run):
-    console.print("\n[bold green]✅ Quality Gate: PASSED[/bold green]")
+def _print_gate_reasons(console, reasons):
+    for reason in reasons or []:
+        console.print(f"   • {escape(str(reason))}")
+        shown, more = _listed_gate_issues(reason)
+        for issue_line in shown:
+            console.print(f"       {escape(issue_line)}", soft_wrap=True)
+        if more:
+            console.print(f"       and {more} more")
+
+
+def _handle_passed_gate(console, command_to_run, *, details="", hint=None):
+    suffix = f": {escape(details)}" if details else ""
+    console.print(
+        f"\n[bold green]✅ Quality Gate: PASSED[/bold green]{suffix}", soft_wrap=True
+    )
+    if hint:
+        console.print(f"   [yellow]{escape(hint)}[/yellow]", soft_wrap=True)
 
     if command_to_run:
         proc = subprocess.run(command_to_run)
@@ -818,8 +832,7 @@ def _handle_passed_gate(console, command_to_run):
 
 def _handle_failed_gate(console, reasons, *, force, strict):
     console.print("\n[bold red] Quality Gate: FAILED[/bold red]")
-    for reason in reasons or []:
-        console.print(f"   • {escape(str(reason))}")
+    _print_gate_reasons(console, reasons)
 
     if force:
         console.print("[yellow] Forced pass (local only)[/yellow]")
@@ -842,8 +855,7 @@ def _handle_failed_gate(console, reasons, *, force, strict):
 
 def _handle_advisory_gate(console, reasons):
     console.print("\n[bold yellow]Quality Gate: ADVISORY[/bold yellow]")
-    for reason in reasons or []:
-        console.print(f"   • {escape(str(reason))}")
+    _print_gate_reasons(console, reasons)
     console.print("[yellow]Advisory mode enabled; CI is allowed to pass.[/yellow]")
     return 0
 
@@ -906,7 +918,8 @@ def run_gate_interaction(
         return _handle_incomplete_gate(console, reasons or incomplete_reasons)
 
     if passed:
-        return _handle_passed_gate(console, command_to_run)
+        details, hint = _passed_gate_summary(results, config, strict=strict)
+        return _handle_passed_gate(console, command_to_run, details=details, hint=hint)
 
     if advisory:
         return _handle_advisory_gate(console, reasons)

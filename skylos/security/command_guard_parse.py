@@ -88,6 +88,11 @@ def _split_shell_on(text: str, separators: set[str]) -> list[str]:
     idx = 0
     while idx < len(text):
         char = text[idx]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            idx += 1
+            continue
         if escaped:
             escaped = False
             idx += 1
@@ -107,6 +112,11 @@ def _split_shell_on(text: str, separators: set[str]) -> list[str]:
             continue
 
         matched = _matched_separator(text, idx, separators)
+        if matched == "&" and (
+            (idx > 0 and text[idx - 1] in "<>")
+            or (idx + 1 < len(text) and text[idx + 1] == ">")
+        ):
+            matched = None
         if matched:
             part = text[start:idx].strip()
             if part:

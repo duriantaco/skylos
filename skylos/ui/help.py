@@ -87,7 +87,7 @@ COMMANDS = [
     },
     {
         "name": "skylos done [path] [--base REF | --session ID]",
-        "desc": "Check that a change is finished, then write a receipt",
+        "desc": "Check a branch or PR, including one an AI agent wrote: runs the tests, then writes a receipt",
         "details": [
             "Runs the tests itself and reads their JUnit results; the agent's own "
             "test claims are ignored",
@@ -466,49 +466,68 @@ COMMANDS = [
 
 # NOTE: MUST UPDATE this list when adding new commands to cli.py
 
+# The common path, shown first by `skylos --help` and `skylos commands`.
+START_HERE = (
+    ("skylos .", "Find dead code in this directory."),
+    (
+        "skylos . -a",
+        "Run all checks: dead code, security, secrets, quality and dependencies.",
+    ),
+    (
+        "skylos done --base main",
+        "Check a branch or PR, including one an AI agent wrote: Skylos runs "
+        "the tests and flags deleted tests, loosened CI and test-only shortcuts.",
+    ),
+    ("skylos cicd init", "Set up a GitHub Actions workflow that checks every PR."),
+)
 
-def print_command_overview(console):
+MORE_COMMANDS = (
+    (
+        "skylos verify [PATH]",
+        "Scan for AI-code mistakes and model Python working changes.",
+    ),
+    (
+        "skylos suite [DIRECTORY]",
+        "Build a combined repo report; dependency checks can use the network.",
+    ),
+    (
+        "skylos defend [DIRECTORY]",
+        "Report supported LLM integration guardrails; gating is opt-in.",
+    ),
+    (
+        "skylos clean [PATH]",
+        "Preview or interactively apply Python import/function cleanup.",
+    ),
+    (
+        "skylos preflight [ARTIFACT]",
+        "Check a local built GPU artifact against the declared fleet; OCI is UNKNOWN.",
+    ),
+    (
+        "skylos image scan IMAGE…",
+        "Find container vulnerabilities in a pinned remote image.",
+    ),
+)
+
+
+def _command_table(rows):
     from rich.table import Table
 
-    console.print(f"\n[bold cyan]Skylos[/bold cyan] [dim]v{skylos.__version__}[/dim]")
-    console.print("[bold]Choose by what you need to check[/bold]\n")
-
-    table = Table(show_header=True, box=None, padding=(0, 2), pad_edge=False)
-    table.add_column("Command", style="bold", no_wrap=True)
+    # One command width for every section, so the descriptions line up.
+    width = max(len(command) for command, _ in START_HERE + MORE_COMMANDS)
+    table = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
+    table.add_column("Command", style="bold", no_wrap=True, min_width=width)
     table.add_column("Use it for")
-    workflows = (
-        (
-            "skylos PATH",
-            "Scan source code; dead code is the default, and -a enables the main analyzers.",
-        ),
-        (
-            "skylos verify [PATH]",
-            "Scan for AI-code mistakes and model Python working changes.",
-        ),
-        (
-            "skylos preflight [ARTIFACT]",
-            "Check a local built GPU artifact against the declared fleet; OCI is UNKNOWN.",
-        ),
-        (
-            "skylos image scan IMAGE…",
-            "Find container vulnerabilities in a pinned remote image.",
-        ),
-        (
-            "skylos suite [DIRECTORY]",
-            "Build a combined repo report; dependency checks can use the network.",
-        ),
-        (
-            "skylos defend [DIRECTORY]",
-            "Report supported LLM integration guardrails; gating is opt-in.",
-        ),
-        (
-            "skylos clean [PATH]",
-            "Preview or interactively apply Python import/function cleanup.",
-        ),
-    )
-    for command, purpose in workflows:
+    for command, purpose in rows:
         table.add_row(command, purpose)
-    console.print(table)
+    return table
+
+
+def print_command_overview(console):
+    console.print(f"\n[bold cyan]Skylos[/bold cyan] [dim]v{skylos.__version__}[/dim]")
+    console.print("[bold]Start here[/bold]\n")
+    console.print(_command_table(START_HERE))
+    console.print("\n[bold]More commands[/bold]\n")
+    console.print(_command_table(MORE_COMMANDS))
     console.print(
         "\n[bold]Keep these three separate:[/bold] "
         "[cyan]verify[/cyan] scans source and models Python changes; "
@@ -521,14 +540,17 @@ def print_command_overview(console):
     )
     console.print("[dim]Command details:[/dim] [bold]skylos <command> --help[/bold]")
     console.print("[dim]Source-scan flags:[/dim] [bold]skylos PATH --help[/bold]")
-    console.print("[dim]Command-family map:[/dim] [bold]skylos commands[/bold]\n")
+    console.print("[dim]All commands:[/dim] [bold]skylos commands[/bold]\n")
 
 
 def print_flat_commands(console):
     from rich.table import Table
 
+    console.print("\n[bold]Start here[/bold]\n")
+    console.print(_command_table(START_HERE))
+
     table = Table(
-        title="[bold cyan]Skylos Command Map[/bold cyan]",
+        title="[bold cyan]All commands[/bold cyan]",
         show_header=True,
         header_style="bold",
         border_style="dim",
@@ -538,7 +560,16 @@ def print_flat_commands(console):
     table.add_column("Description", style="dim")
     table.add_column("Group", style="yellow")
 
-    for cmd in sorted(COMMANDS, key=lambda c: c["name"]):
+    group_order = ("Core Analysis", "CI/CD", "AI Agent", "Release", "Account")
+    for cmd in sorted(
+        COMMANDS,
+        key=lambda c: (
+            group_order.index(c["group"])
+            if c["group"] in group_order
+            else len(group_order),
+            c["name"],
+        ),
+    ):
         table.add_row(
             escape(cmd["name"]),
             escape(cmd["desc"]),

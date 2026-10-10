@@ -1,6 +1,7 @@
 from __future__ import annotations
 import ast
 import sys
+from collections import Counter
 from skylos.rules.danger.taint import TaintVisitor
 from skylos.rules.danger.danger_sql.sqlalchemy_provenance import (
     SQLAlchemyTextProvenance,
@@ -65,6 +66,29 @@ SQL_EXECUTE_METHODS = frozenset({"execute", "executemany", "executescript"})
 SQL_CONSTRUCT_MODULES = ("sqlalchemy", "sqlmodel")
 SQL_CONSTRUCT_NAMES = frozenset(
     {"select", "delete", "insert", "update", "union", "union_all", "exists"}
+)
+# ``notes.insert().values(...)``, ``User.__table__.delete().where(...)``:
+# statements built from a Table object, values bound as parameters.
+TABLE_STATEMENT_METHODS = frozenset({"select", "delete", "insert", "update"})
+SQL_BUILDER_METHODS = frozenset(
+    {
+        "values",
+        "ordered_values",
+        "where",
+        "filter",
+        "filter_by",
+        "returning",
+        "order_by",
+        "group_by",
+        "having",
+        "limit",
+        "offset",
+        "select_from",
+        "with_only_columns",
+        "on_conflict_do_nothing",
+        "on_conflict_do_update",
+        "on_duplicate_key_update",
+    }
 )
 _PROCESS_INPUT_ATTRS = frozenset({"sys.argv", "os.environ", "sys.stdin"})
 _PROCESS_INPUT_CALLS = frozenset(
@@ -234,22 +258,45 @@ class _SQLFlowChecker(TaintVisitor):
     def __init__(self, tree: ast.AST, file_path, findings):
         super().__init__(file_path, findings)
         self.untrusted_sources = UntrustedSourceIndex(tree)
-        self.sql_construct_names: set[str] = set()
-        self.sql_construct_modules: set[str] = set()
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
         self.sqlalchemy_text = SQLAlchemyTextProvenance(tree)
         self.static_string_stack: list[dict[str, bool]] = [{}]
+        self.sql_statement_stack: list[dict[str, bool]] = [{}]
+        self.sql_table_stack: list[dict[str, bool]] = [{}]
+        bindings = Counter(
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+        )
+        self.rebound_global_sql_names = {
+            name for name, count in bindings.items() if count > 1
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Global):
+                self.rebound_global_sql_names.update(node.names)
+            elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                root = self._sql_binding_root(node)
+                if root is not None:
+                    self.rebound_global_sql_names.add(root)
         self.db_receiver_alias_stack: list[set[str]] = [set()]
 
     def _push(self):
         super()._push()
         self.static_string_stack.append({})
+        self.sql_statement_stack.append({})
+        self.sql_table_stack.append({})
         self.db_receiver_alias_stack.append(set())
 
     def _pop(self):
         if len(self.static_string_stack) > 1:
             self.static_string_stack.pop()
+        if len(self.sql_statement_stack) > 1:
+            self.sql_statement_stack.pop()
+        if len(self.sql_table_stack) > 1:
+            self.sql_table_stack.pop()
         if len(self.db_receiver_alias_stack) > 1:
             self.db_receiver_alias_stack.pop()
         super()._pop()
@@ -265,13 +312,57 @@ class _SQLFlowChecker(TaintVisitor):
                 return scope[name]
         return False
 
+    def _set_sql_statement(self, name: str, is_statement: bool) -> None:
+        if not self.sql_statement_stack:
+            self.sql_statement_stack.append({})
+        self.sql_statement_stack[-1][name] = bool(is_statement)
+
+    def _is_sql_statement_name(self, name: str) -> bool:
+        return self._lookup_sql_proof(self.sql_statement_stack, name)
+
+    def _lookup_sql_proof(self, stack: list[dict[str, bool]], name: str) -> bool:
+        for index in range(len(stack) - 1, -1, -1):
+            scope = stack[index]
+            if name in scope:
+                # A function can run after a later module/global assignment.
+                if (
+                    index == 0
+                    and len(stack) > 1
+                    and name in self.rebound_global_sql_names
+                ):
+                    return False
+                return scope[name]
+        return False
+
+    def _set_sql_table(self, name: str, is_table: bool) -> None:
+        self.sql_table_stack[-1][name] = bool(is_table)
+
+    def _is_sql_table(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return self._lookup_sql_proof(self.sql_table_stack, node.id)
+        if not isinstance(node, ast.Call):
+            return False
+        name = _qualified_name_from_expr(node.func)
+        if not name:
+            return False
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), name
+        )
+        return bool(
+            resolved
+            and resolved.startswith("sqlalchemy.")
+            and resolved.rsplit(".", 1)[-1] == "Table"
+        )
+
+    def _invalidate_sql_binding(self, name: str) -> None:
+        self._set_sql_statement(name, False)
+        self._set_sql_table(name, False)
+
     def _is_static_query_expr(self, node: ast.AST) -> bool:
         if _is_static_string_expr(node):
             return True
         if isinstance(node, ast.Name):
             return self._is_static_string_name(node.id)
-        if self._is_sql_construct(node):
-            return True
         # sqlalchemy.text("... :id") over a constant is a static statement;
         # values travel as bound parameters.
         if (
@@ -284,22 +375,109 @@ class _SQLFlowChecker(TaintVisitor):
         return False
 
     def _is_sql_construct(self, node: ast.AST) -> bool:
-        """``select(User).where(...)``, ``sa.delete(Item)``: bound-parameter SQL."""
+        """``select(User).where(...)``, ``sa.delete(Item)``, ``notes.insert().values(...)``,
+        or a name holding one: bound-parameter SQL.
+
+        Clause arguments must not be string-built or tainted. Methods that
+        bind values may accept tainted strings, including formatted strings.
+        """
+        if isinstance(node, ast.Name):
+            return self._is_sql_statement_name(node.id)
+        chain: list[ast.Call] = []
         current = node
-        while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
-            inner = current.func.value
-            if not isinstance(inner, ast.Call):
+        while isinstance(current, ast.Call):
+            chain.append(current)
+            func = current.func
+            if not (
+                isinstance(func, ast.Attribute) and isinstance(func.value, ast.Call)
+            ):
                 break
-            current = inner
-        if not isinstance(current, ast.Call):
+            current = func.value
+        if not chain:
             return False
-        func = current.func
+        if any(
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr not in SQL_BUILDER_METHODS
+            for call in chain[:-1]
+        ):
+            return False
+        for call in chain:
+            binds_values = isinstance(call.func, ast.Attribute) and call.func.attr in {
+                "values",
+                "ordered_values",
+                "filter_by",
+                "limit",
+                "offset",
+            }
+            for arg in [*call.args, *(keyword.value for keyword in call.keywords)]:
+                if not binds_values and (
+                    _is_interpolated_string(arg) or self.is_tainted(arg)
+                ):
+                    return False
+        func = chain[-1].func
         if isinstance(func, ast.Name):
-            return func.id in self.sql_construct_names
-        if isinstance(func, ast.Attribute) and func.attr in SQL_CONSTRUCT_NAMES:
-            root = _qualified_name_from_expr(func.value)
-            return bool(root) and root.split(".")[0] in self.sql_construct_modules
-        return False
+            return self._is_imported_sql_construct(func)
+        if not isinstance(func, ast.Attribute):
+            return False
+        if isinstance(func.value, ast.Name) and self._is_sql_statement_name(
+            func.value.id
+        ):
+            return func.attr in SQL_BUILDER_METHODS
+        if func.attr in SQL_CONSTRUCT_NAMES:
+            if self._is_imported_sql_construct(func):
+                return True
+        return func.attr in TABLE_STATEMENT_METHODS and self._is_sql_table(func.value)
+
+    def _is_imported_sql_construct(self, func: ast.AST) -> bool:
+        name = _qualified_name_from_expr(func)
+        if not name:
+            return False
+        resolved = self.untrusted_sources.resolved_import(
+            self._current_function(), name
+        )
+        return bool(
+            resolved
+            and resolved.split(".", 1)[0] in SQL_CONSTRUCT_MODULES
+            and resolved.rsplit(".", 1)[-1] in SQL_CONSTRUCT_NAMES
+        )
+
+    def _text_call_root(self, node: ast.AST) -> ast.Call | None:
+        """The ``sqlalchemy.text()`` call at the root of ``text(q).bindparams(...)``."""
+        current = node
+        while (
+            isinstance(current, ast.Call)
+            and isinstance(current.func, ast.Attribute)
+            and isinstance(current.func.value, ast.Call)
+        ):
+            if current.func.attr not in {
+                "bindparams",
+                "params",
+                "columns",
+                "execution_options",
+            }:
+                return None
+            current = current.func.value
+        if isinstance(current, ast.Call) and self.sqlalchemy_text.is_text_call(current):
+            return current
+        return None
+
+    def _is_sql_statement(self, node: ast.AST) -> bool:
+        """A statement that needs no report where it is executed.
+
+        Either a bound-parameter construct, or a ``text()`` statement whose SQL
+        is constant or already reported on the ``text()`` call itself.
+        """
+        if self._is_sql_construct(node):
+            return True
+        text_call = self._text_call_root(node)
+        if text_call is None or not text_call.args:
+            return False
+        sql = text_call.args[0]
+        return (
+            self._is_static_query_expr(sql)
+            or _is_interpolated_string(sql)
+            or self.is_tainted(sql)
+        )
 
     def is_tainted(self, node):
         # Untrusted process input also reaches SQL text: sys.argv, sys.stdin,
@@ -353,28 +531,20 @@ class _SQLFlowChecker(TaintVisitor):
                 self._mark_db_receiver_alias(target.attr)
 
     def visit_Import(self, node):
-        self.sqlalchemy_text.record_import(node)
         for alias in node.names:
-            if alias.name.split(".")[0] in SQL_CONSTRUCT_MODULES:
-                self.sql_construct_modules.add(alias.asname or alias.name.split(".")[0])
+            self._invalidate_sql_binding(alias.asname or alias.name.split(".", 1)[0])
+        self.sqlalchemy_text.record_import(node)
         for alias in node.names:
             top_level = alias.name.split(".")[0]
             if top_level in DB_MODULES or alias.name in DB_MODULES:
                 self.db_names.add(alias.asname or alias.name.split(".")[0])
         self.generic_visit(node)
 
-    def _record_sql_construct_imports(self, node: ast.ImportFrom) -> None:
-        if not node.module or node.level:
-            return
-        if node.module.split(".")[0] not in SQL_CONSTRUCT_MODULES:
-            return
-        for alias in node.names:
-            if alias.name in SQL_CONSTRUCT_NAMES:
-                self.sql_construct_names.add(alias.asname or alias.name)
-
     def visit_ImportFrom(self, node):
+        for alias in node.names:
+            if alias.name != "*":
+                self._invalidate_sql_binding(alias.asname or alias.name)
         self.sqlalchemy_text.record_import(node)
-        self._record_sql_construct_imports(node)
         if node.module:
             top_level = node.module.split(".")[0]
             if top_level in DB_MODULES or node.module in DB_MODULES:
@@ -453,8 +623,8 @@ class _SQLFlowChecker(TaintVisitor):
         query_expr = get_query_expression(node, names=("statement", "sql", "query"))
         if query_expr is None or not self.is_tainted(query_expr):
             return
-        if self._is_sql_construct(query_expr):
-            return
+        if self._is_sql_statement(query_expr):
+            return  # bound parameters, or reported on the text() call itself
         if isinstance(query_expr, ast.Call) and self.sqlalchemy_text.is_text_call(
             query_expr
         ):
@@ -473,6 +643,12 @@ class _SQLFlowChecker(TaintVisitor):
             evidence,
         )
 
+    def _taint_params(self, fn):
+        super()._taint_params(fn)
+        # A parameter shadows a module-level statement of the same name.
+        for name in self.env_stack[-1]:
+            self._invalidate_sql_binding(name)
+
     def _record_passthrough_function(self, node):
         param_names = {a.arg for a in node.args.args}
         for statement in node.body:
@@ -482,6 +658,7 @@ class _SQLFlowChecker(TaintVisitor):
                     break
 
     def visit_FunctionDef(self, node):
+        self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
         try:
@@ -491,6 +668,7 @@ class _SQLFlowChecker(TaintVisitor):
             self.sqlalchemy_text.leave_scope()
 
     def visit_AsyncFunctionDef(self, node):
+        self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_function(node)
         try:
@@ -500,6 +678,7 @@ class _SQLFlowChecker(TaintVisitor):
             self.sqlalchemy_text.leave_scope()
 
     def visit_ClassDef(self, node):
+        self._invalidate_sql_binding(node.name)
         self.sqlalchemy_text.record_name_binding(node.name)
         self.sqlalchemy_text.enter_class(node)
         try:
@@ -510,7 +689,23 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.sqlalchemy_text.record_name_binding(node.id)
+            self._invalidate_sql_binding(node.id)
         self.generic_visit(node)
+
+    @staticmethod
+    def _sql_binding_root(node: ast.AST) -> str | None:
+        while isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        return node.id if isinstance(node, ast.Name) else None
+
+    def visit_Attribute(self, node: ast.Attribute):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            root = self._sql_binding_root(node)
+            if root is not None:
+                self._invalidate_sql_binding(root)
+        self.generic_visit(node)
+
+    visit_Subscript = visit_Attribute
 
     def visit_Lambda(self, node: ast.Lambda):
         self.sqlalchemy_text.enter_lambda(node)
@@ -552,22 +747,110 @@ class _SQLFlowChecker(TaintVisitor):
     def visit_GeneratorExp(self, node: ast.GeneratorExp):
         self._visit_scoped_comprehension(node)
 
+    def _invalidate_branch_sql_bindings(self, nodes) -> None:
+        for root in nodes:
+            for child in ast.walk(root):
+                if isinstance(child, ast.Name) and isinstance(
+                    child.ctx, (ast.Store, ast.Del)
+                ):
+                    self._invalidate_sql_binding(child.id)
+                elif isinstance(child, (ast.Attribute, ast.Subscript)) and isinstance(
+                    child.ctx, (ast.Store, ast.Del)
+                ):
+                    root_name = self._sql_binding_root(child)
+                    if root_name is not None:
+                        self._invalidate_sql_binding(root_name)
+                elif isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    self._invalidate_sql_binding(child.name)
+                elif isinstance(child, ast.ExceptHandler) and child.name:
+                    self._invalidate_sql_binding(child.name)
+
+    def visit_If(self, node):
+        self.visit(node.test)
+        statements = [scope.copy() for scope in self.sql_statement_stack]
+        tables = [scope.copy() for scope in self.sql_table_stack]
+        for branch in (node.body, node.orelse):
+            self.sql_statement_stack = [scope.copy() for scope in statements]
+            self.sql_table_stack = [scope.copy() for scope in tables]
+            for child in branch:
+                self.visit(child)
+        self._invalidate_branch_sql_bindings([*node.body, *node.orelse])
+
+    def visit_For(self, node):
+        statements = [scope.copy() for scope in self.sql_statement_stack]
+        tables = [scope.copy() for scope in self.sql_table_stack]
+        self._invalidate_branch_sql_bindings(node.body)
+        if isinstance(node, ast.While):
+            self.visit(node.test)
+        else:
+            self.visit(node.iter)
+            self.visit(node.target)
+        for child in node.body:
+            self.visit(child)
+        self.sql_statement_stack = statements
+        self.sql_table_stack = tables
+        self._invalidate_branch_sql_bindings([node])
+        for child in node.orelse:
+            self.visit(child)
+        self._invalidate_branch_sql_bindings([node])
+
+    visit_AsyncFor = visit_For
+    visit_While = visit_For
+
+    def visit_Try(self, node):
+        statements = [scope.copy() for scope in self.sql_statement_stack]
+        tables = [scope.copy() for scope in self.sql_table_stack]
+        for child in node.body:
+            self.visit(child)
+        # The else branch is reached only after the entire try body succeeds.
+        for child in node.orelse:
+            self.visit(child)
+        for handler in node.handlers:
+            self.sql_statement_stack = [scope.copy() for scope in statements]
+            self.sql_table_stack = [scope.copy() for scope in tables]
+            self._invalidate_branch_sql_bindings(node.body)
+            if handler.name:
+                self._invalidate_sql_binding(handler.name)
+            self.visit(handler)
+        self.sql_statement_stack = statements
+        self.sql_table_stack = tables
+        self._invalidate_branch_sql_bindings([*node.body, *node.orelse, *node.handlers])
+        for child in node.finalbody:
+            self.visit(child)
+        self._invalidate_branch_sql_bindings([node])
+
+    visit_TryStar = visit_Try
+
     def visit_Assign(self, node):
         self._track_db_receiver_aliases(node.targets, node.value)
         is_static = self._is_static_query_expr(node.value)
+        is_statement = self._is_sql_statement(node.value)
+        is_table = self._is_sql_table(node.value)
+        super().visit_Assign(node)
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self._set_static_string(target.id, is_static)
-        super().visit_Assign(node)
+                self._set_sql_statement(target.id, is_statement)
+                self._set_sql_table(target.id, is_table)
 
     def visit_AnnAssign(self, node):
         self._track_db_receiver_aliases([node.target], node.value)
+        is_static = bool(node.value and self._is_static_query_expr(node.value))
+        is_statement = bool(node.value and self._is_sql_statement(node.value))
+        is_table = bool(node.value and self._is_sql_table(node.value))
+        super().visit_AnnAssign(node)
         if node.value and isinstance(node.target, ast.Name):
             self._set_static_string(
                 node.target.id,
-                self._is_static_query_expr(node.value),
+                is_static,
             )
-        super().visit_AnnAssign(node)
+            self._set_sql_statement(
+                node.target.id,
+                is_statement,
+            )
+            self._set_sql_table(node.target.id, is_table)
 
     def visit_AugAssign(self, node):
         if isinstance(node.target, ast.Name):
@@ -578,7 +861,10 @@ class _SQLFlowChecker(TaintVisitor):
                 and self._is_static_query_expr(node.value)
             )
             self._set_static_string(target_name, remains_static)
-            self._set(target_name, self._get(target_name) or self.is_tainted(node.value))
+            self._set_sql_statement(target_name, False)
+            self._set(
+                target_name, self._get(target_name) or self.is_tainted(node.value)
+            )
         self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -594,7 +880,7 @@ class _SQLFlowChecker(TaintVisitor):
 
             query_expr = get_query_expression(node, names=("sql", "query", "statement"))
 
-            if query_expr is not None and not self._is_sql_construct(query_expr):
+            if query_expr is not None and not self._is_sql_statement(query_expr):
                 sink = f"SQL text passed to .{node.func.attr}()"
                 if _is_interpolated_string(query_expr) or self.is_tainted(query_expr):
                     self._sqli_finding(
@@ -654,7 +940,7 @@ class _SQLFlowChecker(TaintVisitor):
             statement_expression = get_query_expression(
                 node, names=("statement", "sql", "query")
             )
-            if statement_expression is not None and not self._is_sql_construct(
+            if statement_expression is not None and not self._is_sql_statement(
                 statement_expression
             ):
                 if _is_interpolated_string(statement_expression) or self.is_tainted(

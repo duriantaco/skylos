@@ -492,6 +492,12 @@ def _resolve_project_cache_path(
     return root, path
 
 
+# Generated state under .skylos/ that never belongs in a commit. Each of these
+# directories ignores itself, which leaves the repository's .gitignore and the
+# files people do commit in .skylos/ (config, baseline, contracts) alone.
+_GENERATED_SKYLOS_DIRS = frozenset({"cache", "contribution", "index", "receipts"})
+
+
 def _ensure_cache_parent(root: Path, path: Path, *, create: bool) -> bool:
     try:
         relative_parent = path.parent.relative_to(root)
@@ -503,7 +509,22 @@ def _ensure_cache_parent(root: Path, path: Path, *, create: bool) -> bool:
         current = current / part
         if not _ensure_cache_dir(root, current, create=create):
             return False
+    parts = relative_parent.parts
+    if (
+        create
+        and len(parts) >= 2
+        and parts[0] == ".skylos"
+        and parts[1] in _GENERATED_SKYLOS_DIRS
+    ):
+        _ignore_generated_dir(root / ".skylos" / parts[1])
     return True
+
+
+def _ignore_generated_dir(directory: Path) -> None:
+    ignore = directory / ".gitignore"
+    if ignore.exists() or ignore.is_symlink():
+        return
+    write_text_no_symlink(ignore, "*\n")
 
 
 def _ensure_cache_dir(root: Path, current: Path, *, create: bool) -> bool:
