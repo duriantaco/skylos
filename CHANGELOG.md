@@ -1,5 +1,33 @@
 ## Changelog
 
+## [4.48.0](https://github.com/duriantaco/skylos/compare/v4.47.2...v4.48.0) (2026-10-11)
+
+
+### Features
+
+* **provenance:** record agent edits and preserve commit associations ([#958](https://github.com/duriantaco/skylos/issues/958)) ([20b62cc](https://github.com/duriantaco/skylos/commit/20b62ccde53212a389552f8f37502c97119f0706))
+
+
+### Bug Fixes
+
+* **cli:** improve help, reports and CI setup safety ([#965](https://github.com/duriantaco/skylos/issues/965)) ([9db0c2e](https://github.com/duriantaco/skylos/commit/9db0c2ee41629a2043641f593f335889545d4d35))
+* **cli:** show workspace naming and handle invalid credit responses ([#966](https://github.com/duriantaco/skylos/issues/966)) ([086ba1f](https://github.com/duriantaco/skylos/commit/086ba1f46e6facc1db579d55c8aa72d051c975a6))
+* **dead-code:** recognize bounded Flask and Django entrypoints ([#972](https://github.com/duriantaco/skylos/issues/972)) ([9eb23cd](https://github.com/duriantaco/skylos/commit/9eb23cd4cdbffeeacecbd417758b747c40c002b5))
+* **dead-code:** stop getattr hiding unrelated dead code ([#971](https://github.com/duriantaco/skylos/issues/971)) ([56f1545](https://github.com/duriantaco/skylos/commit/56f1545351676f5625506c268ae31da8c20a7e12))
+* **docs:** correct claims and standardize CLI plan names ([#967](https://github.com/duriantaco/skylos/issues/967)) ([a0c77f4](https://github.com/duriantaco/skylos/commit/a0c77f4c1658ab192ee76ef93f31f9f135cab98d))
+* **doctor:** detect the native accelerator and correct build advice ([#961](https://github.com/duriantaco/skylos/issues/961)) ([7a31d92](https://github.com/duriantaco/skylos/commit/7a31d92293a1fc05b62547428e468468881093fc))
+* **gate:** explain results and count custom findings ([#963](https://github.com/duriantaco/skylos/issues/963)) ([199ed4e](https://github.com/duriantaco/skylos/commit/199ed4e98d512dbea9078d8cdbd328cb4572007a))
+* **quality:** require diagnostic evidence for debug output ([#968](https://github.com/duriantaco/skylos/issues/968)) ([95cb62f](https://github.com/duriantaco/skylos/commit/95cb62ffe3b67b0417b59fa54291e986b9a196b6))
+* **scan:** keep full scans whole when the tree has uncommitted edits ([#962](https://github.com/duriantaco/skylos/issues/962)) ([5754fa3](https://github.com/duriantaco/skylos/commit/5754fa370596cd5bb666968386eea628cf2383ec))
+* **scan:** reduce false alarms while preserving dangerous command detection ([#964](https://github.com/duriantaco/skylos/issues/964)) ([a522560](https://github.com/duriantaco/skylos/commit/a5225604d04405f7d3b534a2392ff295ae186840))
+* **security:** block authentication loss in PR gates and done ([#973](https://github.com/duriantaco/skylos/issues/973)) ([16df15a](https://github.com/duriantaco/skylos/commit/16df15a3f7e2cba01064a62125d4d2acb3c5a07e))
+
+
+### Performance Improvements
+
+* **analyzer:** speed up repeated attribute scoring without changing results ([#975](https://github.com/duriantaco/skylos/issues/975)) ([e11b183](https://github.com/duriantaco/skylos/commit/e11b18373fa352b55f516b855394a235b0484ec7))
+* **cli:** avoid unused report JSON copies ([#974](https://github.com/duriantaco/skylos/issues/974)) ([1da322a](https://github.com/duriantaco/skylos/commit/1da322af1b709ce55c87a6093d3db1992c274f99))
+
 ## [4.47.2](https://github.com/duriantaco/skylos/compare/v4.47.1...v4.47.2) (2026-10-08)
 
 
