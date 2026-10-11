@@ -1,5 +1,13 @@
 ## Changelog
 
+## [0.6.1] - unreleased
+
+### Changed
+- Listing: Python-first description and keywords; Go is listed with its `skylos-go` engine requirement
+- Listing: square icon and light gallery banner
+- Packaging: README images resolve from `editors/vscode` on GitHub (the 0.5.0 listing's demo GIF was a broken link), and the demo GIF is no longer bundled in the `.vsix`
+- Listing: clarified manual AI requests, CLI edit-time verification, and VSIX installation for editors using Open VSX
+
 ## [0.6.0] - 2026-05-06
 
 ### Added
