@@ -1,6 +1,10 @@
 ---
 name: skylos-security
 description: Investigate and harden Skylos security behavior. Use when the user asks to validate a security finding, reproduce a scanner bypass, assess false negatives, review LLM evidence filters, analyze CI/cloud policy trust boundaries, classify severity, or add regression tests for security-sensitive analyzer behavior.
+metadata:
+  # Repo-maintainer skill: hidden from `npx skills add duriantaco/skylos`
+  # (set INSTALL_INTERNAL_SKILLS=1 to install it anyway).
+  internal: true
 ---
 
 # Skylos Security
