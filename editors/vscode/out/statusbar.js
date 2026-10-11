@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SkylosStatusBar = void 0;
 const vscode = __importStar(require("vscode"));
 const dashboard_1 = require("./dashboard");
+const assessmentCore_1 = require("./assessmentCore");
 const config_1 = require("./config");
 class SkylosStatusBar {
     constructor(store) {
@@ -73,24 +74,17 @@ class SkylosStatusBar {
             this.item.tooltip = `Last Skylos scan failed: ${lastError.message}\nClick to open Security Dashboard`;
             return;
         }
-        if (total === 0) {
-            this.item.text = "$(shield) Skylos";
-            this.item.backgroundColor = undefined;
-            this.item.color = undefined;
-            this.item.tooltip = "No issues found — Click to open Security Dashboard";
-            return;
-        }
-        const { grade, color } = (0, dashboard_1.computeSecurityScore)(this.store);
-        this.item.text = `$(shield) ${grade}`;
+        const { status, label, color } = (0, dashboard_1.getRiskSummary)(this.store);
+        this.item.text = status === "none" ? "$(shield) Skylos" : `$(shield) Skylos ${label}`;
         this.item.color = color;
         const critical = counts["CRITICAL"] ?? 0;
         const high = counts["HIGH"] ?? 0;
         const medium = (counts["MEDIUM"] ?? 0) + (counts["WARN"] ?? 0);
         const low = (counts["LOW"] ?? 0) + (counts["INFO"] ?? 0);
-        if (grade === "D" || grade === "F") {
+        if (status === "critical" || status === "high") {
             this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
         }
-        else if (grade === "C") {
+        else if (status === "medium" || status === "unknown") {
             this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
         }
         else {
@@ -102,7 +96,7 @@ class SkylosStatusBar {
         const scanLine = this.store.lastScan?.diffBase
             ? `Mode: new issues vs ${this.store.lastScan.diffBase}\n`
             : "";
-        this.item.tooltip = `${scanLine}${scopeLine}Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
+        this.item.tooltip = `${scanLine}${scopeLine}Risk: ${label}\n${(0, assessmentCore_1.coverageText)(this.store.assessment)}\nDisplayed findings: ${total}\nCritical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
     }
     dispose() {
         this.disposables.forEach((d) => d.dispose());

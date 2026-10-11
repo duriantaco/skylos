@@ -24,6 +24,21 @@
 
 Analysis runs through your local Skylos CLI. AI chat and fixes are optional; when you invoke them, your configured provider receives code context. CLI network lookups and Cloud sync follow your CLI configuration.
 
+## Reading the assessment
+
+The dashboard uses four separate answers instead of one blended grade:
+
+- **Risk** — the highest unresolved severity among Defect and Review findings. A critical finding stays critical even when other checks are clear.
+- **Maintainability** — how widespread Advice is, with measured proportions such as `30/200 functions (15%)` and magnitude such as `4.5× limit`. Missing denominators remain unknown.
+- **Dead code** — candidates to review before removal, rather than proof that removal is safe.
+- **Gate** — what your configured policy allows. Editor scans do not run a gate; run `skylos . --gate` to evaluate it. Reports with an explicit local gate outcome show that result separately from Risk.
+
+Type and severity answer different questions. **Defect** describes a concrete correctness pattern, **Review** needs context, and **Advice** describes maintainability. Review can still be CRITICAL. The dashboard groups Advice by rule; expand a group for every location. Defect and Review rows stay separate, with their severity visible.
+
+Filters change the displayed findings, not the complete scan assessment. The coverage line lists disabled and incomplete checks. A focused file scan or failed scan invalidates the previous workspace assessment while retaining known findings; rescan the workspace for current coverage. Older CLI reports show an explicitly labeled Legacy score when provided, and never receive an invented replacement score.
+
+JSON exports retain complete extension findings and the original CLI report from the latest workspace scan. SARIF retains every extension finding and attaches the assessment. Neither export adds a current numeric grade.
+
 ## How it works
 
 **Static Analysis (Skylos CLI)**
@@ -222,7 +237,7 @@ New Issues mode shows only **new issues since a base branch**, useful for PRs an
 Command Palette → `Skylos: Export Report` offers three formats:
 
 - **Markdown** — human-readable report with severity tables and findings
-- **JSON** — machine-readable with scores, CWE/OWASP tags
+- **JSON** — complete findings, assessments, and CWE/OWASP tags
 - **SARIF** — standard format for CI/code-scanning (GitHub Code Scanning, GitLab SAST, Azure DevOps)
 
 ## Settings

@@ -42,6 +42,7 @@ exports.normalizeReport = normalizeReport;
 const vscode = __importStar(require("vscode"));
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
+const assessmentCore_1 = require("./assessmentCore");
 const config_1 = require("./config");
 const scanCore_1 = require("./scanCore");
 const findingCore_1 = require("./findingCore");
@@ -193,6 +194,8 @@ async function runScan(target, wsRoot, token, diffBase) {
             succeed({
                 findings,
                 grade: report.grade,
+                assessment: (0, assessmentCore_1.readAssessment)(report.assessment),
+                report,
                 summary: report.analysis_summary,
                 circularDeps: report.circular_dependencies,
                 depVulns: report.dependency_vulnerabilities,
