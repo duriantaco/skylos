@@ -197,6 +197,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "build>=1.2.2" "packaging>=24.2" "twine>=6.1.0"
 
+      - name: Pin README links to the release tag for PyPI
+        env:
+          RELEASE_TAG: ${{ steps.release_ref.outputs.tag }}
+        run: |
+          # Tags cut before this script existed build with the README as is.
+          if [ -f tools/release/pypi_readme.py ]; then
+            python tools/release/pypi_readme.py --ref "$RELEASE_TAG" README.md
+          else
+            echo "tools/release/pypi_readme.py not in ${RELEASE_TAG}; README links stay relative"
+          fi
+
       - name: Build sdist + wheel
         run: |
           python -m build --sdist --wheel --outdir dist
