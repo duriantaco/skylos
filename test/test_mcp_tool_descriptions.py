@@ -43,9 +43,7 @@ def test_ungated_tool_description_says_it_works_without_a_key(tools):
 
 
 def test_existing_docstrings_are_kept(tools):
-    assert tools["verify_change"].description.startswith(
-        "Verify a changed file/range"
-    )
+    assert tools["verify_change"].description.startswith("Verify a changed file/range")
 
 
 def test_unauthenticated_error_explains_how_to_get_a_key(monkeypatch):
@@ -78,9 +76,63 @@ def test_provenance_scan_tool_runs_when_authenticated(tools, monkeypatch, tmp_pa
     monkeypatch.setattr(server_mod, "_store_result", lambda *a, **k: "run")
     server = FastMCP("test")
     _register_tools(server)
-    result = asyncio.run(
-        server.call_tool("provenance_scan", {"path": str(tmp_path)})
-    )
+    result = asyncio.run(server.call_tool("provenance_scan", {"path": str(tmp_path)}))
     text = result[0][0].text if isinstance(result, tuple) else result[0].text
     payload = json.loads(text)
     assert "No module named" not in payload.get("error", "")
+
+
+def test_every_tool_parameter_is_described(tools):
+    # Clients show parameter descriptions to the model; MCP directories
+    # (Glama's tool-definition score) also grade them.
+    for name, tool in tools.items():
+        for param, schema in tool.inputSchema.get("properties", {}).items():
+            assert schema.get("description"), f"{name}.{param}"
+
+
+def test_tools_that_write_files_are_not_marked_read_only(tools):
+    for name in ("remediate", "generate_fix", "learn_triage"):
+        annotations = tools[name].annotations
+        if annotations is not None:  # older mcp releases have no annotations
+            assert annotations.readOnlyHint is False, name
+
+
+def test_external_service_tools_declare_open_world_access(tools):
+    for name in (
+        "remediate",
+        "verify_dead_code",
+        "validate_code_change",
+        "verify_change",
+    ):
+        annotations = tools[name].annotations
+        if annotations is not None:
+            assert annotations.openWorldHint is True, name
+
+
+def test_default_remediation_is_a_static_plan(tools, monkeypatch, tmp_path):
+    import skylos_mcp.server as server_mod
+    from skylos.llm.orchestrator import RemediationAgent
+
+    monkeypatch.setattr(server_mod, "_gate", lambda name: None)
+    monkeypatch.setattr(
+        RemediationAgent,
+        "_scan",
+        lambda *_: {
+            "danger": [
+                {"rule_id": "SKY-D201", "severity": "HIGH", "file": "app.py", "line": 1}
+            ]
+        },
+    )
+
+    def no_model(*_):
+        pytest.fail("Default remediation must not instantiate a model")
+
+    monkeypatch.setattr(RemediationAgent, "_create_fixer", no_model)
+    server = FastMCP("test")
+    _register_tools(server)
+    result = asyncio.run(server.call_tool("remediate", {"path": str(tmp_path)}))
+    text = result[0][0].text if isinstance(result, tuple) else result[0].text
+    payload = json.loads(text)
+    assert "error" not in payload
+    assert payload["total_findings"] == 1
+    assert "without calling a model" in tools["remediate"].description
