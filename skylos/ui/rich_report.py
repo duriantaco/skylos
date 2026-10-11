@@ -59,11 +59,21 @@ _FINDING_TITLES = (
 
 
 def _shorten_path(path, root_path=None, keep_parts=3):
+    """Use the scan root for locations, retaining context for external paths."""
     if not path:
         return "?"
 
     try:
-        p = Path(path).resolve()
+        input_path = Path(path)
+        p = input_path.resolve()
+        if root_path is not None and input_path.is_absolute():
+            try:
+                rel = p.relative_to(Path(root_path).resolve())
+            except (OSError, RuntimeError, TypeError, ValueError):
+                pass
+            else:
+                # A file scan can supply the source itself as its root.
+                return str(rel) if rel.parts else p.name or str(p)
         cwd = Path.cwd().resolve()
 
         rel = p.relative_to(cwd)

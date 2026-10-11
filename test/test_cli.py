@@ -1543,7 +1543,8 @@ def test_render_results_includes_ai_defect_summary_and_table():
     assert columns["Severity"] == ["CRITICAL"]
     assert "Call to a missing local helper" in columns["Message"][0]
     assert "security.require_auth" in columns["Message"][0]
-    assert columns["Location"] == ["/root/app/views.py:5"]
+    assert columns["Location"] == ["app/views.py:5"]
+    assert result["ai_defects"][0]["file"] == "/root/app/views.py"
 
 
 def test_render_results_includes_unused_files_in_summary_and_table():
