@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "4.47.2"
 requires-python = ">=3.10"
-description = "Open-source, local-first static analysis and PR gates. Finds dead code, security issues, secrets, quality regressions and AI-code mistakes, and checks whether an AI agent's change is really finished. Deepest in Python, TypeScript/JavaScript and Java; narrower checks for Go, PHP, Rust, Dart, C#, Kotlin, C++ and Shell."
+description = "Python dead code, security and secrets scanner with a pull-request gate; narrower checks for TypeScript, Java and more."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -15,6 +15,8 @@ keywords = [
     "dead-code",
     "unused-code",
     "unused-imports",
+    "unused-functions",
+    "python-dead-code",
     "security",
     "linter",
     "code-quality",
@@ -24,7 +26,6 @@ keywords = [
     "python-linter",
     "python-security",
     "python-security-scanner",
-    "typescript-linter",
     "quality-gate",
     "ci-cd",
     "github-actions",
@@ -38,27 +39,27 @@ keywords = [
     "mcp",
     "mcp-server",
     "ai-agent",
-    "ai-tool",
     "coding-agent",
     "test-tampering",
     "pull-request-gate",
     "vulture-alternative",
     "bandit-alternative",
-    "semgrep-alternative",
     "code-scanner",
     "dead-code-detector",
+    "django",
+    "flask",
+    "fastapi",
+    "pytest",
     "devsecops",
-    "vibe-coding",
     "ai-generated-code",
     "ai-code-security",
     "prompt-injection",
     "ai-supply-chain-security",
-    "phantom-function",
     "hallucinated-dependency",
-    "copilot-review",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -98,11 +99,10 @@ dependencies = [
 [project.urls]
 Homepage = "https://skylos.dev"
 Documentation = "https://docs.skylos.dev"
-Repository = "https://github.com/duriantaco/skylos"
 Changelog = "https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md"
-"Bug Tracker" = "https://github.com/duriantaco/skylos/issues"
-Discord = "https://discord.gg/Ftn9t9tErf"
-"MCP Server" = "https://github.com/duriantaco/skylos/tree/main/skylos_mcp"
+Issues = "https://github.com/duriantaco/skylos/issues"
+Source = "https://github.com/duriantaco/skylos"
+"MCP server" = "https://docs.skylos.dev/mcp-server"
 
 [project.optional-dependencies]
 llm = ["litellm>=1.84.0,<1.89.0", "aiohttp>=3.14.0"]
