@@ -1,7 +1,7 @@
 {
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
-  "description": "Python dead code, security and secrets checks in VS Code from the open-source Skylos CLI; narrower checks for TypeScript and JavaScript. Optional AI chat and fixes send code to your configured provider when invoked.",
+  "description": "Python dead code, security and secrets checks in VS Code from the open-source Skylos CLI; narrower checks for TypeScript and JavaScript. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.",
   "version": "0.6.1",
   "publisher": "oha",
   "icon": "icon.png",
@@ -223,7 +223,7 @@
           {
             "id": "skylos.setup.privacy",
             "title": "Choose AI privacy settings",
-            "description": "Scans use your local Skylos CLI. AI chat and fixes send code to your configured provider when invoked. Optional edit-time verification uses the CLI; CLI networking and Cloud sync follow its settings.\n[Open Skylos AI Settings](command:workbench.action.openSettings?%5B%22skylos.aiProvider%22%5D)",
+            "description": "Scans use your local Skylos CLI. AI chat and fixes are optional; when you invoke them, your configured provider receives code context. Optional edit-time verification uses the CLI; CLI networking and Cloud sync follow its settings.\n[Open Skylos AI Settings](command:workbench.action.openSettings?%5B%22skylos.aiProvider%22%5D)",
             "completionEvents": [
               "onSettingChanged:skylos.aiProvider"
             ]

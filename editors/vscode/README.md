@@ -1,6 +1,6 @@
 # Skylos for VS Code
 
-> Python dead code, security and secrets checks in VS Code, from the open-source [Skylos](https://github.com/duriantaco/skylos) CLI. TypeScript and JavaScript get narrower checks. Findings show the file, line and evidence; optional AI chat and fixes send code to your configured provider when you invoke them.
+> Python dead code, security and secrets checks in VS Code, from the open-source [Skylos](https://github.com/duriantaco/skylos) CLI. TypeScript and JavaScript get narrower checks. Findings show the file, line and evidence. AI chat and fixes are optional; when you invoke them, your configured provider receives code context.
 
 <img src="media/vsce.gif" alt="Skylos VS Code Extension — inline dead code detection, security scanning, and CodeLens actions" width="800" />
 
@@ -22,7 +22,7 @@
 * **Secrets Scanning**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
 * **Dangerous Patterns**: Flags risky uses of `eval/exec`, command execution, `pickle.load/loads`, `yaml.load` without SafeLoader, and weak hashes. See the [rules reference](https://docs.skylos.dev/rules-reference).
 
-Analysis runs through your local Skylos CLI. AI chat and fixes are optional and send code to your configured provider when invoked. CLI network lookups and Cloud sync follow your CLI configuration.
+Analysis runs through your local Skylos CLI. AI chat and fixes are optional; when you invoke them, your configured provider receives code context. CLI network lookups and Cloud sync follow your CLI configuration.
 
 ## How it works
 
@@ -289,10 +289,11 @@ Open Settings → Extensions → Skylos (or settings.json):
 ## Privacy
 
 - Analysis executes through your local Skylos CLI; registry lookups and Cloud uploads depend on CLI settings
-- Manual AI fixes send the finding and enclosing function or nearby code to your configured provider
-- Chat sends your messages, recent conversation history, and the selected finding's file path and surrounding code to that provider
+- Manual AI fixes provide the finding and full enclosing function or nearby code to your configured provider; Dry Run uses the same AI requests
+- Chat provides your messages, recent conversation history, and the selected finding's file path, details, and surrounding code to that provider
+- **Preview Dead Code Removal** uses the CLI's AI-provider settings and may share repository code context
 - Recent chat history is saved locally in VS Code workspace state; **Clear Chat** removes it
-- AI requests stay on your machine when the configured model server is local
+- The local-provider option connects to your local server; that server's own network and privacy settings still apply
 - The extension does not add telemetry
 
 ## Contributing
