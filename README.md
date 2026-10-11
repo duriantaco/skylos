@@ -1,15 +1,18 @@
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos" width="160">
     <h1>Skylos</h1>
+    <p><strong>Code checks that show their work.</strong></p>
 </div>
 
 ## What Is Skylos?
 
-Skylos is an open-source (Apache-2.0), local-first static analysis CLI and
-pull-request gate. It finds dead code, security issues, secrets, vulnerable
-dependencies, quality regressions and AI-code mistakes, and `skylos done`
-checks whether a change, often a coding agent's, is really finished. The CLI
-runs without an account.
+Skylos is an open-source (Apache-2.0) CLI and pull-request gate for Python
+projects that runs without an account. `skylos .` finds dead code: unused
+functions, classes, imports and empty files. Add `-a` to check security bugs,
+hard-coded secrets, vulnerable dependencies, code quality and AI-code
+mistakes. Findings include source locations and supporting analysis;
+`skylos done` checks whether a branch, often a coding agent's, is ready to
+merge.
 
 It is built for:
 
@@ -42,7 +45,6 @@ PRs, not endorsements.
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [Website](https://skylos.dev) |
 [Docs](https://docs.skylos.dev) |
