@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from collections import Counter
-from pathlib import Path
 import re
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
 
 from rich.console import Console
-from rich.text import Text
 from rich.table import Table
+from rich.text import Text
 
 from skylos.api._snippets import _resolve_snippet_path
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
+    dependency_coverage_lines,
     maintainability_rows,
 )
 from skylos.reporting.finding_types import (
@@ -28,7 +29,8 @@ from skylos.ui.dead_code_evidence import (
     dead_code_uncertainty_summary,
     dead_code_uncertainty_text,
 )
-
+from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
+from skylos.ui.security_evidence import security_evidence_details
 
 CATEGORY_SPECS = (
     ("analysis_errors", "Analysis", "File analysis failed"),
@@ -206,6 +208,8 @@ def _print_assessment(console: Console, result: dict) -> None:
     for label, detail in assessment_rows(assessment, gate=result.get("gate") or result.get("quality_gate")):
         console.print(Text.assemble((f"  {label}: ", "bold"), (_sanitize_terminal_text(detail), "")))
     console.print(Text("  " + _sanitize_terminal_text(assessment_coverage_text(assessment)), style="dim"))
+    for detail in dependency_coverage_lines(result.get("analysis_summary")):
+        console.print(Text("  " + _sanitize_terminal_text(detail), style="dim"))
     for label, spread, magnitude in maintainability_rows(assessment):
         console.print(Text("    " + _sanitize_terminal_text(f"{label}: {spread}; {magnitude}"), style="dim"))
 
@@ -418,7 +422,10 @@ def _make_pretty_finding(
 
 
 def _context_details(item):
-    details = []
+    details = security_evidence_details(item)
+    test_advice = pytest_signature_advice(item)
+    if test_advice:
+        details.append(test_advice)
     if item.get("confidence") is not None:
         details.append(f"Confidence: {item['confidence']}%")
     symbol = item.get("symbol")
@@ -694,6 +701,8 @@ def _rule_id(item: dict, category: str) -> str:
 
 
 def _title(item: dict, category: str, fallback_label: str) -> str:
+    if category == "quality" and pytest_signature_advice(item):
+        return pytest_signature_title(item)
     if category in DEAD_CODE_TYPES:
         name = item.get("name") or item.get("simple_name") or item.get("symbol")
         if name:
