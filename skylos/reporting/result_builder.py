@@ -157,11 +157,18 @@ def build_analysis_result(
         project_root=getattr(analyzer, "_project_root", None),
         workspace_inventory=workspace_inventory,
     )
+    graded_files = files
     if isinstance(getattr(analyzer, "_review_context", None), dict):
         _attach_effective_review_config_hashes(result, project_cfg)
+    measured_paths = {str(file) for file in graded_files}
+    result["analysis_summary"]["maintainability_inventory"] = [
+        item
+        for item in getattr(analyzer, "_maintainability_inventory", [])
+        if item.get("file") in measured_paths
+    ]
     _attach_grade(
         result,
-        files,
+        graded_files,
         enable_danger,
         enable_quality,
         enable_ai_defects,
@@ -169,7 +176,20 @@ def build_analysis_result(
         enable_secrets,
     )
     attach_directory_rollups(result, getattr(analyzer, "_project_root", None))
+    from skylos.reporting.finding_types import (
+        annotate_finding_types,
+        summarize_finding_types,
+    )
+
+    annotate_finding_types(result)
+    result["analysis_summary"]["finding_type_counts"] = summarize_finding_types(result)
+    if result.get("assessment"):
+        result["analysis_summary"]["assessment_scope"] = "all_analyzed_findings"
     return result
+
+
+
+
 
 
 def _attach_effective_review_config_hashes(result, root_config):
@@ -463,7 +483,8 @@ def _attach_grade(
     enable_secrets,
 ):
     try:
-        from skylos.reporting.grader import count_lines_of_code, compute_grade
+        from skylos.reporting.grader import count_lines_of_code
+        from skylos.reporting.assessment import compute_assessment
 
         total_loc = count_lines_of_code(files)
         categories = _grade_categories(
@@ -473,6 +494,8 @@ def _attach_grade(
             enable_sca,
             enable_secrets,
         )
+        # A supplemental finding is evidence of risk, not evidence that an
+        # entire scanner phase ran. Assessment counts every finding separately.
         result["analysis_summary"]["total_loc"] = total_loc
         result["analysis_summary"]["grade_categories"] = categories
         if result.get("analysis_errors") or result["analysis_summary"].get(
@@ -481,12 +504,7 @@ def _attach_grade(
             result["analysis_summary"]["grade_unavailable_reason"] = (
                 "analysis_incomplete"
             )
-            return
-        result["grade"] = compute_grade(
-            result,
-            total_loc,
-            included_categories=categories,
-        )
+        result["assessment"] = compute_assessment(result, scanned_checks=categories)
     except Exception:
         _debug_traceback()
 

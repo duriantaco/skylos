@@ -13,6 +13,13 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from skylos.analysis.errors import analysis_result_incomplete
+from skylos.reporting.finding_types import (
+    annotate_finding_types,
+    get_finding_type,
+    group_advice,
+    summarize_finding_types,
+)
+from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos_mcp.auth import (
     UNAUTH_DAILY_LIMIT,
     UNAUTHENTICATED_TOOLS,
@@ -77,6 +84,7 @@ def _result_path(run_id: str) -> Path | None:
 
 
 def _store_result(result: dict, tool: str, path: str) -> str:
+    annotate_finding_types(result)
     ts = datetime.now(timezone.utc).isoformat()
     run_id = _make_run_id(tool, path, ts)
 
@@ -309,9 +317,7 @@ def _validate_code_change_impl(
                 scan_diff_dependency_hallucinations,
             )
 
-            dep_result = scan_diff_dependency_hallucinations(
-                diff, Path(path).resolve()
-            )
+            dep_result = scan_diff_dependency_hallucinations(diff, Path(path).resolve())
         except Exception:
             registry_status = "error"
             logger.debug("Diff dependency check failed", exc_info=True)
@@ -385,7 +391,10 @@ def _verify_change_impl(
 
 
 def _verify_agent_excludes(exclude_folders: str | None) -> set[str]:
-    from skylos.commands.defend_cmd import DEFAULT_DEFEND_EXCLUDES, _build_defend_excludes
+    from skylos.commands.defend_cmd import (
+        DEFAULT_DEFEND_EXCLUDES,
+        _build_defend_excludes,
+    )
 
     extra = None
     if exclude_folders:
@@ -802,9 +811,75 @@ def _is_architecture_finding(finding: dict) -> bool:
     )
 
 
-def _make_summary(result: dict, focus: str | None = None) -> dict:
+def _compact_findings(rows, category, expand_advice):
+    if expand_advice or not isinstance(rows, (list, tuple)):
+        return rows
+    return [
+        finding
+        for finding in rows
+        if not isinstance(finding, dict)
+        or get_finding_type(finding, category) != "advice"
+    ]
+
+
+def _compact_reply(result: dict, *, expand_advice: bool = False) -> dict:
+    """Compact advice only; never cap Defect, Review or analysis errors."""
+    out = dict(result)
+    out["finding_types"] = summarize_finding_types(result)
+    out["advice_groups"] = [
+        {
+            "rule_id": group["rule_id"],
+            "name": group["name"],
+            "count": group["count"],
+            "file_count": len(group["files"]),
+        }
+        for group in group_advice(result)
+    ]
+    if expand_advice:
+        return out
+    for section, category in (
+        *FINDING_SECTIONS,
+        ("code_health", "quality"),
+        ("circular_dependencies", "quality"),
+        ("publisher_change_findings", "ai_defects"),
+    ):
+        if section in out:
+            category = "custom_rules" if section == "custom_rules" else category
+            out[section] = _compact_findings(out[section], category, False)
+    metrics = out.get("architecture_metrics")
+    if isinstance(metrics, dict) and isinstance(metrics.get("advisories"), list):
+        metrics = dict(metrics)
+        advisories = []
+        for advisory in metrics["advisories"]:
+            if not isinstance(advisory, dict):
+                advisories.append(advisory)
+                continue
+            signals = _compact_findings(advisory.get("signals"), "quality", False)
+            if signals or "signals" not in advisory:
+                advisories.append({**advisory, "signals": signals})
+        metrics["advisories"] = advisories
+        out["architecture_metrics"] = metrics
+    return out
+
+
+def _result_reply(summary: dict, run_id: str, *, expand_advice: bool) -> str:
+    summary["_run_id"] = run_id
+    summary["_result_uri"] = f"skylos://results/{run_id}"
+    summary["advice_details"] = {
+        "expanded": expand_advice,
+        "resource_uri": summary["_result_uri"],
+        "expand_parameter": "expand_advice",
+    }
+    return json.dumps(summary, indent=2)
+
+
+def _make_summary(
+    result: dict, focus: str | None = None, *, expand_advice: bool = False
+) -> dict:
     summary = result.get("analysis_summary", {})
     out: dict[str, Any] = {"analysis_summary": summary}
+    if isinstance(result.get("assessment"), dict):
+        out["assessment"] = result["assessment"]
     if result.get("analysis_errors"):
         out["analysis_errors"] = result["analysis_errors"]
 
@@ -824,14 +899,23 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
             "unused_variables",
             "unused_parameters",
             "unused_files",
+            "unused_exports",
+            "unused_fixtures",
         ]:
             items = result.get(key, [])
             if items:
                 out[key] = items
 
     if focus is None or focus == "security":
-        if result.get("danger"):
-            out["danger"] = result["danger"]
+        for key in (
+            "danger",
+            "reliability",
+            "ai_defects",
+            "dependency_vulnerabilities",
+            "publisher_change_findings",
+        ):
+            if result.get(key):
+                out[key] = result[key]
 
     if focus is None or focus == "quality":
         if result.get("quality"):
@@ -840,15 +924,18 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
             out["circular_dependencies"] = result["circular_dependencies"]
         if result.get("custom_rules"):
             out["custom_rules"] = result["custom_rules"]
+        for key in ("code_health", "architecture_metrics"):
+            if result.get(key):
+                out[key] = result[key]
 
     if focus is None or focus == "secrets":
         if result.get("secrets"):
             out["secrets"] = result["secrets"]
 
-    return out
+    return _compact_reply(out, expand_advice=expand_advice)
 
 
-def _architecture_payload(result: dict) -> dict:
+def _architecture_payload(result: dict, *, expand_advice: bool = False) -> dict:
     findings = [
         finding
         for finding in result.get("quality", []) or []
@@ -857,14 +944,20 @@ def _architecture_payload(result: dict) -> dict:
     payload: dict[str, Any] = {
         "analysis_summary": result.get("analysis_summary", {}),
         "architecture_metrics": result.get("architecture_metrics", {}),
-        "findings": findings,
+        "quality": findings,
     }
+    if isinstance(result.get("assessment"), dict):
+        payload["assessment"] = result["assessment"]
     if result.get("circular_dependencies"):
         payload["circular_dependencies"] = result["circular_dependencies"]
+    if result.get("analysis_errors"):
+        payload["analysis_errors"] = result["analysis_errors"]
+    payload = _compact_reply(payload, expand_advice=expand_advice)
+    payload["findings"] = payload.pop("quality")
     return payload
 
 
-def _health_score_payload(result: dict) -> dict:
+def _health_score_payload(result: dict, *, expand_advice: bool = False) -> dict:
     summary = result.get("analysis_summary", {})
     grade = result.get("grade", {})
     categories = grade.get("categories", {}) if isinstance(grade, dict) else {}
@@ -911,7 +1004,8 @@ def _health_score_payload(result: dict) -> dict:
         and not str(data["key_issue"]).lower().startswith("no ")
     ]
 
-    return {
+    payload = {
+        **_make_summary(result, expand_advice=expand_advice),
         "grade": grade,
         "category_scores": category_scores,
         "counts": counts,
@@ -919,6 +1013,16 @@ def _health_score_payload(result: dict) -> dict:
         "analysis_summary": summary,
         "top_issues": top_issues,
     }
+    if isinstance(result.get("assessment"), dict):
+        # Keep the historical tool name for existing clients. New scans return
+        # measured assessments, without a blended score or letter grade.
+        payload["assessment"] = result["assessment"]
+        payload.pop("grade", None)
+        payload.pop("category_scores", None)
+        payload.pop("top_issues", None)
+    elif grade:
+        payload["grade_kind"] = "legacy_score"
+    return payload
 
 
 def _gate(tool_name: str) -> str | None:
@@ -1061,6 +1165,9 @@ def _register_tools(mcp):
         path: PathParam,
         confidence: ConfidenceParam = 60,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
         """Find dead code: unused functions, classes, imports, variables, parameters and files.
 
@@ -1071,7 +1178,12 @@ def _register_tools(mcp):
         Findings are candidates: before deleting one, check for dynamic use
         (getattr, string dispatch, entry points, framework decorators, tests).
         A non-empty `analysis_errors` means analysis or verification was
-        incomplete; do not treat the findings as a complete scan."""
+        incomplete; do not treat the findings as a complete scan.
+
+        Defect and Review records remain complete. Advice is grouped by default;
+        expand_advice=True includes every Advice record. Read _result_uri for
+        the complete saved result without rescanning.
+        """
         gate_err = _gate("analyze")
         if gate_err:
             return gate_err
@@ -1084,23 +1196,30 @@ def _register_tools(mcp):
             enable_danger=False,
             enable_quality=False,
         )
-        summary = _make_summary(result, focus="dead_code")
         run_id = _store_result(result, "analyze", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _make_summary(result, focus="dead_code", expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
     @_tool("Scan for security issues")
     def security_scan(
         path: PathParam,
         confidence: ConfidenceParam = 60,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
         """Scan source code for security issues such as SQL and command injection, SSRF, path traversal, eval/exec and unsafe deserialization.
 
         Returns JSON with findings (rule ID, severity, file, line, message) and
         `_run_id`. Read-only; the scan runs locally and does not upload code. Use
         `secrets_scan` for hard-coded credentials and `validate_code_change`
-        to check a diff before it lands."""
+        to check a diff before it lands.
+
+        Defect and Review records remain complete. Advice is grouped by default;
+        expand_advice=True includes every Advice record. Read _result_uri for
+        the complete saved result without rescanning.
+        """
         gate_err = _gate("security_scan")
         if gate_err:
             return gate_err
@@ -1111,21 +1230,28 @@ def _register_tools(mcp):
             exclude_folders=exclude_folders,
             enable_danger=True,
         )
-        summary = _make_summary(result, focus="security")
         run_id = _store_result(result, "security_scan", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _make_summary(result, focus="security", expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
     @_tool("Check code quality")
     def quality_check(
         path: PathParam,
         confidence: ConfidenceParam = 60,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
         """Report code-quality issues: high complexity, deep nesting, long functions, duplicate branches and similar maintainability findings.
 
         Returns JSON with findings (rule ID, file, line, message) and
-        `_run_id`. Read-only and local."""
+        `_run_id`. Read-only and local.
+
+        Defect and Review records remain complete. Advice is grouped by default;
+        expand_advice=True includes every Advice record. Read _result_uri for
+        the complete saved result without rescanning.
+        """
         gate_err = _gate("quality_check")
         if gate_err:
             return gate_err
@@ -1136,21 +1262,28 @@ def _register_tools(mcp):
             exclude_folders=exclude_folders,
             enable_quality=True,
         )
-        summary = _make_summary(result, focus="quality")
         run_id = _store_result(result, "quality_check", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _make_summary(result, focus="quality", expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
     @_tool("Check architecture")
     def architecture_check(
         path: PathParam,
         confidence: ConfidenceParam = 60,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
         """Report architecture findings for a project: module coupling, cohesion and circular dependencies.
 
         Returns JSON with the architecture findings and `_run_id`. Read-only
-        and local. Use `quality_check` for function-level issues."""
+        and local. Use `quality_check` for function-level issues.
+
+        Defect and Review records remain complete. Advice is grouped by default;
+        expand_advice=True includes every Advice record. Read _result_uri for
+        the complete saved result without rescanning.
+        """
         gate_err = _gate("architecture_check")
         if gate_err:
             return gate_err
@@ -1161,31 +1294,36 @@ def _register_tools(mcp):
             exclude_folders=exclude_folders,
             enable_quality=True,
         )
-        summary = _architecture_payload(result)
         run_id = _store_result(result, "architecture_check", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _architecture_payload(result, expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
-    @_tool("Grade codebase health")
+    @_tool("Assess codebase health")
     def health_score(
         path: PathParam,
         confidence: ConfidenceParam = 60,
         include_security: Annotated[
-            bool, Field(description="Include security findings in the grade.")
+            bool, Field(description="Include security findings in the assessment.")
         ] = True,
         include_secrets: Annotated[
-            bool, Field(description="Include hard-coded secret findings in the grade.")
+            bool, Field(description="Include hard-coded secret findings in the assessment.")
         ] = True,
         include_quality: Annotated[
-            bool, Field(description="Include code-quality findings in the grade.")
+            bool, Field(description="Include code-quality findings in the assessment.")
         ] = True,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
-        """Compute an overall health grade (A-F and a 0-100 score) for a project from dead code, security, secrets and quality findings.
+        """Assess a project through separate Risk, Maintainability and Dead code readouts.
 
-        Use it for a one-number summary or to compare runs; use the specific
-        scan tools to see the findings themselves. Returns JSON with the grade,
-        per-category scores and `_run_id`. Read-only and local."""
+        This tool retains its health_score name for compatibility but no longer
+        creates a blended numeric grade. Gate policy remains independent.
+        Returns assessment, coverage, finding counts and _run_id. Read-only
+        and local. Advice is grouped by default; expand_advice=True includes
+        every Advice record. Read _result_uri for the complete saved result.
+        """
         gate_err = _gate("health_score")
         if gate_err:
             return gate_err
@@ -1198,21 +1336,28 @@ def _register_tools(mcp):
             enable_danger=include_security,
             enable_quality=include_quality,
         )
-        summary = _health_score_payload(result)
         run_id = _store_result(result, "health_score", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _health_score_payload(result, expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
     @_tool("Find hard-coded secrets")
     def secrets_scan(
         path: PathParam,
         confidence: ConfidenceParam = 60,
         exclude_folders: ExcludeListParam = None,
+        expand_advice: Annotated[
+            bool, Field(description="Include every Advice record instead of rule-group counts; complete results are always available through _result_uri.")
+        ] = False,
     ) -> str:
         """Find hard-coded secrets and credentials (API keys, tokens, private keys, passwords) in source and config files.
 
         Returns JSON with findings (provider, file, line) and `_run_id`. Secret
-        values are redacted in the output. Read-only and local."""
+        values are redacted in the output. Read-only and local.
+
+        Defect and Review records remain complete. Advice is grouped by default;
+        expand_advice=True includes every Advice record. Read _result_uri for
+        the complete saved result without rescanning.
+        """
         gate_err = _gate("secrets_scan")
         if gate_err:
             return gate_err
@@ -1223,10 +1368,9 @@ def _register_tools(mcp):
             exclude_folders=exclude_folders,
             enable_secrets=True,
         )
-        summary = _make_summary(result, focus="secrets")
         run_id = _store_result(result, "secrets_scan", path)
-        summary["_run_id"] = run_id
-        return json.dumps(summary, indent=2)
+        summary = _make_summary(result, focus="secrets", expand_advice=expand_advice)
+        return _result_reply(summary, run_id, expand_advice=expand_advice)
 
     @_tool(
         "Plan or apply LLM fixes", read_only=False, destructive=True, open_world=True
@@ -1892,7 +2036,7 @@ def _register_tools(mcp):
 
     @mcp.resource("skylos://results/latest")
     def get_latest_result() -> str:
-        """Full JSON result of the most recent stored Skylos tool run."""
+        """Complete JSON result, including every Advice record; of the most recent stored Skylos tool run."""
         data = _load_result("latest")
         if data is None:
             return json.dumps({"error": "No analysis has been run yet."})
@@ -1900,7 +2044,7 @@ def _register_tools(mcp):
 
     @mcp.resource("skylos://results/{run_id}")
     def get_result_by_id(run_id: str) -> str:
-        """Full JSON result of a stored run; find its run_id in skylos://results or a scan's `_run_id`."""
+        """Complete JSON result, including every Advice record; of a stored run; find its run_id in skylos://results or a scan's `_run_id`."""
         data = _load_result(run_id)
         if data is None:
             return json.dumps({"error": f"Run '{run_id}' not found."})

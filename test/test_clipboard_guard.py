@@ -1,4 +1,4 @@
-"""The score badge must never overwrite the clipboard in non-interactive runs."""
+"""Explicit clipboard writes are guarded; historical grades never copy badges."""
 
 import io
 import sys
@@ -46,46 +46,61 @@ def interactive(monkeypatch):
 
 def test_copies_in_interactive_terminal(interactive, fake_pyperclip):
     console = Console(file=_TTY())
-    _render_grade(console, GRADE)
+    assert clipboard.copy_to_clipboard("Explicit user copy", console) == "copied"
     assert len(fake_pyperclip.copied) == 1
-    assert "Copied to clipboard!" in console.file.getvalue()
 
 
 def test_redirected_stdout_does_not_copy(interactive, fake_pyperclip, monkeypatch):
     monkeypatch.setattr(clipboard, "sys", types.SimpleNamespace(stdout=io.StringIO()))
     console = Console(file=io.StringIO())
-    _render_grade(console, GRADE)
+    assert clipboard.copy_to_clipboard("Explicit user copy", console) == "skipped"
     assert fake_pyperclip.copied == []
     assert "Copied to clipboard" not in console.file.getvalue()
 
 
 def test_non_tty_console_file_does_not_copy(interactive, fake_pyperclip):
     console = Console(file=io.StringIO())
-    _render_grade(console, GRADE)
+    assert clipboard.copy_to_clipboard("Explicit user copy", console) == "skipped"
     assert fake_pyperclip.copied == []
 
 
 @pytest.mark.parametrize("var", ["CI", "GITHUB_ACTIONS", "GITLAB_CI"])
 def test_ci_does_not_copy(interactive, fake_pyperclip, monkeypatch, var):
     monkeypatch.setenv(var, "true")
-    _render_grade(Console(file=_TTY()), GRADE)
+    assert (
+        clipboard.copy_to_clipboard("Explicit user copy", Console(file=_TTY()))
+        == "skipped"
+    )
     assert fake_pyperclip.copied == []
 
 
 def test_ci_false_value_is_not_treated_as_ci(interactive, fake_pyperclip, monkeypatch):
     monkeypatch.setenv("CI", "false")
-    _render_grade(Console(file=_TTY()), GRADE)
+    assert (
+        clipboard.copy_to_clipboard("Explicit user copy", Console(file=_TTY()))
+        == "copied"
+    )
     assert len(fake_pyperclip.copied) == 1
 
 
 def test_env_opt_out(interactive, fake_pyperclip, monkeypatch):
     monkeypatch.setenv("SKYLOS_NO_CLIPBOARD", "1")
-    _render_grade(Console(file=_TTY()), GRADE)
+    assert (
+        clipboard.copy_to_clipboard("Explicit user copy", Console(file=_TTY()))
+        == "skipped"
+    )
     assert fake_pyperclip.copied == []
 
 
 def test_copy_badge_false_does_not_copy(interactive, fake_pyperclip):
     _render_grade(Console(file=_TTY()), GRADE, copy_badge=False)
+    assert fake_pyperclip.copied == []
+
+
+def test_legacy_grade_does_not_copy_even_in_interactive_terminal(
+    interactive, fake_pyperclip
+):
+    _render_grade(Console(file=_TTY()), GRADE)
     assert fake_pyperclip.copied == []
 
 

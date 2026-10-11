@@ -1,6 +1,6 @@
 import logging
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from rich.console import Console
@@ -9,6 +9,18 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from skylos.reporting.assessment_display import (
+    assessment_coverage_text,
+    assessment_rows,
+    maintainability_rows,
+)
+from skylos.reporting.finding_types import (
+    get_finding_type,
+    group_advice,
+    iter_result_findings,
+    summarize_finding_types,
+)
+from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
@@ -23,6 +35,26 @@ _RESULTS_SUPPRESS_HINT = "[muted]Suppress a line: # skylos: ignore (Python) or /
 _RESULTS_DOCS_LINK = (
     _RESULTS_SUPPRESS_HINT
     + "[muted]Full guide: https://docs.skylos.dev/guides/understanding-output[/muted]\n"
+)
+
+_FINDING_TITLES = (
+    ("danger", "Security"),
+    ("reliability", "Reliability"),
+    ("ai_defects", "AI Code"),
+    ("secrets", "Secrets"),
+    ("quality", "Quality"),
+    ("circular_dependencies", "Circular Dependencies"),
+    ("custom_rules", "Custom Rules"),
+    ("dependency_vulnerabilities", "Dependency Vulnerabilities (SCA)"),
+    ("publisher_change_findings", "npm Publisher Changes (review only)"),
+    ("unused_functions", "Unused Functions"),
+    ("unused_imports", "Unused Imports"),
+    ("unused_parameters", "Unused Parameters"),
+    ("unused_variables", "Unused Variables"),
+    ("unused_classes", "Unused Classes"),
+    ("unused_files", "Unused Files"),
+    ("unused_fixtures", "Unused Fixtures"),
+    ("unused_exports", "Unused Exports"),
 )
 
 
@@ -143,6 +175,231 @@ def _fit_side_columns(console, fixed_widths, optional):
     return {key for key, _ in shown}
 
 
+def _finding_type_headline(result):
+    counts = summarize_finding_types(result)
+    defect_label = "defect" if counts["defect"] == 1 else "defects"
+    group_label = "group" if counts["advice_groups"] == 1 else "groups"
+    return (
+        f"{counts['defect']} {defect_label} · {counts['review']} review · "
+        f"{counts['advice']} advice in {counts['advice_groups']} {group_label}"
+    )
+
+
+def _finding_view(result, finding_type):
+    """A display-only view; the caller's complete results remain untouched."""
+    source_sections = {}
+    for section in [
+        *(section for section, _ in FINDING_SECTIONS),
+        "circular_dependencies",
+        "publisher_change_findings",
+    ]:
+        for finding in result.get(section, []) or []:
+            source_sections.setdefault(
+                (id(finding), section == "custom_rules"), section
+            )
+    view = defaultdict(list)
+    for category, finding in iter_result_findings(result):
+        if get_finding_type(finding, category) == finding_type:
+            section = source_sections.get(
+                (id(finding), category == "custom_rules"), "quality"
+            )
+            view[section].append(finding)
+    return view
+
+
+def _finding_severity(item, category):
+    default = "LOW" if category.startswith("unused_") else "MEDIUM"
+    if category == "analysis_errors":
+        default = "HIGH"
+    elif category in {"danger", "secrets", "dependency_vulnerabilities"}:
+        default = "HIGH"
+    return str(item.get("severity") or default).upper()
+
+
+def _finding_table_cells(item, category, root_path=None):
+    """Keep category-specific evidence in a consistent finding table."""
+    rule = str(item.get("rule_id") or item.get("rule") or "")
+    name = str(item.get("name") or item.get("simple_name") or "")
+    details = []
+    if category.startswith("unused_"):
+        kind = {
+            "unused_classes": "class",
+            "unused_fixtures": "fixture",
+        }.get(category, category.removeprefix("unused_").rstrip("s"))
+        rule = rule or {
+            "function": "SKY-U001",
+            "import": "SKY-U002",
+            "variable": "SKY-U003",
+            "class": "SKY-U004",
+            "parameter": "SKY-U006",
+            "file": "SKY-E002",
+        }.get(kind, "SKY-U001")
+        details.append(str(item.get("message") or f"Unused {kind}: {name or '<?>'}"))
+        if name and name not in details[0]:
+            details.append(name)
+        if item.get("confidence") is not None:
+            details.append(f"Confidence: {item['confidence']}%")
+        why = compact_dead_code_evidence(item)
+        if why:
+            details.append(f"Evidence: {why}")
+    elif category == "quality":
+        kind, name, detail = _quality_detail(item)
+        details.append(str(detail))
+        if item.get("message") and str(item["message"]) != str(detail):
+            details.append(str(item["message"]))
+        if name and name != "<?>":
+            details.append(f"Name: {name}")
+        rule = rule or kind
+    else:
+        details.append(str(item.get("message") or item.get("error_type") or "Finding"))
+        if name:
+            details.append(f"Name: {name}")
+    if category == "secrets":
+        rule = rule or "SKY-S101"
+        details.extend(
+            [
+                f"Provider: {item.get('provider') or 'generic'}",
+                f"Preview: {item.get('preview') or '****'}",
+            ]
+        )
+    if category == "circular_dependencies":
+        rule = rule or "SKY-CIRC"
+        cycle = item.get("cycle") or []
+        if cycle:
+            details.append(
+                "Cycle: " + " → ".join(str(part) for part in [*cycle, cycle[0]])
+            )
+        details.append(f"Length: {item.get('cycle_length', len(cycle))}")
+        if item.get("suggested_break"):
+            details.append(f"Suggested break: {item['suggested_break']}")
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if category in {"dependency_vulnerabilities", "publisher_change_findings"}:
+        details.append(
+            f"Package: {metadata.get('package_name', '?')}@{metadata.get('package_version', '?')}"
+        )
+    if category == "dependency_vulnerabilities":
+        vuln = metadata.get("display_id") or metadata.get("vuln_id")
+        if vuln:
+            details.append(f"Vulnerability: {vuln}")
+        details.append(f"Fix: {metadata.get('fixed_version') or '-'}")
+        if metadata.get("reachability_verdict"):
+            details.append(f"Reachability: {metadata['reachability_verdict']}")
+    if category == "publisher_change_findings":
+        details.append(
+            f"Publisher: {metadata.get('previous_publisher') or '?'} → "
+            f"{metadata.get('new_publisher') or '?'}"
+        )
+        if metadata.get("dormancy_days") is not None:
+            details.append(f"Release gap: {metadata['dormancy_days']} days")
+    symbol = item.get("symbol")
+    if symbol and symbol != "<module>" and symbol != name:
+        details.append(f"Symbol: {symbol}")
+    if item.get("ai_authored"):
+        details.append(f"AI: {item.get('ai_agent') or 'ai'}")
+    verification = item.get("verification")
+    if isinstance(verification, dict) and verification.get("verdict"):
+        details.append(f"Verified: {verification['verdict']}")
+        proof = _verification_proof(item)
+        if proof:
+            details.append(f"Proof: {proof}")
+    file_path = item.get("file") or item.get("file_path") or item.get("basename")
+    line = item.get("line") or item.get("line_number") or item.get("lineno") or 1
+    location = f"{_shorten_path(file_path, root_path)}:{line}"
+    rule_name = _display_rule_name(
+        rule, default=str(item.get("kind") or "Finding").replace("_", " ").title()
+    )
+    return rule, rule_name, "\n".join(details), location
+
+
+def _render_finding_table(console, root_path, limit, title, items, category):
+    items = [item for item in (items or []) if isinstance(item, dict)]
+    if not items:
+        return
+    console.rule(f"[bold]{escape(title)}")
+    show, overflow = _display_cap(items, limit)
+    cells = [_finding_table_cells(item, category, root_path) for item in show]
+    rule_width = _text_width([cell[0] for cell in cells], floor=18, cap=_MAX_RULE_WIDTH)
+    location_width = _text_width([cell[3] for cell in cells], cap=_MAX_LOCATION_WIDTH)
+    columns = _fit_side_columns(
+        console, [6, rule_width], [("severity", 9), ("location", location_width)]
+    )
+    table = Table(expand=True)
+    table.add_column("Type", width=6, overflow="fold")
+    if "severity" in columns:
+        table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Rule", width=rule_width, overflow="fold")
+    table.add_column("Message", overflow="fold")
+    if "location" in columns:
+        table.add_column("Location", width=location_width, overflow="fold")
+    for item, (rule, name, detail, location) in zip(show, cells):
+        severity = _finding_severity(item, category)
+        row = [get_finding_type(item, category).title()]
+        if "severity" in columns:
+            row.append(escape(severity))
+        else:
+            detail += f"\nSeverity: {severity}"
+        row.extend([escape(f"{name}\n{rule}"), escape(detail)])
+        if "location" in columns:
+            row.append(escape(location))
+        else:
+            row[-1] += f"\n[muted]{escape(location)}[/muted]"
+        table.add_row(*row)
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+        )
+    console.print()
+
+
+def _render_advice_groups(console, result, *, root_path=None, limit=None):
+    groups = group_advice(result)
+    if not groups:
+        return
+    console.rule("[bold]Advice")
+    table = Table(expand=True)
+    table.add_column("Type", width=6)
+    table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Rule", width=20, overflow="fold")
+    table.add_column("Count", width=5, justify="right")
+    table.add_column("Top files", overflow="fold")
+    show, overflow = _display_cap(groups, limit)
+    for group in show:
+        counts = Counter(
+            str(finding.get("severity") or "MEDIUM").upper()
+            for finding in group["findings"]
+        )
+        severities = ", ".join(sorted(counts))
+        files = Counter(
+            str(finding.get("file") or finding.get("file_path") or "?")
+            for finding in group["findings"]
+        )
+        top = sorted(files, key=lambda file: (-files[file], file))[:3]
+        file_labels = [
+            f"{_shorten_path(file, root_path)} ({files[file]})" for file in top
+        ]
+        if len(files) > len(top):
+            file_labels.append(f"+{len(files) - len(top)} more files")
+        table.add_row(
+            "Advice",
+            escape(severities),
+            escape(f"{group['name']}\n{group['rule_id']}"),
+            str(group["count"]),
+            escape("\n".join(file_labels)),
+        )
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more advice groups (use --limit to adjust)[/muted]"
+        )
+    console.print(
+        "[muted]Use --expand-advice for every location and message, or --format json for complete findings.[/muted]"
+    )
+    console.print()
+
+
 def _analysis_error_affected_file_count(error):
     count = error.get("affected_file_count")
     if isinstance(count, int) and not isinstance(count, bool) and count > 0:
@@ -185,39 +442,27 @@ def _render_analysis_errors(
         Panel.fit(
             f"[bad]Analysis incomplete: {affected_file_count} affected "
             f"{affected_label} across {error_count} analysis {error_label}.[/bad]\n"
-            "[muted]No grade or clean result was produced; Skylos exits with code 2.[/muted]",
+            "[muted]Analysis is incomplete; known findings remain visible. Skylos exits with code 2.[/muted]",
             border_style="bad",
         )
     )
 
-    table = Table(title="Analysis Errors", expand=True)
-    table.add_column("File", style="bold", overflow="fold")
-    table.add_column("Line", justify="right", width=6)
-    table.add_column("Error", overflow="fold")
-    table.add_column("Affected", justify="right", width=10)
-    table.add_column("Runtime", style="muted", width=14)
-
-    visible, overflow = _display_cap(errors, limit)
-    for error in visible:
-        path = escape(_shorten_path(error.get("file"), root_path))
-        line = str(error.get("line") or 1)
+    rows = []
+    for error in errors:
         kind = str(error.get("kind") or error.get("error_type") or "analysis error")
         message = str(error.get("message") or "File analysis failed")
         affected_count = _analysis_error_affected_file_count(error)
         affected = "1 file" if affected_count == 1 else f"{affected_count} files"
-        table.add_row(
-            path,
-            line,
-            escape(f"{kind.replace('_', ' ')}: {message}"),
-            affected,
-            escape(_analysis_error_runtime(error)),
+        rows.append(
+            {
+                **error,
+                "rule_id": error.get("rule_id") or "SKY-ANALYSIS-INCOMPLETE",
+                "message": f"{kind.replace('_', ' ')}: {message}\nAffected: {affected}\nRuntime: {_analysis_error_runtime(error)}",
+            }
         )
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
+    _render_finding_table(
+        console, root_path, limit, "Analysis Errors", rows, "analysis_errors"
+    )
     # e.g. how to install a missing language engine; shown once per distinct fix.
     for suggestion in dict.fromkeys(
         str(error.get("suggestion") or "").strip() for error in errors
@@ -234,9 +479,15 @@ def _render_analysis_warnings(console: Console, result, *, root_path=None, limit
     if not warnings:
         return
     visible, overflow = _display_cap(warnings, limit)
+    if all(w.get("generated_file") for w in warnings):
+        subject = f"{len(warnings)} generated or vendored file(s)"
+    elif any(w.get("generated_file") for w in warnings):
+        subject = f"{len(warnings)} file(s) outside the diff or generated/vendored"
+    else:
+        subject = f"{len(warnings)} file(s) outside the diff"
     console.print(
-        f"[warn]Analysis warnings: {len(warnings)} file(s) outside the diff could "
-        "not be analyzed (not blocking):[/warn]"
+        f"[warn]Analysis warnings: {subject} could not be analyzed "
+        "(not blocking):[/warn]"
     )
     for warning in visible:
         path = escape(_shorten_path(warning.get("file"), root_path))
@@ -277,8 +528,6 @@ def _score_style(score):
 
 
 def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
-    from skylos.reporting.grader import generate_badge_url
-
     overall = grade_data["overall"]
     cats = grade_data["categories"]
     o_score = overall["score"]
@@ -286,12 +535,12 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
 
     console.print(
         Panel.fit(
-            f"[{g_style}]Codebase Grade: {overall['letter']} ({o_score}/100)[/{g_style}]",
+            f"[{g_style}]Legacy score: {overall['letter']} ({o_score}/100)[/{g_style}]",
             border_style=g_style,
         )
     )
 
-    grade_table = Table(title="Grade Breakdown", expand=True)
+    grade_table = Table(title="Legacy score breakdown", expand=True)
     grade_table.add_column("Category", style="bold", width=16)
     grade_table.add_column("Score", justify="right", width=8)
     grade_table.add_column("Grade", width=6)
@@ -326,32 +575,28 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
         grade_table.add_row(display_name, s_str, l_str, w_pct, escape(issue))
 
     console.print(grade_table)
-    badge_url = generate_badge_url(overall["letter"], o_score)
-    badge_markdown = (
-        f"[![Skylos Grade]({badge_url})](https://github.com/duriantaco/skylos)"
-    )
-
+    console.print("[muted]Historical result; this score is not a current risk assessment.[/muted]")
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold cyan]Score Badge for your README.md:[/bold cyan]\n\n"
-            f"[yellow]{badge_markdown}[/yellow]",
-            title="[cyan]Score Badge[/cyan]",
-            border_style="cyan",
-        )
-    )
 
-    if copy_badge:
-        from skylos.ui.clipboard import copy_to_clipboard
 
-        status = copy_to_clipboard(badge_markdown, console)
-        if status == "copied":
-            console.print("[good]Copied to clipboard![/good]")
-        elif status == "missing":
-            console.print(
-                "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
-            )
-
+def _render_assessment(console: Console, assessment, *, gate=None):
+    table = Table(title="Scan assessment", expand=True)
+    table.add_column("Area", style="bold", width=16)
+    table.add_column("Result", overflow="fold")
+    for label, detail in assessment_rows(assessment, gate=gate):
+        table.add_row(label, escape(detail))
+    console.print(table)
+    console.print(escape(assessment_coverage_text(assessment)), style="muted")
+    checks = maintainability_rows(assessment)
+    if checks:
+        maintenance = Table(title="Maintainability measurements", expand=True)
+        maintenance.add_column("Check", width=12)
+        maintenance.add_column("Spread", overflow="fold")
+        maintenance.add_column("Magnitude", overflow="fold")
+        for row in checks:
+            maintenance.add_row(*(escape(value) for value in row))
+        console.print(maintenance)
+    console.print("[muted]Risk includes Defect and Review findings; review evidence before acting.[/muted]")
     console.print()
 
 
@@ -370,136 +615,20 @@ def _dead_code_why(item: dict) -> str:
 
 
 def _render_unused(console: Console, root_path, limit, title, items, name_key="name"):
-    if not items:
-        return
-
-    console.rule(f"[bold]{title}")
-
-    has_why = any(_dead_code_why(item) for item in items if isinstance(item, dict))
-    show, overflow = _display_cap(items, limit)
-    locations = [
-        f"{_shorten_path(item.get('file'), root_path)}:{item.get('line', '?')}"
-        for item in show
-    ]
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    optional = [("location", location_width)]
-    if has_why:
-        optional.append(("evidence", 42))
-    columns = _fit_side_columns(console, [3, 6], optional)
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Name", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-    table.add_column("Conf", style="yellow", width=6, justify="right")
-    if "evidence" in columns:
-        table.add_column("Evidence", style="muted", width=42, overflow="fold")
-
-    for i, (item, location) in enumerate(zip(show, locations), 1):
-        nm = escape(str(item.get(name_key) or item.get("simple_name") or "<?>"))
-        name_cell = f"[bold]{nm}[/bold]"
-        why = _dead_code_why(item)
-        if "location" not in columns:
-            name_cell += f"\n[muted]{escape(location)}[/muted]"
-        if why and has_why and "evidence" not in columns:
-            name_cell += f"\n[muted]{why}[/muted]"
-        row = [str(i), name_cell]
-        if "location" in columns:
-            row.append(escape(location))
-        row.append(_format_confidence(item.get("confidence", "?")))
-        if "evidence" in columns:
-            row.append(why or "-")
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        "[muted]Name — the unused function, import, class, or variable.[/muted]\n"
-        "[muted]Conf — how confident Skylos is that this code is truly unused (higher = safer to remove).[/muted]\n"
-        + (
-            "[muted]Evidence — classification and analyzer evidence behind the dead-code decision.[/muted]\n"
-            if has_why
-            else ""
-        )
-        + _RESULTS_DOCS_LINK
-    )
+    category = "unused_" + title.removeprefix("Unused ").lower().replace(" ", "_")
+    _render_finding_table(console, root_path, limit, title, items, category)
 
 
 def _render_unused_simple(
     console: Console, root_path, limit, title, items, name_key="name"
 ):
-    if not items:
-        return
-
-    console.rule(f"[bold]{title}")
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Name", style="bold")
-    table.add_column("Location", style="muted", overflow="fold")
-
-    show, overflow = _display_cap(items, limit)
-    for i, item in enumerate(show, 1):
-        nm = escape(str(item.get(name_key) or item.get("simple_name") or "<?>"))
-        short = _shorten_path(item.get("file"), root_path)
-        loc = escape(f"{short}:{item.get('line', '?')}")
-        table.add_row(str(i), nm, loc)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print()
+    _render_finding_table(console, root_path, limit, title, items, "unused_fixtures")
 
 
 def _render_unused_files(console: Console, root_path, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold]Unused Files")
-
-    show, overflow = _display_cap(items, limit)
-    rules = [str(item.get("rule_id") or "SKY-E002") for item in show]
-    locations = [
-        f"{_shorten_path(item.get('file'), root_path)}:{item.get('line', 1)}"
-        for item in show
-    ]
-    rule_width = _text_width(rules, floor=10, cap=_MAX_RULE_WIDTH)
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    columns = _fit_side_columns(
-        console, [3, rule_width], [("location", location_width)]
+    _render_finding_table(
+        console, root_path, limit, "Unused Files", items, "unused_files"
     )
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Rule", style="bold", width=rule_width, overflow="fold")
-    table.add_column("Message", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-
-    for index, (item, rule, location) in enumerate(zip(show, rules, locations), 1):
-        message = escape(str(item.get("message") or "Unused file"))
-        if "location" in columns:
-            table.add_row(str(index), escape(rule), message, escape(location))
-        else:
-            message += f"\n[muted]{escape(location)}[/muted]"
-            table.add_row(str(index), escape(rule), message)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(_RESULTS_DOCS_LINK)
 
 
 _CLONE_KINDS = {
@@ -584,287 +713,42 @@ def _quality_detail(quality):
 
 
 def _render_quality(console: Console, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold red]Quality Issues")
-
-    show, overflow = _display_cap(items, limit)
-    locations = []
-    for quality in show:
-        file_path = quality.get("file")
-        short = _shorten_path(file_path) if file_path else quality.get("basename")
-        locations.append(f"{short or '?'}:{quality.get('line', '?')}")
-    rule_ids = [str(quality.get("rule_id") or "") for quality in show]
-    names = [_quality_detail(quality)[1] for quality in show]
-    rule_width = _text_width(rule_ids, floor=18, cap=_MAX_RULE_WIDTH)
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    name_width = _text_width(names, floor=8, cap=30)
-    columns = _fit_side_columns(
-        console,
-        [3, rule_width],
-        [("location", location_width), ("name", name_width)],
-    )
-    if "name" in columns:
-        # Long test names read better whole; give them what the detail spares.
-        room = _message_room(console, [3, rule_width, location_width, name_width])
-        if room is not None:
-            spare = max(0, room - _MIN_MESSAGE_WIDTH)
-            name_width = min(_text_width(names), name_width + spare)
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Rule", style="yellow", width=rule_width, overflow="fold")
-    if "name" in columns:
-        table.add_column("Name", style="bold", width=name_width, overflow="fold")
-    table.add_column("Detail", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-
-    for i, (quality, rule_id, location) in enumerate(zip(show, rule_ids, locations), 1):
-        kind, func, detail = _quality_detail(quality)
-        rule_cell = escape(_display_rule_name(rule_id, default=kind))
-        if rule_id:
-            rule_cell += f"\n[dim]{escape(rule_id)}[/dim]"
-        detail_cell = escape(detail)
-        if "name" not in columns:
-            detail_cell = f"[bold]{escape(func)}[/bold]\n{detail_cell}"
-        row = [str(i), rule_cell]
-        if "name" in columns:
-            row.append(escape(func))
-        if "location" in columns:
-            row.extend([detail_cell, escape(location)])
-        else:
-            row.append(f"{detail_cell}\n[muted]{escape(location)}[/muted]")
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        "[muted]Reading the table:[/muted]\n"
-        "[muted]  • Rule — what was checked, with its rule ID[/muted]\n"
-        "[muted]  • Detail — what Skylos found; for clones, an exact copy, the same structure with different names, or a near copy of another class or function[/muted]\n"
-        '[muted]  • "(limit N)" — the configured threshold; tune in \\[tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
-        + _RESULTS_DOCS_LINK
-    )
+    _render_finding_table(console, None, limit, "Quality", items, "quality")
 
 
 def _render_circular_deps(console: Console, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold yellow]Circular Dependencies")
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Cycle", style="bold")
-    table.add_column("Length", width=6)
-    table.add_column("Severity", width=8)
-    table.add_column("Suggested Break", style="cyan")
-
-    show, overflow = _display_cap(items, limit)
-    for i, cd in enumerate(show, 1):
-        cycle = cd.get("cycle", [])
-        cycle_str = " → ".join(cycle) + f" → {cycle[0]}" if cycle else "?"
-        length = str(cd.get("cycle_length", len(cycle)))
-        sev = cd.get("severity", "MEDIUM")
-        suggested = cd.get("suggested_break", "?")
-        table.add_row(
-            str(i),
-            escape(cycle_str),
-            escape(length),
-            escape(str(sev)),
-            escape(str(suggested)),
-        )
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        "[muted]Cycle — the chain of modules that import each other in a loop.[/muted]\n"
-        "[muted]Length — how many modules are in the cycle.[/muted]\n"
-        "[muted]Suggested Break — the module to refactor to break the dependency loop.[/muted]\n"
-        + _RESULTS_DOCS_LINK
+    _render_finding_table(
+        console, None, limit, "Circular Dependencies", items, "circular_dependencies"
     )
 
 
 def _render_custom_rules(console: Console, root_path, limit, items):
-    custom = [
-        i for i in (items or []) if str(i.get("rule_id", "")).startswith("CUSTOM-")
-    ]
-    if not custom:
-        return
-
-    console.rule("[bold magenta]Custom Rules")
-    show, overflow = _display_cap(custom, limit)
-    rules = [str(d.get("rule_id") or "CUSTOM") for d in show]
-    locations = [
-        f"{_shorten_path(d.get('file'), root_path)}:{d.get('line', '?')}" for d in show
-    ]
-    rule_width = _text_width(rules, floor=18, cap=_MAX_RULE_WIDTH)
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    columns = _fit_side_columns(
-        console,
-        [3, rule_width],
-        [("location", location_width), ("severity", 10)],
+    _render_finding_table(
+        console, root_path, limit, "Custom Rules", items, "custom_rules"
     )
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Rule", style="magenta", width=rule_width, overflow="fold")
-    if "severity" in columns:
-        table.add_column("Severity", width=10)
-    table.add_column("Message", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-
-    for i, (d, rule, loc) in enumerate(zip(show, rules, locations), 1):
-        sev = str(d.get("severity") or "MEDIUM")
-        msg = escape(str(d.get("message") or "Custom rule violation"))
-        rule_cell = escape(rule)
-        row = [str(i)]
-        if "severity" in columns:
-            row.extend([rule_cell, escape(sev)])
-        else:
-            row.append(f"{rule_cell}\n[dim]{escape(sev)}[/dim]")
-        if "location" in columns:
-            row.extend([msg, escape(loc)])
-        else:
-            row.append(f"{msg}\n[muted]{escape(loc)}[/muted]")
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print()
 
 
 def _render_secrets(console: Console, root_path, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold red]Secrets")
-    has_provenance = any(s.get("ai_authored") for s in (items or []))
-
-    show, overflow = _display_cap(items, limit)
-    locations = [
-        f"{_shorten_path(s.get('file'), root_path)}:{s.get('line', '?')}" for s in show
-    ]
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    optional = [("location", location_width), ("preview", 18)]
-    if has_provenance:
-        optional.append(("ai", 12))
-    columns = _fit_side_columns(console, [3, 14], optional)
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Provider", style="yellow", width=14)
-    table.add_column("Message", overflow="fold")
-    if "preview" in columns:
-        table.add_column("Preview", style="muted", width=18)
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-    if "ai" in columns:
-        table.add_column("AI", width=12)
-
-    for i, (s, loc) in enumerate(zip(show, locations), 1):
-        prov = s.get("provider") or "generic"
-        msg = s.get("message") or "Secret detected"
-        prev = s.get("preview") or "****"
-        if s.get("ai_authored"):
-            agent = f"[red]{escape(str(s.get('ai_agent') or 'ai'))}[/red]"
-        else:
-            agent = "[muted]-[/muted]"
-        message_cell = escape(str(msg))
-        folded = [] if "location" in columns else [escape(loc)]
-        if "preview" not in columns:
-            folded.append(escape(str(prev)))
-        if folded:
-            message_cell += f"\n[muted]{' · '.join(folded)}[/muted]"
-        if "ai" not in columns and has_provenance and s.get("ai_authored"):
-            message_cell += f"\nAI: {agent}"
-        row = [str(i), escape(str(prov)), message_cell]
-        if "preview" in columns:
-            row.append(escape(str(prev)))
-        if "location" in columns:
-            row.append(escape(loc))
-        if "ai" in columns:
-            row.append(agent)
-
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        '[muted]Provider — the service the secret belongs to (e.g. AWS, Stripe, GitHub) or "generic" for high-entropy strings.[/muted]\n'
-        "[muted]Preview — a masked snippet of the detected secret.[/muted]\n"
-        + _RESULTS_DOCS_LINK
-    )
+    _render_finding_table(console, root_path, limit, "Secrets", items, "secrets")
 
 
 def _render_result_tree(console: Console, result, root_path=None):
     by_file = defaultdict(list)
-
-    def _add_unused(items, kind):
-        for u in items or []:
-            file = u.get("file")
-            if not file:
+    for category, _title in _FINDING_TITLES:
+        for finding in result.get(category, []) or []:
+            if not isinstance(finding, dict):
                 continue
-            line = u.get("line") or u.get("lineno") or 1
-            name = u.get("name") or u.get("simple_name") or "<?>"
-            msg = f"Unused {kind}: {escape(str(name))}"
-            by_file[file].append((line, "info", msg))
-
-    def _add_findings(items, kind, default_sev="medium"):
-        for f in items or []:
-            file = f.get("file")
-            if not file:
-                continue
-            line = f.get("line") or 1
-            sev = (f.get("severity") or default_sev).lower()
-            rule = f.get("rule_id")
-            msg = escape(str(f.get("message") or kind))
-            if rule:
-                msg = f"{escape(f'[{rule}]')} {msg}"
-            by_file[file].append((line, sev, msg))
-
-    _add_unused(result.get("unused_functions"), "function")
-    _add_unused(result.get("unused_imports"), "import")
-    _add_unused(result.get("unused_classes"), "class")
-    _add_unused(result.get("unused_variables"), "variable")
-    _add_unused(result.get("unused_parameters"), "parameter")
-    _add_findings(result.get("unused_files"), "unused file", default_sev="low")
-
-    _add_findings(result.get("danger"), "security", default_sev="high")
-    _add_findings(result.get("reliability"), "reliability", default_sev="medium")
-    _add_findings(result.get("ai_defects"), "AI defect", default_sev="medium")
-    _add_findings(result.get("secrets"), "secret", default_sev="high")
-    _add_findings(result.get("quality"), "quality", default_sev="medium")
-    _add_findings(
-        result.get("dependency_vulnerabilities"),
-        "vulnerability",
-        default_sev="high",
-    )
-    _add_findings(
-        result.get("publisher_change_findings"),
-        "npm publisher review",
-        default_sev="warn",
-    )
+            rule, name, detail, location = _finding_table_cells(
+                finding, category, root_path
+            )
+            file = str(finding.get("file") or finding.get("file_path") or "?")
+            line = finding.get("line") or finding.get("lineno") or 1
+            severity = _finding_severity(finding, category)
+            msg = (
+                f"Type: {get_finding_type(finding, category).title()}  Severity: {severity}\n"
+                f"{rule} · {name}\n{detail}\n{location}"
+            )
+            by_file[file].append((line, severity.lower(), escape(msg)))
 
     if not by_file:
         console.print("[good]No findings to display.[/good]")
@@ -937,199 +821,14 @@ def _verification_label(verdict):
 
 
 def _render_ai_defects(console: Console, root_path, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold magenta]AI Defects")
-
-    show, overflow = _display_cap(items, limit)
-    rule_ids = [str(defect.get("rule_id") or "UNKNOWN") for defect in show]
-    locations = [
-        f"{_shorten_path(defect.get('file'), root_path)}:{defect.get('line', '?')}"
-        for defect in show
-    ]
-    defect_width = _text_width(rule_ids, floor=18, cap=_MAX_RULE_WIDTH)
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    columns = _fit_side_columns(
-        console,
-        [3, defect_width],
-        [("location", location_width), ("severity", 8)],
-    )
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Defect", style="yellow", width=defect_width, overflow="fold")
-    if "severity" in columns:
-        table.add_column("Severity", width=8)
-    table.add_column("Message", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-
-    for i, (defect, rule_id, location) in enumerate(zip(show, rule_ids, locations), 1):
-        defect_name = str(_display_rule_name(rule_id))
-        severity = str(defect.get("severity") or "UNKNOWN").title()
-        rule_line = escape(rule_id)
-        if "severity" not in columns:
-            rule_line += f" · {escape(severity)}"
-        defect_cell = f"{escape(defect_name)}\n[dim]{rule_line}[/dim]"
-        message = str(defect.get("message") or "AI defect detected")
-        symbol = (
-            defect.get("symbol")
-            or defect.get("name")
-            or defect.get("simple_name")
-            or "<module>"
-        )
-        message_cell = escape(message)
-        if symbol != "<module>":
-            message_cell += f"\n[muted]Symbol: {escape(str(symbol))}[/muted]"
-        if "location" not in columns:
-            message_cell += f"\n[muted]{escape(location)}[/muted]"
-        row = [str(i), defect_cell]
-        if "severity" in columns:
-            row.append(escape(severity))
-        row.append(message_cell)
-        if "location" in columns:
-            row.append(escape(location))
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        "[muted]Defect — the evidence-backed AI-code failure mode and rule ID.[/muted]\n"
-        "[muted]Severity — impact level: Critical > High > Medium > Low.[/muted]\n"
-        "[muted]Message — the defect evidence and affected symbol, when available.[/muted]\n"
-        + _RESULTS_DOCS_LINK
-    )
+    _render_finding_table(console, root_path, limit, "AI Code", items, "ai_defects")
 
 
 def _render_danger(
-    console: Console,
-    root_path,
-    limit,
-    items,
-    *,
-    title="Security Issues",
-    reliability=False,
+    console: Console, root_path, limit, items, *, title="Security", reliability=False
 ):
-    if not items:
-        return
-
-    console.rule(f"[bold {'yellow' if reliability else 'red'}]{title}")
-
-    has_verification = not reliability and any(
-        isinstance(d.get("verification"), dict) and d["verification"].get("verdict")
-        for d in (items or [])
-    )
-    # A column of "-" says nothing; show it once something was AI-written.
-    has_provenance = any(d.get("ai_authored") for d in (items or []))
-
-    show, overflow = _display_cap(items, limit)
-    rule_ids = [str(d.get("rule_id") or "UNKNOWN") for d in show]
-    locations = [
-        f"{_shorten_path(d.get('file'), root_path)}:{d.get('line', '?')}" for d in show
-    ]
-    symbols = [str(d.get("symbol") or "<module>") for d in show]
-    issue_width = _text_width(rule_ids, floor=20, cap=_MAX_RULE_WIDTH)
-    location_width = _text_width(locations, cap=_MAX_LOCATION_WIDTH)
-    symbol_width = _text_width(symbols, floor=8, cap=20)
-    optional = [("location", location_width), ("severity", 9)]
-    if has_verification:
-        optional.append(("verified", 9))
-    if has_provenance:
-        optional.append(("ai", 12))
-    optional.append(("symbol", symbol_width))
-    if has_verification:
-        optional.append(("proof", 30))
-    columns = _fit_side_columns(console, [3, issue_width], optional)
-
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Issue", style="yellow", width=issue_width, overflow="fold")
-    if "severity" in columns:
-        table.add_column("Severity", width=9)
-    table.add_column("Message", overflow="fold")
-    if "location" in columns:
-        table.add_column(
-            "Location", style="muted", width=location_width, overflow="fold"
-        )
-    if "symbol" in columns:
-        table.add_column("Symbol", style="muted", width=symbol_width, overflow="fold")
-    if "ai" in columns:
-        table.add_column("AI", width=12)
-    if "verified" in columns:
-        table.add_column("Verified", width=9)
-    if "proof" in columns:
-        table.add_column("Proof", width=30, overflow="fold")
-
-    for i, (d, rule_id, loc, symbol) in enumerate(
-        zip(show, rule_ids, locations, symbols), 1
-    ):
-        issue_name = _display_rule_name(rule_id)
-        sev = (d.get("severity") or "UNKNOWN").title()
-        rule_line = escape(rule_id)
-        if "severity" not in columns:
-            rule_line += f" · {escape(sev)}"
-        issue_cell = f"{escape(str(issue_name))}\n[dim]{rule_line}[/dim]"
-        msg = d.get("message") or "Issue detected"
-        if d.get("ai_authored"):
-            agent = f"[red]{escape(str(d.get('ai_agent') or 'ai'))}[/red]"
-        else:
-            agent = "[muted]-[/muted]"
-        ver = (d.get("verification") or {}).get("verdict")
-
-        # Columns that did not fit keep their facts, one muted line each.
-        message_cell = escape(str(msg))
-        where = [] if "location" in columns else [escape(loc)]
-        if "symbol" not in columns and symbol != "<module>":
-            where.append(f"in {escape(symbol)}")
-        if where:
-            message_cell += f"\n[muted]{' '.join(where)}[/muted]"
-        if "ai" not in columns and d.get("ai_authored"):
-            message_cell += f"\nAI: {agent}"
-        if has_verification and "verified" not in columns:
-            message_cell += f"\nVerified: {_verification_label(ver)}"
-        if has_verification and "proof" not in columns and _verification_proof(d):
-            message_cell += f"\n[muted]{escape(_verification_proof(d))}[/muted]"
-
-        row = [str(i), issue_cell]
-        if "severity" in columns:
-            row.append(escape(sev))
-        row.append(message_cell)
-        if "location" in columns:
-            row.append(escape(loc))
-        if "symbol" in columns:
-            row.append(escape(symbol))
-        if "ai" in columns:
-            row.append(agent)
-        if "verified" in columns:
-            row.append(_verification_label(ver))
-        if "proof" in columns:
-            row.append(escape(_verification_proof(d)))
-
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    if reliability:
-        issue_help = (
-            "[muted]Issue — a deployment or runtime compatibility risk.[/muted]\n"
-        )
-    else:
-        issue_help = "[muted]Issue — the type of vulnerability (e.g. SQL injection, command injection, eval).[/muted]\n"
-    console.print(
-        issue_help
-        + "[muted]Severity — impact level: Critical > High > Medium > Low.[/muted]\n"
-        "[muted]Symbol — the function or scope where the issue was found.[/muted]\n"
-        + _RESULTS_DOCS_LINK
-    )
+    category = "reliability" if reliability else "danger"
+    _render_finding_table(console, root_path, limit, title, items, category)
 
 
 def _render_reliability(console: Console, root_path, limit, items):
@@ -1144,119 +843,29 @@ def _render_reliability(console: Console, root_path, limit, items):
 
 
 def _render_sca(console: Console, limit, items):
-    if not items:
-        return
-
-    console.rule("[bold red]Dependency Vulnerabilities (SCA)")
-    columns = _fit_side_columns(
+    _render_finding_table(
         console,
-        [3, 22, 18],
-        [("fix", 14), ("severity", 9), ("reachability", 14)],
-    )
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Package", style="yellow", width=22, overflow="fold")
-    table.add_column("Vuln ID", width=18, overflow="fold")
-    if "severity" in columns:
-        table.add_column("Severity", width=9)
-    if "reachability" in columns:
-        table.add_column("Reachability", width=14)
-    table.add_column("Message", overflow="fold")
-    if "fix" in columns:
-        table.add_column("Fix", style="good", width=14, overflow="fold")
-
-    show, overflow = _display_cap(items, limit)
-    for i, v in enumerate(show, 1):
-        meta = v.get("metadata") or {}
-        pkg = f"{meta.get('package_name', '?')}@{meta.get('package_version', '?')}"
-        vuln_id = meta.get("display_id") or meta.get("vuln_id") or v.get("rule_id", "")
-        sev = (v.get("severity") or "MEDIUM").title()
-        msg = v.get("message") or "Known vulnerability"
-        fix = meta.get("fixed_version") or "-"
-        rv = meta.get("reachability_verdict", "")
-        if rv == "reachable":
-            reach = "[red]Reachable[/red]"
-        elif rv.startswith("unreachable"):
-            reach = "[green]Unreachable[/green]"
-        elif rv == "inconclusive":
-            reach = "[yellow]Inconclusive[/yellow]"
-        else:
-            reach = "[dim]-[/dim]"
-        message_cell = escape(str(msg))
-        if "severity" not in columns:
-            message_cell += f"\n[muted]Severity: {escape(sev)}[/muted]"
-        if "reachability" not in columns and rv:
-            message_cell += f"\nReachability: {reach}"
-        if "fix" not in columns:
-            message_cell += f"\n[good]Fix: {escape(str(fix))}[/good]"
-        row = [str(i), escape(pkg), escape(str(vuln_id))]
-        if "severity" in columns:
-            row.append(escape(sev))
-        if "reachability" in columns:
-            row.append(reach)
-        row.append(message_cell)
-        if "fix" in columns:
-            row.append(escape(str(fix)))
-        table.add_row(*row)
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
-    console.print(
-        "[muted]Package — the dependency and its installed version.[/muted]\n"
-        "[muted]Reachability — whether your code actually calls the vulnerable code path.[/muted]\n"
-        "[muted]Fix — the version that patches the vulnerability (upgrade to this).[/muted]\n"
-        + _RESULTS_DOCS_LINK
+        None,
+        limit,
+        "Dependency Vulnerabilities (SCA)",
+        items,
+        "dependency_vulnerabilities",
     )
 
 
 def _render_publisher_changes(console: Console, limit, items):
     if not items:
         return
-
-    console.rule("[bold yellow]npm Publisher Changes (review only)")
-    table = Table(expand=True)
-    table.add_column("#", style="muted", width=3)
-    table.add_column("Package", style="yellow", width=22)
-    table.add_column("Publisher", width=24, overflow="fold")
-    table.add_column("Release gap", width=12)
-    table.add_column("Location", overflow="fold")
-
-    show, overflow = _display_cap(items, limit)
-    for i, finding in enumerate(show, 1):
-        meta = finding.get("metadata")
-        if not isinstance(meta, dict):
-            meta = {}
-        name = str(meta.get("package_name") or "?")
-        version = str(meta.get("package_version") or "?")
-        publisher = (
-            f"{meta.get('previous_publisher') or '?'} → "
-            f"{meta.get('new_publisher') or '?'}"
-        )
-        days = meta.get("dormancy_days")
-        gap = f"{days} days" if isinstance(days, int) and days >= 0 else "?"
-        file_path = _shorten_path(finding.get("file") or finding.get("file_path"))
-        line = finding.get("line") or finding.get("line_number") or 1
-        location = f"{file_path}:{line}"
-        table.add_row(
-            str(i),
-            escape(f"{name}@{version}"),
-            escape(publisher),
-            gap,
-            escape(location),
-        )
-
-    console.print(table)
-    if overflow:
-        console.print(
-            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
-        )
+    _render_finding_table(
+        console,
+        None,
+        limit,
+        "npm Publisher Changes (review only)",
+        items,
+        "publisher_change_findings",
+    )
     console.print(
-        "[muted]Review the publisher and release provenance. This signal does "
-        "not establish compromise or a known vulnerability and does not fail "
-        "the quality gate.[/muted]\n"
+        "[muted]Review the publisher and release provenance. This signal does not establish compromise or a known vulnerability and does not fail the quality gate.[/muted]\n"
     )
 
 
@@ -1268,11 +877,12 @@ def render_results(
     limit=None,
     *,
     copy_badge: bool = True,
+    expand_advice: bool = False,
 ):
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
-            f"[brand]Python Static Analysis Results[/brand]\n[muted]Analyzed {summ.get('total_files', '?')} file(s)[/muted]",
+            f"[brand]Static Analysis Results[/brand]\n{_finding_type_headline(result)}\n[muted]Analyzed {summ.get('total_files', '?')} file(s)[/muted]",
             border_style="brand",
         )
     )
@@ -1329,97 +939,53 @@ def render_results(
     )
     if _architecture_advisory_pill(result):
         console.print(
-            "[muted]Architecture advisories are advice only: they don't change "
-            "the grade or the gate. To list them, add --format concise.[/muted]"
+            "[muted]Architecture advice describes maintainability; gate decisions use "
+            "your configured limits. To list signals, add --format concise.[/muted]"
+        )
+    if result.get("quality"):
+        console.print(
+            "[muted]Quality thresholds: tune in "
+            + escape(
+                "[tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)"
+            )
+            + "[/muted]"
         )
     console.print()
 
-    _render_analysis_errors(
-        console,
-        result,
-        root_path=root_path,
-        limit=limit,
-    )
     _render_analysis_warnings(console, result, root_path=root_path, limit=limit)
     _render_publisher_review_status(console, result)
 
+    assessment = result.get("assessment")
     grade_data = result.get("grade")
-    if grade_data:
+    if isinstance(assessment, dict) and assessment:
+        _render_assessment(console, assessment, gate=result.get("gate") or result.get("quality_gate"))
+    elif grade_data:
         _render_grade(console, grade_data, copy_badge=copy_badge)
+    if summ.get("assessment_includes_filtered_findings") or summ.get("grade_includes_filtered_findings"):
+        label = "Assessment" if assessment else "Grade"
+        console.print(
+            f"[muted]{label} includes all analyzed findings, including those outside this display.[/muted]"
+        )
 
-    if tree:
-        _render_result_tree(console, result, root_path=root_path)
-    else:
-        _render_unused(
-            console,
-            root_path,
-            limit,
-            "Unused Functions",
-            result.get("unused_functions", []),
-            name_key="name",
-        )
-        _render_unused(
-            console,
-            root_path,
-            limit,
-            "Unused Imports",
-            result.get("unused_imports", []),
-            name_key="name",
-        )
-        _render_unused(
-            console,
-            root_path,
-            limit,
-            "Unused Parameters",
-            result.get("unused_parameters", []),
-            name_key="name",
-        )
-        _render_unused(
-            console,
-            root_path,
-            limit,
-            "Unused Variables",
-            result.get("unused_variables", []),
-            name_key="name",
-        )
-        _render_unused(
-            console,
-            root_path,
-            limit,
-            "Unused Classes",
-            result.get("unused_classes", []),
-            name_key="name",
-        )
-        _render_unused_files(
-            console,
-            root_path,
-            limit,
-            result.get("unused_files", []),
-        )
-        _render_unused_simple(
-            console,
-            root_path,
-            limit,
-            "Unused Fixtures",
-            result.get("unused_fixtures", []),
-            name_key="name",
-        )
-        _render_secrets(console, root_path, limit, result.get("secrets", []) or [])
-        _render_danger(console, root_path, limit, result.get("danger", []) or [])
-        _render_reliability(
-            console, root_path, limit, result.get("reliability", []) or []
-        )
-        _render_ai_defects(
-            console, root_path, limit, result.get("ai_defects", []) or []
-        )
-        _render_quality(console, limit, result.get("quality", []) or [])
-        _render_circular_deps(
-            console, limit, result.get("circular_dependencies", []) or []
-        )
-        _render_custom_rules(
-            console, root_path, limit, result.get("custom_rules", []) or []
-        )
-        _render_sca(console, limit, result.get("dependency_vulnerabilities", []) or [])
-        _render_publisher_changes(
-            console, limit, result.get("publisher_change_findings", []) or []
-        )
+    _render_analysis_errors(console, result, root_path=root_path, limit=limit)
+
+    for finding_type in ("defect", "review", "advice"):
+        if finding_type == "advice" and not expand_advice:
+            _render_advice_groups(console, result, root_path=root_path, limit=limit)
+            continue
+        view = _finding_view(result, finding_type)
+        if not any(view.values()):
+            continue
+        label = "Defects" if finding_type == "defect" else finding_type.title()
+        console.rule(f"[bold]{label}")
+        if tree:
+            _render_result_tree(console, view, root_path=root_path)
+            continue
+        for category, title in _FINDING_TITLES:
+            _render_finding_table(
+                console, root_path, limit, title, view.get(category), category
+            )
+        if view.get("publisher_change_findings"):
+            console.print(
+                "[muted]Review publisher and release provenance; this signal does not establish compromise or fail the quality gate.[/muted]"
+            )

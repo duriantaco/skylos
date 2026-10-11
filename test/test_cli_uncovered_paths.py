@@ -542,7 +542,13 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
         cli.main()
 
         exp.generate.assert_called_once()
-        p.assert_called_once_with(json.dumps(result))
+        p.assert_called_once()
+        payload = json.loads(p.call_args.args[0])
+        assert payload["unused_functions"][0].pop("finding_type") == "review"
+        assert payload["analysis_summary"].pop("finding_type_counts") == {
+            "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+        }
+        assert payload == result
 
 
 def test_shorten_path_returns_absolute_when_outside_cwd(tmp_path, monkeypatch):

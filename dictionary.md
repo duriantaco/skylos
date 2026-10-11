@@ -62,6 +62,11 @@ Rule IDs use a stable public prefix:
 | Pretty output | `--format pretty`; compact file-grouped terminal output with severity rails, snippets, and copyable `file:line` locations. |
 | Concise output | `--format concise`; untruncated `file:line  RULE_ID  message` output for editors, scripts, and agents. |
 | Rule selection | `--select SKY-...`; exact, case-insensitive rule filtering across scan output formats with automatic analyzer-family enablement. |
+| Finding type | Every built-in rule declares `finding_type`: `defect`, `review`, or `advice`. Type describes the purpose of a check; severity remains separate. Terminal reports group Advice by rule and `--expand-advice` shows every record. JSON retains complete records for the selected scan scope. Display grouping does not change the assessment or gate limits. See [docs/cli-output.md](./docs/cli-output.md#finding-types-and-advice). |
+| Scan assessment | Four readouts: Risk, Maintainability, Dead code and Gate, with explicit coverage and scope. New source scans emit `assessment` version 1 instead of an overall numeric or A–F `grade`. Independent `debt` and `defend` scores are unchanged. See [scan assessment](./docs/cli-output.md#scan-assessment). |
+| Risk readout | Highest unresolved severity and counts for Defect and Review findings outside dead-code candidate lists. Clean categories and repository size do not dilute it. A risk finding still needs contextual review. |
+| Maintainability readout | Advice counts, affected units and measured threshold excess. A proportion is reported only when its relevant rule/language inventory is complete; otherwise its denominator is unavailable. No uncalibrated letter grade. |
+| Coverage | Which checks completed, did not run, or could not finish. Not assessed and incomplete do not mean clean. |
 | Structured output | `--format json`, `--format llm`, or `--format github` for machines, LLM consumers, and GitHub annotations. |
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
 | Upload contract | `skylos/api/upload_contract/v1.json`, shared with Skylos Cloud; defines how each finding is normalized, which errors reject a whole upload, and the retry and idempotency rules. The CLI sends `X-Skylos-Upload-Contract: 1`. See [docs/cli-output.md](./docs/cli-output.md#uploading-to-skylos-cloud). |
@@ -743,8 +748,9 @@ Architecture metrics include scanned TS/JS modules and use `package.json`
 workspace boundaries for package aggregates. TS/JS Q802 and Q803 use parsed
 interfaces, abstract classes, concrete classes, and functions as a file-level
 abstractness heuristic. Default Q802/Q803 signals are grouped per module under
-`architecture_metrics.advisories` and excluded from `quality_count`, grades,
-gates, and issue uploads. Setting `[tool.skylos.architecture] enforce_iad = true`
+`architecture_metrics.advisories` and excluded from `quality_count` and local
+gate inputs. Complete SARIF and Cloud uploads retain those records with their
+Advice type; they remain in the maintainability assessment. Setting `[tool.skylos.architecture] enforce_iad = true`
 places them in actionable `quality` instead. If a TS/JS source cannot be parsed or opened with
 no-follow directory descriptors on the host platform, its module still
 participates in the dependency graph, but Q802/Q803 are suppressed for that

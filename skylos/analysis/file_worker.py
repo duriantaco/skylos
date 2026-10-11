@@ -327,6 +327,14 @@ def _architecture_metrics(
                 for line in prepared.source.splitlines()
                 if line.strip() and not line.strip().startswith("#")
             ),
+            "maintainability_inventory": {
+                "language": "Python",
+                "function_lines": [
+                    node.lineno
+                    for node in ast.walk(prepared.tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ],
+            },
         }
     except Exception:
         logger.debug(
@@ -491,6 +499,17 @@ def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tup
             options.collect_architecture_metrics,
         ),
     )
+    if (
+        artifacts.architecture_metrics
+        and options.full_scan
+        and options.enable_quality_rules
+    ):
+        inventory = artifacts.architecture_metrics["maintainability_inventory"]
+        inventory["rule_units"] = {
+            rule: len(inventory["function_lines"])
+            for rule in ("SKY-Q301", "SKY-Q306", "SKY-Q302", "SKY-C303", "SKY-C304")
+            if rule not in cfg.get("ignore", [])
+        }
     return _success_result(
         cfg,
         prepared,

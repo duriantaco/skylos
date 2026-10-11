@@ -9,6 +9,7 @@ import pytest
 import skylos.cli as cli
 from skylos.commands.scan_cmd import _build_ci_json_payload
 from skylos.core.safe_cache_io import write_text_no_symlink
+from skylos.reporting.finding_types import annotate_finding_types, summarize_finding_types
 
 
 def _report():
@@ -114,6 +115,8 @@ def test_json_bytes_normalization_and_upload_isolation(
         "ran": False,
         "reason": "skipped with --no-provenance",
     }
+    annotate_finding_types(expected)
+    expected["analysis_summary"]["finding_type_counts"] = summarize_finding_types(expected)
     original_expected = copy.deepcopy(expected)
 
     def enrich(result, *_args, **_kwargs):

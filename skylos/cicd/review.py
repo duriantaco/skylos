@@ -25,6 +25,11 @@ from skylos.cicd.risk_passport import (
     format_risk_passport_markdown,
 )
 from skylos.core.file_discovery import find_git_root
+from skylos.reporting.assessment_display import (
+    assessment_coverage_text,
+    assessment_rows,
+    maintainability_rows,
+)
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -148,6 +153,7 @@ def run_pr_review(
         repo,
         grade=grade,
         previous_grade=previous_grade,
+        assessment=results.get("assessment") if isinstance(results, dict) else None,
         evidence_cards=evidence_cards,
         risk_passport=risk_passport,
     )
@@ -1267,6 +1273,7 @@ def _post_summary_comment(
     *,
     grade: dict | None = None,
     previous_grade: dict | None = None,
+    assessment: dict | None = None,
     evidence_cards: bool = False,
     risk_passport: dict | None = None,
 ) -> None:
@@ -1416,11 +1423,13 @@ def _post_summary_comment(
                         f"  - **Fix:** {sanitize_markdown_text(fix, max_length=500)}"
                     )
 
-    if grade:
+    if isinstance(assessment, dict) and assessment:
+        lines.extend(_format_assessment_markdown(assessment))
+    elif grade:
         overall = grade["overall"]
         cats = grade["categories"]
 
-        lines.extend(["", "### Codebase Grade", ""])
+        lines.extend(["", "### Legacy score", ""])
 
         if previous_grade:
             prev = previous_grade["overall"]
@@ -1433,7 +1442,7 @@ def _post_summary_comment(
                 f"({arrow}{delta})"
             )
         else:
-            lines.append(f"**Overall: {overall['letter']} ({overall['score']}/100)**")
+            lines.append(f"**Legacy: {overall['letter']} ({overall['score']}/100)**")
 
         lines.extend(
             [
@@ -1459,6 +1468,7 @@ def _post_summary_comment(
             lines.append(
                 f"| {display} | {cat['score']}{delta_str} | {cat['letter']} | {issue} |"
             )
+        lines.extend(["", "Historical result; this score is not a current risk assessment."])
 
     body = "\n".join(lines)
 
@@ -1471,6 +1481,22 @@ def _post_summary_comment(
         )
     except subprocess.CalledProcessError as e:
         console.print(f"[yellow]Failed to post summary comment: {e.stderr}[/yellow]")
+
+
+def _format_assessment_markdown(assessment: dict) -> list[str]:
+    lines = ["", "### Scan assessment", "", "| Area | Result |", "|------|--------|"]
+    for label, detail in assessment_rows(assessment):
+        safe_detail = sanitize_markdown_text(detail, max_length=500)
+        lines.append(f"| {label} | {safe_detail} |")
+    lines.extend(["", sanitize_markdown_text(assessment_coverage_text(assessment), max_length=1000)])
+    checks = maintainability_rows(assessment)
+    if checks:
+        lines.extend(["", "| Check | Spread | Magnitude |", "|-------|--------|-----------|"])
+        for row in checks:
+            safe = [sanitize_markdown_text(value, max_length=250) for value in row]
+            lines.append("| " + " | ".join(safe) + " |")
+    lines.extend(["", "Risk includes Defect and Review findings; review evidence before acting."])
+    return lines
 
 
 def _fetch_previous_grade(base_branch: str = "origin/main") -> dict | None:

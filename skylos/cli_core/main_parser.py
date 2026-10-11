@@ -387,6 +387,15 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         ),
     )
     parser.add_argument(
+        "--expand-advice",
+        action="store_true",
+        help=(
+            "Show every Advice finding instead of grouping them by rule in "
+            "terminal and LLM reports. Defect and Review findings always retain "
+            "individual rows. JSON records, assessments and gate limits are unchanged."
+        ),
+    )
+    parser.add_argument(
         "--file-filter",
         type=str,
         default=None,
@@ -412,8 +421,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--no-clipboard",
         action="store_true",
-        help="Never copy the score badge to the clipboard (also: SKYLOS_NO_CLIPBOARD=1). "
-        "Copying already only happens in an interactive terminal outside CI.",
+        help="Disable clipboard access (also: SKYLOS_NO_CLIPBOARD=1). "
+        "Assessments do not automatically copy badges.",
     )
     parser.add_argument(
         "--no-provenance",

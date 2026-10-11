@@ -235,7 +235,9 @@ def test_tables_keep_rule_ids_locations_and_messages_readable(
         theme=_skylos_console_theme(),
     )
 
-    render_results(console, _scan_result(tmp_path), copy_badge=False)
+    render_results(
+        console, _scan_result(tmp_path), copy_badge=False, expand_advice=True
+    )
 
     rendered = output.getvalue()
     lines = rendered.splitlines()

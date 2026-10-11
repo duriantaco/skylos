@@ -184,6 +184,6 @@ def pick_nudge(result, args, project_root=None):
     if total == 0:
         if dead_code_uncertainty_summary(result)["count"]:
             return "[dim]Some symbols have uncertain usage. Review the scan evidence before removing them.[/dim]"
-        return "[dim]No findings at current settings. Share the scan grade:[/dim] [bold]skylos badge[/bold]"
+        return "[dim]No findings at current settings. Add an Analyzed with Skylos badge:[/dim] [bold]skylos badge[/bold]"
 
     return None
