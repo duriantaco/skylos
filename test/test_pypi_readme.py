@@ -5,12 +5,16 @@ so every one is a 404 there. tools/release/pypi_readme.py rewrites them to
 GitHub URLs pinned to the release tag before the publish build.
 """
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from skylos.core.safe_cache_io import write_text_no_symlink
+from tools.release import pypi_readme
 from tools.release.pypi_readme import absolutize, is_relative, main, rewrite
 
 REPO = Path(__file__).resolve().parents[1]
@@ -163,3 +167,103 @@ def test_link_outside_repository_fails_before_overwriting(tmp_path):
     with pytest.raises(ValueError, match="outside the repository"):
         main(["--ref", "v1.0.0", str(readme)])
     assert readme.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("link_kind", ["leaf_symlink", "parent_symlink", "hardlink"])
+def test_main_refuses_linked_readme_without_overwriting_target(tmp_path, link_kind):
+    external = tmp_path / "external"
+    external.mkdir()
+    victim = external / "README.md"
+    original = "[guide](docs/guide.md)\n"
+    assert write_text_no_symlink(victim, original)
+    readme = tmp_path / "README.md"
+    try:
+        if link_kind == "leaf_symlink":
+            readme.symlink_to(victim)
+        elif link_kind == "parent_symlink":
+            linked_parent = tmp_path / "linked"
+            linked_parent.symlink_to(external, target_is_directory=True)
+            readme = linked_parent / "README.md"
+        else:
+            os.link(victim, readme)
+    except (OSError, NotImplementedError):
+        pytest.skip(f"{link_kind} unavailable")
+
+    with pytest.raises(OSError, match="Could not safely rewrite README"):
+        main(["--ref", "v1.2.3", str(readme)])
+
+    assert victim.read_text(encoding="utf-8") == original
+    if link_kind == "hardlink":
+        assert readme.stat().st_ino == victim.stat().st_ino
+    else:
+        assert (readme if link_kind == "leaf_symlink" else readme.parent).is_symlink()
+
+
+def test_main_does_not_report_success_when_guarded_write_fails(
+    tmp_path, monkeypatch, capsys
+):
+    readme = tmp_path / "README.md"
+    original = "[guide](docs/guide.md)\n"
+    assert write_text_no_symlink(readme, original)
+    monkeypatch.setattr(pypi_readme, "write_text_no_symlink", lambda *a, **kw: False)
+
+    with pytest.raises(OSError, match="Could not safely rewrite README"):
+        main(["--ref", "v1.2.3", str(readme)])
+
+    assert readme.read_text(encoding="utf-8") == original
+    assert capsys.readouterr().out == ""
+
+
+def test_main_rejects_leaf_symlink_swapped_in_after_read(tmp_path, monkeypatch):
+    readme = tmp_path / "README.md"
+    victim = tmp_path / "victim.md"
+    assert write_text_no_symlink(readme, "[guide](docs/guide.md)\n")
+    assert write_text_no_symlink(victim, "KEEP\n")
+    try:
+        probe = tmp_path / "link-probe"
+        probe.symlink_to(victim)
+        probe.unlink()
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+    def swap_then_write(path, text, **kwargs):
+        assert Path(path) == readme
+        readme.unlink()
+        readme.symlink_to(victim)
+        return write_text_no_symlink(path, text, **kwargs)
+
+    monkeypatch.setattr(pypi_readme, "write_text_no_symlink", swap_then_write)
+
+    with pytest.raises(OSError, match="Could not safely rewrite README"):
+        main(["--ref", "v1.2.3", str(readme)])
+
+    assert victim.read_text(encoding="utf-8") == "KEEP\n"
+    assert readme.is_symlink()
+
+
+def test_script_runs_without_installed_skylos_or_site_packages(tmp_path):
+    readme = tmp_path / "README.md"
+    assert write_text_no_symlink(readme, "[guide](docs/guide.md)\n")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(REPO / "tools/release/pypi_readme.py"),
+            "--ref",
+            "v1.2.3",
+            str(readme),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "pointed 1 line(s)" in result.stdout
+    assert readme.read_text(encoding="utf-8") == (
+        "[guide](https://github.com/duriantaco/skylos/blob/v1.2.3/docs/guide.md)\n"
+    )

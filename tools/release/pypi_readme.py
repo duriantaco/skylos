@@ -16,6 +16,13 @@ import sys
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
+# The release job runs this script before installing the Skylos package.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from skylos.core.safe_cache_io import write_text_no_symlink  # noqa: E402
+
 REPO_URL = "https://github.com/duriantaco/skylos"
 RAW_URL = "https://raw.githubusercontent.com/duriantaco/skylos"
 IMAGE_SUFFIXES = (".png", ".gif", ".jpg", ".jpeg", ".svg", ".webp")
@@ -200,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
 
     text = args.readme.read_text(encoding="utf-8")
     new = rewrite(text, args.ref)
-    args.readme.write_text(new, encoding="utf-8")
+    if not write_text_no_symlink(args.readme, new, encoding="utf-8"):
+        raise OSError(f"Could not safely rewrite README: {args.readme}")
     changed = sum(1 for a, b in zip(text.splitlines(), new.splitlines()) if a != b)
     print(f"{args.readme}: pointed {changed} line(s) of relative links at {args.ref}")
     return 0
