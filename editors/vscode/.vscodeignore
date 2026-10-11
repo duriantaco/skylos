@@ -3,3 +3,7 @@ src/**
 test/**
 .vscode/**
 **/*.map
+# Listing media: the Marketplace page loads these from GitHub, so keep them out of the .vsix.
+media/vsce.gif
+python-security-scan-vscode.png
+*.vsix
