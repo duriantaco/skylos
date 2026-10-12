@@ -106,8 +106,16 @@ Example clause values:
 running Skylos, or a matching API cache. If usable package API metadata is
 unavailable, the rule skips it: that is not evidence that a function is missing.
 Missing members and invalid keywords are still reported when the
-available API metadata supports the finding. A skipped check does not confirm
-that the call is valid.
+available API metadata supports the finding. Missing, malformed, or truncated
+member metadata produces an incomplete `python_installed_api_signature`
+coverage record. With no verified findings, `skylos verify` returns
+`incomplete` and exits `2`; the record identifies unchecked modules and reasons.
+
+Route guard contracts prove decorator/dependency name presence only. JSON
+`contract_checks` records this structural scope and reports
+`authentication_behavior: "not_verified"`; human and short output show the
+same limitation. A satisfied contract does not prove that the named guard
+enforces authentication or authorization.
 
 ## Local Demo
 

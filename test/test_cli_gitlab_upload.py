@@ -58,7 +58,13 @@ def managed(project, monkeypatch):
             status_code=200, json=lambda: response, text="ok", headers={}
         )
 
-    def get(*args, **kwargs):
+    def get(url, *args, **kwargs):
+        if url == f"{api.BASE_URL}/api/sync/rules":
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"rules": []},
+                raise_for_status=lambda: None,
+            )
         pytest.fail("managed machine output must not make unmocked HTTP requests")
 
     monkeypatch.setattr(api.requests, "post", post)

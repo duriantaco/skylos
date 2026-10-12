@@ -101,6 +101,13 @@ def test_pr_scan_has_no_upload_authority(workflow):
     scan = next(run for run in runs if run.startswith("skylos ."))
     args = build_main_parser(version="test").parse_args(shlex.split(scan)[1:])
     assert args.no_upload and not args.upload
+    assert args.sca and args.gate and args.strict
+    assert args.diff_mode == "impact"
+    assert args.diff == "$SKYLOS_BASE_REF"
+    scan_step = next(step for step in job["steps"] if step.get("run") == scan)
+    assert scan_step["env"] == {
+        "SKYLOS_BASE_REF": "${{ github.event.pull_request.base.sha }}"
+    }
     assert not args.trace and not args.allow_coverage_execution
     assert not args.pytest_fixtures
 
@@ -121,6 +128,7 @@ def test_upload_commands_parse_and_preserve_cloud_policy_errors(workflow):
     scan = steps[scan_index]
     args = build_main_parser(version="test").parse_args(shlex.split(scan["run"])[1:])
     assert args.upload and not args.no_upload and not args.force
+    assert args.sca and args.gate and not args.strict
     assert scan["env"] == {
         "SKYLOS_COMMIT": "${{ github.sha }}",
         "SKYLOS_BRANCH": "${{ github.ref_name }}",

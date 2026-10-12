@@ -849,6 +849,7 @@ def test_verify_change_path_passes_with_declared_typescript_dependencies(tmp_pat
     assert check["outcome"] == "pass"
     assert check["references"] == 0
     assert check["out_of_scope_references"] == 2
+    assert payload["coverage"]["limitations"][0]["external_api_verification"] == "not_verified"
 
 
 def test_verify_change_file_uses_declared_monorepo_root(tmp_path):
@@ -1251,6 +1252,18 @@ def test_verify_change_path_contract_routes_accept_custom_guard_decorator(tmp_pa
     )
 
     assert not any(finding["rule_id"] == "SKY-A105" for finding in payload["findings"])
+    assert payload["contract_checks"] == [
+        {
+            "id": "contract_route_decorator_presence",
+            "scope": "structural_decorator_presence",
+            "outcome": "pass",
+            "checked_routes": 1,
+            "matched_routes": 1,
+            "missing_guard_routes": 0,
+            "unchecked_files": [],
+            "authentication_behavior": "not_verified",
+        }
+    ]
 
 
 def test_verify_change_path_contract_routes_respect_path_scope(tmp_path):

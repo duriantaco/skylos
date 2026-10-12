@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
@@ -221,10 +221,14 @@ def _resolve_github_actions_scan_path(
     *,
     root: Path | None = None,
 ) -> Path | None:
-    candidate = Path(path).resolve()
+    # Keep the requested path, so the guarded reader can refuse a symlink
+    # rather than silently following it or losing it during discovery.
+    candidate = Path(os.path.abspath(path))
     if root is not None and not _is_under_root(candidate, root):
         return None
-    if not candidate.is_file() or not _is_github_actions_file(candidate):
+    if not (candidate.is_file() or candidate.is_symlink()):
+        return None
+    if not _is_github_actions_file(candidate):
         return None
     return candidate
 
@@ -267,24 +271,72 @@ class _WorkflowLines(list[str]):
         self.source = source
 
 
-def _load_yaml(path: Path) -> tuple[dict[str, Any], _WorkflowLines] | None:
+def _config_analysis_error(path: Path, kind: str, message: str) -> dict[str, Any]:
+    return {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "kind": kind,
+        "component": "github_actions",
+        "file": str(path),
+        "line": 1,
+        "severity": "HIGH",
+        "message": message,
+    }
+
+
+def _load_yaml(
+    path: Path,
+    *,
+    root: Path | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], _WorkflowLines] | None:
+    def incomplete(kind: str, message: str) -> None:
+        if analysis_errors is not None:
+            analysis_errors.append(_config_analysis_error(path, kind, message))
+
     if yaml is None:
+        incomplete(
+            "config_parser_unavailable",
+            "GitHub Actions analysis incomplete: YAML parser unavailable",
+        )
         return None
     try:
-        text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        if root is not None:
+            text = read_project_text_no_symlink(
+                root.parent if root.is_file() else root,
+                path,
+                max_bytes=MAX_YAML_BYTES,
+                encoding="utf-8",
+            )
+        else:
+            text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
         if text is None:
+            incomplete(
+                "config_read_error",
+                "GitHub Actions analysis incomplete: YAML file could not be safely read "
+                f"(symlink, unreadable file, invalid UTF-8, or size limit {MAX_YAML_BYTES} bytes)",
+            )
             return None
         loaded = load_yaml_with_locations(
             text, max_depth=MAX_YAML_GRAPH_DEPTH, max_nodes=MAX_YAML_GRAPH_NODES
         )
         if loaded is None:
+            incomplete(
+                "config_parse_error",
+                "GitHub Actions analysis incomplete: invalid YAML or YAML resource limit exceeded",
+            )
             return None
         raw, source = loaded
     except Exception:
+        incomplete(
+            "config_parse_error",
+            "GitHub Actions analysis incomplete: YAML parser failed",
+        )
         return None
     if not isinstance(raw, dict):
+        incomplete("config_parse_error", "GitHub Actions analysis incomplete: expected a YAML mapping")
         return None
     if not _yaml_graph_is_safe(raw):
+        incomplete("config_parse_error", "GitHub Actions analysis incomplete: unsafe YAML graph")
         return None
     return raw, _WorkflowLines(text, source)
 
@@ -2104,12 +2156,13 @@ def scan_github_actions_file(
     *,
     root: str | Path | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     root_path = Path(root).resolve() if root is not None else None
     file_path = _resolve_github_actions_scan_path(path, root=root_path)
     if file_path is None:
         return []
-    loaded = _load_yaml(file_path)
+    loaded = _load_yaml(file_path, root=root_path, analysis_errors=analysis_errors)
     if loaded is None:
         return []
     data, lines = loaded
@@ -2161,11 +2214,14 @@ def scan_github_actions(
     *,
     changed_files: set[str] | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     root_path = Path(root).resolve()
     findings: list[dict[str, Any]] = []
     for file_path in _discover_action_files(root_path, changed_files):
         findings.extend(
-            scan_github_actions_file(file_path, root=root_path, ignore=ignore)
+            scan_github_actions_file(
+                file_path, root=root_path, ignore=ignore, analysis_errors=analysis_errors
+            )
         )
     return findings

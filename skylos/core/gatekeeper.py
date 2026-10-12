@@ -566,6 +566,136 @@ def _analysis_incomplete_reasons(results):
     return reasons
 
 
+def sca_coverage_warnings(results):
+    """Describe requested dependency checks without implying full coverage."""
+    summary = results.get("analysis_summary") if isinstance(results, dict) else None
+    receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
+    if not isinstance(receipt, dict):
+        return []
+    status = receipt.get("status")
+    if status == "no_supported_manifests":
+        return [
+            "SCA coverage limited: no supported dependency manifests found; "
+            "0 dependencies queried"
+        ]
+    unresolved = receipt.get("unresolved_dependency_count", 0)
+    if isinstance(unresolved, int) and not isinstance(unresolved, bool) and unresolved > 0:
+        queried = receipt.get("queried_dependency_count", 0)
+        return [
+            f"SCA coverage limited: {queried} dependencies queried; "
+            f"{unresolved} dependencies have unresolved versions"
+        ]
+    if receipt.get("unsupported_lockfile_count", 0):
+        return ["SCA coverage limited: unsupported dependency lockfile inventory"]
+    return []
+
+
+def _coverage_count(value):
+    # Match Cloud's nonnegative safe-integer accounting contract.
+    if (
+        type(value) in (int, float)
+        and 0 <= value <= 9_007_199_254_740_991
+        and value == int(value)
+    ):
+        return int(value)
+    return None
+
+
+def _sca_required_coverage_reasons(receipt, *, require_resolved):
+    if not isinstance(receipt, dict) or not receipt:
+        return [GateReason("Required SCA coverage missing: dependency scan was not recorded")]
+    reasons = []
+    supported = _coverage_count(receipt.get("supported_manifest_candidate_count"))
+    if supported is None or supported == 0:
+        reasons.append(
+            GateReason("Required SCA coverage missing: no supported dependency manifests found")
+        )
+    status = receipt.get("status")
+    if (
+        status not in {"complete", "complete_with_unresolved_versions"}
+        or receipt.get("complete") is not True
+    ):
+        reasons.append(
+            GateReason("Required SCA coverage incomplete: supported dependency inventory was not completed")
+        )
+    unsupported = any(
+        (_coverage_count(receipt.get(key)) or 0) > 0
+        for key in ("unsupported_manifest_count", "unsupported_lockfile_count")
+    )
+    if unsupported:
+        reasons.append(
+            GateReason("Required SCA coverage incomplete: unsupported dependency manifest or lockfile inventory")
+        )
+    dependencies = _coverage_count(receipt.get("dependency_count"))
+    queried = _coverage_count(receipt.get("queried_dependency_count"))
+    if dependencies is None or queried is None:
+        reasons.append(GateReason("Required SCA coverage incomplete: missing query accounting"))
+    else:
+        query = receipt.get("query")
+        query_complete = isinstance(query, dict) and query.get("complete") is True
+        if queried < dependencies or (dependencies > 0 and not query_complete):
+            reasons.append(
+                GateReason("Required SCA coverage incomplete: not every inventoried dependency was queried")
+            )
+    if require_resolved:
+        unresolved = _coverage_count(receipt.get("unresolved_dependency_count"))
+        unresolved_lockfile = _coverage_count(receipt.get("unresolved_lockfile_dependency_count"))
+        if unresolved is None or unresolved_lockfile is None:
+            reasons.append(GateReason("Required SCA coverage incomplete: dependency version resolution was not verified"))
+        elif unresolved > 0 or unresolved_lockfile > 0 or status == "complete_with_unresolved_versions":
+            reasons.append(GateReason("Required SCA coverage incomplete: dependency versions must be resolved"))
+    return reasons
+
+
+def _required_coverage_reasons(results, gate_config):
+    """Policy rejections are distinct from operational analysis failures."""
+    coverage = gate_config.get("coverage")
+    if not isinstance(coverage, dict):
+        return []
+    required = coverage.get("required", [])
+    if isinstance(required, str):
+        required = [required]
+    if not isinstance(required, (list, tuple, set)):
+        return [GateReason("Invalid required coverage policy: expected category names")]
+    required = {str(category).strip().lower() for category in required}
+    require_resolved = (
+        coverage.get("require_resolved_versions") is True
+        or coverage.get("require_resolved_versions") == "true"
+    )
+    if require_resolved:
+        required.add("sca")
+    reasons = []
+    unsupported = required - {"sca", "custom_rules"}
+    if unsupported:
+        reasons.append(
+            GateReason(
+                "Unsupported required coverage categories: "
+                + ", ".join(sorted(unsupported))
+            )
+        )
+    summary = results.get("analysis_summary")
+    if "custom_rules" in required:
+        rules_receipt = (
+            summary.get("custom_rules_coverage") if isinstance(summary, dict) else None
+        )
+        if not isinstance(rules_receipt, dict) or rules_receipt.get("status") != "complete":
+            reasons.append(
+                GateReason(
+                    "Required custom rule coverage missing: configured rules were not checked"
+                )
+            )
+    if "sca" not in required:
+        return reasons
+    receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
+    reasons.extend(
+        _sca_required_coverage_reasons(
+            receipt,
+            require_resolved=require_resolved,
+        )
+    )
+    return reasons
+
+
 def check_gate(results, config, strict=False, provenance=None):
     """
     Evaluate scan results against gate thresholds.
@@ -588,14 +718,18 @@ def check_gate(results, config, strict=False, provenance=None):
 
     found = _gate_findings(results)
     gate_config = _effective_gate_config(config)
+    reasons.extend(_required_coverage_reasons(results, gate_config))
 
     if strict:
-        return _check_strict_gate(
+        strict_passed, strict_reasons = _check_strict_gate(
             **found,
             circular_dependencies=results.get("circular_dependencies", []) or [],
         )
+        return strict_passed and not reasons, reasons + strict_reasons
 
     passed = _apply_gate_thresholds(reasons, gate_config, _gate_issue_groups(**found))
+    if reasons:
+        passed = False
     regressions = _security_control_regressions(results)
     if regressions:
         reasons.append(
@@ -815,6 +949,10 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
         "",
         f"**Result: {icon} {status}**",
     ]
+    coverage_warnings = sca_coverage_warnings(results)
+    if coverage_warnings:
+        lines.extend(["", "### Coverage Limitations"])
+        lines.extend(f"- {warning}" for warning in coverage_warnings)
     _append_failure_reasons(
         lines,
         reasons,
@@ -942,6 +1080,8 @@ def run_gate_interaction(
     gate_cfg = config.get("gate") or {}
 
     strict = bool(strict or gate_cfg.get("strict", False))
+    for warning in sca_coverage_warnings(results):
+        console.print(f"[yellow]{escape(warning)}[/yellow]", soft_wrap=True)
     incomplete_reasons = _analysis_incomplete_reasons(results)
     passed, reasons = _resolve_gate_check(results, config, strict, provenance)
 

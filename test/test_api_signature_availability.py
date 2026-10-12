@@ -73,6 +73,11 @@ def test_unavailable_surface_does_not_claim_missing_api(
     )
 
     assert findings == []
+    assert findings.check["outcome"] == "incomplete"
+    assert findings.check["skipped_references"] >= 1
+    assert findings.check["reasons"] == [
+        {"code": "installed_api_metadata_unavailable", "count": findings.check["skipped_references"]}
+    ]
 
 
 @pytest.mark.parametrize("surface", [None, {}, {"members": None}, {"members": []}])
@@ -235,3 +240,75 @@ def test_analyzer_skips_unavailable_pandas_but_keeps_known_api_errors(
     assert [finding["symbol"] for finding in findings] == ["requests.not_an_api"]
     assert loaded == ["pandas", "requests"]
     assert result.get("analysis_errors", []) == []
+
+
+def test_unavailable_metadata_changes_real_verifier_and_cli_verdict(tmp_path, monkeypatch, capsys):
+    from skylos.commands.verify_cmd import run_verify_command
+    from skylos.rules.ai_defect import dependency_hallucination as dependency
+    from skylos.rules.ai_defect import manifest_dependency_hallucination as manifest
+    from skylos.verify_change import verify_change_path
+
+    _write(tmp_path / "app.py", "import requests\nrequests.not_an_api()\n")
+    monkeypatch.setattr(python_api_surface, "build_python_api_surface", lambda *_: None)
+    monkeypatch.setattr(dependency, "scan_python_dependency_hallucinations", lambda *a, **k: [])
+    monkeypatch.setattr(manifest, "scan_manifest_dependency_hallucinations", lambda *a, **k: [])
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+
+    payload = verify_change_path(tmp_path, behavior_comparison=False)
+
+    assert payload["status"] == "incomplete"
+    assert payload["findings"] == []
+    check = next(c for c in payload["coverage"]["checks"] if c["id"] == "python_installed_api_signature")
+    assert check["outcome"] == "incomplete"
+    assert check["unchecked_modules"] == [
+        {"module": "requests", "file": str(tmp_path / "app.py"), "reason": "installed_api_metadata_unavailable"}
+    ]
+    exit_code = run_verify_command([str(tmp_path), "--no-behavior", "--format", "json"])
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "incomplete"
+
+
+def test_complete_installed_metadata_still_passes_verification(tmp_path, monkeypatch):
+    from skylos.rules.ai_defect import dependency_hallucination as dependency
+    from skylos.rules.ai_defect import manifest_dependency_hallucination as manifest
+    from skylos.verify_change import verify_change_path
+
+    _write(tmp_path / "app.py", "import pandas as pd\npd.to_datetime('2026-01-01', utc=True)\n")
+    monkeypatch.setattr(python_api_surface, "build_python_api_surface", lambda *_: _pandas_surface())
+    monkeypatch.setattr(dependency, "scan_python_dependency_hallucinations", lambda *a, **k: [])
+    monkeypatch.setattr(manifest, "scan_manifest_dependency_hallucinations", lambda *a, **k: [])
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+
+    payload = verify_change_path(tmp_path, behavior_comparison=False)
+
+    assert payload["status"] == "pass"
+    check = next(c for c in payload["coverage"]["checks"] if c["id"] == "python_installed_api_signature")
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 1
+    assert check["skipped_references"] == 0
+
+
+def test_truncated_metadata_keeps_verified_findings_and_incomplete_coverage(tmp_path):
+    source = _write(tmp_path / "app.py", "import pandas as pd\npd.to_datetime('now', imaginary=True)\n")
+    result = scan_python_api_signature_hallucinations(
+        tmp_path, [source], surface_loader=lambda *_: _pandas_surface(truncated=True)
+    )
+
+    assert [finding["symbol"] for finding in result] == ["pandas.to_datetime"]
+    assert result.check["outcome"] == "fail"
+    assert result.check["skipped_references"] == 1
+    assert result.check["reasons"] == [{"code": "installed_api_metadata_truncated", "count": 1}]
+
+
+def test_missing_callable_signature_is_incomplete_without_inventing_finding(tmp_path):
+    source = _write(tmp_path / "app.py", "import requests\nrequests.get('https://example.test', invented=True)\n")
+    result = scan_python_api_signature_hallucinations(
+        tmp_path, [source],
+        surface_loader=lambda *_: {"members": {"get": {"kind": "function", "signature": "", "parameters": []}}},
+    )
+
+    assert result == []
+    assert result.check["outcome"] == "incomplete"
+    assert result.check["skipped_references"] == 1
+    assert result.check["unchecked_calls"][0]["symbol"] == "requests.get"
+    assert result.check["reasons"] == [{"code": "installed_api_signature_unavailable", "count": 1}]

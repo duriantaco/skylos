@@ -17,11 +17,15 @@ def scan_config_files(
     *,
     changed_files: set[str] | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
     required_rules: str | list[str] | tuple[str, ...] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     findings.extend(
-        scan_github_actions(root, changed_files=changed_files, ignore=ignore)
+        scan_github_actions(
+            root, changed_files=changed_files, ignore=ignore,
+            analysis_errors=analysis_errors,
+        )
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     findings.extend(scan_dockerfiles(root, changed_files=changed_files, ignore=ignore))

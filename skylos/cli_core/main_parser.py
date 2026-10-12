@@ -346,6 +346,13 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "(GITHUB_BASE_REF, Bitbucket or Azure Pipelines PR target) or origin/main.",
     )
     parser.add_argument(
+        "--diff-mode",
+        choices=("lines", "impact"),
+        default="lines",
+        help="With --diff, 'impact' also reports newly unused symbols outside changed lines "
+        "by comparing static dead-code findings with the base commit. Default: lines.",
+    )
+    parser.add_argument(
         "--github",
         action="store_true",
         help="Output GitHub Actions annotations (::warning / ::error) for inline PR comments.",

@@ -56,6 +56,16 @@ def build_ai_verification_coverage(
         "language_support": _language_support(expectation_data),
         "completed_checks": completed,
         "skipped_checks": skipped,
+        "limitations": [
+            {
+                "check_id": str(check.get("id")),
+                "scope": str(check.get("scope") or "local_workspace_api_surface"),
+                "external_api_verification": "not_verified",
+                "out_of_scope_references": int(check.get("out_of_scope_references") or 0),
+            }
+            for check in normalized
+            if int(check.get("out_of_scope_references") or 0) > 0
+        ],
         "checks": normalized,
     }
 
