@@ -98,6 +98,26 @@ _ADMIN_ATTRS = {
 }
 
 _META_ATTRS = {
+    # ModelForm / DRF / django-filter Meta options
+    "widgets",
+    "labels",
+    "help_texts",
+    "error_messages",
+    "field_classes",
+    "localized_fields",
+    "formfield_callback",
+    "read_only_fields",
+    "extra_kwargs",
+    "depth",
+    "list_serializer_class",
+    # Model Meta options
+    "base_manager_name",
+    "order_with_respect_to",
+    "select_on_save",
+    "required_db_features",
+    "required_db_vendor",
+    "db_table_comment",
+    "db_tablespace",
     "ordering",
     "verbose_name",
     "verbose_name_plural",
@@ -142,6 +162,60 @@ _MIGRATION_ATTRS = {
     "initial",
     "dependencies",
     "operations",
+    "replaces",
+    "run_before",
+    "atomic",
+}
+
+# Class attributes a framework reads from a subclass, keyed by base name.
+_FRAMEWORK_CLASS_ATTRS = {
+    # DRF pagination classes are configured by settings strings.
+    "PageNumberPagination": {
+        "page_size",
+        "page_query_param",
+        "page_size_query_param",
+        "max_page_size",
+        "last_page_strings",
+        "django_paginator_class",
+        "template",
+        "invalid_page_message",
+    },
+    "LimitOffsetPagination": {
+        "default_limit",
+        "limit_query_param",
+        "offset_query_param",
+        "max_limit",
+        "template",
+    },
+    "CursorPagination": {
+        "page_size",
+        "cursor_query_param",
+        "ordering",
+        "page_size_query_param",
+        "max_page_size",
+        "template",
+        "offset_cutoff",
+    },
+    # DRF builds the error response from these.
+    "APIException": {"status_code", "default_detail", "default_code"},
+    # drf-spectacular extensions register themselves by subclassing.
+    "OpenApiAuthenticationExtension": {
+        "target_class",
+        "name",
+        "match_subclasses",
+        "priority",
+    },
+    "OpenApiSerializerExtension": {"target_class", "match_subclasses", "priority"},
+    "OpenApiViewExtension": {"target_class", "match_subclasses", "priority"},
+    "OpenApiFilterExtension": {"target_class", "match_subclasses", "priority"},
+    "OpenApiSerializerFieldExtension": {"target_class", "match_subclasses", "priority"},
+}
+_FRAMEWORK_SELF_REGISTERING_BASES = {
+    "OpenApiAuthenticationExtension",
+    "OpenApiSerializerExtension",
+    "OpenApiViewExtension",
+    "OpenApiFilterExtension",
+    "OpenApiSerializerFieldExtension",
 }
 
 _ALEMBIC_MODULE_ATTRS = {
@@ -660,6 +734,27 @@ def _check_django_drf_structural(def_obj, framework):
         if "." in def_obj.name and detected & _DJANGO_DRF_FRAMEWORKS:
             return _suppress(def_obj)
 
+    if _is_django_migration_class(def_obj, framework):
+        return _suppress(def_obj, "Django migration (loaded by the migration executor)")
+
+    if (
+        def_obj.type == "variable"
+        and simple_name in _MIGRATION_ATTRS
+        and _name_parent_has_base(def_obj, {"Migration"}, framework)
+    ):
+        return _suppress(def_obj, "Django migration attribute")
+
+    if def_obj.type == "variable" and "." in def_obj.name:
+        parent = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
+        for base in _class_base_names(parent, framework):
+            if simple_name in _FRAMEWORK_CLASS_ATTRS.get(base, ()):
+                return _suppress(def_obj, f"{base} attribute read by the framework")
+
+    if def_obj.type == "class" and (
+        _class_base_names(simple_name, framework) & _FRAMEWORK_SELF_REGISTERING_BASES
+    ):
+        return _suppress(def_obj, "Framework extension registered by subclassing")
+
     if def_obj.type == "variable" and simple_name in _META_ATTRS:
         if "." in def_obj.name and "Meta" in def_obj.name:
             return _suppress(def_obj)
@@ -719,6 +814,18 @@ def _check_django_drf_structural(def_obj, framework):
             return _suppress(def_obj, "Click command class")
 
     return None
+
+
+def _is_django_migration_class(def_obj, framework):
+    """``class Migration(migrations.Migration)`` is loaded by name by Django's
+    migration loader, never referenced from project code."""
+    if def_obj.type != "class" or def_obj.simple_name != "Migration":
+        return False
+    if "Migration" not in _class_base_names("Migration", framework):
+        return False
+    detected = getattr(framework, "detected_frameworks", set())
+    filename = str(def_obj.filename).replace("\\", "/")
+    return "django" in detected or "/migrations/" in filename
 
 
 def _check_django_methods(def_obj, framework):

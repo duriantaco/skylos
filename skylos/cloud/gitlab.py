@@ -226,6 +226,8 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
         )
         and type(sca.get("lockfile_limitation_count", 0)) is int
         and not sca.get("lockfile_limitation_count", 0)
+        and type(sca.get("not_checked_lockfile_dependency_count", 0)) is int
+        and not sca.get("not_checked_lockfile_dependency_count", 0)
     )
     return {
         "complete": complete,

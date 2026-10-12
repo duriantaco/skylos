@@ -91,6 +91,11 @@ class _ModuleEvidence:
     includes: set = field(default_factory=set)
     imported_modules: set = field(default_factory=set)
     admins: set = field(default_factory=set)
+    # ``from x import *`` targets anywhere at module level (also under
+    # ``if``/``try``), so a settings package can reach ``settings.base``.
+    star_imports: set = field(default_factory=set)
+    # UPPER_CASE names assigned at module level, with their values.
+    module_settings: dict = field(default_factory=dict)
 
     def definition(self, name: str, *, line=None, kind=None):
         candidates = [
@@ -131,7 +136,29 @@ class _WebScanner:
 
     def collect(self):
         self.suite(self.tree.body, {})
+        self._collect_module_level()
         return self.evidence
+
+    def _collect_module_level(self):
+        package = self.evidence.module
+        if self.evidence.path.name != "__init__.py":
+            package = package.rpartition(".")[0]
+        for statement in _module_level_statements(self.tree.body):
+            if isinstance(statement, ast.ImportFrom) and any(
+                alias.name == "*" for alias in statement.names
+            ):
+                target = _resolve_from_module(statement, package)
+                if target:
+                    self.evidence.star_imports.add(target)
+                continue
+            targets, value = _assigned(statement)
+            if value is None:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    self.evidence.module_settings.setdefault(target.id, []).append(
+                        value
+                    )
 
     def suite(self, statements, bindings, *, owner=None):
         for statement in statements:
@@ -365,6 +392,34 @@ class _WebScanner:
             self.evidence.routes.append(target)
             if view.args or view.keywords:
                 self.evidence.view_overrides.add(target)
+
+
+def _module_level_statements(statements):
+    """Statements that run at import time, including nested blocks."""
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield statement
+        for name in ("body", "orelse", "finalbody"):
+            children = getattr(statement, name, None)
+            if isinstance(children, list):
+                yield from _module_level_statements(children)
+        for handler in getattr(statement, "handlers", None) or ():
+            yield from _module_level_statements(handler.body)
+        for case in getattr(statement, "cases", None) or ():
+            yield from _module_level_statements(case.body)
+
+
+def _resolve_from_module(statement, package):
+    if not statement.level:
+        return statement.module
+    parts = package.split(".") if package else []
+    if statement.level - 1 > len(parts):
+        return None
+    base = parts[: len(parts) - (statement.level - 1)]
+    if statement.module:
+        base.append(statement.module)
+    return ".".join(base) or None
 
 
 def _function_bindings(statement, bindings):

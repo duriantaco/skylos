@@ -478,3 +478,88 @@ def test_pnpm_inventory_limit_stops_before_any_advisory_requests(
     assert result.receipt["complete"] is False
     assert result.receipt["limit_reasons"] == ["dependency_limit_exceeded"]
     assert osv.queries == []
+
+
+def _write_text_lockfile(project, text):
+    path = project / "pnpm-lock.yaml"
+    path.write_text(text, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    return path
+
+
+def test_pnpm_workspace_local_code_is_listed_and_scan_stays_complete(tmp_path, osv):
+    from test.test_pnpm_lockfile import ZOD_V9
+
+    lockfile = _write_text_lockfile(tmp_path, ZOD_V9)
+    docs = tmp_path / "packages" / "docs"
+    docs.mkdir(parents=True)
+    # An exact manifest pin of the workspace package is local, never public.
+    (docs / "package.json").write_text(
+        '{"dependencies": {"zod": "4.6.6", "ai": "^6.0.5"}}', encoding="utf-8"
+    )
+
+    result = sca.scan_dependencies(tmp_path)
+
+    receipt = result.receipt
+    assert receipt["complete"] is True
+    assert receipt["status"] == "complete_with_unresolved_versions"
+    assert receipt["unresolved_lockfile_dependency_count"] == 0
+    assert receipt["not_checked_lockfile_dependency_count"] == 1
+    assert receipt["lockfile_not_checked"] == [
+        {
+            "package": "ai@6.0.5(zod@4.6.6)",
+            "dependency": "zod",
+            "section": "dependencies",
+            "line": receipt["lockfile_not_checked"][0]["line"],
+            "reason": "workspace_package",
+            "source_type": "local",
+            "file": str(lockfile),
+        }
+    ]
+    assert "local_lockfile_packages_not_checked" in receipt["limitations"]
+    # The ``ai`` range is pinned by the lockfile importer for that directory.
+    assert receipt["unresolved_dependency_count"] == 1
+    assert receipt["lockfile_covered_unresolved_dependency_count"] == 1
+    assert receipt["manifest_source_conflict_count"] == 1
+    # The public tarball alias is checked as the real package; real advisories
+    # are still reported for it.
+    assert _query_identities(osv) == {("ai", "6.0.5", "npm"), ("zod", "4.4.3", "npm")}
+    assert {item["metadata"]["package_name"] for item in result} == {"ai", "zod"}
+
+
+def test_pnpm_local_directories_and_links_do_not_make_scan_incomplete(tmp_path, osv):
+    from test.test_pnpm_lockfile import VITE_V9
+
+    _write_text_lockfile(tmp_path, VITE_V9)
+    osv.vulnerable = False
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert result.receipt["complete"] is True
+    assert result.receipt["status"] == "complete"
+    assert result.receipt["not_checked_lockfile_dependency_count"] == 4
+    assert {query["package"]["name"] for query in osv.queries} == {
+        "@vitejs/plugin-vue",
+        "chokidar",
+        "pathe",
+        "sass-embedded-linux-x64",
+    }
+
+
+def test_pnpm_git_dependency_still_makes_scan_incomplete(tmp_path, osv):
+    from test.test_pnpm_lockfile import VITE_V9
+
+    _write_text_lockfile(
+        tmp_path,
+        VITE_V9.replace(
+            "  pathe@2.0.3:\n    resolution: {integrity: sha512-pa}\n",
+            "  pathe@2.0.3:\n    resolution: {type: git, repo: 'https://github.com/x/pathe.git', commit: abc}\n",
+        ),
+    )
+    osv.vulnerable = False
+
+    result = sca.scan_dependencies(tmp_path)
+
+    assert result.receipt["complete"] is False
+    assert result.receipt["status"] == "incomplete"
+    assert result.receipt["unresolved_lockfile_dependency_count"] == 1
+    assert "pathe" not in {query["package"]["name"] for query in osv.queries}

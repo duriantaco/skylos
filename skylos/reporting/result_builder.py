@@ -296,6 +296,10 @@ def _attach_analysis_reports(analyzer, result):
     if isinstance(sca_coverage, dict):
         result["analysis_summary"]["sca_coverage"] = dict(sca_coverage)
 
+    dependency_import_notes = getattr(analyzer, "_dependency_import_notes", None)
+    if isinstance(dependency_import_notes, dict):
+        result["analysis_summary"]["dependency_imports"] = dict(dependency_import_notes)
+
     verification_checks = getattr(analyzer, "_ai_verification_checks", None)
     if isinstance(verification_checks, list):
         from skylos.core.verification_coverage import build_ai_verification_coverage

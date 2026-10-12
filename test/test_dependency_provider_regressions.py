@@ -118,22 +118,34 @@ def _isolate_with_installed_record(
 def test_metadata_only_installed_record_uses_compatible_wheel(
     monkeypatch, tmp_path, mode, wheel_version, source
 ):
-    repo, path = _project(tmp_path, source, "mlx>=1.0")
+    # "mlx-metal" does not map to the "mlx" import by name, so provider
+    # evidence must come from the installed record and the wheel.
+    repo, path = _project(tmp_path, source, "mlx-metal>=1.0")
     fetched, _ = _isolate_with_installed_record(
         monkeypatch,
         tmp_path,
         {
-            "mlx": _inventory(
+            "mlx-metal": _inventory(
                 "mlx/__init__.py", "mlx/core.py", complete=False, version=wheel_version
             )
         },
-        dist="mlx",
+        dist="mlx-metal",
         editable_metadata=True,
         editable_marker=True,
     )
     assert _scan(mode, repo, path, "mlx") == []
     if "mlx.core" in source:
-        assert fetched == [("mlx", ">=1.0")]
+        assert fetched == [("mlx-metal", ">=1.0")]
+
+
+@pytest.mark.parametrize("mode", ["full", "diff"])
+def test_declared_distribution_name_covers_its_own_import_without_lookup(
+    monkeypatch, tmp_path, mode
+):
+    repo, path = _project(tmp_path, "import mlx.core\n", "mlx>=1.0")
+    fetched, _ = _isolate(monkeypatch)
+    assert _scan(mode, repo, path, "mlx") == []
+    assert fetched == []
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
@@ -141,11 +153,11 @@ def test_metadata_only_installed_record_uses_compatible_wheel(
 def test_editable_mlx_scan_reads_compatible_native_wheel(
     monkeypatch, tmp_path, mode, submodule
 ):
-    repo, path = _project(tmp_path, f"import mlx.{submodule}\n", "mlx>=0.32.3")
+    repo, path = _project(tmp_path, f"import mlx.{submodule}\n", "mlx-metal>=0.32.3")
     _isolate_with_installed_record(
         monkeypatch,
         tmp_path,
-        dist="mlx",
+        dist="mlx-metal",
         version="0.32.4.dev20261004+abc123",
         editable_metadata=True,
         editable_marker=True,
@@ -165,21 +177,20 @@ def test_editable_mlx_scan_reads_compatible_native_wheel(
         {
             "0.32.3": (
                 _wheel(["mlx/__init__.py", "mlx/core.cpython-313-x86_64-linux-gnu.so"]),
-                _file("0.32.3", tag=str(tag), requires_python=">=3.10", dist="mlx"),
+                _file(
+                    "0.32.3", tag=str(tag), requires_python=">=3.10", dist="mlx_metal"
+                ),
             )
         },
-        dist="mlx",
+        dist="mlx-metal",
     )
 
     findings = _scan(mode, repo, path, "mlx")
 
-    if submodule == "core":
-        assert findings == []
-    else:
-        assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
-            (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "mlx")
-        ]
-        assert findings[0]["message"].startswith("Unverified import")
+    # The wheel ships the "mlx" root; an unproven submodule is a note at most.
+    assert findings == []
+    if mode == "full" and submodule != "core":
+        assert findings.unverified_imports == {"mlx": "related_provider_paths"}
     assert any(byte_range is not None for _url, byte_range, _max_bytes in requests)
 
 
@@ -188,20 +199,18 @@ def test_editable_mlx_scan_reads_compatible_native_wheel(
 def test_exact_editable_install_without_wheel_cannot_prove_absence(
     monkeypatch, tmp_path, mode, editable_evidence
 ):
-    repo, path = _project(tmp_path, "import mlx.core\n", "mlx==1.0")
+    repo, path = _project(tmp_path, "import mlx.core\n", "mlx-metal==1.0")
     fetched, _ = _isolate_with_installed_record(
         monkeypatch,
         tmp_path,
-        dist="mlx",
+        dist="mlx-metal",
         editable_metadata=editable_evidence == "metadata",
         editable_marker=editable_evidence == "pth",
     )
     findings = _scan(mode, repo, path, "mlx")
-    assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
-        (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "mlx")
-    ]
-    assert findings[0]["message"].startswith("Unverified import")
-    assert fetched == [("mlx", "==1.0")]
+    # Absence is unproven and mlx-metal is related by name: not a finding.
+    assert findings == []
+    assert fetched == [("mlx-metal", "==1.0")]
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
@@ -371,7 +380,7 @@ def test_installed_loader_or_unreadable_origin_cannot_prove_absence(
     assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
         (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "ghost_required")
     ]
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings[0]["message"].startswith("Possible hallucinated import")
     assert fetched == [("safe-lib", "==1.0")]
 
 
@@ -394,7 +403,7 @@ def test_partial_installed_and_wheel_paths_both_survive_without_absence_proof(
     assert [(f["rule_id"], f["symbol"]) for f in findings] == [
         (dep.RULE_ID_UNDECLARED, "ghost_required")
     ]
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings[0]["message"].startswith("Possible hallucinated import")
     assert fetched == [("safe-lib", "==1.0")]
 
 
@@ -404,9 +413,9 @@ def test_partial_installed_and_wheel_paths_both_survive_without_absence_proof(
         (
             ("shared.py",),
             ("shared/__init__.py", "shared/child.py"),
-            [(dep.RULE_ID_UNDECLARED, "shared")],
+            {"shared": "related_provider_paths"},
         ),
-        (("shared/__init__.py", "shared/child.py"), ("shared.py",), []),
+        (("shared/__init__.py", "shared/child.py"), ("shared.py",), {}),
     ],
 )
 def test_installed_module_package_layout_takes_precedence_over_wheel(
@@ -421,9 +430,10 @@ def test_installed_module_package_layout_takes_precedence_over_wheel(
         editable_metadata=True,
     )
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert [(f["rule_id"], f["symbol"]) for f in findings] == expected
-    if findings:
-        assert findings[0]["message"].startswith("Unverified import")
+    # An installed plain module cannot have submodules, so "shared.child" stays
+    # unproven; that is a note, never a finding.
+    assert findings == []
+    assert findings.unverified_imports == expected
 
 
 def test_different_compatible_releases_do_not_combine_disjoint_import_paths(
@@ -440,10 +450,8 @@ def test_different_compatible_releases_do_not_combine_disjoint_import_paths(
         editable_metadata=True,
     )
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
-        (dep.RULE_ID_UNDECLARED, "shared")
-    ]
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings == []
+    assert findings.unverified_imports == {"shared": "related_provider_paths"}
     assert fetched == [("safe-lib", "<3,>=1")]
 
 
@@ -550,10 +558,11 @@ def test_different_wheel_namespace_cannot_borrow_installed_package_exports(
         )
     else:
         findings = dep.scan_python_dependency_hallucinations(repo, paths)
-    assert [
-        (finding["rule_id"], finding["symbol"], Path(finding["file"]).name)
-        for finding in findings
-    ] == [(dep.RULE_ID_UNDECLARED, "shared", "second.py")]
+    # Neither release proves "shared.two" together with "OldAPI", but safe-lib
+    # does ship "shared": unproven, so a summary note rather than a finding.
+    assert findings == []
+    if mode == "full":
+        assert findings.unverified_imports == {"shared": "related_provider_paths"}
 
 
 def test_editable_installed_record_with_wrong_version_remains_rejected(
@@ -660,10 +669,12 @@ def test_unknown_unrelated_provider_does_not_prove_hallucination(
     repo, path = _project(tmp_path, "import rabbitbus\n", "company-sdk==1.0")
     _isolate(monkeypatch, {"company-sdk": answer})
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
-        (dep.RULE_ID_UNDECLARED, "rabbitbus")
+    # Not proof (company-sdk is uninspected), but nothing declared resembles
+    # it either, so it stays visible as a MEDIUM "possible" finding.
+    assert [(f["rule_id"], f["severity"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "rabbitbus")
     ]
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings[0]["message"].startswith("Possible hallucinated import")
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
@@ -868,8 +879,8 @@ def test_unsupported_or_private_declarations_cannot_use_public_inventory(
     path = _write(repo / "main.py", "import acme_magic\n")
     fetched, _ = _isolate(monkeypatch, {"acme-sdk": _inventory("acme_magic.py")})
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert findings[0]["rule_id"] == dep.RULE_ID_UNDECLARED
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings == []
+    assert "acme_magic" in findings.unverified_imports
     assert fetched == []
 
 
@@ -976,9 +987,11 @@ def test_logging_handler_leaves_uncertainty_instead_of_proving_required_import(
     repo, path = _project(tmp_path, source)
     _isolate(monkeypatch, {"safe-lib": _inventory("safe_lib/__init__.py")})
     findings = _scan(mode, repo, path)
-    assert findings[0]["rule_id"] == dep.RULE_ID_UNDECLARED
-    assert findings[0]["message"].startswith("Unverified import")
-    assert "fallback cannot be proven" in findings[0]["message"]
+    assert findings == []
+    if mode == "full":
+        assert findings.unverified_imports == {
+            "ghost_required": "guarded_import_fallback_unproven"
+        }
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
@@ -1018,7 +1031,7 @@ def test_plain_module_from_one_provider_shadows_namespace_from_another(
     assert findings and findings[0]["rule_id"] == dep.RULE_ID_HALLUCINATION
 
 
-def test_plain_module_and_regular_package_collision_is_unverified(
+def test_plain_module_and_regular_package_collision_is_only_a_note(
     monkeypatch, tmp_path
 ):
     repo, path = _project(
@@ -1032,8 +1045,8 @@ def test_plain_module_and_regular_package_collision_is_unverified(
         },
     )
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert findings[0]["rule_id"] == dep.RULE_ID_UNDECLARED
-    assert findings[0]["message"].startswith("Unverified import")
+    assert findings == []
+    assert findings.unverified_imports == {"shared": "overlapping_provider_paths"}
 
 
 @pytest.mark.parametrize("variants_directory", [False, True])
@@ -1053,4 +1066,5 @@ def test_manifest_file_limit_does_not_prove_provider_absent(
     _isolate(monkeypatch, {"safe-lib": _inventory("safe_lib/__init__.py")})
     assert dep._provider_directory_metadata(repo)[2] is True
     findings = dep.scan_python_dependency_hallucinations(repo, [path])
-    assert findings[0]["rule_id"] == dep.RULE_ID_UNDECLARED
+    assert findings == []
+    assert findings.unverified_imports == {"actual_alias": "open_ended_declarations"}
