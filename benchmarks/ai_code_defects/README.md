@@ -28,9 +28,19 @@ Every checked-in case carries an explicit `language` label. Benchmark JSON
 reports per-language case counts and language-label coverage under
 `metadata.languages`.
 
+Every case runs in a temporary project copy. This keeps discovery of the benchmark
+host's Git history and CI workflows out of the result while retaining
+files inside the case, including its own security findings. Cases that compare
+changes receive the Git baseline declared in the manifest.
+The temporary directory must be outside a Git repository; choose a different
+`TMPDIR` if needed. Use a temporary directory without inherited Skylos configuration
+for comparisons; explicitly configured operator policy still applies.
+Source symlinks remain symlinks, and preparation refuses to
+seed baselines or dependency caches through symlinks.
+
 Registry-dependent dependency cases seed Skylos' normal dependency-version cache
-inside a temporary fixture copy, so benchmark results do not depend on live npm
-or Go proxy availability.
+inside that copy, so benchmark results do not depend on live npm or Go proxy
+availability.
 
 Run it with:
 
