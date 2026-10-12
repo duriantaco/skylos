@@ -793,6 +793,14 @@ and scanner scope.
 | Rendered Kubernetes exposure | one multi-document `*.yml` or `*.yaml` bundle plus a contracted Python source file | opt-in proof from an Ingress annotated `skylos.dev/network-scope: external` (or `public`) and `skylos.dev/backend-protocol: http` through its Service and workload; `SKY-DEP001` checks direct top-level FastAPI/Flask routes against `skylos.dev/source-file` and `skylos.dev/required-guards`, `SKY-DEP002` catches an effective Flask debugger, and `SKY-DEP003` catches effective reload mode |
 | GPU release contract | `.skylos/gpu-targets.yml`, Dockerfiles, CMake/CUDA build files, TensorRT source | static target-fleet checks for driver, compute-architecture, and serialized-engine compatibility; no hardware probing |
 
+With `--danger` or `-a`, a directory scan inside a Git worktree also checks
+that worktree's root `.github/workflows/*.yml` / `*.yaml` and `.gitlab-ci.yml`.
+For example, `skylos src --danger` checks the CI configuration that applies
+to `src` while keeping source, container and deployment analysis in `src`.
+Unrelated staged or unstaged edits do not narrow a full scan. Explicit diff
+filters still select changed configuration files; a single-file scan stays
+limited to that file. See [scan scope](./docs/cli-output.md#repository-ci-scope).
+
 ## Other Workflows
 
 These workflows cover narrower jobs: container images, Kubernetes deployment

@@ -3800,6 +3800,7 @@ class Skylos:
                             changed_files=changed_files,
                             ignore=project_ignore,
                             required_rules=required_config_rules,
+                            scan_paths=path if isinstance(path, (list, tuple)) else None,
                         )
                         if config_findings:
                             danger_findings.extend(config_findings)
@@ -4699,6 +4700,7 @@ class Skylos:
                     changed_files=changed_files,
                     ignore=project_ignore,
                     required_rules=required_config_rules,
+                    scan_paths=path if isinstance(path, (list, tuple)) else None,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
