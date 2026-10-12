@@ -173,9 +173,14 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
                     "complete": True,
                     "complete_with_unresolved_versions": True,
                     "no_supported_manifests": False,
+                    "complete_with_non_registry_sources": False,
                 }
                 complete = complete and isinstance(status, str) and status in expected
-                if (
+                if status == "complete_with_non_registry_sources":
+                    from skylos.core.sca_coverage import valid_non_registry_sca_receipt
+
+                    complete = complete and valid_non_registry_sca_receipt(coverage)
+                elif (
                     status == "complete_with_unresolved_versions"
                     and coverage.get("complete") is False
                 ):
@@ -226,6 +231,8 @@ def scan_receipt(result, *, analyzer_owned=False, full_scan=False) -> dict[str, 
         )
         and type(sca.get("lockfile_limitation_count", 0)) is int
         and not sca.get("lockfile_limitation_count", 0)
+        and type(sca.get("not_checked_lockfile_dependency_count", 0)) is int
+        and not sca.get("not_checked_lockfile_dependency_count", 0)
     )
     return {
         "complete": complete,

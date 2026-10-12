@@ -1,3 +1,5 @@
+import pytest
+
 from skylos.visitors.languages.typescript import scan_typescript_file
 
 
@@ -526,3 +528,240 @@ def test_storybook_csf_exports_are_framework_used(tmp_path):
 def test_same_exports_outside_story_file_are_not_marked(tmp_path):
     defs, fw = _scan(tmp_path, "calendar.tsx", STORY_CODE)
     assert "WeeksInMonth" not in _decorated_names(defs, fw)
+
+
+# Next.js metadata routes, project-gated conventions and tool config files.
+# vercel/commerce reported app/robots.ts, app/sitemap.ts and every
+# opengraph-image.tsx as dead at 100% confidence.
+
+NEXT_PACKAGE_JSON = '{"dependencies": {"next": "15.0.0", "react": "19.0.0"}}'
+
+
+def _next_project(tmp_path):
+    (tmp_path / "package.json").write_text(NEXT_PACKAGE_JSON, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    return tmp_path
+
+
+METADATA_ROUTE_CASES = [
+    ("app/robots.ts", "export default function robots() { return {}; }\n", "robots"),
+    (
+        "app/sitemap.ts",
+        "export default async function sitemap() { return []; }\n",
+        "sitemap",
+    ),
+    (
+        "app/manifest.ts",
+        "export default function manifest() { return {}; }\n",
+        "manifest",
+    ),
+    ("app/icon.tsx", "export default function Icon() { return null; }\n", "Icon"),
+    (
+        "src/app/icon2.tsx",
+        "export default function Icon2() { return null; }\n",
+        "Icon2",
+    ),
+    (
+        "app/apple-icon.tsx",
+        "export default function AppleIcon() { return null; }\n",
+        "AppleIcon",
+    ),
+    (
+        "app/shop/[slug]/opengraph-image.tsx",
+        "export default async function Image() { return null; }\n",
+        "Image",
+    ),
+    (
+        "app/twitter-image.jsx",
+        "const TwitterImage = () => null;\nexport default TwitterImage;\n",
+        "TwitterImage",
+    ),
+]
+
+
+@pytest.mark.parametrize(("relative", "code", "name"), METADATA_ROUTE_CASES)
+def test_nextjs_metadata_route_default_export_is_framework_root(
+    tmp_path, relative, code, name
+):
+    defs, fw = _scan(_next_project(tmp_path), relative, code)
+    assert name in _decorated_names(defs, fw)
+
+
+@pytest.mark.parametrize(("relative", "code", "name"), METADATA_ROUTE_CASES)
+def test_metadata_route_names_outside_nextjs_project_are_not_marked(
+    tmp_path, relative, code, name
+):
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"react": "19.0.0"}}', encoding="utf-8"
+    )
+    defs, fw = _scan(tmp_path, relative, code)
+    assert name not in _decorated_names(defs, fw)
+
+
+def test_nextjs_metadata_route_outside_app_dir_is_not_marked(tmp_path):
+    defs, fw = _scan(
+        _next_project(tmp_path),
+        "lib/robots.ts",
+        "export default function robots() { return {}; }\n",
+    )
+    assert "robots" not in _decorated_names(defs, fw)
+
+
+def test_nextjs_metadata_image_named_exports_are_framework_roots(tmp_path):
+    code = """\
+export const alt = "Shop";
+export const size = { width: 1200, height: 630 };
+export const contentType = "image/png";
+export const runtime = "edge";
+export function generateImageMetadata() { return [{ id: "a" }]; }
+export function unusedImageHelper() { return 1; }
+export default async function Image() { return null; }
+"""
+    defs, fw = _scan(_next_project(tmp_path), "app/opengraph-image.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert {
+        "alt",
+        "size",
+        "contentType",
+        "runtime",
+        "generateImageMetadata",
+        "Image",
+    } <= names
+    assert "unusedImageHelper" not in names
+
+
+def test_nextjs_sitemap_and_robots_keep_only_their_own_exports(tmp_path):
+    project = _next_project(tmp_path)
+    sitemap_defs, sitemap_fw = _scan(
+        project,
+        "app/sitemap.ts",
+        "export async function generateSitemaps() { return [{ id: 0 }]; }\n"
+        "export const alt = 'not an image';\n"
+        "export default async function sitemap() { return []; }\n",
+    )
+    sitemap_names = _decorated_names(sitemap_defs, sitemap_fw)
+    assert {"generateSitemaps", "sitemap"} <= sitemap_names
+    assert "alt" not in sitemap_names
+
+    robots_defs, robots_fw = _scan(
+        project,
+        "app/robots.ts",
+        "export function generateSitemaps() { return []; }\n"
+        "export default function robots() { return {}; }\n",
+    )
+    robots_names = _decorated_names(robots_defs, robots_fw)
+    assert "robots" in robots_names
+    assert "generateSitemaps" not in robots_names
+
+
+def test_nextjs_page_keeps_convention_exports_but_not_helpers(tmp_path):
+    code = """\
+export async function generateStaticParams() { return []; }
+export const revalidate = 60;
+export function unusedPageHelper() { return 1; }
+export default function BlogPage() { return null; }
+"""
+    defs, fw = _scan(_next_project(tmp_path), "app/blog/[slug]/page.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert {"generateStaticParams", "revalidate", "BlogPage"} <= names
+    assert "unusedPageHelper" not in names
+
+
+def test_nextjs_detected_from_next_config_without_package_dependency(tmp_path):
+    (tmp_path / "next.config.mjs").write_text("export default {};\n", encoding="utf-8")
+    defs, fw = _scan(
+        tmp_path, "app/robots.js", "export default function robots() { return {}; }\n"
+    )
+    assert "robots" in _decorated_names(defs, fw)
+
+
+def test_nextjs_monorepo_app_uses_its_own_project_root(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"devDependencies": {"next": "15.0.0"}}', encoding="utf-8"
+    )
+    web = tmp_path / "apps" / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text(NEXT_PACKAGE_JSON, encoding="utf-8")
+    defs, fw = _scan(
+        tmp_path,
+        "apps/web/app/robots.ts",
+        "export default function robots() { return {}; }\n",
+    )
+    assert "robots" in _decorated_names(defs, fw)
+
+    # Relative to the only Next.js root, a package's own app/ dir is not the
+    # App Router, so its icon.tsx is ordinary code.
+    defs, fw = _scan(
+        tmp_path,
+        "packages/ui/app/icon.tsx",
+        "export default function Icon() { return null; }\n",
+    )
+    assert "Icon" not in _decorated_names(defs, fw)
+
+
+def test_nextjs_pages_router_config_and_get_initial_props(tmp_path):
+    project = _next_project(tmp_path)
+    api_defs, api_fw = _scan(
+        project,
+        "pages/api/upload.ts",
+        "export const config = { api: { bodyParser: false } };\n"
+        "export default function handler(req, res) { res.end(); }\n",
+    )
+    assert {"config", "handler"} <= _decorated_names(api_defs, api_fw)
+
+    app_defs, app_fw = _scan(
+        project,
+        "pages/_app.tsx",
+        "export function reportWebVitals(metric) { console.log(metric); }\n"
+        "export async function getInitialProps() { return {}; }\n"
+        "export default function MyApp() { return null; }\n",
+    )
+    assert {"reportWebVitals", "getInitialProps", "MyApp"} <= _decorated_names(
+        app_defs, app_fw
+    )
+
+
+def test_pages_config_export_outside_nextjs_project_is_not_marked(tmp_path):
+    defs, fw = _scan(
+        tmp_path,
+        "pages/api/upload.ts",
+        "export const config = { api: { bodyParser: false } };\n",
+    )
+    assert "config" not in _decorated_names(defs, fw)
+
+
+def test_nextjs_root_files_keep_their_hook_exports(tmp_path):
+    project = _next_project(tmp_path)
+    mdx_defs, mdx_fw = _scan(
+        project,
+        "mdx-components.tsx",
+        "export function useMDXComponents(components) { return components; }\n",
+    )
+    assert "useMDXComponents" in _decorated_names(mdx_defs, mdx_fw)
+
+    client_defs, client_fw = _scan(
+        project,
+        "src/instrumentation-client.ts",
+        "export function onRouterTransitionStart(url) { console.log(url); }\n",
+    )
+    assert "onRouterTransitionStart" in _decorated_names(client_defs, client_fw)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["next.config.mjs", "next.config.ts", "postcss.config.mjs", "vite.config.ts"],
+)
+def test_tool_config_default_export_identifier_is_framework_root(tmp_path, filename):
+    # create-next-app writes `const nextConfig = {...}; export default nextConfig;`
+    defs, fw = _scan(
+        tmp_path, filename, "const config = { a: 1 };\nexport default config;\n"
+    )
+    assert "config" in _decorated_names(defs, fw)
+
+
+def test_default_export_identifier_in_ordinary_file_is_not_framework_root(tmp_path):
+    defs, fw = _scan(
+        tmp_path,
+        "lib/settings.ts",
+        "const config = { a: 1 };\nexport default config;\n",
+    )
+    assert "config" not in _decorated_names(defs, fw)

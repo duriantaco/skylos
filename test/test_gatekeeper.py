@@ -1,5 +1,8 @@
 import subprocess
 from subprocess import CalledProcessError
+
+import pytest
+
 import skylos.core.gatekeeper as gk
 
 
@@ -403,6 +406,267 @@ def test_check_gate_ai_defects_can_use_dedicated_threshold():
     config = {"gate": {"max_quality": 0, "max_ai_defects": 1}}
 
     passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
+
+
+def _ai_defect(rule_id, severity, line=1, file="app.py"):
+    return {
+        "rule_id": rule_id,
+        "severity": severity,
+        "file": file,
+        "line": line,
+        "message": f"{rule_id} message",
+    }
+
+
+HALLUCINATED_DEPENDENCY = _ai_defect("SKY-D222", "CRITICAL", line=3)
+PHANTOM_CALL = _ai_defect("SKY-L012", "CRITICAL", line=7)
+DEFAULT_AI_POLICY_HINT = (
+    "Critical AI-code issues fail the gate by default. To allow them, set "
+    "block_ai_defect_severities = [] under [tool.skylos.gate] in pyproject.toml."
+)
+
+
+def test_check_gate_one_critical_ai_defect_blocks_by_default():
+    passed, reasons = gk.check_gate({"ai_defects": [HALLUCINATED_DEPENDENCY]}, {})
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-D222 dependency hallucination)"]
+    assert reasons[0].issues == [HALLUCINATED_DEPENDENCY]
+    assert reasons[0].hint == DEFAULT_AI_POLICY_HINT
+
+
+def test_check_gate_hallucinated_dependency_and_phantom_call_block_by_default():
+    results = {
+        "danger": [],
+        "ai_defects": [HALLUCINATED_DEPENDENCY, PHANTOM_CALL],
+        "quality": [],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(results, {"gate": {"max_quality": 10}})
+
+    assert passed is False
+    assert reasons == [
+        (
+            "2 critical AI-code issues "
+            "(SKY-D222 dependency hallucination, SKY-L012 phantom symbol reference)"
+        )
+    ]
+
+
+def test_check_gate_severity_matching_ignores_case():
+    finding = _ai_defect("SKY-L023", "critical")
+
+    passed, reasons = gk.check_gate({"ai_defects": [finding]}, {})
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L023 phantom decorator)"]
+
+
+def test_check_gate_high_ai_defects_stay_under_the_count_limit_by_default():
+    results = {"ai_defects": [_ai_defect("SKY-D224", "HIGH")]}
+
+    passed, reasons = gk.check_gate(results, {})
+
+    assert passed is True
+    assert reasons == []
+
+
+def test_check_gate_empty_block_ai_defect_severities_restores_count_only_gate():
+    results = {"ai_defects": [HALLUCINATED_DEPENDENCY, PHANTOM_CALL]}
+    config = {"gate": {"block_ai_defect_severities": []}}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
+
+
+def test_check_gate_block_ai_defect_severities_can_add_high():
+    high = _ai_defect("SKY-D225", "HIGH")
+    medium = _ai_defect("SKY-A101", "MEDIUM")
+    config = {"gate": {"block_ai_defect_severities": ["critical", "HIGH"]}}
+
+    passed, reasons = gk.check_gate({"ai_defects": [high, medium]}, config)
+
+    assert passed is False
+    assert reasons == [
+        "1 high AI-code issue (SKY-D225 dependency version hallucination)"
+    ]
+    assert reasons[0].issues == [high]
+    assert reasons[0].hint == (
+        "AI-code issues at these severities fail the gate (block_ai_defect_severities = "
+        '["CRITICAL", "HIGH"] under [tool.skylos.gate]). Edit that list to change it; '
+        "[] turns it off."
+    )
+
+
+def test_check_gate_mixed_blocking_severities_share_one_reason():
+    config = {"gate": {"block_ai_defect_severities": ["CRITICAL", "HIGH"]}}
+    results = {"ai_defects": [PHANTOM_CALL, _ai_defect("SKY-D224", "HIGH")]}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert reasons == [
+        (
+            "2 critical/high AI-code issues "
+            "(SKY-L012 phantom symbol reference, SKY-D224 API signature hallucination)"
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "value", ["", "HIGH", "none", True, 0, None, ["SEVERE"], {"CRITICAL": True}]
+)
+def test_check_gate_unusable_block_ai_defect_severities_keeps_default(value):
+    config = {"gate": {"block_ai_defect_severities": value}}
+
+    passed, reasons = gk.check_gate({"ai_defects": [PHANTOM_CALL]}, config)
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L012 phantom symbol reference)"]
+
+
+def test_check_gate_explicit_max_ai_defects_still_gets_the_severity_rule():
+    results = {"ai_defects": [PHANTOM_CALL, _ai_defect("SKY-A101", "MEDIUM")]}
+
+    passed, reasons = gk.check_gate(results, {"gate": {"max_ai_defects": 5}})
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L012 phantom symbol reference)"]
+
+
+def test_check_gate_explicit_max_ai_defects_and_severity_rule_both_report():
+    medium = _ai_defect("SKY-A101", "MEDIUM")
+    results = {"ai_defects": [PHANTOM_CALL, medium]}
+
+    passed, reasons = gk.check_gate(results, {"gate": {"max_ai_defects": 0}})
+
+    assert passed is False
+    assert reasons == [
+        "1 critical AI-code issue (SKY-L012 phantom symbol reference)",
+        "2 AI-defect issues (max: 0)",
+    ]
+    assert reasons[1].issues == [PHANTOM_CALL, medium]
+
+
+def test_check_gate_count_reason_is_dropped_when_severity_reason_lists_everything():
+    passed, reasons = gk.check_gate(
+        {"ai_defects": [PHANTOM_CALL]}, {"gate": {"max_ai_defects": 0}}
+    )
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L012 phantom symbol reference)"]
+
+
+def test_check_gate_opt_out_keeps_an_explicit_max_ai_defects():
+    config = {"gate": {"block_ai_defect_severities": [], "max_ai_defects": 0}}
+
+    passed, reasons = gk.check_gate({"ai_defects": [PHANTOM_CALL]}, config)
+
+    assert passed is False
+    assert reasons == ["1 AI-defect issue (max: 0)"]
+    assert reasons[0].hint is None
+
+
+def test_check_gate_non_ai_critical_findings_keep_their_rules():
+    critical_quality = {
+        "rule_id": "SKY-Q301",
+        "severity": "CRITICAL",
+        "file": "app.py",
+        "line": 4,
+    }
+    passed, reasons = gk.check_gate({"quality": [critical_quality]}, {})
+    assert passed is True
+    assert reasons == []
+
+    critical_security = {"rule_id": "SKY-D212", "severity": "CRITICAL", "file": "a.py"}
+    config = {"gate": {"block_ai_defect_severities": []}}
+    passed, reasons = gk.check_gate({"danger": [critical_security]}, config)
+    assert passed is False
+    assert reasons == ["1 critical security issue"]
+
+
+def test_check_gate_strict_mode_reason_is_unchanged_by_ai_severity_rule():
+    passed, reasons = gk.check_gate({"ai_defects": [PHANTOM_CALL]}, {}, strict=True)
+
+    assert passed is False
+    assert reasons == ["Strict mode: 1 issue found"]
+
+
+def test_check_gate_ai_severity_rule_covers_ai_authored_files():
+    finding = _ai_defect("SKY-L012", "CRITICAL", file="ai.py")
+    config = {"gate": {"agent": {"max_ai_defects": 5}}}
+
+    passed, reasons = gk.check_gate(
+        {"ai_defects": [finding]}, config, provenance=FakeProvenance(["ai.py"])
+    )
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L012 phantom symbol reference)"]
+
+
+def test_ai_defect_reason_names_at_most_three_rules():
+    findings = [
+        _ai_defect(rule_id, "CRITICAL", line=index)
+        for index, rule_id in enumerate(
+            ["SKY-D222", "SKY-L012", "SKY-L023", "SKY-D224", "SKY-L012"], start=1
+        )
+    ]
+
+    passed, reasons = gk.check_gate({"ai_defects": findings}, {})
+
+    assert passed is False
+    assert reasons == [
+        (
+            "5 critical AI-code issues (SKY-D222 dependency hallucination, "
+            "SKY-L012 phantom symbol reference, SKY-L023 phantom decorator, "
+            "1 more rule)"
+        )
+    ]
+
+
+def test_ai_defect_reason_leaves_out_unsafe_rule_ids():
+    finding = _ai_defect("SKY-L012 <img src=x>", "CRITICAL")
+
+    passed, reasons = gk.check_gate({"ai_defects": [finding]}, {})
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue"]
+
+
+def test_synced_policy_owns_block_ai_defect_severities(tmp_path):
+    from skylos.config import load_config
+
+    synced = tmp_path / ".skylos"
+    synced.mkdir()
+    (synced / "config.yaml").write_text("gate:\n  max_high: 0\n")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.skylos.gate]\nblock_ai_defect_severities = []\n"
+    )
+
+    passed, reasons = gk.check_gate(
+        {"ai_defects": [PHANTOM_CALL]}, load_config(tmp_path)
+    )
+
+    assert passed is False
+    assert reasons == ["1 critical AI-code issue (SKY-L012 phantom symbol reference)"]
+
+
+def test_pyproject_block_ai_defect_severities_opt_out_reaches_the_gate(tmp_path):
+    from skylos.config import load_config
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.skylos.gate]\nblock_ai_defect_severities = []\n"
+    )
+
+    passed, reasons = gk.check_gate(
+        {"ai_defects": [PHANTOM_CALL]}, load_config(tmp_path)
+    )
 
     assert passed is True
     assert reasons == []
@@ -1018,6 +1282,39 @@ def test_advisory_gate_lists_issues(capsys):
     assert rc == 0
     assert "   • 1 high severity issue (max: 0)\n" in out
     assert "SKY-D290  .github/workflows/pr.yml:2  SKY-D290 message" in out
+
+
+def test_failed_gate_names_critical_ai_defects_and_the_policy(capsys):
+    results = {
+        "analysis_summary": {"grade_categories": ["security", "ai_defects"]},
+        "danger": [],
+        "ai_defects": [HALLUCINATED_DEPENDENCY, PHANTOM_CALL],
+    }
+
+    rc, out = _gate_output(capsys, result=results, config={})
+
+    assert rc == 1
+    assert (
+        "Quality Gate: FAILED\n   • 2 critical AI-code issues (SKY-D222 dependency "
+        "hallucination, SKY-L012 phantom symbol reference)\n"
+    ) in out
+    assert "       SKY-D222  app.py:3  SKY-D222 message\n" in out
+    assert "       SKY-L012  app.py:7  SKY-L012 message\n" in out
+    assert f"       {DEFAULT_AI_POLICY_HINT}\n" in out
+
+
+def test_summary_markdown_shows_the_ai_defect_policy_hint():
+    results = {"ai_defects": [PHANTOM_CALL]}
+    passed, reasons = gk.check_gate(results, {})
+
+    markdown = gk.build_summary_markdown(results, passed, reasons)
+
+    assert "**Result: ❌ FAILED**" in markdown
+    assert (
+        "- 1 critical AI-code issue (SKY-L012 phantom symbol reference)\n"
+        "  - `SKY-L012  app.py:7  SKY-L012 message`\n"
+        f"  - {DEFAULT_AI_POLICY_HINT}"
+    ) in markdown
 
 
 def test_check_gate_reasons_carry_counted_issues():

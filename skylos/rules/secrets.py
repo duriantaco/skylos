@@ -7,6 +7,7 @@ import json
 import re
 from bisect import bisect_right
 from dataclasses import dataclass
+from functools import lru_cache
 from hashlib import blake2s
 from html import unescape
 from html.parser import HTMLParser
@@ -429,6 +430,15 @@ YARN_DEPENDENCY_RE = re.compile(
 )
 
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"
+# A secret-like name before a generic high-entropy value on its line.
+_SECRET_NAME_NEARBY_RE = re.compile(
+    r"(?i)key|token|secret|passw|pwd|auth|credential|private|api|signature"
+    r"|session|cookie|(?<![a-z])sig(?![a-z])"
+)
+# Names that keep a digest-shaped (SRI) value reported.
+_SRI_SECRET_NAME_RE = re.compile(
+    r"(?i)key|token|secret|passw|pwd|auth|credential|private|session|cookie"
+)
 DEFAULT_MIN_ENTROPY = 3.9
 _ORDERED_ASCII_RUN_MIN_LENGTH = 8
 _ORDERED_CHARACTER_SET_PUNCTUATION = frozenset("-._~+/=")
@@ -595,11 +605,28 @@ def _keyed_generic_candidates(line_content: str):
         key = _keyed_match_name(keyed_match)
         if secret_shapes.is_location_value(key, keyed_token):
             continue  # a URL: its own parts are scanned as bare tokens
+        if secret_shapes.is_file_path_value(keyed_token) or (
+            secret_shapes.is_public_url_value(keyed_token)
+            and not _has_random_component(keyed_token)
+        ):
+            # A file path, or a URL without credentials. A secret-named URL
+            # with a random component (a capability link) stays reported.
+            continue
         keyed_spans.append((keyed_start, keyed_end))
         if _keyed_value_is_not_secret(key, keyed_token):
             continue
         candidates.append((keyed_start, 0, keyed_token, False, keyed_end))
     return candidates, keyed_spans
+
+
+_RANDOM_COMPONENT_RE = re.compile(r"[A-Za-z0-9_-]{20,}")
+
+
+def _has_random_component(value: str) -> bool:
+    return any(
+        _has_bare_token_charset_mix(part) and _entropy(part) >= DEFAULT_MIN_ENTROPY
+        for part in _RANDOM_COMPONENT_RE.findall(value)
+    )
 
 
 def _is_covered_by_span(token: str, start: int, *span_groups) -> bool:
@@ -873,8 +900,31 @@ def _find_generic_values(
         )
     )
 
-    for start, _, token, is_bare, source_end in sorted(candidates):
-        yield token, is_bare, start, source_end
+    in_lockfile = _is_lockfile_name(rel_name)
+    sri_name_at = -1  # searched once, when a digest-shaped value needs it
+    for start, priority, token, is_bare, source_end in sorted(candidates):
+        keyed = priority == 0
+        if not keyed and not in_lockfile and _is_valid_sri_token(token):
+            if sri_name_at == -1:
+                sri_name = _SRI_SECRET_NAME_RE.search(line_content)
+                sri_name_at = sri_name.start() if sri_name is not None else None
+            if sri_name_at is None or sri_name_at >= start:
+                # A CSP source or subresource-integrity hash ('sha256-<digest>'):
+                # a public digest of public content. Lockfiles keep their own
+                # structural checks; a secret- or session-named value stays.
+                continue
+        yield token, is_bare, start, source_end, keyed
+
+
+@lru_cache(maxsize=256)
+def _is_lockfile_name(rel_name: str) -> bool:
+    lowered = rel_name.lower()
+    return (
+        lowered.endswith(".lock")
+        or lowered in JSON_LOCKFILE_NAMES
+        or lowered == "pnpm-lock.yaml"
+        or _is_nuget_lockfile_name(rel_name)
+    )
 
 
 def _merge_spans(spans) -> list[tuple[int, int]]:
@@ -3826,6 +3876,7 @@ def _is_public_bare_token(file_lines, line_number, token, start, public_pem):
         secret_shapes.is_word_slug(token)
         or secret_shapes.is_evm_address(token)
         or secret_shapes.in_public_document_url(line, start, end)
+        or secret_shapes.in_public_location(line, start, end)
         or secret_shapes.in_ssh_public_key(line, start, end)
         or secret_shapes.covered(public_pem.get(line_number, ()), start, end)
         or secret_shapes.is_jwk_public_member(file_lines, line_number - 1, token)
@@ -4113,6 +4164,7 @@ def scan_ctx(
         in_tests = bool(
             IS_TEST_PATH.search(rel_path.replace("\\", "/"))
             or _JS_TEST_PATH.search(rel_path.replace("\\", "/"))
+            or rel_path.endswith("_test.go")
         )
 
         if in_tests:
@@ -4137,8 +4189,9 @@ def scan_ctx(
                     candidate for candidate in generic_values if not candidate[1]
                 )
 
+        first_secret_name_at = -1  # searched once, when a finding needs it
         for generic_value in generic_values:
-            extracted_token, is_bare, col_pos, source_end = generic_value
+            extracted_token, is_bare, col_pos, source_end, keyed = generic_value
             clean_token = extracted_token.strip()
 
             if not clean_token:
@@ -4181,6 +4234,26 @@ def scan_ctx(
                 "preview": _mask(clean_token),
                 "entropy": round(tok_entropy, 2),
             }
+            if not keyed and first_secret_name_at == -1:
+                first_secret_name = _SECRET_NAME_NEARBY_RE.search(line_content)
+                first_secret_name_at = (
+                    first_secret_name.start() if first_secret_name is not None else None
+                )
+            named = (
+                first_secret_name_at not in (-1, None)
+                and first_secret_name_at < col_pos
+            )
+            if (
+                not keyed
+                and not named
+                and not secret_shapes.in_url_credential(
+                    line_content, col_pos, col_pos + len(extracted_token)
+                )
+            ):
+                # Randomness alone, with no secret-like name on the line, is
+                # an unverified lead; CRITICAL stays for named secrets.
+                generic_finding["severity"] = "HIGH"
+                generic_finding["severity_reason"] = "no_secret_name"
             findings.append(generic_finding)
 
         if not in_tests:

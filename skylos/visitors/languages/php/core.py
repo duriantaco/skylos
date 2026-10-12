@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tree_sitter import Language, Parser
@@ -53,6 +54,148 @@ _IMPORT_EXPR_TYPES = {
     "require_once_expression",
 }
 
+_CLASS_NAME_NODE_TYPES = {"name", "qualified_name", "relative_name"}
+_CLASS_LIKE_DECLARATIONS = {
+    "class_declaration",
+    "interface_declaration",
+    "trait_declaration",
+    "enum_declaration",
+}
+
+# Type names that never refer to a user class: the relative class types, plus
+# the scalar and pseudo types PHPDoc spells in lower case. Skipping them keeps
+# an imported class named, say, ``Resource`` from matching ``@param resource``.
+_NON_CLASS_TYPE_NAMES = frozenset(
+    {
+        "self",
+        "static",
+        "parent",
+        "array",
+        "bool",
+        "boolean",
+        "callable",
+        "double",
+        "false",
+        "float",
+        "int",
+        "integer",
+        "iterable",
+        "list",
+        "mixed",
+        "never",
+        "noreturn",
+        "null",
+        "numeric",
+        "object",
+        "resource",
+        "scalar",
+        "string",
+        "true",
+        "void",
+    }
+)
+
+# PHPDoc tags whose first token is a type expression (PHPDoc, PHPStan and
+# Psalm spellings). PHP tooling treats an import named in a docblock type as
+# used, so these count as references to the class. Cross-reference tags
+# (``@see``, ``@uses``, PHPUnit ``@covers``, inline ``{@see}``/``{@link}``) are
+# documentation: like prose they keep an import, never the class itself.
+_DOCBLOCK_TYPE_TAGS = frozenset(
+    {
+        "assert",
+        "assert-if-false",
+        "assert-if-true",
+        "extends",
+        "implements",
+        "mixin",
+        "param",
+        "param-out",
+        "property",
+        "property-read",
+        "property-write",
+        "return",
+        "self-out",
+        "this-out",
+        "throws",
+        "use",
+        "var",
+        "template-extends",
+        "template-implements",
+        "template-use",
+    }
+)
+_DOCBLOCK_TEMPLATE_TAGS = frozenset(
+    {"template", "template-covariant", "template-contravariant"}
+)
+_DOCBLOCK_LINE_PREFIX_RE = re.compile(r"^[ \t]*\*(?!/)", re.MULTILINE)
+_DOCBLOCK_TAG_RE = re.compile(
+    r"(?:^|(?<=\s))@(?:phpstan-|psalm-|phan-)?([A-Za-z][\w-]*)", re.MULTILINE
+)
+_DOCBLOCK_METHOD_NAME_RE = re.compile(r"[A-Za-z_]\w*\s*\(")
+_DOCBLOCK_TEMPLATE_BOUND_RE = re.compile(r"[ \t]*\w+[ \t]+(?:of|as)[ \t]+")
+# Bounds a type whose brackets never close, so a typo cannot swallow the
+# rest of the docblock prose.
+_DOCBLOCK_MAX_TYPE_LENGTH = 4000
+_DOCBLOCK_NAME_RE = re.compile(
+    r"(?<![\w$\\-])\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*(?![\w\\-])"
+)
+_DOCBLOCK_OPENERS = "<({["
+_DOCBLOCK_CLOSERS = ">)}]"
+
+
+def _docblock_type_expression(text: str) -> str:
+    """Return the PHPDoc type at the start of ``text``.
+
+    A type ends at the first whitespace outside brackets, except around
+    ``|``, ``&`` and the ``:`` of a callable return type, so multi-line array
+    shapes, ``array<int, Foo>``, ``callable(Foo): Bar`` and ``Foo | null``
+    stay whole. A tag with nothing after it on its line has no type.
+    """
+    text = text.lstrip(" \t")[:_DOCBLOCK_MAX_TYPE_LENGTH]
+    depth = 0
+    for index, char in enumerate(text):
+        if char in _DOCBLOCK_OPENERS:
+            depth += 1
+        elif char in _DOCBLOCK_CLOSERS:
+            depth = max(depth - 1, 0)
+        elif char.isspace() and depth == 0:
+            before = text[:index].rstrip()[-1:]
+            after = text[index:].lstrip(" \t")[:1]
+            if before and (before in {"|", "&", ":"} or after in {"|", "&"}):
+                continue
+            return text[:index]
+    return text
+
+
+def _docblock_body(comment: str) -> str:
+    body = comment[3:] if comment.startswith("/**") else comment
+    if body.endswith("*/"):
+        body = body[:-2]
+    return _DOCBLOCK_LINE_PREFIX_RE.sub("", body)
+
+
+def _docblock_type_texts(comment: str):
+    """Yield the type expressions one docblock names."""
+    body = _docblock_body(comment)
+    expressions: list[str] = []
+    for match in _DOCBLOCK_TAG_RE.finditer(body):
+        tag = match.group(1).casefold()
+        rest = body[match.end() : match.end() + _DOCBLOCK_MAX_TYPE_LENGTH]
+        if tag in _DOCBLOCK_TYPE_TAGS:
+            expressions.append(_docblock_type_expression(rest))
+        elif tag in _DOCBLOCK_TEMPLATE_TAGS:
+            bound = _DOCBLOCK_TEMPLATE_BOUND_RE.match(rest)
+            if bound is not None:
+                expressions.append(_docblock_type_expression(rest[bound.end() :]))
+        elif tag == "method":
+            # ``@method [static] ReturnType name(ParamType $p)``: apart from
+            # the method name, every name in the signature is a type.
+            signature = rest.split("\n", 1)[0].split(")", 1)[0]
+            expressions.append(_DOCBLOCK_METHOD_NAME_RE.sub("(", signature))
+    for expression in expressions:
+        if expression and "://" not in expression:
+            yield expression
+
 
 def _get_parser(lang: Language) -> Parser:
     lang_id = id(lang)
@@ -88,6 +231,9 @@ class PhpCore:
         self._trait_precedence: dict[str, dict[str, str]] = {}
         self._trait_dispatch_refs: set[int] = set()
         self._trait_dispatch_calls: set[tuple[str, str]] = set()
+        # Methods whose first parameter declares a class type, e.g. a Laravel
+        # listener's ``handle(OrderShipped $event)``.
+        self.class_typed_first_parameter_methods: set[str] = set()
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -96,6 +242,10 @@ class PhpCore:
         else:
             self.tree = None
             self.root_node = None
+
+    def traits_of(self, class_name: str) -> list[str]:
+        """Resolved names of the traits ``class_name`` uses directly."""
+        return list(self._traits_by_owner.get(class_name, ()))
 
     def _get_text(self, node) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8", "ignore")
@@ -345,7 +495,7 @@ class PhpCore:
                 continue
 
             if child.type == "enum_declaration":
-                self._scan_enum(child, namespace=active_namespace)
+                self._scan_enum(child, namespace=active_namespace, aliases=aliases)
                 continue
 
             if child.type == "const_declaration":
@@ -354,6 +504,14 @@ class PhpCore:
                     current_class=None,
                     namespace=active_namespace,
                     is_exported=False,
+                )
+                self._scan_subtree_refs(
+                    child,
+                    namespace=active_namespace,
+                    current_class=current_class,
+                    current_callable=current_callable,
+                    class_bases=class_bases,
+                    aliases=aliases,
                 )
                 continue
 
@@ -371,7 +529,9 @@ class PhpCore:
             self._scan_refs_in_node(
                 child,
                 namespace=active_namespace,
-                current_class=current_class,
+                current_class=self._docblock_owner(
+                    child, namespace=active_namespace, default=current_class
+                ),
                 current_callable=current_callable,
                 class_bases=class_bases,
                 aliases=aliases,
@@ -384,6 +544,21 @@ class PhpCore:
                 class_bases=class_bases,
                 aliases=aliases,
             )
+
+    def _docblock_owner(self, node, *, namespace: str, default: str | None):
+        """The class a docblock documents, so it cannot reference itself.
+
+        A class docblock is the sibling just before the declaration, so
+        ``@method static Builder|Self query()`` or ``@mixin Self`` on the class
+        itself do not make the class used.
+        """
+        if node.type != "comment":
+            return default
+        sibling = node.next_named_sibling
+        if sibling is None or sibling.type not in _CLASS_LIKE_DECLARATIONS:
+            return default
+        name = self._node_name_text(self._child_by_type(sibling, "name"))
+        return self._qualified_symbol(name, namespace) if name else default
 
     def _scan_class_like(
         self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
@@ -398,57 +573,78 @@ class PhpCore:
         if node.type == "trait_declaration":
             self._trait_names.add(qualified)
 
-        bases: list[str] = []
-        for base_clause in self._children_of_type(node, "base_clause"):
-            for child in base_clause.children:
-                if child.type in {"name", "qualified_name"}:
-                    base_name = self._resolve_name(
-                        self._node_name_text(child),
-                        namespace=namespace,
-                        aliases=aliases,
-                        start_byte=child.start_byte,
-                    )
-                    bases.append(base_name)
-                    self._add_ref(base_name, child.start_byte, current_callable=None)
-        for iface_clause in self._children_of_type(node, "class_interface_clause"):
-            for child in iface_clause.children:
-                if child.type in {"name", "qualified_name"}:
-                    iface_name = self._resolve_name(
-                        self._node_name_text(child),
-                        namespace=namespace,
-                        aliases=aliases,
-                        start_byte=child.start_byte,
-                    )
-                    bases.append(iface_name)
-                    self._add_ref(iface_name, child.start_byte, current_callable=None)
-
+        bases = self._scan_class_heritage(node, namespace=namespace, aliases=aliases)
         class_def.base_classes = bases
         self.defs.append(class_def)
+        self._scan_attribute_refs(
+            node, namespace=namespace, current_class=qualified, aliases=aliases
+        )
 
         declaration_list = self._child_by_type(node, "declaration_list")
         if declaration_list is None:
             return
+        self._scan_class_members(
+            declaration_list,
+            namespace=namespace,
+            current_class=qualified,
+            class_bases=bases,
+            aliases=aliases,
+        )
 
+    def _scan_class_heritage(
+        self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
+    ) -> list[str]:
+        bases: list[str] = []
+        for clause_type in ("base_clause", "class_interface_clause"):
+            for clause in self._children_of_type(node, clause_type):
+                for child in clause.children:
+                    if child.type in {"name", "qualified_name"}:
+                        base_name = self._resolve_name(
+                            self._node_name_text(child),
+                            namespace=namespace,
+                            aliases=aliases,
+                            start_byte=child.start_byte,
+                        )
+                        bases.append(base_name)
+                        self._add_ref(
+                            base_name, child.start_byte, current_callable=None
+                        )
+        return bases
+
+    def _scan_attribute_refs(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        for attr_list in self._children_of_type(node, "attribute_list"):
+            self._scan_subtree_refs(
+                attr_list,
+                namespace=namespace,
+                current_class=current_class,
+                current_callable=None,
+                class_bases=[],
+                aliases=aliases,
+            )
+
+    def _scan_class_members(
+        self,
+        declaration_list,
+        *,
+        namespace: str,
+        current_class: str,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
         for child in declaration_list.children:
             if child.type == "use_declaration":
                 self._scan_trait_use(
                     child,
-                    current_class=qualified,
+                    current_class=current_class,
                     namespace=namespace,
                     aliases=aliases,
-                )
-                continue
-
-            if child.type == "property_declaration":
-                self._scan_property_declaration(child, current_class=qualified)
-                continue
-
-            if child.type == "const_declaration":
-                self._scan_constant_declaration(
-                    child,
-                    current_class=qualified,
-                    namespace=namespace,
-                    is_exported=self._is_publicish(child, default_public=False),
                 )
                 continue
 
@@ -456,18 +652,32 @@ class PhpCore:
                 self._scan_method(
                     child,
                     namespace=namespace,
-                    current_class=qualified,
-                    class_bases=bases,
+                    current_class=current_class,
+                    class_bases=class_bases,
                     aliases=aliases,
                 )
                 continue
 
-            self._scan_refs_in_node(
+            if child.type == "property_declaration":
+                self._scan_property_declaration(child, current_class=current_class)
+            elif child.type == "const_declaration":
+                self._scan_constant_declaration(
+                    child,
+                    current_class=current_class,
+                    namespace=namespace,
+                    is_exported=self._is_publicish(child, default_public=False),
+                )
+            elif child.type == "enum_case":
+                self._scan_enum_case(child, current_class=current_class)
+
+            # Types, attributes, docblocks and initializer expressions of the
+            # member are references even though the member is not a callable.
+            self._scan_subtree_refs(
                 child,
                 namespace=namespace,
-                current_class=qualified,
+                current_class=current_class,
                 current_callable=None,
-                class_bases=bases,
+                class_bases=class_bases,
                 aliases=aliases,
             )
 
@@ -524,7 +734,9 @@ class PhpCore:
                     alias = self._node_name_text(alias_nodes[-1])
                     self._trait_aliases.setdefault(current_class, {})[alias] = targets
 
-    def _scan_enum(self, node, *, namespace: str) -> None:
+    def _scan_enum(
+        self, node, *, namespace: str, aliases: dict[tuple[str, str], str]
+    ) -> None:
         name_node = self._child_by_type(node, "name")
         enum_name = self._node_name_text(name_node)
         if not enum_name:
@@ -537,24 +749,37 @@ class PhpCore:
             name_node.start_point[0] + 1,
         )
         enum_def.is_exported = True
+        bases = self._scan_class_heritage(node, namespace=namespace, aliases=aliases)
+        enum_def.base_classes = bases
         self.defs.append(enum_def)
+        self._scan_attribute_refs(
+            node, namespace=namespace, current_class=qualified, aliases=aliases
+        )
 
         declaration_list = self._child_by_type(node, "enum_declaration_list")
         if declaration_list is None:
             return
-        for case in self._children_of_type(declaration_list, "enum_case"):
-            case_node = self._child_by_type(case, "name")
-            case_name = self._node_name_text(case_node)
-            if not case_name:
-                continue
-            d = Definition(
-                f"{qualified}.{case_name}",
-                "variable",
-                self.file_path,
-                case_node.start_point[0] + 1,
-            )
-            d.is_exported = True
-            self.defs.append(d)
+        self._scan_class_members(
+            declaration_list,
+            namespace=namespace,
+            current_class=qualified,
+            class_bases=bases,
+            aliases=aliases,
+        )
+
+    def _scan_enum_case(self, case, *, current_class: str) -> None:
+        case_node = self._child_by_type(case, "name")
+        case_name = self._node_name_text(case_node)
+        if not case_name:
+            return
+        d = Definition(
+            f"{current_class}.{case_name}",
+            "variable",
+            self.file_path,
+            case_node.start_point[0] + 1,
+        )
+        d.is_exported = True
+        self.defs.append(d)
 
     def _scan_constant_declaration(
         self,
@@ -623,6 +848,8 @@ class PhpCore:
         self.defs.append(d)
 
         params = self._child_by_type(node, "formal_parameters")
+        if params is not None and self._first_parameter_has_class_type(params):
+            self.class_typed_first_parameter_methods.add(qualified)
         if params is not None:
             for child in params.children:
                 if child.type != "property_promotion_parameter":
@@ -640,6 +867,14 @@ class PhpCore:
                 prop_def.is_exported = self._is_publicish(child, default_public=False)
                 self.defs.append(prop_def)
 
+        self._scan_signature_refs(
+            node,
+            namespace=namespace,
+            current_class=current_class,
+            current_callable=qualified,
+            class_bases=class_bases,
+            aliases=aliases,
+        )
         body = self._child_by_type(node, "compound_statement")
         if body is not None:
             self._scan_block(
@@ -650,6 +885,157 @@ class PhpCore:
                 class_bases=class_bases,
                 aliases=aliases,
             )
+
+    def _scan_signature_refs(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        current_callable: str,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        """Record parameter, return and attribute types of a callable."""
+        for child in node.children:
+            if child.type in {"name", "compound_statement"}:
+                continue
+            self._scan_subtree_refs(
+                child,
+                namespace=namespace,
+                current_class=current_class,
+                current_callable=current_callable,
+                class_bases=class_bases,
+                aliases=aliases,
+            )
+
+    def _scan_subtree_refs(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        current_callable: str | None,
+        class_bases: list[str],
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        self._scan_refs_in_node(
+            node,
+            namespace=namespace,
+            current_class=current_class,
+            current_callable=current_callable,
+            class_bases=class_bases,
+            aliases=aliases,
+        )
+        self._scan_block(
+            node,
+            namespace=namespace,
+            current_class=current_class,
+            current_callable=current_callable,
+            class_bases=class_bases,
+            aliases=aliases,
+        )
+
+    def _add_type_ref(
+        self,
+        name: str,
+        start_byte: int,
+        *,
+        namespace: str,
+        current_class: str | None,
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        """Reference a class named in a type position.
+
+        A class naming itself (``self``, ``static`` or its own name in its
+        signatures) does not make the class used.
+        """
+        if not name or name.casefold() in _NON_CLASS_TYPE_NAMES:
+            return
+        target = self._resolve_name(
+            name,
+            namespace=namespace,
+            aliases=aliases,
+            start_byte=start_byte,
+        )
+        if target and target != current_class:
+            self._add_ref(target, start_byte, current_callable=None)
+
+    def _scan_type_node_ref(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        name_node = next(
+            (child for child in node.children if child.type in _CLASS_NAME_NODE_TYPES),
+            None,
+        )
+        if name_node is not None:
+            self._add_type_ref(
+                self._node_name_text(name_node),
+                name_node.start_byte,
+                namespace=namespace,
+                current_class=current_class,
+                aliases=aliases,
+            )
+
+    def _scan_docblock_refs(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_class: str | None,
+        aliases: dict[tuple[str, str], str],
+    ) -> None:
+        text = self._get_text(node)
+        if not text.startswith("/**"):
+            return
+        for expression in _docblock_type_texts(text):
+            for match in _DOCBLOCK_NAME_RE.finditer(expression):
+                self._add_type_ref(
+                    match.group(0),
+                    node.start_byte + match.start(),
+                    namespace=namespace,
+                    current_class=current_class,
+                    aliases=aliases,
+                )
+        # PHP tooling (PHP-CS-Fixer, PhpStorm) keeps an import that only
+        # documentation mentions, so prose that spells an imported class
+        # exactly keeps the import; it does not make the class itself used.
+        class_aliases = {alias for kind, alias in aliases if kind == "class"}
+        if not class_aliases:
+            return
+        for match in _DOCBLOCK_NAME_RE.finditer(text):
+            name = match.group(0)
+            first_segment = name.split("\\", 1)[0]
+            if first_segment in class_aliases:
+                self._add_ref(
+                    first_segment,
+                    node.start_byte + match.start(),
+                    current_callable=None,
+                )
+
+    def _first_parameter_has_class_type(self, params) -> bool:
+        first = next(
+            (
+                child
+                for child in params.named_children
+                if child.type.endswith("parameter")
+            ),
+            None,
+        )
+        type_node = first.child_by_field_name("type") if first is not None else None
+        if type_node is None:
+            return False
+        return any(
+            self._node_name_text(name_node).casefold() not in _NON_CLASS_TYPE_NAMES
+            for named_type in self._descendants_of_type(type_node, "named_type")
+            for name_node in named_type.named_children
+            if name_node.type in _CLASS_NAME_NODE_TYPES
+        )
 
     def _has_test_attribute(self, node, line: int) -> bool:
         for attr_list in self._children_of_type(node, "attribute_list"):
@@ -675,6 +1061,14 @@ class PhpCore:
         d.is_exported = self.is_test_file and func_name.startswith("test")
         self.defs.append(d)
 
+        self._scan_signature_refs(
+            node,
+            namespace=namespace,
+            current_class=None,
+            current_callable=qualified,
+            class_bases=[],
+            aliases=aliases,
+        )
         body = self._child_by_type(node, "compound_statement")
         if body is not None:
             self._scan_block(
@@ -843,7 +1237,16 @@ class PhpCore:
                 aliases=aliases,
             )
             member = self._node_name_text(name_node)
-            if owner and node.type != "member_access_expression":
+            # A member initializer or attribute reading ``self::X`` does not
+            # make its own class used.
+            initializer_self_reference = (
+                current_callable is None and owner == current_class
+            )
+            if (
+                owner
+                and node.type != "member_access_expression"
+                and not initializer_self_reference
+            ):
                 self._add_ref(owner, owner_node.start_byte, current_callable=None)
             self._add_ref(
                 f"{owner}.{member}" if owner and member else member,
@@ -852,6 +1255,42 @@ class PhpCore:
                 unresolved_member=owner is None,
                 trait_dispatch=current_class in self._trait_names
                 and owner == current_class,
+            )
+            return
+
+        if node.type in {"named_type", "attribute"}:
+            self._scan_type_node_ref(
+                node,
+                namespace=namespace,
+                current_class=current_class,
+                aliases=aliases,
+            )
+            return
+
+        if node.type == "binary_expression":
+            operator = node.child_by_field_name("operator")
+            right = node.child_by_field_name("right")
+            if (
+                operator is not None
+                and operator.type == "instanceof"
+                and right is not None
+                and right.type in _CLASS_NAME_NODE_TYPES
+            ):
+                self._add_type_ref(
+                    self._node_name_text(right),
+                    right.start_byte,
+                    namespace=namespace,
+                    current_class=current_class,
+                    aliases=aliases,
+                )
+            return
+
+        if node.type == "comment":
+            self._scan_docblock_refs(
+                node,
+                namespace=namespace,
+                current_class=current_class,
+                aliases=aliases,
             )
             return
 

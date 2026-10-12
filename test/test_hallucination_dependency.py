@@ -278,10 +278,13 @@ def test_hostile_nested_pyproject_does_not_abort_sibling_scan(monkeypatch, tmp_p
         repo, [nested_source, sibling_source]
     )
 
+    # The unreadable nested pyproject could declare anything, so the nested
+    # import is only a summary note; the sibling scope is still checked.
     assert [
         (finding["file"], finding["symbol"])
         for finding in _extract_single(findings, dep.RULE_ID_UNDECLARED)
-    ] == [(str(nested_source), "maturin"), (str(sibling_source), "maturin")]
+    ] == [(str(sibling_source), "maturin")]
+    assert findings.unverified_imports == {"maturin": "open_ended_declarations"}
 
 
 def test_pyproject_parser_value_error_is_ignored(monkeypatch, tmp_path):

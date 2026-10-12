@@ -283,6 +283,18 @@ def f():
         assert len(findings) == 1
         assert findings[0]["severity"] == "HIGH"
 
+    def test_extreme_cognitive_complexity_is_never_critical(self):
+        lines = ["def f():"]
+        for i in range(12):
+            indent = "    " * (i + 1)
+            lines.append(f"{indent}if x{i}:")
+        lines.append("    " * 13 + "pass")
+        rule = CognitiveComplexityRule(threshold=1)
+        findings = check_code(rule, "\n".join(lines))
+        assert len(findings) == 1
+        assert findings[0]["value"] > 50
+        assert findings[0]["severity"] == "HIGH"
+
     def test_async_function(self):
         code = """
 async def handler():

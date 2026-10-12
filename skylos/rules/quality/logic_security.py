@@ -3,6 +3,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from skylos.rules import secret_shapes
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._function_defaults import (
     annotation_accepts_ellipsis,
@@ -743,6 +744,18 @@ class UndefinedConfigRule(SkylosRule):
         if not env_var_name:
             return None
 
+        # ``os.getenv("ENABLE_X", "False")`` declares the flag's default; the
+        # read is where the setting is defined, not a reference to nothing.
+        # An explicit ``None`` default declares nothing.
+        default = node.args[1] if len(node.args) >= 2 else None
+        for kw in node.keywords:
+            if kw.arg == "default":
+                default = kw.value
+        if default is not None and not (
+            isinstance(default, ast.Constant) and default.value is None
+        ):
+            return None
+
         if env_var_name in self.vibe_dictionary.well_known_env_vars:
             return None
 
@@ -1327,6 +1340,139 @@ def _looks_like_real_secret(value: str, vibe_dictionary=None) -> bool:
     )
 
 
+# ``APP_URL``, ``GITHUB_PAT``: two or more UPPER_SNAKE words, each letters
+# with at most two trailing digits.
+_UPPER_SNAKE_NAME_RE = re.compile(r"[A-Z]+[0-9]{0,2}(?:_[A-Z]+[0-9]{0,2})+")
+# ``django.secret_key``: two or more dotted lowercase segments.
+_DOTTED_NAME_RE = re.compile(
+    r"[a-z]+[0-9]{0,2}(?:_[a-z]+[0-9]{0,2})*"
+    r"(?:\.[a-z]+[0-9]{0,2}(?:_[a-z]+[0-9]{0,2})*)+"
+)
+# ``${NAME}`` and ``{{ name }}``: the reference forms that never hold the
+# credential themselves.
+_STRICT_REFERENCE_RES = (
+    re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\}"),
+    re.compile(r"\{\{\s*(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\s*\}\}"),
+)
+# English words and acronyms stay below this; random runs reach it.
+_NAME_WORD_MAX_ENTROPY = 3.5
+# Any of these in a target name makes it hold a credential...
+_CREDENTIAL_NAME_STEMS = (
+    "key",
+    "secret",
+    "token",
+    "pass",
+    "pwd",
+    "auth",
+    "credential",
+    "private",
+    "signing",
+    "salt",
+    "session",
+    "jwt",
+    "api",
+)
+# ...otherwise one of these words makes it a location: ``DATABASE_URL``.
+_LOCATION_NAME_WORDS = frozenset(
+    {
+        "url",
+        "urls",
+        "uri",
+        "dsn",
+        "host",
+        "hostname",
+        "endpoint",
+        "connection",
+        "conn",
+        "address",
+        "addr",
+    }
+)
+# ``<X>_KEY`` names that hold a key, not the name of a setting.
+_SECRET_KEY_NAME_SUFFIXES = (
+    "secret_key",
+    "api_key",
+    "private_key",
+    "encryption_key",
+    "signing_key",
+    "master_key",
+    "access_key",
+    "hmac_key",
+)
+
+
+def _has_random_run(value: str) -> bool:
+    """Upper, lower and digits mixed together, or a high-entropy word."""
+    if (
+        any(c.isupper() for c in value)
+        and any(c.islower() for c in value)
+        and any(c.isdigit() for c in value)
+    ):
+        return True
+    return any(
+        _shannon_entropy(word) >= _NAME_WORD_MAX_ENTROPY
+        for word in re.split(r"[^A-Za-z0-9]+", value)
+    )
+
+
+def _is_location_name(target, var_name: str) -> bool:
+    """``DATABASE_URL``, ``DSN``, ``CONNECTION_STRING``: a plain name that
+    holds where something is, with no credential word in it."""
+    if not isinstance(target, ast.Name):
+        return False
+    lower = var_name.lower()
+    if any(stem in lower for stem in _CREDENTIAL_NAME_STEMS):
+        return False
+    return bool(set(re.split(r"[^a-z0-9]+", lower)) & _LOCATION_NAME_WORDS)
+
+
+def _is_reference_under(target, var_name: str, value: str) -> bool:
+    """A reference to a value kept elsewhere.
+
+    A location name (``DATABASE_URL = "$DATABASE_URL"``) accepts every form
+    ``secret_shapes.is_reference`` does. Under any other target ``$X`` and
+    ``%X%`` can be the credential itself (``APP_KEY = "$ADMIN2024"``), so
+    only ``${NAME}`` and ``{{ name }}`` count, with NAME in UPPER_SNAKE or a
+    dotted lowercase path and nothing random in it.
+    """
+    if _is_location_name(target, var_name):
+        return secret_shapes.is_reference(value)
+    stripped = value.strip()
+    for pattern in _STRICT_REFERENCE_RES:
+        match = pattern.fullmatch(stripped)
+        if match:
+            name = match.group("name")
+            return not _has_random_run(name) and bool(
+                _UPPER_SNAKE_NAME_RE.fullmatch(name) or _DOTTED_NAME_RE.fullmatch(name)
+            )
+    return False
+
+
+def _key_names_its_setting(target, var_name: str, value: str) -> bool:
+    """``APP_URL_KEY = "APP_URL"``: a plain name ending in ``_KEY`` whose
+    value is the rest of the name in UPPER_SNAKE with two or more words.
+    ``MASTER_KEY = "MASTER"`` and names for a key itself
+    (``JWT_SECRET_KEY``, ``STRIPE_API_KEY``) never qualify."""
+    if not isinstance(target, ast.Name):
+        return False
+    lower = var_name.lower()
+    if not lower.endswith("_key") or lower.endswith(_SECRET_KEY_NAME_SUFFIXES):
+        return False
+    return (
+        value == var_name[:-4].lstrip("_").upper()
+        and bool(_UPPER_SNAKE_NAME_RE.fullmatch(value))
+        and not _has_random_run(value)
+    )
+
+
+def _names_a_setting(target, var_name: str, value: str) -> bool:
+    """The literal names a setting rather than holding a credential: a
+    reference to one, or ``APP_URL_KEY = "APP_URL"``."""
+    return _is_reference_under(target, var_name, value) or _key_names_its_setting(
+        target, var_name, value
+    )
+
+
 def _lookup_key_name(node) -> str | None:
     """``os.getenv("X")`` / ``config.get("X")`` / ``os.environ["X"]`` -> "X"."""
     if isinstance(node, ast.Call):
@@ -1479,6 +1625,8 @@ class HardcodedCredentialRule(SkylosRule):
                     str_val = value.value
                     if not str_val or str_val.strip() == "":
                         return None
+                    if _names_a_setting(target, var_name, str_val):
+                        return findings or None
                     try:
                         if _is_env_lookup(value):
                             return None

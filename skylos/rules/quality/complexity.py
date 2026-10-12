@@ -98,12 +98,12 @@ class ComplexityRule(SkylosRule):
         if complexity <= self.threshold:
             return None
 
+        # A complexity number is not an exploitable defect, so it tops out at
+        # HIGH; CRITICAL is reserved for verified, exploitable issues.
         if complexity < 15:
             severity = "WARN"
-        elif complexity < 25:
-            severity = "HIGH"
         else:
-            severity = "CRITICAL"
+            severity = "HIGH"
 
         length = _func_length(node)
         mod = context.get("mod", "")
@@ -250,12 +250,11 @@ class CognitiveComplexityRule(SkylosRule):
         if complexity <= self.threshold:
             return None
 
+        # Capped at HIGH: complexity is not an exploitable defect.
         if complexity <= 30:
             severity = "MEDIUM"
-        elif complexity <= 50:
-            severity = "HIGH"
         else:
-            severity = "CRITICAL"
+            severity = "HIGH"
 
         mod = context.get("mod", "")
         if mod:

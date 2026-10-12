@@ -193,13 +193,13 @@ def test_private_alias_excludes_both_installed_and_real_names(version):
         {"tarball": "https://user@registry.npmjs.org/parent/-/parent-1.0.0.tgz"},
         {"tarball": "https://registry.npmjs.org:443/parent/-/parent-1.0.0.tgz"},
         {"tarball": "https://registry.npmjs.org/other/-/other-1.0.0.tgz"},
-        {"tarball": "file:vendor/parent.tgz"},
         {
             "type": "git",
             "repo": "https://example.invalid/parent.git",
             "commit": "fixture",
         },
-        {"type": "directory", "directory": "packages/parent"},
+        {"type": "directory", "directory": "packages/parent", "commit": "x"},
+        {"tarball": "file:vendor/parent.tgz", "registry": "https://x.invalid/"},
         {"integrity": "fixture", "registry": "https://private.example.invalid/"},
         {"integrity": "fixture", "path": "subdir"},
         {"integrity": "fixture", "unexpected": "source"},
@@ -365,7 +365,7 @@ def test_missing_graph_edge_does_not_hide_queryable_parent(section):
     [
         ("dev", "true"),
         ("optional", "false"),
-        ("os", "linux"),
+        ("os", {"name": "linux"}),
         ("cpu", [1]),
         ("libc", None),
         ("engines", {"node": 18}),
@@ -811,3 +811,429 @@ def test_safe_loader_globals_are_not_changed():
 
     assert yaml.safe_load("value: on")["value"] is True
     assert parse({"lockfileVersion": "9.0", "extra": "2026-09-15"}).unresolved == []
+
+
+# ---------------------------------------------------------------------------
+# Real-world reference forms (zod, vite, vitest, nuxt, svelte, pnpm lockfiles).
+# Each one used to leave the inventory incomplete. Local code is listed as
+# ``not_checked``; public packages are inventoried; remote non-registry code
+# stays unresolved.
+# ---------------------------------------------------------------------------
+
+
+def parse_text(text):
+    return parse_pnpm_lock(Path("pnpm-lock.yaml"), text=text)
+
+
+def not_checked(inventory):
+    return sorted(
+        (entry["reason"], entry.get("dependency") or entry.get("package"))
+        for entry in inventory.not_checked
+    )
+
+
+ZOD_V9 = """\
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      zod:
+        specifier: workspace:*
+        version: link:packages/zod
+
+  packages/bench:
+    devDependencies:
+      zod443:
+        specifier: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz
+        version: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz
+
+  packages/docs:
+    dependencies:
+      ai:
+        specifier: ^6.0.5
+        version: 6.0.5(zod@4.6.6)
+      zod:
+        specifier: workspace:*
+        version: link:../zod
+
+  packages/zod: {}
+
+packages:
+
+  ai@6.0.5:
+    resolution: {integrity: sha512-ai}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  zod443@https://registry.npmjs.org/zod/-/zod-4.4.3.tgz:
+    resolution: {integrity: sha512-zod, tarball: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz}
+    version: 4.4.3
+
+snapshots:
+
+  ai@6.0.5(zod@4.6.6):
+    dependencies:
+      zod: 4.6.6
+
+  zod443@https://registry.npmjs.org/zod/-/zod-4.4.3.tgz: {}
+"""
+
+
+def test_zod_public_tarball_alias_is_inventoried_as_the_real_package():
+    result = parse_text(ZOD_V9)
+    assert result.unresolved == []
+    identities = {(dep["name"], dep["version"]) for dep in result.dependencies}
+    assert identities == {("ai", "6.0.5"), ("zod", "4.4.3")}
+    zod = next(dep for dep in result.dependencies if dep["name"] == "zod")
+    assert zod["source_type"] == "npm_registry"
+    assert zod["dependency_kind"] == "direct"
+    assert zod["dependency_roots"] == ["packages/bench"]
+    assert "https://" not in json.dumps(result.dependencies)
+
+
+def test_zod_peer_resolved_to_workspace_package_is_not_checked():
+    result = parse_text(ZOD_V9)
+    assert not_checked(result) == [("workspace_package", "zod")]
+    assert result.not_checked[0]["source_type"] == "local"
+    assert "zod" in result.non_registry_names
+
+
+def test_bare_version_without_record_is_unresolved_unless_a_workspace_name():
+    text = ZOD_V9.replace("      zod: 4.6.6\n", "      other: 4.6.6\n")
+    result = parse_text(text)
+    assert reasons(result) == {"missing_locked_dependency"}
+    assert result.not_checked == []
+
+
+@pytest.mark.parametrize(
+    "resolution,version",
+    [
+        # Not the public registry: an external or private tarball.
+        (
+            "{integrity: sha512-zod, tarball: https://npm.example.invalid/zod/-/zod-4.4.3.tgz}",
+            "4.4.3",
+        ),
+        # Recorded version disagrees with the tarball.
+        (
+            "{integrity: sha512-zod, tarball: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz}",
+            "4.4.4",
+        ),
+        # Tarball name is not the canonical registry path.
+        (
+            "{integrity: sha512-zod, tarball: https://registry.npmjs.org/zod/-/other-4.4.3.tgz}",
+            "4.4.3",
+        ),
+        (
+            "{integrity: sha512-zod, tarball: 'https://registry.npmjs.org/zod/-/zod-4.4.3.tgz?x=1'}",
+            "4.4.3",
+        ),
+    ],
+)
+def test_unproven_tarball_alias_stays_unresolved(resolution, version):
+    text = ZOD_V9.replace(
+        "    resolution: {integrity: sha512-zod, tarball: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz}\n"
+        "    version: 4.4.3\n",
+        f"    resolution: {resolution}\n    version: {version}\n",
+    )
+    result = parse_text(text)
+    assert ("zod", "4.4.3") not in {
+        (dep["name"], dep["version"]) for dep in result.dependencies
+    }
+    assert "non_registry_source" in reasons(result)
+    assert "zod443" in result.non_registry_names
+
+
+VITE_V9 = """\
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+  excludeLinksFromLockfile: false
+
+catalogs:
+  default:
+    pathe:
+      specifier: ^2.0.3
+      version: 2.0.3
+
+overrides:
+  vite: workspace:*
+
+patchedDependencies:
+  chokidar@3.6.0: e17269188c54412478078f7ac7877c1d5a475a2f2438328e3a7e725513ccbf1f
+
+importers:
+
+  .:
+    devDependencies:
+      chokidar:
+        specifier: ^3.6.0
+        version: 3.6.0(patch_hash=e17269188c54412478078f7ac7877c1d5a475a2f2438328e3a7e725513ccbf1f)
+      pathe:
+        specifier: 'catalog:'
+        version: 2.0.3
+      plugin-vue:
+        specifier: ^6.0.8
+        version: '@vitejs/plugin-vue@6.0.8(vite@packages+vite)'
+
+  packages/vite:
+    dependencies:
+      sass-embedded-linux-x64:
+        specifier: ^1.105.1
+        version: 1.105.1
+
+  playground/css:
+    devDependencies:
+      '@vitejs/test-css-js-dep':
+        specifier: file:./css-js-dep
+        version: file:playground/css/css-js-dep
+      bundled-lib:
+        specifier: link:./bundled-lib
+        version: link:playground/css/bundled-lib
+      vendored:
+        specifier: file:./vendor/vendored-1.0.0.tgz
+        version: file:playground/css/vendor/vendored-1.0.0.tgz
+      outside:
+        specifier: link:../../../outside
+        version: link:../../../outside
+
+packages:
+
+  '@vitejs/plugin-vue@6.0.8':
+    resolution: {integrity: sha512-pv}
+    peerDependencies:
+      vite: ^5.0.0
+
+  '@vitejs/test-css-js-dep@file:playground/css/css-js-dep':
+    resolution: {directory: playground/css/css-js-dep, type: directory}
+
+  chokidar@3.6.0:
+    resolution: {integrity: sha512-ch}
+
+  pathe@2.0.3:
+    resolution: {integrity: sha512-pa}
+
+  sass-embedded-linux-x64@1.105.1:
+    resolution: {integrity: sha512-sa}
+    engines: {node: '>=14.0.0'}
+    cpu: [x64]
+    os: [linux]
+    libc: glibc
+
+  vendored@file:playground/css/vendor/vendored-1.0.0.tgz:
+    resolution: {integrity: sha512-ve, tarball: file:playground/css/vendor/vendored-1.0.0.tgz}
+    version: 1.0.0
+
+snapshots:
+
+  '@vitejs/plugin-vue@6.0.8(vite@packages+vite)':
+    dependencies:
+      vite: link:packages/vite
+
+  '@vitejs/test-css-js-dep@file:playground/css/css-js-dep':
+    dependencies:
+      pathe: 2.0.3
+
+  chokidar@3.6.0(patch_hash=e17269188c54412478078f7ac7877c1d5a475a2f2438328e3a7e725513ccbf1f): {}
+
+  pathe@2.0.3: {}
+
+  sass-embedded-linux-x64@1.105.1:
+    optional: true
+
+  vendored@file:playground/css/vendor/vendored-1.0.0.tgz: {}
+"""
+
+
+def test_vite_local_directories_tarballs_and_links_are_not_checked():
+    result = parse_text(VITE_V9)
+    assert result.unresolved == []
+    assert not_checked(result) == [
+        ("local_link", "bundled-lib"),
+        ("local_link", "outside"),
+        ("local_package", "@vitejs/test-css-js-dep@<local>"),
+        ("local_package", "vendored@<local>"),
+    ]
+    assert {entry["source_type"] for entry in result.not_checked} == {"local"}
+    assert {"@vitejs/test-css-js-dep", "vendored", "bundled-lib"} <= set(
+        result.non_registry_names
+    )
+    # Local record keys (``name@file:<path>``) are not copied into labels.
+    assert "css-js-dep@file" not in json.dumps(result.not_checked)
+    assert "vendor/" not in json.dumps(result.not_checked)
+
+
+def test_vite_patch_catalog_peer_workspace_and_string_libc_forms_resolve():
+    result = parse_text(VITE_V9)
+    by_name = {dep["name"]: dep for dep in result.dependencies}
+    assert set(by_name) == {
+        "@vitejs/plugin-vue",
+        "chokidar",
+        "pathe",
+        "sass-embedded-linux-x64",
+    }
+    assert by_name["chokidar"]["version"] == "3.6.0"
+    # pathe is reached directly (catalog:) and through a local package.
+    assert by_name["pathe"]["dependency_roots"] == ["", "playground/css"]
+    # ``vite: link:packages/vite`` from a snapshot is the workspace project.
+    plugin_edges = by_name["@vitejs/plugin-vue"]["dependencies"]
+    assert plugin_edges == [
+        {
+            "name": "vite",
+            "version_spec": "<local>",
+            "group": "dependencies",
+            "workspace": "packages/vite",
+        }
+    ]
+    assert by_name["sass-embedded-linux-x64"]["dependency_markers"]["libc"] == ["glibc"]
+
+
+def test_git_dependency_stays_unresolved_not_silently_unchecked():
+    text = VITE_V9.replace(
+        "  pathe@2.0.3:\n    resolution: {integrity: sha512-pa}\n",
+        "  pathe@2.0.3:\n    resolution: {type: git, repo: 'https://github.com/x/pathe.git', commit: abc}\n",
+    )
+    result = parse_text(text)
+    assert reasons(result) == {"non_registry_source"}
+    assert "pathe" not in {dep["name"] for dep in result.dependencies}
+    assert "pathe" in result.non_registry_names
+
+
+def test_pnpm_runtime_dependency_is_not_checked():
+    text = """\
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      node:
+        specifier: runtime:26.11.1
+        version: runtime:26.11.1
+
+packages:
+
+  node@runtime:26.11.1:
+    resolution:
+      type: variations
+      variants:
+        - resolution:
+            archive: tarball
+            integrity: sha256-fixture
+            type: binary
+            url: https://nodejs.org/download/release/v26.11.1/node-v26.11.1-linux-x64.tar.gz
+          targets:
+            - cpu: x64
+              os: linux
+
+snapshots:
+
+  node@runtime:26.11.1: {}
+"""
+    result = parse_text(text)
+    assert result.unresolved == []
+    assert result.dependencies == []
+    assert not_checked(result) == [("runtime", "node@runtime:26.11.1")]
+
+
+VITE_V6 = """\
+lockfileVersion: '6.0'
+
+importers:
+
+  .:
+    dependencies:
+      dep-that-imports:
+        specifier: file:./dep-that-imports
+        version: file:playground/dep-that-imports(typescript@5.2.2)
+
+  packages/svelte: {}
+
+packages:
+
+  /@sveltejs/kit@1.22.4(svelte@packages+svelte):
+    resolution: {integrity: sha512-kit}
+    dependencies:
+      svelte: link:packages/svelte
+    dev: false
+
+  /slash@3.0.0:
+    resolution: {integrity: sha512-sl}
+    dev: false
+
+  file:playground/dep-that-imports(typescript@5.2.2):
+    resolution: {directory: playground/dep-that-imports, type: directory}
+    id: file:playground/dep-that-imports
+    name: '@vitejs/test-dep-that-imports'
+    dependencies:
+      '@sveltejs/kit': 1.22.4(svelte@packages+svelte)
+      slash3: /slash@3.0.0
+    dev: false
+"""
+
+
+def test_v6_file_keys_snapshot_workspace_links_and_aliases():
+    result = parse_text(VITE_V6)
+    assert result.unresolved == []
+    assert not_checked(result) == [
+        ("local_package", "@vitejs/test-dep-that-imports@<local>")
+    ]
+    by_name = {dep["name"]: dep for dep in result.dependencies}
+    assert set(by_name) == {"@sveltejs/kit", "slash"}
+    # Children of a local package are still inventoried with its context.
+    assert by_name["slash"]["dependency_roots"] == [""]
+    assert by_name["slash"]["dependency_kind"] == "transitive"
+
+
+def test_v6_local_record_with_a_foreign_id_stays_unresolved():
+    text = VITE_V6.replace(
+        "    id: file:playground/dep-that-imports\n",
+        "    id: registry.example.invalid/other/1.0.0\n",
+    )
+    result = parse_text(text)
+    assert "non_registry_source" in reasons(result)
+    assert result.not_checked == []
+
+
+@pytest.mark.parametrize("version", [6, 9])
+def test_local_directory_and_file_tarball_records_with_exact_keys(version):
+    result = parse(
+        document(
+            version,
+            packages={
+                "parent@1.0.0": {
+                    "resolution": {"type": "directory", "directory": "pkgs/parent"}
+                },
+                "vendored@1.0.0": {
+                    "resolution": {"tarball": "file:vendor/vendored-1.0.0.tgz"}
+                },
+            },
+        )
+    )
+    assert result.dependencies == []
+    assert result.unresolved == []
+    assert sorted(
+        (entry["reason"], entry["name"], entry["version"])
+        for entry in result.not_checked
+    ) == [
+        ("local_package", "parent", "1.0.0"),
+        ("local_package", "vendored", "1.0.0"),
+    ]
+    assert result.non_registry_names == ["parent", "vendored"]
+
+
+def test_local_resolution_with_a_foreign_alternate_id_stays_unresolved():
+    result = parse(
+        document(
+            packages={
+                "parent@1.0.0": {
+                    "resolution": {"type": "directory", "directory": "pkgs/parent"},
+                    "id": "registry.example.invalid/parent/1.0.0",
+                }
+            },
+        )
+    )
+    assert result.not_checked == []
+    assert reasons(result) == {"non_registry_source"}

@@ -73,6 +73,10 @@ Expect finding arrays such as:
 
 The top level may also include `grade`, `provenance`, and
 `analysis_summary`. Empty arrays can be omitted, so use `.get(key, [])`.
+With `--gate` (or `--strict` without `--force`), `gate` holds `passed`,
+`reasons` (strings), `scope`, `status`, `forced`, the `verdict` (`passed`,
+`failed`, `incomplete`), its `exit_code`, and `reason_details` (`message`,
+`details`, `hint` per reason).
 
 ## Filtering
 
@@ -90,11 +94,22 @@ Use `--diff REF` for findings on changed lines. Use `--diff-base REF` for
 findings in changed files. Use `--baseline` after `skylos baseline .` to show
 only new findings.
 
+Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
+`*.min.js`, library banners). The count is in
+`analysis_summary.generated_files`; add `--include-generated` to scan them.
+
 ## Gating
 
-- `skylos . --gate`: apply `[tool.skylos.gate]` thresholds.
+- `skylos . --gate`: apply `[tool.skylos.gate]` thresholds. Any critical
+  AI-code issue fails by default; set `block_ai_defect_severities = []` to
+  turn that off.
 - `--strict`: fail on any finding.
 - `--force` / `-f`: bypass gate exit failure.
+- Every gate run ends with a verdict line and its reasons: `Quality Gate:
+  PASSED`, `Quality Gate: FAILED` (exit 1), or `Quality Gate: INCOMPLETE —
+  could not decide (exit 2)` when required analysis did not finish (the reason
+  names the check, the counts, and the fix; `--force` does not override it).
+  Concise, LLM, GitHub, and GitLab output print it on stderr.
 - `--format concise`: exits non-zero when findings exist.
 
 ## Useful Subcommands

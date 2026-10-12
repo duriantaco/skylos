@@ -187,6 +187,7 @@ IMPLICIT_DUNDERS = {
 }
 
 METACLASS_BASES = {"ABCMeta", "EnumMeta", "type"}
+DJANGO_CHOICES_BASES = {"TextChoices", "IntegerChoices"}
 
 
 def _is_intentional_discard_name(name: str) -> bool:
@@ -1553,8 +1554,12 @@ class Visitor(ast.NodeVisitor):
                 is_namedtuple = True
             if (
                 base_name in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag")
+                or base_name in DJANGO_CHOICES_BASES
+                or (base_name == "Choices" and isinstance(base, ast.Attribute))
                 or base_name in self.enum_classes
             ):
+                # Django's TextChoices/IntegerChoices are enums whose members
+                # are stored values, so an unreferenced member is not dead.
                 is_enum = True
             if base_name in (
                 "Base",

@@ -252,6 +252,11 @@ def cyclonedx_bom(
         {**limitation, "file": _relative_file(limitation["file"], root)}
         for limitation in receipt.get("lockfile_limitations", [])
     ]
+    if "lockfile_not_checked" in receipt:
+        receipt["lockfile_not_checked"] = [
+            {**entry, "file": _relative_file(entry["file"], root)}
+            for entry in receipt["lockfile_not_checked"]
+        ]
     receipt["ignored_lockfiles"] = [
         {
             **item,

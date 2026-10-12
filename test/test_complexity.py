@@ -49,7 +49,7 @@ def simple():
         assert findings[0]["value"] == 21
         assert findings[0]["severity"] == "HIGH"
 
-    def test_critical_complexity(self):
+    def test_very_high_complexity_is_never_critical(self):
         body = "\n".join([f"    if x == {i}: pass" for i in range(30)])
         code = f"def complex_critical(x):\n{body}"
 
@@ -58,7 +58,8 @@ def simple():
 
         assert len(findings) == 1
         assert findings[0]["value"] == 31
-        assert findings[0]["severity"] == "CRITICAL"
+        # CRITICAL is reserved for exploitable or verified issues.
+        assert findings[0]["severity"] == "HIGH"
 
     def test_async_function(self):
         body = "\n".join([f"    if x == {i}: pass" for i in range(10)])

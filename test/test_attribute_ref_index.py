@@ -18,7 +18,7 @@ from skylos.analyzer import Skylos
 from skylos.deadcode.evidence import build_dead_code_evidence
 from skylos.visitors.base import Definition
 from test.attribute_ref_oracle import _definition as _make_definition
-from test.attribute_ref_oracle import _number, _original, _scores
+from test.attribute_ref_oracle import _fresh_bytecode, _number, _original, _scores
 
 
 _definition = partial(_make_definition, Definition)
@@ -128,7 +128,7 @@ def test_near_threshold_scores_match_bit_for_bit(initial, weight):
     assert _scores(actual) == _scores(expected)
 
 
-def test_cache_keeps_numeric_types_signed_zero_and_nan_payloads_distinct():
+def test_cache_keeps_numeric_types_signed_zero_and_nan_payloads_distinct(monkeypatch):
     def quiet_nan(bits):
         return struct.unpack("!d", bytes.fromhex(bits))[0]
 
@@ -145,6 +145,9 @@ def test_cache_keeps_numeric_types_signed_zero_and_nan_payloads_distinct():
     index = _ready_index(contexts)
     for weight in [0, -0.0, math.inf, -math.inf, *values[3:5]]:
         for initial in values:
+            # Finite pairs add only in the oracle (the index reads its cache),
+            # so restart both loops before each NaN-bit comparison.
+            _fresh_bytecode(monkeypatch, _original, attribute_module._original_updates)
             expected = _definition("alpha.work", {"same_file_attr": initial})
             actual = copy.deepcopy(expected)
             weights = {"same_file_attr": weight}

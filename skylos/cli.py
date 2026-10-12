@@ -2565,6 +2565,17 @@ def _print_default_excludes(console):
     console.print(f"\n[muted]Total: {len(DEFAULT_EXCLUDE_FOLDERS)} folders[/muted]")
     console.print("\nUse --no-default-excludes to disable these exclusions")
     console.print("Use --include-folder <folder> to force include specific folders")
+    console.print("\n[brand]Generated and vendored files skipped by default:[/brand]")
+    console.print(
+        " Django migrations (<app>/migrations/*.py defining class Migration; "
+        "still read for references, security and secret findings kept)"
+    )
+    console.print(" static/**/lib/** JS/CSS, *.min.js, *.min.css")
+    console.print(" JS/CSS files that open with a vendored-library licence banner")
+    console.print(
+        "\nUse --include-generated (or \\[tool.skylos] include_generated = true) "
+        "to scan them"
+    )
 
 
 def _build_main_scan_context(args):
@@ -2613,6 +2624,69 @@ def _build_main_scan_context(args):
     )
 
 
+def _gate_outcome(result: dict, config: dict, args, *, provenance=None):
+    """The --gate decision: config limits, strict when --strict or configured."""
+    from skylos.core.gate_outcome import evaluate_gate
+
+    config = config or {}
+    gate_cfg = config.get("gate") or {}
+    strict = bool(getattr(args, "strict", False) or gate_cfg.get("strict", False))
+    return evaluate_gate(result, config, strict=strict, provenance=provenance)
+
+
+def _strict_outcome(result: dict):
+    """The --strict decision without --gate: any finding fails, no config."""
+    from skylos.core.gate_outcome import evaluate_gate
+
+    return evaluate_gate(result, {}, strict=True)
+
+
+def _gate_record(result: dict, config: dict, args, *, provenance=None):
+    """The result's top-level ``gate`` object, or None when no gate applies.
+
+    --gate checks the configured policy; --strict alone checks every finding,
+    except with --force, which skips that evaluation.
+    """
+    from skylos.core.gate_outcome import gate_record
+
+    force = bool(getattr(args, "force", False))
+    if bool(getattr(args, "gate", False)):
+        outcome = _gate_outcome(result, config, args, provenance=provenance)
+        return gate_record(outcome, scope="local_configured_policy", force=force)
+    if bool(getattr(args, "strict", False)) and not force:
+        return gate_record(
+            _strict_outcome(result), scope="local_strict_policy", force=force
+        )
+    return None
+
+
+def _machine_report_on_stdout(args) -> bool:
+    return bool(getattr(args, "json", False)) and not getattr(args, "output", None)
+
+
+def _announce_outcome(outcome, args, *, gate: bool = True) -> None:
+    """Print the verdict and reasons on stderr; stdout stays machine-readable.
+
+    JSON written to stdout carries the verdict in its ``gate`` object instead,
+    so nothing is added there.
+    """
+    if outcome is None or _machine_report_on_stdout(args):
+        return
+    from skylos.core.gate_outcome import outcome_text_lines
+
+    lines = outcome_text_lines(
+        outcome, force=bool(getattr(args, "force", False)), gate=gate
+    )
+    sys.stdout.flush()
+    print("\n".join(lines), file=sys.stderr)
+
+
+def _announce_incomplete_scan(result: dict, args) -> None:
+    from skylos.core.gate_outcome import incomplete_scan_outcome
+
+    _announce_outcome(incomplete_scan_outcome(result), args, gate=False)
+
+
 def _formatted_output_gate_exit_code(
     result: dict,
     config: dict,
@@ -2620,42 +2694,52 @@ def _formatted_output_gate_exit_code(
     *,
     provenance=None,
 ) -> int:
-    """Evaluate --gate for output modes that must not print gate UI."""
-    incomplete_exit_code = _analysis_incomplete_exit_code(result)
-    if incomplete_exit_code:
-        return incomplete_exit_code
+    """Evaluate --gate for output modes that must not print gate UI on stdout.
 
+    The verdict and its reasons go to stderr (JSON on stdout carries them in
+    its ``gate`` object instead).
+    """
     from contextlib import redirect_stdout
 
-    from skylos.core.gatekeeper import (
-        build_summary_markdown,
-        check_gate,
-        write_github_summary,
-    )
+    from skylos.core.gate_outcome import INCOMPLETE, PASSED
+    from skylos.core.gatekeeper import build_summary_markdown, write_github_summary
 
-    config = config or {}
-    gate_cfg = config.get("gate") or {}
-    strict = bool(getattr(args, "strict", False) or gate_cfg.get("strict", False))
-    passed, reasons = check_gate(result, config, strict=strict, provenance=provenance)
+    outcome = _gate_outcome(result, config, args, provenance=provenance)
 
     if bool(getattr(args, "summary", False)):
         # Without $GITHUB_STEP_SUMMARY the markdown is printed; keep it off the
         # machine-readable report on stdout.
         with redirect_stdout(sys.stderr):
-            write_github_summary(build_summary_markdown(result, passed, reasons))
+            write_github_summary(
+                build_summary_markdown(
+                    result,
+                    outcome.verdict == PASSED,
+                    outcome.reasons,
+                    incomplete=outcome.verdict == INCOMPLETE,
+                )
+            )
 
-    if passed or bool(getattr(args, "force", False)):
-        return 0
-    return 1
+    _announce_outcome(outcome, args)
+    return outcome.exit_code(force=bool(getattr(args, "force", False)))
+
+
+def _finish_formatted_scan(result: dict, config: dict, args, *, provenance=None) -> int:
+    """Exit code for --gate/--strict in non-rich output, verdict on stderr."""
+    if bool(getattr(args, "gate", False)):
+        return _formatted_output_gate_exit_code(
+            result, config, args, provenance=provenance
+        )
+    exit_code = _strict_scan_exit_code(result, args)
+    if bool(getattr(args, "strict", False)):
+        _announce_outcome(_strict_outcome(result), args)
+    elif exit_code == 2:
+        _announce_incomplete_scan(result, args)
+    return exit_code
 
 
 def _concise_scan_exit_code(
     result: dict, config: dict, args, *, provenance=None
 ) -> int:
-    incomplete_exit_code = _analysis_incomplete_exit_code(result)
-    if incomplete_exit_code:
-        return incomplete_exit_code
-
     if bool(getattr(args, "gate", False)):
         return _formatted_output_gate_exit_code(
             result,
@@ -2663,6 +2747,11 @@ def _concise_scan_exit_code(
             args,
             provenance=provenance,
         )
+
+    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    if incomplete_exit_code:
+        _announce_incomplete_scan(result, args)
+        return incomplete_exit_code
 
     if not bool(getattr(args, "force", False)):
         return 1 if _has_concise_findings(result) else 0
@@ -2721,7 +2810,9 @@ def _concise_line(
 
 
 def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
-    lines: list[str] = []
+    from skylos.reporting.assessment_display import dependency_coverage_lines
+
+    lines: list[str] = dependency_coverage_lines(result.get("analysis_summary"))
 
     for category, fallback_label in CONCISE_FINDING_CATEGORIES:
         items = list(result.get(category, []) or [])
@@ -2791,6 +2882,102 @@ def _analysis_incomplete_exit_code(result: dict) -> int:
     from skylos.core.gatekeeper import _analysis_incomplete_reasons
 
     return 2 if _analysis_incomplete_reasons(result) else 0
+
+
+def _print_rich_scan_outcome(console, result: dict, args) -> None:
+    """End a rich scan with the --strict verdict, or with why it is incomplete."""
+    from skylos.core.gate_outcome import incomplete_scan_outcome, print_outcome
+
+    if bool(getattr(args, "strict", False)):
+        print_outcome(
+            console,
+            _strict_outcome(result),
+            force=bool(getattr(args, "force", False)),
+        )
+        return
+    outcome = incomplete_scan_outcome(result)
+    if outcome is not None:
+        print_outcome(console, outcome, gate=False)
+
+
+def _print_rich_incomplete_gate(console, result: dict, args) -> int:
+    """--gate on an incomplete scan: the step summary if asked, then the verdict.
+
+    Incompleteness alone decides this outcome, so gate limits are not read.
+    """
+    from skylos.core.gate_outcome import incomplete_scan_outcome, print_outcome
+    from skylos.core.gatekeeper import build_summary_markdown, write_github_summary
+
+    outcome = incomplete_scan_outcome(result)
+    if outcome is None:
+        return 0
+    if bool(getattr(args, "summary", False)):
+        write_github_summary(
+            build_summary_markdown(result, False, outcome.reasons, incomplete=True)
+        )
+    print_outcome(console, outcome)
+    return outcome.exit_code()
+
+
+GATE_ERROR_VERDICT = "Quality Gate: ERROR — could not decide (exit 1)"
+DIFF_UNAVAILABLE_HINT = (
+    "Check that the base ref exists in this clone (fetch it; CI checkouts often "
+    "need full history), or pass a ref that exists to --diff or --diff-base."
+)
+
+
+def _gate_requested(args) -> bool:
+    return bool(getattr(args, "gate", False) or getattr(args, "strict", False))
+
+
+def _announce_gate_stop(console, args, reason: str, *, exit_code: int, hint=None):
+    """A --gate/--strict run that stopped early still ends with a verdict.
+
+    Rich and pretty output print on the console; every other format prints on
+    stderr because stdout belongs to its report.
+    """
+    from skylos.core.gatekeeper import INCOMPLETE_VERDICT
+
+    verdict = INCOMPLETE_VERDICT if exit_code == 2 else GATE_ERROR_VERDICT
+    lines = [verdict, f"   • {reason}"]
+    if hint:
+        lines.append(f"       {hint}")
+    if console is None or _is_main_machine_output(args):
+        sys.stdout.flush()
+        print("\n".join(lines), file=sys.stderr)
+        return
+    console.print(f"\n[bold red]{_escape_markup(verdict)}[/bold red]", soft_wrap=True)
+    for line in lines[1:]:
+        console.print(_escape_markup(line), soft_wrap=True)
+
+
+POLICY_BASE_HINT = (
+    "A compared gate reads its policy from the base ref, so that ref must exist "
+    "in this clone: fetch it (CI checkouts often need full history), or pass a "
+    "ref that exists to --diff or --diff-base."
+)
+
+
+def _exit_config_error(parser, args, message: str):
+    """Report a configuration error (exit 2); a gate also states its verdict."""
+    if not _gate_requested(args):
+        parser.error(message)
+    # Same usage and error lines as argparse, then the verdict last.
+    parser.print_usage(sys.stderr)
+    print(f"{parser.prog}: error: {message}", file=sys.stderr)
+    hint = POLICY_BASE_HINT if "PR policy base" in message else None
+    _announce_gate_stop(None, args, message, exit_code=2, hint=hint)
+    raise SystemExit(2)
+
+
+def _exit_diff_unavailable(args, message: str):
+    """Stop with exit 2 when the diff base cannot be read; gates say so."""
+    reason = f"Skylos diff unavailable: {message}"
+    if _gate_requested(args):
+        _announce_gate_stop(None, args, reason, exit_code=2, hint=DIFF_UNAVAILABLE_HINT)
+    else:
+        print(reason, file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _apply_config_driven_analysis_flags(args, project_cfg, console):
@@ -3249,15 +3436,13 @@ def _run_pre_analysis_steps(args, project_root, console):
                         f"(full scan on changed, defs/refs-only on rest)"
                     )
             else:
-                print(
-                    "Skylos diff unavailable: Git diff failed; check that the "
-                    "base ref exists in the scanned repository",
-                    file=sys.stderr,
+                _exit_diff_unavailable(
+                    args,
+                    "Git diff failed; check that the base ref exists in the "
+                    "scanned repository",
                 )
-                raise SystemExit(2)
         except FileNotFoundError:
-            print("Skylos diff unavailable: git is not installed", file=sys.stderr)
-            raise SystemExit(2) from None
+            _exit_diff_unavailable(args, "git is not installed")
 
     return SimpleNamespace(
         pytest_fixtures_ok=pytest_fixtures_ok,

@@ -30,6 +30,7 @@ from skylos.ui.dead_code_evidence import (
     dead_code_uncertainty_text,
 )
 from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
+from skylos.ui.scope_notes import scope_note_lines
 from skylos.ui.security_evidence import security_evidence_details
 
 CATEGORY_SPECS = (
@@ -149,6 +150,9 @@ def render_pretty_results(
     _print_architecture_advisory_status(console, result)
     _print_publisher_review_status(console, result)
     _print_assessment(console, result)
+    if not isinstance(result.get("assessment"), dict) or not result["assessment"]:
+        for detail in dependency_coverage_lines(result.get("analysis_summary")):
+            console.print(Text("  " + _sanitize_terminal_text(detail), style="dim"))
     summary = result.get("analysis_summary") or {}
     if summary.get("assessment_includes_filtered_findings") or summary.get("grade_includes_filtered_findings"):
         label = "Assessment" if result.get("assessment") else "Grade"
@@ -158,6 +162,8 @@ def render_pretty_results(
                 style="dim",
             )
         )
+    for note in scope_note_lines(result):
+        console.print(Text(f"  {_sanitize_terminal_text(note)}", style="dim"))
     _print_directory_rollups(console, result)
     console.print()
 

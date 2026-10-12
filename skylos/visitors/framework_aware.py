@@ -50,6 +50,8 @@ FRAMEWORK_DECORATORS = [
     "@*.shared_task",
     "@*.task",
     "@*.signal",
+    # ``@post_save.connect`` / ``@setup_logging.connect``: signal receivers
+    "@*.connect",
     "@*.lifespan",
     "@pre_load",
     "@post_load",
@@ -195,6 +197,9 @@ class FrameworkAwareVisitor:
         self.objects_passed_as_args = set()
         self.objects_created_by_call = set()
         self.django_path_converter_classes = set()
+        # class name -> method names DRF calls for SerializerMethodField
+        self._drf_method_fields = defaultdict(set)
+        self._class_base_simple_names = {}
         self._django_register_converter_names = set()
         self._django_urls_aliases = set()
         self._django_root_aliases = set()
@@ -340,6 +345,7 @@ class FrameworkAwareVisitor:
         for item in node.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.class_method_lines[(node.name, item.name)] = item.lineno
+        self._record_drf_method_fields(node)
         bases = self._base_names(node)
 
         is_view_like = False
@@ -467,7 +473,68 @@ class FrameworkAwareVisitor:
 
         self.generic_visit(node)
 
+    def _record_drf_method_fields(self, node: ast.ClassDef) -> None:
+        """``x = serializers.SerializerMethodField()`` makes DRF call
+        ``get_x`` (or the ``method_name=`` argument) by name."""
+        self._class_base_simple_names[node.name] = {
+            base.id if isinstance(base, ast.Name) else base.attr
+            for base in node.bases
+            if isinstance(base, (ast.Name, ast.Attribute))
+        }
+        for item in node.body:
+            if isinstance(item, ast.Assign):
+                targets, value = item.targets, item.value
+            elif isinstance(item, ast.AnnAssign) and item.value is not None:
+                targets, value = [item.target], item.value
+            else:
+                continue
+            if not isinstance(value, ast.Call):
+                continue
+            func = value.func
+            name = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else getattr(func, "id", None)
+            )
+            if name != "SerializerMethodField":
+                continue
+            method_name = None
+            for keyword in value.keywords:
+                if keyword.arg == "method_name" and isinstance(
+                    keyword.value, ast.Constant
+                ):
+                    method_name = keyword.value.value
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    method = (
+                        method_name
+                        if isinstance(method_name, str)
+                        else f"get_{target.id}"
+                    )
+                    self._drf_method_fields[node.name].add(method)
+
+    def _mark_drf_method_fields(self) -> None:
+        for class_name, methods in self._drf_method_fields.items():
+            # The method may live on the class or on a base (mixin) in this file.
+            owners = [class_name]
+            seen = set()
+            while owners:
+                owner = owners.pop()
+                if owner in seen:
+                    continue
+                seen.add(owner)
+                for method in methods:
+                    line = self.class_method_lines.get((owner, method))
+                    if line:
+                        self.framework_decorated_lines.add(line)
+                owners.extend(
+                    base
+                    for base in self._class_base_simple_names.get(owner, ())
+                    if base in self.class_defs
+                )
+
     def finalize(self) -> None:
+        self._mark_drf_method_fields()
         for alias_name in self._fastapi_dependency_alias_refs:
             for dep_name in self._fastapi_dependency_aliases.get(alias_name, ()):
                 self._mark_dependency_name(dep_name)

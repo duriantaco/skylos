@@ -199,6 +199,12 @@ def test_partial_sca_only_removes_dependency_resolution_coverage():
         "quality",
         "dependencies",
     ]
+    # Local lockfile packages listed as not checked cannot resolve an earlier
+    # dependency finding, even though the scan itself is complete.
+    result["analysis_summary"]["sca_coverage"][
+        "not_checked_lockfile_dependency_count"
+    ] = 2
+    assert _receipt(result)["resolution_covered_checks"] == ["quality"]
 
 
 def test_disabled_check_and_missing_architecture_evidence_are_not_covered():

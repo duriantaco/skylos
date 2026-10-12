@@ -37,8 +37,18 @@ Skylos has framework-aware behavior for patterns such as:
 - FastAPI, Flask, and Django routes.
 - pytest tests, fixtures, and hooks.
 - SQLAlchemy models and metadata.
-- Next.js and React entrypoints.
+- Next.js and React entrypoints, including metadata routes (`robots`,
+  `sitemap`, `opengraph-image`, ...) gated on a detected Next.js project.
+- Tool config files (`next.config.*`, `postcss.config.*`, ...) and their
+  default export.
+- Laravel convention classes, each with the evidence Laravel's discovery
+  needs (`Command` base, typed listener event, existing model for factories
+  and policies), plus Livewire and Blade components, migrations,
+  `DatabaseSeeder` and `laravel-vite-plugin` inputs.
+- PHP type-position and PHPDoc references to imported classes.
 - package entrypoints and plugin hooks.
+
+The full convention table is in `dictionary.md` under "Framework entrypoints".
 
 When adding support, include a minimal positive fixture and a negative fixture
 so the analyzer does not simply whitelist too much.

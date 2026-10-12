@@ -102,6 +102,11 @@ partial static analysis labeled. Dependency coverage names unresolved versions
 and the supported inputs needed to check them. Neither view claims runtime
 exploitability or a complete installed environment; JSON keeps the full evidence.
 
+For `uv.lock`, valid Git, URL, path and private-index dependencies are shown as
+**not checked**. Skylos still queries supported public packages; the coverage
+gap alone does not cause exit `2`. It cannot establish a clean dependency
+assessment. See [uv source coverage](./docs/dependency-scanning.md#uv-source-coverage).
+
 New source scans replace the blended A–F grade with these readouts. Disabled
 checks are **not assessed**; failed checks are **incomplete**. Maintainability
 percentages use only the relevant units actually measured, with no guessed
@@ -283,6 +288,38 @@ adds a Skylos Cloud upload job for pushes to your default branch, which fails
 until the Skylos GitHub App is installed on the repository.
 [Your first Skylos-gated pull request](./docs/first-gated-pr.md) walks through
 it in about 8 minutes, including making the checks required.
+
+The gate (`skylos . --gate`, `skylos cicd gate`, and the generated workflow)
+fails on any critical security issue, any secret, and any critical AI-code
+issue, such as an import of a package that does not exist on PyPI (SKY-D222)
+or a call to a function that is never defined or imported (SKY-L012). Other
+findings fail it only above count limits. Change the limits under
+`[tool.skylos.gate]` in `pyproject.toml`:
+
+```toml
+[tool.skylos.gate]
+max_high = 5          # high-severity security issues allowed
+max_quality = 10      # quality issues allowed
+max_ai_defects = 10   # AI-code issues allowed (defaults to max_quality)
+# AI-code issues at these severities fail the gate whatever max_ai_defects
+# allows. Add "HIGH" to block more; [] turns the rule off.
+block_ai_defect_severities = ["CRITICAL"]
+```
+
+`max_ai_defects` and `block_ai_defect_severities` are separate checks; the
+gate fails if either one fails. In a pull request, `skylos cicd gate
+--diff-base` reads this policy from the base branch, so a pull request cannot
+turn the rule off for itself. A gate policy synced from Skylos Cloud replaces
+the repository's `[tool.skylos.gate]` section.
+
+Every gate run ends with one verdict line and the reasons behind it:
+`Quality Gate: PASSED`, `Quality Gate: FAILED` (exit 1), or
+`Quality Gate: INCOMPLETE — could not decide (exit 2)` when required analysis
+did not finish, for example a lockfile the dependency scan could not resolve.
+Each reason names the check that stopped, how many files or dependencies it
+missed, and what to change. `--format json` carries the same verdict in a
+top-level `gate` object; concise, LLM, GitHub, and GitLab output print it on
+stderr. See [Exit Codes And Incomplete Analysis](./docs/cli-output.md#exit-codes-and-incomplete-analysis).
 
 Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-reference).
 
@@ -515,7 +552,9 @@ Skylos is not a replacement for every specialized scanner. It is a local-first
 repo and PR checker that puts several common review checks behind one CLI.
 
 - **Framework-aware dead code detection:** FastAPI, Django, Flask, pytest,
-  SQLAlchemy, Next.js, React, package entrypoints, and common plugin patterns.
+  SQLAlchemy, Next.js (App/Pages Router files and metadata routes), React,
+  Laravel (auto-discovered commands, listeners, components, factories, seeders),
+  tool config files, package entrypoints, and common plugin patterns.
 - **PR-focused output:** diff scanning, CI thresholds, GitHub annotations, and
   baselines for existing findings.
 - **Local-first operation:** core analysis executes locally and does not upload
@@ -674,6 +713,12 @@ precedence over repository-controlled config. The top-level
 `skylos debt` and `skylos clean`; pass `--exclude` for command-local additions
 or `--include-folder` to override an excluded folder.
 
+A full scan skips generated and vendored files (Django migrations,
+`static/**/lib/**`, `*.min.js`, `*.min.css`, vendored-library banners) and says
+how many in one line of output. Set `include_generated = true` under
+`[tool.skylos]` (or pass `--include-generated`) to scan them; see
+[What a full scan leaves out](docs/cli-output.md#what-a-full-scan-leaves-out).
+
 ## Language Support
 
 | Language | Dead Code | Security | Quality | Local API Proof (`verify`) | Notes |
@@ -682,7 +727,7 @@ or `--include-folder` to override an excluded folder.
 | TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
-| PHP | Yes | Yes | No | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
+| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel conventions, plus taint-style security sinks and sources |
 | Rust | Yes | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
 | Dart | Yes³ | Yes³ | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |

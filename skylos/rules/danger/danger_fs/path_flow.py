@@ -317,6 +317,7 @@ def _is_pytest_fixture_function(fn: ast.AST):
 
 
 class _PathFlowChecker(TaintVisitor):
+    resolve_sanitizer_imports = True
     PATHLIB_SINK_METHODS = {
         "open",
         "read_bytes",
