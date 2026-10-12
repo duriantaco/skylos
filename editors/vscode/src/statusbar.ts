@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
-import { computeSecurityScore } from "./dashboard";
+import { getRiskSummary } from "./dashboard";
+import { coverageText } from "./assessmentCore";
 import { getMaxProblems } from "./config";
 
 
@@ -50,16 +51,8 @@ export class SkylosStatusBar {
       return;
     }
 
-    if (total === 0) {
-      this.item.text = "$(shield) Skylos";
-      this.item.backgroundColor = undefined;
-      this.item.color = undefined;
-      this.item.tooltip = "No issues found — Click to open Security Dashboard";
-      return;
-    }
-
-    const { grade, color } = computeSecurityScore(this.store);
-    this.item.text = `$(shield) ${grade}`;
+    const { status, label, color } = getRiskSummary(this.store);
+    this.item.text = status === "none" ? "$(shield) Skylos" : `$(shield) Skylos ${label}`;
     this.item.color = color;
 
     const critical = counts["CRITICAL"] ?? 0;
@@ -67,9 +60,9 @@ export class SkylosStatusBar {
     const medium = (counts["MEDIUM"] ?? 0) + (counts["WARN"] ?? 0);
     const low = (counts["LOW"] ?? 0) + (counts["INFO"] ?? 0);
 
-    if (grade === "D" || grade === "F") {
+    if (status === "critical" || status === "high") {
       this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-    } else if (grade === "C") {
+    } else if (status === "medium" || status === "unknown") {
       this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
     } else {
       this.item.backgroundColor = undefined;
@@ -81,7 +74,7 @@ export class SkylosStatusBar {
     const scanLine = this.store.lastScan?.diffBase
       ? `Mode: new issues vs ${this.store.lastScan.diffBase}\n`
       : "";
-    this.item.tooltip = `${scanLine}${scopeLine}Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
+    this.item.tooltip = `${scanLine}${scopeLine}Risk: ${label}\n${coverageText(this.store.assessment)}\nDisplayed findings: ${total}\nCritical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
   }
 
   dispose(): void {

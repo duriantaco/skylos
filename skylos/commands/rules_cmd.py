@@ -235,6 +235,7 @@ def list_rules(console, rules_dir, *, json_output=False, query="", packs=False):
     table.add_column("Rule", style="bold")
     table.add_column("Name")
     table.add_column("Category")
+    table.add_column("Type")
     table.add_column("Severity")
 
     for rule in rules:
@@ -242,6 +243,7 @@ def list_rules(console, rules_dir, *, json_output=False, query="", packs=False):
             Text(_safe_terminal_text(rule.get("id", ""))),
             Text(_safe_terminal_text(rule.get("name", ""))),
             Text(_safe_terminal_text(rule.get("category", ""))),
+            Text(_safe_terminal_text(rule.get("finding_type", "review")).title()),
             Text(_safe_terminal_text(rule.get("severity") or "-")),
         )
 

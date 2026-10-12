@@ -37,6 +37,7 @@ exports.FindingsStore = void 0;
 const vscode = __importStar(require("vscode"));
 const provenanceCore_1 = require("./provenanceCore");
 const reviewCore_1 = require("./reviewCore");
+const assessmentCore_1 = require("./assessmentCore");
 class FindingsStore {
     constructor() {
         this.workspaceCliFindingsByFile = new Map();
@@ -63,6 +64,11 @@ class FindingsStore {
         this._onDidChange.fire();
     }
     setFocusedCLIFindings(filePath, findings) {
+        // A focused scan replaces one file, not the complete prior scan. Its
+        // results cannot certify that a previous workspace assessment is current.
+        this._assessment = undefined;
+        this._grade = undefined;
+        this._report = undefined;
         this.focusedCliFindingsByFile.set(filePath, findings);
         this._onDidChange.fire();
     }
@@ -75,8 +81,10 @@ class FindingsStore {
         }
         this._onDidChange.fire();
     }
-    setEngineMetadata(grade, summary, circularDeps, depVulns) {
+    setEngineMetadata(grade, summary, circularDeps, depVulns, assessment, report) {
         this._grade = grade;
+        this._assessment = assessment;
+        this._report = report;
         this._summary = summary;
         this._circularDeps = circularDeps ?? [];
         this._depVulns = depVulns ?? [];
@@ -88,10 +96,16 @@ class FindingsStore {
         this._onDidChange.fire();
     }
     setLastError(error) {
+        this._assessment = undefined;
+        this._grade = undefined;
+        this._report = undefined;
         this._lastError = error;
         this._onDidChange.fire();
     }
     get grade() { return this._grade; }
+    get assessment() { return this._assessment; }
+    get report() { return this._report; }
+    get gate() { return (0, assessmentCore_1.readGate)(this._report?.gate); }
     get summary() { return this._summary; }
     get circularDeps() { return this._circularDeps; }
     get depVulns() { return this._depVulns; }
@@ -212,6 +226,8 @@ class FindingsStore {
         this.agentFindingsByFile.clear();
         this.aiFindingsByFile.clear();
         this._grade = undefined;
+        this._assessment = undefined;
+        this._report = undefined;
         this._summary = undefined;
         this._circularDeps = [];
         this._depVulns = [];

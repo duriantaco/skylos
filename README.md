@@ -80,6 +80,29 @@ C++ is limited to unused file-local functions, and Shell is security only.
 Skylos also checks CI/CD and deployment config. See
 [Language Support](#language-support).
 
+## Read The Results
+
+Remember **Risk, Maintainability, Dead code, Gate**:
+
+| Readout | What it tells you |
+|:---|:---|
+| **Risk** | Highest unresolved severity and counts. One critical finding stays critical, regardless of repository size. |
+| **Maintainability** | Advice counts, affected code units, and how far measurements exceed their limits. |
+| **Dead code** | Removal candidates with confidence and evidence; review dynamic calls and public APIs before deleting. |
+| **Gate** | Whether findings satisfy your configured limits. Passing means within policy, not zero findings. |
+
+Finding **Type** is separate from severity: **Defect** is a concrete correctness
+pattern, **Review** needs context, and **Advice** concerns maintainability or
+tooling. A Review finding can still be critical. Advice stays visible in rule
+groups; `--expand-advice` shows every location and JSON keeps complete records.
+Grouping cannot improve the assessment or bypass a gate.
+
+New source scans replace the blended A–F grade with these readouts. Disabled
+checks are **not assessed**; failed checks are **incomplete**. Maintainability
+percentages use only the relevant units actually measured, with no guessed
+denominators or uncalibrated grades. The independent `debt` and `defend` scores
+keep their meanings. See [the output guide](./docs/cli-output.md#scan-assessment).
+
 ## Choose the Right Command
 
 Each command answers a different question. The source scan requires `PATH`.
@@ -580,8 +603,9 @@ CI parser exactly:
 docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest-python3.13 . --json --no-provenance
 ```
 
-If a Python file cannot be parsed, Skylos reports `analysis_errors`, omits the
-grade, and exits with code 2 instead of treating the skipped file as clean.
+If a Python file cannot be parsed, Skylos reports `analysis_errors`, marks
+coverage incomplete, and exits with code 2 instead of treating the skipped
+file as clean. Findings from completed checks remain available.
 
 See [Installation](https://docs.skylos.dev/installation) for source installs,
 container usage, and optional dependencies.
@@ -744,7 +768,7 @@ templates are unaffected.
 
 Go dead-code and security checks require the native `skylos-go` engine. If
 Skylos discovers Go files but cannot run that engine, the report is marked
-incomplete, no grade or clean result is produced, and the CLI exits with status
+incomplete, no clean result is produced, and the CLI exits with status
 `2`. Run `skylos doctor` to verify engine availability and configure
 `SKYLOS_GO_BIN` when using a separately built engine. The official GitHub
 Action builds the matching native engine automatically.

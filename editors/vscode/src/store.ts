@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import type {
   SkylosFinding,
   CLIGrade,
+  CLIAssessment,
+  CLIReport,
   AnalysisSummary,
   CircularDependency,
   DependencyVulnerability,
@@ -12,6 +14,7 @@ import type {
 import type { FindingSource } from "./provenanceCore";
 import { isCorroborated, matchesSourceFilter, mergeCorrelatedFindings } from "./provenanceCore";
 import { reviewScore, severityRank } from "./reviewCore";
+import { readGate } from "./assessmentCore";
 
 type FindingsScope = "raw" | "working";
 
@@ -22,6 +25,8 @@ export class FindingsStore {
   private aiFindingsByFile = new Map<string, SkylosFinding[]>();
 
   private _grade: CLIGrade | undefined;
+  private _assessment: CLIAssessment | undefined;
+  private _report: CLIReport | undefined;
   private _summary: AnalysisSummary | undefined;
   private _circularDeps: CircularDependency[] = [];
   private _depVulns: DependencyVulnerability[] = [];
@@ -48,6 +53,11 @@ export class FindingsStore {
   }
 
   setFocusedCLIFindings(filePath: string, findings: SkylosFinding[]): void {
+    // A focused scan replaces one file, not the complete prior scan. Its
+    // results cannot certify that a previous workspace assessment is current.
+    this._assessment = undefined;
+    this._grade = undefined;
+    this._report = undefined;
     this.focusedCliFindingsByFile.set(filePath, findings);
     this._onDidChange.fire();
   }
@@ -67,8 +77,12 @@ export class FindingsStore {
     summary?: AnalysisSummary,
     circularDeps?: CircularDependency[],
     depVulns?: DependencyVulnerability[],
+    assessment?: CLIAssessment,
+    report?: CLIReport,
   ): void {
     this._grade = grade;
+    this._assessment = assessment;
+    this._report = report;
     this._summary = summary;
     this._circularDeps = circularDeps ?? [];
     this._depVulns = depVulns ?? [];
@@ -82,11 +96,17 @@ export class FindingsStore {
   }
 
   setLastError(error: ScanFailureMetadata): void {
+    this._assessment = undefined;
+    this._grade = undefined;
+    this._report = undefined;
     this._lastError = error;
     this._onDidChange.fire();
   }
 
   get grade(): CLIGrade | undefined { return this._grade; }
+  get assessment(): CLIAssessment | undefined { return this._assessment; }
+  get report(): CLIReport | undefined { return this._report; }
+  get gate() { return readGate(this._report?.gate); }
   get summary(): AnalysisSummary | undefined { return this._summary; }
   get circularDeps(): CircularDependency[] { return this._circularDeps; }
   get depVulns(): DependencyVulnerability[] { return this._depVulns; }
@@ -236,6 +256,8 @@ export class FindingsStore {
     this.agentFindingsByFile.clear();
     this.aiFindingsByFile.clear();
     this._grade = undefined;
+    this._assessment = undefined;
+    this._report = undefined;
     this._summary = undefined;
     this._circularDeps = [];
     this._depVulns = [];

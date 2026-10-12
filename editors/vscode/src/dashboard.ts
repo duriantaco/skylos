@@ -2,56 +2,15 @@ import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getMaxProblems } from "./config";
 import { createWebviewNonce, escapeHtml, isRecord, webviewCsp } from "./webviewSecurity";
+import { assessmentRows, coverageText, groupAdvice, measurementRows, riskSummary } from "./assessmentCore";
+import type { SkylosFinding } from "./types";
 
-interface ScoreResult {
-  score: number;
-  grade: string;
-  color: string;
+export function getRiskSummary(store: FindingsStore) {
+  return riskSummary(store.assessment, store.getAllRawFindings());
 }
 
-const GRADE_COLOR: Record<string, string> = {
-  "A+": "#4ade80", "A": "#4ade80", "A-": "#4ade80",
-  "B+": "#60a5fa", "B": "#60a5fa", "B-": "#60a5fa",
-  "C+": "#facc15", "C": "#facc15", "C-": "#facc15",
-  "D+": "#fb923c", "D": "#fb923c", "D-": "#fb923c",
-  "F": "#ef4444",
-};
-
-const FALLBACK_GRADE_MAP: { min: number; grade: string; color: string }[] = [
-  { min: 97, grade: "A+", color: "#4ade80" },
-  { min: 90, grade: "A", color: "#4ade80" },
-  { min: 80, grade: "B", color: "#60a5fa" },
-  { min: 70, grade: "C", color: "#facc15" },
-  { min: 60, grade: "D", color: "#fb923c" },
-  { min: 0, grade: "F", color: "#ef4444" },
-];
-
-const SEVERITY_PENALTY: Record<string, number> = {
-  CRITICAL: 15, HIGH: 8, MEDIUM: 3, WARN: 3, LOW: 1, INFO: 1,
-};
-
-export function computeSecurityScore(store: FindingsStore, scope: "working" | "raw" = "working"): ScoreResult {
-  const engineGrade = store.grade;
-  if (engineGrade) {
-    const letter = engineGrade.overall.letter;
-    const score = engineGrade.overall.score;
-    const color = GRADE_COLOR[letter] ?? "#888";
-    return { score, grade: letter, color };
-  }
-
-  const counts = store.countBySeverity(scope);
-  let score = 100;
-  for (const [sev, count] of Object.entries(counts)) {
-    score -= (SEVERITY_PENALTY[sev] ?? 1) * count;
-  }
-  score = Math.max(0, score);
-
-  for (const entry of FALLBACK_GRADE_MAP) {
-    if (score >= entry.min) {
-      return { score, grade: entry.grade, color: entry.color };
-    }
-  }
-  return { score, grade: "F", color: "#ef4444" };
+function findingsTable(findings: SkylosFinding[]): string {
+  return `<table><tr><th>Type</th><th>Severity</th><th>Rule</th><th>Location</th><th>Message</th></tr>${findings.map(f => `<tr><td>${escapeHtml(f.findingType ?? "review")}</td><td>${escapeHtml(f.severityUnknown ? "UNKNOWN" : f.severity)}</td><td>${escapeHtml(f.ruleId)}</td><td>${escapeHtml(f.relativePath ?? f.file)}:${f.line}</td><td>${escapeHtml(f.message)}</td></tr>`).join("")}</table>`;
 }
 
 export class SkylosDashboard {
@@ -112,7 +71,7 @@ export class SkylosDashboard {
   private getHtml(webview: vscode.Webview): string {
     const nonce = createWebviewNonce();
     const csp = webviewCsp(webview, nonce);
-    const { score, grade, color } = computeSecurityScore(this.store);
+    const { label: riskLabel, color } = getRiskSummary(this.store);
     const counts = this.store.countBySeverity();
     const catCounts = this.store.countByCategory();
     const allFindings = this.store.getAllFindings();
@@ -140,8 +99,15 @@ export class SkylosDashboard {
       .sort((a, b) => b[1].critical - a[1].critical || b[1].total - a[1].total)
       .slice(0, 5);
 
-    const donutPct = Math.round(score);
-    const donutDeg = Math.round((score / 100) * 360);
+    const assessment = this.store.assessment;
+    const fullFindings = this.store.getAllRawFindings();
+    const assessmentHtml = `<table>${assessmentRows(assessment, fullFindings, this.store.gate).map(([area, detail]) => `<tr><th>${escapeHtml(area)}</th><td>${escapeHtml(detail)}</td></tr>`).join("")}</table><p>${escapeHtml(coverageText(assessment))}</p>`;
+    const measurements = measurementRows(assessment);
+    const measurementsHtml = measurements.length ? `<div class="card full"><h3>Maintainability measurements</h3><table><tr><th>Check</th><th>Spread</th><th>Magnitude</th></tr>${measurements.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</table></div>` : "";
+    const advice = groupAdvice(allFindings);
+    const adviceHtml = advice.length ? `<div class="card full"><h3>Advice</h3><p>Expand a check for every displayed location. Exports retain complete records.</p>${advice.map(([rule, rows]) => `<details><summary>${escapeHtml(rule)} · ${rows.length} advice · ${new Set(rows.map(f => f.file)).size} files</summary>${findingsTable(rows)}</details>`).join("")}</div>` : "";
+    const actionable = allFindings.filter(f => f.findingType !== "advice");
+    const findingsHtml = actionable.length ? `<div class="card full"><h3>Defect and Review</h3>${findingsTable(actionable)}</div>` : "";
 
     const catIcons: Record<string, string> = {
       security: "&#128274;",
@@ -152,17 +118,8 @@ export class SkylosDashboard {
       ai: "&#129302;",
     };
 
-    const engineGrade = this.store.grade;
-    let catGradesHtml = "";
-    if (engineGrade?.categories) {
-      const entries = Object.entries(engineGrade.categories);
-      if (entries.length > 0) {
-        catGradesHtml = `<div class="cat-grades">${entries.map(([cat, g]) => {
-          const c = GRADE_COLOR[g.letter] ?? "#888";
-          return `<div class="cat-grade-item"><span class="cat-grade-letter" style="color:${c}">${escapeHtml(g.letter)}</span><span class="cat-grade-label">${escapeHtml(cat)}</span></div>`;
-        }).join("")}</div>`;
-      }
-    }
+    const legacy = !assessment && this.store.grade?.overall;
+    const legacyHtml = legacy ? `<p>Legacy score: ${escapeHtml(legacy.letter)} (${escapeHtml(legacy.score)}/100). Historical result; not a current risk assessment.</p>` : "";
 
     let summaryHtml = "";
     if (summary) {
@@ -247,13 +204,11 @@ body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);backgr
 .sep{opacity:.3}
 
 .score-wrap{display:flex;align-items:center;gap:32px}
-.donut{position:relative;width:140px;height:140px;border-radius:50%;background:conic-gradient(${color} 0deg,${color} var(--fill),var(--vscode-widget-border,rgba(255,255,255,.1)) var(--fill));animation:ring-fill 1s ease-out forwards}
+.donut{position:relative;width:140px;height:140px;border-radius:50%;border:4px solid ${color}}
 .donut::after{content:"";position:absolute;inset:20px;border-radius:50%;background:var(--vscode-editor-background)}
 .donut-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1}
 .donut-grade{font-size:36px;font-weight:700;color:${color}}
 .donut-score{font-size:12px;opacity:.6}
-@keyframes ring-fill{from{--fill:0deg}to{--fill:${donutDeg}deg}}
-@property --fill{syntax:"<angle>";initial-value:0deg;inherits:false}
 
 .score-stats{display:flex;flex-direction:column;gap:8px}
 .stat-row{display:flex;align-items:center;gap:10px;font-size:13px}
@@ -297,23 +252,11 @@ ${scopeHtml}
 
 <div class="grid">
   <div class="card">
-    <h3>Security Score</h3>
-    <div class="score-wrap">
-      <div class="donut">
-        <div class="donut-label">
-          <span class="donut-grade">${escapeHtml(grade)}</span>
-          <span class="donut-score">${donutPct}/100</span>
-        </div>
-      </div>
-      <div class="score-stats">
-        <div class="stat-row"><span class="stat-dot" style="background:#ef4444"></span>Critical: ${critical}</div>
-        <div class="stat-row"><span class="stat-dot" style="background:#fb923c"></span>High: ${high}</div>
-        <div class="stat-row"><span class="stat-dot" style="background:#facc15"></span>Medium: ${medium}</div>
-        <div class="stat-row"><span class="stat-dot" style="background:#60a5fa"></span>Low: ${low}</div>
-        <div class="stat-row" style="margin-top:4px;font-weight:600">Total: ${total}</div>
-      </div>
-    </div>
-    ${catGradesHtml}
+    <h3>Scan assessment</h3>
+    <p style="color:${color};font-weight:700">Risk: ${escapeHtml(riskLabel)}</p>
+    ${assessmentHtml}
+    <p>Assessment includes the complete scan; finding filters change this view.</p>
+    ${legacyHtml}
   </div>
 
   <div class="card">
@@ -359,6 +302,9 @@ ${scopeHtml}
 
   ${circularHtml}
   ${depVulnHtml}
+  ${measurementsHtml}
+  ${findingsHtml}
+  ${adviceHtml}
 </div>
 
 <div class="actions">

@@ -11,6 +11,56 @@ const {
 
 const wsRoot = path.join(path.sep, "repo");
 
+test("normalizeReportCore preserves finding type independently of severity", () => {
+  const findings = normalizeReportCore({
+    danger: [{ file: "app.py", line: 1, rule_id: "SKY-D211", severity: "CRITICAL", finding_type: "review", message: "Review evidence" }],
+    quality: [{ file: "app.py", line: 3, rule_id: "SKY-Q301", severity: "HIGH", finding_type: "advice", message: "Complex function" }],
+  }, { wsRoot, deadCodeEnabled: true, showDeadParams: false, confidenceThreshold: 80 });
+  assert.deepEqual(findings.map(f => [f.findingType, f.severity]), [["review", "CRITICAL"], ["advice", "HIGH"]]);
+});
+
+test("normalizeReportCore retains additional CLI risk and dead-code categories", () => {
+  const findings = normalizeReportCore({
+    reliability: [{ file: "app.py", line: 1, rule_id: "SKY-L003", severity: "HIGH", finding_type: "defect", message: "Dangerous comparison" }],
+    ai_defects: [{ file: "app.py", line: 2, rule_id: "SKY-A101", severity: "CRITICAL", finding_type: "review", message: "Missing control" }],
+    dependency_vulnerabilities: [{ file: "requirements.txt", line: 3, rule_id: "SKY-SCA", severity: "HIGH", finding_type: "review", package: "sample", summary: "Known vulnerable dependency" }],
+    unused_files: [{ file: "unused.py", line: 1, name: "unused", confidence: 95 }],
+    unused_exports: [{ file: "app.ts", line: 4, name: "unusedExport", confidence: 95 }],
+    unused_fixtures: [{ file: "conftest.py", line: 5, name: "unused_fixture", confidence: 95 }],
+  }, { wsRoot, deadCodeEnabled: true, showDeadParams: false, confidenceThreshold: 80 });
+  assert.equal(findings.length, 6);
+  const byRule = new Map(findings.map(f => [f.ruleId, f]));
+  assert.equal(byRule.get("SKY-L003").findingType, "defect");
+  assert.equal(byRule.get("SKY-A101").severity, "CRITICAL");
+  assert.equal(byRule.get("SKY-SCA").message, "Known vulnerable dependency");
+  assert.equal(findings.filter(f => f.category === "dead_code").length, 3);
+});
+
+test("known severity aliases remain known and preserve their urgency", () => {
+  const rows = normalizeReportCore({ danger: [
+    { file: "app.py", severity: " error ", message: "Known high urgency" },
+    { file: "app.py", severity: " warning ", message: "Known medium urgency" },
+    { file: "app.py", severity: " unrecognized ", message: "Unknown urgency" },
+  ] }, { wsRoot, deadCodeEnabled: true, showDeadParams: false, confidenceThreshold: 80 });
+  assert.deepEqual(rows.map(row => [row.severity, !!row.severityUnknown]), [["HIGH", false], ["WARN", false], ["INFO", true]]);
+});
+
+test("code health and architecture evidence stay visible without duplicate report mirrors", () => {
+  const base = { file: "app.py", line: 10, rule_id: "SKY-Q301", severity: "MEDIUM", finding_type: "advice", message: "Complexity", evidence: ["first"] };
+  const variant = { ...base, evidence: ["second"] };
+  const arch = { ...base, rule_id: "SKY-C301", message: "Architecture evidence" };
+  const rows = normalizeReportCore({
+    quality: [base],
+    code_health: [{ ...base }, variant, { ...variant }],
+    architecture_metrics: { advisories: [{ signals: [{ ...base }, arch, { ...arch }] }] },
+  }, { wsRoot, deadCodeEnabled: true, showDeadParams: false, confidenceThreshold: 80 });
+  assert.equal(rows.length, 5);
+  assert.deepEqual(rows.map(row => row.evidence), [["first"], ["second"], ["second"], ["first"], ["first"]]);
+  assert.equal(rows.every(row => row.findingType === "advice"), true);
+  const { groupAdvice } = require("../out/assessmentCore");
+  assert.equal(groupAdvice(rows).reduce((n, [, group]) => n + group.length, 0), 5);
+});
+
 test("normalizeReportCore maps dead code to canonical SKY-U rule ids with stable fingerprints", () => {
   const findings = normalizeReportCore({
     unused_imports: [

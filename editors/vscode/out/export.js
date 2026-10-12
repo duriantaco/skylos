@@ -34,8 +34,11 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.exportReport = exportReport;
+exports.buildMarkdown = buildMarkdown;
+exports.buildJson = buildJson;
+exports.buildSarif = buildSarif;
 const vscode = __importStar(require("vscode"));
-const dashboard_1 = require("./dashboard");
+const assessmentCore_1 = require("./assessmentCore");
 const rules_1 = require("./rules");
 async function exportReport(store) {
     const pick = await vscode.window.showQuickPick([
@@ -67,7 +70,6 @@ function getProjectName() {
     return ws?.name ?? "Unknown Project";
 }
 function buildMarkdown(store) {
-    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store, "raw");
     const counts = store.countBySeverity("raw");
     const catCounts = store.countByCategory("raw");
     const findings = store.getAllRawFindings();
@@ -75,7 +77,19 @@ function buildMarkdown(store) {
     let md = `# Skylos Security Report\n\n`;
     md += `**Project:** ${getProjectName()}  \n`;
     md += `**Date:** ${date}  \n`;
-    md += `**Score:** ${grade} (${score}/100)\n\n`;
+    md += `\n## Scan assessment\n\n| Area | Result |\n|------|--------|\n`;
+    for (const [area, detail] of (0, assessmentCore_1.assessmentRows)(store.assessment, findings, store.gate))
+        md += `| ${area} | ${markdownCell(detail)} |\n`;
+    md += `\n${markdownCell((0, assessmentCore_1.coverageText)(store.assessment))}\n\n`;
+    if (!store.assessment && store.grade?.overall)
+        md += `Legacy score: ${markdownCell(store.grade.overall.letter)} (${store.grade.overall.score}/100). Historical result; not a current risk assessment.\n\n`;
+    const measurements = (0, assessmentCore_1.measurementRows)(store.assessment);
+    if (measurements.length) {
+        md += "| Check | Spread | Magnitude |\n|-------|--------|-----------|\n";
+        for (const row of measurements)
+            md += `| ${row.map(markdownCell).join(" | ")} |\n`;
+        md += "\n";
+    }
     md += `## Summary\n\n`;
     md += `| Severity | Count |\n|----------|-------|\n`;
     for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) {
@@ -101,7 +115,7 @@ function buildMarkdown(store) {
         for (const f of items) {
             const meta = (0, rules_1.getRuleMeta)(f.ruleId);
             const shortFile = f.file.split("/").slice(-2).join("/");
-            md += `- **[${f.ruleId}]** ${f.message} — \`${shortFile}:${f.line}\` (${f.severity})`;
+            md += `- **[${f.ruleId}]** ${f.message} — \`${shortFile}:${f.line}\` (${f.findingType ?? "review"}, ${f.severityUnknown ? "UNKNOWN" : f.severity})`;
             if (meta?.owasp)
                 md += `  OWASP: ${meta.owasp}`;
             if (meta?.cwe)
@@ -116,7 +130,6 @@ function buildMarkdown(store) {
     return md;
 }
 function buildJson(store) {
-    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store, "raw");
     const counts = store.countBySeverity("raw");
     const findings = store.getAllRawFindings();
     const date = new Date().toISOString().split("T")[0];
@@ -124,14 +137,19 @@ function buildJson(store) {
         report: {
             project: getProjectName(),
             date,
-            score: { value: score, grade },
+            assessment: store.assessment,
+            gate: store.gate,
+            legacy_score: !store.assessment ? store.grade : undefined,
+            raw_cli_report: store.report,
             summary: counts,
             findings: findings.map((f) => {
                 const meta = (0, rules_1.getRuleMeta)(f.ruleId);
                 return {
+                    ...f,
                     ruleId: f.ruleId,
-                    severity: f.severity,
+                    severity: f.severityUnknown ? "UNKNOWN" : f.severity,
                     category: f.category,
+                    finding_type: f.findingType ?? "review",
                     message: f.message,
                     file: f.file,
                     line: f.line,
@@ -179,6 +197,7 @@ function buildSarif(store) {
             ruleIndex: ruleIndex.get(f.ruleId) ?? 0,
             level: sarifLevel(f),
             message: { text: f.message },
+            properties: { finding_type: f.findingType ?? "review", severity: f.severityUnknown ? "UNKNOWN" : f.severity },
             locations: [
                 {
                     physicalLocation: {
@@ -202,11 +221,15 @@ function buildSarif(store) {
                     },
                 },
                 results,
+                properties: { assessment: store.assessment, gate: store.gate },
                 originalUriBaseIds: wsRoot ? { "%SRCROOT%": { uri: `file://${wsRoot}/` } } : undefined,
             },
         ],
     };
     return JSON.stringify(sarif, null, 2);
+}
+function markdownCell(value) {
+    return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 function sarifLevel(f) {
     const s = f.severity.toUpperCase();

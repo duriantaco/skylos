@@ -13,6 +13,7 @@ export const SUPPORTED_LANGUAGES = [
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | "WARN";
 export type Category = "dead_code" | "security" | "secrets" | "quality" | "debt" | "ai";
+export type FindingType = "defect" | "review" | "advice";
 
 export interface FindingTraceStep {
   file?: string;
@@ -28,7 +29,9 @@ export interface SkylosFinding {
   ruleId: string;
   legacyRuleId?: string;
   category: Category;
+  findingType?: FindingType;
   severity: Severity;
+  severityUnknown?: boolean;
   message: string;
   file: string;
   relativePath?: string;
@@ -60,6 +63,7 @@ export interface SkylosFinding {
 }
 
 export interface UnusedItem {
+  finding_type?: FindingType;
   name?: string;
   simple_name?: string;
   type?: string;
@@ -75,6 +79,7 @@ export interface UnusedItem {
 }
 
 export interface CLIFinding {
+  finding_type?: FindingType;
   message: string;
   file: string;
   line: number;
@@ -124,6 +129,7 @@ export interface CLIFinding {
 }
 
 export interface QualityFinding {
+  finding_type?: FindingType;
   rule_id?: string;
   kind?: string;
   metric?: string;
@@ -198,7 +204,41 @@ export interface CLIGrade {
   categories?: Record<string, { score: number; letter: string }>;
 }
 
+export interface CLIAssessment {
+  version: 1;
+  scope: "all_analyzed_findings";
+  scanned_checks: string[];
+  coverage: { status: "complete" | "partial" | "incomplete" | "unknown"; not_assessed: string[]; incomplete_checks: string[]; reasons: string[] };
+  risk: { status: "critical" | "high" | "medium" | "low" | "none" | "unknown" | "not_assessed"; highest_severity: string | null; finding_count: number; severity_counts?: Record<string, number> };
+  maintainability: { status: "measured" | "not_assessed"; advice_count: number; rule_count: number; affected_files: number; affected_functions: number | null; checks: MaintainabilityCheck[] };
+  dead_code: { status: "review" | "none" | "unknown" | "not_assessed"; candidate_count: number; confidence_range: number[] | null };
+  finding_counts: { defect: number; review: number; advice: number; advice_groups: number };
+}
+
+export interface CLIGate {
+  passed: boolean;
+  reasons: string[];
+  scope: "local_configured_policy" | "local_strict_policy";
+  status: "evaluated" | "incomplete";
+  forced: boolean;
+}
+
+export interface MaintainabilityCheck {
+  rule_id: string;
+  name: string;
+  language?: string;
+  count: number;
+  affected_units: number;
+  unit: string;
+  analyzed_units: number | null;
+  affected_percent: number | null;
+  max_value: number | null;
+  max_threshold: number | null;
+  max_excess_ratio: number | null;
+}
+
 export interface AnalysisSummary {
+  assessment_includes_filtered_findings?: boolean;
   total_files?: number;
   total_loc?: number;
   languages?: Record<string, number>;
@@ -231,11 +271,20 @@ export interface CLIReport {
   unused_classes?: UnusedItem[];
   unused_variables?: UnusedItem[];
   unused_parameters?: UnusedItem[];
+  unused_files?: UnusedItem[];
+  unused_exports?: UnusedItem[];
+  unused_fixtures?: UnusedItem[];
   secrets?: CLIFinding[];
   danger?: CLIFinding[];
+  reliability?: CLIFinding[];
+  ai_defects?: CLIFinding[];
+  publisher_change_findings?: CLIFinding[];
+  custom_rules?: CLIFinding[];
   quality?: QualityFinding[];
   analysis_summary?: AnalysisSummary;
   grade?: CLIGrade;
+  assessment?: CLIAssessment;
+  gate?: CLIGate;
   circular_dependencies?: CircularDependency[];
   dependency_vulnerabilities?: DependencyVulnerability[];
   whitelisted?: string[];

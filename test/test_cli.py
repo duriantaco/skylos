@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from io import StringIO
 from pathlib import Path
+from copy import deepcopy
 
 import pytest
 import json
@@ -24,6 +25,20 @@ from skylos.cli import (
 )
 from skylos.commands.scan_cmd import _write_scan_output
 from skylos.reporting.provenance import ProvenanceReport
+from skylos.reporting.finding_types import (
+    annotate_finding_types,
+    summarize_finding_types,
+)
+
+
+def _with_finding_type_metadata(result):
+    """Expected output adds metadata while preserving every other input field."""
+    expected = deepcopy(result)
+    annotate_finding_types(expected)
+    expected.setdefault("analysis_summary", {})["finding_type_counts"] = (
+        summarize_finding_types(expected)
+    )
+    return expected
 
 
 def test_scan_output_rejects_symlink_without_clobbering_target(tmp_path):
@@ -471,7 +486,9 @@ class TestMainFunction:
             main()
 
             mock_analyze.assert_called_once()
-            mock_print.assert_called_once_with(json.dumps(mock_skylos_result))
+            mock_print.assert_called_once_with(
+                json.dumps(_with_finding_type_metadata(mock_skylos_result))
+            )
 
     @pytest.mark.parametrize("format_args", [["--json"], ["--format", "json"]])
     def test_main_json_remains_parseable_when_analysis_logs(
@@ -494,7 +511,9 @@ class TestMainFunction:
             main()
 
         captured = capsys.readouterr()
-        assert json.loads(captured.out) == mock_skylos_result
+        assert json.loads(captured.out) == _with_finding_type_metadata(
+            mock_skylos_result
+        )
         assert "dependency inventory unavailable" in captured.err
 
     def test_main_config_file_is_loaded_and_forwarded(
@@ -683,7 +702,12 @@ class TestMainFunction:
         self, mock_skylos_result, policy
     ):
         test_args = [
-            "cli.py", "test_path", "--danger", "--gate", "--json", "--no-provenance"
+            "cli.py",
+            "test_path",
+            "--danger",
+            "--gate",
+            "--json",
+            "--no-provenance",
         ]
         with (
             patch("sys.argv", test_args),
@@ -1018,14 +1042,20 @@ def test_architecture_advisories_support_rule_selection_and_display_filters():
     assert metrics["advisories"][0]["rule_ids"] == ["SKY-Q803"]
     assert metrics["advisories"][0]["signals"] == [q803]
     assert selected["analysis_summary"]["architecture_advisory_count"] == 1
-    assert cli._apply_rule_selection(result, ["SKY-Q301"])[
-        "architecture_metrics"
-    ]["advisories"] == []
+    assert (
+        cli._apply_rule_selection(result, ["SKY-Q301"])["architecture_metrics"][
+            "advisories"
+        ]
+        == []
+    )
     high = cli._apply_display_filters(result, severity="high")
     assert high["architecture_metrics"]["advisories"][0]["signals"] == [q802]
-    assert cli._apply_display_filters(result, category="security")[
-        "architecture_metrics"
-    ]["advisories"] == []
+    assert (
+        cli._apply_display_filters(result, category="security")["architecture_metrics"][
+            "advisories"
+        ]
+        == []
+    )
     assert result["architecture_metrics"]["advisories"][0]["signals"] == [
         q802,
         q803,
@@ -1404,9 +1434,11 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
         "unused_files": [],
     }
 
-    report = cli._generate_llm_report(result, tmp_path)
+    report = cli._generate_llm_report(result, tmp_path, expand_advice=True)
 
-    assert report.startswith("# Skylos Report — 3 findings\n\n")
+    assert report.startswith(
+        "# Skylos Report\n\n0 defects · 2 review · 1 advice in 1 group."
+    )
     assert "## 1. SKY-D201 | HIGH | Security\n" in report
     assert "## 2. SKY-Q301 | MEDIUM | Quality\n" in report
     assert "## 3. SKY-DC001 | MEDIUM | Dead Code\n" in report
@@ -1494,7 +1526,7 @@ def test_render_results_includes_ai_defect_summary_and_table():
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "AI defects: 1" in printed
-    console.rule.assert_any_call("[bold magenta]AI Defects")
+    console.rule.assert_any_call("[bold]AI Code")
 
     tables = [
         call.args[0]
@@ -1502,17 +1534,17 @@ def test_render_results_includes_ai_defect_summary_and_table():
         if call.args and isinstance(call.args[0], Table)
     ]
     ai_table = next(
-        table
-        for table in tables
-        if any(col.header == "Defect" for col in table.columns)
+        table for table in tables if any(col.header == "Type" for col in table.columns)
     )
     columns = {column.header: list(column._cells) for column in ai_table.columns}
 
-    assert "SKY-L012" in columns["Defect"][0]
-    assert columns["Severity"] == ["Critical"]
+    assert "SKY-L012" in columns["Rule"][0]
+    assert columns["Type"] == ["Review"]
+    assert columns["Severity"] == ["CRITICAL"]
     assert "Call to a missing local helper" in columns["Message"][0]
     assert "security.require_auth" in columns["Message"][0]
-    assert columns["Location"] == ["/root/app/views.py:5"]
+    assert columns["Location"] == ["app/views.py:5"]
+    assert result["ai_defects"][0]["file"] == "/root/app/views.py"
 
 
 def test_render_results_includes_unused_files_in_summary_and_table():
@@ -1615,7 +1647,8 @@ def test_render_results_ai_defect_message_is_visible_at_narrow_terminal_width():
     )
 
     rendered = output.getvalue()
-    assert "AI Defects" in rendered
+    assert "AI Code" in rendered
+    assert "Review" in rendered
     assert "Call to a missing" in rendered
     assert "local helper" in rendered
     assert "security.require_" in rendered
@@ -1663,7 +1696,7 @@ def test_render_results_tree_mode_includes_ai_defects():
     )
 
 
-def test_render_results_unused_table_includes_confidence_column_and_formats():
+def test_render_results_unused_table_keeps_confidence_in_readable_message():
     console = Mock()
 
     result = {
@@ -1705,21 +1738,11 @@ def test_render_results_unused_table_includes_confidence_column_and_formats():
     for col in t.columns:
         headers.append(col.header)
 
-    assert "Conf" in headers, "Expected a confidence column in unused table"
-
-    conf_col = None
-    for col in t.columns:
-        if col.header == "Conf":
-            conf_col = col
-            break
-
-    assert conf_col is not None, "Conf column not found"
-
-    conf_cells = list(conf_col._cells)
-
-    assert conf_cells[0] == "[red]95%[/red]"
-    assert conf_cells[1] == "[yellow]80%[/yellow]"
-    assert conf_cells[2] == "[dim]50%[/dim]"
+    assert "Type" in headers and "Severity" in headers
+    columns = {column.header: list(column._cells) for column in t.columns}
+    assert columns["Type"] == ["Review", "Review", "Review"]
+    for message, confidence in zip(columns["Message"], (95, 80, 50)):
+        assert f"Confidence: {confidence}%" in message
 
 
 def test_render_results_unused_table_includes_compact_dead_code_reason():
@@ -1762,12 +1785,9 @@ def test_render_results_unused_table_includes_compact_dead_code_reason():
 
     table = tables[0]
     headers = [column.header for column in table.columns]
-    assert "Evidence" in headers
-
-    evidence_col = next(
-        column for column in table.columns if column.header == "Evidence"
-    )
-    assert list(evidence_col._cells) == ["uncertain · no refs · not exported"]
+    assert "Type" in headers and "Severity" in headers
+    message_col = next(column for column in table.columns if column.header == "Message")
+    assert "Evidence: uncertain · no refs · not exported" in list(message_col._cells)[0]
 
 
 def test_render_results_shows_grep_verify_summary():
@@ -1858,7 +1878,14 @@ def test_render_results_shows_analysis_errors_without_grade():
         for call in console.print.call_args_list
         if call.args and isinstance(call.args[0], Table)
     ]
-    assert any(table.title == "Analysis Errors" for table in tables)
+    console.rule.assert_any_call("[bold]Analysis Errors")
+    error_table = next(
+        table for table in tables if any(col.header == "Type" for col in table.columns)
+    )
+    columns = {column.header: list(column._cells) for column in error_table.columns}
+    assert columns["Type"] == ["Review"]
+    assert columns["Severity"] == ["HIGH"]
+    assert "invalid syntax" in columns["Message"][0]
     panels = [
         call.args[0]
         for call in console.print.call_args_list
@@ -1895,8 +1922,8 @@ def test_render_results_uses_dedicated_reliability_section():
     cli.render_results(console, result, tree=False, root_path="/root")
 
     rule_text = [str(call.args[0]) for call in console.rule.call_args_list if call.args]
-    assert any("Reliability Issues" in text for text in rule_text)
-    assert all("Security Issues" not in text for text in rule_text)
+    assert any("Reliability" in text for text in rule_text)
+    assert all("Security" not in text for text in rule_text)
 
 
 def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
@@ -2277,7 +2304,9 @@ def test_main_json_category_reliability_excludes_security_deployment_findings(
     assert output["analysis_summary"]["danger_count"] == 0
     assert output["analysis_summary"]["reliability_count"] == 1
     assert "by_directory" not in output["analysis_summary"]
-    assert "grade" not in output
+    assert output["grade"] == result["grade"]
+    assert output["analysis_summary"]["grade_scope"] == "all_analyzed_findings"
+    assert output["analysis_summary"]["grade_includes_filtered_findings"] is True
     assert "ai_security_stats" not in output
     assert "provenance_summary" not in output
 
@@ -2387,9 +2416,7 @@ def test_explicit_rich_upload_shows_analysis_stages(monkeypatch):
         "quality": [],
         "secrets": [],
     }
-    monkeypatch.setattr(
-        cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"]
-    )
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"])
     fake_logger = Mock()
     fake_logger.console = Mock()
 
@@ -2410,13 +2437,15 @@ def test_explicit_rich_upload_shows_analysis_stages(monkeypatch):
         cli.main()
 
     messages = [
-        call.args[0]
-        for call in fake_logger.console.print.call_args_list
-        if call.args
+        call.args[0] for call in fake_logger.console.print.call_args_list if call.args
     ]
-    start = next(i for i, message in enumerate(messages) if "Analyzing locally" in str(message))
+    start = next(
+        i for i, message in enumerate(messages) if "Analyzing locally" in str(message)
+    )
     complete = next(
-        i for i, message in enumerate(messages) if "Source analysis complete" in str(message)
+        i
+        for i, message in enumerate(messages)
+        if "Source analysis complete" in str(message)
     )
     assert start < complete
     upload.assert_called_once()
@@ -2440,9 +2469,7 @@ def test_upload_with_zero_credits_still_uploads(monkeypatch, in_ci, destination)
         "quality": [],
         "secrets": [],
     }
-    monkeypatch.setattr(
-        cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"]
-    )
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--no-provenance"])
     fake_logger = Mock()
     fake_logger.console = Mock()
 
@@ -2496,9 +2523,7 @@ def test_explicit_rich_upload_interrupted_during_analysis_reports_no_upload(
 
     assert exc.value.code == 130
     messages = [
-        call.args[0]
-        for call in fake_logger.console.print.call_args_list
-        if call.args
+        call.args[0] for call in fake_logger.console.print.call_args_list if call.args
     ]
     assert any("Analyzing locally" in str(message) for message in messages)
     assert any("no Cloud scan was created" in str(message) for message in messages)
@@ -2541,7 +2566,9 @@ def test_explicit_rich_upload_reports_incomplete_scan_before_exit(monkeypatch):
         if call.args
     ]
     assert any("Cloud upload was not started" in message for message in messages)
-    assert any("Dependency vulnerability scan incomplete" in message for message in messages)
+    assert any(
+        "Dependency vulnerability scan incomplete" in message for message in messages
+    )
     upload.assert_not_called()
 
 
@@ -2581,6 +2608,12 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     assert upload_result["analysis_summary"] == {
         "total_files": 1,
         "project_root": "",
+        "finding_type_counts": {
+            "defect": 0,
+            "review": 0,
+            "advice": 0,
+            "advice_groups": 0,
+        },
     }
     assert upload_result["danger"] == []
     assert upload_result["quality"] == []
@@ -2595,7 +2628,10 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     }
     mock_print.assert_called_once()
     printed_payload = json.loads(mock_print.call_args.args[0])
-    assert printed_payload["analysis_summary"] == {"total_files": 1}
+    assert (
+        printed_payload["analysis_summary"]
+        == _with_finding_type_metadata(result)["analysis_summary"]
+    )
     assert printed_payload["danger"] == []
     assert printed_payload["quality"] == []
     assert printed_payload["secrets"] == []
@@ -2676,7 +2712,7 @@ def test_main_json_gate_failure_exits_nonzero(monkeypatch):
             cli.main()
 
     assert e.value.code == 1
-    mock_print.assert_called_once_with(json.dumps(result))
+    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
 
 
 def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch):
@@ -3080,7 +3116,8 @@ def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):
         cli.main()
 
     output = output_path.read_text(encoding="utf-8")
-    assert "Python Static Analysis Results" in output
+    assert "Static Analysis Results" in output
+    assert "0 defects · 1 review · 0 advice in 0 groups" in output
     assert "Unused Functions" in output
     assert "dead" in output
 
@@ -3157,7 +3194,7 @@ def test_main_json_strict_failure_exits_nonzero(monkeypatch):
             cli.main()
 
     assert e.value.code == 1
-    mock_print.assert_called_once_with(json.dumps(result))
+    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
 
 
 @pytest.mark.parametrize(
@@ -3273,7 +3310,11 @@ def test_main_circular_dependency_reporting_and_exit_codes(
     if output_format == "json":
         rendered = json.loads(output)
         assert rendered.get("circular_dependencies", []) == (
-            [cycle] if show_cycle else []
+            _with_finding_type_metadata({"circular_dependencies": [cycle]})[
+                "circular_dependencies"
+            ]
+            if show_cycle
+            else []
         )
     elif show_cycle:
         if output_format == "rich":
@@ -3349,7 +3390,7 @@ def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
             cli.main()
 
     assert exc.value.code == 2
-    mock_print.assert_called_once_with(json.dumps(result))
+    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
     upload_report.assert_not_called()
 
 
@@ -3424,7 +3465,7 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             exit_code = exc.code
 
     assert exit_code == expected_exit
-    mock_print.assert_called_once_with(json.dumps(result))
+    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
     if expected_exit:
         upload.assert_not_called()
     else:

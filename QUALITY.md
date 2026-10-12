@@ -14,6 +14,50 @@ Rules that are only taste preferences should stay out of the default quality set
 can still be project policy, but they should be configured separately and rolled out as
 advisory checks first.
 
+Every built-in rule in `skylos/rules/catalog.py` declares a `finding_type`:
+`defect` for concrete correctness patterns, `review` for risks requiring context,
+and `advice` for maintainability or tooling conventions. Severity describes impact
+and remains separate. These labels do not certify a production incident.
+
+All findings in the selected scan scope remain in JSON. Terminal reports list
+Defect and Review individually and group Advice by rule, with counts and affected
+files. Use `--expand-advice` to show every Advice location and message. MCP and
+LLM replies summarize Advice by default and provide access to the full records.
+Display grouping and expansion do not change the assessment or configured gate
+limits. Assign a type explicitly when adding any rule.
+
+## Assessment Policy
+
+The source scan answers four separate questions: **Risk, Maintainability,
+Dead code, Gate**. It does not blend clean categories into an overall A–F grade.
+
+- **Risk:** preserve the highest unresolved severity among Defect and Review
+  findings outside the dead-code candidate lists. Include correctness findings
+  from quality rules. Adding lines, clean files, or unrelated languages cannot
+  dilute the risk. A Review finding remains a candidate risk, not a proved incident.
+- **Maintainability:** retain Advice counts and rule groups. Where a complete
+  inventory exists, report affected units against the units measured for that
+  rule and language. Measure threshold excess separately: complexity 11 against
+  limit 10 is 1.1× the limit; 45 is 4.5×. Count a unit once within a
+  rule when measuring prevalence, while retaining every finding record.
+- **Dead code:** report candidates, confidence and evidence for review. A high
+  confidence score does not authorize deletion or establish runtime safety.
+- **Gate:** evaluate the existing limits independently of the readouts. Advice
+  remains eligible for enforcement unless an existing rule or scan-scope policy
+  explicitly excludes it. Grouping is not an exemption.
+
+Disabled checks are not assessed. Failed or unavailable checks make coverage
+incomplete; known findings stay visible. Missing or incomplete unit inventories
+produce counts with an unavailable denominator rather than an invented ratio.
+No numeric health score or maintainability letter is assigned until its bands
+have been calibrated against manually reviewed repositories.
+
+Keep Type, severity, confidence and coverage distinct in every reporting
+surface. Preserve complete records in JSON and expose them from compact agent
+replies. Apply ordinary display filters after assessment; disclose its original
+scope. A changed analysis scope must not reuse a full-project assessment.
+See [scan assessment](./docs/cli-output.md#scan-assessment).
+
 ## Standards-Backed Practice Matrix
 
 | Practice Area | Source / Stipulation | Skylos Coverage | CI / Tool Coverage |

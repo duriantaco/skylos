@@ -3891,6 +3891,7 @@ def apply_review_decisions(
         # is safer than presenting a score or provenance count that no longer
         # agrees with the visible results.
         projected.pop("grade", None)
+        projected.pop("assessment", None)
         projected.pop("ai_security_stats", None)
         projected.pop("provenance_summary", None)
     return projected

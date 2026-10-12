@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 from pathlib import Path
 import re
 
 from rich.console import Console
 from rich.text import Text
+from rich.table import Table
 
 from skylos.api._snippets import _resolve_snippet_path
+from skylos.reporting.assessment_display import (
+    assessment_coverage_text,
+    assessment_rows,
+    maintainability_rows,
+)
+from skylos.reporting.finding_types import (
+    get_finding_type,
+    group_advice,
+    iter_result_findings,
+    summarize_finding_types,
+)
+from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
@@ -34,6 +48,7 @@ CATEGORY_SPECS = (
     ("unused_parameters", "Dead Code", "unused parameter"),
     ("unused_files", "Dead Code", "unused file"),
     ("unused_fixtures", "Dead Code", "unused fixture"),
+    ("unused_exports", "Dead Code", "unused export"),
 )
 
 DEAD_CODE_TYPES = {
@@ -44,6 +59,7 @@ DEAD_CODE_TYPES = {
     "unused_parameters": "parameter",
     "unused_files": "file",
     "unused_fixtures": "fixture",
+    "unused_exports": "export",
 }
 
 SEVERITY_STYLES = {
@@ -99,6 +115,8 @@ class PrettyFinding:
     snippet: str
     fix: str
     why: str = ""
+    finding_type: str = "review"
+    details: tuple[str, ...] = ()
 
 
 def render_pretty_results(
@@ -107,6 +125,7 @@ def render_pretty_results(
     *,
     root_path=None,
     limit: int | None = None,
+    expand_advice: bool = False,
 ) -> None:
     findings = collect_pretty_findings(result, root_path=root_path, limit=limit)
     total_files = (result.get("analysis_summary") or {}).get("total_files", "?")
@@ -114,7 +133,7 @@ def render_pretty_results(
     header = Text.assemble(
         ("Skylos", "bold cyan"),
         (" static analysis", "bold"),
-        (f"  {_finding_count_label(findings)}", "dim"),
+        (f"  {_finding_type_headline(result)}", "dim"),
         (f"  {total_files} file{'s' if total_files != 1 else ''} analyzed", "dim"),
     )
     console.print(header)
@@ -127,6 +146,16 @@ def render_pretty_results(
         console.print(Text(_sanitize_terminal_text(uncertainty), style="yellow"))
     _print_architecture_advisory_status(console, result)
     _print_publisher_review_status(console, result)
+    _print_assessment(console, result)
+    summary = result.get("analysis_summary") or {}
+    if summary.get("assessment_includes_filtered_findings") or summary.get("grade_includes_filtered_findings"):
+        label = "Assessment" if result.get("assessment") else "Grade"
+        console.print(
+            Text(
+                f"  {label} includes all analyzed findings, including those outside this display.",
+                style="dim",
+            )
+        )
     _print_directory_rollups(console, result)
     console.print()
 
@@ -134,31 +163,51 @@ def render_pretty_results(
         console.print(Text("  No findings to display.", style="bold green"))
         return
 
-    by_file: dict[str, list[PrettyFinding]] = {}
-    for finding in findings:
-        by_file.setdefault(finding.file, []).append(finding)
-
-    for file_path in sorted(by_file):
-        file_findings = sorted(
-            by_file[file_path],
-            key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.line, f.rule),
-        )
-        short_path = _sanitize_terminal_text(_shorten_path(file_path, root_path))
-        console.print(
-            Text.assemble(
-                ("  ", ""),
-                (short_path, "bold"),
-                (" · ", "dim"),
-                (f"{_finding_count_label(file_findings)}", "dim"),
+    for finding_type in ("defect", "review", "advice"):
+        if finding_type == "advice" and not expand_advice:
+            _print_advice_groups(console, result, root_path=root_path, limit=limit)
+            continue
+        selected = [
+            finding for finding in findings if finding.finding_type == finding_type
+        ]
+        if not selected:
+            continue
+        label = "Defects" if finding_type == "defect" else finding_type.title()
+        console.print(Text(f"  {label}", style="bold"))
+        by_file: dict[str, list[PrettyFinding]] = {}
+        for finding in selected:
+            by_file.setdefault(finding.file, []).append(finding)
+        for file_path in sorted(by_file):
+            file_findings = sorted(
+                by_file[file_path],
+                key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.line, f.rule),
             )
-        )
-        console.print()
-
-        for finding in file_findings:
-            _print_finding(console, finding, short_path)
-        console.print()
+            short_path = _sanitize_terminal_text(_shorten_path(file_path, root_path))
+            console.print(
+                Text.assemble(
+                    ("  ", ""),
+                    (short_path, "bold"),
+                    (" · ", "dim"),
+                    (_finding_count_label(file_findings), "dim"),
+                )
+            )
+            console.print()
+            for finding in file_findings:
+                _print_finding(console, finding, short_path)
+            console.print()
 
     _print_footer(console, findings)
+
+
+def _print_assessment(console: Console, result: dict) -> None:
+    assessment = result.get("assessment")
+    if not isinstance(assessment, dict) or not assessment:
+        return
+    for label, detail in assessment_rows(assessment, gate=result.get("gate") or result.get("quality_gate")):
+        console.print(Text.assemble((f"  {label}: ", "bold"), (_sanitize_terminal_text(detail), "")))
+    console.print(Text("  " + _sanitize_terminal_text(assessment_coverage_text(assessment)), style="dim"))
+    for label, spread, magnitude in maintainability_rows(assessment):
+        console.print(Text("    " + _sanitize_terminal_text(f"{label}: {spread}; {magnitude}"), style="dim"))
 
 
 def _print_architecture_advisory_status(console: Console, result: dict) -> None:
@@ -173,10 +222,13 @@ def _print_architecture_advisory_status(console: Console, result: dict) -> None:
     console.print(
         Text(
             f"  Architecture: {count} advisory module{'s' if count != 1 else ''}"
-            f"{signal_label}; see architecture_metrics.advisories in JSON",
+            f"{signal_label}; maintainability advice; gates use configured limits; "
+            "see architecture_metrics.advisories in JSON",
             style="dim",
         )
     )
+
+
 
 
 def _print_publisher_review_status(console: Console, result: dict) -> None:
@@ -200,15 +252,85 @@ def _print_publisher_review_status(console: Console, result: dict) -> None:
         )
 
 
+
+
 def _finding_count_label(findings: list[PrettyFinding]) -> str:
-    reviews = sum(
-        finding.category == "publisher_change_findings" for finding in findings
+    counts = Counter(finding.finding_type for finding in findings)
+    return (
+        " · ".join(
+            f"{counts[kind]} {('defect' if counts[kind] == 1 else 'defects') if kind == 'defect' else kind}"
+            for kind in ("defect", "review", "advice")
+            if counts[kind]
+        )
+        or "0 defects"
     )
-    issues = len(findings) - reviews
-    label = f"{issues} issue{'s' if issues != 1 else ''}"
-    if reviews:
-        label += f" · {reviews} review signal{'s' if reviews != 1 else ''}"
-    return label
+
+
+def _finding_type_headline(result):
+    counts = summarize_finding_types(result)
+    defect_label = "defect" if counts["defect"] == 1 else "defects"
+    group_label = "group" if counts["advice_groups"] == 1 else "groups"
+    return (
+        f"{counts['defect']} {defect_label} · {counts['review']} review · "
+        f"{counts['advice']} advice in {counts['advice_groups']} {group_label}"
+    )
+
+
+def _print_advice_groups(console, result, *, root_path=None, limit=None):
+    groups = group_advice(result)
+    if not groups:
+        return
+    console.print(Text("  Advice", style="bold"))
+    table = Table(box=None, padding=(0, 1), expand=True)
+    table.add_column("Type", width=6)
+    table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Rule", width=20, overflow="fold")
+    table.add_column("Count", width=5, justify="right")
+    table.add_column("Top files", overflow="fold")
+    visible = groups if limit is None else groups[:limit]
+    for group in visible:
+        severities = ", ".join(
+            sorted(
+                {
+                    str(finding.get("severity") or "MEDIUM").upper()
+                    for finding in group["findings"]
+                }
+            )
+        )
+        files = Counter(
+            str(finding.get("file") or finding.get("file_path") or "?")
+            for finding in group["findings"]
+        )
+        top = sorted(files, key=lambda file: (-files[file], file))[:3]
+        names = [f"{_shorten_path(file, root_path)} ({files[file]})" for file in top]
+        if len(files) > len(top):
+            names.append(f"+{len(files) - len(top)} more files")
+        table.add_row(
+            "Advice",
+            _sanitize_terminal_text(severities),
+            Text(
+                _sanitize_terminal_text(str(group["name"]))
+                + "\n"
+                + _sanitize_terminal_text(str(group["rule_id"]))
+            ),
+            str(group["count"]),
+            Text("\n".join(_sanitize_terminal_text(name) for name in names)),
+        )
+    console.print(table)
+    if len(visible) < len(groups):
+        console.print(
+            Text(
+                f"  ... and {len(groups) - len(visible)} more advice groups (use --limit to adjust)",
+                style="dim",
+            )
+        )
+    console.print(
+        Text(
+            "  Use --expand-advice for every location and message, or --format json for complete findings.",
+            style="dim",
+        )
+    )
+    console.print()
 
 
 def collect_pretty_findings(
@@ -219,9 +341,21 @@ def collect_pretty_findings(
 ) -> list[PrettyFinding]:
     source_cache: dict[str, list[str] | None] = {}
     findings: list[PrettyFinding] = []
+    source_sections = {}
+    for section in [
+        *(section for section, _ in FINDING_SECTIONS),
+        "circular_dependencies",
+        "publisher_change_findings",
+    ]:
+        for item in result.get(section, []) or []:
+            source_sections.setdefault((id(item), section == "custom_rules"), section)
+    by_category = {"analysis_errors": result.get("analysis_errors", []) or []}
+    for category, item in iter_result_findings(result):
+        section = source_sections.get((id(item), category == "custom_rules"), "quality")
+        by_category.setdefault(section, []).append(item)
 
     for category, category_label, fallback_label in CATEGORY_SPECS:
-        items = list(result.get(category, []) or [])
+        items = by_category.get(category, [])
         if limit is not None:
             items = items[:limit]
         for item in items:
@@ -276,7 +410,34 @@ def _make_pretty_finding(
         snippet=snippet,
         fix=fix,
         why=why,
+        finding_type=get_finding_type(item, category),
+        details=tuple(
+            _sanitize_terminal_text(detail) for detail in _context_details(item)
+        ),
     )
+
+
+def _context_details(item):
+    details = []
+    if item.get("confidence") is not None:
+        details.append(f"Confidence: {item['confidence']}%")
+    symbol = item.get("symbol")
+    if symbol and symbol != "<module>":
+        details.append(f"Symbol: {symbol}")
+    if item.get("ai_authored"):
+        details.append(f"AI: {item.get('ai_agent') or 'ai'}")
+    verification = item.get("verification")
+    if isinstance(verification, dict) and verification.get("verdict"):
+        details.append(f"Verified: {verification['verdict']}")
+        evidence = verification.get("evidence")
+        chain = evidence.get("chain") if isinstance(evidence, dict) else None
+        if isinstance(chain, list) and chain:
+            names = [
+                str(part.get("fn") or "?") if isinstance(part, dict) else "?"
+                for part in chain[:6]
+            ]
+            details.append("Proof: " + " -> ".join(names))
+    return details
 
 
 def _print_finding(console: Console, finding: PrettyFinding, short_path: str) -> None:
@@ -284,6 +445,7 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         ("    ", ""),
         ("█", _severity_rail_style(finding.severity)),
         (" ", ""),
+        (f"Type: {finding.finding_type.title()}  Severity: ", "dim"),
         (
             _severity_badge(finding.severity),
             SEVERITY_STYLES.get(finding.severity, "dim"),
@@ -291,7 +453,7 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         (" ", ""),
         (finding.rule, "cyan"),
         ("  ", ""),
-        (_truncate(finding.title, 140), ""),
+        (finding.title, ""),
     )
     console.print(first)
 
@@ -307,7 +469,7 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         console.print(
             Text.assemble(
                 ("      evidence: ", "dim"),
-                (_truncate(finding.why, 140), "dim"),
+                (finding.why, "dim"),
             )
         )
 
@@ -315,9 +477,12 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         console.print(
             Text.assemble(
                 ("      ", ""),
-                (_truncate(finding.snippet.strip(), 140), "dim"),
+                (finding.snippet.strip(), "dim"),
             )
         )
+
+    for detail in finding.details:
+        console.print(Text.assemble(("      ", "dim"), (detail, "dim")))
 
     if finding.fix:
         label = (
@@ -495,11 +660,7 @@ def _shorten_path(path: str, root_path=None) -> str:
     except (OSError, ValueError):
         pass
 
-    text = str(path)
-    parts = text.replace("\\", "/").split("/")
-    if raw.is_absolute() and len(parts) > 4:
-        return ".../" + "/".join(parts[-3:])
-    return text
+    return str(path)
 
 
 def _line_number(item: dict) -> int:
@@ -536,7 +697,9 @@ def _title(item: dict, category: str, fallback_label: str) -> str:
     if category in DEAD_CODE_TYPES:
         name = item.get("name") or item.get("simple_name") or item.get("symbol")
         if name:
-            return f"Unused {DEAD_CODE_TYPES[category]}: {name}"
+            title = f"Unused {DEAD_CODE_TYPES[category]}: {name}"
+            message = item.get("message")
+            return f"{title}\n{message}" if message and str(message) != title else title
 
     if category == "dependency_vulnerabilities":
         meta = item.get("metadata") or {}
@@ -546,7 +709,9 @@ def _title(item: dict, category: str, fallback_label: str) -> str:
         if pkg:
             package = f"{pkg}@{version}" if version else str(pkg)
             suffix = f" ({vuln})" if vuln else ""
-            return f"Vulnerable dependency: {package}{suffix}"
+            title = f"Vulnerable dependency: {package}{suffix}"
+            message = item.get("message")
+            return f"{title}\n{message}" if message and str(message) != title else title
 
     for key in ("message", "msg", "detail", "description", "reason"):
         value = item.get(key)

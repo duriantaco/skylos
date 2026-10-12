@@ -40,11 +40,29 @@ def _escape_github_command_property(value):
 
 
 def _emit_github_grade_annotation(result):
+    assessment = result.get("assessment")
+    if isinstance(assessment, dict) and assessment:
+        from skylos.reporting.assessment_display import (
+            assessment_notice,
+            assessment_coverage_text,
+        )
+
+        message = (
+            assessment_notice(assessment, gate=result.get("gate"))
+            + " | "
+            + assessment_coverage_text(assessment)
+        )
+        print(
+            f"::notice title=Skylos Assessment::{_escape_github_command_data(message)}"
+        )
+        return
     grade_data = result.get("grade")
     if grade_data:
         overall = grade_data["overall"]
         grade = f"{overall['letter']} ({overall['score']}/100)"
-        print(f"::notice title=Skylos Grade::{_escape_github_command_data(grade)}")
+        print(
+            f"::notice title=Skylos Legacy Score::{_escape_github_command_data(grade)}"
+        )
 
 
 def _github_finding_annotation(finding):

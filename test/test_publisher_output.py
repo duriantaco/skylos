@@ -82,7 +82,8 @@ def test_publisher_review_has_distinct_pretty_and_rich_sections():
     pretty_console = _console()
     render_pretty_results(pretty_console, result)
     pretty = pretty_console.export_text()
-    assert "0 issues · 1 review signal" in pretty
+    assert "0 defects · 1 review · 0 advice in 0 groups" in pretty
+    assert "Type: Review  Severity:  WARN" in pretty
     assert "WARN  SKY-SCA-NPM-PUB001" in pretty
     assert "Publisher review" in pretty
 

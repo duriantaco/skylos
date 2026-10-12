@@ -5,6 +5,7 @@ export type CoreSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | "WA
 export type CoreCategory = "dead_code" | "security" | "secrets" | "quality" | "debt" | "ai";
 
 interface RawUnusedItem {
+  finding_type?: "defect" | "review" | "advice";
   name?: string;
   simple_name?: string;
   type?: string;
@@ -20,6 +21,7 @@ interface RawUnusedItem {
 }
 
 interface RawFinding {
+  finding_type?: "defect" | "review" | "advice";
   message?: string;
   file?: string;
   line?: number;
@@ -74,15 +76,31 @@ interface RawQualityFinding extends RawFinding {
   threshold?: number;
 }
 
+interface RawDependencyFinding extends RawFinding {
+  package?: string;
+  summary?: string;
+  vulnerability_id?: string;
+}
+
 export interface RawCLIReport {
   unused_functions?: RawUnusedItem[];
   unused_imports?: RawUnusedItem[];
   unused_classes?: RawUnusedItem[];
   unused_variables?: RawUnusedItem[];
   unused_parameters?: RawUnusedItem[];
+  unused_files?: RawUnusedItem[];
+  unused_exports?: RawUnusedItem[];
+  unused_fixtures?: RawUnusedItem[];
   secrets?: RawFinding[];
   danger?: RawFinding[];
+  reliability?: RawFinding[];
+  ai_defects?: RawFinding[];
+  publisher_change_findings?: RawFinding[];
+  custom_rules?: RawFinding[];
   quality?: RawQualityFinding[];
+  code_health?: RawQualityFinding[];
+  architecture_metrics?: { advisories?: { signals?: RawQualityFinding[] }[] };
+  dependency_vulnerabilities?: RawDependencyFinding[];
 }
 
 export interface NormalizeReportOptions {
@@ -93,12 +111,14 @@ export interface NormalizeReportOptions {
 }
 
 export interface CoreFinding {
+  findingType?: "defect" | "review" | "advice";
   id: string;
   fingerprint: string;
   ruleId: string;
   legacyRuleId?: string;
   category: CoreCategory;
   severity: CoreSeverity;
+  severityUnknown?: boolean;
   message: string;
   file: string;
   relativePath: string;
@@ -142,6 +162,9 @@ const DEAD_CODE_RULES: Record<string, { ruleId: string; legacyRuleId: string; it
   unused_variables: { ruleId: "SKY-U003", legacyRuleId: "DEAD-VAR", itemType: "variable", label: "variable" },
   unused_classes: { ruleId: "SKY-U004", legacyRuleId: "DEAD-CLASS", itemType: "class", label: "class" },
   unused_parameters: { ruleId: "SKY-U005", legacyRuleId: "DEAD-PARAM", itemType: "parameter", label: "parameter" },
+  unused_files: { ruleId: "SKY-E002", legacyRuleId: "", itemType: "file", label: "file" },
+  unused_exports: { ruleId: "SKYLOS", legacyRuleId: "", itemType: "export", label: "export" },
+  unused_fixtures: { ruleId: "SKY-U000", legacyRuleId: "", itemType: "fixture", label: "fixture" },
 };
 
 const LEGACY_RULE_ALIASES: Record<string, string> = {
@@ -164,6 +187,9 @@ export function normalizeReportCore(report: RawCLIReport, options: NormalizeRepo
   mapUnused(findings, report.unused_classes, "unused_classes", options);
   mapUnused(findings, report.unused_variables, "unused_variables", options);
   mapUnused(findings, report.unused_parameters, "unused_parameters", options);
+  mapUnused(findings, report.unused_files, "unused_files", options);
+  mapUnused(findings, report.unused_exports, "unused_exports", options);
+  mapUnused(findings, report.unused_fixtures, "unused_fixtures", options);
 
   for (const secret of report.secrets ?? []) {
     const finding = rawFindingToCore(secret, "secrets", options);
@@ -178,6 +204,48 @@ export function normalizeReportCore(report: RawCLIReport, options: NormalizeRepo
   for (const quality of report.quality ?? []) {
     const finding = rawQualityFindingToCore(quality, options);
     if (finding) findings.push(finding);
+  }
+  for (const reliability of report.reliability ?? []) {
+    const finding = rawFindingToCore(reliability, "security", options);
+    if (finding) findings.push(finding);
+  }
+  for (const issue of [...(report.ai_defects ?? []), ...(report.publisher_change_findings ?? [])]) {
+    const finding = rawFindingToCore(issue, "ai", options);
+    if (finding) findings.push(finding);
+  }
+  for (const custom of report.custom_rules ?? []) {
+    const finding = rawFindingToCore(custom, "quality", options);
+    if (finding) findings.push(finding);
+  }
+  for (const dependency of report.dependency_vulnerabilities ?? []) {
+    const finding = rawFindingToCore({
+      ...dependency,
+      message: dependency.message ?? dependency.summary ?? `${dependency.package ?? "Dependency"}: ${dependency.vulnerability_id ?? "review vulnerability"}`,
+    }, "security", options);
+    if (finding) findings.push(finding);
+  }
+
+  // These families may mirror complete records already emitted above. Keep
+  // every row within its own family, including repeated evidence, and suppress
+  // only identical complete records mirrored from another family.
+  const present = new Set([
+    ...(report.secrets ?? []), ...(report.danger ?? []), ...(report.quality ?? []),
+    ...(report.reliability ?? []), ...(report.ai_defects ?? []),
+    ...(report.publisher_change_findings ?? []), ...(report.custom_rules ?? []),
+    ...(report.dependency_vulnerabilities ?? []),
+  ].map(rawRecordKey));
+  const extras = [
+    report.code_health ?? [],
+    (report.architecture_metrics?.advisories ?? []).flatMap(advisory => advisory.signals ?? []),
+  ];
+  for (const rows of extras) {
+    for (const row of rows) {
+      if (present.has(rawRecordKey(row))) continue;
+      const finding = rawQualityFindingToCore(row, options);
+      if (finding) findings.push(finding);
+    }
+    // Update after a whole family so duplicate observations inside it remain.
+    rows.forEach(row => present.add(rawRecordKey(row)));
   }
 
   return findings.filter((finding) => {
@@ -198,9 +266,9 @@ export function isDeadCodeRule(ruleId: string): boolean {
 }
 
 export function normalizeSeverity(value?: string): CoreSeverity {
-  const normalized = String(value ?? "").toUpperCase();
+  const normalized = String(value ?? "").trim().toUpperCase();
   if (normalized === "CRITICAL") return "CRITICAL";
-  if (normalized === "HIGH") return "HIGH";
+  if (normalized === "HIGH" || normalized === "ERROR") return "HIGH";
   if (normalized === "MEDIUM") return "MEDIUM";
   if (normalized === "LOW") return "LOW";
   if (normalized === "WARN" || normalized === "WARNING") return "WARN";
@@ -253,6 +321,7 @@ function mapUnused(
       ruleId,
       legacyRuleId: meta.legacyRuleId,
       category: "dead_code",
+      findingType: item.finding_type ?? "review",
       severity: "INFO",
       message,
       file: paths.absolutePath,
@@ -293,7 +362,9 @@ function rawFindingToCore(
     fingerprint,
     ruleId,
     category,
+    findingType: raw.finding_type === "defect" || raw.finding_type === "advice" ? raw.finding_type : "review",
     severity: normalizeSeverity(raw.severity),
+    severityUnknown: !["CRITICAL", "HIGH", "ERROR", "MEDIUM", "LOW", "WARN", "WARNING", "INFO"].includes(String(raw.severity ?? "").trim().toUpperCase()) || undefined,
     message,
     file: paths.absolutePath,
     relativePath: paths.relativePath,
@@ -330,6 +401,15 @@ function rawFindingToCore(
 function rawQualityFindingToCore(raw: RawQualityFinding, options: NormalizeReportOptions): CoreFinding | undefined {
   const message = raw.message ?? `Quality issue (${raw.kind ?? raw.metric ?? "quality"})`;
   return rawFindingToCore({ ...raw, message, rule_id: raw.rule_id ?? "SKY-Q000" }, "quality", options);
+}
+
+function rawRecordKey(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(rawRecordKey).join(",")}]`;
+  if (value && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return `{${Object.keys(row).sort().map(key => `${JSON.stringify(key)}:${rawRecordKey(row[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
 }
 
 function normalizePaths(filePath: string, wsRoot: string): { absolutePath: string; relativePath: string } {

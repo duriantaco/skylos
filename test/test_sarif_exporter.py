@@ -898,6 +898,31 @@ def test_security_severity_uses_highest_finding_for_rule():
     assert rule["properties"]["security-severity"] == "9.5"
 
 
+def test_result_severity_preserves_mixed_occurrences_and_critical_correctness():
+    findings = [
+        {"rule_id": "SKY-D211", "category": "SECURITY", "severity": "HIGH"},
+        {"rule_id": "SKY-D211", "category": "SECURITY", "severity": "CRITICAL"},
+        {"rule_id": "SKY-L001", "category": "QUALITY", "severity": "CRITICAL"},
+        {"rule_id": "CUSTOM", "category": "QUALITY"},
+    ]
+    run = SarifExporter(findings).generate()["runs"][0]
+
+    assert [row["level"] for row in run["results"]] == [
+        "error",
+        "error",
+        "error",
+        "note",
+    ]
+    assert [row["properties"]["severity"] for row in run["results"]] == [
+        "HIGH",
+        "CRITICAL",
+        "CRITICAL",
+        "UNKNOWN",
+    ]
+    rules = {row["id"]: row for row in run["tool"]["driver"]["rules"]}
+    assert rules["SKY-D211"]["properties"]["security-severity"] == "9.5"
+
+
 def test_cwe_tags_use_github_external_convention():
     finding = {
         "rule_id": "SKY-D211",

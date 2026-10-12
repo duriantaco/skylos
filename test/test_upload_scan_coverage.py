@@ -40,7 +40,9 @@ def _full_result() -> dict:
     }
 
 
-def _receipt(result: dict, *, analyzer_owned: bool = True, analysis_mode: str = "static") -> dict:
+def _receipt(
+    result: dict, *, analyzer_owned: bool = True, analysis_mode: str = "static"
+) -> dict:
     receipt = scan_coverage_receipt(
         result, analyzer_owned=analyzer_owned, analysis_mode=analysis_mode
     )
@@ -60,22 +62,91 @@ def test_full_static_scan_can_attest_covered_checks():
     }
 
 
+def test_new_assessment_receipt_can_replace_legacy_grade_without_weakening_scope():
+    from skylos.reporting.assessment import compute_assessment
+
+    result = _full_result()
+    result.pop("grade")
+    result["assessment"] = compute_assessment(result)
+    assert _receipt(result)["resolution_covered_checks"] == ["quality"]
+    result["analysis_summary"]["assessment_includes_filtered_findings"] = True
+    assert _receipt(result)["complete"] is False
+
+
+def test_stale_assessment_cannot_authorize_absence_even_with_legacy_grade():
+    from skylos.reporting.assessment import compute_assessment
+
+    result = _full_result()
+    result["assessment"] = compute_assessment(result)
+    result["quality"].append({"rule_id": "SKY-L001", "severity": "HIGH"})
+    assert _receipt(result)["complete"] is False
+
+
+def test_incomplete_ai_proof_excludes_ai_absence_coverage_only():
+    from skylos.reporting.assessment import compute_assessment
+
+    result = _full_result()
+    result.pop("grade")
+    result["analysis_summary"]["grade_categories"].append("ai_defects")
+    result["analysis_summary"]["ai_verification"] = {
+        "state": "incomplete",
+        "missing_checks": ["go_workspace_api_surface"],
+    }
+    result["assessment"] = compute_assessment(result)
+    assert _receipt(result)["resolution_covered_checks"] == ["quality"]
+
+
 @pytest.mark.parametrize(
     ("change", "expected_reason"),
     [
-        (lambda r: r["analysis_summary"].update(selected_rules=["SKY-Q301"]), "selected_rules"),
-        (lambda r: r["analysis_summary"]["comparison_scope"].update(changed_files_only=True), "partial_repository"),
-        (lambda r: r["analysis_summary"]["comparison_scope"].update(kind="file"), "partial_repository"),
-        (lambda r: r["analysis_summary"]["comparison_scope"].update(kind="repository_root_with_exclusions", complete_repository=False, excluded_folders=["generated"]), "partial_repository"),
+        (
+            lambda r: r["analysis_summary"].update(selected_rules=["SKY-Q301"]),
+            "selected_rules",
+        ),
+        (
+            lambda r: r["analysis_summary"]["comparison_scope"].update(
+                changed_files_only=True
+            ),
+            "partial_repository",
+        ),
+        (
+            lambda r: r["analysis_summary"]["comparison_scope"].update(kind="file"),
+            "partial_repository",
+        ),
+        (
+            lambda r: r["analysis_summary"]["comparison_scope"].update(
+                kind="repository_root_with_exclusions",
+                complete_repository=False,
+                excluded_folders=["generated"],
+            ),
+            "partial_repository",
+        ),
         (lambda r: r.pop("grade"), "filtered_findings"),
-        (lambda r: r["analysis_errors"].append({"file": "bad.ts"}), "analysis_incomplete"),
-        (lambda r: r["analysis_summary"].update(incomplete_languages=["typescript"]), "analysis_incomplete"),
-        (lambda r: r["analysis_summary"].update(selected_rules="SKY-Q301"), "selected_rules"),
-        (lambda r: r["analysis_summary"].update(resolution_scope_limited=True), "configured_suppression"),
-        (lambda r: r["suppressed"].append({"rule_id": "SKY-Q301"}), "suppressed_findings"),
+        (
+            lambda r: r["analysis_errors"].append({"file": "bad.ts"}),
+            "analysis_incomplete",
+        ),
+        (
+            lambda r: r["analysis_summary"].update(incomplete_languages=["typescript"]),
+            "analysis_incomplete",
+        ),
+        (
+            lambda r: r["analysis_summary"].update(selected_rules="SKY-Q301"),
+            "selected_rules",
+        ),
+        (
+            lambda r: r["analysis_summary"].update(resolution_scope_limited=True),
+            "configured_suppression",
+        ),
+        (
+            lambda r: r["suppressed"].append({"rule_id": "SKY-Q301"}),
+            "suppressed_findings",
+        ),
     ],
 )
-def test_partial_or_filtered_scans_cannot_claim_complete_coverage(change, expected_reason):
+def test_partial_or_filtered_scans_cannot_claim_complete_coverage(
+    change, expected_reason
+):
     result = _full_result()
     change(result)
     receipt = _receipt(result)
@@ -165,16 +236,22 @@ def test_non_analyzer_and_non_static_uploads_are_partial():
 
 
 def test_missing_summary_emits_no_coverage_claim():
-    assert scan_coverage_receipt({}, analyzer_owned=True, analysis_mode="static") is None
+    assert (
+        scan_coverage_receipt({}, analyzer_owned=True, analysis_mode="static") is None
+    )
 
 
 def test_ignored_quality_rule_does_not_resolve_other_quality_issues(tmp_path):
     from skylos.analyzer import analyze
 
-    (tmp_path / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    (
+        tmp_path / "pyproject.toml"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
         '[tool.skylos]\nignore = ["SKY-Q301"]\n', encoding="utf-8"
     )
-    (tmp_path / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    (
+        tmp_path / "app.py"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
         "def main():\n    return 1\n", encoding="utf-8"
     )
     result = json.loads(
@@ -197,10 +274,14 @@ def test_nested_file_config_ignore_limits_resolution_scope(tmp_path):
 
     source = tmp_path / "src"
     source.mkdir()
-    (source / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    (
+        source / "pyproject.toml"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
         '[tool.skylos]\nignore = ["SKY-Q301"]\n', encoding="utf-8"
     )
-    (source / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    (
+        source / "app.py"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
         "def main():\n    return 1\n", encoding="utf-8"
     )
     result = json.loads(
@@ -209,7 +290,10 @@ def test_nested_file_config_ignore_limits_resolution_scope(tmp_path):
     assert result["analysis_summary"]["resolution_scope_limited"] is True
 
 
-@pytest.mark.parametrize(("filename", "source"), [("app.py", "VALUE = 1\n"), ("app.ts", "export const value = 1;\n")])
+@pytest.mark.parametrize(
+    ("filename", "source"),
+    [("app.py", "VALUE = 1\n"), ("app.ts", "export const value = 1;\n")],
+)
 def test_uploaded_analyzer_covers_standard_default_exclusions(
     tmp_path, filename, source
 ):
@@ -253,11 +337,15 @@ def test_conflicting_actionable_iad_finding_is_not_labeled_advisory():
 def test_analyzer_records_iad_policy_with_zero_signals(tmp_path, enforce):
     from skylos.analyzer import analyze
 
-    (tmp_path / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+    (
+        tmp_path / "app.py"
+    ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
         "VALUE = 1\n", encoding="utf-8"
     )
     if enforce:
-        (tmp_path / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
+        (
+            tmp_path / "pyproject.toml"
+        ).write_text(  # skylos: ignore[SKY-D324] pytest-owned tmp_path fixture
             "[tool.skylos.architecture]\nenforce_iad = true\n",
             encoding="utf-8",
         )
@@ -295,7 +383,7 @@ def test_architecture_advisory_upload_is_count_only_and_bounded():
     }
 
 
-def test_upload_payloads_carry_coverage_and_classification_without_advisory_sources(
+def test_upload_payloads_retain_advice_records_without_inventing_parent_metadata(
     monkeypatch,
 ):
     result = _full_result()
@@ -324,5 +412,12 @@ def test_upload_payloads_carry_coverage_and_classification_without_advisory_sour
         assert payload["architecture_advisories"]["signal_count"] == 1
         assert "private.module" not in json.dumps(payload)
         assert "private/path.py" not in json.dumps(payload)
-    assert prepared.core_payload["runs"][0]["results"] == []
-    assert prepared.compatibility_payload["findings"] == []
+    sarif_rows = prepared.core_payload["runs"][0]["results"]
+    compatibility_rows = prepared.compatibility_payload["findings"]
+    assert len(sarif_rows) == len(compatibility_rows) == 1
+    assert sarif_rows[0]["ruleId"] == "SKY-Q802"
+    assert sarif_rows[0]["properties"]["finding_type"] == "advice"
+    assert sarif_rows[0]["properties"]["severity"] == "UNKNOWN"
+    assert compatibility_rows[0]["rule_id"] == "SKY-Q802"
+    assert compatibility_rows[0]["category"] == "QUALITY"
+    assert compatibility_rows[0]["file_path"] == ""

@@ -1,9 +1,13 @@
 from io import StringIO
+from pathlib import Path
 
 from rich.console import Console
 from rich.theme import Theme
 
 from skylos.ui.rich_report import _render_analysis_errors
+from skylos.ui.rich_report import _finding_table_cells, _shorten_path
+from skylos.analysis.errors import analysis_error_payload
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _render_errors(result):
@@ -86,6 +90,64 @@ import pytest  # noqa: E402
 
 from skylos.cli import _skylos_console_theme  # noqa: E402
 from skylos.ui.rich_report import _quality_detail, render_results  # noqa: E402
+
+
+@pytest.mark.parametrize("width", [80, 100, 180])
+def test_external_scan_syntax_error_keeps_root_relative_location(width):
+    root = Path("/tmp/pytest-of-runner/pytest-0/test_rich_upload_waits_for_com0")
+    source = root / "app.py"
+    with pytest.raises(SyntaxError) as exc:
+        compile("def broken(:\n    pass\n", str(source), "exec")
+    finding = analysis_error_payload(source, exc.value)
+    finding["python_version"] = "3.12.3"
+    original = dict(finding)
+    output = StringIO()
+    console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+        width=width,
+        theme=_skylos_console_theme(),
+    )
+
+    _render_analysis_errors(
+        console, {"analysis_errors": [finding]}, root_path=root, limit=1
+    )
+
+    assert _finding_table_cells(finding, "analysis_errors", root)[3] == "app.py:1"
+    rendered = output.getvalue()
+    assert any("app.py:1" in line for line in rendered.splitlines())
+    assert "syntax error: invalid syntax" in rendered
+    assert "code 2." in rendered
+    assert finding == original
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_shorten_path_file_scan_never_uses_dot(tmp_path, existing):
+    target = tmp_path.resolve() / "app.py"
+    if existing:
+        assert write_text_no_symlink(target, "value = 1\n")
+    assert _shorten_path(target, root_path=target) == "app.py"
+    neighbor = target.with_name("neighbor.py")
+    assert _shorten_path(neighbor, root_path=target) == _shorten_path(neighbor)
+
+
+def test_scan_root_has_priority_over_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "selected"
+    assert _shorten_path(root / "src" / "app.py", root_path=root) == "src/app.py"
+    assert _shorten_path("selected/src/app.py", root_path=root) == "selected/src/app.py"
+
+
+def test_shorten_path_preserves_locations_outside_scan_root(tmp_path, monkeypatch):
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    scan_root = tmp_path / "selected"
+    outside = tmp_path / "sibling" / "app.py"
+    assert _shorten_path(outside, root_path=scan_root) == str(outside.resolve())
+    assert _shorten_path(cwd / "neighbor.py", root_path=scan_root) == "neighbor.py"
+    assert _shorten_path("src/app.py", root_path=scan_root) == "src/app.py"
 
 
 @pytest.mark.parametrize(
@@ -235,7 +297,9 @@ def test_tables_keep_rule_ids_locations_and_messages_readable(
         theme=_skylos_console_theme(),
     )
 
-    render_results(console, _scan_result(tmp_path), copy_badge=False)
+    render_results(
+        console, _scan_result(tmp_path), copy_badge=False, expand_advice=True
+    )
 
     rendered = output.getvalue()
     lines = rendered.splitlines()

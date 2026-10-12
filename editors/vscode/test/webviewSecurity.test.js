@@ -65,7 +65,9 @@ test("webview templates do not use inline event handlers or un-nonced scripts", 
 test("dashboard escapes scan-originated strings before rendering HTML", () => {
   const source = readSource("dashboard.ts");
 
-  assert.match(source, /escapeHtml\(g\.letter\)/);
+  assert.match(source, /escapeHtml\(legacy\.letter\)/);
+  assert.match(source, /escapeHtml\(riskLabel\)/);
+  assert.match(source, /escapeHtml\(detail\)/);
   assert.match(source, /escapeHtml\(cat\)/);
   assert.match(source, /escapeHtml\(l\)/);
   assert.match(source, /escapeHtml\(v\.package\)/);

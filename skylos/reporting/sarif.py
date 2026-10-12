@@ -333,7 +333,19 @@ class SarifExporter:
                 max_length=80,
             ).upper()
 
-            properties = {"category": category}
+            from skylos.reporting.finding_types import get_finding_type
+
+            properties = {
+                "category": category,
+                "finding_type": get_finding_type(finding, category),
+                # SARIF levels collapse HIGH/CRITICAL, and security-severity is
+                # shared by every occurrence of a rule. Preserve this record's
+                # original severity for Cloud and other downstream consumers.
+                "severity": sanitize_untrusted_text(
+                    str(finding.get("severity") or "UNKNOWN").upper(),
+                    max_length=40,
+                ),
+            }
             if category == "PUBLISHER_CHANGE":
                 properties["review_only"] = True
 

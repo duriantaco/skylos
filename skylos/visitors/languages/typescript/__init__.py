@@ -74,9 +74,7 @@ def _first_parse_error_node(root_node):
         node = stack.pop()
         if node.type == "ERROR" or node.is_missing:
             return node
-        stack.extend(
-            reversed([child for child in node.children if child.has_error])
-        )
+        stack.extend(reversed([child for child in node.children if child.has_error]))
     return None
 
 
@@ -201,6 +199,7 @@ def _analysis_scan_result(
     ignore_rules_by_line: dict[int, set[str]],
     suppressed: list[dict],
     analysis_error: dict | None = None,
+    measurement: dict | None = None,
 ) -> tuple:
     return (
         *base_result,
@@ -214,7 +213,7 @@ def _analysis_scan_result(
         {},
         {},
         [],
-        None,
+        {"maintainability_inventory": measurement} if measurement else None,
         set(),
         analysis_error,
         ignore_rules_by_line,
@@ -288,6 +287,7 @@ def scan_typescript_file(
         if enable_danger_rules
         else []
     )
+    measurement: dict = {}
     q_findings: list[dict] = (
         scan_quality(
             core.root_node,
@@ -295,6 +295,7 @@ def scan_typescript_file(
             file_path,
             threshold=complexity_limit,
             lang=core.lang,
+            measurement=measurement if _include_analysis_metadata else None,
         )
         if enable_quality_rules
         else []
@@ -310,6 +311,11 @@ def scan_typescript_file(
         else set()
     )
     if ignored_rule_ids:
+        measurement["rule_units"] = {
+            rule: count
+            for rule, count in measurement.get("rule_units", {}).items()
+            if rule not in ignored_rule_ids
+        }
         q_findings = [
             finding
             for finding in q_findings
@@ -362,4 +368,5 @@ def scan_typescript_file(
         ignore_rules_by_line,
         suppressed_quality + suppressed_danger,
         _typescript_parse_error(str(file_path), core.root_node),
+        measurement,
     )

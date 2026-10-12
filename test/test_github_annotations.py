@@ -163,6 +163,6 @@ class TestGitHubAnnotations:
         lines = _capture_annotations(result)
 
         assert lines == [
-            "::notice title=Skylos Grade::"
+            "::notice title=Skylos Legacy Score::"
             "A%25%0D%0A::error injected (100%0A::warning injected/100)"
         ]
