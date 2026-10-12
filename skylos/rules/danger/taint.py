@@ -1,13 +1,19 @@
 import ast
 
+from skylos.rules.danger.module_namespace import (
+    attribute_write_names,
+    module_name_for,
+    module_rebinding,
+)
+
+# ``bleach.linkify`` only adds links and ``cgi.escape`` leaves quotes alone,
+# so neither is listed.
 XSS_SANITIZERS = {
     "html.escape",
     "markupsafe.escape",
     "markupsafe.Markup.escape",
     "Markup.escape",
     "bleach.clean",
-    "bleach.linkify",
-    "cgi.escape",
 }
 
 CMD_SANITIZERS = {
@@ -23,6 +29,13 @@ URL_SANITIZERS = {
     "_validate_api_request_url",
     "_validate_artifact_upload_url",
     "_validate_github_oidc_request_url",
+}
+
+# A call that passes one of these arguments may not sanitize:
+# ``quote(url, safe=":/")`` keeps the scheme and host separators.
+_SANITIZER_DISABLING_ARGS = {
+    "urllib.parse.quote": (1, "safe"),
+    "urllib.parse.quote_plus": (1, "safe"),
 }
 
 PATH_SANITIZERS = {
@@ -55,6 +68,14 @@ def _resolve_call_name(node: ast.Call):
 
 
 class TaintVisitor(ast.NodeVisitor):
+    # Checkers that index imports set this.
+    untrusted_sources = None
+    # A checker that sets this also accepts a sanitizer imported by name
+    # (``from os.path import basename``) as its qualified entry. Only path
+    # traversal opts in: elsewhere a sanitizer is not proof without the
+    # context checks a checker may lack (an escaped value in an ``href``).
+    resolve_sanitizer_imports = False
+
     def __init__(self, file_path, findings, sanitizers=None):
         self.file_path = file_path
         self.findings = findings
@@ -113,6 +134,57 @@ class TaintVisitor(ast.NodeVisitor):
                 continue
             self._set(name, True)
 
+    def _import_names_are_stable(self, call_name: str) -> bool:
+        """The module cannot swap ``call_name`` out behind its import: no star
+        import, ``exec``/``eval``, namespace write (``globals()[...] =``,
+        ``vars()``, ``__globals__``, a module ``__dict__``) or ``setattr`` on
+        the module object."""
+        module = getattr(self.untrusted_sources, "module", None)
+        if module is None:
+            return False
+        cached = getattr(self, "_module_rebinding_cache", None)
+        if cached is None or cached[0] is not module:
+            cached = (module, module_rebinding(module, module_name_for(self.file_path)))
+            self._module_rebinding_cache = cached
+        dynamic, rebound = cached[1]
+        return not dynamic and not any(part in rebound for part in call_name.split("."))
+
+    def _sanitizer_is_unpatched(self, qualified: str) -> bool:
+        """No attribute write in the module could have replaced ``qualified``
+        on its library module before the import (``os.path.basename = ...``
+        followed by ``from os.path import basename``)."""
+        module = getattr(self.untrusted_sources, "module", None)
+        cached = getattr(self, "_attribute_writes_cache", None)
+        if cached is None or cached[0] is not module:
+            cached = (module, attribute_write_names(module))
+            self._attribute_writes_cache = cached
+        names, computed = cached[1]
+        return not computed and qualified.rsplit(".", 1)[-1] not in names
+
+    def _is_sanitizer_call(self, node: ast.Call) -> bool:
+        call_name = _resolve_call_name(node)
+        if not call_name:
+            return False
+        if call_name not in self.sanitizers:
+            if not self.resolve_sanitizer_imports or self.untrusted_sources is None:
+                return False
+            if not self._import_names_are_stable(call_name):
+                return False
+            call_name = self.untrusted_sources.resolved_import(
+                self._current_function(), call_name
+            )
+            if call_name not in self.sanitizers:
+                return False
+            if not self._sanitizer_is_unpatched(call_name):
+                return False
+        disabling = _SANITIZER_DISABLING_ARGS.get(call_name)
+        if disabling is None:
+            return True
+        position, keyword = disabling
+        return len(node.args) <= position and not any(
+            kw.arg == keyword or kw.arg is None for kw in node.keywords
+        )
+
     def is_tainted(self, node):
         if node is None:
             return False
@@ -157,10 +229,8 @@ class TaintVisitor(ast.NodeVisitor):
             return self._get(node.id)
 
         if isinstance(node, ast.Call):
-            if self.sanitizers:
-                call_name = _resolve_call_name(node)
-                if call_name and call_name in self.sanitizers:
-                    return False
+            if self.sanitizers and self._is_sanitizer_call(node):
+                return False
 
             if isinstance(node.func, ast.Attribute):
                 if self.is_tainted(node.func.value):

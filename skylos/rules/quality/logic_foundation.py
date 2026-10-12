@@ -1575,20 +1575,20 @@ class ReturnConsistencyRule(SkylosRule):
             return None
 
         returns_value = False
-        returns_none = False
+        returns_bare = False
 
+        # PEP 8: once any return has a value, the others must say
+        # ``return None`` explicitly. Only a bare ``return`` is inconsistent.
         for child in _walk_scope(node.body):
             if isinstance(child, ast.Return):
                 if child.value is None:
-                    returns_none = True
-                elif (
+                    returns_bare = True
+                elif not (
                     isinstance(child.value, ast.Constant) and child.value.value is None
                 ):
-                    returns_none = True
-                else:
                     returns_value = True
 
-        if returns_value and returns_none:
+        if returns_value and returns_bare:
             return [
                 {
                     "rule_id": self.rule_id,
