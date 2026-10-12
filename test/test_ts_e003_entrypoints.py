@@ -1270,3 +1270,346 @@ def test_package_managers_preserve_custom_runner_configs(command, tmp_path):
     _, _, configs = _discover_script_entry_candidates(str(tmp_path))
 
     assert configs == {str(config.resolve()): ("vite", str(tmp_path))}
+
+
+@pytest.mark.parametrize(
+    "plugin_call",
+    [
+        "laravel({ input: ['resources/css/app.css', 'resources/js/app.js'] })",
+        "laravel(['resources/js/app.js'])",
+        "laravel('resources/js/app.js')",
+    ],
+)
+def test_laravel_vite_plugin_inputs_are_vite_entries(tmp_path, plugin_call):
+    app = tmp_path / "resources" / "js" / "app.js"
+    other = tmp_path / "resources" / "js" / "other.js"
+    _write(app, "import './bootstrap';\n")
+    _write(other, "export {};\n")
+    vite_config = tmp_path / "vite.config.js"
+    _write(
+        vite_config,
+        "import { defineConfig } from 'vite';\n"
+        "import laravel from 'laravel-vite-plugin';\n"
+        f"export default defineConfig({{ plugins: [{plugin_call}] }});\n",
+    )
+    files = {str(app.resolve()), str(other.resolve())}
+
+    assert _discover_vite_config_entries(str(vite_config), files, str(tmp_path)) == {
+        str(app.resolve())
+    }
+
+
+def test_laravel_named_call_without_plugin_import_is_not_an_entry(tmp_path):
+    app = tmp_path / "resources" / "js" / "app.js"
+    _write(app, "export {};\n")
+    vite_config = tmp_path / "vite.config.js"
+    _write(
+        vite_config,
+        "import laravel from './local-plugin.js';\n"
+        "export default { plugins: [laravel({ input: ['resources/js/app.js'] })] };\n",
+    )
+
+    assert (
+        _discover_vite_config_entries(
+            str(vite_config), {str(app.resolve())}, str(tmp_path)
+        )
+        == set()
+    )
+
+
+def test_nextjs_first_run_reports_only_real_dead_code(tmp_path):
+    """vercel/commerce shape: every metadata route was reported dead."""
+    from skylos.analyzer import analyze
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"private": True, "dependencies": {"next": "15.0.0"}}),
+    )
+    _write(
+        tmp_path / "next.config.ts",
+        "const nextConfig = { images: { formats: ['image/avif'] } };\n"
+        "export default nextConfig;\n",
+    )
+    _write(
+        tmp_path / "postcss.config.mjs",
+        "const config = { plugins: { '@tailwindcss/postcss': {} } };\n"
+        "export default config;\n",
+    )
+    _write(
+        tmp_path / "app" / "robots.ts",
+        "export default function robots() { return { rules: [] }; }\n",
+    )
+    _write(
+        tmp_path / "app" / "sitemap.ts",
+        "export const dynamic = 'force-dynamic';\n"
+        "export default async function sitemap() { return []; }\n",
+    )
+    _write(
+        tmp_path / "app" / "opengraph-image.tsx",
+        "import OpengraphImage from '../components/opengraph-image';\n"
+        "export const runtime = 'edge';\n"
+        "export default async function Image() { return await OpengraphImage(); }\n",
+    )
+    _write(
+        tmp_path / "components" / "opengraph-image.tsx",
+        "export default async function OpengraphImage() { return null; }\n",
+    )
+    _write(
+        tmp_path / "app" / "page.tsx",
+        "async function getData() { return 1; }\n"
+        "function deadChainTop() { return deadChainLeaf(); }\n"
+        "function deadChainLeaf() { return 2; }\n"
+        "export function unusedPageHelper() { return 1; }\n"
+        "export default async function HomePage() { return await getData(); }\n",
+    )
+    _write(
+        tmp_path / "components" / "orphan.tsx",
+        "export function Orphan() { return null; }\n",
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0))
+
+    assert result["analysis_errors"] == []
+    dead_symbols = {
+        (Path(finding["file"]).name, finding["name"])
+        for key in ("unused_functions", "unused_variables", "unused_classes")
+        for finding in result[key]
+    }
+    # getData is called only by the page's default export, which Next.js
+    # calls; the unused chain in the same file is still reported.
+    assert dead_symbols == {
+        ("page.tsx", "unusedPageHelper"),
+        ("page.tsx", "deadChainTop"),
+        ("page.tsx", "deadChainLeaf"),
+        ("orphan.tsx", "Orphan"),
+    }
+    assert {Path(finding["file"]).name for finding in result["unused_files"]} == {
+        "orphan.tsx"
+    }
+
+
+def _dead_function_names(tmp_path) -> set[tuple[str, str]]:
+    from skylos.analyzer import analyze
+
+    result = json.loads(analyze(str(tmp_path), conf=0))
+    assert result["analysis_errors"] == []
+    return {
+        (
+            Path(finding["file"]).relative_to(tmp_path.resolve()).as_posix(),
+            finding["name"],
+        )
+        for finding in result["unused_functions"]
+    }
+
+
+def test_name_only_framework_marks_do_not_keep_helpers_live_in_nextjs(tmp_path):
+    """Only files Next.js routes keep their callees alive (review l7-A)."""
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"dependencies": {"next": "15.0.0", "react": "19.0.0"}}),
+    )
+    _write(
+        tmp_path / "app" / "page.tsx",
+        "export default function Page() { return pageHelper(); }\n"
+        "function pageHelper() { return 'home'; }\n",
+    )
+    _write(
+        tmp_path / "src" / "middleware.ts",
+        "export function middleware() { return mwHelper(); }\n"
+        "function mwHelper() { return null; }\n",
+    )
+    # A private `_folder` is not routed; components/page.tsx is not a route.
+    _write(
+        tmp_path / "app" / "_lib" / "page.tsx",
+        "function privateHelper() { return 5; }\n"
+        "export default function PrivateNotARoute() { return privateHelper(); }\n",
+    )
+    _write(
+        tmp_path / "components" / "page.tsx",
+        "function componentPageHelper() { return 6; }\n"
+        "export default function ComponentNamedPage() { return componentPageHelper(); }\n",
+    )
+    _write(
+        tmp_path / "hooks" / "useThing.ts",
+        "import { useState } from 'react';\n"
+        "export function useThing() { useState(0); return thingHelper(); }\n"
+        "function thingHelper() { return 8; }\n",
+    )
+
+    dead = _dead_function_names(tmp_path)
+
+    assert {
+        ("app/_lib/page.tsx", "privateHelper"),
+        ("components/page.tsx", "componentPageHelper"),
+        ("hooks/useThing.ts", "thingHelper"),
+    } <= dead
+    assert dead.isdisjoint(
+        {("app/page.tsx", "pageHelper"), ("src/middleware.ts", "mwHelper")}
+    )
+
+
+def test_name_only_framework_marks_do_not_keep_helpers_live_outside_nextjs(tmp_path):
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"main": "src/main.tsx", "dependencies": {"react": "18.2.0"}}),
+    )
+    _write(
+        tmp_path / "src" / "main.tsx",
+        "import App from './App';\nconsole.log(App);\n",
+    )
+    _write(
+        tmp_path / "src" / "App.tsx",
+        "import React from 'react';\n"
+        "export default function App() { return appTitle(); }\n"
+        "function appTitle() { return 'app'; }\n",
+    )
+    _write(
+        tmp_path / "src" / "hooks" / "useOrphan.ts",
+        "import { useState } from 'react';\n"
+        "export function useOrphan() { useState(0); return computeOrphan(); }\n"
+        "function computeOrphan() { return 1; }\n",
+    )
+    _write(
+        tmp_path / "src" / "components" / "error.tsx",
+        "import React from 'react';\n"
+        "function errorText() { return 'err'; }\n"
+        "export default function ErrorBox() { return errorText(); }\n",
+    )
+    _write(
+        tmp_path / "src" / "pages" / "Unrouted.tsx",
+        "function buildUnrouted() { return 'u'; }\n"
+        "export default function Unrouted() { return buildUnrouted(); }\n",
+    )
+    _write(
+        tmp_path / "app" / "page.jsx",
+        "function pageJsxHelper() { return 1; }\n"
+        "export default function PageJsx() { return pageJsxHelper(); }\n",
+    )
+    _write(
+        tmp_path / "middleware.js",
+        "function mwJsHelper() { return 3; }\n"
+        "export function middleware() { return mwJsHelper(); }\n",
+    )
+    # A tool config is loaded by its tool, Next.js or not.
+    _write(
+        tmp_path / "vite.config.ts",
+        "function buildPlugins() { return []; }\n"
+        "const config = { plugins: buildPlugins() };\n"
+        "export default config;\n",
+    )
+
+    dead = _dead_function_names(tmp_path)
+
+    assert {
+        ("src/hooks/useOrphan.ts", "computeOrphan"),
+        ("src/components/error.tsx", "errorText"),
+        ("src/pages/Unrouted.tsx", "buildUnrouted"),
+        ("app/page.jsx", "pageJsxHelper"),
+        ("middleware.js", "mwJsHelper"),
+    } <= dead
+    assert ("src/App.tsx", "appTitle") not in dead
+    assert ("vite.config.ts", "buildPlugins") not in dead
+
+
+def test_src_router_dirs_shadowed_by_root_dirs_are_not_routed(tmp_path):
+    """Next.js ignores src/pages and src/app when pages/ or app/ exist."""
+    _write(tmp_path / "package.json", json.dumps({"dependencies": {"next": "14.2.0"}}))
+    _write(
+        tmp_path / "pages" / "index.tsx",
+        "export default function Index() { return indexTitle(); }\n"
+        "function indexTitle() { return 'home'; }\n",
+    )
+    _write(
+        tmp_path / "src" / "pages" / "shadowed.tsx",
+        "function shadowedHelper() { return 'never served'; }\n"
+        "export default function Shadowed() { return shadowedHelper(); }\n",
+    )
+    _write(tmp_path / "app" / "page.tsx", "export default function P() { return 1; }\n")
+    _write(
+        tmp_path / "src" / "app" / "robots.ts",
+        "function shadowedRules() { return {}; }\n"
+        "export default function robots() { return shadowedRules(); }\n",
+    )
+
+    dead = _dead_function_names(tmp_path)
+
+    assert {
+        ("src/pages/shadowed.tsx", "shadowedHelper"),
+        ("src/app/robots.ts", "shadowedRules"),
+    } <= dead
+    assert ("pages/index.tsx", "indexTitle") not in dead
+
+
+def test_src_router_dirs_are_routed_without_root_dirs(tmp_path):
+    _write(tmp_path / "package.json", json.dumps({"dependencies": {"next": "14.2.0"}}))
+    _write(
+        tmp_path / "src" / "pages" / "about.tsx",
+        "function aboutTitle() { return 'about'; }\n"
+        "export default function About() { return aboutTitle(); }\n",
+    )
+    _write(
+        tmp_path / "src" / "app" / "robots.ts",
+        "function robotsRules() { return {}; }\n"
+        "export default function robots() { return robotsRules(); }\n",
+    )
+
+    dead = _dead_function_names(tmp_path)
+
+    assert dead.isdisjoint(
+        {("src/pages/about.tsx", "aboutTitle"), ("src/app/robots.ts", "robotsRules")}
+    )
+
+
+def test_literal_page_extensions_decide_which_files_are_pages(tmp_path):
+    _write(tmp_path / "package.json", json.dumps({"dependencies": {"next": "14.2.0"}}))
+    _write(
+        tmp_path / "next.config.js",
+        'module.exports = { pageExtensions: ["page.tsx", "api.ts"] };\n',
+    )
+    _write(
+        tmp_path / "pages" / "components" / "Card.tsx",
+        "function cardTitle() { return 'card'; }\n"
+        "export default function Card() { return cardTitle(); }\n",
+    )
+    _write(
+        tmp_path / "pages" / "index.page.tsx",
+        "function indexTitle() { return 'home'; }\n"
+        "export default function Index() { return indexTitle(); }\n",
+    )
+    _write(
+        tmp_path / "app" / "layout.page.tsx",
+        "function layoutTitle() { return 'l'; }\n"
+        "export default function Layout() { return layoutTitle(); }\n",
+    )
+    _write(
+        tmp_path / "app" / "route.jsx",
+        "function routeHelper() { return 1; }\n"
+        "export function GET() { return routeHelper(); }\n",
+    )
+
+    dead = _dead_function_names(tmp_path)
+
+    assert {
+        ("pages/components/Card.tsx", "cardTitle"),
+        ("app/route.jsx", "routeHelper"),
+    } <= dead
+    assert dead.isdisjoint(
+        {("pages/index.page.tsx", "indexTitle"), ("app/layout.page.tsx", "layoutTitle")}
+    )
+
+
+def test_non_literal_page_extensions_keep_default_pages(tmp_path):
+    _write(tmp_path / "package.json", json.dumps({"dependencies": {"next": "14.2.0"}}))
+    _write(
+        tmp_path / "next.config.js",
+        "const exts = ['tsx'];\nmodule.exports = { pageExtensions: [...exts] };\n",
+    )
+    _write(
+        tmp_path / "pages" / "components" / "Card.tsx",
+        "function cardTitle() { return 'card'; }\n"
+        "export default function Card() { return cardTitle(); }\n",
+    )
+
+    assert ("pages/components/Card.tsx", "cardTitle") not in _dead_function_names(
+        tmp_path
+    )

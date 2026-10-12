@@ -343,6 +343,154 @@ class TestNextjsConventionExports:
         assert expected.issubset(_NEXTJS_CONVENTION_EXPORTS)
 
 
+# ---------- Next.js project file conventions ----------
+
+_NEXT_PROJECT_ENTRY_FILES = (
+    "app/robots.ts",
+    "app/sitemap.ts",
+    "app/manifest.ts",
+    "app/icon.tsx",
+    "app/apple-icon.tsx",
+    "app/opengraph-image.tsx",
+    "app/[page]/opengraph-image.tsx",
+    "app/(marketing)/twitter-image.tsx",
+    "app/page.jsx",
+    "app/layout.js",
+    "app/blog/template.jsx",
+    "app/api/hello/route.js",
+    "middleware.js",
+    "src/instrumentation.js",
+    "mdx-components.tsx",
+    "next.config.cjs",
+    "postcss.config.mjs",
+    "tailwind.config.mjs",
+)
+
+
+def _write_files(root: Path, relatives) -> list[Path]:
+    paths = []
+    for relative in relatives:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("export {};\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        paths.append(path)
+    return paths
+
+
+class TestNextjsProjectConventions:
+    def test_nextjs_convention_files_are_not_dead(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"dependencies": {"next": "15.0.0"}}', encoding="utf-8"
+        )
+        files = _write_files(tmp_path, _NEXT_PROJECT_ENTRY_FILES)
+
+        assert find_dead_ts_files(files, [], {}, {}) == []
+
+    def test_helper_imported_only_by_metadata_route_is_live(self, tmp_path):
+        # vercel/commerce: components/opengraph-image.tsx is imported only by
+        # the app/**/opengraph-image.tsx metadata routes.
+        (tmp_path / "package.json").write_text(
+            '{"dependencies": {"next": "15.0.0"}}', encoding="utf-8"
+        )
+        route, helper, orphan = _write_files(
+            tmp_path,
+            (
+                "app/opengraph-image.tsx",
+                "components/opengraph-image.tsx",
+                "components/orphan.tsx",
+            ),
+        )
+        dead_files = find_dead_ts_files(
+            [route, helper, orphan], [], {str(helper): {str(route)}}, {}
+        )
+
+        assert [Path(finding["file"]).name for finding in dead_files] == ["orphan.tsx"]
+
+    def test_same_files_outside_nextjs_project_stay_reportable(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"dependencies": {"react": "19.0.0"}}', encoding="utf-8"
+        )
+        files = _write_files(
+            tmp_path,
+            (
+                "app/robots.ts",
+                "app/opengraph-image.tsx",
+                "app/page.jsx",
+                "middleware.js",
+                "lib/sitemap.ts",
+            ),
+        )
+
+        dead = {
+            Path(finding["file"]).relative_to(tmp_path.resolve()).as_posix()
+            for finding in find_dead_ts_files(files, [], {}, {})
+        }
+        assert dead == {
+            "app/robots.ts",
+            "app/opengraph-image.tsx",
+            "app/page.jsx",
+            "middleware.js",
+            "lib/sitemap.ts",
+        }
+
+    def test_metadata_route_files_outside_app_dir_stay_reportable(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"dependencies": {"next": "15.0.0"}}', encoding="utf-8"
+        )
+        # Next.js does not route files below a private `_folder`.
+        files = _write_files(
+            tmp_path,
+            (
+                "lib/robots.ts",
+                "components/icon.tsx",
+                "app/_lib/robots.ts",
+                "app/(shop)/_components/page.jsx",
+            ),
+        )
+
+        assert len(find_dead_ts_files(files, [], {}, {})) == 4
+
+    @staticmethod
+    def _demoted_metadata_exports(tmp_path):
+        image_file = str(tmp_path / "app" / "opengraph-image.tsx")
+        sitemap_file = str(tmp_path / "app" / "sitemap.ts")
+        demoted = []
+        for fname, export_name in (
+            (image_file, "alt"),
+            (image_file, "size"),
+            (image_file, "contentType"),
+            (image_file, "generateImageMetadata"),
+            (sitemap_file, "generateSitemaps"),
+            (sitemap_file, "dynamic"),
+        ):
+            d = _make_def(export_name, "function", fname, exported=True)
+            d.references = 1
+            d.is_exported = False
+            demoted.append(d)
+        return demoted
+
+    def test_metadata_route_exports_are_not_unnecessary_exports(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            '{"dependencies": {"next": "15.0.0"}}', encoding="utf-8"
+        )
+
+        findings = find_unused_ts_exports(self._demoted_metadata_exports(tmp_path), {})
+        assert findings == []
+
+    def test_metadata_export_names_outside_nextjs_are_unnecessary_exports(
+        self, tmp_path
+    ):
+        findings = find_unused_ts_exports(self._demoted_metadata_exports(tmp_path), {})
+        assert {f["name"] for f in findings} == {
+            "alt",
+            "size",
+            "contentType",
+            "generateImageMetadata",
+            "generateSitemaps",
+            "dynamic",
+        }
+
+
 # ---------- Wildcard re-export passthrough ----------
 
 

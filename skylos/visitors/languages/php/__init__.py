@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .core import PhpCore
 from .danger import scan_danger
+from .laravel import laravel_convention_class_lines
 
 
 class DummyVisitor:
@@ -65,6 +66,13 @@ def scan_php_file(
         is_test_file=core.is_test_file,
         test_decorated_lines=core.test_decorated_lines,
     )
+    framework = DummyVisitor()
+    convention_lines = laravel_convention_class_lines(
+        str(path), core.defs, core.class_typed_first_parameter_methods
+    )
+    if convention_lines:
+        framework.detected_frameworks.add("laravel")
+        framework.framework_decorated_lines.update(convention_lines)
     findings = (
         scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
     )
@@ -75,7 +83,7 @@ def scan_php_file(
         set(),
         set(),
         visitor,
-        DummyVisitor(),
+        framework,
         [],
         findings,
         [],

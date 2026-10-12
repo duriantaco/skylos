@@ -917,6 +917,50 @@ findings in any language.
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
 | E004 | LOW | Unnecessary export | TS/JS |
 
+### Framework entrypoints
+
+Dead-code findings skip code a framework or tool loads by convention rather
+than by an import. These conventions apply to TS/JS and PHP:
+
+| Convention | Scope | Kept live |
+|:---|:---|:---|
+| Next.js App Router | `app/`, or `src/app/` when there is no root `app/`, in a Next.js project, outside private `_folders` | `page`, `layout`, `template`, `loading`, `error`, `global-error`, `not-found`, `default`, `route` files (`.js`, `.jsx`, `.ts`, `.tsx`, or the literal `pageExtensions` of `next.config.*`), their default export, route handlers, `metadata`/`generateMetadata`/`viewport`/`generateViewport`/`generateStaticParams` and route segment config exports (`dynamic`, `revalidate`, `runtime`, ...) |
+| Next.js metadata routes | `app/`, or `src/app/` when there is no root `app/`, in a Next.js project, outside private `_folders` | `robots`, `sitemap`, `manifest`, `icon`, `apple-icon`, `opengraph-image`, `twitter-image` files and their default export; `alt`, `size`, `contentType`, `generateImageMetadata` in image routes; `generateSitemaps` in sitemaps |
+| Next.js Pages Router | `pages/**` | default exports, `getServerSideProps`, `getStaticProps`, `getStaticPaths`, `getInitialProps`, `_app`/`_document`/`_error`/`404`/`500`; `config` and `_app`'s `reportWebVitals` in a Next.js project |
+| Next.js root files | project root or `src/` | `middleware`, `proxy`, `instrumentation`, `instrumentation-client`, `mdx-components` and their hook exports |
+| Tool config files | any directory | `next.config.*`, `postcss.config.*` and `tailwind.config.*` (`.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`), the usual Vite, Vitest, ESLint, Jest, Playwright and tsup config names, and their default export, including `const config = {...}; export default config` |
+| Laravel Vite plugin | `vite.config.*` | each `input` of `laravel(...)` from `laravel-vite-plugin` |
+| Laravel | a `composer.json` whose `require` lists `laravel/framework` | `Illuminate\Console\Command` subclasses in `app/Console/Commands` (bases resolved through imports and the PSR-4 map); classes in `app/Listeners` with a `handle*`/`__invoke` method whose first parameter has a class type, when event discovery is on (a provider's `shouldDiscoverEvents()` returns true, or the Laravel 11 `Application::configure()` builder without `withEvents(discover: false)`); `*Factory` in `database/factories` when the model in `app/Models` or `app` uses `HasFactory` (directly or through a project parent); `*Policy` in `app/Policies` when the model exists; classes in `app/Livewire`, `app/Http/Livewire`, `app/View/Components`, `database/migrations`; `DatabaseSeeder`; and the public methods of those classes |
+
+A project is a Next.js project when a `next.config.*` file or a `package.json`
+that depends on `next` sits in the file's directory or a parent. Only the named
+convention exports stay live: an unused helper exported from `page.tsx` or
+`opengraph-image.tsx`, and an unused private method of a Laravel listener, are
+still reported. A helper that only a convention root calls, such as a data
+loader called by a page's default export, stays live; in JS/TS that applies
+only when the file itself is one Next.js routes, Storybook loads or a tool
+reads as config, not to name-only marks such as `use*` hooks or a `page.tsx`
+outside `app/`. With discovery off, a Laravel listener stays live only through
+its `::class` registration in `$listen` or `Event::listen`.
+
+Known limitations: tool config and Storybook story files are recognised by file
+name, so a stale `scripts/old/vite.config.ts` or an unused `*.stories.tsx`
+keeps its callees live; a Laravel policy stays live while its model file
+exists, even if the model is dead; and a class referenced only from a dead
+class (for example an event type-hinted only by an unregistered listener) is
+not reported, as with any other reference from dead code.
+
+PHP classes named only in type positions count as used: parameter, return and
+property types (including nullable, union, intersection and promoted
+constructor parameters), `instanceof`, `catch`, attributes, `::class`, and
+PHPDoc types (`@param`, `@return`, `@var`, `@throws`, `@extends`,
+`@implements`, `@use`, `@template ... of`, `@method`, `@property`, `@mixin`,
+including generics and multi-line array shapes). As in PHP-CS-Fixer, an import
+that a docblock only mentions in prose or in a cross-reference (`@see`,
+`@uses`, PHPUnit `@covers`, `{@see}`, `{@link}`) stays used, but that mention
+does not make the class itself used. A class's own docblock naming the class
+(`@method static Builder|Self query()`, `@mixin Self`) does not make it used.
+
 Pretty output and the TUI use short display labels such as
 `dead-code/function`, `dead-code/import`, `dead-code/class`,
 `dead-code/variable`, `dead-code/parameter`, and `dead-code/file`. Those labels
