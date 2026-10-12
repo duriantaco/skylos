@@ -114,6 +114,92 @@ def names_its_key(key: str, value: str) -> bool:
     )
 
 
+_CREDENTIAL_LABEL_WORDS = frozenset(
+    {
+        "access",
+        "api",
+        "auth",
+        "authentication",
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "credentials",
+        "encryption",
+        "key",
+        "keys",
+        "login",
+        "oauth",
+        "otp",
+        "passphrase",
+        "passwd",
+        "password",
+        "private",
+        "pwd",
+        "refresh",
+        "secret",
+        "secrets",
+        "session",
+        "signature",
+        "signing",
+    }
+)
+# Data/text/input describe the representation; event/batch/item/node/query
+# describe the measured unit; model/type/value describe its semantic role.
+# Keep this vocabulary explicit: an arbitrary short word can be a credential.
+_TOKEN_LABEL_QUALIFIERS = frozenset(
+    {
+        "batch",
+        "data",
+        "event",
+        "input",
+        "item",
+        "model",
+        "node",
+        "query",
+        "text",
+        "type",
+        "value",
+    }
+)
+
+
+def describes_token_label(key: str, value: str) -> bool:
+    """A descriptive token label that restates its segmented field name.
+
+    This is only evidence against a generic entropy candidate, never against
+    a provider credential. Spaces alone do not establish a label: every key
+    word must occur in order, with at most one known interior qualifier and
+    no extra prefix or suffix. Credential fields are deliberately excluded.
+    A secret deliberately identical to its descriptive field label remains
+    ambiguous; this does not classify unrelated prose or English passphrases.
+    """
+    if len(key) > 128 or len(value) > 192:
+        return False
+    name = key.rsplit(".", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z]{2,16}(?:[_-][A-Za-z]{2,16}){2,}", name):
+        return False
+    key_words = re.split(r"[_-]", name.lower())
+    if key_words[-1] != "token" or _CREDENTIAL_LABEL_WORDS.intersection(key_words):
+        return False
+    # Only literal lowercase ASCII words and ordinary phrase separators:
+    # case changes, digits, encodings, tabs and escaped newlines stay scanned.
+    if not re.fullmatch(r"[a-z]+(?:[ /-]+[a-z]+)+", value):
+        return False
+    value_words = re.split(r"[ /-]+", value)
+    if _CREDENTIAL_LABEL_WORDS.intersection(value_words):
+        return False
+    if value_words == key_words:
+        return True
+    if len(value_words) != len(key_words) + 1:
+        return False
+    return any(
+        value_words[index] in _TOKEN_LABEL_QUALIFIERS
+        and value_words[:index] + value_words[index + 1 :] == key_words
+        for index in range(1, len(value_words) - 1)
+    )
+
+
 def is_location_value(key: str, value: str) -> bool:
     """``TOKEN_URL = "https://host/oauth/token"``: a URL assigned to a name
     that says it holds a location, with no user info in it. The URL's own

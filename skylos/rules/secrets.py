@@ -595,7 +595,60 @@ def _keyed_value_is_not_secret(key: str, value: str) -> bool:
     )
 
 
-def _keyed_generic_candidates(line_content: str):
+def _label_literal_ends_after_line(file_lines, line_number, comment_prefix):
+    if file_lines is None:
+        return False  # Without source context an end of line is ambiguous.
+    # Fail conservatively if a long comment/blank region prevents a bounded
+    # lookahead from proving that this mapping value is complete.
+    stop = min(len(file_lines), line_number + 32)
+    for index in range(line_number, stop):
+        following = file_lines[index].lstrip()
+        if not following or (comment_prefix and following.startswith(comment_prefix)):
+            continue
+        return following[0] in "}]"
+    return stop == len(file_lines)
+
+
+def _complete_token_label_literal(
+    line_content: str, match, rel_name: str, file_lines, line_number
+) -> bool:
+    """A label exclusion needs a whole literal, not an expression prefix."""
+    following = line_content[match.end() :].lstrip(" \t\r\n")
+    if following and following[0] in "}];":
+        return True
+    # A comma terminates a mapping value; after '=' it can begin a tuple.
+    if following.startswith(","):
+        return line_content[: match.start("q")].rstrip().endswith(":")
+    suffix = PurePosixPath(rel_name).suffix.lower()
+    comment_prefix = ""
+    if suffix in {".py", ".pyi", ".pyw", ".env", ".yml", ".yaml", ".toml"}:
+        comment_prefix = "#"
+    elif suffix in {
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".mts",
+        ".cts",
+        ".go",
+        ".php",
+        ".rs",
+        ".dart",
+        ".cs",
+        ".kt",
+        ".kts",
+    }:
+        comment_prefix = "//"
+    if following and not (comment_prefix and following.startswith(comment_prefix)):
+        return False
+    return _label_literal_ends_after_line(file_lines, line_number, comment_prefix)
+
+
+def _keyed_generic_candidates(
+    line_content: str, *, rel_name: str = "", file_lines=None, line_number=0
+):
     candidates = []
     keyed_spans = []
     for keyed_match in GENERIC_KEYED_VALUE.finditer(line_content):
@@ -613,7 +666,12 @@ def _keyed_generic_candidates(line_content: str):
             # with a random component (a capability link) stays reported.
             continue
         keyed_spans.append((keyed_start, keyed_end))
-        if _keyed_value_is_not_secret(key, keyed_token):
+        if _keyed_value_is_not_secret(key, keyed_token) or (
+            secret_shapes.describes_token_label(key, keyed_token)
+            and _complete_token_label_literal(
+                line_content, keyed_match, rel_name, file_lines, line_number
+            )
+        ):
             continue
         candidates.append((keyed_start, 0, keyed_token, False, keyed_end))
     return candidates, keyed_spans
@@ -842,6 +900,8 @@ def _find_generic_values(
     approved_structural_spans: tuple[tuple[int, int], ...],
     structural_contexts: tuple[tuple[int, int, str, str], ...],
     rel_name: str,
+    file_lines=None,
+    line_number=0,
 ):
     if rel_name == "yarn.lock":
         yarn_match = YARN_INTEGRITY_RE.fullmatch(line_content)
@@ -860,7 +920,9 @@ def _find_generic_values(
     context_spans = _merge_spans(
         (start, end) for start, end, _, _ in structural_contexts
     )
-    candidates, keyed_spans = _keyed_generic_candidates(line_content)
+    candidates, keyed_spans = _keyed_generic_candidates(
+        line_content, rel_name=rel_name, file_lines=file_lines, line_number=line_number
+    )
     candidates.extend(
         _structural_generic_candidates(structural_contexts, keyed_spans, approved_spans)
     )
@@ -4177,6 +4239,8 @@ def scan_ctx(
                 ),
                 structural_contexts=structural_context_spans.get(line_number, ()),
                 rel_name=rel_name,
+                file_lines=file_lines,
+                line_number=line_number,
             )
             if rel_name.lower().endswith(
                 (".html", ".htm", ".css", ".map")

@@ -24,18 +24,30 @@ The primer builds two Skylos revisions in separate managed environments:
   includes the result of merging the PR into its base branch, including forks.
 
 Both revisions scan the same commit-pinned corpus projects. The workflow uses
-the primer's packaged corpus, `--all`, two concurrent detector processes, and
-a 300-second default timeout per invocation. The job has a 45-minute limit.
-The primer and Actions are pinned to full commits; uv is pinned to `0.12.5`,
-Python to the `3.13` series, and the primer's dependencies use its lockfile.
+the primer's packaged corpus, `--all`, one detector invocation at a time, and
+a 300-second default timeout per invocation. Serial scheduling gives each
+revision the runner's resources without another detector competing for them.
+It keeps the detector's automatic worker count and default grep verification;
+the adapter gives both revisions the same 150-second grep budget. Timeouts
+remain failures. The job has a 45-minute limit.
+The primer and Actions are pinned to full commits; uv is pinned to `0.12.5`.
+Python `3.13` runs the harness. Docker builder/runtime images supply the
+detector interpreter, whose version and image digests appear in the report.
+The primer's dependencies use its lockfile.
 
 The current primer pin is
-[`d6f3118a2cfc465426500eab449005fe56845c58`](https://github.com/mcdigman/liveness_primer/tree/d6f3118a2cfc465426500eab449005fe56845c58).
-It selects 15 Python projects for Skylos. Its adapter compares unused
-functions, imports, classes, variables, and parameters. **File-level findings
-(`SKY-E002` / `SKY-E003`) are not included at this pin.** This job does not
-opt into security, secrets, quality, or AI-defect analyses, and is not a
-cross-language benchmark.
+[`1438a928dd00cbb3b1098a9edc82480f43daabdb`](https://github.com/mcdigman/liveness_primer/tree/1438a928dd00cbb3b1098a9edc82480f43daabdb).
+Its packaged corpus selects 31 projects eligible for Skylos across multiple
+languages. The adapter compares dead-code findings, including unused files,
+and circular dependencies. Each project's corpus settings select its security,
+secrets, quality, and AI-defect analyses; the adapter ingests only selected
+diagnostic buckets. A neutral Skylos configuration keeps target repository
+policy from changing that selection. Dependency SCA is not selected.
+
+Both detector revisions receive the same Go engine built from the exact PR
+base. Changes to the Go engine are outside this comparison's coverage. The
+workflow also applies a checked compatibility overlay to install the named
+Dart extra for the full corpus; other optional extras remain excluded.
 
 ## Read a PR report
 
@@ -63,32 +75,41 @@ accept or reject a PR solely because its total finding count went down or up.
 
 ## Reproduce a comparison
 
-Use a disposable Linux environment without credentials, with Git, Python 3.13,
-and uv 0.12.5 available. Managed runs build and execute the detector revisions;
+Use a disposable Linux environment without credentials, with Docker, Git,
+Python 3.13 for the harness, Go 1.22, and uv 0.12.5 available. Managed runs build
+and execute the detector revisions;
 do not run an unfamiliar PR on your everyday development machine. Corpus
 projects are static-analysis inputs, not projects whose tests should be run.
 
 Clone the same primer revision:
 
 ```bash
-git clone https://github.com/mcdigman/liveness_primer.git liveness-primer-check
-git -C liveness-primer-check checkout --detach d6f3118a2cfc465426500eab449005fe56845c58
+git clone https://github.com/mcdigman/liveness_primer.git _liveness_primer
+git -C _liveness_primer checkout --detach 1438a928dd00cbb3b1098a9edc82480f43daabdb
 ```
 
 Replace the two revision placeholders below with the full base and head SHAs
 from the report, not mutable branch names. The head is the reported merge SHA,
 not necessarily the PR branch tip.
 
+Before running the comparison, follow the workflow's **Build trusted base Go
+engine** and **Enable Dart support for the full corpus** steps. Build the Go
+binary from a separate checkout at the exact base SHA, then set `SKYLOS_GO_BIN`
+to its absolute path. Apply the workflow's Dart overlay to the pinned primer
+checkout named `_liveness_primer`. These prerequisites are required to match
+CI's coverage; an unmodified primer command does not reproduce them.
+
 ```bash
-uv run --project liveness-primer-check --python 3.13 --locked liveness-primer run \
+uv run --project _liveness_primer --python 3.13 --locked liveness-primer run \
   --tool skylos \
   --repo https://github.com/duriantaco/skylos \
   --old BASE_SHA_FROM_REPORT \
   --new MERGE_SHA_FROM_REPORT \
   --all \
+  --container \
   --output github \
   --json-out liveness-primer-report.json \
-  --jobs 2 \
+  --jobs 1 \
   --timeout 300
 ```
 
@@ -119,5 +140,5 @@ thresholds or transfer repository ownership.
 
 Update the primer pin in a separate reviewed change, run a fresh comparison,
 and inspect corpus, adapter, and report-schema changes before accepting it.
-Do not replace the pin with `main`. For example, upstream v0.1.1 adds file-level
-findings, so adopting it changes what this CI report covers.
+Do not replace the pin with `main`; changes to the corpus, adapter buckets or
+container recipe can change what the comparison covers.
