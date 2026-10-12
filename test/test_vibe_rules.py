@@ -1633,6 +1633,42 @@ class TestHardcodedCredential:
                 None,
                 id="test-file",
             ),
+            pytest.param(
+                """
+                APP_URL_KEY = "APP_URL"
+                """,
+                "settings.py",
+                False,
+                None,
+                id="env-var-name-value",
+            ),
+            pytest.param(
+                """
+                DB_PASSWORD = "${DB_PASSWORD}"
+                """,
+                "settings.py",
+                False,
+                None,
+                id="reference-value",
+            ),
+            pytest.param(
+                """
+                SECRET_KEY = "Zx8Kq2Lm9Pq4Rs7Tv1Wx6"
+                """,
+                "settings.py",
+                True,
+                "HIGH",
+                id="real-value-next-to-setting-names",
+            ),
+            pytest.param(
+                """
+                STRIPE_KEY = "sk_live_51HqLyjWDarjt"
+                """,
+                "settings.py",
+                True,
+                "HIGH",
+                id="provider-key-under-key-suffix",
+            ),
         ],
     )
     def test_hardcoded_credential_detection(
@@ -1646,6 +1682,358 @@ class TestHardcodedCredential:
                 assert l014[0]["severity"] == expected_severity
         else:
             assert len(l014) == 0
+
+    @pytest.mark.parametrize(
+        ("code", "expected_severity"),
+        [
+            # A value that looks like a name is still the credential.
+            pytest.param(
+                """
+                from flask import Flask
+                app = Flask(__name__)
+                app.secret_key = "secret_key"
+                """,
+                "HIGH",
+                id="flask-secret-key-attribute",
+            ),
+            pytest.param(
+                """
+                SECRET_KEY = "SUPER_SECRET_KEY_2024"
+                """,
+                "HIGH",
+                id="secret-key-upper-snake-value",
+            ),
+            pytest.param(
+                """
+                import jwt
+                JWT_SECRET = "MY_JWT_SECRET"
+                def sign(payload):
+                    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+                """,
+                "HIGH",
+                id="jwt-secret-used-to-sign",
+            ),
+            pytest.param(
+                """
+                import psycopg2
+                DB_PASSWORD = "db_password"
+                def connect():
+                    return psycopg2.connect(host="db", user="app", password=DB_PASSWORD)
+                """,
+                "HIGH",
+                id="db-password-is-its-own-name",
+            ),
+            pytest.param(
+                """
+                ADMIN_PASSWORD = "AdminPassword"
+                """,
+                "HIGH",
+                id="admin-password-camel-case-name",
+            ),
+            pytest.param(
+                """
+                PASSWORD = "password"
+                """,
+                "MEDIUM",
+                id="password-is-password",
+            ),
+            # Targets named for a setting name, and values the module uses as
+            # an env/config key, get no exemption.
+            pytest.param(
+                """
+                TOKEN_ENV_KEY = "GITHUB_TOKEN"
+                """,
+                "HIGH",
+                id="env-word-target",
+            ),
+            pytest.param(
+                """
+                PROD_ENV_KEY = "correct-horse-battery-staple"
+                """,
+                "HIGH",
+                id="passphrase-under-env-word-target",
+            ),
+            pytest.param(
+                """
+                AUTH_HEADER_KEY = "kafka-prod-secret"
+                """,
+                "HIGH",
+                id="passphrase-under-header-word-target",
+            ),
+            pytest.param(
+                """
+                import os
+                UPLOAD_KEY = "S3_UPLOAD_BUCKET"
+                bucket = os.environ["S3_UPLOAD_BUCKET"]
+                """,
+                "HIGH",
+                id="value-is-environ-key",
+            ),
+            pytest.param(
+                """
+                import os
+                GH_KEY = "GH_TOKEN"
+                def token():
+                    return os.getenv(GH_KEY)
+                """,
+                "HIGH",
+                id="target-passed-as-getenv-key",
+            ),
+            pytest.param(
+                """
+                SESSION_KEY = "session_cookie_name"
+                cookie = app.config.get("session_cookie_name")
+                """,
+                "HIGH",
+                id="value-is-config-get-key",
+            ),
+            pytest.param(
+                """
+                COOKIE_KEY = "app.session.cookie_name"
+                def cookie_name(settings):
+                    return settings.get(COOKIE_KEY)
+                """,
+                "HIGH",
+                id="dotted-setting-passed-as-settings-key",
+            ),
+            pytest.param(
+                """
+                import os
+                JWT_KEY = "q8Zp2LmN4vR7tY1wX3cB"
+                SESSION_SECRET_VALUE = "Wq8Zp2LmN4vR7tY1wX3cBz"
+                def load(app):
+                    app.config.get(JWT_KEY)
+                    return os.getenv(SESSION_SECRET_VALUE)
+                """,
+                "HIGH",
+                id="random-value-passed-as-config-key",
+            ),
+            pytest.param(
+                """
+                import os
+                JWT_SECRET = "MY_JWT_SECRET"
+                secret = os.getenv("MY_JWT_SECRET", JWT_SECRET)
+                """,
+                "HIGH",
+                id="secret-used-as-env-fallback",
+            ),
+            # ``<X>_KEY = "X"``: the value is the rest of the target's name, in
+            # UPPER_SNAKE with two or more words.
+            pytest.param(
+                """
+                APP_URL_KEY = "APP_URL"
+                """,
+                None,
+                id="key-suffix-names-setting",
+            ),
+            pytest.param(
+                """
+                GITHUB_PAT_KEY = "GITHUB_PAT"
+                """,
+                None,
+                id="key-suffix-names-token-setting",
+            ),
+            pytest.param(
+                """
+                app_url_key = "APP_URL"
+                """,
+                None,
+                id="lowercase-key-suffix-names-setting",
+            ),
+            pytest.param(
+                """
+                APP_URL_KEY = "app_url"
+                """,
+                "HIGH",
+                id="key-suffix-with-lowercase-value",
+            ),
+            pytest.param(
+                """
+                MASTER_KEY = "MASTER"
+                """,
+                "HIGH",
+                id="key-suffix-with-single-word-value",
+            ),
+            pytest.param(
+                """
+                JWT_SECRET_KEY = "JWT_SECRET"
+                """,
+                "HIGH",
+                id="secret-key-suffix-never-names-setting",
+            ),
+            pytest.param(
+                """
+                settings.APP_URL_KEY = "APP_URL"
+                """,
+                "HIGH",
+                id="key-suffix-on-attribute-target",
+            ),
+            # References: ``${NAME}`` and ``{{ name }}`` with NAME in UPPER_SNAKE
+            # or a dotted path. ``$X`` and ``%X%`` can be the credential.
+            pytest.param(
+                """
+                DB_PASSWORD = "${DB_PASSWORD}"
+                """,
+                None,
+                id="braced-reference-under-password",
+            ),
+            pytest.param(
+                """
+                app.secret_key = "${FLASK_SECRET_KEY}"
+                """,
+                None,
+                id="braced-reference-under-attribute",
+            ),
+            pytest.param(
+                """
+                SECRET_KEY = "{{ django.secret_key }}"
+                """,
+                None,
+                id="template-reference-under-secret-key",
+            ),
+            pytest.param(
+                """
+                DB_PASSWORD = "$ADMIN2024"
+                """,
+                "HIGH",
+                id="bare-dollar-password",
+            ),
+            pytest.param(
+                """
+                ADMIN_PASSWORD = "%PRODADMIN2024%"
+                """,
+                "HIGH",
+                id="percent-wrapped-password",
+            ),
+            pytest.param(
+                """
+                app.secret_key = "$FLASKSECRET"
+                """,
+                "HIGH",
+                id="bare-dollar-under-attribute",
+            ),
+            pytest.param(
+                """
+                APP_KEY = "$ADMIN2024"
+                """,
+                "HIGH",
+                id="bare-dollar-under-key-name",
+            ),
+            pytest.param(
+                """
+                STRIPE_KEY = "$SK_LIVE_2024"
+                """,
+                "HIGH",
+                id="bare-dollar-upper-snake-under-key-name",
+            ),
+            pytest.param(
+                """
+                APP_KEY = "$ADMIN_PASS"
+                """,
+                "HIGH",
+                id="bare-dollar-env-name-under-key-name",
+            ),
+            pytest.param(
+                """
+                GH_KEY = "$GH_TOKEN"
+                """,
+                "HIGH",
+                id="bare-dollar-token-name-under-key-name",
+            ),
+            pytest.param(
+                """
+                SESSION_KEY = "%HUNTER2%"
+                """,
+                "HIGH",
+                id="percent-wrapped-under-session-key",
+            ),
+            pytest.param(
+                """
+                DB_PASSWORD = "${ADMIN2024}"
+                """,
+                "HIGH",
+                id="braced-name-with-digit-run",
+            ),
+            pytest.param(
+                """
+                DB_PASSWORD = "${ADMIN24}"
+                """,
+                "HIGH",
+                id="braced-single-upper-word-under-password",
+            ),
+            pytest.param(
+                """
+                AUTH_KEY = "${hunter2}"
+                """,
+                "HIGH",
+                id="braced-single-word-under-auth-key",
+            ),
+            pytest.param(
+                """
+                class Config:
+                    def load(self):
+                        self.app_key = "${hunter2}"
+                """,
+                "HIGH",
+                id="braced-single-word-under-attribute",
+            ),
+            pytest.param(
+                """
+                JWT_KEY = "{{ hunter2 }}"
+                """,
+                "HIGH",
+                id="template-single-word-under-jwt-key",
+            ),
+            pytest.param(
+                """
+                DB_PASSWORD = "{{ admin }}"
+                """,
+                "HIGH",
+                id="template-single-lower-word-under-password",
+            ),
+            pytest.param(
+                """
+                SECRET_KEY = "{{prod_secret_value}}"
+                """,
+                "HIGH",
+                id="template-undotted-name-under-secret-key",
+            ),
+            pytest.param(
+                """
+                API_TOKEN = "{{ q8Zp2LmN4vR7 }}"
+                """,
+                "HIGH",
+                id="template-with-random-name",
+            ),
+            # Location names with no credential word keep every reference form.
+            pytest.param(
+                """
+                DATABASE_URL = "$DATABASE_URL"
+                """,
+                None,
+                id="bare-dollar-under-url-name",
+            ),
+            pytest.param(
+                """
+                DSN = "$PGPASSWORD"
+                """,
+                None,
+                id="bare-dollar-under-dsn-name",
+            ),
+            pytest.param(
+                """
+                CONNECTION_STRING = "${CONN}"
+                """,
+                None,
+                id="braced-single-word-under-connection-string",
+            ),
+        ],
+    )
+    def test_value_that_names_a_setting(self, code, expected_severity):
+        # With the module source in context, as the analyzer runs the rule.
+        findings = check_code_with_source(HardcodedCredentialRule(), code, "app.py")
+        severities = [f["severity"] for f in findings if f["rule_id"] == "SKY-L014"]
+        assert severities == ([expected_severity] if expected_severity else [])
 
 
 class TestErrorDisclosure:
@@ -2817,6 +3205,49 @@ class TestUndefinedConfig:
         findings = check_code(UndefinedConfigRule(), code)
         l016 = [f for f in findings if f["rule_id"] == "SKY-L016"]
         assert len(l016) == 0
+
+    def test_flag_read_with_declared_default_not_flagged(self):
+        # mozilla/pontoon settings: the line that defines the flag was reported.
+        code = """
+        import os
+        ENABLE_BUGS_TAB = os.environ.get("ENABLE_BUGS_TAB", "False") != "False"
+        USE_X_FORWARDED_HOST = os.getenv("USE_X_FORWARDED_HOST", default="False")
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        l016 = [f for f in findings if f["rule_id"] == "SKY-L016"]
+        assert len(l016) == 0
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param('os.getenv("ENABLE_ADMIN_BYPASS", None)', id="positional"),
+            pytest.param(
+                'os.environ.get("ENABLE_ADMIN_BYPASS", default=None)', id="keyword"
+            ),
+        ],
+    )
+    def test_none_default_is_not_a_declared_default(self, call):
+        code = f"""
+        import os
+        if {call}:
+            bypass_admin_checks()
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        assert [f["name"] for f in findings if f["rule_id"] == "SKY-L016"] == [
+            "ENABLE_ADMIN_BYPASS"
+        ]
+
+    def test_flag_read_without_default_next_to_defaulted_flag_still_flagged(self):
+        code = """
+        import os
+        ENABLE_A = os.getenv("ENABLE_A", "0")
+        if os.environ.get("ENABLE_B"):
+            enable_b()
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        assert [f["name"] for f in findings if f["rule_id"] == "SKY-L016"] == [
+            "ENABLE_B"
+        ]
 
 
 def _check_stale_mock(test_code, module_path, module_code):

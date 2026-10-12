@@ -80,8 +80,21 @@ class TestReturnConsistency:
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 0
 
-    def test_explicit_return_none_mixed(self):
+    def test_explicit_return_none_mixed_is_consistent(self):
+        # PEP 8 asks for exactly this: an explicit ``return None``.
         code = "def f(x):\n    if x > 0:\n        return x\n    return None\n"
+        findings = check_code(ReturnConsistencyRule(), code)
+        assert len(findings) == 0
+
+    def test_bare_return_next_to_explicit_none_still_flagged(self):
+        code = (
+            "def f(x):\n"
+            "    if x > 0:\n"
+            "        return x\n"
+            "    if x < 0:\n"
+            "        return None\n"
+            "    return\n"
+        )
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 1
 
