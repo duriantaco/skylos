@@ -183,7 +183,7 @@ def test_liveness_primer_workflow_uses_locked_comparison_contract():
     assert "--container" in script
     assert "--output github" in script
     assert '--json-out "$REPORT_JSON"' in script
-    assert "--jobs 2" in script
+    assert "--jobs 1" in script
     assert "--timeout 300" in script
     assert "set -euo pipefail" in script
     assert '| tee "$REPORT_MARKDOWN" >> "$GITHUB_STEP_SUMMARY"' in script
@@ -221,6 +221,7 @@ def _run_comparison(
     report_state="present",
     base_sha="a" * 40,
     merge_sha="b" * 40,
+    report_data=None,
 ):
     bash = shutil.which("bash")
     if bash is None:
@@ -237,7 +238,7 @@ with open('invocation.json', 'x', encoding='utf-8') as out:
 if os.environ['PRIMER_STUB_REPORT'] != 'missing':
     with open(os.environ['REPORT_JSON'], 'x', encoding='utf-8') as out:
         if os.environ['PRIMER_STUB_REPORT'] == 'present':
-            json.dump({'fixture': 'offline workflow test'}, out)
+            json.dump(json.loads(os.environ['PRIMER_STUB_REPORT_DATA']), out)
 print('# Offline primer report')
 sys.exit(int(os.environ['PRIMER_STUB_EXIT']))
 PY
@@ -255,6 +256,11 @@ PY
         "PRIMER_STUB_EXIT": str(exit_code),
         "PRIMER_STUB_REPORT": report_state,
         "PRIMER_STUB_PYTHON": sys.executable,
+        "PRIMER_STUB_REPORT_DATA": json.dumps(
+            {"fixture": "offline workflow test"}
+            if report_data is None
+            else report_data
+        ),
     }
     return subprocess.run(
         [bash, "-c", stub + _comparison_step(_workflow())["run"]],
@@ -293,7 +299,7 @@ def test_comparison_shell_passes_exact_revisions_and_keeps_both_reports(tmp_path
         "--json-out",
         str(tmp_path / "report data.json"),
         "--jobs",
-        "2",
+        "1",
         "--timeout",
         "300",
     ]
@@ -311,6 +317,28 @@ def test_comparison_shell_does_not_hide_primer_failure_behind_tee(tmp_path, exit
     assert result.returncode == exit_code
     assert (tmp_path / "report data.json").is_file()
     assert (tmp_path / "report summary.md").read_text() == "# Offline primer report\n"
+
+
+def test_comparison_shell_preserves_timeout_error_report_and_failure(tmp_path):
+    report = {
+        "projects": [
+            {
+                "project": "controlled",
+                "errors": [
+                    {
+                        "side": "head",
+                        "exit_code": None,
+                        "detail": "timed out after 300s",
+                    }
+                ],
+            }
+        ]
+    }
+    result = _run_comparison(tmp_path, exit_code=1, report_data=report)
+
+    assert result.returncode == 1
+    assert json.loads((tmp_path / "report data.json").read_text()) == report
+    assert (tmp_path / "report summary.md").is_file()
 
 
 @pytest.mark.parametrize("report_state", ["missing", "empty"])
