@@ -102,6 +102,11 @@ partial static analysis labeled. Dependency coverage names unresolved versions
 and the supported inputs needed to check them. Neither view claims runtime
 exploitability or a complete installed environment; JSON keeps the full evidence.
 
+For `uv.lock`, valid Git, URL, path and private-index dependencies are shown as
+**not checked**. Skylos still queries supported public packages; the coverage
+gap alone does not cause exit `2`. It cannot establish a clean dependency
+assessment. See [uv source coverage](./docs/dependency-scanning.md#uv-source-coverage).
+
 New source scans replace the blended A–F grade with these readouts. Disabled
 checks are **not assessed**; failed checks are **incomplete**. Maintainability
 percentages use only the relevant units actually measured, with no guessed
