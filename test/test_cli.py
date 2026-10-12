@@ -2712,7 +2712,20 @@ def test_main_json_gate_failure_exits_nonzero(monkeypatch):
             cli.main()
 
     assert e.value.code == 1
-    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
+    mock_print.assert_called_once()
+    printed = json.loads(mock_print.call_args.args[0])
+    gate = printed.pop("gate")
+    assert printed == _with_finding_type_metadata(result)
+    assert gate["verdict"] == "failed"
+    assert gate["exit_code"] == 1
+    assert gate["strict"] is True
+    assert gate["headline"] == "Quality Gate: FAILED"
+    assert gate["passed"] is False
+    assert gate["scope"] == "local_configured_policy"
+    assert gate["reasons"] == ["Strict mode: 1 issue found"]
+    assert gate["reason_details"][0]["details"] == [
+        "SKY-Q001  app.py:1  quality issue"
+    ]
 
 
 def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch):
@@ -3194,7 +3207,14 @@ def test_main_json_strict_failure_exits_nonzero(monkeypatch):
             cli.main()
 
     assert e.value.code == 1
-    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
+    mock_print.assert_called_once()
+    printed = json.loads(mock_print.call_args.args[0])
+    gate = printed.pop("gate")
+    assert printed == _with_finding_type_metadata(result)
+    assert gate["verdict"] == "failed"
+    assert gate["exit_code"] == 1
+    assert gate["scope"] == "local_strict_policy"
+    assert gate["reasons"] == ["Strict mode: 1 issue found"]
 
 
 @pytest.mark.parametrize(
@@ -3317,13 +3337,19 @@ def test_main_circular_dependency_reporting_and_exit_codes(
             else []
         )
     elif show_cycle:
+        # Human output ends with the --strict verdict, which lists the cycle
+        # again as the reason; the report itself shows it once.
+        report = output.split("Quality Gate:")[0]
+        if output_format in {"rich", "pretty"} and "--strict" in extra_args:
+            assert "Quality Gate: FAILED" in output
+            assert "Strict mode: 1 issue found" in output
         if output_format == "rich":
-            assert "Circular Dependencies" in output
-            assert "pkg.left → pkg.right → pkg.left" in output
+            assert "Circular Dependencies" in report
+            assert "pkg.left → pkg.right → pkg.left" in report
         else:
-            assert output.count("SKY-CIRC") == 1
-            assert "pkg/left.py:4" in output
-            assert cycle["message"] in output
+            assert report.count("SKY-CIRC") == 1
+            assert "pkg/left.py:4" in report
+            assert cycle["message"] in report
     else:
         assert "SKY-CIRC" not in output
         assert cycle["message"] not in output
@@ -3465,7 +3491,16 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             exit_code = exc.code
 
     assert exit_code == expected_exit
-    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
+    mock_print.assert_called_once()
+    printed = json.loads(mock_print.call_args.args[0])
+    gate = printed.pop("gate", None)
+    assert printed == _with_finding_type_metadata(result)
+    if gate_args:
+        # --gate reports the same verdict it exits with (--force: exit 0 on fail).
+        assert gate["verdict"] == ("incomplete" if expected_exit else "passed")
+        assert gate["exit_code"] == expected_exit
+    else:
+        assert gate is None
     if expected_exit:
         upload.assert_not_called()
     else:
@@ -3599,7 +3634,12 @@ def test_main_llm_output_is_quiet_and_gate_failure_exits_nonzero(monkeypatch, ll
             cli.main()
 
     assert e.value.code == 1
-    assert mock_print.call_args.args[0].startswith("# Skylos Report")
+    report_call, verdict_call = mock_print.call_args_list
+    assert report_call.args[0].startswith("# Skylos Report")
+    # The verdict ends the run on stderr; the report on stdout stays clean.
+    assert verdict_call.kwargs["file"] is sys.stderr
+    assert verdict_call.args[0].startswith("Quality Gate: FAILED\n")
+    assert "Strict mode: 1 issue found" in verdict_call.args[0]
     assert observed["analyzer_level"] == logging.WARNING
     assert analyzer_logger.level == original_level
     fake_logger.console.print.assert_not_called()

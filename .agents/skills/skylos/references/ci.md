@@ -61,7 +61,11 @@ Update `dictionary.md` and docs in the same change as rule catalog updates.
 
 ## Gate And Exit Behavior
 
-- `skylos . --gate`: applies configured thresholds.
+- `skylos . --gate`: applies configured thresholds. Critical security issues,
+  secrets, and critical AI-code issues (`ai_defects`, for example SKY-D222 or
+  SKY-L012) fail it regardless of counts; `block_ai_defect_severities` under
+  `[tool.skylos.gate]` sets the AI-code severities (`[]` turns that off), and
+  `max_ai_defects` remains a separate count limit.
 - `--strict`: fails on any issue.
 - `--force`: exits zero even when the gate would fail.
 - `--format concise`: exits non-zero when findings exist.

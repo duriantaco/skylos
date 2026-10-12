@@ -284,6 +284,38 @@ until the Skylos GitHub App is installed on the repository.
 [Your first Skylos-gated pull request](./docs/first-gated-pr.md) walks through
 it in about 8 minutes, including making the checks required.
 
+The gate (`skylos . --gate`, `skylos cicd gate`, and the generated workflow)
+fails on any critical security issue, any secret, and any critical AI-code
+issue, such as an import of a package that does not exist on PyPI (SKY-D222)
+or a call to a function that is never defined or imported (SKY-L012). Other
+findings fail it only above count limits. Change the limits under
+`[tool.skylos.gate]` in `pyproject.toml`:
+
+```toml
+[tool.skylos.gate]
+max_high = 5          # high-severity security issues allowed
+max_quality = 10      # quality issues allowed
+max_ai_defects = 10   # AI-code issues allowed (defaults to max_quality)
+# AI-code issues at these severities fail the gate whatever max_ai_defects
+# allows. Add "HIGH" to block more; [] turns the rule off.
+block_ai_defect_severities = ["CRITICAL"]
+```
+
+`max_ai_defects` and `block_ai_defect_severities` are separate checks; the
+gate fails if either one fails. In a pull request, `skylos cicd gate
+--diff-base` reads this policy from the base branch, so a pull request cannot
+turn the rule off for itself. A gate policy synced from Skylos Cloud replaces
+the repository's `[tool.skylos.gate]` section.
+
+Every gate run ends with one verdict line and the reasons behind it:
+`Quality Gate: PASSED`, `Quality Gate: FAILED` (exit 1), or
+`Quality Gate: INCOMPLETE — could not decide (exit 2)` when required analysis
+did not finish, for example a lockfile the dependency scan could not resolve.
+Each reason names the check that stopped, how many files or dependencies it
+missed, and what to change. `--format json` carries the same verdict in a
+top-level `gate` object; concise, LLM, GitHub, and GitLab output print it on
+stderr. See [Exit Codes And Incomplete Analysis](./docs/cli-output.md#exit-codes-and-incomplete-analysis).
+
 Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-reference).
 
 ## Check Every Agent Edit (Claude Code, Codex, Cursor)

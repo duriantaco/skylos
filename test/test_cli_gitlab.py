@@ -378,7 +378,10 @@ def test_gitlab_sca_clean_response_preserves_exit_zero(
 
     assert exit_code == 0
     assert report == []
-    assert not stderr.strip()
+    # The report stays on stdout; stderr carries only the gate verdict.
+    lines = stderr.strip().splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("Quality Gate: PASSED")
 
 
 @pytest.mark.parametrize("force", [False, True])

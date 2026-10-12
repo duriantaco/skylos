@@ -2,6 +2,7 @@ import importlib  # skylos: ignore[SKY-Q502] legacy gate flow module is being sp
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.markup import escape
 from rich.prompt import Confirm, Prompt
+
+from skylos.core.gate_incomplete import incomplete_analysis_reasons
 
 
 class _LazyInquirer:
@@ -77,16 +80,35 @@ SECURITY_GATE_KEYS = ("max_critical", "max_high", "max_security")
 GATE_ISSUE_LIST_LIMIT = 10
 GATE_ISSUE_MESSAGE_CHARS = 80
 ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
+# AI defects at these severities fail the gate whatever max_ai_defects allows.
+# [tool.skylos.gate] block_ai_defect_severities replaces the list; [] turns
+# the rule off and leaves only the max_ai_defects count.
+BLOCK_AI_DEFECT_SEVERITIES_KEY = "block_ai_defect_severities"
+DEFAULT_BLOCK_AI_DEFECT_SEVERITIES = ("CRITICAL",)
+AI_DEFECT_SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+AI_DEFECT_REASON_RULE_LIMIT = 3
+SAFE_RULE_ID = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+
+
+INCOMPLETE_VERDICT = "Quality Gate: INCOMPLETE — could not decide (exit 2)"
+INCOMPLETE_EXPLANATION = (
+    "Required analysis did not finish, so the gate can neither pass nor fail. "
+    "--force and advisory mode do not change this."
+)
 
 
 class GateReason(str):
-    """A gate failure reason that also carries the issues counted toward it."""
+    """A gate reason with the issues counted toward it and literal detail lines."""
 
     issues = ()
+    hint = None
+    details = ()
 
-    def __new__(cls, text, issues=()):
+    def __new__(cls, text, issues=(), hint=None, details=()):
         reason = super().__new__(cls, text)
         reason.issues = list(issues)
+        reason.hint = hint
+        reason.details = tuple(details)
         return reason
 
 
@@ -312,6 +334,24 @@ def _non_relaxable_gate_limit(value, baseline):
     return min(safe_value, baseline)
 
 
+def _block_ai_defect_severities(gate_config):
+    """Severities at which one AI defect fails the gate.
+
+    Missing or unusable values keep the default, so a typo cannot turn the
+    rule off. Only an explicit empty list does that.
+    """
+    if BLOCK_AI_DEFECT_SEVERITIES_KEY not in gate_config:
+        return DEFAULT_BLOCK_AI_DEFECT_SEVERITIES
+    value = gate_config.get(BLOCK_AI_DEFECT_SEVERITIES_KEY)
+    if not isinstance(value, (list, tuple)):
+        return DEFAULT_BLOCK_AI_DEFECT_SEVERITIES
+    if not value:
+        return ()
+    requested = {str(item).strip().upper() for item in value if isinstance(item, str)}
+    severities = tuple(sev for sev in AI_DEFECT_SEVERITY_ORDER if sev in requested)
+    return severities or DEFAULT_BLOCK_AI_DEFECT_SEVERITIES
+
+
 def _effective_gate_config(config):
     gate_config = config.get("gate", {}) if isinstance(config, dict) else {}
     if not isinstance(gate_config, dict):
@@ -346,6 +386,7 @@ def _effective_gate_config(config):
             "max_quality",
             BASELINE_GATE_CONFIG["max_quality"],
         )
+    effective[BLOCK_AI_DEFECT_SEVERITIES_KEY] = _block_ai_defect_severities(gate_config)
     return effective
 
 
@@ -477,6 +518,79 @@ def _check_strict_gate(
     return True, []
 
 
+def _issue_severity(issue):
+    if not isinstance(issue, dict):
+        return ""
+    return str(issue.get("severity", "")).strip().upper()
+
+
+def _rule_label(rule_id):
+    from skylos.rules.catalog import get_rule_name
+
+    name = get_rule_name(rule_id, default="")
+    if len(name) > 1 and name[1].islower():
+        name = name[0].lower() + name[1:]
+    return f"{rule_id} {name}" if name else rule_id
+
+
+def _ai_defect_block_reason(blocking):
+    present = {_issue_severity(issue) for issue in blocking}
+    severity_label = "/".join(
+        sev.lower() for sev in AI_DEFECT_SEVERITY_ORDER if sev in present
+    )
+    counted = _count_noun(len(blocking), f"{severity_label} AI-code issue")
+
+    rule_ids = []
+    for issue in blocking:
+        rule_id = str(issue.get("rule_id") or issue.get("rule") or "").strip()
+        if SAFE_RULE_ID.fullmatch(rule_id) and rule_id not in rule_ids:
+            rule_ids.append(rule_id)
+    details = [
+        _rule_label(rule_id) for rule_id in rule_ids[:AI_DEFECT_REASON_RULE_LIMIT]
+    ]
+    if len(rule_ids) > AI_DEFECT_REASON_RULE_LIMIT:
+        hidden = len(rule_ids) - AI_DEFECT_REASON_RULE_LIMIT
+        details.append(_count_noun(hidden, "more rule"))
+    # Locations stay on the issue lines, which render repository text
+    # literally; the reason itself is printed as Markdown.
+    return f"{counted} ({', '.join(details)})" if details else counted
+
+
+def _ai_defect_policy_hint(severities):
+    if tuple(severities) == DEFAULT_BLOCK_AI_DEFECT_SEVERITIES:
+        return (
+            "Critical AI-code issues fail the gate by default. To allow them, "
+            f"set {BLOCK_AI_DEFECT_SEVERITIES_KEY} = [] under [tool.skylos.gate] "
+            "in pyproject.toml."
+        )
+    listed = ", ".join(f'"{sev}"' for sev in severities)
+    return (
+        "AI-code issues at these severities fail the gate "
+        f"({BLOCK_AI_DEFECT_SEVERITIES_KEY} = [{listed}] under "
+        "[tool.skylos.gate]). Edit that list to change it; [] turns it off."
+    )
+
+
+def _apply_ai_defect_severity_block(reasons, gate_config, ai_defects):
+    """Fail on any AI defect at a blocking severity, whatever the count limit.
+
+    Returns the blocking issues; an empty list means the rule passed.
+    """
+    severities = gate_config.get(BLOCK_AI_DEFECT_SEVERITIES_KEY, ())
+    if not severities:
+        return []
+    blocking = [issue for issue in ai_defects if _issue_severity(issue) in severities]
+    if blocking:
+        reasons.append(
+            GateReason(
+                _ai_defect_block_reason(blocking),
+                blocking,
+                hint=_ai_defect_policy_hint(severities),
+            )
+        )
+    return blocking
+
+
 def _apply_gate_thresholds(reasons, gate_config, groups):
     passed = True
 
@@ -493,8 +607,23 @@ def _apply_gate_thresholds(reasons, gate_config, groups):
             )
         )
 
+    ai_defects = groups["max_ai_defects"]
+    blocking_ai_defects = _apply_ai_defect_severity_block(
+        reasons, gate_config, ai_defects
+    )
+    if blocking_ai_defects:
+        passed = False
+
     for key, noun, plural, _label in GATE_LIMITS:
         if key == "max_critical" and critical_blocks:
+            continue
+        # Skip the count reason when the severity reason already lists every
+        # AI defect.
+        if (
+            key == "max_ai_defects"
+            and blocking_ai_defects
+            and len(blocking_ai_defects) == len(ai_defects)
+        ):
             continue
         if not _append_threshold_reason(
             reasons,
@@ -521,49 +650,11 @@ def _gate_findings(results):
 
 
 def _analysis_incomplete_reasons(results):
-    results = results if isinstance(results, dict) else {}
-    reasons = []
-
-    analysis_errors = results.get("analysis_errors")
-    if analysis_errors:
-        try:
-            error_count = len(analysis_errors)
-        except TypeError:
-            error_count = 1
-        reasons.append(
-            f"Analysis incomplete: {error_count} analysis error(s) prevented a "
-            "complete scan"
-        )
-
-    summary = results.get("analysis_summary")
-    summary = summary if isinstance(summary, dict) else {}
-    raw_languages = summary.get("incomplete_languages")
-    if isinstance(raw_languages, (list, tuple, set)):
-        languages = sorted(
-            {
-                str(language).strip()
-                for language in raw_languages
-                if str(language).strip()
-            }
-        )
-    elif raw_languages:
-        languages = [str(raw_languages).strip()]
-    else:
-        languages = []
-    if languages:
-        reasons.append("Incomplete language engine coverage: " + ", ".join(languages))
-
-    sca_coverage = summary.get("sca_coverage")
-    if isinstance(sca_coverage, dict):
-        status = sca_coverage.get("status")
-        # Coverage limitations (including unresolved manifest ranges) are not
-        # operational failures; only an interrupted or unavailable scan is.
-        if status in ("incomplete", "unavailable", "unknown"):
-            reasons.append(
-                f"Dependency vulnerability scan incomplete (status: {status})"
-            )
-
-    return reasons
+    """Why required analysis did not finish; each reason says what to do next."""
+    return [
+        GateReason(reason.text, hint=reason.hint, details=reason.details)
+        for reason in incomplete_analysis_reasons(results)
+    ]
 
 
 def check_gate(results, config, strict=False, provenance=None):
@@ -678,6 +769,32 @@ def _listed_gate_issues(reason):
     return shown, len(issues) - len(shown)
 
 
+def gate_reason_lines(reason):
+    """The literal lines shown under one reason, then its hint (or None).
+
+    Issue lines come first (at most GATE_ISSUE_LIST_LIMIT, then "and N
+    more"), then the reason's own detail lines.
+    """
+    shown, more = _listed_gate_issues(reason)
+    lines = list(shown)
+    if more:
+        lines.append(f"and {more} more")
+    lines.extend(str(detail) for detail in getattr(reason, "details", ()) or ())
+    return lines, getattr(reason, "hint", None)
+
+
+def gate_reasons_text(reasons):
+    """Plain-text reason block for stderr and other non-Rich output."""
+    lines = []
+    for reason in reasons or []:
+        detail_lines, hint = gate_reason_lines(reason)
+        lines.append(f"   • {reason}")
+        lines.extend(f"       {line}" for line in detail_lines)
+        if hint:
+            lines.append(f"       {hint}")
+    return lines
+
+
 def _security_scanned(results):
     summary = results.get("analysis_summary")
     categories = summary.get("grade_categories") if isinstance(summary, dict) else None
@@ -766,15 +883,31 @@ def _append_failure_reasons(lines, reasons, *, heading="Failure Reasons"):
         for reason in reasons:
             lines.append(f"- {reason}")
             shown, more = _listed_gate_issues(reason)
-            for issue_line in shown:
+            details = getattr(reason, "details", ()) or ()
+            for detail_line in [*shown, *details]:
                 # A code span keeps repository paths and messages literal.
-                literal = issue_line.replace("`", "'")
+                literal = str(detail_line).replace("`", "'")
                 lines.append(f"  - `{literal}`")
             if more:
                 lines.append(f"  - and {more} more")
+            hint = getattr(reason, "hint", None)
+            if hint:
+                lines.append(f"  - {hint}")
 
 
-def build_summary_markdown(results, passed, reasons, *, advisory=False):
+def _summary_status(passed, *, advisory, incomplete):
+    if incomplete:
+        return "⚠️", "INCOMPLETE - COULD NOT DECIDE", "Incomplete Analysis"
+    if advisory and not passed:
+        return "⚠️", "ADVISORY - WOULD FAIL", "Advisory Reasons"
+    if passed:
+        return "✅", "PASSED", "Failure Reasons"
+    return "❌", "FAILED", "Failure Reasons"
+
+
+def build_summary_markdown(
+    results, passed, reasons, *, advisory=False, incomplete=False
+):
     results = results or {}
 
     danger = results.get("danger", []) or []
@@ -788,12 +921,9 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     high_count = len(high_issues)
     dead_code_count = _count_dead_code_findings(results)
 
-    if advisory and not passed:
-        status = "ADVISORY - WOULD FAIL"
-        icon = "⚠️"
-    else:
-        status = "PASSED" if passed else "FAILED"
-        icon = "✅" if passed else "❌"
+    icon, status, heading = _summary_status(
+        passed, advisory=advisory, incomplete=incomplete
+    )
 
     lines = [
         "## Skylos Analysis Results",
@@ -815,11 +945,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
         "",
         f"**Result: {icon} {status}**",
     ]
-    _append_failure_reasons(
-        lines,
-        reasons,
-        heading="Advisory Reasons" if advisory and not passed else "Failure Reasons",
-    )
+    _append_failure_reasons(lines, reasons, heading=heading)
 
     return "\n".join(lines)
 
@@ -847,12 +973,12 @@ def _resolve_gate_check(results, config, strict, provenance):
 
 def _print_gate_reasons(console, reasons):
     for reason in reasons or []:
-        console.print(f"   • {escape(str(reason))}")
-        shown, more = _listed_gate_issues(reason)
-        for issue_line in shown:
-            console.print(f"       {escape(issue_line)}", soft_wrap=True)
-        if more:
-            console.print(f"       and {more} more")
+        console.print(f"   • {escape(str(reason))}", soft_wrap=True)
+        detail_lines, hint = gate_reason_lines(reason)
+        for detail_line in detail_lines:
+            console.print(f"       {escape(detail_line)}", soft_wrap=True)
+        if hint:
+            console.print(f"       [yellow]{escape(hint)}[/yellow]", soft_wrap=True)
 
 
 def _handle_passed_gate(console, command_to_run, *, details="", hint=None):
@@ -900,14 +1026,14 @@ def _handle_advisory_gate(console, reasons):
     return 0
 
 
-def _handle_incomplete_gate(console, reasons):
-    console.print("\n[bold red]Analysis incomplete[/bold red]")
-    for reason in reasons or []:
-        console.print(f"   • {escape(str(reason))}")
-    console.print(
-        "[red]The quality gate cannot pass because required analysis did not "
-        "complete.[/red]"
-    )
+def _handle_incomplete_gate(
+    console, reasons, *, verdict=INCOMPLETE_VERDICT, explanation=INCOMPLETE_EXPLANATION
+):
+    """Print the could-not-decide verdict, then what stopped and what to do."""
+    console.print(f"\n[bold red]{escape(verdict)}[/bold red]", soft_wrap=True)
+    if explanation:
+        console.print(f"   [red]{escape(explanation)}[/red]", soft_wrap=True)
+    _print_gate_reasons(console, reasons)
     return 2
 
 
@@ -944,6 +1070,8 @@ def run_gate_interaction(
     strict = bool(strict or gate_cfg.get("strict", False))
     incomplete_reasons = _analysis_incomplete_reasons(results)
     passed, reasons = _resolve_gate_check(results, config, strict, provenance)
+    if incomplete_reasons:
+        reasons = incomplete_reasons
 
     if summary:
         md = build_summary_markdown(
@@ -951,11 +1079,12 @@ def run_gate_interaction(
             passed,
             reasons,
             advisory=advisory and not incomplete_reasons,
+            incomplete=bool(incomplete_reasons),
         )
         write_github_summary(md)
 
     if incomplete_reasons:
-        return _handle_incomplete_gate(console, reasons or incomplete_reasons)
+        return _handle_incomplete_gate(console, incomplete_reasons)
 
     if passed:
         details, hint = _passed_gate_summary(results, config, strict=strict)

@@ -88,6 +88,9 @@ max_high = 5
 max_security = 0
 max_reliability = 0
 max_quality = 10
+# AI-code issues at these severities fail the gate whatever the counts allow.
+# Add "HIGH" to block more; [] turns this off.
+block_ai_defect_severities = ["CRITICAL"]
 strict = false
 """
 
