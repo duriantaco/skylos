@@ -33,7 +33,9 @@ Git history, configuration and CI workflows out of the result while retaining
 files inside the case, including its own security findings. Cases that compare
 changes receive the Git baseline declared in the manifest.
 The temporary directory must be outside a Git repository; choose a different
-`TMPDIR` if needed. Source symlinks remain symlinks, and preparation refuses to
+`TMPDIR` if needed. Use a temporary directory without inherited Skylos
+configuration; explicitly configured operator policy still applies.
+Source symlinks remain symlinks, and preparation refuses to
 seed baselines or dependency caches through symlinks.
 
 Registry-dependent dependency cases seed Skylos' normal dependency-version cache
