@@ -46,6 +46,7 @@ from skylos.visitors.languages.typescript.analysis import (
     find_unused_ts_exports,
     mark_package_api_ts_exports_consumed,
 )
+from skylos.visitors.languages.typescript.framework import is_framework_loaded_file
 from skylos.analysis.ast_cache import (
     MODE_IGNORE,
     load_python_module,
@@ -1577,6 +1578,30 @@ def _has_evidence_marker(defn, markers) -> bool:
     return any(marker in refs for marker in markers)
 
 
+# Evidence that a framework, package, test runner or the module itself calls
+# the definition, so it is a liveness root rather than an unreferenced symbol.
+_ROOT_EVIDENCE_MARKERS = (
+    "framework_root",
+    "package_entrypoint",
+    "test_entrypoint",
+    "top_level_execution",
+)
+
+
+def _is_loaded_root(defn) -> bool:
+    """Whether root evidence on ``defn`` proves its framework calls it.
+
+    JS/TS framework marks include name-only rules, so there the file itself
+    must be one a framework or tool loads.
+    """
+    if not _has_evidence_marker(defn, _ROOT_EVIDENCE_MARKERS):
+        return False
+    filename = str(getattr(defn, "filename", ""))
+    if not filename.endswith(_TS_JS_SOURCE_EXTS):
+        return True
+    return is_framework_loaded_file(filename)
+
+
 def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:
     framework_lines = getattr(framework_flags, "framework_decorated_lines", set())
     test_lines = getattr(test_flags, "test_decorated_lines", set())
@@ -2144,6 +2169,11 @@ class Skylos:
             return None
 
         for key, defn in self.defs.items():
+            # A root with no static references (a Next.js page's default
+            # export, a Laravel listener) is called by its framework, so the
+            # helpers it calls must not inherit deadness from it.
+            if _is_loaded_root(defn):
+                continue
             if (
                 defn.type in ("function", "method")
                 and defn.references == 0
@@ -5532,15 +5562,7 @@ class Skylos:
             name
             for name, defn in self.defs.items()
             if getattr(defn, "type", None) in ("function", "method")
-            and _has_evidence_marker(
-                defn,
-                (
-                    "framework_root",
-                    "package_entrypoint",
-                    "test_entrypoint",
-                    "top_level_execution",
-                ),
-            )
+            and _has_evidence_marker(defn, _ROOT_EVIDENCE_MARKERS)
         }
         self._apply_entry_reachability(evidence_root_names=evidence_root_names)
 

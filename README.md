@@ -515,7 +515,9 @@ Skylos is not a replacement for every specialized scanner. It is a local-first
 repo and PR checker that puts several common review checks behind one CLI.
 
 - **Framework-aware dead code detection:** FastAPI, Django, Flask, pytest,
-  SQLAlchemy, Next.js, React, package entrypoints, and common plugin patterns.
+  SQLAlchemy, Next.js (App/Pages Router files and metadata routes), React,
+  Laravel (auto-discovered commands, listeners, components, factories, seeders),
+  tool config files, package entrypoints, and common plugin patterns.
 - **PR-focused output:** diff scanning, CI thresholds, GitHub annotations, and
   baselines for existing findings.
 - **Local-first operation:** core analysis executes locally and does not upload
@@ -682,7 +684,7 @@ or `--include-folder` to override an excluded folder.
 | TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
 | Go | Yes¹ | Partial¹ | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
-| PHP | Yes | Yes | No | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
+| PHP | Yes | Yes | No | Unsupported | PHP parser coverage, type and docblock references, Laravel conventions, plus taint-style security sinks and sources |
 | Rust | Yes | Yes | No | Unsupported | Rust parser coverage plus security sink/source checks |
 | Dart | Yes³ | Yes³ | No | Unsupported | Dart parser coverage plus selected security sinks and sources |
 | C# | Partial | Partial | Partial | Partial | C# symbols, direct-block unreachable code, selected security sinks, and direct NuGet inventory |

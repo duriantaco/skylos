@@ -7,7 +7,10 @@ from .nextjs import (
     NEXTJS_IMPORTED_CONVENTION_EXPORTS,
     is_nextjs_convention_export,
     is_nextjs_default_export_file,
+    is_nextjs_project_entry_file,
+    is_nextjs_project_pages_file,
 )
+from .tool_configs import is_tool_config_file
 
 _STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
@@ -41,6 +44,22 @@ _VSCODE_CONTRACT_METHODS: dict[str, frozenset[str]] = {
 }
 
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
+
+
+def is_framework_loaded_file(file_path: str) -> bool:
+    """Whether a framework or tool itself loads this JS/TS file.
+
+    Some framework-root marks are name rules (``use*`` hooks, ``page.tsx`` or
+    ``/pages/`` anywhere). Only a file that Next.js routes, Storybook loads or
+    a tool reads as its config is a root whose callees cannot be dead.
+    """
+    return bool(
+        is_tool_config_file(file_path)
+        or _STORYBOOK_FILE_RE.search(file_path)
+        or is_nextjs_project_pages_file(file_path)
+        or is_nextjs_project_entry_file(file_path)
+    )
+
 
 _FW_PATTERN = """
 (import_statement source: (string) @import_src)
@@ -155,7 +174,12 @@ class TSFrameworkVisitor:
                 self.detected_frameworks.add("vscode")
 
     def _scan_file_conventions(self) -> None:
-        if is_nextjs_default_export_file(self._file_path):
+        # Next.js serves convention files by their default export, and a tool
+        # (next, postcss, tailwind, vite, ...) reads its config file's default
+        # export, so ``const config = {...}; export default config`` is live.
+        if is_nextjs_default_export_file(self._file_path) or is_tool_config_file(
+            self._file_path
+        ):
             self._mark_default_export()
 
     def _scan_storybook_exports(self) -> None:

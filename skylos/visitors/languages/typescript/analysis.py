@@ -23,6 +23,7 @@ from .nextjs import (
     is_nextjs_convention_file,
     is_nextjs_pages_api_file,
     is_nextjs_pages_router_file,
+    is_nextjs_project_entry_file,
 )
 from .resolve import (
     _find_nearest_tsconfig,
@@ -34,6 +35,8 @@ from .safe_glob import (
     resolve_bounded_base,
     safe_glob_paths,
 )
+from .tool_configs import RUNNER_CONFIG_FILES as _PLAYWRIGHT_CONFIG_FILES
+from .tool_configs import TOOL_CONFIG_FILES as _CONFIG_FILES
 
 _NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
 _NEXTJS_CONVENTION_FILES = NEXTJS_CONVENTION_FILES
@@ -69,19 +72,6 @@ _ENTRY_FILE_SUFFIXES = (
     ".cjs",
 )
 
-_PLAYWRIGHT_CONFIG_FILES = frozenset(
-    {
-        "playwright.config.ts",
-        "playwright.config.js",
-        "playwright.config.mts",
-        "playwright.config.mjs",
-        "tsup.config.ts",
-        "tsup.config.mts",
-        "tsup.config.js",
-        "tsup.config.mjs",
-        "tsup.config.cjs",
-    }
-)
 
 try:
     _ENTRY_TS_LANG: Language | None = Language(tsts.language_typescript())
@@ -395,44 +385,6 @@ _TEST_SUFFIXES = (
 
 _STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
 
-_CONFIG_FILES = frozenset(
-    {
-        "vitest.config.ts",
-        "vitest.config.mts",
-        "vitest.config.js",
-        "vitest.config.mjs",
-        "jest.config.ts",
-        "jest.config.js",
-        "jest.config.cjs",
-        "tsconfig.ts",
-        "source.config.ts",
-        "source.config.tsx",
-        "source.config.js",
-        "source.config.jsx",
-        "tailwind.config.ts",
-        "tailwind.config.js",
-        "tailwind.config.cjs",
-        "next.config.ts",
-        "next.config.mts",
-        "next.config.js",
-        "next.config.mjs",
-        "postcss.config.ts",
-        "postcss.config.js",
-        "postcss.config.cjs",
-        "eslint.config.ts",
-        "eslint.config.mts",
-        "eslint.config.js",
-        "eslint.config.mjs",
-        "vite.config.ts",
-        "vite.config.mts",
-        "vite.config.js",
-        "vite.config.mjs",
-        "playwright.config.ts",
-        "playwright.config.js",
-        "playwright.config.mts",
-        "playwright.config.mjs",
-    }
-)
 
 _VITEPRESS_CONFIG_SUFFIXES = tuple(
     f"/.vitepress/{name}.{extension}"
@@ -502,7 +454,7 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
         return True
     if basename in _CONFIG_FILES:
         return True
-    return False
+    return is_nextjs_project_entry_file(sf)
 
 
 def _is_ts_dev_or_test_root(sf: str) -> bool:
@@ -957,7 +909,63 @@ def _discover_vite_config_entries(
             allow_glob=True,
         )
     )
+    matches.update(
+        _literal_entries_from_nodes(
+            source,
+            _laravel_vite_plugin_inputs(source, root_node),
+            base_dir,
+            ts_files,
+        )
+    )
     return matches
+
+
+def _laravel_vite_plugin_inputs(source: bytes, root_node) -> list:
+    """Return the ``input`` nodes of ``laravel(...)`` from laravel-vite-plugin.
+
+    The plugin accepts ``laravel('a.js')``, ``laravel(['a.js'])`` or
+    ``laravel({ input: [...] })`` and builds each input as an entry point.
+    """
+    bindings: set[str] = set()
+    for statement in root_node.named_children:
+        if statement.type != "import_statement" or is_type_only(statement):
+            continue
+        if (
+            _string_node_value(source, statement.child_by_field_name("source"))
+            != "laravel-vite-plugin"
+        ):
+            continue
+        for clause in statement.named_children:
+            if clause.type != "import_clause":
+                continue
+            bindings.update(
+                binding.local
+                for binding in iter_import_clause_bindings(source, clause)
+                if binding.kind == "default" and not binding.type_only
+            )
+    if not bindings:
+        return []
+
+    inputs: list = []
+    for node in _iter_ts_nodes(root_node):
+        if node.type != "call_expression":
+            continue
+        function_node = node.child_by_field_name("function")
+        if (
+            function_node is None
+            or function_node.type != "identifier"
+            or _node_text(source, function_node) not in bindings
+        ):
+            continue
+        arguments = node.child_by_field_name("arguments")
+        if arguments is None or not arguments.named_children:
+            continue
+        first = arguments.named_children[0]
+        if first.type == "object":
+            inputs.extend(_find_object_path_values(source, [first], ("input",)))
+        elif first.type in {"string", "array"}:
+            inputs.append(first)
+    return inputs
 
 
 def _discover_vitest_config_entries(
