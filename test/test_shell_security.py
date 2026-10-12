@@ -1085,7 +1085,7 @@ def _workflow_rule_ids(
 
     workflow = tmp_path / ".github" / "workflows" / "ci.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
-    workflow.write_text(
+    workflow.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path with a fixed filename
         "name: ci\non: push\n"
         + defaults
         + f"jobs:\n  build:\n    runs-on: {runs_on}\n"

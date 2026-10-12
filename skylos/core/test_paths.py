@@ -91,7 +91,9 @@ def _uses_test_framework(tree: ast.AST) -> bool:
 @lru_cache(maxsize=4096)
 def _declares_test_module(path_text: str, size: int, mtime_ns: int) -> bool:
     try:
-        source = Path(path_text).read_text(encoding="utf-8", errors="replace")
+        source = Path(path_text).read_text(  # skylos: ignore[SKY-D215] analyzer reads a discovered test file
+            encoding="utf-8", errors="replace"
+        )
         return _uses_test_framework(ast.parse(source))
     except (OSError, SyntaxError, ValueError):
         return False
