@@ -96,8 +96,8 @@ entries are easy to find because every Skylos command contains
 | Hook | Claude Code | Codex | Cursor | What it does |
 |:---|:---|:---|:---|:---|
 | `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
-| `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell) | `beforeReadFile` | Blocks reading a file that contains secrets |
-| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks installs of hallucinated or typosquatted packages |
+| `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell; `pre-bash` covers that) | `beforeReadFile` | Blocks reading a file that contains secrets |
+| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, and installs of hallucinated or typosquatted packages |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
 
 ### post-edit
@@ -191,14 +191,52 @@ tracked file (source, `.env.example`) is still blocked.
 
 ### pre-bash
 
-This hook checks only package-install commands:
+This hook checks two things.
+
+**Secrets the command would print.** Skylos works out what the command prints
+from files and environment variables and scans that text with the same secrets
+scanner as `pre-read`. If a secret would reach the output, the command is
+blocked. The block message names the file and line numbers (or the variable)
+and the kind of secret, never the value. This closes the shell route around
+`pre-read`, and on Codex, which reads files through the shell, it is the read
+check. It follows:
+
+- programs that print files: `cat`, `less`, `nl`, `head`/`tail`,
+  `grep`/`rg`/`ag`, `sed`, `awk`, `cut`, `base64`, `xxd`, `sort`, `diff` and
+  similar, including `cmd < file`, `cat <<< "$VAR"`, globs and braces
+  (`cat .env*`, `.env{,.local}`), `cd dir && ...`, `$(...)`, loops
+  (`for f in .env*`, `while read ...; done < .env`), `bash -c '...'` and `eval`
+- `grep -r` over a directory, and `rg`/`ag` with `--hidden` (except files Git
+  ignores, which they skip), for `.env*` files
+- the environment: `env`, `printenv`, `export -p`, `declare -p`, `set`, and
+  `echo`/`printf` of `$NAME`, including values loaded by the same command
+  (`source .env`, `export $(cat .env | xargs)`)
+
+Only what is printed counts, after `grep`, `head`/`tail`, `cut`, simple
+`sed` scripts (`-n '10,40p'`, `/re/p`, `s/=.*//`) and simple `awk` programs
+(`NR<=40`, `-F= '{print $1}'`). So these run: `sed -n '1,200p' app.py` when
+the secret is further down, `cat .env | grep PORT` when the PORT line holds
+no secret, `grep -c`, `cut -d= -f1 .env`, `sed 's/=.*//' .env`,
+`grep -rn KEY . | cut -d: -f1`, `> /dev/null`, `| wc -l`,
+`echo ${TOKEN:+set}`, and `export $(cat .env | xargs)`, which loads values
+without printing them. A pipe into a program Skylos does not know counts as
+not printed. Only the printed lines are scanned, at most 2 MB per command.
+
+This guards the commands agents usually write; it is not a sandbox. Not
+followed: a program that opens the file itself
+(`python -c "print(open('.env').read())"`), `find ... -exec cat`,
+`... | xargs cat`, `git show HEAD:.env`, `docker compose config`, a copy read
+back under another name, and files the secrets scanner does not read
+(`.npmrc`, `~/.aws/credentials`), which `pre-read` does not check either.
+
+**Package installs.** These install commands are checked:
 
 - `pip`/`pip3`/`pipx install`, `python -m pip install`, `uv pip install`,
   `uv add`, `poetry add`
 - `npm install|i|add`, `pnpm add`, `yarn add`, `bun add`
 - `go get`, `go install`
 
-Every other command passes straight through without any lookup. For each named
+Other commands skip the registry lookup. For each named
 package, Skylos checks that it exists on PyPI, npm or the Go module proxy (and,
 for exact pins, that the version exists), and flags one-edit look-alikes of
 popular packages. Well-known packages that sit one edit from a popular name

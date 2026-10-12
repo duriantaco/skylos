@@ -23,6 +23,7 @@ def _repository_ci_findings(
     *,
     changed_files: set[str] | None,
     ignore: set[str] | None,
+    analysis_errors: list[dict[str, Any]] | None = None,
     scan_paths: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Active worktree CI contracts also apply to a source-directory scan."""
@@ -83,7 +84,15 @@ def _repository_ci_findings(
     for path, scanner in candidates:
         if path.is_relative_to(scope) or (selected is not None and path not in selected):
             continue
-        findings.extend(scanner(path, root=repository, ignore=ignore))
+        if scanner is scan_github_actions_file:
+            findings.extend(
+                scanner(
+                    path, root=repository, ignore=ignore,
+                    analysis_errors=analysis_errors,
+                )
+            )
+        else:
+            findings.extend(scanner(path, root=repository, ignore=ignore))
     return findings
 
 
@@ -92,17 +101,22 @@ def scan_config_files(
     *,
     changed_files: set[str] | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
     required_rules: str | list[str] | tuple[str, ...] | set[str] | None = None,
     scan_paths: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     findings.extend(
-        scan_github_actions(root, changed_files=changed_files, ignore=ignore)
+        scan_github_actions(
+            root, changed_files=changed_files, ignore=ignore,
+            analysis_errors=analysis_errors,
+        )
     )
     findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     findings.extend(
         _repository_ci_findings(
-            root, changed_files=changed_files, ignore=ignore, scan_paths=scan_paths
+            root, changed_files=changed_files, ignore=ignore,
+            analysis_errors=analysis_errors, scan_paths=scan_paths,
         )
     )
     findings.extend(scan_dockerfiles(root, changed_files=changed_files, ignore=ignore))

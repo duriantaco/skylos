@@ -7,6 +7,7 @@ how its job installs the project's tests; workflow.py renders the YAML.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import shlex
@@ -35,6 +36,7 @@ _REQUIREMENTS_FILES = (
 )
 _TEST_EXTRAS = ("test", "tests", "testing", "dev")
 _NODE_TEST_PROGRAMS = {"npm", "npx", "yarn", "pnpm", "node", "jest", "vitest", "bun"}
+_VITEST_JUNIT = "reports/junit.xml"
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,11 @@ class DoneSetup:
     enabled: bool
     reason: str
     install_commands: tuple[str, ...]
+    # Done does not start JavaScript runners on its own. When a Vitest or
+    # Jest project has no test_command, these are the [tool.skylos.done]
+    # lines that make Done run its tests, and what to install first.
+    suggested_settings: tuple[str, ...] = ()
+    suggested_install: str = ""
 
 
 def _read_pyproject(root: Path) -> dict[str, Any]:
@@ -126,6 +133,59 @@ def _runs_node_tests(test_command: Any) -> bool:
     return bool(argv) and Path(argv[0]).name in _NODE_TEST_PROGRAMS
 
 
+def _read_package_json(root: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((root / "package.json").read_text("utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _jest_junit_path(package: dict[str, Any]) -> str:
+    """Where jest-junit writes, from its package.json settings."""
+    settings = package.get("jest-junit")
+    settings = settings if isinstance(settings, dict) else {}
+    directory = str(settings.get("outputDirectory") or ".")
+    name = str(settings.get("outputName") or "junit.xml")
+    directory = directory.replace("<rootDir>", ".").strip("/") or "."
+    return (
+        name if directory in {".", "./"} else f"{directory.removeprefix('./')}/{name}"
+    )
+
+
+def _js_runner_settings(root: Path) -> tuple[str, tuple[str, ...], str] | None:
+    """(runner, [tool.skylos.done] lines, install hint) for a root
+    package.json that depends on Vitest or Jest."""
+    package = _read_package_json(root)
+    dependencies: dict[str, Any] = {}
+    for key in ("devDependencies", "dependencies"):
+        if isinstance(package.get(key), dict):
+            dependencies.update(package[key])
+    if "vitest" in dependencies:
+        return (
+            "Vitest",
+            (
+                'test_command = "npx vitest run --reporter=default '
+                f'--reporter=junit --outputFile.junit={_VITEST_JUNIT}"',
+                f'junit_xml = "{_VITEST_JUNIT}"',
+            ),
+            "",
+        )
+    if "jest" in dependencies:
+        install = (
+            "" if "jest-junit" in dependencies else "npm install --save-dev jest-junit"
+        )
+        return (
+            "Jest",
+            (
+                'test_command = "npx jest --ci --reporters=default --reporters=jest-junit"',
+                f'junit_xml = "{_jest_junit_path(package)}"',
+            ),
+            install,
+        )
+    return None
+
+
 def detect_done_setup(repo_root: str | Path) -> DoneSetup:
     """Decide whether the generated workflow should include `skylos done`.
 
@@ -144,6 +204,16 @@ def detect_done_setup(repo_root: str | Path) -> DoneSetup:
         return DoneSetup(True, "[tool.skylos.done] test_command is set", install)
     if pytest_project:
         return DoneSetup(True, "pytest project found", install)
+    js_runner = _js_runner_settings(root)
+    if js_runner is not None:
+        runner, settings, js_install = js_runner
+        return DoneSetup(
+            False,
+            f"{runner} found, but Done needs a test_command that writes JUnit XML",
+            install,
+            suggested_settings=settings,
+            suggested_install=js_install,
+        )
     return DoneSetup(
         False,
         "no pytest project or [tool.skylos.done] test_command found",
@@ -191,6 +261,22 @@ def print_init_next_steps(
                 f"runs your tests ({escape(done_setup.reason)})",
                 "installs: " + escape(" && ".join(done_setup.install_commands)),
                 "edit that step in the workflow if your tests need more",
+            )
+        elif done_requested is None and done_setup.suggested_settings:
+            steps = []
+            if done_setup.suggested_install:
+                steps.append(f"first: {done_setup.suggested_install}")
+            steps.append(
+                "add to pyproject.toml (create it if needed) and commit it to "
+                "your default branch: Done reads settings from there"
+            )
+            steps += ["  [tool.skylos.done]"]
+            steps += [f"  {line}" for line in done_setup.suggested_settings]
+            steps.append("then rerun: skylos cicd init --done")
+            row(
+                DONE_JOB_NAME,
+                f"not added: {escape(done_setup.reason)}",
+                *(escape(step) for step in steps),
             )
         elif done_requested is None:
             row(

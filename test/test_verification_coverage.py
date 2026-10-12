@@ -17,6 +17,31 @@ def test_expected_checks_deduplicate_typescript_and_javascript():
     assert expectations[0].applicable_files == 2
 
 
+def test_out_of_scope_external_references_are_an_explicit_limitation():
+    check = {
+        "id": "typescript_local_api_surface",
+        "status": "completed",
+        "outcome": "pass",
+        "scope": "local_workspace_static_exports",
+        "applicable_files": 1,
+        "out_of_scope_references": 2,
+    }
+
+    coverage = build_ai_verification_coverage(
+        [check], expected_checks=expected_ai_verification_checks([Path("app.ts")])
+    )
+
+    assert coverage["state"] == "complete"
+    assert coverage["limitations"] == [
+        {
+            "check_id": "typescript_local_api_surface",
+            "scope": "local_workspace_static_exports",
+            "external_api_verification": "not_verified",
+            "out_of_scope_references": 2,
+        }
+    ]
+
+
 def test_coverage_marks_supported_missing_check_incomplete():
     expectations = expected_ai_verification_checks([Path("main.go")])
 

@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import sys
 import unicodedata
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,7 @@ _IMPORT_ERROR_NAMES = frozenset(
 )
 VIBE_CATEGORY = "api_signature_hallucination"
 AI_LIKELIHOOD = "high"
+PYTHON_API_SIGNATURE_CHECK_ID = "python_installed_api_signature"
 # Source-size cap enforced by ast_cache's MODE_SAFE_IGNORE_1MB read mode.
 MAX_PYTHON_API_SIGNATURE_SOURCE_BYTES = mode_max_bytes(MODE_SAFE_IGNORE_1MB)
 _MAX_API_SIGNATURE_PREFILTER_ROOTS = 64
@@ -35,6 +37,31 @@ SurfaceLoader = Callable[[str | Path, str], dict[str, Any] | None]
 # Returns True when the dotted module exists, False when it provably does not,
 # and None when existence cannot be decided.
 SubmoduleResolver = Callable[[str], bool | None]
+
+
+class PythonApiSignatureFindings(list):
+    """Keep the findings-list API while exposing what package inspection proved."""
+
+    def __init__(self, findings=(), *, check: dict[str, Any]) -> None:
+        super().__init__(findings)
+        self.check = check
+
+
+def failed_python_api_signature_check(reason: str) -> dict[str, Any]:
+    return {
+        "id": PYTHON_API_SIGNATURE_CHECK_ID,
+        "status": "skipped",
+        "outcome": "incomplete",
+        "scope": "installed_python_package_api_metadata",
+        "languages": ["python"],
+        "applicable_files": 0,
+        "references": 0,
+        "checked_references": 0,
+        "verified_references": 0,
+        "skipped_references": 0,
+        "finding_count": 0,
+        "reasons": [{"code": reason, "count": 1}],
+    }
 
 
 @dataclass(frozen=True)
@@ -70,6 +97,8 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         self.function_aliases: dict[str, tuple[str, str]] = {}
         self.class_aliases: dict[str, tuple[str, str]] = {}
         self.instance_stack: list[dict[str, tuple[str, str]]] = [{}]
+        self.inspected_modules: dict[str, str | None] = {}
+        self.unchecked_calls: list[dict[str, Any]] = []
 
     def generic_visit(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -83,6 +112,7 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             if not self._allowed_module(module_name):
                 continue
 
+            self._surface(module_name)
             self._check_submodule_path(node, module_name)
             local_name = _import_alias_name(alias, module_name)
             self.module_aliases[local_name] = module_name
@@ -96,6 +126,7 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         if not self._allowed_module(module_name):
             self.generic_visit(node)
             return
+        self._surface(module_name)
         if node.level == 0 and self._check_submodule_path(node, module_name):
             self.generic_visit(node)
             return
@@ -229,11 +260,24 @@ class _ApiSignatureChecker(ast.NodeVisitor):
 
     def _surface(self, module_name: str) -> dict[str, Any] | None:
         if module_name not in self.surfaces:
-            self.surfaces[module_name] = self.surface_loader(
-                self.project_root,
-                module_name,
-            )
-        return self.surfaces[module_name]
+            try:
+                self.surfaces[module_name] = self.surface_loader(
+                    self.project_root,
+                    module_name,
+                )
+            except Exception:
+                # Inspection failure cannot prove a missing member or a valid API.
+                self.surfaces[module_name] = None
+        surface = self.surfaces[module_name]
+        if not isinstance(surface, dict) or not isinstance(surface.get("members"), dict):
+            reason = "installed_api_metadata_unavailable"
+            surface = None
+        elif surface.get("members_truncated") is True:
+            reason = "installed_api_metadata_truncated"
+        else:
+            reason = None
+        self.inspected_modules[module_name] = reason
+        return surface
 
     def _module_member(
         self,
@@ -398,6 +442,21 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             self._add_missing_finding(node, target)
             return
 
+        parameters = target.entry.get("parameters")
+        if any(keyword.arg is not None for keyword in node.keywords) and (
+            not isinstance(parameters, list)
+            or (parameters == [] and target.entry.get("signature") == "")
+        ):
+            self.unchecked_calls.append(
+                {
+                    "symbol": target.label,
+                    "file": str(self.file_path),
+                    "line": node.lineno,
+                    "reason": "installed_api_signature_unavailable",
+                }
+            )
+            return
+
         for keyword in node.keywords:
             if keyword.arg is None:
                 continue
@@ -436,15 +495,19 @@ def scan_python_api_signature_hallucinations(
     allowed_modules: tuple[str, ...] | None = None,
     surface_loader: SurfaceLoader | None = None,
     submodule_resolver: SubmoduleResolver | None = None,
-) -> list[dict[str, Any]]:
+) -> PythonApiSignatureFindings:
     findings: list[dict[str, Any]] = []
     root = _repo_root(repo_root)
     if root is None:
-        return findings
+        return PythonApiSignatureFindings(
+            check=failed_python_api_signature_check("invalid_project_root")
+        )
 
     allowed_roots = _allowed_roots(allowed_modules)
     if not allowed_roots:
-        return findings
+        return PythonApiSignatureFindings(
+            check=failed_python_api_signature_check("installed_api_allowlist_empty")
+        )
 
     cache_session = None
     loader = surface_loader
@@ -456,6 +519,10 @@ def scan_python_api_signature_hallucinations(
             resolver = installed_submodule_exists
     local_modules = _local_module_roots(root, py_files)
     surfaces: dict[str, dict[str, Any] | None] = {}
+    inspected = 0
+    reasons: Counter[str] = Counter()
+    unchecked_modules: list[dict[str, str]] = []
+    unchecked_calls: list[dict[str, Any]] = []
 
     try:
         for file_path in py_files:
@@ -474,11 +541,45 @@ def scan_python_api_signature_hallucinations(
                 resolver,
             )
             checker.visit(tree)
+            inspected += len(checker.inspected_modules)
+            for module_name, reason in checker.inspected_modules.items():
+                if reason is not None:
+                    reasons[reason] += 1
+                    unchecked_modules.append(
+                        {"module": module_name, "file": str(file_path), "reason": reason}
+                    )
+            unchecked_calls.extend(checker.unchecked_calls)
+            if checker.unchecked_calls:
+                reasons["installed_api_signature_unavailable"] += len(
+                    checker.unchecked_calls
+                )
     finally:
         if cache_session is not None:
             cache_session.flush()
 
-    return findings
+    skipped = sum(reasons.values())
+    return PythonApiSignatureFindings(
+        findings,
+        check={
+            "id": PYTHON_API_SIGNATURE_CHECK_ID,
+            "status": "completed",
+            "outcome": "fail" if findings else "incomplete" if skipped else "pass",
+            "scope": "installed_python_package_api_metadata",
+            "languages": ["python"],
+            "applicable_files": len(py_files),
+            "reference_unit": "module_or_callable_metadata",
+            "references": inspected + len(unchecked_calls),
+            "checked_references": inspected + len(unchecked_calls) - skipped,
+            "verified_references": inspected + len(unchecked_calls) - skipped,
+            "skipped_references": skipped,
+            "finding_count": len(findings),
+            "unchecked_modules": unchecked_modules,
+            "unchecked_calls": unchecked_calls,
+            "reasons": [
+                {"code": code, "count": count} for code, count in sorted(reasons.items())
+            ],
+        },
+    )
 
 
 def installed_submodule_exists(module_name: str) -> bool | None:

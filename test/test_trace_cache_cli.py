@@ -1,5 +1,5 @@
-import json
 import io
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -7,7 +7,8 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-import skylos.cli as cli
+from skylos import cli
+from skylos.commands.cache_cmd import run_cache_command
 from skylos.core.result_cache import (
     RUN_CACHE_DIR,
     TRACE_CACHE_DIR,
@@ -17,7 +18,15 @@ from skylos.core.result_cache import (
     save_trace_cache,
 )
 from skylos.core.safe_cache_io import write_text_no_symlink
-from skylos.commands.cache_cmd import run_cache_command
+
+
+@pytest.fixture(autouse=True)
+def _isolate_custom_rule_loading(monkeypatch):
+    # These tests own trace/cache behavior, not Cloud credential discovery.
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "not_connected"},
+    )
 
 
 def _args(root, **overrides):
@@ -134,25 +143,24 @@ def test_trace_subprocess_does_not_import_repo_local_tracer(tmp_path):
 
 def test_trace_cache_hit_skips_trace_subprocess_and_writes_trace(tmp_path):
     _write_minimal_project(tmp_path)
-    key, fingerprint = build_trace_cache_key(
-        tmp_path,
-        [tmp_path],
-        return_fingerprint=True,
-    )
     payload = _trace_payload(tmp_path)
-    save_trace_cache(
-        tmp_path,
-        key,
-        payload,
-        pytest_returncode=0,
-        fingerprint_summary=fingerprint,
-    )
-
-    with (
-        patch("skylos.core.result_cache._git_visible_files", return_value=None),
-        patch("skylos.cli.subprocess.run") as mock_run,
-    ):
-        result = cli._run_pre_analysis_steps(_args(tmp_path), tmp_path, _console())
+    # Seed and read with the same discovery source, including under a CI Git
+    # checkout where this untracked fixture is not Git-visible.
+    with patch("skylos.core.result_cache._git_visible_files", return_value=None):
+        key, fingerprint = build_trace_cache_key(
+            tmp_path,
+            [tmp_path],
+            return_fingerprint=True,
+        )
+        save_trace_cache(
+            tmp_path,
+            key,
+            payload,
+            pytest_returncode=0,
+            fingerprint_summary=fingerprint,
+        )
+        with patch("skylos.cli.subprocess.run") as mock_run:
+            result = cli._run_pre_analysis_steps(_args(tmp_path), tmp_path, _console())
 
     assert not mock_run.called
     assert result.trace_file == tmp_path / ".skylos_trace"

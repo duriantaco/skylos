@@ -382,6 +382,9 @@ def render_short(payload: dict[str, Any]) -> str:
         )
     if len(findings) > MAX_SHORT_FINDINGS:
         lines.append(f"... and {len(findings) - MAX_SHORT_FINDINGS} more")
+    from skylos.verification.render import render_verification_scope_notes
+
+    lines.extend(render_verification_scope_notes(payload))
     status = str(payload.get("status") or "unknown")
     lines.append(f"{status.upper()}: {payload.get('summary', '')}")
     return "\n".join(lines)

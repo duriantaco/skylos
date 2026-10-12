@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -7,7 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
@@ -35,6 +36,14 @@ SKIP_DIR_NAMES = {
 
 ACTION_FILENAMES = {"action.yml", "action.yaml"}
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
+COOKIECUTTER_VARIABLE_RE = re.compile(
+    r"(?<!\$)\{\{[ \t]*cookiecutter\.([A-Za-z_][A-Za-z0-9_]*)[ \t]*\}\}"
+)
+COOKIECUTTER_LITERAL_RE = re.compile(
+    r"(?<!\$)\{\{[ \t]*(?:'(?P<single>[^'\\\r\n]*)'|"
+    r'"(?P<double>[^"\\\r\n]*)")[ \t]*\}\}'
+)
+COOKIECUTTER_SENTINEL = "__SKYLOS_COOKIECUTTER_"
 MAX_YAML_BYTES = 1_000_000
 MAX_YAML_GRAPH_DEPTH = 100
 MAX_YAML_GRAPH_NODES = 50_000
@@ -230,10 +239,14 @@ def _resolve_github_actions_scan_path(
     *,
     root: Path | None = None,
 ) -> Path | None:
-    candidate = Path(path).resolve()
+    # Keep the requested path, so the guarded reader can refuse a symlink
+    # rather than silently following it or losing it during discovery.
+    candidate = Path(os.path.abspath(path))
     if root is not None and not _is_under_root(candidate, root):
         return None
-    if not candidate.is_file() or not _is_github_actions_file(candidate):
+    if not (candidate.is_file() or candidate.is_symlink()):
+        return None
+    if not _is_github_actions_file(candidate):
         return None
     return candidate
 
@@ -271,31 +284,189 @@ def _discover_action_files(
 class _WorkflowLines(list[str]):
     """Raw lines paired with the source map from the same safe YAML parse."""
 
-    def __init__(self, text: str, source: YamlSource):
+    def __init__(self, text: str, source: YamlSource, parsed_text: str | None = None):
         super().__init__(text.splitlines())
         self.source = source
+        self.parsed_lines = (text if parsed_text is None else parsed_text).splitlines()
 
 
-def _load_yaml(path: Path) -> tuple[dict[str, Any], _WorkflowLines] | None:
+def _config_analysis_error(path: Path, kind: str, message: str) -> dict[str, Any]:
+    return {
+        "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+        "kind": kind,
+        "component": "github_actions",
+        "file": str(path),
+        "line": 1,
+        "severity": "HIGH",
+        "message": message,
+    }
+
+
+def _is_cookiecutter_template(path: Path, root: Path | None) -> bool:
+    """Recognize generator inputs, never a repository's active workflows."""
+    if root is None or root.is_file():
+        return False
+    parts = path.relative_to(root).parts
+    for index, part in enumerate(parts):
+        if part == ".github":
+            break
+        match = COOKIECUTTER_VARIABLE_RE.fullmatch(part)
+        if match is None:
+            continue
+        manifest_path = root.joinpath(*parts[:index], "cookiecutter.json")
+        manifest = read_project_text_no_symlink(
+            root, manifest_path, max_bytes=65_536, encoding="utf-8"
+        )
+        if manifest is None:
+            continue
+        try:
+            data = json.loads(manifest)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(data, dict) and match.group(1) in data:
+            return True
+    return False
+
+
+def _cookiecutter_yaml(text: str) -> str | None:
+    """Decode static GitHub-expression escapes without evaluating Jinja."""
+    if COOKIECUTTER_SENTINEL in text:
+        return None
+    literals: list[str] = []
+
+    def literal(match: re.Match[str]) -> str:
+        value = match.group("single") or match.group("double") or ""
+        # No escapes, multiline output, expressions, filters or function calls.
+        if not value.startswith("${{"):
+            return match.group(0)
+        token = f"{COOKIECUTTER_SENTINEL}LITERAL_{len(literals)}__"
+        literals.append(value)
+        return token
+
+    normalized = COOKIECUTTER_LITERAL_RE.sub(literal, text)
+    normalized = COOKIECUTTER_VARIABLE_RE.sub(
+        lambda match: f"{COOKIECUTTER_SENTINEL}VARIABLE_{match.group(1)}__", normalized
+    )
+    # Jinja also evaluates {{ ... }} after a literal '$'. Only expressions
+    # from the quoted constants above may pass through as GitHub syntax.
+    if re.search(r"\{\{|\{%|\{#", normalized):
+        return None
+    for index, value in enumerate(literals):
+        normalized = normalized.replace(f"{COOKIECUTTER_SENTINEL}LITERAL_{index}__", value)
+    return normalized
+
+
+def _cookiecutter_variables_are_display_only(data: dict[str, Any]) -> bool:
+    """Unknown generated names may not determine a security control."""
+    stack: list[tuple[Any, tuple[Any, ...]]] = [(data, ())]
+    visits = 0
+    while stack:
+        value, location = stack.pop()
+        visits += 1
+        if visits > MAX_YAML_GRAPH_NODES:
+            return False
+        if isinstance(value, (dict, list)):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if isinstance(key, str) and COOKIECUTTER_SENTINEL in key:
+                        return False
+                    stack.append((child, (*location, key)))
+            else:
+                stack.extend(
+                    (child, (*location, index)) for index, child in enumerate(value)
+                )
+        elif isinstance(value, str) and COOKIECUTTER_SENTINEL in value:
+            workflow_name = location == ("name",)
+            job_name = (
+                len(location) == 3 and location[0] == "jobs" and location[2] == "name"
+            )
+            step_name = (
+                len(location) == 5
+                and location[0] == "jobs"
+                and location[2] == "steps"
+                and isinstance(location[3], int)
+                and location[4] == "name"
+            )
+            event_path = (
+                len(location) == 4
+                and location[0] in ("on", True)
+                and location[1] in ("push", "pull_request", "pull_request_target")
+                and location[2] in ("paths", "paths-ignore")
+                and isinstance(location[3], int)
+            )
+            if not (workflow_name or job_name or step_name or event_path):
+                return False
+    return True
+
+
+def _load_yaml(
+    path: Path,
+    *,
+    root: Path | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], _WorkflowLines] | None:
+    def incomplete(kind: str, message: str) -> None:
+        if analysis_errors is not None:
+            analysis_errors.append(_config_analysis_error(path, kind, message))
+
     if yaml is None:
+        incomplete(
+            "config_parser_unavailable",
+            "GitHub Actions analysis incomplete: YAML parser unavailable",
+        )
         return None
     try:
-        text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        if root is not None:
+            text = read_project_text_no_symlink(
+                root.parent if root.is_file() else root,
+                path,
+                max_bytes=MAX_YAML_BYTES,
+                encoding="utf-8",
+            )
+        else:
+            text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
         if text is None:
+            incomplete(
+                "config_read_error",
+                "GitHub Actions analysis incomplete: YAML file could not be safely read "
+                f"(symlink, unreadable file, invalid UTF-8, or size limit {MAX_YAML_BYTES} bytes)",
+            )
             return None
-        loaded = load_yaml_with_locations(
-            text, max_depth=MAX_YAML_GRAPH_DEPTH, max_nodes=MAX_YAML_GRAPH_NODES
+        template = _is_cookiecutter_template(path, root)
+        parse_text = _cookiecutter_yaml(text) if template else text
+        loaded = (
+            None
+            if parse_text is None
+            else load_yaml_with_locations(
+                parse_text, max_depth=MAX_YAML_GRAPH_DEPTH, max_nodes=MAX_YAML_GRAPH_NODES
+            )
         )
         if loaded is None:
+            incomplete(
+                "config_parse_error",
+                "GitHub Actions analysis incomplete: invalid YAML or YAML resource limit exceeded",
+            )
             return None
         raw, source = loaded
     except Exception:
+        incomplete(
+            "config_parse_error",
+            "GitHub Actions analysis incomplete: YAML parser failed",
+        )
         return None
     if not isinstance(raw, dict):
+        incomplete("config_parse_error", "GitHub Actions analysis incomplete: expected a YAML mapping")
         return None
     if not _yaml_graph_is_safe(raw):
+        incomplete("config_parse_error", "GitHub Actions analysis incomplete: unsafe YAML graph")
         return None
-    return raw, _WorkflowLines(text, source)
+    if template and not _cookiecutter_variables_are_display_only(raw):
+        incomplete(
+            "config_parse_error",
+            "GitHub Actions analysis incomplete: unsupported dynamic workflow template",
+        )
+        return None
+    return raw, _WorkflowLines(text, source, parse_text)
 
 
 def _yaml_graph_is_safe(value: Any) -> bool:
@@ -359,7 +530,8 @@ def _yaml_graph_is_safe(value: Any) -> bool:
 
 
 def _line_for_contains(lines: list[str], needle: str, *, start: int = 1) -> int:
-    for lineno, line in enumerate(lines, 1):
+    search_lines = lines.parsed_lines if isinstance(lines, _WorkflowLines) else lines
+    for lineno, line in enumerate(search_lines, 1):
         if lineno < start:
             continue
         if needle in line:
@@ -2246,12 +2418,13 @@ def scan_github_actions_file(
     *,
     root: str | Path | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     root_path = Path(root).resolve() if root is not None else None
     file_path = _resolve_github_actions_scan_path(path, root=root_path)
     if file_path is None:
         return []
-    loaded = _load_yaml(file_path)
+    loaded = _load_yaml(file_path, root=root_path, analysis_errors=analysis_errors)
     if loaded is None:
         return []
     data, lines = loaded
@@ -2303,11 +2476,14 @@ def scan_github_actions(
     *,
     changed_files: set[str] | None = None,
     ignore: set[str] | None = None,
+    analysis_errors: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     root_path = Path(root).resolve()
     findings: list[dict[str, Any]] = []
     for file_path in _discover_action_files(root_path, changed_files):
         findings.extend(
-            scan_github_actions_file(file_path, root=root_path, ignore=ignore)
+            scan_github_actions_file(
+                file_path, root=root_path, ignore=ignore, analysis_errors=analysis_errors
+            )
         )
     return findings

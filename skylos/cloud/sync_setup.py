@@ -61,7 +61,7 @@ exit 0
 
 def cloud_workflow_content() -> str:
     content = """# Save as .github/workflows/skylos.yml: Cloud pins this workflow path.
-# Pull requests receive a local scan. Only default-branch pushes upload to Cloud.
+# Pull requests block newly introduced findings. Only default-branch pushes upload to Cloud.
 name: Skylos Quality Gate
 
 "on":
@@ -91,8 +91,10 @@ jobs:
       - name: Install Skylos
         run: python -I -m pip install skylos
 
-      - name: Scan pull request locally
-        run: skylos . --danger --secrets --quality --ai-defects --no-upload
+      - name: Gate newly introduced pull request findings
+        run: skylos . --danger --secrets --quality --ai-defects --sca --diff "$SKYLOS_BASE_REF" --diff-mode impact --gate --strict --no-upload
+        env:
+          SKYLOS_BASE_REF: ${{ github.event.pull_request.base.sha }}
 
   cloud-upload:
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -119,7 +121,7 @@ jobs:
         run: skylos sync pull
 
       - name: Run Skylos Scan & Upload
-        run: skylos . --danger --secrets --quality --ai-defects --upload
+        run: skylos . --danger --secrets --quality --ai-defects --sca --gate --upload
         env:
           SKYLOS_COMMIT: ${{ github.sha }}
           SKYLOS_BRANCH: ${{ github.ref_name }}

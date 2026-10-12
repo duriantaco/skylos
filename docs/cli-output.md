@@ -181,6 +181,16 @@ installed (`pip install "skylos[dart]"`).
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 
+Malformed or unreadable GitHub Actions YAML also produces incomplete analysis.
+When scanning a repository, Skylos recognizes nested Cookiecutter workflow
+templates through a placeholder directory and an adjacent `cookiecutter.json`.
+It statically decodes literal GitHub-expression escapes and accepts simple
+placeholders in display names and trigger path filters. It does not execute
+Jinja or generator hooks. Dynamic commands, permissions, action references,
+template control flow, and unsupported expressions remain incomplete; scan
+the generated workflow to check those. A repository's active workflows always
+require valid YAML.
+
 ### Gate verdict
 
 A gate run (`skylos . --gate`, `skylos . --strict`, `skylos cicd gate`) always

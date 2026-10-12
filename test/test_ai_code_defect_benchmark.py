@@ -323,8 +323,12 @@ def test_benchmark_preserves_external_workflow_link_for_static_reader_refusal(tm
         copied = project / ".github" / "workflows" / "ci.yml"
         assert copied.is_symlink()
         assert copied.readlink() == external
-        # Copying must not materialize the external file as fixture-owned code.
-        assert scan_config_files(project) == []
+        errors = []
+        assert scan_config_files(project, analysis_errors=errors) == []
+        assert len(errors) == 1
+        assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert errors[0]["kind"] == "config_read_error"
+        assert errors[0]["file"] == str(copied)
     finally:
         temporary.cleanup()
 

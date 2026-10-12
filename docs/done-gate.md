@@ -312,7 +312,9 @@ package added in this change has nothing to loosen.
 Skylos does not start JavaScript runners on its own. Set `test_command` and
 have the runner write JUnit XML to `junit_xml`, for example
 `npx vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml`
-or Jest with the `jest-junit` reporter. Without a `test_command`, a project
+or Jest with the `jest-junit` reporter (`skylos cicd init` prints these
+settings when the root `package.json` depends on Vitest or Jest). Without a
+`test_command`, a project
 whose only tests are JavaScript/TypeScript gets an unfinished tests check that
 says so, instead of an automatic pytest run; the static checks above still
 run. When pytest runs automatically in a repository that also has JS/TS

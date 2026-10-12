@@ -3,6 +3,37 @@ from __future__ import annotations
 from skylos.verification.render import render_verify_report
 
 
+def test_passing_route_contract_does_not_claim_authentication_behavior():
+    payload = {
+        "status": "pass",
+        "summary": "No AI-code issues found",
+        "contract_checks": [
+            {"id": "contract_route_decorator_presence", "outcome": "pass"}
+        ],
+    }
+
+    report = render_verify_report(payload)
+    assert "Route contract: satisfied (decorator presence only)" in report
+    assert "Authentication behavior: not verified" in report
+
+
+def test_external_and_metadata_limits_remain_visible_with_another_finding():
+    report = render_verify_report(
+        {
+            "status": "fail",
+            "summary": "1 issue found",
+            "coverage": {
+                "checks": [
+                    {"out_of_scope_references": 2},
+                    {"unchecked_modules": [{"module": "requests", "reason": "installed_api_metadata_unavailable"}]},
+                ]
+            },
+        }
+    )
+    assert "External API references unverified: 2" in report
+    assert "Package API metadata unavailable: requests" in report
+
+
 def _comparison(**overrides):
     row = {
         "status": "different",

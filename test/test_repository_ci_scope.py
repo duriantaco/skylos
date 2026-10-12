@@ -381,3 +381,59 @@ def test_file_list_with_nested_metadata_in_one_worktree_keeps_actual_root_ci(
     result = _analyze(selected)
     _assert_workflow(result, repository)
     assert result["analysis_summary"]["total_files"] == 2
+
+
+def _assert_repository_ci_parse_failure(result, malformed, valid):
+    errors = result.get("analysis_errors", [])
+    assert len(errors) == 1
+    assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+    assert errors[0]["kind"] == "config_parse_error"
+    assert errors[0]["component"] == "github_actions"
+    assert errors[0]["file"] == str(malformed)
+    assert errors[0]["line"] == 1
+    assert errors[0]["severity"] == "HIGH"
+    records = [item for item in result.get("danger", []) if Path(item["file"]) == valid]
+    assert len(records) == 4
+    assert Counter(item["rule_id"] for item in records) == _RULE_COUNTS
+    assert {
+        (item["rule_id"], item["severity"], item["line"]) for item in records
+    } == _RECORD_SIGNATURES
+
+
+@pytest.mark.parametrize("target", [".", "src", "empty-src"])
+def test_repository_ci_parse_error_reaches_analyzer_and_gate(
+    repository, target, monkeypatch, capsys
+):
+    selected = repository / target
+    if target == "empty-src":
+        (repository / "empty-src").mkdir()
+    malformed = _write(repository / ".github" / "workflows" / "ci.yml", "name: [\n")
+    valid = _write(repository / ".github" / "workflows" / "still-valid.yml", _WORKFLOW)
+
+    result = _analyze(selected)
+    _assert_repository_ci_parse_failure(result, malformed, valid)
+    assert result["analysis_summary"]["total_files"] == (0 if target == "empty-src" else 1)
+
+    # Disconnect optional Cloud only; run the real parser, detectors and gate.
+    monkeypatch.setattr("skylos.cloud.sync.get_token", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "skylos", target, "--danger", "--gate", "--format", "json",
+        "--no-upload", "--no-provenance", "--no-grep-verify",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    result = json.loads(capsys.readouterr().out)
+    _assert_repository_ci_parse_failure(result, malformed, valid)
+
+
+@pytest.mark.parametrize("selection", ["empty", "source-only"])
+def test_explicit_change_scope_omits_unchanged_root_ci_parse_error(repository, selection):
+    malformed = _write(repository / ".github" / "workflows" / "ci.yml", "name: [\n")
+    valid = _write(repository / ".github" / "workflows" / "still-valid.yml", _WORKFLOW)
+    changed = set() if selection == "empty" else {str(repository / "src" / "app.py")}
+    result = _analyze(repository / "src", changed_files=changed)
+    assert result.get("analysis_errors", []) == []
+    assert not any(
+        Path(item["file"]) in {malformed, valid} for item in result.get("danger", [])
+    )

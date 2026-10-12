@@ -56,12 +56,12 @@ class FakeVerify:
         return {"status": "fail" if findings else "pass", "findings": findings}
 
 
-def _run(tmp_path, event, payload, *, client=None, deps=None, raw=None):
+def _run(tmp_path, event, payload, *, client=None, deps=None, raw=None, env=None):
     argv = [event] + (["--client", client] if client else [])
     stdout = io.StringIO()
     deps = deps or HookDeps()
     # Hermetic env: the test process may itself run under an agent.
-    deps.env = {"CLAUDE_PROJECT_DIR": str(tmp_path)}
+    deps.env = {"CLAUDE_PROJECT_DIR": str(tmp_path), **(env or {})}
     (tmp_path / ".git").mkdir(exist_ok=True)  # hook state lives in-repo only
     stdin = io.StringIO(raw if raw is not None else json.dumps(payload))
     code = run_hook_command(argv, stdin=stdin, stdout=stdout, deps=deps)
@@ -616,6 +616,236 @@ def test_pre_bash_real_packages_allowed(tmp_path):
         deps=HookDeps(install_checker=checker),
     )
     assert text == "" and checker.calls == ["npm install lodash"]
+
+
+# Live-format keys, split so this file does not trip secret scanners.
+STRIPE_KEY = "sk_live_" + "51HqLyjWDarjtT1zdp7dc" + "4yXfPzLqQ3m9Vb7n2KxR8sTwU0e"
+GITHUB_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+
+
+def _env_files(tmp_path):
+    _write(
+        tmp_path / ".env.production",
+        f"# prod\nPORT=3000\nSTRIPE_SECRET_KEY={STRIPE_KEY}\nNODE_ENV=production\n",
+    )
+    _write(tmp_path / ".env.example", "PORT=3000\nSTRIPE_SECRET_KEY=sk_live_changeme\n")
+    _write(tmp_path / "app" / ".env", f"GITHUB_TOKEN={GITHUB_TOKEN}\nDEBUG=1\n")
+
+
+def _assert_no_secret(text):
+    for leaked in (STRIPE_KEY, GITHUB_TOKEN, STRIPE_KEY[-6:], GITHUB_TOKEN[-6:]):
+        assert leaked not in text
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat .env.production",
+        "grep STRIPE .env.production",
+        "grep -i stripe .env.production",
+        "head -n 5 .env.production",
+        "tail -2 .env.production",
+        "sed -n '1,10p' .env.production",
+        "base64 .env.production",
+        "cat .env*",
+        "cd app && cat .env",
+        "cat app/.env | grep TOKEN",
+        "cat .env.production | sort | uniq",
+        "cat .env.production 2>/dev/null",
+        "sudo cat .env.production",
+        "cat < .env.production",
+        "while read l; do echo $l; done < .env.production",
+        'echo "$(cat .env.production)"',
+        "x=$(grep KEY .env.production); echo $x",
+        "bash -c 'cat .env.production'",
+        "eval cat .env.production",
+        "grep -rn sk_live .",
+        "echo a#b; cat .env.production",
+        "grep -A1 PORT .env.production",
+        "sed -n '3p' .env.production",
+        "awk -F= '{print $2}' .env.production",
+        "cat .env{.production,}",
+        'cat "$PWD/.env.production"',
+        "for f in .env*; do cat $f; done",
+        "grep -rn STRIPE . | head -5",
+    ],
+)
+def test_pre_bash_blocks_commands_that_print_secret_files(tmp_path, command):
+    _env_files(tmp_path)
+    _, out, text = _run(tmp_path, "pre-bash", _bash(command), client="claude")
+    spec = out["hookSpecificOutput"]
+    assert spec["permissionDecision"] == "deny"
+    assert "would print" in spec["permissionDecisionReason"]
+    _assert_no_secret(text)
+    _assert_no_secret((tmp_path / ".skylos" / "hook.log").read_text())
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat .env.example",
+        "grep PORT .env.production",
+        "cat .env.production | grep PORT",
+        "grep -E '^(PORT|NODE_ENV)=' .env.production",
+        "head -n 2 .env.production",
+        "grep -c STRIPE .env.production",
+        "cut -d= -f1 .env.production",
+        "awk -F= '{print $1}' .env.production",
+        "cat .env.production > /dev/null",
+        "cat .env.production | wc -l",
+        "export $(cat .env.production | xargs)",
+        "source .env.production && npm run dev",
+        "sed -i 's/3000/4000/' .env.production",
+        "grep -r --include='*.py' STRIPE .",
+        "cat <<'EOF' > notes.md\ndon't cat .env.production\nEOF",
+        # Line ranges that skip the secret (Codex reads files this way).
+        "sed -n '1,2p' .env.production",
+        "nl -ba .env.production | sed -n '1,2p'",
+        "awk 'NR<=2' .env.production",
+        # Masking: names or placeholders, never values.
+        "sed 's/=.*//' .env.production",
+        "sed -E 's/=.+/=<redacted>/' .env.production",
+        "awk -F= '!/^#/ {print $1}' .env.production",
+        "grep -o '^[A-Z_]*' .env.production",
+        "grep -rn STRIPE . | cut -d: -f1 | sort -u",
+        "grep -rn STRIPE . --exclude='.env*'",
+        # Reads that print nothing of the file.
+        "while IFS='=' read -r k v; do export \"$k=$v\"; done < .env.production",
+        "while read -r l; do [[ $l == STRIPE* ]] && echo found; done < .env.production",
+        "(cd app && ls); cat .env.example",
+    ],
+)
+def test_pre_bash_allows_commands_that_print_no_secret(tmp_path, command):
+    _env_files(tmp_path)
+    _, _, text = _run(tmp_path, "pre-bash", _bash(command), client="claude")
+    assert text == ""
+
+
+def test_pre_bash_secret_block_names_file_and_lines_only(tmp_path):
+    _env_files(tmp_path)
+    _, out, text = _run(
+        tmp_path,
+        "pre-bash",
+        _bash("cat .env.production; cat app/.env"),
+        client="claude",
+    )
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert ".env.production line(s) 3" in reason
+    assert "app/.env line(s) 1" in reason
+    assert "cut -d= -f1" in reason
+    _assert_no_secret(text)
+
+    _, out, text = _run(
+        tmp_path,
+        "pre-bash",
+        {"hook_event_name": "beforeShellExecution", "command": "cat .env.production"},
+        client="cursor",
+    )
+    assert out["permission"] == "deny"
+    assert ".env.production" in out["agent_message"]
+    _assert_no_secret(text)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env",
+        "printenv",
+        "export -p",
+        "printenv GITHUB_TOKEN",
+        "echo $GITHUB_TOKEN",
+        'printf "%s" "${GITHUB_TOKEN}"',
+        "env | grep -i token",
+        'cat <<< "$GITHUB_TOKEN"',
+        "declare -p GITHUB_TOKEN",
+    ],
+)
+def test_pre_bash_blocks_printing_secret_environment_variables(tmp_path, command):
+    env = {"GITHUB_TOKEN": GITHUB_TOKEN, "PATH": "/usr/bin"}
+    _, out, text = _run(tmp_path, "pre-bash", _bash(command), client="claude", env=env)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "environment variable GITHUB_TOKEN" in reason
+    _assert_no_secret(text)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env | grep PATH",
+        "echo $PATH",
+        "env | cut -d= -f1",
+        'test -n "$GITHUB_TOKEN" && echo set',
+        "echo ${#GITHUB_TOKEN}",
+        "echo $GITHUB_TOKEN | gh auth login --with-token",
+        "env FOO=1 npm test",
+        "command -v env",
+        "set -e",
+        "echo ${GITHUB_TOKEN:+set}",
+        'echo "${GITHUB_TOKEN:0:4}"',
+        "echo 'Put $GITHUB_TOKEN in your .env'",
+        'echo "\\$GITHUB_TOKEN is required"',
+        "GITHUB_TOKEN=dummy; echo $GITHUB_TOKEN",
+        "declare -f",
+    ],
+)
+def test_pre_bash_allows_environment_use_that_prints_no_secret(tmp_path, command):
+    env = {"GITHUB_TOKEN": GITHUB_TOKEN, "PATH": "/usr/bin"}
+    _, _, text = _run(tmp_path, "pre-bash", _bash(command), client="claude", env=env)
+    assert text == ""
+
+
+def test_pre_bash_sourced_file_values_count_as_environment(tmp_path):
+    _env_files(tmp_path)
+    for command in (
+        "source app/.env && env",
+        ". app/.env; echo $GITHUB_TOKEN",
+        "export $(cat app/.env | xargs) && env | grep TOKEN",
+    ):
+        _, out, text = _run(tmp_path, "pre-bash", _bash(command), client="claude")
+        reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "environment variable GITHUB_TOKEN" in reason
+        _assert_no_secret(text)
+
+
+def test_pre_bash_skips_tool_state_variables_and_gitignored_search_hits(tmp_path):
+    # direnv keeps compressed state in DIRENV_* variables: high entropy,
+    # not a credential.
+    env = {
+        "DIRENV_WATCHES": "eJx0zM1KAzEQx_FXKXPuITcfT0qjvCqEaq5FsVIqFJdh2YbJx4R6VFcHxJlaeTMhWKk3qeBhgM"
+    }
+    _, _, text = _run(
+        tmp_path, "pre-bash", _bash("env | sort"), client="claude", env=env
+    )
+    assert text == ""
+
+    import subprocess
+
+    _env_files(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _write(tmp_path / ".gitignore", ".env*\n")
+    _, _, text = _run(
+        tmp_path, "pre-bash", _bash("rg --hidden STRIPE"), client="claude"
+    )
+    assert text == ""  # rg still skips files Git ignores
+    _, out, _ = _run(tmp_path, "pre-bash", _bash("grep -rn STRIPE ."), client="claude")
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "--exclude='.env*'" in reason
+
+
+def test_pre_bash_scans_only_printed_lines_of_large_files(tmp_path):
+    body = "".join(f"line_{i} = {i}\n" for i in range(20_000))
+    _write(tmp_path / "big.py", body + f'STRIPE = "{STRIPE_KEY}"\n')
+    for command in ("sed -n '1,200p' big.py", "grep -n line_19 big.py", "head big.py"):
+        _, _, text = _run(tmp_path, "pre-bash", _bash(command), client="claude")
+        assert text == ""
+    _, out, text = _run(
+        tmp_path, "pre-bash", _bash("tail -n 1 big.py"), client="claude"
+    )
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert (
+        "big.py line(s) 20001" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    )
+    _assert_no_secret(text)
 
 
 def test_install_command_packages_parsing():

@@ -402,6 +402,7 @@ def test_run_verify_command_passes_declared_external_typescript_imports(
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == (
+        "External API references unverified: 2\n"
         "PASS: No AI-code issues found; "
         "2 external references outside local API proof"
     )
@@ -669,6 +670,38 @@ def test_verify_diff_covers_committed_staged_unstaged_and_untracked(tmp_path):
         verify_change_diff(tmp_path, ref="--output=/tmp/x")
     with pytest.raises(ValueError):
         verify_change_diff(tmp_path, ref="does-not-exist")
+
+
+@needs_git
+def test_verify_diff_preserves_unavailable_api_metadata_details(tmp_path):
+    _git(tmp_path, "init", "-q")
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n")
+    _git(tmp_path, "add", "app.py")
+    _git(tmp_path, "commit", "-qm", "base")
+    source.write_text("value = 2\n")
+
+    def analyzer(*_args, **_kwargs):
+        return {
+            "analysis_summary": {
+                "ai_verification": {
+                    "state": "incomplete",
+                    "checks": [{
+                        "id": "python_installed_api_signature",
+                        "outcome": "incomplete",
+                        "skipped_references": 1,
+                        "unchecked_modules": [{"module": "requests", "reason": "installed_api_metadata_unavailable"}],
+                    }],
+                }
+            }
+        }
+
+    result = verify_change_diff(tmp_path, analyze_func=analyzer)
+
+    assert result["status"] == "incomplete"
+    assert result["coverage"]["state"] == "incomplete"
+    assert result["coverage"]["checks"][0]["file"] == "app.py"
+    assert result["coverage"]["checks"][0]["unchecked_modules"][0]["module"] == "requests"
 
 
 @needs_git
