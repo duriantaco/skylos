@@ -173,6 +173,85 @@ installed (`pip install "skylos[dart]"`).
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 
+### Gate verdict
+
+A gate run (`skylos . --gate`, `skylos . --strict`, `skylos cicd gate`) always
+ends with one verdict line, then the reasons:
+
+- `Quality Gate: PASSED` (exit `0`), with the limits the scan was held to.
+- `Quality Gate: FAILED` (exit `1`, or `0` with `--force`), with each limit
+  that failed and the findings counted toward it.
+- `Quality Gate: INCOMPLETE — could not decide (exit 2)` when required
+  analysis did not finish. Each reason names the check that stopped, how many
+  files, lockfile entries, or OSV.dev query batches it could not cover, and
+  the next step.
+- `Quality Gate: ERROR — could not decide (exit 1)` when the run stopped
+  before deciding, for example because analysis raised an error or
+  `cicd gate --input` could not read its file.
+
+For example, with a `pnpm-lock.yaml` entry the dependency scan cannot resolve:
+
+```text
+Quality Gate: INCOMPLETE — could not decide (exit 2)
+   Required analysis did not finish, so the gate can neither pass nor fail. --force and advisory mode do not change this.
+   • Dependency vulnerability scan incomplete (status: incomplete): 1 lockfile entry could not be resolved
+       pnpm-lock.yaml:5  missing locked dependency: left-pad
+       Dependency results are required whenever --sca is on (-a includes it). To scan or gate without them, run without --sca, for example --danger --secrets --quality --ai-defects instead of -a.
+```
+
+Rich and pretty output print the verdict last on the terminal. `concise`,
+`llm`, `github`, and `gitlab` print it on stderr so stdout stays parseable.
+`--format json` and `json-ci` carry it in the top-level `gate` object instead
+(and also print the verdict on stderr when `--output` sends the JSON to a
+file). The same object feeds the assessment's Gate readout and the SARIF run
+properties:
+
+```json
+"gate": {
+  "passed": false,
+  "reasons": ["Dependency vulnerability scan incomplete (status: incomplete): 1 lockfile entry could not be resolved"],
+  "scope": "local_configured_policy",
+  "status": "incomplete",
+  "forced": false,
+  "verdict": "incomplete",
+  "exit_code": 2,
+  "strict": false,
+  "headline": "Quality Gate: INCOMPLETE — could not decide (exit 2)",
+  "hint": null,
+  "reason_details": [
+    {
+      "message": "Dependency vulnerability scan incomplete (status: incomplete): 1 lockfile entry could not be resolved",
+      "details": ["pnpm-lock.yaml:5  missing locked dependency: left-pad"],
+      "hint": "Dependency results are required whenever --sca is on ..."
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `passed` | `true` only when the gate passed; `false` for a failed or incomplete gate. |
+| `reasons` | One plain string per reason, in order. |
+| `scope` | `local_configured_policy` (`--gate`, your `[tool.skylos.gate]` limits) or `local_strict_policy` (`--strict` without `--gate`: any finding fails). |
+| `status` | `evaluated`, or `incomplete` when required analysis did not finish. |
+| `forced` | `true` when `--force` was given and the gate did not pass. An incomplete gate still exits `2`. |
+| `verdict` | `passed`, `failed`, or `incomplete`. |
+| `exit_code` | The exit status the verdict produces: `0`, `1` (`0` with `--force`), or `2`. |
+| `strict` | Whether strict rules applied (`--strict` or `strict = true` under `[tool.skylos.gate]`). |
+| `headline` | The verdict line printed by human output. |
+| `hint` | For a pass, a note about what the default limits allowed; otherwise `null`. |
+| `reason_details` | One object per entry in `reasons`, same order: `message` (equal to the string), `details` (the literal lines shown under it: at most 10 findings, then `and N more`, then file, line or count details), and `hint` (the next step, or `null`). |
+
+The object is decided on the full result, before `--severity`, `--category`,
+or `--file-filter` narrow the displayed findings. It appears with `--gate`,
+and with `--strict` unless `--force` is also given: `--strict --force`
+without `--gate` skips the policy evaluation and records no `gate` object,
+though human output still ends with the verdict it was forced past. With
+`--upload`, a failing Skylos Cloud gate can still exit `1` after a local
+`passed` verdict. A scan without `--gate` or `--strict` that exits `2` ends
+with `Scan: INCOMPLETE — required analysis did not finish (exit 2)` and the
+same reasons.
+
 For a plain `skylos . --upload`, successful Cloud delivery returns `0` even
 when the Cloud quality gate reports advisory violations. Use `--gate` or
 `--strict` to enforce a failing exit. An incomplete scan does not upload, and
@@ -305,7 +384,7 @@ The separate `skylos debt` and `skylos defend` scores retain their own contracts
 | Risk | Highest unresolved severity and counts among Defect and Review findings, excluding dead-code candidates. Correctness findings in `quality` are included. |
 | Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. |
 | Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. |
-| Gate | PASS or FAIL against the configured policy when a gate is evaluated; otherwise not evaluated. |
+| Gate | PASS or FAIL against the configured policy when a gate is evaluated, INCOMPLETE when required analysis did not finish; otherwise not evaluated. JSON: the top-level `gate` object ([Gate verdict](#gate-verdict)). |
 
 One critical secret stays critical regardless of repository size, other clean
 categories or the amount of Advice. A critical Review finding still requires

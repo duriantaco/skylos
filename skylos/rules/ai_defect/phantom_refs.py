@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import builtins
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -102,6 +102,10 @@ class _ModuleFacts:
     has_dynamic_getattr: bool
     has_type_checking_dynamic_getattr: bool
     type_checking_node_ids: set[int]
+    # Names bound inside ``try`` or through ``global``: not on every path,
+    # but enough that a reference to them is not a phantom.
+    possible_members: set[str] = dataclass_field(default_factory=set)
+    type_checking_possible_members: set[str] = dataclass_field(default_factory=set)
 
 
 @releases_python_ast_cache
@@ -132,6 +136,8 @@ def scan_repo_phantom_security_references(
     dynamic_modules = set()
     type_checking_dynamic_modules = set()
     module_type_checking_node_ids = {}
+    module_possible_members = {}
+    module_type_checking_possible_members = {}
     parse_failures = set()
 
     for file_path in files:
@@ -169,6 +175,7 @@ def scan_repo_phantom_security_references(
                 local_modules,
                 source_has_type_checking=source_has_type_checking,
                 include_reference_context=include_reference_context,
+                is_package=module_name in package_modules,
             )
         module_members[module_name] = facts.members
         module_type_checking_members[module_name] = facts.type_checking_members
@@ -183,6 +190,10 @@ def scan_repo_phantom_security_references(
             if target in local_modules
         }
         module_type_checking_node_ids[module_name] = facts.type_checking_node_ids
+        module_possible_members[module_name] = facts.possible_members
+        module_type_checking_possible_members[module_name] = (
+            facts.type_checking_possible_members
+        )
         dynamic_modules.discard(module_name)
         type_checking_dynamic_modules.discard(module_name)
         if facts.has_dynamic_getattr:
@@ -228,7 +239,7 @@ def scan_repo_phantom_security_references(
             star_export_cache[module_name] = None
             return None
         names, nested_star_bases, explicit_all = _may_bound_module_names(
-            module_tree, module_name
+            module_tree, module_name, _is_package_module_file(module_file)
         )
         if explicit_all is not None:
             result = set(explicit_all)
@@ -252,6 +263,54 @@ def scan_repo_phantom_security_references(
 
     repo_member_names = _repo_member_names(module_members)
 
+    # Attributes that code creates at runtime, mostly test fixtures. conftest
+    # files are read even in a changed-file scan because their fixtures serve
+    # the tests beside them.
+    created_attributes = set()
+    for file_path, current_module in file_to_module.items():
+        if (
+            target_paths
+            and file_path not in target_paths
+            and file_path.name != "conftest.py"
+        ):
+            continue
+        _source, tree = load_python_module(file_path, MODE_REPLACE)
+        if tree is None:
+            continue
+        created_attributes.update(
+            _created_module_attributes(
+                tree,
+                current_module,
+                local_modules,
+                module_alias_exports,
+                _ensure_module_loaded,
+                is_package=current_module in package_modules,
+            )
+        )
+
+    def _member_may_exist(module_name, member_name, type_checking_reference):
+        """Whether code may give the module this member at runtime.
+
+        Covers names bound inside ``try`` or via ``global`` in the module,
+        and attributes other code creates with ``setattr`` or test patching.
+        """
+        if (module_name, member_name) in created_attributes:
+            return True
+        possible = (
+            module_type_checking_possible_members
+            if type_checking_reference
+            else module_possible_members
+        )
+        return member_name in possible.get(module_name, ())
+
+    guarded_cache = {}
+
+    def _is_guarded(module_tree, node, caught):
+        key = (id(module_tree), caught)
+        if key not in guarded_cache:
+            guarded_cache[key] = _guarded_node_ids(module_tree, caught)
+        return id(node) in guarded_cache[key]
+
     for file_path, current_module in file_to_module.items():
         if target_paths and file_path not in target_paths:
             continue
@@ -267,7 +326,8 @@ def scan_repo_phantom_security_references(
         )
         ast_index = _ast_index_for(tree)
         parent_map = ast_index.parent_map
-        scope_infos = _scope_infos_for(tree, current_module, local_modules)
+        is_package = current_module in package_modules
+        scope_infos = _scope_infos_for(tree, current_module, local_modules, is_package)
         type_checking_node_ids = module_type_checking_node_ids.get(
             current_module, set()
         )
@@ -283,7 +343,9 @@ def scan_repo_phantom_security_references(
                 alias.name == "*" for alias in import_node.names
             ):
                 continue
-            star_base = _resolve_import_from_base(current_module, import_node)
+            star_base = _resolve_import_from_base(
+                current_module, import_node, is_package=is_package
+            )
             exported = _star_export_names(star_base)
             if exported is None:
                 star_unknown = True
@@ -317,6 +379,7 @@ def scan_repo_phantom_security_references(
                 _ensure_module_loaded,
                 module_dunder_attributes,
                 ast_index,
+                member_may_exist=_member_may_exist,
             )
         )
 
@@ -355,6 +418,12 @@ def scan_repo_phantom_security_references(
                     package_modules,
                     module_dunder_attributes,
                 ):
+                    continue
+                if _member_may_exist(
+                    target_module,
+                    member_name,
+                    id(node) in type_checking_node_ids,
+                ) or _is_guarded(tree, node, _ATTRIBUTE_GUARDS):
                     continue
                 findings.append(
                     _build_reference_finding(
@@ -414,6 +483,12 @@ def scan_repo_phantom_security_references(
                     module_dunder_attributes,
                 ):
                     continue
+                if _member_may_exist(
+                    target_module,
+                    member_name,
+                    id(node) in type_checking_node_ids,
+                ) or _is_guarded(tree, node, _ATTRIBUTE_GUARDS):
+                    continue
 
                 findings.append(
                     _build_call_finding(
@@ -462,6 +537,12 @@ def scan_repo_phantom_security_references(
                     module_dunder_attributes,
                 ):
                     continue
+                if _member_may_exist(
+                    target_module,
+                    member_name,
+                    id(deco_target) in type_checking_node_ids,
+                ) or _is_guarded(tree, deco_target, _ATTRIBUTE_GUARDS):
+                    continue
 
                 findings.append(
                     _build_decorator_finding(
@@ -490,8 +571,10 @@ def _direct_local_import_findings(
     ensure_module_loaded,
     module_dunder_attributes: frozenset[str] = _STANDARD_MODULE_ATTRIBUTES,
     ast_index=None,
+    member_may_exist=None,
 ):
     findings = []
+    guarded_ids = None
     if ast_index is None:
         # Built, not memoized: a caller reaching this fallback may hand us a
         # tree the run-scoped cache does not hold, and an id(tree)-keyed
@@ -500,7 +583,9 @@ def _direct_local_import_findings(
     for node in ast_index.import_nodes:
         if not isinstance(node, ast.ImportFrom):
             continue
-        base = _resolve_import_from_base(current_module, node)
+        base = _resolve_import_from_base(
+            current_module, node, is_package=_is_package_module_file(file_path)
+        )
         if base not in local_modules:
             continue
         if id(node) in type_checking_node_ids:
@@ -527,6 +612,14 @@ def _direct_local_import_findings(
                 continue
             if base in package_modules:
                 continue
+            if member_may_exist is not None and member_may_exist(
+                base, alias.name, id(node) in type_checking_node_ids
+            ):
+                continue
+            if guarded_ids is None:
+                guarded_ids = _guarded_node_ids(tree, _IMPORT_GUARDS)
+            if id(node) in guarded_ids:
+                continue
             findings.append(
                 _build_import_finding(
                     file_path,
@@ -538,7 +631,7 @@ def _direct_local_import_findings(
     return findings
 
 
-def _may_bound_module_names(tree, module_name):
+def _may_bound_module_names(tree, module_name, is_package=False):
     """Module-level names bound on any path (not only on every path)."""
     names = set()
     star_bases = []
@@ -556,7 +649,11 @@ def _may_bound_module_names(tree, module_name):
         if isinstance(stmt, ast.ImportFrom):
             for alias in stmt.names:
                 if alias.name == "*":
-                    star_bases.append(_resolve_import_from_base(module_name, stmt))
+                    star_bases.append(
+                        _resolve_import_from_base(
+                            module_name, stmt, is_package=is_package
+                        )
+                    )
                 else:
                     names.add(alias.asname or alias.name)
             continue
@@ -587,6 +684,299 @@ def _may_bound_module_names(tree, module_name):
                     names.add(child.name)
                 stack.extend(child.body)
     return names, star_bases, explicit_all
+
+
+def _global_declared_names(node):
+    """Module names that functions inside ``node`` declare ``global``."""
+    return {
+        name
+        for child in ast.walk(node)
+        if isinstance(child, ast.Global)
+        for name in child.names
+    }
+
+
+def _conditionally_bound_names(tree, *, type_checking_mode=False):
+    """Module names that code may bind although not on every path.
+
+    Module facts keep names bound on every path. That is too strong for
+    saying a name does not exist when the module binds it inside
+    ``try``/``except`` (an optional import whose handler exits or falls back)
+    or when one of its functions declares it ``global``. ``TYPE_CHECKING``
+    guards and constant conditions still select one branch, and a later
+    top-level ``del`` still removes a name.
+    """
+    if not isinstance(tree, ast.Module):
+        return set()
+    guards = type_checking_guard_branches(tree)
+    names = set()
+
+    def bind(found, in_try):
+        if in_try:
+            names.update(found)
+
+    def visit(statements, *, in_try, top_level):
+        for stmt in statements:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bind({stmt.name}, in_try)
+                names.update(_global_declared_names(stmt))
+            elif isinstance(stmt, ast.Import):
+                bind(
+                    {
+                        alias.asname or alias.name.split(".", 1)[0]
+                        for alias in stmt.names
+                    },
+                    in_try,
+                )
+            elif isinstance(stmt, ast.ImportFrom):
+                bind(
+                    {
+                        alias.asname or alias.name
+                        for alias in stmt.names
+                        if alias.name != "*"
+                    },
+                    in_try,
+                )
+            elif isinstance(stmt, ast.Assign):
+                for target in stmt.targets:
+                    bind(_extract_target_names(target), in_try)
+            elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+                bind(_extract_target_names(stmt.target), in_try)
+            elif _is_type_alias_statement(stmt):
+                bind(_extract_target_names(stmt.name), in_try)
+            elif isinstance(stmt, ast.Delete):
+                if top_level:
+                    for target in stmt.targets:
+                        names.difference_update(_extract_target_names(target))
+            elif isinstance(stmt, ast.If):
+                branch = guards.get(id(stmt))
+                if branch is None:
+                    truth = _static_truth_value(stmt.test)
+                else:
+                    truth = branch if type_checking_mode else not branch
+                if truth is None:
+                    visit(stmt.body, in_try=in_try, top_level=False)
+                    visit(stmt.orelse, in_try=in_try, top_level=False)
+                else:
+                    selected = stmt.body if truth else stmt.orelse
+                    visit(selected, in_try=in_try, top_level=False)
+            elif _is_try_statement(stmt):
+                for block in (
+                    stmt.body,
+                    stmt.orelse,
+                    *(handler.body for handler in stmt.handlers),
+                    stmt.finalbody,
+                ):
+                    visit(block, in_try=True, top_level=False)
+            elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+                if not isinstance(stmt, ast.While):
+                    bind(_extract_target_names(stmt.target), in_try)
+                visit(stmt.body, in_try=in_try, top_level=False)
+                visit(stmt.orelse, in_try=in_try, top_level=False)
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                for item in stmt.items:
+                    if item.optional_vars is not None:
+                        bind(_extract_target_names(item.optional_vars), in_try)
+                visit(stmt.body, in_try=in_try, top_level=False)
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    bind(_extract_match_pattern_names(case.pattern), in_try)
+                    visit(case.body, in_try=in_try, top_level=False)
+
+    visit(tree.body, in_try=False, top_level=True)
+    return names
+
+
+_NAMESPACE_MUTATORS = frozenset({"update", "setdefault", "__setitem__"})
+# A reference inside ``try`` whose handler names one of these is a probe that
+# is ready for the name to be missing. Broad handlers (``except Exception``,
+# bare ``except``) are ordinary error handling and do not count.
+_ATTRIBUTE_GUARDS = frozenset({"AttributeError"})
+_IMPORT_GUARDS = frozenset({"ImportError", "ModuleNotFoundError"})
+
+
+def _handler_catches(handler, caught):
+    if handler.type is None:
+        return False
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(_callee_name(exception) in caught for exception in types)
+
+
+def _guarded_node_ids(tree, caught):
+    """ids of nodes in a ``try`` body whose handler catches ``caught``."""
+    guarded = set()
+    for node in ast.walk(tree):
+        if not _is_try_statement(node):
+            continue
+        if not any(_handler_catches(handler, caught) for handler in node.handlers):
+            continue
+        for stmt in node.body:
+            guarded.update(id(child) for child in ast.walk(stmt))
+    return guarded
+
+
+def _writes_module_namespace(tree):
+    """Whether the module adds names to itself through its namespace dict.
+
+    ``globals()[name] = value`` anywhere, or ``locals()``/``vars()`` writes in
+    module-level code (``requests.packages`` does
+    ``locals()[package] = __import__(package)``), make the module surface
+    dynamic: a missing member cannot be proven.
+    """
+
+    def namespace_call(node, module_level):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and not node.args
+            and not node.keywords
+        ):
+            return False
+        if node.func.id == "globals":
+            return True
+        return module_level and node.func.id in {"locals", "vars"}
+
+    def writes(node, module_level):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+            return namespace_call(node.value, module_level)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _NAMESPACE_MUTATORS
+        ):
+            return namespace_call(node.func.value, module_level)
+        return False
+
+    stack = [(tree, True)]
+    while stack:
+        node, module_level = stack.pop()
+        if writes(node, module_level):
+            return True
+        nested = isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        )
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, module_level and not nested))
+    return False
+
+
+def _string_constant(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _keyword_constant(call, name):
+    for keyword in call.keywords:
+        if keyword.arg == name and isinstance(keyword.value, ast.Constant):
+            return keyword.value.value
+    return None
+
+
+def _callee_name(func):
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _attribute_creating_call(call):
+    """``(target expression or dotted path, attribute name)`` for a call that
+    creates an attribute at runtime, else None.
+
+    Covers ``setattr(obj, "name", value)``,
+    ``monkeypatch.setattr(obj, "name", value, raising=False)`` and its
+    ``"pkg.mod.name"`` form, and ``patch.object(obj, "name", create=True)`` /
+    ``patch("pkg.mod.name", create=True)``. Calls that require the attribute
+    to exist already (``raising=True``, no ``create=True``) create nothing.
+    """
+    func = call.func
+    callee = _callee_name(func)
+    args = call.args
+    if callee == "setattr" and isinstance(func, ast.Name):
+        if len(args) >= 2 and _string_constant(args[1]) is not None:
+            return args[0], _string_constant(args[1])
+        return None
+    if callee == "setattr":
+        if _keyword_constant(call, "raising") is not False or not args:
+            return None
+        dotted = _string_constant(args[0])
+        if dotted is not None:
+            return _split_dotted_attribute(dotted)
+        if len(args) >= 2 and _string_constant(args[1]) is not None:
+            return args[0], _string_constant(args[1])
+        return None
+    if _keyword_constant(call, "create") is not True:
+        return None
+    if (
+        callee == "object"
+        and isinstance(func, ast.Attribute)
+        and _callee_name(func.value) == "patch"
+    ):
+        if len(args) >= 2 and _string_constant(args[1]) is not None:
+            return args[0], _string_constant(args[1])
+        return None
+    if callee == "patch" and args:
+        dotted = _string_constant(args[0])
+        if dotted is not None:
+            return _split_dotted_attribute(dotted)
+    return None
+
+
+def _split_dotted_attribute(dotted):
+    module_name, _, attribute = dotted.rpartition(".")
+    if not module_name or not attribute:
+        return None
+    return module_name, attribute
+
+
+def _created_module_attributes(
+    tree,
+    current_module,
+    local_modules,
+    module_alias_exports,
+    ensure_module_loaded,
+    *,
+    is_package=False,
+):
+    """``(module, name)`` pairs that code in ``tree`` creates at runtime.
+
+    A test that does ``monkeypatch.setattr(api, "_fake", ..., raising=False)``
+    or ``api._fake = ...`` makes later ``api._fake`` references valid even
+    though ``api`` never defines ``_fake``.
+    """
+    ast_index = _ast_index_for(tree)
+    scope_infos = _scope_infos_for(tree, current_module, local_modules, is_package)
+    created = set()
+    for node in ast_index.scan_nodes:
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+            expr = node
+        elif isinstance(node, ast.Call):
+            target = _attribute_creating_call(node)
+            if target is None:
+                continue
+            owner, attribute = target
+            if isinstance(owner, str):
+                if owner in local_modules:
+                    created.add((owner, attribute))
+                continue
+            expr = ast.Attribute(value=owner, attr=attribute, ctx=ast.Load())
+        else:
+            continue
+        resolved = _resolve_local_module_member(
+            expr=expr,
+            node=node,
+            tree=tree,
+            ast_index=ast_index,
+            scope_infos=scope_infos,
+            module_alias_exports=module_alias_exports,
+            local_modules=local_modules,
+            ensure_module_loaded=ensure_module_loaded,
+        )
+        if resolved:
+            created.add(resolved[:2])
+    return created
 
 
 def _is_package_module_file(file_path):
@@ -741,6 +1131,7 @@ def plain_module_facts(file_path, module_name, local_modules):
     from it instead of being parsed; otherwise this is exactly
     ``load_python_module`` + ``_collect_module_facts``.
     """
+    is_package = _is_package_module_file(Path(file_path))
     index = active_module_facts_index()
     if index is None:
         source, tree = load_python_module(file_path, MODE_REPLACE)
@@ -753,6 +1144,7 @@ def plain_module_facts(file_path, module_name, local_modules):
             module_name,
             local_modules,
             source_has_type_checking="TYPE_CHECKING" in source,
+            is_package=is_package,
         )
         return STATUS_OK, facts, None
 
@@ -781,6 +1173,7 @@ def plain_module_facts(file_path, module_name, local_modules):
         module_name,
         recording,
         source_has_type_checking="TYPE_CHECKING" in source,
+        is_package=is_package,
     )
     payload = _facts_to_payload(facts)
     if payload is not None:
@@ -808,6 +1201,11 @@ def _facts_to_payload(facts):
         if facts.type_checking_exported_modules == facts.exported_modules
         else facts.type_checking_exported_modules
     )
+    type_checking_possible = (
+        None
+        if facts.type_checking_possible_members == facts.possible_members
+        else sorted(facts.type_checking_possible_members)
+    )
     return {
         "m": sorted(facts.members),
         "tm": type_checking_members,
@@ -815,6 +1213,8 @@ def _facts_to_payload(facts):
         "te": type_checking_exports,
         "d": facts.has_dynamic_getattr,
         "td": facts.has_type_checking_dynamic_getattr,
+        "p": sorted(facts.possible_members),
+        "tp": type_checking_possible,
     }
 
 
@@ -826,6 +1226,8 @@ def _facts_from_payload(payload):
         tc_members = payload.get("tm")
         exported = dict(payload["e"])
         tc_exported = payload.get("te")
+        possible = set(payload["p"])
+        tc_possible = payload.get("tp")
         return _ModuleFacts(
             members=members,
             type_checking_members=(
@@ -838,6 +1240,10 @@ def _facts_from_payload(payload):
             has_dynamic_getattr=bool(payload["d"]),
             has_type_checking_dynamic_getattr=bool(payload["td"]),
             type_checking_node_ids=set(),
+            possible_members=possible,
+            type_checking_possible_members=(
+                set(possible) if tc_possible is None else set(tc_possible)
+            ),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -853,6 +1259,7 @@ def _collect_module_facts(
     *,
     source_has_type_checking=None,
     include_reference_context=False,
+    is_package=False,
 ):
     """Memoized ``_build_module_facts``, shared across rule passes.
 
@@ -872,9 +1279,10 @@ def _collect_module_facts(
             current_module,
             local_modules,
             source_has_type_checking=source_has_type_checking,
+            is_package=is_package,
         )
 
-    key = (id(tree), current_module, source_has_type_checking)
+    key = (id(tree), current_module, source_has_type_checking, is_package)
     cached = _MODULE_FACTS_CACHE.get(key)
     if cached is not None and cached[0] == local_modules:
         return cached[1]
@@ -884,6 +1292,7 @@ def _collect_module_facts(
         local_modules,
         source_has_type_checking=source_has_type_checking,
         include_reference_context=True,
+        is_package=is_package,
     )
     _MODULE_FACTS_CACHE[key] = (frozenset(local_modules), facts)
     return facts
@@ -899,6 +1308,7 @@ def _build_module_facts(
     *,
     source_has_type_checking=None,
     include_reference_context=False,
+    is_package=False,
 ):
     if not isinstance(tree, ast.Module):
         return _ModuleFacts(
@@ -927,6 +1337,7 @@ def _build_module_facts(
         local_modules,
         type_checking_guards,
         type_checking_mode=False,
+        is_package=is_package,
     )
     if type_checking_guards:
         type_checking = _collect_module_fact_state(
@@ -935,21 +1346,35 @@ def _build_module_facts(
             local_modules,
             type_checking_guards,
             type_checking_mode=True,
+            is_package=is_package,
         )
     else:
         type_checking = runtime.copy()
+    dynamic_namespace = _writes_module_namespace(tree)
+    possible_members = _conditionally_bound_names(tree, type_checking_mode=False)
+    type_checking_possible_members = (
+        _conditionally_bound_names(tree, type_checking_mode=True)
+        if type_checking_guards
+        else set(possible_members)
+    )
     return _ModuleFacts(
         members=runtime.members,
         type_checking_members=type_checking.members,
         exported_modules=runtime.exported_modules,
         type_checking_exported_modules=type_checking.exported_modules,
         has_dynamic_getattr=(
-            runtime.has_dynamic_getattr or runtime.has_wildcard_reexport
+            runtime.has_dynamic_getattr
+            or runtime.has_wildcard_reexport
+            or dynamic_namespace
         ),
         has_type_checking_dynamic_getattr=(
-            type_checking.has_dynamic_getattr or type_checking.has_wildcard_reexport
+            type_checking.has_dynamic_getattr
+            or type_checking.has_wildcard_reexport
+            or dynamic_namespace
         ),
         type_checking_node_ids=type_checking_node_ids,
+        possible_members=possible_members,
+        type_checking_possible_members=type_checking_possible_members,
     )
 
 
@@ -961,6 +1386,7 @@ def _collect_module_fact_state(
     *,
     type_checking_mode,
     initial=None,
+    is_package=False,
 ):
     state = initial.copy() if initial is not None else _ModuleFactState(set(), {})
 
@@ -1001,7 +1427,9 @@ def _collect_module_fact_state(
                     if head in local_modules:
                         state.exported_modules[head] = head
         elif isinstance(stmt, ast.ImportFrom):
-            base = _resolve_import_from_base(current_module, stmt)
+            base = _resolve_import_from_base(
+                current_module, stmt, is_package=is_package
+            )
             for alias in stmt.names:
                 if alias.name == "*":
                     if base in local_modules:
@@ -1036,6 +1464,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=state,
                 )
                 continue
@@ -1049,6 +1478,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=state,
                 )
                 continue
@@ -1059,6 +1489,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=state,
             )
             else_state = _collect_module_fact_state(
@@ -1067,6 +1498,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=state,
             )
             state = _intersect_module_fact_states([body_state, else_state])
@@ -1086,6 +1518,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=state,
             )
             normal_state = _collect_module_fact_state(
@@ -1094,6 +1527,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=normal_state,
             )
             paths = [normal_state]
@@ -1107,6 +1541,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=handler_state,
                 )
                 if handler.name:
@@ -1119,6 +1554,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=state,
             )
         elif isinstance(stmt, (ast.With, ast.AsyncWith)):
@@ -1172,6 +1608,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=body_entry_state,
             )
             state = _intersect_module_fact_states(
@@ -1186,6 +1623,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=state,
                 )
                 continue
@@ -1200,6 +1638,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=body_start,
             )
             loop_state = _intersect_module_fact_states([state, body_state])
@@ -1209,6 +1648,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=loop_state,
             )
             state = _intersect_module_fact_states([loop_state, else_state])
@@ -1221,6 +1661,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=state,
                 )
                 continue
@@ -1230,6 +1671,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=state,
             )
             loop_state = _intersect_module_fact_states([state, body_state])
@@ -1239,6 +1681,7 @@ def _collect_module_fact_state(
                 local_modules,
                 type_checking_guards,
                 type_checking_mode=type_checking_mode,
+                is_package=is_package,
                 initial=loop_state,
             )
             state = _intersect_module_fact_states([loop_state, else_state])
@@ -1262,6 +1705,7 @@ def _collect_module_fact_state(
                     local_modules,
                     type_checking_guards,
                     type_checking_mode=type_checking_mode,
+                    is_package=is_package,
                     initial=case_state,
                 )
                 paths.append(case_state)
@@ -1652,7 +2096,7 @@ def _build_ast_index(tree):
 _SCOPE_INFOS_CACHE: dict[int, tuple[str, set, dict]] = {}
 
 
-def _scope_infos_for(tree, current_module, local_modules):
+def _scope_infos_for(tree, current_module, local_modules, is_package=False):
     """Memoized ``_build_scope_infos``, shared across rule passes.
 
     The phantom-ref scan and the API hallucination coverage pass build
@@ -1662,13 +2106,13 @@ def _scope_infos_for(tree, current_module, local_modules):
     cached = _SCOPE_INFOS_CACHE.get(id(tree))
     if (
         cached is not None
-        and cached[0] == current_module
+        and cached[0] == (current_module, is_package)
         and cached[1] == local_modules
     ):
         return cached[2]
-    scope_infos = _build_scope_infos(tree, current_module, local_modules)
+    scope_infos = _build_scope_infos(tree, current_module, local_modules, is_package)
     _SCOPE_INFOS_CACHE[id(tree)] = (
-        current_module,
+        (current_module, is_package),
         frozenset(local_modules),
         scope_infos,
     )
@@ -1678,14 +2122,18 @@ def _scope_infos_for(tree, current_module, local_modules):
 register_dependent_clear(_SCOPE_INFOS_CACHE.clear)
 
 
-def _build_scope_infos(tree, current_module, local_modules):
-    scope_infos = {tree: _collect_scope_info(tree, current_module, local_modules)}
+def _build_scope_infos(tree, current_module, local_modules, is_package=False):
+    scope_infos = {
+        tree: _collect_scope_info(tree, current_module, local_modules, is_package)
+    }
     for node in _ast_index_for(tree).scope_nodes:
-        scope_infos[node] = _collect_scope_info(node, current_module, local_modules)
+        scope_infos[node] = _collect_scope_info(
+            node, current_module, local_modules, is_package
+        )
     return scope_infos
 
 
-def _collect_scope_info(scope_node, current_module, local_modules):
+def _collect_scope_info(scope_node, current_module, local_modules, is_package=False):
     shadowed = set()
     bound = set()
     local_imports = defaultdict(list)
@@ -1721,7 +2169,9 @@ def _collect_scope_info(scope_node, current_module, local_modules):
                     )
 
         def visit_ImportFrom(self, node):
-            base = _resolve_import_from_base(current_module, node)
+            base = _resolve_import_from_base(
+                current_module, node, is_package=is_package
+            )
             for alias in node.names:
                 if alias.name == "*":
                     continue
@@ -1957,12 +2407,17 @@ def _attribute_is_nested_prefix(node, parent_map):
     return isinstance(parent, ast.Attribute) and parent.value is node
 
 
-def _resolve_import_from_base(current_module, node):
+def _resolve_import_from_base(current_module, node, *, is_package=False):
+    """Absolute module that ``node`` imports from.
+
+    Relative imports resolve against ``__package__``: the module itself for a
+    package ``__init__``, its parent package for any other module.
+    """
     module = node.module or ""
-    if "." in current_module:
-        cur_pkg = current_module.rsplit(".", 1)[0]
-    else:
+    if is_package or "." not in current_module:
         cur_pkg = current_module
+    else:
+        cur_pkg = current_module.rsplit(".", 1)[0]
 
     if node.level and node.level > 0:
         if cur_pkg:

@@ -311,6 +311,10 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   lock entries, inventory limits, or failed OSV requests produce incomplete
   operational results. CLI exit code **2** signals this failure, even with
   `--force` or an advisory gate. JSON is emitted before exit; upload is skipped.
+  The run ends with a reason that names the cause and its count (unresolved
+  lock entries with file and line, unreadable files, failed OSV.dev batches);
+  to gate without dependency results, run without `--sca`. See
+  [Gate verdict](./cli-output.md#gate-verdict).
 - A completed inventory with findings can fail a configured vulnerability gate
   with exit code **1**. Reporting without a gate does not make findings an
   operational error.

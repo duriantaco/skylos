@@ -124,6 +124,8 @@ def _inspect_python_coverage(
         type_checking_dynamic,
         type_checking_node_ids,
         load_reasons,
+        possible,
+        type_checking_possible,
     ) = _load_module_facts(
         modules,
         local_modules,
@@ -155,6 +157,7 @@ def _inspect_python_coverage(
             package_modules,
             state,
             module_dunder_attributes,
+            possible_members=(possible, type_checking_possible),
         )
 
     checked = state.verified + len(findings)
@@ -186,9 +189,13 @@ def _inspect_target_references(
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
+    *,
+    possible_members: tuple[dict[str, set[str]], dict[str, set[str]]] = ({}, {}),
 ) -> None:
     ast_index = _ast_index_for(tree)
-    scope_infos = _scope_infos_for(tree, current_module, local_modules)
+    scope_infos = _scope_infos_for(
+        tree, current_module, local_modules, current_module in package_modules
+    )
 
     def ensure_module_loaded(module_name: str) -> bool:
         return module_name in trees
@@ -207,6 +214,7 @@ def _inspect_target_references(
         package_modules,
         state,
         module_dunder_attributes,
+        possible_members=possible_members,
     )
 
     for expression, owner in _reference_expressions(ast_index):
@@ -217,10 +225,12 @@ def _inspect_target_references(
             active_members = type_checking_members
             active_aliases = type_checking_aliases
             active_dynamic = type_checking_dynamic
+            active_possible = possible_members[1]
         else:
             active_members = members
             active_aliases = aliases
             active_dynamic = dynamic
+            active_possible = possible_members[0]
         resolved = _resolve_local_module_member(
             expr=expression,
             node=owner,
@@ -247,6 +257,8 @@ def _inspect_target_references(
             module_dunder_attributes,
         ):
             state.verified += 1
+        elif member_name in active_possible.get(target_module, ()):
+            state.skip("conditionally_bound_member")
 
 
 def _reference_expressions(ast_index) -> Iterable[tuple[ast.AST, ast.AST]]:
@@ -274,6 +286,8 @@ def _inspect_import_references(
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
+    *,
+    possible_members: tuple[dict[str, set[str]], dict[str, set[str]]] = ({}, {}),
 ) -> None:
     for node in ast_index.import_nodes:
         if isinstance(node, ast.ImportFrom):
@@ -291,6 +305,7 @@ def _inspect_import_references(
                 package_modules,
                 state,
                 module_dunder_attributes,
+                possible_members=possible_members,
             )
         elif isinstance(node, ast.Import):
             _inspect_module_import(root, node, local_modules, state)
@@ -310,14 +325,20 @@ def _inspect_from_import(
     package_modules: set[str],
     state: _PythonCoverageState,
     module_dunder_attributes: frozenset[str],
+    *,
+    possible_members: tuple[dict[str, set[str]], dict[str, set[str]]] = ({}, {}),
 ) -> None:
-    base = _resolve_import_from_base(current_module, node)
+    base = _resolve_import_from_base(
+        current_module, node, is_package=current_module in package_modules
+    )
     if id(node) in type_checking_node_ids:
         active_members = type_checking_members
         active_dynamic = type_checking_dynamic
+        active_possible = possible_members[1]
     else:
         active_members = members
         active_dynamic = dynamic
+        active_possible = possible_members[0]
     if base not in local_modules:
         if _local_module_exists(root, base):
             state.references += 1
@@ -348,6 +369,8 @@ def _inspect_from_import(
             state.verified += 1
         elif base in package_modules:
             state.skip("package_import_ownership_uncertain")
+        elif alias.name in active_possible.get(base, ()):
+            state.skip("conditionally_bound_member")
 
 
 def _inspect_module_import(
@@ -456,8 +479,12 @@ def _load_module_facts(
     set[str],
     dict[str, set[int]],
     dict[str, str],
+    dict[str, set[str]],
+    dict[str, set[str]],
 ]:
     trees: dict[str, ast.AST] = {}
+    possible: dict[str, set[str]] = {}
+    type_checking_possible: dict[str, set[str]] = {}
     members: dict[str, set[str]] = {}
     type_checking_members: dict[str, set[str]] = {}
     aliases: dict[str, dict[str, str]] = {}
@@ -490,9 +517,13 @@ def _load_module_facts(
                 local_modules,
                 source_has_type_checking=source_has_type_checking,
                 include_reference_context=module_name in reference_modules,
+                is_package=file_path.name
+                in {"__init__.py", "__init__.pyi", "__init__.pyw"},
             )
         members[module_name] = facts.members
         type_checking_members[module_name] = facts.type_checking_members
+        possible[module_name] = facts.possible_members
+        type_checking_possible[module_name] = facts.type_checking_possible_members
         aliases[module_name] = {
             alias: target
             for alias, target in facts.exported_modules.items()
@@ -518,6 +549,8 @@ def _load_module_facts(
         type_checking_dynamic,
         type_checking_node_ids,
         reasons,
+        possible,
+        type_checking_possible,
     )
 
 

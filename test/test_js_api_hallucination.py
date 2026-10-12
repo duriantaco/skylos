@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skylos.rules.ai_defect.js_api_hallucination import (
     scan_js_local_api_hallucinations,
 )
@@ -714,3 +716,202 @@ if (process.env.DISABLE_API) {
     assert coverage["reasons"] == [
         {"code": "surface_conditional_commonjs_export", "count": 1}
     ]
+
+
+# Export forms that SKY-L012 must recognise. SKY-L012 fails the quality gate by
+# default, so a form it cannot read must make the import unknown, never missing.
+EXPORT_FORMS = {
+    "generator": (
+        {"lib.ts": "export function* gen(): IterableIterator<number> { yield 1; }\n"},
+        "import { gen } from './lib';",
+    ),
+    "async_generator": (
+        {"lib.ts": "export async function* agen() { yield 1; }\n"},
+        "import { agen } from './lib';",
+    ),
+    "default_generator": (
+        {"lib.ts": "export default function* () { yield 1; }\n"},
+        "import g from './lib';",
+    ),
+    "local_generator_export_clause": (
+        {"lib.ts": "function* gen() { yield 1; }\nexport { gen };\n"},
+        "import { gen } from './lib';",
+    ),
+    "local_generator_renamed": (
+        {"lib.ts": "function* gen() { yield 1; }\nexport { gen as items };\n"},
+        "import { items } from './lib';",
+    ),
+    "generator_through_star_reexport": (
+        {
+            "lib.ts": "export * from './inner';\n",
+            "inner.ts": "export function* deepGen() { yield 1; }\n",
+        },
+        "import { deepGen } from './lib';",
+    ),
+    "generator_function_expression": (
+        {"lib.ts": "export const gen = function* () { yield 1; };\n"},
+        "import { gen } from './lib';",
+    ),
+    "async_function": (
+        {"lib.ts": "export async function load() { return 1; }\n"},
+        "import { load } from './lib';",
+    ),
+    "abstract_class": (
+        {"lib.ts": "export abstract class Base { abstract run(): void; }\n"},
+        "import { Base } from './lib';",
+    ),
+    "declare_const_function_class": (
+        {
+            "lib.ts": (
+                "export declare const VERSION: string;\n"
+                "export declare function ext(a: number): number;\n"
+                "export declare class Ext { run(): void }\n"
+            )
+        },
+        "import { VERSION, ext, Ext } from './lib';",
+    ),
+    "enum_and_const_enum": (
+        {"lib.ts": "export enum Color { Red }\nexport const enum Mode { A }\n"},
+        "import { Color, Mode } from './lib';",
+    ),
+    "namespace": (
+        {"lib.ts": "export namespace Util { export const x = 1; }\n"},
+        "import { Util } from './lib';",
+    ),
+    "module_keyword": (
+        {"lib.ts": "export module Legacy { export const y = 1; }\n"},
+        "import { Legacy } from './lib';",
+    ),
+    "export_clause_alias": (
+        {"lib.ts": "const a = 1;\nexport { a as b };\n"},
+        "import { b } from './lib';",
+    ),
+    "default_as_named_reexport": (
+        {
+            "lib.ts": "export { default as Widget } from './widget';\n",
+            "widget.ts": "export default class W {}\n",
+        },
+        "import { Widget } from './lib';",
+    ),
+    "star_reexport": (
+        {
+            "lib.ts": "export * from './inner';\n",
+            "inner.ts": "export function deep() { return 1; }\n",
+        },
+        "import { deep } from './lib';",
+    ),
+    "star_as_namespace_reexport": (
+        {
+            "lib.ts": "export * as inner from './inner';\n",
+            "inner.ts": "export const z = 1;\n",
+        },
+        "import { inner } from './lib';",
+    ),
+    "export_assignment_default_import": (
+        {"lib.ts": "function f() { return 1; }\nexport = f;\n"},
+        "import f from './lib';",
+    ),
+    "export_assignment_named_import": (
+        {"lib.ts": "namespace f { export const a = 1; }\nexport = f;\n"},
+        "import { a } from './lib';",
+    ),
+    "type_and_interface": (
+        {"lib.ts": "export type Id = string;\nexport interface Shape { a: number }\n"},
+        "import type { Id, Shape } from './lib';",
+    ),
+    "multiple_declarators": (
+        {"lib.ts": "export const a = 1, b = 2;\n"},
+        "import { a, b } from './lib';",
+    ),
+    "destructured_declarations": (
+        {
+            "lib.ts": (
+                "const obj = { a: 1 };\nconst arr = [1];\n"
+                "export const { a } = obj;\nexport const [first] = arr;\n"
+            )
+        },
+        "import { a, first } from './lib';",
+    ),
+}
+
+
+def _write_ts_repo(repo: Path, files: dict[str, str], importer: str) -> None:
+    repo.mkdir()
+    (repo / "package.json").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        json.dumps({"name": "forms", "type": "module"}), encoding="utf-8"
+    )
+    for name, content in files.items():
+        (repo / name).write_text(content, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    (repo / "app.ts").write_text(importer + "\nconsole.log('ok');\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+
+
+@pytest.mark.parametrize("form", sorted(EXPORT_FORMS))
+def test_js_api_hallucination_recognises_export_form(tmp_path, form):
+    files, importer = EXPORT_FORMS[form]
+    repo = tmp_path / "repo"
+    _write_ts_repo(repo, files, importer)
+
+    findings, _coverage = _scan(repo)
+
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    ("files", "importer", "missing"),
+    [
+        (
+            {"lib.ts": "export function* gen() { yield 1; }\n"},
+            "import { genn } from './lib';",
+            "genn",
+        ),
+        (
+            {"lib.ts": "export module Legacy { export const y = 1; }\n"},
+            "import { Legacyy } from './lib';",
+            "Legacyy",
+        ),
+        (
+            {
+                "lib.ts": "export * from './inner';\n",
+                "inner.ts": "export function* deepGen() { yield 1; }\n",
+            },
+            "import { deeperGen } from './lib';",
+            "deeperGen",
+        ),
+    ],
+)
+def test_js_api_hallucination_still_reports_a_missing_export(
+    tmp_path, files, importer, missing
+):
+    repo = tmp_path / "repo"
+    _write_ts_repo(repo, files, importer)
+
+    findings, coverage = _scan(repo)
+
+    assert [finding["simple_name"] for finding in findings] == [missing]
+    assert coverage["outcome"] == "fail"
+
+
+def test_js_api_hallucination_reads_generator_export_through_tsconfig_path(tmp_path):
+    # pontoon: import { entryPatterns } from '~/utils/message/entryPatterns'
+    repo = tmp_path / "repo"
+    (repo / "src" / "utils").mkdir(parents=True)
+    (repo / "package.json").write_text('{"name": "app"}', encoding="utf-8")
+    (repo / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"~/*": ["src/*"]}}}),
+        encoding="utf-8",
+    )
+    (repo / "src" / "utils" / "entryPatterns.ts").write_text(
+        "export function* entryPatterns(entry: string): IterableIterator<string> {\n"
+        "  yield entry;\n}\n",
+        encoding="utf-8",
+    )
+    (repo / "src" / "form.ts").write_text(
+        "import { entryPatterns } from '~/utils/entryPatterns';\n"
+        "import { entryPatternz } from '~/utils/entryPatterns';\n"
+        "console.log(entryPatterns, entryPatternz);\n",
+        encoding="utf-8",
+    )
+
+    findings, _coverage = _scan(repo)
+
+    assert [finding["simple_name"] for finding in findings] == ["entryPatternz"]

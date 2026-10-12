@@ -53,7 +53,7 @@ Rule IDs use a stable public prefix:
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
-| Quality gate | A threshold-based pass/fail decision used locally or in CI. |
+| Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. |
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. |

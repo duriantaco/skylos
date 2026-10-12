@@ -15,6 +15,14 @@ from skylos.core.js_ast import (
 )
 
 
+# ``function*`` and ``async function*`` parse as generator declarations.
+_FUNCTION_DECLARATION_TYPES = frozenset(
+    {"function_declaration", "generator_function_declaration"}
+)
+# ``namespace X {}`` parses as internal_module, ``module X {}`` as module.
+_NAMESPACE_DECLARATION_TYPES = frozenset({"internal_module", "module"})
+
+
 def _object_export_members(source: bytes, node: Any | None) -> list[tuple[str, str]]:
     if node is None or node.type != "object":
         return []
@@ -113,7 +121,7 @@ def _collect_direct_member_pair(
     node: Any,
     members: list[tuple[str, str]],
 ) -> None:
-    if node.type == "function_declaration":
+    if node.type in _FUNCTION_DECLARATION_TYPES:
         _append_member_pair(source, node.child_by_field_name("name"), "function", members)
         return
     if node.type in {"class_declaration", "abstract_class_declaration"}:
@@ -188,7 +196,7 @@ def _collect_declared_member_pairs(
 def _exported_namespace_names(source: bytes, export_node: Any) -> list[str]:
     names: list[str] = []
     for child in _iter_nodes(export_node):
-        if child.type != "internal_module":
+        if child.type not in _NAMESPACE_DECLARATION_TYPES:
             continue
         for nested in child.named_children:
             if nested.type != "identifier":
@@ -304,7 +312,7 @@ def _collect_module_scope_bindings(
     if node.type in {"ambient_declaration", "expression_statement"}:
         _collect_nested_module_bindings(source, node, bindings)
         return
-    if node.type == "internal_module":
+    if node.type in _NAMESPACE_DECLARATION_TYPES:
         _collect_internal_module_binding(source, node, bindings)
         return
     if node.type in {"lexical_declaration", "variable_declaration"}:
@@ -335,7 +343,7 @@ def _collect_declaration_binding(
 
 
 def _declaration_binding_kind(node: Any) -> str | None:
-    if node.type in {"function_declaration", "function_signature"}:
+    if node.type in _FUNCTION_DECLARATION_TYPES or node.type == "function_signature":
         return "function"
     if node.type in {"class_declaration", "abstract_class_declaration"}:
         return "class"
@@ -352,7 +360,10 @@ def _collect_nested_module_bindings(
     bindings: dict[str, str],
 ) -> None:
     for child in node.named_children:
-        if node.type == "expression_statement" and child.type != "internal_module":
+        if (
+            node.type == "expression_statement"
+            and child.type not in _NAMESPACE_DECLARATION_TYPES
+        ):
             continue
         _collect_module_scope_bindings(source, child, bindings)
 
@@ -431,7 +442,12 @@ def _binding_names(source: bytes, node: Any | None) -> list[str]:
     return []
 def _default_export_kind(node: Any) -> str:
     for child in node.named_children:
-        if child.type in {"function_declaration", "function_expression", "arrow_function"}:
+        if child.type in {
+            *_FUNCTION_DECLARATION_TYPES,
+            "function_expression",
+            "generator_function",
+            "arrow_function",
+        }:
             return "function"
         if child.type in {"class_declaration", "abstract_class_declaration"}:
             return "class"
@@ -441,7 +457,12 @@ def _default_export_kind(node: Any) -> str:
 def _value_kind(node: Any | None) -> str:
     if node is None:
         return "value"
-    if node.type in {"function", "function_expression", "arrow_function"}:
+    if node.type in {
+        "function",
+        "function_expression",
+        "generator_function",
+        "arrow_function",
+    }:
         return "function"
     if node.type in {"class", "class_declaration", "class_expression"}:
         return "class"

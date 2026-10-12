@@ -5,7 +5,7 @@ gets two GitHub checks, and a pull request that fails them cannot merge:
 
 | Check | What it does |
 |:---|:---|
-| **Skylos Quality Gate** | Scans the lines the pull request changes for security issues, secrets, quality problems, AI-code mistakes and vulnerable dependencies. Fails when the gate fails. Posts a summary comment and inline comments. |
+| **Skylos Quality Gate** | Scans the lines the pull request changes for security issues, secrets, quality problems, AI-code mistakes and vulnerable dependencies. Fails on any critical security issue, secret or critical AI-code mistake (such as an import of a package that does not exist), and when other findings pass their limits. Posts a summary comment and inline comments. |
 | **Skylos Done** | Runs your tests and checks that the change is finished: no deleted or skipped tests, no edits to Skylos settings, no added secrets. Added when Skylos can find your tests. |
 
 No API key or repository secret is needed for either check.
@@ -170,6 +170,18 @@ Skylos-gated pull request. Clean up:
 gh pr close --delete-branch
 git checkout main
 ```
+
+To see an AI-code mistake blocked, repeat the steps with this file instead:
+
+```bash
+printf 'def handle(payload, signature):\n    if not verify_signature(payload, signature):\n        raise ValueError("bad signature")\n    return payload\n' > skylos_gate_demo.py
+```
+
+Expected: **Skylos Quality Gate** fails with
+`1 critical AI-code issue (SKY-L012 phantom symbol reference)`, because
+`verify_signature` is never defined or imported. Critical AI-code issues fail
+the gate by default. To change that, set `block_ai_defect_severities` under
+`[tool.skylos.gate]`; see the [gate settings](../README.md#cicd).
 
 ## 7. Optional: connect Skylos Cloud (3 to 5 minutes, needs the browser)
 
