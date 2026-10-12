@@ -88,8 +88,8 @@ def offline_osv(monkeypatch):
 
 
 def _write_pnpm_gap(project):
-    (project / "package.json").write_text(PNPM_PACKAGE_JSON, encoding="utf-8")
-    (project / "pnpm-lock.yaml").write_text(PNPM_LOCK_MISSING_ENTRY, encoding="utf-8")
+    (project / "package.json").write_text(PNPM_PACKAGE_JSON, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
+    (project / "pnpm-lock.yaml").write_text(PNPM_LOCK_MISSING_ENTRY, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
 
 
 def _run(monkeypatch, capsys, *args):
@@ -365,7 +365,7 @@ def test_json_gate_carries_verdict_and_reasons_without_stderr(
 def test_strict_force_without_gate_records_no_gate_but_still_states_it(
     project, monkeypatch, capsys
 ):
-    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")
+    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
     report = project.parent / "report.json"
 
     exit_code, out, err = _scan(
@@ -424,7 +424,7 @@ def test_concise_gate_keeps_stdout_findings_only_and_verdict_on_stderr(
 def test_offline_osv_gate_names_the_failed_query(
     project, monkeypatch, capsys, offline_osv
 ):
-    (project / "requirements.txt").write_text("requests==2.19.0\n", encoding="utf-8")
+    (project / "requirements.txt").write_text("requests==2.19.0\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
 
     exit_code, out, _err = _scan(monkeypatch, capsys, "--sca", "--gate")
 
@@ -441,7 +441,7 @@ def test_offline_osv_gate_names_the_failed_query(
 def test_lockfile_parse_failure_gate_says_how_to_find_the_file(
     project, monkeypatch, capsys, offline_osv
 ):
-    (project / "pnpm-lock.yaml").write_text(
+    (project / "pnpm-lock.yaml").write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
         'lockfileVersion: "9.0"\nimporters: [not: valid\n', encoding="utf-8"
     )
 
@@ -454,7 +454,7 @@ def test_lockfile_parse_failure_gate_says_how_to_find_the_file(
 
 
 def test_source_parse_failure_gate_lists_the_file(project, monkeypatch, capsys):
-    (project / "broken.py").write_text("def broken(:\n    return 2\n", encoding="utf-8")
+    (project / "broken.py").write_text("def broken(:\n    return 2\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
 
     exit_code, out, _err = _scan(monkeypatch, capsys, "--gate")
 
@@ -474,7 +474,7 @@ def test_concise_gate_pass_and_fail_end_with_a_verdict(project, monkeypatch, cap
     assert out == ""
     assert _tail(err, 1)[0].startswith("Quality Gate: PASSED")
 
-    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")
+    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
     exit_code, out, err = _scan(
         monkeypatch, capsys, "--gate", "--strict", "--format", "concise"
     )
@@ -501,7 +501,7 @@ def test_plain_scan_exit_two_explains_itself_without_a_gate(
 
 
 def test_strict_without_gate_ends_with_its_verdict(project, monkeypatch, capsys):
-    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")
+    (project / "app.py").write_text("import os\n" + CLEAN_APP, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
 
     exit_code, out, _err = _scan(monkeypatch, capsys, "--strict")
 
@@ -571,7 +571,7 @@ def test_cicd_gate_input_with_incomplete_scan_explains_itself(
     project, monkeypatch, capsys
 ):
     report = project / "report.json"
-    report.write_text(
+    report.write_text(  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
         json.dumps(
             _sca_result(
                 unresolved_lockfile_dependency_count=1,

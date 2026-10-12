@@ -837,12 +837,12 @@ EXPORT_FORMS = {
 
 def _write_ts_repo(repo: Path, files: dict[str, str], importer: str) -> None:
     repo.mkdir()
-    (repo / "package.json").write_text(
+    (repo / "package.json").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         json.dumps({"name": "forms", "type": "module"}), encoding="utf-8"
     )
     for name, content in files.items():
-        (repo / name).write_text(content, encoding="utf-8")
-    (repo / "app.ts").write_text(importer + "\nconsole.log('ok');\n", encoding="utf-8")
+        (repo / name).write_text(content, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+    (repo / "app.ts").write_text(importer + "\nconsole.log('ok');\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
 
 
 @pytest.mark.parametrize("form", sorted(EXPORT_FORMS))
