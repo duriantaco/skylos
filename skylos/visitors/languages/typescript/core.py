@@ -9,6 +9,10 @@ import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser, Query, QueryCursor
 
 from skylos.visitors.base import Definition
+from skylos.visitors.languages.typescript.grammar_gaps import (
+    is_typescript_path,
+    repair_typescript_grammar_gaps,
+)
 from skylos.visitors.languages.typescript.safe_glob import safe_glob_paths
 
 try:
@@ -255,9 +259,14 @@ def _ampersands_are_jsx_text(root_node, positions: set[int]) -> bool:
 
 
 def _parse_tsx_with_raw_ampersands(parser: Parser, source: bytes):
+    return _parse_tsx_masking_raw_ampersands(parser, source)[0]
+
+
+def _parse_tsx_masking_raw_ampersands(parser: Parser, source: bytes):
+    """Parse TSX, returning the tree and the (possibly masked) parsed bytes."""
     tree = parser.parse(source)
     if not tree.root_node.has_error or b"&" not in source:
-        return tree
+        return tree, source
 
     # The TSX grammar rejects raw '&' in JSX text. Mask only text segments
     # identified by error recovery, keeping every byte and line offset intact.
@@ -293,6 +302,31 @@ def _parse_tsx_with_raw_ampersands(parser: Parser, source: bytes):
         masked_positions.update(new_positions)
         if not tree.root_node.has_error:
             break
+    if not masked_positions:
+        return tree, source
+    # ``masked`` may also hold rejected positions; rebuild what ``tree`` parsed.
+    parsed = bytearray(source)
+    for position in masked_positions:
+        parsed[position] = ord("x")
+    return tree, bytes(parsed)
+
+
+def parse_typescript_source(
+    parser: Parser, source: bytes, *, file_path: str, jsx: bool
+):
+    """Parse JS/TS source, repairing known grammar gaps without moving offsets."""
+    if jsx:
+        tree, parsed = _parse_tsx_masking_raw_ampersands(parser, source)
+    else:
+        tree, parsed = parser.parse(source), source
+    if tree.root_node.has_error:
+        tree = repair_typescript_grammar_gaps(
+            parser,
+            parsed,
+            tree,
+            typescript=is_typescript_path(file_path),
+            jsx=jsx,
+        )
     return tree
 
 
@@ -318,10 +352,11 @@ class TypeScriptCore:
 
         if self.lang:
             self.parser = _get_parser(self.lang)
-            self.tree = (
-                _parse_tsx_with_raw_ampersands(self.parser, source_bytes)
-                if self._uses_jsx_parser
-                else self.parser.parse(source_bytes)
+            self.tree = parse_typescript_source(
+                self.parser,
+                source_bytes,
+                file_path=str(file_path),
+                jsx=self._uses_jsx_parser,
             )
             self.root_node = self.tree.root_node
         else:
