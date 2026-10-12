@@ -42,8 +42,10 @@ lockfiles, the project's own local code (`link:` and `file:` directories, local
 `file:` tarballs, peers satisfied by a workspace project, and pnpm `runtime:`
 entries such as `node@runtime:26.11.1`) is listed as **not checked** instead of
 making the scan incomplete: it has no public registry identity to look up.
-Explicit private registries, Git dependencies, and external archives remain
-unresolved, rather than being guessed to have public-registry identities. Known local/non-registry
+For `uv.lock`, validated Git, URL, path and private-index sources are also
+listed as **not checked**; see [uv source coverage](#uv-source-coverage).
+In other lockfile formats, explicit private registries, Git dependencies and
+external archives retain their existing unresolved-source behavior. Known local/non-registry
 identities also prevent matching direct manifest pins in the lockfile's project
 and recorded workspace directories from being reinterpreted as public packages.
 Unrelated nested projects retain their own manifest inventory.
@@ -52,6 +54,33 @@ npm permits omitted or registry-relative `resolved` values; those retain
 `registry_unspecified` provenance. Even `registry.npmjs.org` is npm shorthand
 for the configured registry, not proof of package provenance. This scanner does
 not inspect `.npmrc`, verify artifact integrity, or establish supply-chain trust.
+
+### uv source coverage
+
+Skylos validates `uv.lock` source records before classifying them. Recognized
+Git, URL, path and private-index sources have no supported public package
+identity: they are **not checked**, never fetched or queried as public PyPI
+packages. Matching manifest pins cannot override those recorded sources.
+Supported public packages in the same project still get queried.
+
+When the supported inventory and advisory queries succeed, the receipt uses
+`status: "complete_with_non_registry_sources"`. A normal scan exits `0` if no
+configured gate fails; known public-package vulnerabilities still appear and
+can fail the gate. Rich, pretty, LLM, concise and GitHub output explain the
+not-checked count. JSON keeps source types, reasons and locations in
+`analysis_summary.sca_coverage.lockfile_not_checked`, without source URLs or
+credentials. Examples are capped at 25; the
+`non_registry_lockfile_dependency_count` count is not truncated.
+
+This is successful processing with **limited coverage**. `complete` and
+`category_complete` remain `false`: the dependency assessment cannot claim a
+clean result, SCA baseline creation refuses it, and uploads cannot use it to
+resolve earlier dependency findings by absence.
+
+Malformed or contradictory source metadata, unreadable lockfiles, invalid
+public-package versions, resource limits and advisory-service failures still
+make the scan incomplete and exit `2`. Any vulnerabilities already found
+remain in the report.
 
 ### Pipenv lockfiles
 

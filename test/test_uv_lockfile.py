@@ -151,7 +151,7 @@ def test_workspace_members_are_roots_but_external_local_directories_are_not():
         ('registry = "https://pypi.org.example/simple"', "non_public_registry"),
         ('registry = "https://user:secret@pypi.org/simple"', "non_public_registry"),
         ('registry = "https://pypi.org/simple?token=secret"', "non_public_registry"),
-        ('git = "https://example.test/pkg.git#abcdef"', "non_registry_source"),
+        ('git = "https://example.test/pkg.git#' + 'a' * 40 + '"', "non_registry_source"),
         ('url = "https://files.pythonhosted.org/example.whl"', "non_registry_source"),
         ('path = "vendor/pkg.whl"', "non_registry_source"),
         (
@@ -166,15 +166,21 @@ def test_non_public_sources_are_explicit_gaps_without_credential_disclosure(
     result = _parse("version = 1\n" + _package("requests", source=source))
     assert result.dependencies == []
     assert result.local_package_count == 0
-    assert result.unresolved == [
-        {
+    expected = {
             "reason": reason,
             "package": "requests",
             "line": 4,
             "name": "requests",
             "version": "1.0",
         }
-    ]
+    if reason == "unsupported_package_source":
+        assert result.unresolved == [expected]
+        assert result.not_checked == []
+    else:
+        expected["source_type"] = source.split(" = ", 1)[0]
+        assert result.not_checked == [expected]
+        assert result.unresolved == []
+        assert result.non_registry_names == ["requests"]
     assert "secret" not in repr(result)
 
 
@@ -191,7 +197,8 @@ def test_public_transitives_of_private_packages_are_still_inventoried():
         )
         + _package("public-pkg")
     )
-    assert len(result.unresolved) == 1
+    assert result.unresolved == []
+    assert len(result.not_checked) == 1
     assert result.dependencies[0]["dependency_kind"] == "transitive"
     assert result.dependencies[0]["dependency_roots"] == ["app"]
 
@@ -466,6 +473,7 @@ def test_validated_local_source_tree_names_are_exposed_for_manifest_source_guard
     )
     assert result.non_registry_names == [
         "app-root",
+        "archive",
         "local-directory",
         "local-editable",
     ]

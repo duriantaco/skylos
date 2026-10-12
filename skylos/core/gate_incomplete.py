@@ -13,6 +13,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from skylos.core.sca_coverage import (
+    NON_REGISTRY_COVERAGE_STATUS,
+    valid_non_registry_sca_receipt,
+)
+
 DETAIL_LINE_LIMIT = 10
 DETAIL_MESSAGE_CHARS = 160
 SCA_BLOCKING_STATUSES = ("incomplete", "unavailable", "unknown")
@@ -105,8 +110,13 @@ def incomplete_analysis_reasons(results) -> list[IncompleteReason]:
     coverage = summary.get("sca_coverage")
     # Coverage limitations (including unresolved manifest ranges) are not
     # operational failures; only an interrupted or unavailable scan is.
-    if isinstance(coverage, dict) and coverage.get("status") in SCA_BLOCKING_STATUSES:
-        reasons.append(_sca_reason(coverage))
+    if isinstance(coverage, dict):
+        status = coverage.get("status")
+        if status in SCA_BLOCKING_STATUSES or (
+            status == NON_REGISTRY_COVERAGE_STATUS
+            and not valid_non_registry_sca_receipt(coverage)
+        ):
+            reasons.append(_sca_reason(coverage))
 
     return reasons
 
