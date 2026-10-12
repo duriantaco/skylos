@@ -6,12 +6,12 @@
     "url": "https://github.com/duriantaco/skylos",
     "source": "github"
   },
-  "version": "4.47.2",
+  "version": "4.48.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "skylos",
-      "version": "4.47.2",
+      "version": "4.48.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
