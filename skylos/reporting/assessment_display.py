@@ -130,6 +130,60 @@ def assessment_coverage_text(assessment) -> str:
     return "; ".join(parts)
 
 
+def dependency_coverage_lines(analysis_summary) -> list[str]:
+    """Explain the existing SCA receipt without resolving or querying packages."""
+    sca = _mapping(_mapping(analysis_summary).get("sca_coverage"))
+    if not sca:
+        return []
+
+    def count(key):
+        value = sca.get(key)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            else None
+        )
+
+    facts = []
+    for key, label in (
+        ("queried_dependency_count", "packages queried"),
+        ("supported_lockfile_count", "supported lockfiles read"),
+        ("unresolved_dependency_count", "manifest versions unresolved"),
+        ("unresolved_lockfile_dependency_count", "lockfile entries unresolved"),
+        ("parse_error_count", "parse errors"),
+        ("unsupported_lockfile_count", "unsupported lockfiles"),
+    ):
+        value = count(key)
+        if value is not None:
+            facts.append(f"{value} {label}")
+    lines = ["Dependency inventory: " + " · ".join(facts)] if facts else []
+    next_steps = []
+    if count("unresolved_dependency_count") or count("supported_lockfile_count") == 0:
+        next_steps.append(
+            "provide a supported lockfile (e.g. uv.lock, poetry.lock or package-lock.json) or exact manifest versions; version ranges are not resolved"
+        )
+    if (
+        count("unresolved_lockfile_dependency_count")
+        or count("parse_error_count")
+        or count("unsupported_lockfile_count")
+    ):
+        next_steps.append(
+            "inspect sca_coverage in the JSON report for unsupported, unreadable or unresolved dependency entries"
+        )
+    query = _mapping(sca.get("query"))
+    if query.get("complete") is False:
+        next_steps.append(
+            "inspect failure and limit reasons in sca_coverage.query; retry failed requests after advisory-service access is restored"
+        )
+    if next_steps:
+        lines.append("Dependency next step: " + "; ".join(next_steps))
+    if sca.get("category_complete") is False:
+        lines.append(
+            "Dependency scope: recorded versions only; installed environment, lockfile freshness and runtime reachability are not verified"
+        )
+    return lines
+
+
 def assessment_notice(assessment, *, gate=None) -> str:
     return " | ".join(
         f"{label}: {detail}" for label, detail in assessment_rows(assessment, gate=gate)

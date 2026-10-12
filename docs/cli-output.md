@@ -87,6 +87,26 @@ outcome counts are available under
 Unverified same-name attribute matches are retained as contextual evidence;
 they do not rescue a symbol unless a stronger liveness signal confirms the use.
 
+When a security finding carries analyzer-recorded evidence, `rich` and
+`pretty` show the observed sources, sink, path and guards. These are static
+observations, not confirmation of runtime exploitability. Partial analysis
+is labeled explicitly. No flow is invented for findings without evidence;
+JSON retains the complete packet, including additional sources and steps.
+
+Dependency coverage also shows the number of packages queried, supported
+lockfiles read and unresolved versions. A manifest range such as `>=2.0`
+does not identify a version to query. Supply a
+[supported lockfile](./dependency-scanning.md#supported-inventories) or exact
+manifest versions, and inspect `analysis_summary.sca_coverage` for parsing,
+source or advisory-service gaps. Skylos does not install dependencies or
+resolve ranges. SBOM export is supported; SBOM import is not.
+
+Expanded signature advice on conventional test functions explains that
+pytest may supply fixtures and parametrized inputs by name. Review fixture
+dependencies and case clarity before applying advice intended for manually
+called functions. This context changes the human explanation only: the
+finding, severity, JSON record and configured gate remain intact.
+
 Write the same pretty report to a file with `--output`:
 
 ```bash
