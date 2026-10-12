@@ -150,6 +150,8 @@ def dependency_coverage_lines(analysis_summary) -> list[str]:
         ("supported_lockfile_count", "supported lockfiles read"),
         ("unresolved_dependency_count", "manifest versions unresolved"),
         ("unresolved_lockfile_dependency_count", "lockfile entries unresolved"),
+        ("non_registry_lockfile_dependency_count", "non-registry entries not queried"),
+        ("not_checked_lockfile_dependency_count", "lockfile entries not checked"),
         ("parse_error_count", "parse errors"),
         ("unsupported_lockfile_count", "unsupported lockfiles"),
     ):
@@ -157,10 +159,23 @@ def dependency_coverage_lines(analysis_summary) -> list[str]:
         if value is not None:
             facts.append(f"{value} {label}")
     lines = ["Dependency inventory: " + " · ".join(facts)] if facts else []
+    skipped = count("non_registry_lockfile_dependency_count")
+    if skipped:
+        lines.append(
+            "Dependency coverage limitation: Git, path, URL and private-registry "
+            "sources are not checked for vulnerabilities through OSV; their vulnerability status is unknown"
+        )
+        examples = _non_registry_examples(sca.get("lockfile_not_checked"))
+        if examples:
+            detail = "; ".join(examples[:5])
+            remaining = max(0, skipped - min(5, len(examples)))
+            if remaining:
+                detail += f"; {remaining} more entries (see sca_coverage JSON)"
+            lines.append("Dependency sources not checked: " + detail)
     next_steps = []
     if count("unresolved_dependency_count") or count("supported_lockfile_count") == 0:
         next_steps.append(
-            "provide a supported lockfile (e.g. uv.lock, poetry.lock or package-lock.json) or exact manifest versions; version ranges are not resolved"
+            "for unresolved public-package versions, provide a supported lockfile (e.g. uv.lock, poetry.lock or package-lock.json) or exact manifest versions; version ranges are not resolved"
         )
     if (
         count("unresolved_lockfile_dependency_count")
@@ -182,6 +197,43 @@ def dependency_coverage_lines(analysis_summary) -> list[str]:
             "Dependency scope: recorded versions only; installed environment, lockfile freshness and runtime reachability are not verified"
         )
     return lines
+
+
+def _non_registry_examples(entries) -> list[str]:
+    """Only bounded package labels, never source URLs or credentials."""
+    import re
+
+    if not isinstance(entries, list):
+        return []
+    labels = {"git": "Git", "path": "path", "url": "URL"}
+    examples = []
+    for entry in entries[:25]:
+        if not isinstance(entry, dict):
+            continue
+        reason = entry.get("reason")
+        if reason not in ("non_registry_source", "non_public_registry"):
+            continue
+        name = entry.get("name") or entry.get("package")
+        if not isinstance(name, str):
+            continue
+        name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", name).strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", name):
+            continue
+        source_type = entry.get("source_type")
+        kind = (
+            "private registry"
+            if reason == "non_public_registry"
+            else labels.get(source_type)
+            if isinstance(source_type, str)
+            else None
+        )
+        if kind:
+            example = f"{name} ({kind})"
+            if example not in examples:
+                examples.append(example)
+        if len(examples) == 5:
+            break
+    return examples
 
 
 def assessment_notice(assessment, *, gate=None) -> str:

@@ -146,6 +146,14 @@ def _emit_github_annotation(annotation):
 
 def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None):
     _emit_github_grade_annotation(result)
+    from skylos.reporting.assessment_display import dependency_coverage_lines
+
+    coverage = dependency_coverage_lines(result.get("analysis_summary"))
+    if coverage:
+        print(
+            "::notice title=Skylos Dependency Coverage::"
+            + _escape_github_command_data(" | ".join(coverage))
+        )
     annotations = _github_annotation_items(result)
     annotations = _filter_github_annotations_by_severity(annotations, severity_filter)
     annotations.sort(key=_github_annotation_sort_key)

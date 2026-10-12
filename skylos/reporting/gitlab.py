@@ -74,6 +74,7 @@ _SCA_COMPLETION_STATES = {
     "unavailable": False,
     "unknown": False,
     "no_supported_manifests": False,
+    "complete_with_non_registry_sources": False,
 }
 _SCA_CONTEXT_FIELDS = (
     "dependency_section",
@@ -334,6 +335,10 @@ def _sca_completion_diagnostic(coverage: object) -> str | None:
     status = coverage.get("status")
     if not isinstance(status, str) or status not in _SCA_COMPLETION_STATES:
         return invalid
+    if status == "complete_with_non_registry_sources":
+        from skylos.core.sca_coverage import valid_non_registry_sca_receipt
+
+        return None if valid_non_registry_sca_receipt(coverage) else invalid
     if (
         status == "complete_with_unresolved_versions"
         and coverage.get("complete") is False
