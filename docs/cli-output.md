@@ -181,6 +181,16 @@ installed (`pip install "skylos[dart]"`).
 `--force` and advisory gate settings do not convert incomplete analysis into a
 passing result.
 
+Malformed or unreadable GitHub Actions YAML also produces incomplete analysis.
+When scanning a repository, Skylos recognizes nested Cookiecutter workflow
+templates through a placeholder directory and an adjacent `cookiecutter.json`.
+It statically decodes literal GitHub-expression escapes and accepts simple
+placeholders in display names and trigger path filters. It does not execute
+Jinja or generator hooks. Dynamic commands, permissions, action references,
+template control flow, and unsupported expressions remain incomplete; scan
+the generated workflow to check those. A repository's active workflows always
+require valid YAML.
+
 ### Gate verdict
 
 A gate run (`skylos . --gate`, `skylos . --strict`, `skylos cicd gate`) always
@@ -441,6 +451,26 @@ the assessment. True changes in analysis scope, such as exact rule selection
 or a diff, do not borrow a whole-project assessment. Gate enforcement remains
 independent: Advice in `quality` still counts toward applicable limits, while
 the existing code-health and architecture exemptions below remain explicit.
+
+## Repository CI Scope
+
+With `--danger` or `-a`, full directory scans inside a verified Git worktree
+include its active root GitHub Actions workflows and default `.gitlab-ci.yml`,
+even when the selected directory is `src`. These CI files apply to the
+repository's source. Source files, Dockerfiles, deployment configuration and
+local actions remain within the selected directory.
+
+The same workflow findings remain visible in clean, staged, unstaged and
+untracked-only working trees. Uncommitted edits do not turn a full scan into
+a diff scan. Explicit changed-file filters still select CI files: a source-only
+diff does not add findings from unchanged root workflows.
+
+Skylos uses the actual Git worktree root, including linked worktrees, rather
+than a nearby `pyproject.toml`. Nested repositories use their own root CI;
+file lists spanning separate worktrees do not gain an outer repository's CI
+checks. Symlinked root CI files or workflow directories are not followed.
+Single-file inputs and directories without a verified Git worktree retain
+their existing local configuration scope.
 
 ## Review Changed Lines
 

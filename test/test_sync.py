@@ -1100,7 +1100,7 @@ def test_cmd_setup_writes_workflow_that_syncs_cloud_policy(
     assert "Pull Skylos Cloud Policy" in workflow
     assert "skylos sync pull" in workflow
     assert "id-token: write" in workflow
-    assert "skylos . --danger --secrets --quality --ai-defects --upload" in workflow
+    assert "skylos . --danger --secrets --quality --ai-defects --sca --gate --upload" in workflow
     assert "--sha" not in workflow
     assert "SKYLOS_COMMIT" in workflow
     assert "SKYLOS_BRANCH" in workflow
@@ -1153,7 +1153,7 @@ def test_cmd_upgrade_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, ca
     assert "Pull Skylos Cloud Policy" in workflow
     assert "skylos sync pull" in workflow
     assert "id-token: write" in workflow
-    assert "skylos . --danger --secrets --quality --ai-defects --upload" in workflow
+    assert "skylos . --danger --secrets --quality --ai-defects --sca --gate --upload" in workflow
     assert "--sha" not in workflow
     assert "SKYLOS_COMMIT" in workflow
     assert "SKYLOS_BRANCH" in workflow

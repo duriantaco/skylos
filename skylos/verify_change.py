@@ -229,6 +229,8 @@ def verify_change_diff(
 
     findings: list[dict[str, Any]] = []
     incomplete: list[str] = []
+    coverage_records: list[dict[str, Any]] = []
+    contract_checks: list[dict[str, Any]] = []
     skipped = max(0, len(selected) - MAX_DIFF_FILES)
     with _facts_session(root, enabled=analyze_func is None):
         for rel, ranges in list(selected.items())[:MAX_DIFF_FILES]:
@@ -240,6 +242,8 @@ def verify_change_diff(
                 ranges,
                 findings,
                 incomplete,
+                coverage_records=coverage_records,
+                contract_checks=contract_checks,
                 confidence=confidence,
                 exclude_folders=exclude_folders,
                 include_dependency_hallucinations=include_dependency_hallucinations,
@@ -264,7 +268,7 @@ def verify_change_diff(
         summary += f"; verification incomplete for {len(incomplete)} file(s)"
     if skipped:
         summary += f"; {skipped} changed file(s) not checked (limit {MAX_DIFF_FILES})"
-    return {
+    response = {
         "schema_version": 2,
         "tool": "verify_change",
         "status": status,
@@ -278,10 +282,50 @@ def verify_change_diff(
         "summary": summary,
         "security_checks_enabled": bool(include_security_findings),
     }
+    if coverage_records:
+        response["coverage"] = {
+            "schema_version": 1,
+            "state": "incomplete" if incomplete or skipped else "complete",
+            "scope": "changed_files",
+            "files": coverage_records,
+            "checks": [
+                {**check, "file": record["file"]}
+                for record in coverage_records
+                for check in record["coverage"].get("checks", [])
+                if isinstance(check, dict)
+            ],
+            "limitations": [
+                {**limitation, "file": record["file"]}
+                for record in coverage_records
+                for limitation in record["coverage"].get("limitations", [])
+                if isinstance(limitation, dict)
+            ],
+        }
+    if contract_checks:
+        response["contract_checks"] = contract_checks
+    return response
 
 
-def _verify_diff_file(root, rel, ranges, findings, incomplete, **kwargs) -> None:
+def _verify_diff_file(
+    root,
+    rel,
+    ranges,
+    findings,
+    incomplete,
+    *,
+    coverage_records=None,
+    contract_checks=None,
+    **kwargs,
+) -> None:
     result = verify_change_path(root / rel, behavior_comparison=False, **kwargs)
+    if coverage_records is not None and isinstance(result.get("coverage"), dict):
+        coverage_records.append({"file": rel, "coverage": result["coverage"]})
+    if contract_checks is not None:
+        contract_checks.extend(
+            {**check, "file": rel}
+            for check in result.get("contract_checks", [])
+            if isinstance(check, dict)
+        )
     if result.get("status") == "incomplete":
         incomplete.append(rel)
     for finding in _result_findings(result):
@@ -527,6 +571,9 @@ def _add_contract_route_findings(
         scan_root,
         files=changed_files,
     )
+    route_check = getattr(route_findings, "check", None)
+    if isinstance(route_check, dict):
+        analysis_result.setdefault("contract_checks", []).append(route_check)
     if not route_findings:
         return
 

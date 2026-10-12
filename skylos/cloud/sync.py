@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import argparse
 import stat
 import tempfile
 from pathlib import Path
@@ -766,46 +767,49 @@ def cmd_project_unlink() -> None:
         print("No repo link found.")
 
 
-def cmd_pull() -> None:
-    token = get_token()
-
-    if not token:
-        print("Error: Not connected.")
-        print("Run 'skylos login' or 'skylos sync connect' first.")
-        sys.exit(1)
-
-    repo_root = _find_repo_root()
-    try:
-        skylos_dir = _ensure_safe_link_path(repo_root, create_dir=True).parent
-    except AuthError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    from skylos.core.review_decisions import invalidate_trusted_bundle
-
-    sync_subpath = _current_repo_subpath(repo_root)
-    sync_project_root = repo_root / sync_subpath if sync_subpath else repo_root
-    invalidate_trusted_bundle(
-        sync_project_root,
-        cache_root=GLOBAL_CREDS_DIR / "reviewed-findings",
+def cmd_pull(*, dry_run: bool = False, output_format: str = "text") -> None:
+    from skylos.cloud.sync_state import activate_sync_files, validate_sync_paths
+    from skylos.core.review_decisions import (
+        invalidate_trusted_bundle,
+        write_trusted_bundle,
     )
 
+    def progress(message: str) -> None:
+        if output_format != "json":
+            print(message)
+
+    cache_root = GLOBAL_CREDS_DIR / "reviewed-findings"
+    sync_project_root = None
+    trust_invalidated = False
     try:
+        token = get_token()
+        if not token:
+            raise AuthError(
+                "Not connected. Run 'skylos login' or 'skylos sync connect' first."
+            )
+        repo_root = _find_repo_root()
+        sync_subpath = _current_repo_subpath(repo_root)
+        sync_project_root = repo_root / sync_subpath if sync_subpath else repo_root
+        if not dry_run:
+            trust_invalidated = invalidate_trusted_bundle(
+                sync_project_root, cache_root=cache_root
+            )
+        skylos_dir = _ensure_safe_link_path(repo_root, create_dir=False).parent
+        validate_sync_paths(repo_root, (CONFIG_FILE, SUPPRESSIONS_FILE))
+
         info = api_get(WHOAMI_ENDPOINT, token)
-        print(f"Connected to: {info.get('project', {}).get('name', UNKNOWN_LABEL)}\n")
-    except AuthError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    try:
-        print("Pulling configuration...")
+        if not isinstance(info, dict):
+            raise AuthError("Invalid project response")
+        project = info.get("project")
+        if not isinstance(project, dict):
+            raise AuthError("Invalid project response")
+        progress(f"Connected to: {project.get('name', UNKNOWN_LABEL)}\n")
+        progress("Pulling configuration...")
         config_data = api_get("/api/sync/config", token)
-        _write_sync_config(skylos_dir, config_data)
-
-        print("Pulling suppressions...")
+        config_payload = _sync_config_payload(config_data)
+        progress("Pulling suppressions...")
         supp_data = api_get("/api/sync/suppressions", token)
-        if not isinstance(supp_data, dict):
-            raise AuthError("Invalid suppression response")
+        _validate_sync_suppressions(supp_data)
         whoami_project = info.get("project") if isinstance(info, dict) else None
         whoami_project_id = (
             str(whoami_project.get("id") or "").strip()
@@ -821,44 +825,126 @@ def cmd_pull() -> None:
             raise AuthError("Suppression response belongs to a different project")
         if not suppression_project_id and whoami_project_id:
             supp_data = {**supp_data, "project_id": whoami_project_id}
-        _write_sync_suppressions(skylos_dir, supp_data)
-
-        from skylos.core.review_decisions import write_trusted_bundle
-
-        trusted_path = write_trusted_bundle(
-            sync_project_root,
-            supp_data,
-            cache_root=GLOBAL_CREDS_DIR / "reviewed-findings",
-            service_origin=get_api_url(),
-        )
-        if trusted_path is None:
-            raise AuthError("Could not store trusted suppression state")
-
-        print("\n✓ Sync complete!")
-
-    except Exception as e:
-        print(f"Error: {e}")
+        config_project_id = str(config_data.get("project_id") or "").strip()
+        if (
+            whoami_project_id
+            and config_project_id
+            and whoami_project_id != config_project_id
+        ):
+            raise AuthError("Configuration response belongs to a different project")
+        files = {
+            CONFIG_FILE: yaml.safe_dump(config_payload, default_flow_style=False),
+            SUPPRESSIONS_FILE: json.dumps(supp_data, indent=2, allow_nan=False) + "\n",
+        }
+        changes = {
+            filename: {"path": str(skylos_dir / filename)} for filename in files
+        }
+        if not dry_run:
+            with activate_sync_files(repo_root, files):
+                trusted_path = write_trusted_bundle(
+                    sync_project_root,
+                    supp_data,
+                    cache_root=cache_root,
+                    service_origin=get_api_url(),
+                )
+                if trusted_path is None:
+                    raise AuthError("Could not store trusted suppression state")
+        count = len(supp_data.get("decisions", supp_data.get("suppressions", [])))
+        if output_format == "json":
+            print(json.dumps(
+                {
+                    "status": "validated" if dry_run else "synced",
+                    "dry_run": dry_run,
+                    "project_id": whoami_project_id or suppression_project_id or None,
+                    "files": changes,
+                    "suppression_count": count,
+                    "trusted_suppressions": "unchanged" if dry_run else "refreshed",
+                },
+                sort_keys=True,
+            ))
+        else:
+            for filename in files:
+                progress(f"  {'Would write' if dry_run else '✓'} {skylos_dir / filename}")
+            progress(
+                "\n✓ Dry run complete; no files or trust state changed."
+                if dry_run else "\n✓ Sync complete!"
+            )
+    except Exception as error:
+        if not dry_run and sync_project_root is not None:
+            trust_invalidated = invalidate_trusted_bundle(
+                sync_project_root, cache_root=cache_root
+            ) or trust_invalidated
+        if output_format == "json":
+            print(json.dumps(
+                {
+                    "status": "failed", "dry_run": dry_run, "error": str(error),
+                    "trusted_suppressions": "invalidated" if trust_invalidated else "unchanged",
+                },
+                sort_keys=True,
+            ))
+        else:
+            print(f"Error: {error}")
         sys.exit(1)
 
 
-def _write_sync_config(skylos_dir: Path, config_data):
-    config_payload = config_data.get("config")
+def _sync_config_payload(config_data):
+    if not isinstance(config_data, dict):
+        raise AuthError("Invalid configuration response")
+    config_payload = config_data.get("config", config_data)
     if not isinstance(config_payload, dict):
-        if isinstance(config_data, dict):
-            config_payload = config_data
-        else:
-            config_payload = {}
+        raise AuthError("Invalid configuration response")
+    return config_payload
 
+
+def _validate_sync_suppressions(supp_data) -> None:
+    from skylos.core.review_decisions import (
+        MAX_BUNDLE_BYTES, REVIEW_SCHEMA, REVIEW_SCHEMA_VERSION,
+    )
+
+    if not isinstance(supp_data, dict):
+        raise AuthError("Invalid suppression response")
+    if supp_data.get("schema") not in (None, REVIEW_SCHEMA):
+        raise AuthError("Unsupported suppression schema")
+    if supp_data.get("version") not in (None, 1, REVIEW_SCHEMA_VERSION):
+        raise AuthError("Unsupported suppression version")
+    records = supp_data.get("decisions", supp_data.get("suppressions"))
+    if not isinstance(records, list) or any(
+        not isinstance(record, dict) for record in records
+    ):
+        raise AuthError("Invalid suppression records")
+    for key in ("decisions", "suppressions"):
+        if key in supp_data and (
+            not isinstance(supp_data[key], list)
+            or any(not isinstance(record, dict) for record in supp_data[key])
+        ):
+            raise AuthError("Invalid suppression records")
+    try:
+        serialized = json.dumps(supp_data, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as error:
+        raise AuthError("Invalid suppression response") from error
+    if len(serialized) > MAX_BUNDLE_BYTES:
+        raise AuthError("Suppression response exceeds size limit")
+
+
+def _write_sync_config(skylos_dir: Path, config_data):
+    from skylos.cloud.sync_state import activate_sync_files
+
+    config_payload = _sync_config_payload(config_data)
     config_path = skylos_dir / CONFIG_FILE
-    with config_path.open("w") as f:
-        yaml.dump(config_payload, f, default_flow_style=False)
+    files = {CONFIG_FILE: yaml.safe_dump(config_payload, default_flow_style=False)}
+    with activate_sync_files(skylos_dir.parent, files):
+        pass
     print(f"  ✓ {config_path}")
 
 
 def _write_sync_suppressions(skylos_dir: Path, supp_data):
+    from skylos.cloud.sync_state import activate_sync_files
+
+    _validate_sync_suppressions(supp_data)
     supp_path = skylos_dir / SUPPRESSIONS_FILE
-    payload = supp_data if isinstance(supp_data, dict) else {}
-    _atomic_write_text(supp_path, json.dumps(payload, indent=2) + "\n")
+    files = {SUPPRESSIONS_FILE: json.dumps(supp_data, indent=2, allow_nan=False) + "\n"}
+    with activate_sync_files(skylos_dir.parent, files):
+        pass
     print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
 
 
@@ -1028,11 +1114,24 @@ def main(args: Sequence[str] | None = None) -> None:
         return
 
     cmd = args[0].lower()
+    if cmd == "pull":
+        parser = argparse.ArgumentParser(
+            prog="skylos sync pull",
+            description="Fetch and validate Cloud configuration and suppressions.",
+            allow_abbrev=False,
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help="Validate without writing files or changing trust state",
+        )
+        parser.add_argument("--format", choices=("text", "json"), default="text")
+        options = parser.parse_args(list(args[1:]))
+        cmd_pull(dry_run=options.dry_run, output_format=options.format)
+        return
     handlers = {
         "connect": lambda: cmd_connect(_optional_arg(args, 1)),
         "status": cmd_status,
         "disconnect": cmd_disconnect,
-        "pull": cmd_pull,
         "setup": lambda: cmd_setup(_optional_arg(args, 1)),
         "upgrade": cmd_upgrade,
     }
@@ -1073,19 +1172,43 @@ def project_main(args: Sequence[str] | None = None) -> None:
     handler()
 
 
-def get_custom_rules() -> list[dict[str, Any]]:
+def load_custom_rules() -> dict[str, Any]:
+    """Report rule loading coverage separately from an empty ruleset."""
+    # Explicit operator environment also transports trusted CI policy
+    # artifacts into credential-free scan jobs. It is the same source used by
+    # the analyzer, so its receipt must describe the rules actually scanned.
+    environment_rules = os.environ.get("SKYLOS_CUSTOM_RULES")
+    if environment_rules is not None:
+        try:
+            rules = json.loads(environment_rules)
+            if not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+                raise ValueError("Invalid custom rule environment")
+            return {"rules": rules, "status": "complete", "source": "environment"}
+        except (ValueError, RecursionError):
+            return {"rules": [], "status": "unavailable", "reason": "invalid_custom_rule_environment"}
     token = get_token()
     if not token:
-        return []
+        return {"rules": [], "status": "not_connected"}
 
     try:
         data = api_get("/api/sync/rules", token)
-        rules = data.get("rules", [])
-        if isinstance(rules, list):
-            return rules
-        return []
-    except (AuthError, OSError, ValueError):
-        return []
+        if not isinstance(data, dict):
+            raise ValueError("Invalid custom rule response")
+        rules = data.get("rules")
+        if not isinstance(rules, list) or any(
+            not isinstance(rule, dict) for rule in rules
+        ):
+            raise ValueError("Invalid custom rule response")
+        return {"rules": rules, "status": "complete"}
+    except (AuthError, OSError, ValueError) as error:
+        return {
+            "rules": [], "status": "unavailable",
+            "reason": "custom_rule_fetch_failed", "error_type": type(error).__name__,
+        }
+
+
+def get_custom_rules() -> list[dict[str, Any]]:
+    return load_custom_rules()["rules"]
 
 
 if __name__ == "__main__":

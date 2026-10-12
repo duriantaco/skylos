@@ -184,6 +184,15 @@ def build_verify_change_response(
     coverage = _verification_coverage(analysis_result)
     coverage = _reconcile_response_coverage(coverage, findings)
     status = _status_for_findings(findings, coverage)
+    contract_checks = [
+        dict(check)
+        for check in analysis_result.get("contract_checks", [])
+        if isinstance(check, dict)
+    ]
+    if status == "pass" and any(
+        check.get("outcome") == "incomplete" for check in contract_checks
+    ):
+        status = "incomplete"
 
     response = {
         "schema_version": SCHEMA_VERSION,
@@ -205,6 +214,8 @@ def build_verify_change_response(
     }
     if coverage is not None:
         response["coverage"] = coverage
+    if contract_checks:
+        response["contract_checks"] = contract_checks
     return response
 
 

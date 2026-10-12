@@ -99,6 +99,9 @@ repo-relative path, and `target.diff` lists the files checked. The behavior
 comparison is not run in this mode. It cannot be combined with `--stdin`,
 `--file`, `--range` or `--project-context`. At most 200 files are checked;
 more makes the result `incomplete`.
+Per-file check coverage and structural contract scope are retained in the diff
+response, so an incomplete package inspection or external API limitation is
+still visible when findings are filtered to changed lines.
 
 ## Output formats
 
@@ -130,6 +133,24 @@ and recognized Node built-ins are outside this local API check. The check
 reports their count in `out_of_scope_references` and can pass without proving
 those external APIs. A missing relative import, unresolved workspace package,
 local path alias, or unknown bare import still makes the check incomplete.
+Human and short reports say `External API references unverified: N`, including
+when an unrelated finding fails the run. JSON includes the same limitation in
+`coverage.limitations`; a complete local check does not prove external APIs.
+
+When dependency hallucination checks are enabled, the installed-Python check
+`python_installed_api_signature` inspects imported allowlisted packages in the
+environment running Skylos. Missing, malformed, or truncated package member
+metadata is reported as incomplete coverage, with module names and reasons in
+`unchecked_modules`. It cannot produce a missing-API finding without positive
+metadata. If there are no findings, incomplete inspection exits `2`. This
+check is scoped to installed package metadata; it does not execute target code
+or prove arbitrary external behavior.
+
+Route contracts check required decorator or dependency names structurally.
+`contract_checks` records matched routes and explicitly reports
+`authentication_behavior: "not_verified"`. A matching decorator, including one
+that simply returns its input function, does not establish that authentication
+or authorization is enforced.
 
 PHP, Rust, Dart, C#, Kotlin, and Shell retain their existing static-analysis
 coverage; C++ currently has only narrow file-local dead-code detection.

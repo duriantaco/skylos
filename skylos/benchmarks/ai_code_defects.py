@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from skylos.core.file_discovery import find_git_root
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    write_text_no_symlink,
+)
 from skylos.rules.ai_defect.dependency_truth import (
     LEGACY_STATUS_EXISTS,
     DependencyTruthState,
@@ -693,7 +698,7 @@ def _run_case(
     comparison_tools: list[str] | None = None,
     comparison_func: ComparisonFunc | None = None,
 ) -> dict[str, Any]:
-    case_path = (manifest_root / case["path"]).resolve()
+    case_path = manifest_root / case["path"]
     scan = case.get("scan")
     if not isinstance(scan, dict):
         scan = {}
@@ -776,29 +781,40 @@ def _contract_path_scan(scan: dict[str, Any]) -> str | None:
 def _prepared_case_path(
     case_path: Path,
     scan: dict[str, Any],
-) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    # Each case is an independent project. Scanning its checked-in directory
+    # would inherit the benchmark host's Git history, policy and CI workflows.
     dependency_statuses = _dependency_status_entries(scan)
     git_baseline = _git_baseline_entries(scan)
-    if (
-        not dependency_statuses
-        and not git_baseline
-        and not _include_dependency_hallucination_scan(scan)
-        and not _include_security_findings_scan(scan)
-    ):
-        return case_path, None
-
     temp_case = tempfile.TemporaryDirectory(prefix="skylos-ai-defect-")
-    prepared_path = Path(temp_case.name) / case_path.name
-    if case_path.is_dir():
-        shutil.copytree(case_path, prepared_path)
-    else:
-        prepared_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(case_path, prepared_path)
+    try:
+        temporary_root = Path(temp_case.name).resolve()
+        if find_git_root(temporary_root) is not None:
+            raise ValueError(
+                "Benchmark temporary directory must be outside a Git repository; "
+                "set TMPDIR outside the checkout"
+            )
+        source_path = case_path.resolve()
+        source_root = case_path.parent.resolve()
+        if not source_path.is_relative_to(source_root):
+            raise ValueError("Benchmark case root must stay inside its source directory")
+        if case_path.is_symlink():
+            raise ValueError("Benchmark case root cannot be a symlink")
+        prepared_path = temporary_root / case_path.name
+        if source_path.is_dir():
+            # Preserve links so copying cannot turn an out-of-scope target into
+            # an ordinary source file inside the benchmark project.
+            shutil.copytree(source_path, prepared_path, symlinks=True)
+        else:
+            shutil.copy2(source_path, prepared_path, follow_symlinks=False)
 
-    if dependency_statuses:
-        _write_dependency_status_cache(prepared_path, dependency_statuses)
-    if git_baseline:
-        _prepare_git_baseline(prepared_path, git_baseline)
+        if dependency_statuses:
+            _write_dependency_status_cache(prepared_path, dependency_statuses)
+        if git_baseline:
+            _prepare_git_baseline(prepared_path, git_baseline)
+    except Exception:
+        temp_case.cleanup()
+        raise
     return prepared_path, temp_case
 
 
@@ -825,19 +841,46 @@ def _git_baseline_entries(scan: dict[str, Any]) -> dict[str, str]:
     return entries
 
 
+def _fixture_write_path(case_path: Path, relative_path: str | Path) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise ValueError("Benchmark preparation paths must stay inside the fixture")
+    if relative.parts[0].casefold() == ".git":
+        raise ValueError("Benchmark preparation cannot seed Git metadata")
+    if case_path.is_symlink():
+        raise ValueError("Benchmark preparation cannot follow symlinks")
+    target = case_path.resolve()
+    for component in relative.parts:
+        target /= component
+        if target.is_symlink():
+            raise ValueError("Benchmark preparation cannot follow symlinks")
+    return target
+
+
 def _prepare_git_baseline(case_path: Path, git_baseline: dict[str, str]) -> None:
+    metadata = case_path / ".git"
+    if metadata.exists() or metadata.is_symlink():
+        raise ValueError("Benchmark Git baselines require a fresh fixture repository")
+    targets = {
+        rel_path: _fixture_write_path(case_path, rel_path) for rel_path in git_baseline
+    }
     current_contents: dict[str, str | None] = {}
-    for rel_path in git_baseline:
-        target = case_path / rel_path
+    for rel_path, target in targets.items():
         if target.exists():
-            current_contents[rel_path] = target.read_text(encoding="utf-8")
+            content = read_project_text_no_symlink(
+                case_path, target, max_bytes=target.stat().st_size
+            )
+            if content is None:
+                raise OSError(f"Could not read benchmark baseline source: {rel_path}")
+            current_contents[rel_path] = content
         else:
             current_contents[rel_path] = None
 
     for rel_path, content in git_baseline.items():
-        target = case_path / rel_path
+        target = targets[rel_path]
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if not write_text_no_symlink(target, content):
+            raise OSError(f"Could not write benchmark baseline source: {rel_path}")
 
     _run_git(case_path, "init")
     _run_git(case_path, "config", "user.email", "benchmarks@skylos.dev")
@@ -846,14 +889,15 @@ def _prepare_git_baseline(case_path: Path, git_baseline: dict[str, str]) -> None
     _run_git(case_path, "commit", "-m", "baseline")
 
     for rel_path, content in current_contents.items():
-        target = case_path / rel_path
+        target = targets[rel_path]
         if content is None:
             try:
                 target.unlink()
             except FileNotFoundError:
                 pass
             continue
-        target.write_text(content, encoding="utf-8")
+        if not write_text_no_symlink(target, content):
+            raise OSError(f"Could not restore benchmark source: {rel_path}")
 
 
 def _run_git(cwd: Path, *args: str) -> None:
@@ -876,7 +920,7 @@ def _write_dependency_status_cache(
     else:
         cache_root = case_path
 
-    cache_path = cache_root / VERSION_CACHE_PATH
+    cache_path = _fixture_write_path(cache_root, VERSION_CACHE_PATH)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     statuses: dict[str, str] = {}
@@ -888,7 +932,8 @@ def _write_dependency_status_cache(
         "schema_version": VERSION_CACHE_SCHEMA_VERSION,
         "statuses": statuses,
     }
-    cache_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if not write_text_no_symlink(cache_path, json.dumps(payload, indent=2) + "\n"):
+        raise OSError("Could not write benchmark dependency cache")
 
 
 def _dependency_status_key(entry: dict[str, Any]) -> str:

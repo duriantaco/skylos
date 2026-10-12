@@ -76,6 +76,50 @@ def _check_managed_gitlab_delivery(response: dict) -> None:
         raise SystemExit(2)
 
 
+def _public_upload_receipt(response: dict) -> dict:
+    """Keep a small public outcome beside the scan, never transport credentials."""
+    from copy import deepcopy
+    import re
+
+    from skylos.api import BASE_URL
+
+    receipt = {"status": "uploaded" if response.get("success") else "failed"}
+    scan_id = response.get("scan_id")
+    if isinstance(scan_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", scan_id):
+        receipt["scan_id"] = scan_id
+        receipt["url"] = f"{BASE_URL.rstrip('/')}/dashboard/scans/{scan_id}"
+    gate = response.get("quality_gate")
+    gate = gate if isinstance(gate, dict) else {}
+    public_gate = {
+        key: deepcopy(gate[key])
+        for key in ("passed", "reasons", "message", "new_violations", "coverage_failures")
+        if key in gate
+    }
+    if (
+        "passed" not in public_gate
+        and response.get("quality_gate_reported") is not False
+        and isinstance(response.get("quality_gate_passed"), bool)
+    ):
+        public_gate["passed"] = response["quality_gate_passed"]
+    if public_gate:
+        receipt["quality_gate"] = public_gate
+    if response.get("quality_gate_reported") is False:
+        receipt["quality_gate_status"] = "not_reported"
+    if isinstance(response.get("gitlab_delivery"), dict):
+        receipt["delivery"] = {
+            key: deepcopy(response["gitlab_delivery"][key])
+            for key in ("status", "reason", "created", "updated", "resolved", "eligible")
+            if key in response["gitlab_delivery"]
+        }
+        if "gitlab_delivery_exit_code" in response:
+            receipt["delivery"]["exit_code"] = response["gitlab_delivery_exit_code"]
+    if not response.get("success"):
+        for key in ("code", "error", "retryable"):
+            if key in response:
+                receipt[key] = deepcopy(response[key])
+    return receipt
+
+
 def _verify_security_findings(
     result: dict, args, console, *, project_root, machine_output: bool
 ) -> None:
@@ -175,7 +219,7 @@ def _report_scope_options(args, config):
 
 
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
-    """Keep a compared gate on base policy for the complete scan lifecycle."""
+    """Keep compared gates and impact scans on one immutable policy."""
     import os
 
     from skylos.cicd.policy import base_policy_context
@@ -184,7 +228,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     args = cli_module._parse_main_cli_args(parser, argv)
     base = (
         (getattr(args, "diff_base", None) or getattr(args, "diff", None))
-        if getattr(args, "gate", False)
+        if (
+            getattr(args, "gate", False)
+            or getattr(args, "diff_mode", "lines") == "impact"
+        )
         else None
     )
     if base == "auto":
@@ -194,7 +241,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         with base_policy_context(
             cli_module._resolve_main_project_root(args.path), base
         ):
-            if base:
+            if base and getattr(args, "gate", False):
                 args.danger = True
                 args.quality = True
             return _run_scan_command(
@@ -272,6 +319,11 @@ def _run_scan_command(
 
     if getattr(args, "scan_publisher_changes", False):
         args.sca = True
+    if getattr(args, "diff_mode", "lines") == "impact":
+        if not getattr(args, "diff", None):
+            parser.error("--diff-mode impact requires --diff")
+        if getattr(args, "diff_base", None):
+            parser.error("--diff-mode impact requires a full head scan; use --diff without --diff-base")
     if args.upload and (args.diff or args.diff_base):
         parser.error(
             "diff-scoped results cannot be uploaded as a full scan; "
@@ -424,6 +476,30 @@ def _run_scan_command(
         result = json.loads(result_json)
         del result_json
 
+        rules_receipt = getattr(pre_analysis, "custom_rules_coverage", None)
+        if isinstance(rules_receipt, dict):
+            rules_receipt = dict(rules_receipt)
+            if rules_receipt.get("status") == "complete" and rules_receipt.get("rule_count", 0):
+                if not args.quality:
+                    rules_receipt.update(status="not_scanned", reason="quality_not_enabled")
+                elif not (result.get("analysis_summary", {}).get("languages") or {}).get("Python"):
+                    rules_receipt.update(status="unsupported", reason="no_python_custom_rule_targets")
+            result.setdefault("analysis_summary", {})["custom_rules_coverage"] = rules_receipt
+            if rules_receipt.get("status") == "unavailable":
+                warning = {
+                    "kind": "custom_rules_unavailable", "file": str(project_root),
+                    "message": "Cloud custom rules could not be loaded; those rules were not checked.",
+                }
+                required = ((config.get("gate") or {}).get("coverage") or {}).get("required", [])
+                if isinstance(required, list) and "custom_rules" in required:
+                    warning.update(rule_id="SKY-ANALYSIS-INCOMPLETE", severity="HIGH")
+                    result.setdefault("analysis_errors", []).append(warning)
+                    result.setdefault("analysis_summary", {})["analysis_error_count"] = len(result["analysis_errors"])
+                else:
+                    result.setdefault("analysis_warnings", []).append(warning)
+                if not machine_output:
+                    console.print("[warn]Cloud custom rules unavailable; those rules were not checked.[/warn]")
+
         grep_report = (result.get("analysis_summary") or {}).get("grep_verify") or {}
         if (
             not machine_output
@@ -510,6 +586,17 @@ def _run_scan_command(
                 )
             except ValueError as exc:
                 cli_module._exit_diff_unavailable(args, str(exc))
+
+            if getattr(args, "diff_mode", "lines") == "impact":
+                from skylos.core.pr_impact import annotate_dead_code_impact
+
+                annotate_dead_code_impact(
+                    result, scan_path, project_root=project_root, base_ref=base_ref,
+                    config=config, confidence=args.confidence,
+                    config_file=config_file,
+                    exclude_folders=final_exclude_folders,
+                    grep_verify=not args.no_grep_verify,
+                )
 
         if args.pytest_fixtures:
             report_path = project_root / ".skylos_unused_fixtures.json"
@@ -604,7 +691,7 @@ def _run_scan_command(
                 kept_errors, outside_warnings = _split_outside_diff_analysis_errors(
                     all_errors, _diff_scope(changed_ranges) | _diff_scope(anchored)
                 )
-            if outside_warnings:
+            if outside_warnings and getattr(args, "diff_mode", "lines") != "impact":
                 result["analysis_errors"] = kept_errors
                 result["analysis_warnings"] = (
                     list(result.get("analysis_warnings") or []) + outside_warnings
@@ -623,6 +710,7 @@ def _run_scan_command(
                         item
                         for item in items
                         if id(item) in diff_finding_ids
+                        or item.get("report_scope") == "dependency_impact"
                         # These findings describe removed controls; their
                         # deletion anchor need not be an added source line.
                         or (
@@ -651,6 +739,13 @@ def _run_scan_command(
                 console.print(
                     f"[brand]--diff:[/brand] filtered to {len(changed_ranges)} "
                     f"changed line ranges from {base_ref}"
+                )
+            if getattr(args, "diff_mode", "lines") == "impact" and not machine_output:
+                impact = (result.get("analysis_summary") or {}).get("pr_impact", {})
+                console.print(
+                    f"[muted]PR impact: {impact.get('status', 'incomplete')}; "
+                    f"{impact.get('introduced_count', 0)} newly unused findings, "
+                    "including definitions outside changed lines.[/muted]"
                 )
 
         code_health_base = getattr(args, "diff_base", None) or (
@@ -916,26 +1011,46 @@ def _run_scan_command(
             display_payload = json_output_result
             if getattr(args, "json_ci", False):
                 display_payload = _build_ci_json_payload(json_output_result)
-            output_result_json = json.dumps(display_payload)
 
-        def upload_formatted_result() -> None:
+        def upload_formatted_result(*, defer_exit=False):
             if not args.upload:
-                return
+                return None, 0
+            if _strict_scan_exit_code(result, args) == 2:
+                receipt = {"status": "skipped", "reason": "analysis_incomplete"}
+                if not defer_exit:
+                    raise SystemExit(2)
+                return receipt, 2
             _attach_upload_project_context(result, project_root)
             if done_receipt is not None:
                 result["done_receipt"] = done_receipt
-            upload_resp = upload_report(
-                result,
-                is_forced=args.force,
-                strict=args.strict,
-                quiet=True,
-                analyzer_owned=True,
-                gitlab_full_scan=gitlab_full_scan,
-            )
-            if not upload_resp.get("success"):
-                _check_managed_gitlab_delivery(upload_resp)
-                raise SystemExit(1)
-            _check_managed_gitlab_delivery(upload_resp)
+            try:
+                upload_resp = upload_report(
+                    result,
+                    is_forced=args.force,
+                    # Enforce after rendering so a rejected Cloud gate still
+                    # has one complete JSON report and its upload receipt.
+                    strict=False,
+                    quiet=True,
+                    analyzer_owned=True,
+                    gitlab_full_scan=gitlab_full_scan,
+                )
+            except Exception:
+                upload_resp = {
+                    "success": False,
+                    "code": "UPLOAD_UNAVAILABLE",
+                    "error": "Cloud upload failed before a receipt was returned",
+                }
+            if not isinstance(upload_resp, dict):
+                upload_resp = {
+                    "success": False,
+                    "code": "UPLOAD_RESPONSE_INVALID",
+                    "error": "Cloud upload returned no usable receipt",
+                }
+            receipt = _public_upload_receipt(upload_resp)
+            delivery_exit = upload_resp.get("gitlab_delivery_exit_code", 0)
+            if "gitlab_delivery_exit_code" in upload_resp:
+                print(upload_resp.get("gitlab_delivery_message", ""), file=sys.stderr)
+            exit_code = 2 if delivery_exit == 2 else 0 if upload_resp.get("success") else 1
             cloud_gate_passed = upload_resp.get("quality_gate_passed")
             if cloud_gate_passed is None:
                 cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
@@ -949,7 +1064,10 @@ def _run_scan_command(
                 # The upload ran quietly, so nothing else explains this exit.
                 sys.stdout.flush()
                 print(CLOUD_GATE_FAILED_TEXT, file=sys.stderr)
-                raise SystemExit(1)
+                exit_code = max(exit_code, 1)
+            if exit_code and not defer_exit:
+                raise SystemExit(exit_code)
+            return receipt, exit_code
 
         if args.sarif:
             all_findings = []
@@ -1086,6 +1204,15 @@ def _run_scan_command(
             grade_data = output_result.get("grade")
             if grade_data:
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
+            summary = output_result.get("analysis_summary")
+            if isinstance(summary, dict):
+                coverage = {
+                    key: summary[key]
+                    for key in ("sca_coverage", "custom_rules_coverage")
+                    if isinstance(summary.get(key), dict)
+                }
+                if coverage:
+                    sarif_data["runs"][0].setdefault("properties", {})["summary"] = coverage
             if output_result.get("assessment"):
                 sarif_data["runs"][0].setdefault("properties", {})["assessment"] = (
                     output_result["assessment"]
@@ -1147,18 +1274,22 @@ def _run_scan_command(
             return
 
         if args.json:
+            incomplete_exit_code = _strict_scan_exit_code(result, args)
+            upload_receipt, upload_exit_code = upload_formatted_result(defer_exit=True)
+            if upload_receipt is not None:
+                display_payload["upload"] = upload_receipt
+            output_result_json = json.dumps(display_payload)
             if args.output:
                 _write_scan_output(args.output, output_result_json)
             else:
                 print(output_result_json)
 
-            incomplete_exit_code = _strict_scan_exit_code(result, args)
             if incomplete_exit_code == 2:
                 # Incomplete scans never upload; still state the verdict.
                 _finish_formatted_scan(result, config, args, provenance=prov_report)
                 raise SystemExit(incomplete_exit_code)
-
-            upload_formatted_result()
+            if upload_exit_code:
+                raise SystemExit(upload_exit_code)
 
             exit_code = _finish_formatted_scan(
                 result, config, args, provenance=prov_report
@@ -1168,6 +1299,10 @@ def _run_scan_command(
             return
 
         if args.concise:
+            from skylos.core.gatekeeper import sca_coverage_warnings
+
+            for warning in sca_coverage_warnings(result):
+                print(warning, file=sys.stderr)
             display_result = output_result
             _cli_limit = getattr(args, "limit", None)
 
@@ -1242,9 +1377,15 @@ def _run_scan_command(
             )
         sys.exit(1)
 
+    from skylos.core.gatekeeper import sca_coverage_warnings
+
+    if not args.gate:
+        for warning in sca_coverage_warnings(result):
+            console.print(f"[warn]{escape(warning)}[/warn]", soft_wrap=True)
+
     if args.gate:
         incomplete_exit_code = _strict_scan_exit_code(result, args)
-        if incomplete_exit_code:
+        if incomplete_exit_code == 2:
             if explicit_rich_upload:
                 console.print(
                     "[bad]Scan incomplete; Cloud upload was not started.[/bad]"
@@ -1280,7 +1421,7 @@ def _run_scan_command(
             upload_resp = upload_report(
                 result,
                 is_forced=args.force,
-                strict=args.strict,
+                strict=False,
                 analyzer_owned=True,
                 gitlab_full_scan=gitlab_full_scan,
             )
@@ -1530,7 +1671,7 @@ def _run_scan_command(
             console.print(f"[dim]{escape(tip)}[/dim]", soft_wrap=True)
 
     strict_exit_code = _strict_scan_exit_code(result, args)
-    if strict_exit_code:
+    if strict_exit_code and (strict_exit_code == 2 or not args.upload):
         if explicit_rich_upload:
             from skylos.core.gatekeeper import _analysis_incomplete_reasons
 
@@ -1682,7 +1823,7 @@ def _run_scan_command(
         upload_resp = upload_report(
             result,
             is_forced=args.force,
-            strict=args.strict,
+            strict=False,
             analyzer_owned=True,
             gitlab_full_scan=gitlab_full_scan,
         )
@@ -1707,6 +1848,19 @@ def _run_scan_command(
 
             if passed is False and (args.strict or args.gate) and not args.force:
                 raise SystemExit(1)
+
+    if strict_exit_code:
+        if args.upload:
+            console.print("[bad]Scan did not pass --strict.[/bad]")
+            render_results(
+                console,
+                result,
+                tree=args.tree,
+                root_path=project_root,
+                limit=getattr(args, "limit", None),
+                copy_badge=not getattr(args, "no_clipboard", False),
+            )
+        raise SystemExit(strict_exit_code)
 
     if args.command and not args.gate:
         cmd_list = args.command

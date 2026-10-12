@@ -957,6 +957,22 @@ def _prepare_report_upload(
     )
     strip_secret_snippets(compatibility_payload)
     scan_summary = _build_report_scan_summary(all_findings, core_payload, definitions)
+    analysis_summary = result_json.get("analysis_summary")
+    if isinstance(analysis_summary, dict):
+        # Preserve completion and scope alongside the findings in every
+        # supported upload transport, including native SARIF ingestion.
+        coverage = {
+            key: json.loads(json.dumps(analysis_summary[key]))
+            for key in ("sca_coverage", "custom_rules_coverage")
+            if isinstance(analysis_summary.get(key), dict)
+        }
+        if coverage:
+            scan_summary.update(coverage)
+            core_payload["runs"][0].setdefault("properties", {}).setdefault(
+                "summary", {}
+            ).update(coverage)
+            legacy_payload["summary"] = dict(scan_summary)
+            compatibility_payload["summary"] = dict(scan_summary)
 
     return PreparedReportUpload(
         legacy_payload=legacy_payload,
@@ -1573,6 +1589,19 @@ def _report_upload_success_result(
         "plan": plan,
         "credits_warning": data.get("credits_warning", False),
     }
+    quality_gate = data.get("quality_gate")
+    result["quality_gate_reported"] = (
+        isinstance(quality_gate, dict)
+        and isinstance(quality_gate.get("passed"), bool)
+    )
+    if isinstance(quality_gate, dict):
+        result["quality_gate"] = {
+            key: quality_gate[key]
+            for key in ("passed", "reasons", "message", "new_violations", "coverage_failures")
+            if key in quality_gate
+        }
+    if scan_id:
+        result["url"] = f"{BASE_URL.rstrip('/')}/dashboard/scans/{scan_id}"
     # Older servers do not report it; only verified uploads publish checks.
     if isinstance(data.get("upload_trust"), str):
         result["upload_trust"] = data["upload_trust"]

@@ -70,6 +70,8 @@ DISABLE_ENV = "SKYLOS_HOOKS_DISABLE"
 
 MAX_STDIN_BYTES = 8_000_000
 MAX_SCAN_BYTES = 2_000_000
+# Total file text one shell command may make pre-bash read.
+MAX_SHELL_READ_BYTES = 8_000_000
 MAX_LOG_BYTES = 512_000
 MAX_ITEMS = 10
 MAX_NOTES = 5
@@ -1022,12 +1024,29 @@ def _secret_scannable(path: Path) -> bool:
     return name.endswith(ALLOWED_FILE_SUFFIXES) or name.startswith(".env")
 
 
+def _scan_relpath(path: Path, root: Path) -> str:
+    """The path the secrets scanner sees. Env files it would skip by name
+    (``.envrc``, ``.env-local``, ``.env_prod``) are named ``.env.*``."""
+    relpath = _rel(path, root)
+    name = path.name
+    if name.startswith(".env") and not (
+        name.endswith(".env") or name.startswith(".env.")
+    ):
+        rest = name[len(".env") :].lstrip(".-_") or "local"
+        relpath = relpath[: len(relpath) - len(name)] + ".env." + rest
+    return relpath
+
+
 def _secret_findings(
     path: Path, root: Path, text: str, *, ignore_tests: bool = True
 ) -> list[dict[str, Any]]:
     from skylos.rules.secrets import scan_ctx
 
-    ctx = {"relpath": _rel(path, root), "lines": text.splitlines(True), "tree": None}
+    ctx = {
+        "relpath": _scan_relpath(path, root),
+        "lines": text.splitlines(True),
+        "tree": None,
+    }
     findings = []
     for raw in scan_ctx(ctx, ignore_tests=ignore_tests):
         provider = str(raw.get("provider") or "secret").replace("_", " ")
@@ -1141,6 +1160,11 @@ def _handle_pre_bash(payload, root, client, deps, record):
         record["outcome"] = "skip"
         return _allow_output("pre-bash", client)
 
+    reason = _shell_secret_reason(command, _cwd(payload, root), root, deps, record)
+    if reason is not None:
+        record["outcome"] = "block"
+        return _deny_output(client, reason)
+
     if not _INSTALL_HINT_RE.search(command):
         # Fast path: unrelated commands never import the registry checker.
         record["outcome"] = "skip"
@@ -1179,6 +1203,206 @@ def _handle_pre_bash(payload, root, client, deps, record):
         "correct, add it to [tool.skylos] hooks_allow_packages in pyproject.toml."
     )
     return _deny_output(client, reason)
+
+
+_ENV_LINE_RE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)")
+# Variable names that may hold a credential; a generic (entropy-only)
+# finding in any other variable is tool state, such as direnv's.
+_SECRET_NAME_RE = re.compile(
+    r"KEY|TOKEN|SECRET|PASS|PWD|AUTH|CRED|PRIVATE|SESSION|COOKIE|SIGNATURE|DSN",
+    re.IGNORECASE,
+)
+_NAME_LIKE_RE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+
+
+def _shell_secret_reason(
+    command: str, cwd: Path, root: Path, deps: HookDeps, record: dict[str, Any]
+) -> str | None:
+    """Why ``command`` must not run: it would print a secret from a file or
+    the environment into the agent's context. None when it would not.
+
+    Only the lines a command prints are scanned, so ``grep x big.lock``
+    costs what it prints. A command scans at most MAX_SCAN_BYTES in total,
+    .env files first.
+    """
+    from skylos.commands.hook_shell_reads import shell_reads
+
+    reads = shell_reads(command, cwd)
+    if not reads.files and not reads.env:
+        return None
+    # label -> (line, rule) -> finding; a file read twice counts once.
+    sources: dict[str, dict[tuple[Any, Any], dict[str, Any]]] = {}
+    walked = False
+    scan_budget, read_budget = MAX_SCAN_BYTES, MAX_SHELL_READ_BYTES
+    # A file read several times is loaded once, and scanned once per set
+    # of printed lines.
+    texts: dict[Path, list[str] | None] = {}
+    scans: dict[tuple[Path, frozenset[int]], list[dict[str, Any]]] = {}
+    for read in sorted(reads.files, key=lambda r: not r.path.name.startswith(".env")):
+        if sources and not read.path.name.startswith(".env"):
+            break  # already blocked; the .env files came first
+        if read.path not in texts:
+            if read_budget <= 0:
+                record["scan_budget_spent"] = True
+                break
+            text = _read_scannable(read.path)
+            read_budget -= len(text or "")
+            texts[read.path] = None if text is None else text.splitlines()
+        lines = texts[read.path]
+        if lines is None:
+            continue
+        printed = _printed_by_line(read.output(lines))
+        if not printed or not _secret_scannable(read.path):
+            continue
+        key = (read.path, frozenset(printed))
+        if key not in scans:
+            if scan_budget <= 0:
+                record["scan_budget_spent"] = True
+                break
+            scans[key] = _printed_line_findings(read.path, root, lines, printed)
+            scan_budget -= sum(len(lines[n - 1]) for n in printed if n <= len(lines))
+        label = _rel(read.path.resolve(), root.resolve())
+        for finding in scans[key]:
+            number = finding["line"]
+            original = lines[number - 1] if 0 < number <= len(lines) else ""
+            if any(
+                _prints_secret(original, original, out, read.path, root)
+                for out in printed.get(number, ())
+            ):
+                sources.setdefault(label, {})[(number, finding["rule_id"])] = finding
+                walked = walked or read.walked
+    for read in reads.env:
+        _env_secret_sources(read, root, deps, sources)
+    if not sources:
+        return None
+
+    total = sum(len(found) for found in sources.values())
+    record["findings"] = total
+    record["secret_sources"] = len(sources)
+    where = []
+    for label, found in list(sources.items())[:MAX_ITEMS]:
+        if label.startswith("$"):
+            where.append(f"environment variable {label[1:]}")
+        else:
+            lines_hit = sorted({line for line, _rule in found})
+            shown = ", ".join(str(n) for n in lines_hit[:MAX_ITEMS])
+            where.append(f"{label} line(s) {shown}")
+    kinds = sorted(
+        {
+            f["message"].replace("Hard-coded ", "")
+            for found in sources.values()
+            for f in found.values()
+        }
+    )
+    search_hint = (
+        "When searching a directory, leave env files out (grep -r "
+        "--exclude='.env*', or rg, which skips files Git ignores). "
+        if walked
+        else ""
+    )
+    return (
+        f"Skylos blocked this command: it would print {total} likely secret(s) "
+        f"({'; '.join(kinds[:4])}) from {'; '.join(where)}. Command output goes "
+        f"to the model provider. {search_hint}List variable names without values "
+        "(cut -d= -f1 .env), print only the lines you need (sed -n '10,40p', "
+        "grep, head/tail) skipping those lines, check a variable is set without "
+        'printing it (test -n "$NAME" && echo set), or ask the user.'
+    )
+
+
+def _printed_line_findings(
+    path: Path, root: Path, lines: list[str], printed: dict[int, list[str]]
+) -> list[dict[str, Any]]:
+    """Secret findings on the printed lines only, numbered as in the file."""
+    numbers = sorted(n for n in printed if 0 < n <= len(lines))
+    text = "\n".join(lines[n - 1] for n in numbers) + "\n"
+    findings = []
+    for finding in _secret_findings(path, root, text, ignore_tests=False):
+        index = finding["line"] - 1
+        if 0 <= index < len(numbers):
+            findings.append({**finding, "line": numbers[index]})
+    return findings
+
+
+def _printed_by_line(printed) -> dict[int, list[str]]:
+    by_line: dict[int, list[str]] = {}
+    for number, text in printed:
+        by_line.setdefault(number, []).append(text)
+    return by_line
+
+
+def _prints_secret(
+    original: str, scanned: str, printed: str, path: Path, root: Path
+) -> bool:
+    """Whether ``printed`` (what a filter made of ``original``) still holds
+    the secret found in ``scanned``: unchanged, scanned again, or carrying
+    a value-like fragment of it."""
+    if printed == original or original in printed:
+        return True
+    if _secret_findings(path, root, printed + "\n", ignore_tests=False):
+        return True
+    return any(fragment in printed for fragment in _value_fragments(scanned))
+
+
+def _value_fragments(line: str) -> list[str]:
+    """Parts of a line long and varied enough to be (part of) a secret
+    value, not a variable name: "sk_live_51Hq..." but not "STRIPE_KEY"."""
+    fragments = []
+    for token in re.split(r"[\s=:'\"`,;()\[\]{}<>]+", line):
+        if len(token) < 10 or _NAME_LIKE_RE.fullmatch(token):
+            continue
+        mixed = any(c.islower() for c in token) and any(c.isupper() for c in token)
+        if mixed or any(c.isdigit() for c in token):
+            fragments.append(token)
+    return fragments
+
+
+def _env_secret_sources(read, root: Path, deps: HookDeps, sources) -> None:
+    variables = _visible_env(read, deps.env)
+    names = sorted(variables)
+    values = [variables[name].replace("\n", "\\n") for name in names]
+    listing = [f"{name}={value}" for name, value in zip(names, values)]
+    display = {
+        "plain": listing,
+        "declare": [f'declare -x {n}="{v}"' for n, v in zip(names, values)],
+    }.get(read.style, values)
+    printed = _printed_by_line(read.output(display))
+    if not printed:
+        return
+    scan = "\n".join(
+        line if number in printed else "" for number, line in enumerate(listing, 1)
+    )
+    env_path = root / ".env"
+    for finding in _secret_findings(env_path, root, scan + "\n", ignore_tests=False):
+        number = finding["line"]
+        if not 0 < number <= len(names):
+            continue
+        name = names[number - 1]
+        if "generic" in finding["message"] and not _SECRET_NAME_RE.search(name):
+            continue
+        if any(
+            _prints_secret(
+                display[number - 1], listing[number - 1], out, env_path, root
+            )
+            for out in printed.get(number, ())
+        ):
+            sources.setdefault(f"${name}", {})[(number, finding["rule_id"])] = finding
+
+
+def _visible_env(read, env: dict[str, str]) -> dict[str, str]:
+    """The variables an environment read prints, by name: the hook's own
+    environment (which the agent's shell inherits) plus files sourced
+    earlier in the same command."""
+    variables = {name: value for name, value in env.items() if isinstance(value, str)}
+    for path in read.sourced:
+        text = _read_scannable(path)
+        for line in (text or "").splitlines():
+            match = _ENV_LINE_RE.fullmatch(line)
+            if match:
+                variables[match.group(1)] = match.group(2).strip().strip("'\"")
+    if read.names is not None:
+        variables = {k: v for k, v in variables.items() if k in read.names}
+    return variables
 
 
 # --------------------------------------------------------------------------

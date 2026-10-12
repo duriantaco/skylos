@@ -14,8 +14,9 @@ from skylos.benchmarks.ai_code_defects import (
     run_manifest,
     validate_manifest,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
+from skylos.rules.config import scan_config_files
 from skylos.verify_change import verify_change_path
-
 
 MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent
@@ -156,13 +157,19 @@ def test_checked_in_local_api_benchmarks_assert_verification_contract(
     expected_outcome,
 ):
     monkeypatch.setenv("SKYLOS_JOBS", "1")
-    payload = verify_change_path(
-        MANIFEST_PATH.parent / "fixtures" / fixture,
-        project_context=True,
-        include_dependency_hallucinations=False,
-        # This benchmark checks static Go/Java API coverage, not Python behavior.
-        behavior_comparison=False,
+    project, temporary = benchmark._prepared_case_path(
+        MANIFEST_PATH.parent / "fixtures" / fixture, {}
     )
+    try:
+        payload = verify_change_path(
+            project,
+            project_context=True,
+            include_dependency_hallucinations=False,
+            # This benchmark checks static Go/Java API coverage, not Python behavior.
+            behavior_comparison=False,
+        )
+    finally:
+        temporary.cleanup()
 
     assert payload["status"] == expected_status
     assert payload["coverage"]["state"] == "complete"
@@ -171,6 +178,241 @@ def test_checked_in_local_api_benchmarks_assert_verification_contract(
     )
     assert check["outcome"] == expected_outcome
     assert check["finding_count"] == (1 if expected_outcome == "fail" else 0)
+
+
+def test_actual_local_api_benchmark_runner_uses_independent_projects(monkeypatch):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    expected = {
+        "go-local-api-hallucination": ("fail", 1),
+        "clean-go-local-api-surface": ("pass", 0),
+        "java-local-api-hallucination": ("fail", 1),
+        "clean-java-local-api-surface": ("pass", 0),
+    }
+    summary = run_manifest(MANIFEST_PATH, selected_cases=set(expected))
+    assert summary["case_count"] == summary["pass_count"] == 4
+    assert summary["failure_count"] == 0
+    for case in summary["cases"]:
+        assert (case["status"], case["finding_count"]) == expected[case["id"]]
+        assert case["coverage_state"] == "complete"
+        assert case["failures"] == []
+
+
+@pytest.mark.parametrize(
+    ("fixture", "check_id"),
+    [
+        ("clean_go_local_api_surface", "go_workspace_api_surface"),
+        ("clean_java_local_api_surface", "java_workspace_api_surface"),
+    ],
+)
+def test_isolated_api_benchmark_still_reports_its_own_workflow_security(
+    monkeypatch, fixture, check_id
+):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    project, temporary = benchmark._prepared_case_path(
+        MANIFEST_PATH.parent / "fixtures" / fixture, {}
+    )
+    try:
+        workflow = project / ".github" / "workflows" / "ci.yml"
+        workflow.parent.mkdir(parents=True)
+        assert write_text_no_symlink(
+            workflow,
+            "name: CI\non: push\npermissions: {}\njobs:\n"
+            "  check:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - uses: actions/checkout@v4\n",
+        )
+        payload = verify_change_path(
+            project, project_context=True, include_dependency_hallucinations=False,
+            behavior_comparison=False,
+        )
+    finally:
+        temporary.cleanup()
+    assert payload["status"] == "fail"
+    assert payload["coverage"]["state"] == "complete"
+    assert any(
+        finding["rule_id"] == "SKY-D292"
+        and finding["range"]["file"] == ".github/workflows/ci.yml"
+        for finding in payload["findings"]
+    )
+    check = next(item for item in payload["coverage"]["checks"] if item["id"] == check_id)
+    assert check["outcome"] == "pass"
+    assert check["finding_count"] == 0
+
+
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_benchmark_preparation_always_isolates_unconfigured_cases(tmp_path, directory):
+    original = tmp_path / "case"
+    if directory:
+        original.mkdir()
+        source = original / "app.py"
+    else:
+        source = original
+    assert write_text_no_symlink(source, "answer = 42\n")
+    prepared, temporary = benchmark._prepared_case_path(original, {})
+    try:
+        assert prepared != original
+        assert prepared.name == original.name
+        assert prepared.parent.name.startswith("skylos-ai-defect-")
+        copied = prepared / "app.py" if directory else prepared
+        assert copied.read_bytes() == source.read_bytes()
+        assert write_text_no_symlink(copied, "answer = 99\n")
+        assert source.read_text() == "answer = 42\n"
+    finally:
+        temporary.cleanup()
+    assert not prepared.exists()
+
+
+def _benchmark_fixture_file(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert write_text_no_symlink(path, text)
+    return path
+
+
+def test_benchmark_rejects_git_nested_tmpdir_and_cleans_copy(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    benchmark._run_git(host, "init", "-q")
+    scratch = host / "temporary"
+    scratch.mkdir()
+    original = tmp_path / "case"
+    _benchmark_fixture_file(original / "app.py", "answer = 42\n")
+    monkeypatch.setenv("TMPDIR", str(scratch))
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", None)
+    with pytest.raises(ValueError, match="Git|repository"):
+        benchmark._prepared_case_path(original, {})
+    assert list(scratch.iterdir()) == []
+    assert (original / "app.py").read_text() == "answer = 42\n"
+
+
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_benchmark_rejects_symlink_case_root_and_cleans_copy(
+    tmp_path, monkeypatch, directory
+):
+    real = tmp_path / "cases" / "real"
+    source = real / "app.py" if directory else real
+    _benchmark_fixture_file(source, "answer = 42\n")
+    original = real.parent / "case"
+    original.symlink_to(real, target_is_directory=directory)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", str(scratch))
+    with pytest.raises(ValueError, match="symlink"):
+        benchmark._run_case(
+            original.parent, {"path": original.name},
+            lambda *_args, **_kwargs: pytest.fail("Linked case must not be scanned"),
+        )
+    assert original.is_symlink()
+    assert source.read_text() == "answer = 42\n"
+    assert list(scratch.iterdir()) == []
+
+
+def test_benchmark_preserves_external_workflow_link_for_static_reader_refusal(tmp_path):
+    outside = tmp_path / "outside"
+    external = _benchmark_fixture_file(
+        outside / ".github" / "workflows" / "ci.yml",
+        "name: CI\non: push\npermissions: {}\njobs:\n"
+        "  check:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v4\n",
+    )
+    assert any(item["rule_id"] == "SKY-D292" for item in scan_config_files(outside))
+    original = tmp_path / "case"
+    link = original / ".github" / "workflows" / "ci.yml"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(external)
+    project, temporary = benchmark._prepared_case_path(original, {})
+    try:
+        copied = project / ".github" / "workflows" / "ci.yml"
+        assert copied.is_symlink()
+        assert copied.readlink() == external
+        errors = []
+        assert scan_config_files(project, analysis_errors=errors) == []
+        assert len(errors) == 1
+        assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert errors[0]["kind"] == "config_read_error"
+        assert errors[0]["file"] == str(copied)
+    finally:
+        temporary.cleanup()
+
+
+@pytest.mark.parametrize("component", ["parent", "leaf"])
+@pytest.mark.parametrize("seed", ["baseline", "dependency-cache"])
+def test_benchmark_seeded_paths_reject_symlinks_without_external_writes(
+    tmp_path, monkeypatch, seed, component
+):
+    original = tmp_path / "case"
+    original.mkdir()
+    outside = tmp_path / "outside"
+    if seed == "baseline":
+        sentinel = _benchmark_fixture_file(outside / "app.py", "outside = 'unchanged'\n")
+        if component == "parent":
+            (original / "linked").symlink_to(outside, target_is_directory=True)
+            path = "linked/app.py"
+        else:
+            (original / "app.py").symlink_to(sentinel)
+            path = "app.py"
+        scan = {"git_baseline": {path: "outside = 'modified'\n"}}
+    else:
+        sentinel = _benchmark_fixture_file(outside / "cache" / "dependency_versions.json", '{"marker":"unchanged"}\n')
+        if component == "parent":
+            (original / ".skylos").symlink_to(outside, target_is_directory=True)
+        else:
+            link = original / ".skylos" / "cache" / "dependency_versions.json"
+            link.parent.mkdir(parents=True)
+            link.symlink_to(sentinel)
+        scan = {"dependency_statuses": [{
+            "ecosystem": "npm", "name": "left-pad", "version": "1.3.0", "status": "exists",
+        }]}
+    contents = sentinel.read_bytes()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", str(scratch))
+    with pytest.raises(ValueError, match="symlink"):
+        benchmark._prepared_case_path(original, scan)
+    assert sentinel.read_bytes() == contents
+    assert list(scratch.iterdir()) == []
+
+
+def test_benchmark_synthetic_baseline_rejects_existing_git_metadata(tmp_path, monkeypatch):
+    original = tmp_path / "case"
+    _benchmark_fixture_file(original / "app.py", "answer = 42\n")
+    (original / ".git").mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", str(scratch))
+    with pytest.raises(ValueError, match="Git|\\.git"):
+        benchmark._prepared_case_path(original, {"git_baseline": {"app.py": "answer = 0\n"}})
+    assert (original / "app.py").read_text() == "answer = 42\n"
+    assert list(scratch.iterdir()) == []
+
+
+@pytest.mark.parametrize("selector", ["absolute", "parent-relative"])
+def test_benchmark_baseline_rejects_paths_outside_fixture(tmp_path, monkeypatch, selector):
+    original = tmp_path / "case"
+    _benchmark_fixture_file(original / "app.py", "answer = 42\n")
+    sentinel = _benchmark_fixture_file(tmp_path / "sentinel.py", "outside = 'unchanged'\n")
+    selected = str(sentinel) if selector == "absolute" else "../sentinel.py"
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", str(scratch))
+    with pytest.raises(ValueError, match="stay inside"):
+        benchmark._prepared_case_path(original, {"git_baseline": {selected: "outside = 'modified'\n"}})
+    assert sentinel.read_text() == "outside = 'unchanged'\n"
+    assert list(scratch.iterdir()) == []
+
+
+@pytest.mark.parametrize("path", [".git/hooks/pre-commit", ".git/config", ".GIT/config"])
+def test_benchmark_baseline_cannot_seed_git_metadata_before_git_runs(tmp_path, monkeypatch, path):
+    original = tmp_path / "case"
+    _benchmark_fixture_file(original / "app.py", "answer = 42\n")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(benchmark.tempfile, "tempdir", str(scratch))
+    calls = []
+    monkeypatch.setattr(benchmark, "_run_git", lambda *args: calls.append(args))
+    with pytest.raises(ValueError, match="Git|\\.git"):
+        benchmark._prepared_case_path(original, {"git_baseline": {path: "# inert fixture\n"}})
+    assert calls == []
+    assert not (original / ".git").exists()
+    assert list(scratch.iterdir()) == []
 
 
 def _finding(
