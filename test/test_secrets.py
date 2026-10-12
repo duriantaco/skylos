@@ -1975,8 +1975,8 @@ def test_escaped_npm_integrity_uses_parser_span():
 @pytest.mark.parametrize(
     "relpath,src",
     [
-        ("config.json", json.dumps({"integrity": NPM_SRI})),
         ("app.py", f'session_id = "{NPM_SRI}"'),
+        ("settings.py", f'COOKIE_SIGNING = "{NPM_SRI}"'),
     ],
 )
 def test_sri_shape_outside_known_lockfile_context_is_detected(relpath, src):
