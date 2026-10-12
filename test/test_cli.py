@@ -558,6 +558,9 @@ class TestMainFunction:
             patch("skylos.cli.setup_logger") as mock_setup_logger,
             patch("skylos.cli.Progress") as mock_progress,
             patch("skylos.cli.upload_report") as mock_upload,
+            # The closing badge reads the console from the real "skylos"
+            # logger, which the mocked setup_logger never configures.
+            patch("skylos.cli.print_badge"),
         ):
             mock_logger = Mock()
             mock_logger.console = Mock()
