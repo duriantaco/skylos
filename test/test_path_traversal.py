@@ -732,3 +732,143 @@ def upload(data):
     for finding in out:
         if finding["rule_id"] == "SKY-D215":
             assert "request data" in finding["metadata"]["security_evidence"]["source"]
+
+
+def test_basename_imported_by_name_sanitizes_upload_path(tmp_path):
+    # mozilla/pontoon sync/upload.py: ``from os.path import basename`` was not
+    # recognised as the ``os.path.basename`` sanitizer.
+    code = (
+        "from os.path import basename, join\n"
+        "from tempfile import TemporaryDirectory\n"
+        "@app.post('/upload')\n"
+        "def upload(name, data):\n"
+        "    with TemporaryDirectory() as root:\n"
+        "        with open(join(root, basename(name)), 'wb') as fh:\n"
+        "            fh.write(data)\n"
+    )
+    out = _scan_one(tmp_path, "upload.py", code)
+    assert not {"SKY-D215", "SKY-D324"} & _rule_ids(out)
+
+
+def test_local_function_named_basename_is_not_a_sanitizer(tmp_path):
+    code = (
+        "from os.path import join\n"
+        "from tempfile import TemporaryDirectory\n"
+        "def basename(value):\n"
+        "    return value\n"
+        "@app.post('/upload')\n"
+        "def upload(name, data):\n"
+        "    with TemporaryDirectory() as root:\n"
+        "        with open(join(root, basename(name)), 'wb') as fh:\n"
+        "            fh.write(data)\n"
+    )
+    out = _scan_one(tmp_path, "upload.py", code)
+    assert "SKY-D215" in _rule_ids(out)
+
+
+_BASENAME_ROUTE = (
+    "@app.post('/upload')\n"
+    "def upload(name, data):\n"
+    "    with open(join('/srv/files', basename(name)), 'wb') as fh:  # sink\n"
+    "        fh.write(data)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        pytest.param("from evil import *\n", id="star-import-after"),
+        pytest.param("vars()['basename'] = lambda p: p\n", id="vars-write"),
+        pytest.param("globals()['basename'] = lambda p: p\n", id="globals-write"),
+        pytest.param(
+            "import builtins\nbuiltins.globals()['basename'] = lambda p: p\n",
+            id="builtins-globals",
+        ),
+        pytest.param(
+            "g = globals()\ng['basename'] = lambda p: p\n", id="globals-alias"
+        ),
+        pytest.param(
+            "def f():\n    pass\nf.__globals__['basename'] = lambda p: p\n",
+            id="function-globals",
+        ),
+        pytest.param(
+            "import sys\nsys.modules[__name__].basename = lambda p: p\n",
+            id="module-attribute",
+        ),
+        pytest.param(
+            "import sys\nsetattr(sys.modules[__name__], 'basename', lambda p: p)\n",
+            id="setattr-module",
+        ),
+        pytest.param(
+            "import sys\nsys.modules[__name__].__dict__['basename'] = lambda p: p\n",
+            id="module-dict",
+        ),
+        pytest.param("exec('basename = lambda p: p')\n", id="exec"),
+        pytest.param(
+            "import sys\n"
+            "getattr(sys.modules[__name__], '__dict__')['basename'] = lambda p: p\n",
+            id="getattr-dict",
+        ),
+        pytest.param(
+            "import sys\nsys.modules[__name__].__setattr__('basename', str)\n",
+            id="module-dunder-setattr",
+        ),
+    ],
+)
+def test_basename_import_rewritten_through_module_namespace_flags(tmp_path, rewrite):
+    code = "from os.path import basename, join\n" + rewrite + _BASENAME_ROUTE
+    out = _scan_one(tmp_path, "upload.py", code)
+    lines = [
+        n for n, line in enumerate(code.splitlines(), 1) if line.endswith("# sink")
+    ]
+    assert [f["line"] for f in out if f["rule_id"] == "SKY-D215"] == lines
+
+
+def test_basename_import_with_namespace_reads_still_sanitizes(tmp_path):
+    code = (
+        "from os.path import basename, join\n"
+        "DEBUG = 'DEBUG' in globals() and globals().get('DEBUG')\n" + _BASENAME_ROUTE
+    )
+    out = _scan_one(tmp_path, "upload.py", code)
+    assert "SKY-D215" not in _rule_ids(out)
+
+
+_PATCHED_BASENAME_ROUTE = (
+    "from os.path import basename\n"
+    "from flask import Flask, request\n"
+    "app = Flask(__name__)\n"
+    "@app.route('/r')\n"
+    "def r():\n"
+    "    return open(os.path.join('/srv', basename(request.args['f']))).read()  # sink\n"
+)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        pytest.param(
+            "import os\nimport os\nos.path.basename = lambda p: p\n", id="os-path"
+        ),
+        pytest.param(
+            "import os\nimport posixpath\nposixpath.basename = lambda p: p\n",
+            id="posixpath",
+        ),
+        pytest.param(
+            "import os\nsetattr(os.path, 'basename', lambda p: p)\n", id="setattr"
+        ),
+    ],
+)
+def test_basename_patched_on_its_module_before_import_flags(tmp_path, patch):
+    # ``os.path.basename = ...`` runs before ``from os.path import basename``,
+    # so the imported name is the replacement, not the sanitizer.
+    code = patch + _PATCHED_BASENAME_ROUTE
+    out = _scan_one(tmp_path, "app.py", code)
+    sink = [n for n, line in enumerate(code.splitlines(), 1) if line.endswith("# sink")]
+    for rule in ("SKY-D215", "SKY-D325"):
+        assert [f["line"] for f in out if f["rule_id"] == rule] == sink
+
+
+def test_unpatched_basename_import_still_sanitizes_both_rules(tmp_path):
+    code = "import os\n" + _PATCHED_BASENAME_ROUTE
+    out = _scan_one(tmp_path, "app.py", code)
+    assert not {"SKY-D215", "SKY-D325"} & _rule_ids(out)

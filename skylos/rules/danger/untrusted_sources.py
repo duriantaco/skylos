@@ -30,6 +30,7 @@ ROUTE_DECORATOR_NAMES = frozenset(
     }
 )  # fmt: skip
 _CLI_DECORATORS = frozenset({"command", "group", "callback", "argument", "option"})
+_MOCK_MODULES = frozenset({"unittest.mock", "mock"})
 _KNOWN_CLI_DECORATOR_ROOTS = frozenset({"click", "typer"})
 _TOOL_DECORATORS = frozenset({"tool", "resource", "prompt"})
 REQUEST_ANNOTATIONS = frozenset(
@@ -67,7 +68,23 @@ def _params(func: ast.AST) -> list[ast.arg]:
     return params
 
 
-def entrypoint_decorator(func: ast.AST) -> str | None:
+def _is_mock_patch(dotted: str, import_bindings: dict[str, str | None] | None) -> bool:
+    """``@patch(...)`` from ``unittest.mock`` swaps an attribute for a test;
+    it is not the HTTP PATCH route decorator. Requires a proven import."""
+    if not import_bindings:
+        return False
+    head, separator, rest = dotted.partition(".")
+    imported = import_bindings.get(head)
+    if not imported:
+        return False
+    qualified = f"{imported}.{rest}" if separator else imported
+    module, _, name = qualified.rpartition(".")
+    return name == "patch" and module in _MOCK_MODULES
+
+
+def entrypoint_decorator(
+    func: ast.AST, import_bindings: dict[str, str | None] | None = None
+) -> str | None:
     """Return the dotted decorator that makes ``func`` an entry point."""
     cli_decorator = None
     for decorator in getattr(func, "decorator_list", []) or []:
@@ -80,6 +97,8 @@ def entrypoint_decorator(func: ast.AST) -> str | None:
             continue
         if name in ROUTE_DECORATOR_NAMES:
             dotted = _dotted(target) or name
+            if _is_mock_patch(dotted, import_bindings):
+                continue
             if _entrypoint_kind(dotted) != "CLI parameter":
                 return dotted
             cli_decorator = dotted
@@ -487,7 +506,7 @@ class _FunctionSources:
         self.traversal_origins: dict[str, list[str]] = {}
         body: list[ast.AST] = []
         if func is not None:
-            decorator = entrypoint_decorator(func)
+            decorator = entrypoint_decorator(func, self.import_bindings)
             fname = getattr(func, "name", "<lambda>")
             for param in _params(func):
                 if _annotation_is_request(param.annotation):
@@ -645,6 +664,10 @@ class UntrustedSourceIndex:
                 bindings[name] = None
         self._import_bindings_cache[key] = bindings
         return bindings
+
+    def entrypoint_decorator(self, func: ast.AST) -> str | None:
+        """``entrypoint_decorator`` with this module's import bindings."""
+        return entrypoint_decorator(func, self._import_bindings_for(func))
 
     def resolved_import(self, func: ast.AST | None, name: str) -> str | None:
         """Resolve a dotted name through an unambiguous import binding."""

@@ -2,6 +2,11 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from collections import Counter
+from functools import cached_property
+from typing import NamedTuple
+from skylos.core.test_paths import is_test_source_file
+from skylos.rules.danger.module_namespace import module_name_for, module_rebinding
 from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
 from skylos.rules.danger.untrusted_sources import UntrustedSourceIndex
 
@@ -57,6 +62,54 @@ NON_HTTP_RECEIVER_NAMES = frozenset(
         "os",
         "self",
     }
+)
+
+# In-process test clients: their requests are dispatched to the application
+# under test, never to the network.
+_TEST_CLIENT_CONSTRUCTORS = frozenset(
+    {
+        "django.test.Client",
+        "django.test.AsyncClient",
+        "django.test.RequestFactory",
+        "django.test.AsyncRequestFactory",
+        "django.test.client.Client",
+        "django.test.client.AsyncClient",
+        "django.test.client.RequestFactory",
+        "django.test.client.AsyncRequestFactory",
+        "rest_framework.test.APIClient",
+        "rest_framework.test.APIRequestFactory",
+        "starlette.testclient.TestClient",
+        "fastapi.testclient.TestClient",
+        "flask.testing.FlaskClient",
+        "litestar.testing.TestClient",
+        "litestar.testing.AsyncTestClient",
+    }
+)
+# Test cases whose ``self.client`` is a django.test client.
+_DJANGO_TEST_CASES = frozenset(
+    {
+        "django.test.TestCase",
+        "django.test.SimpleTestCase",
+        "django.test.TransactionTestCase",
+        "django.test.LiveServerTestCase",
+        "django.test.testcases.TestCase",
+        "django.test.testcases.SimpleTestCase",
+        "django.test.testcases.TransactionTestCase",
+        "django.test.testcases.LiveServerTestCase",
+        "django.contrib.staticfiles.testing.StaticLiveServerTestCase",
+        "rest_framework.test.APITestCase",
+        "rest_framework.test.APISimpleTestCase",
+        "rest_framework.test.APITransactionTestCase",
+        "rest_framework.test.APILiveServerTestCase",
+    }
+)
+_DJANGO_TEST_CASE_CLIENTS = {
+    "client": "client_class",
+    "async_client": "async_client_class",
+}
+# pytest-django fixtures that are django.test clients or request factories.
+_PYTEST_DJANGO_CLIENT_FIXTURES = frozenset(
+    {"client", "admin_client", "async_client", "async_admin_client", "rf", "async_rf"}
 )
 
 
@@ -240,6 +293,246 @@ def _has_constant_host(node):
     if _CONSTANT_HOST_PREFIX_RE.match(prefix):
         return True
     return complete and bool(_CONSTANT_URL_RE.match(prefix))
+
+
+# A literal that fixes the host by itself: ``scheme://host``, optionally with
+# userinfo, a port or a path. ``https:``, ``https://`` and ``https://user@``
+# leave the authority to whatever text follows them.
+_LITERAL_HOST_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/?#{}%\s@]*@)?[^/?#{}%\s@]+(?:[/?#]|$)"
+)
+# Resolved through the module's imports: a local ``getenv`` or ``environ``
+# is not the operator's environment.
+_ENV_LOOKUP_CALLS = frozenset({"os.getenv", "os.environ.get"})
+_OPERATOR_MAPPINGS = frozenset({"os.environ", "sys.argv"})
+_MAX_SETTING_DEPTH = 8
+# Decorators that return the decorated function's own result.
+_RESULT_PRESERVING_DECORATORS = frozenset({"functools.cache", "functools.lru_cache"})
+_NAMED_BINDERS = tuple(
+    getattr(ast, name)
+    for name in (
+        "ExceptHandler",
+        "MatchAs",
+        "MatchStar",
+        "TypeVar",
+        "ParamSpec",
+        "TypeVarTuple",
+    )
+    if hasattr(ast, name)
+)
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _bound_names(node: ast.AST, scope: ast.AST | None = None):
+    """Names that ``node`` binds in the scope it appears in (``scope`` itself
+    binds its name in the enclosing scope, not its own)."""
+    if isinstance(node, ast.Name):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            yield node.id
+    elif isinstance(node, ast.arg):
+        yield node.arg
+    elif isinstance(node, ast.alias):
+        yield node.asname or node.name.split(".", 1)[0]
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if node is not scope:
+            yield node.name
+    elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        yield from node.names
+    elif isinstance(node, _NAMED_BINDERS):
+        if node.name:
+            yield node.name
+    elif isinstance(node, ast.MatchMapping):
+        if node.rest:
+            yield node.rest
+
+
+def _concat_parts(node: ast.AST) -> list[ast.AST] | None:
+    """Operands of an f-string or a left-nested ``+`` chain, in order."""
+    if isinstance(node, ast.JoinedStr):
+        return list(node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        parts = []
+        current = node
+        while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Add):
+            parts.insert(0, current.right)
+            current = current.left
+        parts.insert(0, current)
+        return parts
+    return None
+
+
+def _formatted_operand(node: ast.AST) -> ast.AST | None:
+    """``{x}`` in an f-string is ``x``; a conversion or format spec is not."""
+    if isinstance(node, ast.FormattedValue):
+        if node.conversion != -1 or node.format_spec is not None:
+            return None
+        return node.value
+    return node
+
+
+def _operator_lookup(node: ast.AST, resolve) -> tuple[bool, ast.AST | None]:
+    """``os.environ[...]``, ``os.getenv(...)`` or ``sys.argv[...]`` with a key
+    the developer chose, and the fallback used when the variable is unset.
+    ``resolve`` maps a dotted name to what the module's imports bind it to."""
+    if isinstance(node, ast.Subscript):
+        name = _qualified_name_from_expr(node.value)
+        return (
+            bool(name)
+            and resolve(name) in _OPERATOR_MAPPINGS
+            and _is_operator_value(node.slice, resolve)
+        ), None
+    name = _qualified_name_from_call(node) if isinstance(node, ast.Call) else None
+    if (
+        name
+        and resolve(name) in _ENV_LOOKUP_CALLS
+        and node.args
+        and _is_operator_value(node.args[0], resolve)
+    ):
+        if len(node.args) > 1:
+            return True, node.args[1]
+        for keyword in node.keywords:
+            if keyword.arg == "default":
+                return True, keyword.value
+        return True, None
+    return False, None
+
+
+def _is_str_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and _qualified_name_from_call(node) == "str"
+        and len(node.args) == 1
+        and not node.keywords
+    )
+
+
+def _is_operator_value(node: ast.AST | None, resolve) -> bool:
+    """Text chosen by the developer or the operator: literals, environment
+    variables and CLI arguments, with no name whose value could change."""
+    if node is None:
+        return False
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.FormattedValue):
+        return _is_operator_value(node.value, resolve) and (
+            node.format_spec is None or _is_operator_value(node.format_spec, resolve)
+        )
+    is_lookup, fallback = _operator_lookup(node, resolve)
+    if is_lookup:
+        return fallback is None or _is_operator_value(fallback, resolve)
+    if _is_str_call(node):
+        return _is_operator_value(node.args[0], resolve)
+    parts = _concat_parts(node)
+    return parts is not None and all(
+        _is_operator_value(part, resolve) for part in parts
+    )
+
+
+# Modules whose names hold request data or request-scoped proxies (Flask's
+# ``request``/``session``/``g``, ``werkzeug.local.LocalProxy``, context
+# variables): an imported name from one of them is never a deployment setting.
+_REQUEST_SCOPED_MODULES = (
+    "flask",
+    "werkzeug",
+    "quart",
+    "starlette",
+    "fastapi",
+    "django.http",
+    "django.contrib.sessions",
+    "django.core.handlers",
+    "rest_framework.request",
+    "tornado.web",
+    "sanic",
+    "bottle",
+    "falcon",
+    "pyramid.request",
+    "litestar",
+    "contextvars",
+)
+
+
+def _is_request_scoped_module(dotted: str) -> bool:
+    return dotted.startswith("aiohttp.web") or any(
+        dotted == module or dotted.startswith(module + ".")
+        for module in _REQUEST_SCOPED_MODULES
+    )
+
+
+class _ModuleScope(NamedTuple):
+    bindings: Counter
+    definitions: dict[str, ast.AST]
+    # imported name -> the dotted names it may come from
+    imported: dict[str, tuple[str, ...]]
+    declared_global: set[str]
+    values: dict[str, ast.AST | None]
+
+
+def _walk_function_body(func):
+    """Nodes of a function's (or lambda's, class's or module's) own scope,
+    without nested bodies."""
+    stack = [func.body] if isinstance(func, ast.Lambda) else list(func.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+_FUNCTION_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+class _ScopeInfo(NamedTuple):
+    """A function's, lambda's, class's or module's own namespace."""
+
+    # name -> nodes binding it: parameters, assignment/``for``/``with``/
+    # ``except``/match targets, imports, nested definitions. Comprehension
+    # targets are included (over-approximation).
+    bindings: dict[str, list[ast.AST]]
+    global_names: frozenset[str]
+    nonlocal_names: frozenset[str]
+
+
+def _scope_info(scope: ast.AST) -> _ScopeInfo:
+    bindings: dict[str, list[ast.AST]] = {}
+    global_names: set[str] = set()
+    nonlocal_names: set[str] = set()
+    for node in _walk_function_body(scope):
+        if isinstance(node, ast.Global):
+            global_names.update(node.names)
+        elif isinstance(node, ast.Nonlocal):
+            nonlocal_names.update(node.names)
+        else:
+            for name in _bound_names(node, scope):
+                bindings.setdefault(name, []).append(node)
+    if isinstance(scope, _FUNCTION_SCOPES):
+        args = scope.args
+        for arg in (
+            *args.posonlyargs,
+            *args.args,
+            args.vararg,
+            *args.kwonlyargs,
+            args.kwarg,
+        ):
+            if arg is not None:
+                bindings.setdefault(arg.arg, []).append(arg)
+    return _ScopeInfo(bindings, frozenset(global_names), frozenset(nonlocal_names))
+
+
+def _bound_names_of_statement(statement: ast.AST):
+    """``Name`` targets a class-body statement binds (assignments only)."""
+    if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        for target in targets:
+            for node in ast.walk(target):
+                if isinstance(node, ast.Name):
+                    yield node
 
 
 def _function_ref_name(node):
@@ -445,6 +738,15 @@ class _SSRFFlowChecker(TaintVisitor):
             else {}
         )
         self.dispatched_functions = _dispatched_functions(tree)
+        # Per-file memos keyed by node id: every HTTP call would otherwise
+        # re-walk the module, its functions or its classes.
+        self._scope_infos: dict[int, _ScopeInfo] = {}
+        self._declared_writes: dict[int, dict[str, list[ast.AST]]] = {}
+        self._subtree_names: dict[int, frozenset[str]] = {}
+        self._test_client_bindings: dict[tuple[int, str], bool] = {}
+        self._test_client_attributes: dict[tuple[int, str], bool] = {}
+        self._fixed_host_helpers: dict[int, bool] = {}
+        self._fixed_host_locals: dict[tuple[int, str], bool] = {}
 
     def _push(self):
         super()._push()
@@ -726,6 +1028,341 @@ class _SSRFFlowChecker(TaintVisitor):
                 self._record_request_url_mutation(target.value.id, node.value)
         self.generic_visit(node)
 
+    @cached_property
+    def _in_test_code(self) -> bool:
+        return is_test_source_file(self.file_path)
+
+    def _enclosing_function(self, node: ast.AST) -> ast.AST | None:
+        current = self.parents.get(id(node))
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return current
+            current = self.parents.get(id(current))
+        return None
+
+    def _is_test_client_constructor(self, node: ast.AST | None) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        dynamic, rebound = self._module_rebinding
+        if dynamic:
+            return False  # ``Client`` may have been swapped (star import, ...)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "test_client":
+            return True  # Flask/Quart ``app.test_client()``
+        name = _qualified_name_from_call(node)
+        if not name or any(part in rebound for part in name.split(".")):
+            return False
+        return bool(name) and (
+            self.untrusted_sources.resolved_import(self._enclosing_function(node), name)
+            in _TEST_CLIENT_CONSTRUCTORS
+        )
+
+    def _stores_are_test_clients(self, stores) -> bool:
+        for store in stores:
+            parent = self.parents.get(id(store))
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                value = parent.value
+            elif isinstance(parent, ast.withitem) and parent.optional_vars is store:
+                value = parent.context_expr
+            else:
+                return False
+            if not self._is_test_client_constructor(value):
+                return False
+        return True
+
+    def _scope_info(self, scope: ast.AST) -> _ScopeInfo:
+        info = self._scope_infos.get(id(scope))
+        if info is None:
+            info = self._scope_infos[id(scope)] = _scope_info(scope)
+        return info
+
+    def _binding_scope(self, name: str, node: ast.AST) -> ast.AST | None:
+        """The function, lambda or class body whose ``name`` is read at
+        ``node``, following Python's scoping rules; ``None`` for the module."""
+        in_function = False
+        current = self.parents.get(id(node))
+        while current is not None:
+            if isinstance(current, _FUNCTION_SCOPES) or (
+                isinstance(current, ast.ClassDef) and not in_function
+            ):
+                info = self._scope_info(current)
+                if name in info.global_names:
+                    return None
+                if name not in info.nonlocal_names and name in info.bindings:
+                    return current
+                in_function = in_function or isinstance(current, _FUNCTION_SCOPES)
+            current = self.parents.get(id(current))
+        return None
+
+    def _nested_declared_writes(self, root: ast.AST) -> dict[str, list[ast.AST]]:
+        """Bindings made inside nested scopes of ``root`` that declare the name
+        ``global`` (``root`` is the module) or ``nonlocal`` (a function)."""
+        writes = self._declared_writes.get(id(root))
+        if writes is not None:
+            return writes
+        writes = {}
+        module = root is self.tree
+        for inner in ast.walk(root):
+            if inner is root or not isinstance(
+                inner, (*_FUNCTION_SCOPES, ast.ClassDef)
+            ):
+                continue
+            info = self._scope_info(inner)
+            for name in info.global_names if module else info.nonlocal_names:
+                writes.setdefault(name, []).extend(info.bindings.get(name, ()))
+        self._declared_writes[id(root)] = writes
+        return writes
+
+    def _binding_nodes(self, scope: ast.AST | None, name: str) -> list[ast.AST]:
+        """Every binding of ``name`` in ``scope`` (``None``: the module),
+        including assignments in nested scopes that declare it ``nonlocal``
+        (or, for the module, ``global``)."""
+        root = self.tree if scope is None else scope
+        if root is None:
+            return []
+        return [
+            *self._scope_info(root).bindings.get(name, ()),
+            *self._nested_declared_writes(root).get(name, ()),
+        ]
+
+    def _name_is_test_client(self, name: str, node: ast.AST) -> bool:
+        """``name`` read at ``node`` resolves to a binding (in the current
+        function, an enclosing one, or the module) that only ever holds an
+        in-process test client. Bindings in nested scopes do not count."""
+        scope = self._binding_scope(name, node)
+        key = (id(scope), name)
+        result = self._test_client_bindings.get(key)
+        if result is None:
+            result = self._test_client_bindings[key] = self._binding_is_test_client(
+                scope, name
+            )
+        return result
+
+    def _binding_is_test_client(self, scope: ast.AST | None, name: str) -> bool:
+        if scope is None:
+            dynamic, rebound = self._module_rebinding
+            if dynamic or name in rebound:
+                return False
+        bindings = self._binding_nodes(scope, name)
+        params = [binding for binding in bindings if isinstance(binding, ast.arg)]
+        stores = [binding for binding in bindings if not isinstance(binding, ast.arg)]
+        if params:
+            # A pytest-django fixture requested by a test function. Outside
+            # test code, or on a route, ``client`` is whatever the caller or
+            # dependency injection passes in.
+            if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+            args = scope.args
+            fixture_slots = (*args.posonlyargs, *args.args, *args.kwonlyargs)
+            return (
+                not stores
+                and all(any(p is slot for slot in fixture_slots) for p in params)
+                and name in _PYTEST_DJANGO_CLIENT_FIXTURES
+                and scope.name.startswith("test")
+                and self._in_test_code
+                and self.untrusted_sources.entrypoint_decorator(scope) is None
+            )
+        return bool(stores) and self._stores_are_test_clients(stores)
+
+    def _enclosing_class(self, node: ast.AST) -> ast.ClassDef | None:
+        current = self.parents.get(id(node))
+        while current is not None:
+            if isinstance(current, ast.ClassDef):
+                return current
+            current = self.parents.get(id(current))
+        return None
+
+    def _attribute_owner(self, store: ast.Attribute) -> ast.ClassDef | None:
+        """The class whose instance ``store`` writes: ``self.x = ...`` where
+        ``self`` is the first parameter of a method of that class. ``None``
+        for any other object (a closure ``self``, another instance)."""
+        receiver = store.value
+        if not isinstance(receiver, ast.Name):
+            return None
+        func = self.parents.get(id(store))
+        while func is not None and not isinstance(func, _FUNCTION_SCOPES):
+            func = self.parents.get(id(func))
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        positional = [*func.args.posonlyargs, *func.args.args]
+        if not positional or positional[0].arg != receiver.id:
+            return None
+        if any(
+            _qualified_name_from_expr(d) == "staticmethod" for d in func.decorator_list
+        ):
+            return None
+        owner = self.parents.get(id(func))
+        return owner if isinstance(owner, ast.ClassDef) else None
+
+    @cached_property
+    def _client_attribute_index(self):
+        """Module-wide attribute writes for the ``self.<attr>`` test-client
+        rule: ``attr -> [(store, owning class or None)]``, the names given to
+        ``setattr``/``delattr``, and whether any write cannot be followed
+        (a computed ``setattr`` name, ``__dict__``, ``vars()``, a
+        ``client_class`` assignment or a ``_pre_setup`` override)."""
+        stores: dict[str, list[tuple[ast.AST, ast.ClassDef | None]]] = {}
+        setattr_names: set[str] = set()
+        unknowable = False
+        swaps = {*_DJANGO_TEST_CASE_CLIENTS.values(), "_pre_setup"}
+        for node in ast.walk(self.tree) if self.tree is not None else ():
+            if isinstance(node, ast.Attribute):
+                if node.attr == "__dict__" or (
+                    node.attr in swaps and not isinstance(node.ctx, ast.Load)
+                ):
+                    unknowable = True
+                if isinstance(node.ctx, (ast.Store, ast.Del)):
+                    stores.setdefault(node.attr, []).append(
+                        (node, self._attribute_owner(node))
+                    )
+            elif isinstance(node, ast.Name):
+                if node.id in swaps and isinstance(node.ctx, (ast.Store, ast.Del)):
+                    unknowable = True
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name in swaps:
+                    unknowable = True
+            elif isinstance(node, ast.Call):
+                callee = _qualified_name_from_call(node)
+                if callee == "vars":
+                    unknowable = True
+                elif callee in {"setattr", "delattr"}:
+                    attr = (
+                        _constant_string(node.args[1]) if len(node.args) > 1 else None
+                    )
+                    if attr is None:
+                        unknowable = True
+                    else:
+                        setattr_names.add(attr)
+        return stores, setattr_names, unknowable
+
+    def _module_class(self, name: str) -> ast.ClassDef | None:
+        klass = self._module_scope.definitions.get(name)
+        if isinstance(klass, ast.ClassDef) and self._module_global_is_stable(name):
+            return klass
+        return None
+
+    def _is_django_test_case(self, klass: ast.ClassDef) -> bool:
+        """A module-level class, bound once, whose bases are Django/DRF test
+        cases or same-module classes with such bases (mixins defined in this
+        module are allowed; a base from elsewhere may swap ``self.client``)."""
+        return self._test_case_kind(klass, set()) == "test case"
+
+    def _test_case_kind(self, klass: ast.ClassDef, seen: set[int]) -> str | None:
+        """``"test case"``, ``"mixin"`` (only local, plain bases) or ``None``."""
+        if id(klass) in seen or klass.keywords:
+            return None
+        seen.add(id(klass))
+        if (
+            self.parents.get(id(klass)) is not self.tree
+            or self._module_class(klass.name) is not klass
+        ):
+            return None
+        kind = "mixin"
+        for base in klass.bases:
+            dotted = _qualified_name_from_expr(base) or ""
+            if (
+                self.untrusted_sources.resolved_import(None, dotted)
+                in _DJANGO_TEST_CASES
+            ):
+                kind = "test case"
+                continue
+            if dotted == "object":
+                continue
+            local = self._module_class(dotted) if isinstance(base, ast.Name) else None
+            base_kind = self._test_case_kind(local, seen) if local else None
+            if base_kind is None:
+                return None
+            if base_kind == "test case":
+                kind = "test case"
+        return kind
+
+    def _related_classes(self, klass: ast.ClassDef) -> set[int]:
+        """``klass``, its same-module bases and its same-module subclasses."""
+        classes = [
+            node for node in ast.walk(self.tree) if isinstance(node, ast.ClassDef)
+        ]
+        related = {id(klass)}
+        names = {klass.name}
+        grown = True
+        while grown:
+            grown = False
+            for other in classes:
+                if id(other) in related:
+                    continue
+                base_names = {_qualified_name_from_expr(base) for base in other.bases}
+                if base_names & names:
+                    related.add(id(other))
+                    names.add(other.name)
+                    grown = True
+        pending = [klass]
+        while pending:
+            current = pending.pop()
+            for base in current.bases:
+                local = (
+                    self._module_scope.definitions.get(base.id)
+                    if isinstance(base, ast.Name)
+                    else None
+                )
+                if isinstance(local, ast.ClassDef) and id(local) not in related:
+                    related.add(id(local))
+                    pending.append(local)
+        return related
+
+    def _self_attribute_is_test_client(self, receiver: ast.Attribute) -> bool:
+        if not (
+            isinstance(receiver.value, ast.Name)
+            and receiver.value.id in {"self", "cls"}
+        ):
+            return False
+        klass = self._enclosing_class(receiver)
+        if klass is None:
+            return False
+        key = (id(klass), receiver.attr)
+        result = self._test_client_attributes.get(key)
+        if result is None:
+            result = self._test_client_attributes[key] = (
+                self._class_attribute_is_test_client(klass, receiver.attr)
+            )
+        return result
+
+    def _class_attribute_is_test_client(self, klass: ast.ClassDef, attr: str) -> bool:
+        """``self.<attr>`` in a Django/DRF test case holds an in-process test
+        client: every write of ``.<attr>`` that may reach the instance builds
+        one, or there is none and Django builds ``client``/``async_client``.
+        Outside such test cases ``self.<attr>`` is whatever was assigned."""
+        if not self._is_django_test_case(klass):
+            return False
+        stores_by_attr, setattr_names, unknowable = self._client_attribute_index
+        if unknowable or attr in setattr_names:
+            return False
+        related = self._related_classes(klass)
+        stores = [
+            store
+            for store, owner in stores_by_attr.get(attr, ())
+            if owner is None or id(owner) in related
+        ]
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.ClassDef) and id(node) in related:
+                for statement in node.body:
+                    for name in _bound_names_of_statement(statement):
+                        if name.id == attr:
+                            stores.append(name)
+        if stores:
+            return self._stores_are_test_clients(stores)
+        return attr in _DJANGO_TEST_CASE_CLIENTS
+
+    def _is_test_client_receiver(self, node: ast.Call) -> bool:
+        """The call goes through an in-process test client, not the network."""
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        receiver = node.func.value
+        if isinstance(receiver, ast.Call):
+            return self._is_test_client_constructor(receiver)
+        if isinstance(receiver, ast.Name):
+            return self._name_is_test_client(receiver.id, receiver)
+        if isinstance(receiver, ast.Attribute):
+            return self._self_attribute_is_test_client(receiver)
+        return False
+
     def _is_likely_http_receiver(self, node: ast.Call) -> bool:
         name = _receiver_name(node)
         if name is None:
@@ -746,6 +1383,272 @@ class _SSRFFlowChecker(TaintVisitor):
 
         return False
 
+    @cached_property
+    def _module_scope(self) -> _ModuleScope:
+        """Module-scope binding counts, top-level definitions, imported names,
+        names that any function declares ``global``, and the value each name
+        is assigned (``None`` when bound by anything but an assignment)."""
+        scope = _ModuleScope(Counter(), {}, {}, set(), {})
+        if self.tree is None:
+            return scope
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Global):
+                scope.declared_global.update(node.names)
+        for node in _walk_function_body(self.tree):
+            for name in _bound_names(node):
+                scope.bindings[name] += 1
+                if isinstance(node, ast.alias):
+                    statement = self.parents.get(id(node))
+                    if isinstance(statement, ast.ImportFrom):
+                        module = statement.module or ""
+                        sources = (module, f"{module}.{node.name}")
+                    else:
+                        sources = (node.name,)
+                    scope.imported[name] = sources
+                elif isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    scope.definitions[name] = node
+                else:
+                    parent = self.parents.get(id(node))
+                    scope.values[name] = (
+                        parent.value
+                        if isinstance(node, ast.Name)
+                        and isinstance(parent, (ast.Assign, ast.AnnAssign))
+                        else None
+                    )
+        return scope
+
+    @cached_property
+    def _module_rebinding(self) -> tuple[bool, frozenset[str]]:
+        """Whether the module can rebind any global at run time, and the names
+        it rebinds through its module object (see ``module_rebinding``)."""
+        return module_rebinding(
+            self.tree, module_name_for(self.file_path), self.parents
+        )
+
+    def _module_global_is_stable(self, name: str) -> bool:
+        """``name`` is bound once in module scope and nothing rebinds it: no
+        ``global`` statement, second binding, namespace write or ``setattr``."""
+        scope = self._module_scope
+        dynamic, rebound = self._module_rebinding
+        return (
+            not dynamic
+            and name not in rebound
+            and name not in scope.declared_global
+            and scope.bindings[name] == 1
+        )
+
+    def _name_is_local(self, name: str, node: ast.AST) -> bool:
+        """``name`` read at ``node`` may resolve to a binding of an enclosing
+        function, lambda, comprehension or class body instead of the module
+        global: a parameter, assignment, ``for``/``with``/``except`` target,
+        import, nested definition, or ``global``/``nonlocal`` declaration."""
+        in_function = False
+        current = self.parents.get(id(node))
+        while current is not None:
+            if isinstance(current, _FUNCTION_SCOPES):
+                if name in self._names_bound_under(current):
+                    return True
+                in_function = True
+            elif isinstance(current, _COMPREHENSIONS) or (
+                isinstance(current, ast.ClassDef) and not in_function
+            ):
+                if name in self._names_bound_under(current):
+                    return True
+            current = self.parents.get(id(current))
+        return False
+
+    def _names_bound_under(self, scope: ast.AST) -> frozenset[str]:
+        """Names bound anywhere in ``scope``, nested scopes included on
+        purpose: over-approximating only keeps a finding."""
+        names = self._subtree_names.get(id(scope))
+        if names is None:
+            names = self._subtree_names[id(scope)] = frozenset(
+                name for node in ast.walk(scope) for name in _bound_names(node, scope)
+            )
+        return names
+
+    def _module_setting_pins_host(self, name: str, depth: int = 0) -> bool:
+        """The module global ``name`` holds a URL whose host is fixed by the
+        developer or the operator, and nothing in the module rebinds it."""
+        if depth > _MAX_SETTING_DEPTH or not self._module_global_is_stable(name):
+            return False
+        scope = self._module_scope
+        if name in scope.definitions:
+            return False
+        if name in scope.imported:
+            # A setting imported from another module, but not request data
+            # or a request-scoped proxy imported from a web framework.
+            return not any(
+                _is_request_scoped_module(source) for source in scope.imported[name]
+            )
+        return self._value_pins_host(scope.values.get(name), depth + 1)
+
+    def _resolve_module_name(self, dotted: str) -> str | None:
+        """What a module-level dotted name is bound to by unambiguous imports."""
+        return self.untrusted_sources.resolved_import(None, dotted)
+
+    def _value_pins_host(self, node: ast.AST | None, depth: int) -> bool:
+        """A module setting's value fixes ``scheme://host``: a literal URL with
+        a host, an environment variable or CLI argument whose fallback (if any)
+        is such a literal, or another such setting."""
+        if node is None or depth > _MAX_SETTING_DEPTH:
+            return False
+        literal = _constant_string(node)
+        if literal is not None:
+            return bool(_LITERAL_HOST_RE.match(literal))
+        if isinstance(node, ast.Name):
+            return self._module_setting_pins_host(node.id, depth + 1)
+        is_lookup, fallback = _operator_lookup(node, self._resolve_module_name)
+        if is_lookup:
+            return (
+                fallback is None
+                or (isinstance(fallback, ast.Constant) and fallback.value is None)
+                or self._value_pins_host(fallback, depth + 1)
+            )
+        if _is_str_call(node):
+            return self._value_pins_host(node.args[0], depth + 1)
+        if isinstance(node, ast.BoolOp):
+            return all(self._value_pins_host(value, depth + 1) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return self._value_pins_host(
+                node.body, depth + 1
+            ) and self._value_pins_host(node.orelse, depth + 1)
+        parts = _concat_parts(node)
+        if not parts:
+            return False
+        if _has_constant_host(node):
+            return True
+        return self._value_pins_host(_formatted_operand(parts[0]), depth + 1) and all(
+            _is_operator_value(part, self._resolve_module_name) for part in parts[1:]
+        )
+
+    def _has_configured_host(self, node: ast.AST) -> bool:
+        """``f"{SITE_URL}/api/{x}"``: a module-level setting picks the host and
+        the literal after it starts the path, so later data cannot change it.
+        ``//`` after the setting would start a new authority instead."""
+        parts = _concat_parts(node)
+        if not parts or len(parts) < 2:
+            return False
+        base = _formatted_operand(parts[0])
+        literal = _constant_string(parts[1])
+        return (
+            isinstance(base, ast.Name)
+            and bool(literal)
+            and literal[0] in "/?#"
+            and not literal.startswith("//")
+            and not self._name_is_local(base.id, base)
+            and self._module_setting_pins_host(base.id)
+        )
+
+    def _module_function(self, name: str):
+        """The one top-level function ``name``, if nothing else binds it and
+        no decorator replaces what it returns."""
+        function = self._module_scope.definitions.get(name)
+        if not isinstance(
+            function, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) or not self._module_global_is_stable(name):
+            return None
+        for decorator in function.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            qualified = _qualified_name_from_expr(target) or ""
+            if (
+                self.untrusted_sources.resolved_import(None, qualified)
+                not in _RESULT_PRESERVING_DECORATORS
+            ):
+                return None
+        return function
+
+    def _helper_returns_fixed_host(self, node: ast.AST) -> bool:
+        """A call to the same-module helper (not a parameter or local of the
+        same name) whose every return pins the host."""
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            return False
+        if self._name_is_local(node.func.id, node.func):
+            return False
+        helper = self._module_function(node.func.id)
+        if helper is None:
+            return False
+        result = self._fixed_host_helpers.get(id(helper))
+        if result is None:
+            returns = [
+                stmt
+                for stmt in _walk_function_body(helper)
+                if isinstance(stmt, ast.Return)
+            ]
+            result = self._fixed_host_helpers[id(helper)] = bool(returns) and all(
+                ret.value is not None
+                and (
+                    _has_constant_host(ret.value)
+                    or self._has_configured_host(ret.value)
+                )
+                for ret in returns
+            )
+        return result
+
+    def _url_value_has_fixed_host(self, node: ast.AST) -> bool:
+        return (
+            _has_constant_host(node)
+            or self._has_configured_host(node)
+            or self._helper_returns_fixed_host(node)
+        )
+
+    def _url_has_fixed_host(self, url_arg: ast.AST) -> bool:
+        func = self._current_function()
+        if self._url_value_has_fixed_host(url_arg):
+            return True
+        if _has_constant_host(self._resolve_url_expr(url_arg)):
+            return True
+        if not isinstance(url_arg, ast.Name) or func is None:
+            return False
+        name = url_arg.id
+        args = func.args
+        params = (
+            *args.posonlyargs,
+            *args.args,
+            *args.kwonlyargs,
+            args.vararg,
+            args.kwarg,
+        )
+        if any(arg is not None and arg.arg == name for arg in params):
+            return False  # a path that skips the assignments keeps the argument
+        if self._binding_scope(name, url_arg) is not func:
+            return False  # bound by a lambda or comprehension around the sink
+        key = (id(func), name)
+        result = self._fixed_host_locals.get(key)
+        if result is None:
+            result = self._fixed_host_locals[key] = self._local_url_has_fixed_host(
+                func, name
+            )
+        return result
+
+    def _local_url_has_fixed_host(self, func: ast.AST, name: str) -> bool:
+        """Every assignment of the local ``name`` in ``func`` pins the host, so
+        a branch that assigns request data is never hidden by one that does
+        not."""
+        info = self._scope_info(func)
+        if name in info.global_names or name in info.nonlocal_names:
+            return False
+        values = []
+        for node in info.bindings.get(name, ()):
+            if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)):
+                # A parameter, ``del``, ``except ... as``, a match capture, an
+                # import or a nested definition: not a URL value.
+                return False
+            parent = self.parents.get(id(node))
+            if (
+                not isinstance(parent, (ast.Assign, ast.AnnAssign))
+                or parent.value is None
+            ):
+                return False
+            if isinstance(parent, ast.Assign) and node not in parent.targets:
+                return False
+            values.append(parent.value)
+        return bool(values) and all(
+            self._url_value_has_fixed_host(value) for value in values
+        )
+
     def _untrusted_evidence(self, url_arg: ast.AST, sink: str):
         """Evidence that attacker-reachable input can pick the request host.
 
@@ -753,9 +1656,7 @@ class _SSRFFlowChecker(TaintVisitor):
         call or a deployment setting is not SSRF on its own; require a real
         untrusted source (route/CLI/MCP-tool argument, request data, input(),
         argv, stdin) and a host that the literal prefix does not pin."""
-        if _has_constant_host(url_arg) or _has_constant_host(
-            self._resolve_url_expr(url_arg)
-        ):
+        if self._url_has_fixed_host(url_arg):
             return None
         func = self._current_function()
         evidence = self.untrusted_sources.evidence(
@@ -825,7 +1726,9 @@ class _SSRFFlowChecker(TaintVisitor):
             parts = qn.rsplit(".", 1)
             func = parts[1]
             if func in self.HTTP_METHODS and node.args:
-                if self._is_likely_http_receiver(node):
+                if self._is_likely_http_receiver(
+                    node
+                ) and not self._is_test_client_receiver(node):
                     url_arg = node.args[0]
                     if _is_interpolated_string(
                         url_arg

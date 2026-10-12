@@ -215,6 +215,91 @@ Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
 
+Python D216 needs a real untrusted source (route, CLI or MCP-tool argument,
+request data, `input()`, stdin) that can choose the request host. Not SSRF:
+calls through in-process test clients (Django `Client`/`RequestFactory`, DRF
+`APIClient`, Flask `test_client()`, Starlette/FastAPI `TestClient`,
+pytest-django `client` fixtures in `test*` functions of test files that have no
+route decorator, `self.client` in Django test cases; a client name counts only when every
+binding it resolves to, in the current function, an enclosing function or the
+module, creates a test client, and a binding in a nested function or class does
+not count; `self.client` or another `self` attribute counts only in a Django/DRF
+test-case class whose bases are all known test cases or same-module classes,
+when every write to that attribute that can reach the instance creates a test
+client and the module never rewrites it through `setattr`, `__dict__`, `vars()`,
+a `client_class` assignment or a `_pre_setup` override; a test-client class name
+the module rebinds is not trusted); parameters of a function
+decorated with `unittest.mock.patch` (it is not a PATCH route); and URLs whose
+host is fixed by a literal or by a module-level setting followed by `/`, `?` or
+`#` (not `//`), written directly or returned by every path of a same-module
+helper that has no decorator other than `functools.cache`/`lru_cache`. A setting
+counts only when its value is a literal `scheme://host` URL, an environment
+variable (`os.getenv`/`os.environ`, resolved through the module's imports) or
+CLI argument (`sys.argv`) with a literal name and either no fallback, a `None`
+fallback or such a literal, another such setting, or a name imported from
+another module; `"https:"`, `"https://"` and `""` do not fix the host. A name imported from
+a web-framework or request-scoped module (`flask`, `werkzeug`, `quart`,
+`starlette`, `fastapi`, `django.http`, `django.contrib.sessions`,
+`django.core.handlers`, `rest_framework.request`, `aiohttp.web*`, `tornado.web`,
+`sanic`, `bottle`, `falcon`, `pyramid.request`, `litestar`, `contextvars`, or any
+of their submodules) is never a setting. A setting
+or helper name does not count where the current or an enclosing function shadows
+it (parameter, assignment, `for`/`with`/`except` target, comprehension variable,
+lambda argument, import, nested definition, `global`/`nonlocal`), nor when the
+module rebinds it (a second binding, assignment under `global`,
+`setattr(module, "NAME", ...)`, `module.NAME = ...`). A module that can rewrite its
+globals at run time has no fixed settings: a star import, `exec`/`eval`,
+`reload`, a write through `globals()`/`vars()`/`builtins.globals()` or a
+module-level `locals()`, any use of `__globals__`, `f_globals` or a module
+`__dict__`, `sys._getframe`, `globals` used other than as a call, `setattr` on
+the module with a computed name, a dunder attribute of the module object or
+`sys.modules` (`__setattr__`, `__getitem__`, `__dict__`), `getattr(x,
+"__dict__")`-style lookups of those names, a module obtained through
+`import_module`/`__import__`/`inspect.getmodule` under any name or
+`import __main__`, or the module object passed to other code. Only the setting's own module is checked: an
+assignment from another module (`import app; app.BASE = ...`) is not seen, and a
+setting imported from another module is trusted as is. A fixed-host URL that carries request data in its
+query (`f"{RENDERER}/render?url={...}"`) is not reported. `urllib.parse.quote`
+with a `safe=` argument is not a URL sanitizer.
+
+`bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
+are not XSS sanitizers. Path traversal (D215) also accepts a sanitizer imported by name
+(`from os.path import basename`), but only when the module can't swap it out: no
+local function with the same name, no star import, `exec`/`eval` or other write
+to its own namespace, and no attribute write of the same name on any object
+(`os.path.basename = …`, `setattr(x, "basename", …)`, `del x.basename`) or
+`setattr` with a computed name. D325 uses the same sanitizer handling. Other checks recognise sanitizers only by their qualified name.
+
+D338 reports reading sensitive files. It also reports a sensitive-file reader
+(`cat`, `sed`, `base64`, `tar`, ...) whose redirect writes into a sensitive path
+such as `~/.ssh/config`, `~/.aws/config`, `~/.kube/config`, `~/.npmrc`,
+`~/.claude/settings*.json`, `~/.codex/config.toml`, `~/.docker/config.json`,
+`~/.config/gh/` or `/run/secrets/`, because those files run code, steer
+authentication or installs, or hold secrets. Redirect parsing is quote-aware: a
+quoted `">"` is an argument, `<> file` is a read, and a here-string's `$(...)`
+still reads. Routine credential setup is not reported, and only in GitHub Actions run steps:
+a reader command writing `~/.ssh/known_hosts`, `~/.ssh/id_*` (SSH key files,
+including `.pub`, `-cert.pub` and `.pem` forms), `~/.netrc` or `~/.pypirc` under the home directory (`~`, `$HOME`, `/root`, `/home/<user>`),
+when no workflow, job, container or step `env` sets HOME and no run block in the
+job assigns HOME or writes it to `$GITHUB_ENV`; and a project-relative `.env`, in
+a bash/sh step on a Linux or macOS runner whose working directory is in the
+workspace, with no `BASH_ENV`/`ENV` set, and whose script has nothing that may
+change directory or hide a command (`cd`, `pushd`, `popd`, `source`, `.`, `eval`,
+`exec`, `ln`, `trap`, `case`, `alias`, function definitions, PowerShell location
+cmdlets, `env -C`, or a command word built from a variable, glob or brace
+expansion, including escaped or quoted spellings). Shell scripts, GitLab CI and
+Dockerfiles report these writes as before. TLS certificate writes (`*.pem`,
+`*.crt`, `*.cer` outside `~/.ssh/id_*`), targets with `..`, a glob or a
+variable, and every other sensitive path stay reported. A
+reader writing into a persistence file that is also sensitive
+(`~/.ssh/authorized_keys`, `~/.ssh/rc`) is reported as both D338 and D339. A redirect (`>`,
+`>>`, `>&`, `&>`) from any command into a persistence target is D339 (HIGH):
+`authorized_keys`, `~/.ssh/rc`, `~/.ssh/environment`, shell startup files,
+`/etc/profile*`, cron files, systemd units, sudoers, `/etc/ld.so.preload`,
+`/etc/rc.local`, `/etc/init.d/`, or git hook folders outside the project. A glob
+target that could name one of these (for example `~/.ssh/authorized_ke*`) is
+D339, and redundant `//`, `/./` and `..` segments do not hide one.
+
 ### AI Supply Chain Security
 
 | ID | Severity | Name | File Types | Details |
@@ -689,6 +774,20 @@ uses project ignores, not inline comments, consistently across supported files.
 | L033 | MEDIUM | No-effect statement | Python |
 | L034 | MEDIUM | Repeated mutable alias from sequence multiplication | Python |
 | L035 | HIGH | File-wide blanket ESLint disable | TS/JS |
+
+SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
+bare `return` is inconsistent. SKY-L014 is not reported when the value only
+refers to a setting kept elsewhere: `${NAME}` or `{{ name }}`, where NAME is
+UPPER_SNAKE with two or more words (`${DB_PASSWORD}`) or a dotted lowercase path
+with two or more segments (`{{ django.secret_key }}`); every reference form,
+including `$X` and `%X%`, is accepted only under location names with no
+credential word, such as `DATABASE_URL`, `DSN` or `CONNECTION_STRING`. It is
+also not reported for `<X>_KEY = "X"` on a plain (non-attribute) name, where the
+value is the rest of the target's name in UPPER_SNAKE with two or more words
+(`APP_URL_KEY = "APP_URL"`), unless the name ends in `SECRET_KEY`, `API_KEY`,
+`PRIVATE_KEY`, `ENCRYPTION_KEY`, `SIGNING_KEY`, `MASTER_KEY`, `ACCESS_KEY` or
+`HMAC_KEY`. SKY-L016 is not reported when the read declares a default other than
+`None` (`os.getenv("ENABLE_X", "False")`).
 
 ## Quality, Structure, Architecture, and Performance
 

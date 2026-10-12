@@ -224,3 +224,26 @@ def test_llm_protocol_tags_are_not_html():
 def test_html_tag_concatenation_still_flags():
     src = "def page(name):\n    return '<h1>' + name + '</h1>'\n"
     assert [f for f in _scan_src(src) if f["rule_id"] == "SKY-D228"]
+
+
+def test_escape_imported_by_name_still_reports_in_url_attributes():
+    # Sanitizer import resolution is limited to path traversal: this checker
+    # does not look at the HTML context, so escaping is no proof here.
+    findings = _scan_src(
+        "from html import escape\n"
+        "from django.utils.safestring import mark_safe\n"
+        "def f(user):\n"
+        "    return mark_safe('<a href=\"' + escape(user) + '\">x</a>')\n"
+    )
+    assert _find_rule(findings, "SKY-D226")
+
+
+@pytest.mark.parametrize("call", ["bleach.linkify(user)", "cgi.escape(user)"])
+def test_linkify_and_cgi_escape_are_not_xss_sanitizers(call):
+    findings = _scan_src(
+        "import bleach, cgi\n"
+        "from django.utils.safestring import mark_safe\n"
+        "def f(user):\n"
+        f"    return mark_safe('<p title=\"' + {call} + '\">x</p>')\n"
+    )
+    assert _find_rule(findings, "SKY-D226")
