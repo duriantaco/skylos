@@ -1,4 +1,8 @@
 from __future__ import annotations
+
+import ast
+import configparser
+import os
 import re
 from pathlib import Path
 
@@ -7,6 +11,21 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
+from skylos.core.python_distributions import (
+    NAMESPACE_ROOTS,
+    distribution_commands,
+    distribution_import_paths,
+    shared_namespace_roots,
+)
+from skylos.core.python_requirements import (
+    SetuptoolsRequirements,
+    lock_source_files,
+    normalize_distribution_name,
+    read_requirements_tree,
+    read_setup_cfg,
+    read_setup_py,
+    requirement_name,
+)
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 RULE_ID = "SKY-U005"
@@ -61,7 +80,54 @@ RUNTIME_PLUGIN_PACKAGES = {
     "celery",
     "gunicorn",
     "uvicorn",
+    # Database drivers are loaded by ORM backends from settings or URLs
+    # (``django.db.backends.postgresql``, ``postgresql+asyncpg://``).
+    "psycopg",
+    "psycopg-binary",
+    "psycopg-c",
+    "psycopg2",
+    "psycopg2-binary",
+    "mysqlclient",
+    "pymysql",
+    "cx-oracle",
+    "oracledb",
+    "asyncpg",
+    "aiomysql",
+    "aiosqlite",
 }
+
+# Files whose commands run installed console scripts.
+COMMAND_FILE_PATTERNS = (
+    re.compile(r"^Procfile(\..+)?$"),
+    re.compile(r"^(Dockerfile|Containerfile)([.-].+)?$"),
+    re.compile(r"^.+\.(dockerfile|Dockerfile)$"),
+    re.compile(r"^(docker-)?compose(\..+)?\.ya?ml$"),
+    re.compile(r"^Makefile$"),
+)
+MAX_COMMAND_FILES = 64
+MAX_COMMAND_FILE_DEPTH = 3
+MAX_COMMAND_FILE_BYTES = 1_000_000
+COMMAND_FILE_SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".tox",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "build",
+    "dist",
+    ".mypy_cache",
+    ".pytest_cache",
+}
+_INSTALL_LINE_RE = re.compile(
+    r"\b(?:pip3?|uv|pipx|poetry|pdm|conda|mamba|apt-get|apt|apk|yum|dnf|npm|yarn|pnpm)\b"
+    r"[^\n]*\b(?:install|add|sync)\b"
+)
+_COMMAND_SPLIT_RE = re.compile(r"[\s\"'`\[\],;&|()=]+")
+_DOTTED_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_STRING_IMPORT_CALLS = {"import_module", "import_string", "__import__"}
 
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w.]*)", re.MULTILINE)
 FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w.]*)\s+import\b", re.MULTILINE)
@@ -75,6 +141,11 @@ def _normalize_name(name):
     if not name:
         return ""
     return re.sub(r"[-_.]+", "-", str(name).strip().lower())
+
+
+def _is_type_stub_distribution(dep):
+    """Stub-only packages are read by type checkers, never imported."""
+    return dep.startswith("types-") or dep.endswith("-stubs")
 
 
 def _collect_all_imports(py_files):
@@ -160,79 +231,93 @@ def _parse_pyproject_toml(path):
     return deps, project_name
 
 
-def _collect_declared_deps(repo_root):
-    deps = set()
+def _requirements_entries(current):
+    """Direct requirements declared in ``current``'s requirements files.
+
+    Returns {normalized name: (manifest path, line)}. ``-r`` includes are
+    followed; ``-c`` constraint files declare nothing. Compiled lock files
+    (pip-compile/uv output) are mostly transitive pins, so their entries are
+    never declarations; the ``.in`` inputs they name are read instead.
+    """
+    declared = {}
+    visited = set()
+    lock_inputs = []
+    candidates = [current / "requirements.txt"]
+    req_dir = current / "requirements"
+    try:
+        if req_dir.is_dir():
+            candidates.extend(sorted(req_dir.glob("*.txt"))[:32])
+    except OSError:
+        pass
+
+    def add(tree):
+        for parsed in tree.files:
+            if tree.kinds.get(parsed.path) == "constraint":
+                continue
+            if parsed.compiled:
+                lock_inputs.extend(lock_source_files(parsed, current))
+                continue
+            for requirement in parsed.requirements:
+                declared.setdefault(
+                    requirement.normalized, (parsed.path, requirement.line)
+                )
+
+    for candidate in candidates:
+        try:
+            if not candidate.is_file():
+                continue
+        except OSError:
+            continue
+        add(read_requirements_tree(candidate, root=current, visited=visited))
+    for source in dict.fromkeys(lock_inputs):
+        add(read_requirements_tree(source, root=current, visited=visited))
+    return declared
+
+
+def _collect_declared(repo_root):
+    """Declared direct dependencies with locations, and the project name."""
+    deps = {}
     project_name = None
 
     current = repo_root
     for _ in range(5):
-        req_path = current / "requirements.txt"
-        if req_path.exists():
-            try:
-                for line in req_path.read_text(
-                    encoding="utf-8", errors="ignore"
-                ).splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or line.startswith("-"):
-                        continue
-                    m = REQ_LINE_RE.match(line)
-                    if m:
-                        deps.add(_normalize_name(m.group(1)))
-            except Exception:
-                pass
+        deps.update(
+            (name, location)
+            for name, location in _requirements_entries(current).items()
+            if name not in deps
+        )
 
         pyproj_path = current / "pyproject.toml"
         if pyproj_path.exists():
             pyproject_deps, pyproject_name = _parse_pyproject_toml(pyproj_path)
-            deps.update(pyproject_deps)
+            for name in pyproject_deps:
+                deps.setdefault(name, None)
             if pyproject_name and not project_name:
                 project_name = pyproject_name
 
-        setup_path = current / "setup.py"
-        if setup_path.exists():
-            try:
-                txt = setup_path.read_text(encoding="utf-8", errors="ignore")
-                name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
-                if name_match and not project_name:
-                    project_name = name_match.group(1)
-
-                for key in ("install_requires", "setup_requires"):
-                    pattern = re.compile(re.escape(key) + r"\s*=\s*\[")
-                    km = pattern.search(txt)
-                    if not km:
-                        continue
-                    start = km.end()
-                    depth = 1
-                    pos = start
-                    while pos < len(txt) and depth > 0:
-                        if txt[pos] == "[":
-                            depth += 1
-                        elif txt[pos] == "]":
-                            depth -= 1
-                        pos += 1
-                    block = txt[start : pos - 1]
-                    for item in re.findall(r'["\']([^"\']+)["\']', block):
-                        rm = REQ_LINE_RE.match(item.strip())
-                        if rm:
-                            deps.add(_normalize_name(rm.group(1)))
-            except Exception:
-                pass
-
-        req_dir = current / "requirements"
-        if req_dir.exists() and req_dir.is_dir():
-            for req_file in req_dir.glob("*.txt"):
-                try:
-                    for line in req_file.read_text(
-                        encoding="utf-8", errors="ignore"
-                    ).splitlines():
-                        line = line.strip()
-                        if not line or line.startswith("#") or line.startswith("-"):
-                            continue
-                        m = REQ_LINE_RE.match(line)
-                        if m:
-                            deps.add(_normalize_name(m.group(1)))
-                except Exception:
-                    pass
+        # Run-time requirements only, as for ``[project].dependencies``:
+        # ``setup_requires``/``tests_require``/extras are not imported by
+        # the package itself.
+        for setup_path, reader in (
+            (current / "setup.py", read_setup_py),
+            (current / "setup.cfg", read_setup_cfg),
+        ):
+            if not setup_path.exists():
+                continue
+            declaration = reader(setup_path)
+            if declaration is None and setup_path.name == "setup.py":
+                declaration = _legacy_setup_py(setup_path)
+            if declaration is None:
+                continue
+            if declaration.name and not project_name:
+                project_name = declaration.name
+            for spec, line in declaration.install:
+                name = requirement_name(spec)
+                if name:
+                    deps.setdefault(
+                        normalize_distribution_name(name),
+                        (setup_path, line) if line else None,
+                    )
 
         if deps:
             break
@@ -243,6 +328,258 @@ def _collect_declared_deps(repo_root):
         current = parent
 
     return deps, project_name
+
+
+def _legacy_setup_py(setup_path):
+    """A literal ``install_requires=[...]`` in a setup.py that is not Python 3."""
+    txt = read_text_no_symlink(
+        setup_path,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    if txt is None:
+        return None
+    declaration = SetuptoolsRequirements(setup_path)
+    name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
+    if name_match:
+        declaration.name = name_match.group(1)
+    match = re.search(r"install_requires\s*=\s*\[", txt)
+    if match:
+        depth, pos = 1, match.end()
+        while pos < len(txt) and depth > 0:
+            if txt[pos] == "[":
+                depth += 1
+            elif txt[pos] == "]":
+                depth -= 1
+            pos += 1
+        block = txt[match.end() : pos - 1]
+        declaration.install = [
+            (item, 0) for item in re.findall(r'["\']([^"\']+)["\']', block)
+        ]
+    return declaration
+
+
+def _collect_declared_deps(repo_root):
+    deps, project_name = _collect_declared(repo_root)
+    return set(deps), project_name
+
+
+def _string_values(node):
+    for child in ast.walk(node):
+        if isinstance(child, ast.Constant) and isinstance(child.value, str):
+            yield child.value
+
+
+def _module_reference(text):
+    """``a.b.c`` or ``a.b:attr`` in a string, as a dotted module path."""
+    text = text.strip()
+    if ":" in text and " " not in text:
+        text = text.split(":", 1)[0]
+    if len(text) > 200 or not _DOTTED_RE.match(text):
+        return None
+    return text
+
+
+def _string_references(tree):
+    """Dotted paths named in strings that frameworks import by name.
+
+    Django settings (``INSTALLED_APPS``, ``MIDDLEWARE``, cache/storage/
+    template backends, ``REST_FRAMEWORK`` classes) are UPPER_CASE module
+    assignments; ``import_module``/``import_string`` take the path directly.
+    """
+    references = set()
+    for statement in ast.walk(tree):
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            if statement.value is None or not any(
+                isinstance(target, ast.Name) and target.id.isupper()
+                for target in targets
+            ):
+                continue
+            for value in _string_values(statement.value):
+                reference = _module_reference(value)
+                if reference:
+                    references.add(reference)
+        elif isinstance(statement, ast.Call) and statement.args:
+            function = statement.func
+            name = (
+                function.attr
+                if isinstance(function, ast.Attribute)
+                else getattr(function, "id", None)
+            )
+            first = statement.args[0]
+            if (
+                name in _STRING_IMPORT_CALLS
+                and isinstance(first, ast.Constant)
+                and isinstance(first.value, str)
+            ):
+                reference = _module_reference(first.value)
+                if reference:
+                    references.add(reference)
+    return references
+
+
+def _collect_usage(py_files):
+    """Dotted import paths and string module references in Python sources."""
+    paths = set()
+    for fp in py_files:
+        try:
+            src = fp.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for pattern in (IMPORT_RE, FROM_RE, DYNAMIC_RE):
+            for match in pattern.finditer(src):
+                if match.group(1):
+                    paths.add(match.group(1))
+        try:
+            tree = ast.parse(src)
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        paths |= _string_references(tree)
+    return paths
+
+
+def _command_files(root):
+    found = []
+    root = Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        depth = len(Path(dirpath).relative_to(root).parts)
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if name not in COMMAND_FILE_SKIP_DIRS and depth < MAX_COMMAND_FILE_DEPTH
+        )
+        for filename in sorted(filenames):
+            if any(pattern.match(filename) for pattern in COMMAND_FILE_PATTERNS):
+                found.append(Path(dirpath) / filename)
+                if len(found) >= MAX_COMMAND_FILES:
+                    return found
+    return found
+
+
+def _collect_commands(root):
+    """Command words and ``python -m`` modules in Procfile/Dockerfile/etc."""
+    commands, modules = set(), set()
+    for path in _command_files(root):
+        text = read_text_no_symlink(
+            path, max_bytes=MAX_COMMAND_FILE_BYTES, encoding="utf-8", errors="ignore"
+        )
+        if not text:
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if _INSTALL_LINE_RE.search(stripped):
+                # ``pip install foo`` installs foo; it does not use it.
+                continue
+            tokens = [token for token in _COMMAND_SPLIT_RE.split(stripped) if token]
+            for index, token in enumerate(tokens):
+                word = token.rsplit("/", 1)[-1]
+                commands.add(word)
+                if (
+                    token == "-m"
+                    and index
+                    and tokens[index - 1].rsplit("/", 1)[-1].startswith("python")
+                    and index + 1 < len(tokens)
+                ):
+                    reference = _module_reference(tokens[index + 1])
+                    if reference:
+                        modules.add(reference)
+    return commands, modules
+
+
+def _entry_point_values(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _entry_point_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _entry_point_values(item)
+
+
+def _collect_configured_modules(root):
+    """Modules named by entry points and plugin settings in project config.
+
+    ``[project.scripts]``/``[project.entry-points]``, Poetry scripts/plugins,
+    ``setup.cfg`` ``[options.entry_points]`` and mypy ``plugins``.
+    """
+    values = []
+    pyproject = read_text_no_symlink(
+        Path(root) / "pyproject.toml",
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+    )
+    if pyproject:
+        try:
+            data = tomllib.loads(pyproject)
+        except (tomllib.TOMLDecodeError, RecursionError, ValueError):
+            data = {}
+        project = data.get("project") if isinstance(data, dict) else None
+        if isinstance(project, dict):
+            for key in ("scripts", "gui-scripts", "entry-points"):
+                values.extend(_entry_point_values(project.get(key)))
+        tool = data.get("tool") if isinstance(data, dict) else None
+        if isinstance(tool, dict):
+            poetry = tool.get("poetry")
+            if isinstance(poetry, dict):
+                for key in ("scripts", "plugins"):
+                    values.extend(_entry_point_values(poetry.get(key)))
+            mypy = tool.get("mypy")
+            if isinstance(mypy, dict):
+                values.extend(_entry_point_values(mypy.get("plugins")))
+    for name in ("setup.cfg", "mypy.ini", ".mypy.ini"):
+        text = read_text_no_symlink(
+            Path(root) / name,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+        if not text:
+            continue
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            parser.read_string(text)
+        except configparser.Error:
+            continue
+        for section in parser.sections():
+            if section == "options.entry_points":
+                values.extend(parser[section].values())
+            elif section == "mypy" and parser.has_option(section, "plugins"):
+                values.append(parser[section]["plugins"])
+    modules = set()
+    for value in values:
+        for item in re.split(r"[\s,]+", value):
+            if "=" in item:
+                item = item.split("=", 1)[1]
+            reference = _module_reference(item)
+            if reference:
+                modules.add(reference)
+    return modules
+
+
+def _path_used(used_path, provided_paths):
+    """Lenient: a namespace portion like ``google.cloud.translate`` also
+    covers ``google.cloud.translate_v2`` (both ship in one distribution)."""
+    root = used_path.split(".", 1)[0]
+    for provided in provided_paths:
+        if used_path == provided or used_path.startswith(provided + "."):
+            return True
+        if (
+            root in NAMESPACE_ROOTS
+            and "." in used_path
+            and "." in provided
+            and (used_path.startswith(provided) or provided.startswith(used_path + "."))
+        ):
+            return True
+    return False
 
 
 _MANIFEST_NAMES = ("requirements.txt", "pyproject.toml", "setup.py", "setup.cfg")
@@ -266,7 +603,9 @@ def _declared_dependency_location(repo_root, dep, boundary=None):
     outside the project cannot be stored or shown as part of it.
     """
     token = re.compile(
-        r"(?<![A-Za-z0-9_.-])" + r"[-_.]+".join(map(re.escape, re.split(r"[-_.]+", dep))) + r"(?![A-Za-z0-9_])",
+        r"(?<![A-Za-z0-9_.-])"
+        + r"[-_.]+".join(map(re.escape, re.split(r"[-_.]+", dep)))
+        + r"(?![A-Za-z0-9_])",
         re.IGNORECASE,
     )
     current = repo_root
@@ -296,6 +635,15 @@ def _declared_dependency_location(repo_root, dep, boundary=None):
     return None
 
 
+def _load_import_to_dist():
+    """The pipreqs import -> distribution table shared with SKY-D222/D223."""
+    from skylos.rules.ai_defect.dependency_hallucination import (
+        _load_import_to_dist_mapping,
+    )
+
+    return _load_import_to_dist_mapping()
+
+
 def scan_unused_dependencies(repo_root, py_files, location_root=None):
     """Declared dependencies with no matching import.
 
@@ -307,12 +655,19 @@ def scan_unused_dependencies(repo_root, py_files, location_root=None):
     if not repo_root or not py_files:
         return findings
 
-    declared_deps, project_name = _collect_declared_deps(repo_root)
-    if not declared_deps:
+    repo_root = Path(repo_root)
+    declared, project_name = _collect_declared(repo_root)
+    if not declared:
         return findings
 
-    all_imports, has_dynamic = _collect_all_imports(py_files)
+    used_paths = _collect_usage(py_files)
+    commands, command_modules = _collect_commands(repo_root)
+    used_paths |= command_modules
+    used_paths |= _collect_configured_modules(repo_root)
+    all_imports = {path.split(".", 1)[0] for path in used_paths}
     import_to_dist = _build_import_to_dist()
+    pipreqs = _load_import_to_dist()
+    shared = shared_namespace_roots(import_to_dist)
 
     project_norm = _normalize_name(project_name) if project_name else None
 
@@ -323,7 +678,8 @@ def scan_unused_dependencies(repo_root, py_files, location_root=None):
         if imp in import_to_dist:
             used_dists.update(import_to_dist[imp])
 
-    for dep in sorted(declared_deps):
+    boundary = location_root or repo_root
+    for dep in sorted(declared):
         if not dep:
             continue
 
@@ -336,6 +692,9 @@ def scan_unused_dependencies(repo_root, py_files, location_root=None):
         if dep in RUNTIME_PLUGIN_PACKAGES:
             continue
 
+        if _is_type_stub_distribution(dep):
+            continue
+
         if dep in used_dists:
             continue
 
@@ -345,31 +704,39 @@ def scan_unused_dependencies(repo_root, py_files, location_root=None):
         if _normalize_name(dep_as_import) in used_dists:
             continue
 
-        for imp in all_imports:
-            imp_norm = _normalize_name(imp)
-            if imp_norm == dep:
-                break
-        else:
-            location = _declared_dependency_location(
-                repo_root, dep, location_root or repo_root
-            )
-            manifest, line = location if location else (repo_root, 0)
-            findings.append(
-                {
-                    "rule_id": RULE_ID,
-                    "kind": "quality",
-                    "severity": "MEDIUM",
-                    "type": "dependency",
-                    "name": dep,
-                    "simple_name": dep,
-                    "value": "unused",
-                    "threshold": 0,
-                    "message": f"Declared dependency '{dep}' appears unused. No matching import found in any Python file.",
-                    "file": str(manifest),
-                    "basename": manifest.name if location else "",
-                    "line": line,
-                    "col": 0,
-                }
-            )
+        provided = distribution_import_paths(
+            dep,
+            installed_modules=import_to_dist,
+            import_to_dist=pipreqs,
+            namespace_roots=shared,
+        )
+        if any(_path_used(path, provided) for path in used_paths):
+            continue
+        if commands & distribution_commands(dep):
+            continue
+
+        location = declared.get(dep)
+        if location is not None and not _is_within(location[0], boundary):
+            location = None
+        if location is None:
+            location = _declared_dependency_location(repo_root, dep, boundary)
+        manifest, line = location if location else (repo_root, 0)
+        findings.append(
+            {
+                "rule_id": RULE_ID,
+                "kind": "quality",
+                "severity": "MEDIUM",
+                "type": "dependency",
+                "name": dep,
+                "simple_name": dep,
+                "value": "unused",
+                "threshold": 0,
+                "message": f"Declared dependency '{dep}' appears unused. No matching import found in any Python file.",
+                "file": str(manifest),
+                "basename": manifest.name if location else "",
+                "line": line,
+                "col": 0,
+            }
+        )
 
     return findings

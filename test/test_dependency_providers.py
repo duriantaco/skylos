@@ -124,7 +124,7 @@ def test_hallucination_is_critical_once_every_declared_distribution_is_checked(
     "answer",
     [{"status": "no_wheel"}, {"status": "missing"}, {"status": "unreadable"}],
 )
-def test_unknown_declared_modules_make_a_hallucination_unverified(
+def test_unknown_related_declared_modules_leave_a_note_not_a_finding(
     monkeypatch, tmp_path, answer
 ):
     repo, source = _project(
@@ -137,11 +137,12 @@ def test_unknown_declared_modules_make_a_hallucination_unverified(
 
     findings = dep.scan_python_dependency_hallucinations(repo, [source])
 
-    assert _findings(findings) == [
-        (dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "acme_magic")
-    ]
-    assert findings[0]["message"].startswith("Unverified import 'acme_magic'")
-    assert "dependency 'acme-internal' could not be checked" in findings[0]["message"]
+    # acme-internal could ship acme_magic. "Could not verify" is a summary
+    # note for the scan, never a finding.
+    assert findings == []
+    assert findings.unverified_imports == {
+        "acme_magic": "unchecked_related_distributions"
+    }
 
 
 def test_unreadable_distribution_with_an_unrelated_name_leaves_uncertainty(
@@ -194,13 +195,9 @@ def test_registry_failure_stops_lookups_and_marks_the_scan_incomplete(
         repo, [("app/views.py", 1, "ghost_one"), ("app/views.py", 2, "ghost_two")]
     )
 
-    # Any of the related "ghost-plugin-*" packages could ship these modules.
-    assert {(f["rule_id"], f["symbol"]) for f in findings} == {
-        (dep.RULE_ID_UNDECLARED, "ghost_one"),
-        (dep.RULE_ID_UNDECLARED, "ghost_two"),
-    }
-    assert "'ghost-plugin-0', 'ghost-plugin-1'" in findings[0]["message"]
-    assert "and 37 more" in findings[0]["message"]
+    # Any of the related "ghost-plugin-*" packages could ship these modules,
+    # so the uncertainty is not reported as a finding.
+    assert findings == []
     assert unreachable is True
     # One failed round; the second import does not wait out more timeouts.
     assert len(fetched) == dep.DIST_MODULE_LOOKUP_WORKERS
@@ -209,15 +206,16 @@ def test_registry_failure_stops_lookups_and_marks_the_scan_incomplete(
 def test_undeclared_check_only_looks_up_similarly_named_distributions(
     monkeypatch, tmp_path
 ):
+    # acme-registration-redux is not in the name mapping, so its wheel is read.
     repo, source = _project(
         tmp_path,
-        ["django-registration-redux", "stripe", "feedparser"],
+        ["acme-registration-redux", "stripe", "feedparser"],
         "import registration\nimport yaml\n",
     )
     fetched = _stub_registry(
         monkeypatch,
         pypi={"registration": "exists", "yaml": "exists"},
-        wheels={"django-registration-redux": {"modules": ["registration"]}},
+        wheels={"acme-registration-redux": {"modules": ["registration"]}},
     )
 
     findings = dep.scan_python_dependency_hallucinations(repo, [source])
@@ -225,7 +223,21 @@ def test_undeclared_check_only_looks_up_similarly_named_distributions(
     # An undeclared import is MEDIUM and claims no proof, so unrelated
     # distributions are not looked up for it.
     assert _findings(findings) == [(dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "yaml")]
-    assert fetched == ["django-registration-redux"]
+    assert fetched == ["acme-registration-redux"]
+
+
+def test_known_distribution_names_resolve_without_registry_lookups(
+    monkeypatch, tmp_path
+):
+    repo, source = _project(
+        tmp_path,
+        ["django-registration-redux", "django-money", "beautifulsoup4"],
+        "import registration\nimport djmoney\nfrom bs4 import BeautifulSoup\n",
+    )
+    fetched = _stub_registry(monkeypatch, pypi={"registration": "exists"})
+
+    assert dep.scan_python_dependency_hallucinations(repo, [source]) == []
+    assert fetched == []
 
 
 def test_namespace_portion_is_not_a_hallucination(monkeypatch, tmp_path):
@@ -305,29 +317,29 @@ def test_nested_project_name_is_not_a_provider_to_look_up(monkeypatch, tmp_path)
 
 
 def test_wheel_answers_are_fresh_between_scans(monkeypatch, tmp_path):
-    repo, source = _project(tmp_path, ["django-money"], "import djmoney\n")
+    # django-cash -> djcash is not in the name mapping, so the wheel is read.
+    repo, source = _project(tmp_path, ["django-cash"], "import djcash\n")
     fetched = _stub_registry(
-        monkeypatch, wheels={"django-money": {"modules": ["djmoney"]}}
+        monkeypatch, wheels={"django-cash": {"modules": ["djcash"]}}
     )
 
     assert dep.scan_python_dependency_hallucinations(repo, [source]) == []
     assert dep.scan_python_dependency_hallucinations(repo, [source]) == []
-    assert fetched == ["django-money", "django-money"]
+    assert fetched == ["django-cash", "django-cash"]
 
 
 def test_failed_lookups_are_not_cached(monkeypatch, tmp_path):
-    repo, source = _project(tmp_path, ["django-money"], "import djmoney\n")
-    fetched = _stub_registry(monkeypatch, wheels={"django-money": None})
+    repo, source = _project(tmp_path, ["django-cash"], "import djcash\n")
+    fetched = _stub_registry(monkeypatch, wheels={"django-cash": None})
 
     first = dep.scan_python_dependency_hallucinations(repo, [source])
     second = dep.scan_python_dependency_hallucinations(repo, [source])
 
-    assert (
-        _findings(first)
-        == _findings(second)
-        == [(dep.RULE_ID_UNDECLARED, dep.SEV_MEDIUM, "djmoney")]
-    )
-    assert fetched == ["django-money", "django-money"]
+    assert first == second == []
+    assert first.unverified_imports == second.unverified_imports == {
+        "djcash": "unchecked_related_distributions"
+    }
+    assert fetched == ["django-cash", "django-cash"]
 
 
 def test_repository_module_inventory_cache_is_not_used(monkeypatch, tmp_path):

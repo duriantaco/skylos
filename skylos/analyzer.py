@@ -111,6 +111,7 @@ _find_package_boundary_modules = find_package_boundary_modules
 
 _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_sca_coverage",
+    "_dependency_import_notes",
     "_analysis_scope",
     "_review_context",
     "_review_file_configs",
@@ -4907,6 +4908,14 @@ class Skylos:
                         dep_findings = scan_python_dependency_hallucinations(
                             project_root, py_files
                         )
+                        unverified = getattr(dep_findings, "unverified_imports", {})
+                        if unverified:
+                            # Imports that could not be verified are a
+                            # summary note, never findings.
+                            self._dependency_import_notes = {
+                                "unverified_import_count": len(unverified),
+                                "unverified_imports": sorted(unverified)[:25],
+                            }
                         _extend_unsuppressed_ai_defect_findings(
                             dep_findings,
                             project_ignore=project_ignore,

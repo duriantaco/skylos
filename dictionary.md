@@ -82,6 +82,7 @@ Rule IDs use a stable public prefix:
 | `skylos verify-verdict` | Verifies a signed check verdict offline against the published keys (`https://skylos.dev/.well-known/skylos-verdict-keys.json` or a local `--keys` file). `--commit`, `--repository`, `--project`, and `--workspace` bind it to what is being deployed; `--require-repository-verified` requires a GitHub OIDC upload bound to the repository; `--max-age` rejects old verdicts; `--require-passed` exits 1 unless the level is `SKYLOS_POLICY_PASSED` (`--allow-override` also accepts `SKYLOS_GATE_OVERRIDDEN`; `SKYLOS_GATE_DISABLED` never passes). Exit 2 means not verified. Needs `skylos[verdict]` (`cryptography`). |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
+| Not checked (SCA) | A lockfile entry that is the project's own local code, so no advisory database can describe it: pnpm `link:`/`file:` directories, local tarballs, peers satisfied by a workspace project, and `runtime:` entries. Listed in `sca_coverage.lockfile_not_checked` (count `not_checked_lockfile_dependency_count`); it does not make the dependency scan incomplete or stop the gate. Git, private-registry and non-canonical archive sources stay unresolved and do. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
@@ -612,17 +613,38 @@ use the `SKY-A` prefix.
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
-Python import names can differ from distribution names. Skylos checks installed
-distribution metadata and bounded PyPI wheel indexes to resolve declared aliases.
+Python import names can differ from distribution names. Skylos maps declared
+distributions to import paths from installed distribution metadata, a curated
+table of well-known mismatches (`beautifulsoup4` -> `bs4`, `djangorestframework`
+-> `rest_framework`, `PyYAML` -> `yaml`, `Pillow` -> `PIL`), the pipreqs table
+and conservative name rules (`django-guardian` -> `guardian`), then checks
+bounded PyPI wheel indexes for the rest. Requirements files are read like pip
+reads them: `-r`/`-c` includes inside the project, `\` continuations and
+`--hash` options (pip-compile and `uv pip compile` lock files). Declared
+dependencies come from requirements files, `pyproject.toml` (dependencies,
+optional dependencies, dependency groups, Poetry), `setup.cfg` (`[options]`
+`install_requires`/`setup_requires`/`tests_require`, `[options.extras_require]`,
+`file:` requirement lists inside the project) and literal `setup.py` keywords
+(including module-level lists). These files are parsed, never run; a
+`setup(**kwargs)`, `attr:` or computed list leaves the declarations open-ended.
+Nested projects use their own manifests.
 Namespace packages require the imported portion's full path: a distribution
 providing `sphinxcontrib.applehelp` does not establish
 `sphinxcontrib.serializinghtml`. Target packages are never installed or executed.
+`setuptools` and other build-backend imports in `setup.py` are not runtime
+dependencies.
 
 A missing PyPI project for an import name alone does not prove a hallucinated
-dependency. Source-only, private, dynamic, unsupported, unavailable, and unresolved
-version-range providers leave an import unverified; these reports use MEDIUM
-`SKY-D223`. An exact compatible pin with an unambiguous artifact inventory can
-support absence evidence. Compatible platform wheels can confirm import paths
+dependency. "Could not verify" is never a finding: when a declared provider that
+is related to the import (by name, mapping or partial inventory) is source-only,
+private, dynamic, unsupported or unavailable, or the declarations are open-ended
+(private index, dynamic metadata), the import is only counted in
+`analysis_summary.dependency_imports`. An import that no declared distribution
+resembles stays visible: MEDIUM `SKY-D223` "Possible hallucinated import" while
+some declared distributions are uninspected, `SKY-D222` once all are. Installed
+metadata naming a different, undeclared distribution is reported as an
+undeclared import. An exact compatible pin with an unambiguous artifact
+inventory can support absence evidence. Compatible platform wheels can confirm import paths
 they contain, but cannot prove an import is absent, even with an exact pin.
 Editable-install inventories can use compatible wheel paths as positive
 evidence, but their incomplete RECORDs cannot prove that an import is absent,
@@ -767,7 +789,7 @@ findings in any language.
 | U002 | INFO | Unused import | Upload/API normalized dead-code category |
 | U003 | INFO | Unused variable | Upload/API normalized dead-code category |
 | U004 | INFO | Unused class | Upload/API normalized dead-code category |
-| U005 | MEDIUM | Declared dependency appears unused | Python dependencies |
+| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped | Python dependencies |
 | U006 | INFO | Unused parameter | Debt normalized dead-code category |
 | DC001 | MEDIUM | Unused function | LLM report dead-code ID |
 | DC002 | LOW | Unused import | LLM report dead-code ID |

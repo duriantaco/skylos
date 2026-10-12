@@ -151,15 +151,18 @@ def fetch_distribution_modules(dist_name: str, *, specifier: str = "") -> dict:
         names = _wheel_file_names(url, size)
     except _Unreadable:
         return {"status": STATUS_UNREADABLE}
+    site_path_loader = _has_site_path_loader(names)
     return {
         **module_inventory(names),
         "version": version,
+        # A site-level .pth loader can expose any module name at import time.
+        "site_path_loader": site_path_loader,
         "complete_for_requirement": bool(
             version is not None
             and _exact_pin(declared)
             and len(candidates) == 1
             and candidates[0][3]  # only portable wheels can support absence proof
-            and not _has_site_path_loader(names)
+            and not site_path_loader
         ),
     }
 

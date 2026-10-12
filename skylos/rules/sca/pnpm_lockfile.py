@@ -2,6 +2,12 @@
 
 The v9 packages table describes sources; snapshots describe installations with
 distinct peer contexts. Neither referenced paths nor package scripts are read.
+
+References follow pnpm's own key rules: ``1.0.0(peer@2.0.0)`` and patch hashes
+are contexts of ``name@1.0.0``; ``npm:``/``alias@`` references name the real
+package; tarball and ``file:`` references are keyed ``name@<reference>``. The
+project's own local code (``link:``/``file:`` directories, local tarballs and
+workspace packages) is listed as ``not_checked``; it has no registry identity.
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ import hashlib
 from pathlib import Path
 import posixpath
 import re
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
@@ -25,7 +32,9 @@ from skylos.rules.sca.npm_lockfile import _exact_version, _name, _source
 _MAX_BYTES = 10_000_000
 _MAX_NODES = 200_000
 _MAX_DEPTH = 64
-_MAX_GRAPH_WORK = 100_000
+# Large monorepos (astro: ~570 importers) need several hundred thousand
+# bounded context steps; the bound still stops multiplicative blow-ups.
+_MAX_GRAPH_WORK = 1_000_000
 _PROJECT_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 _ENVIRONMENT_SECTIONS = ("configDependencies", "packageManagerDependencies")
 _SECTIONS = _PROJECT_SECTIONS + _ENVIRONMENT_SECTIONS
@@ -161,14 +170,124 @@ def _identity(key, version):
     return name, exact
 
 
-def _display_key(value, version):
+def _public_tarball_identity(metadata):
+    """``name@version`` of a public npm registry tarball resolution.
+
+    pnpm keys a tarball dependency by its URL (``alias@https://registry.npmjs.org
+    /zod/-/zod-4.4.3.tgz``). The resolution is what pnpm installs, so a
+    canonical public tarball path names the real package; recorded
+    ``name``/``version`` fields must agree with it.
+    """
+    resolution = metadata.get("resolution")
+    if not isinstance(resolution, dict):
+        return None
+    tarball = resolution.get("tarball")
+    if not isinstance(tarball, str) or len(tarball) > 8192:
+        return None
+    try:
+        parsed = urlsplit(tarball)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in ("https", "http")
+        or parsed.netloc != "registry.npmjs.org"
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    name, separator, filename = unquote(parsed.path).lstrip("/").partition("/-/")
+    stem = name.rpartition("/")[2] + "-"
+    if (
+        not separator
+        or _name(name) is None
+        or "/" in filename
+        or not filename.startswith(stem)
+        or not filename.endswith(".tgz")
+    ):
+        return None
+    exact = _exact_version(filename[len(stem) : -len(".tgz")])
+    if exact is None:
+        return None
+    if ("name" in metadata and metadata["name"] != name) or (
+        "version" in metadata and _exact_version(metadata["version"]) != exact
+    ):
+        return None
+    return name, exact
+
+
+def _local_resolution(metadata):
+    """The record is the project's own code: a directory or a ``file:`` tarball."""
+    resolution = metadata.get("resolution")
+    if not isinstance(resolution, dict):
+        return False
+    if "directory" in resolution or resolution.get("type") == "directory":
+        return (
+            resolution.get("type") == "directory"
+            and isinstance(resolution.get("directory"), str)
+            and set(resolution) == {"type", "directory"}
+        )
+    tarball = resolution.get("tarball")
+    return (
+        isinstance(tarball, str)
+        and tarball.startswith("file:")
+        and set(resolution) <= {"tarball", "integrity"}
+    )
+
+
+_RUNTIMES = frozenset({"node", "deno", "bun"})
+
+
+def _runtime_label(key, metadata, version):
+    """``node@runtime:26.11.1``: a JavaScript runtime binary pnpm installs.
+
+    It comes from the runtime's own download site, not the npm registry, so no
+    npm advisory can describe it.
+    """
+    base = _base_key(key)
+    if version != 9 or base is None:
+        return None
+    name, separator, raw_version = base.partition("@runtime:")
+    resolution = metadata.get("resolution")
+    if (
+        not separator
+        or name not in _RUNTIMES
+        or _exact_version(raw_version) is None
+        or not isinstance(resolution, dict)
+        or resolution.get("type") not in ("variations", "binary")
+    ):
+        return None
+    return f"{name}@runtime:{raw_version}"
+
+
+def _local_record_id(key, *entries):
+    """pnpm 8 writes ``id: file:<dir>`` for local packages with peer contexts.
+
+    Any other alternate identity is not evidence of local code.
+    """
+    return all(
+        "id" not in entry
+        or (isinstance(entry["id"], str) and entry["id"] == _base_key(key))
+        for entry in entries
+    )
+
+
+def _key_alias(key, version):
+    """The installed name in a v9 ``alias@<reference>`` key, if any."""
+    base = _base_key(key)
+    if base is None or version != 9:
+        return None
+    index = base.find("@", 1)
+    return _name(base[:index]) if index > 0 else None
+
+
+def _display_key(value, version, identity=None):
     """Source keys may contain authenticated URLs; never copy those to output."""
     if len(value) > 8192:
         return "<invalid>"
     if any(char in value for char in (":", "?", "#", "%", "\\")) or any(
         ord(char) < 32 for char in value
     ):
-        identity = _identity(value, version)
+        identity = identity or _identity(value, version)
         if identity is not None:
             name, exact = identity
             digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -228,9 +347,12 @@ def _metadata_problems(entry):
         if field in entry and type(entry[field]) is not bool:
             yield {"reason": "invalid_package_metadata", "field": field}
     for field in ("os", "cpu", "libc", "transitivePeerDependencies"):
+        value = entry.get(field)
+        if field != "transitivePeerDependencies" and isinstance(value, str):
+            continue  # ``libc: glibc``: package.json permits one string
         if field in entry and (
-            not isinstance(entry[field], list)
-            or not all(isinstance(value, str) for value in entry[field])
+            not isinstance(value, list)
+            or not all(isinstance(item, str) for item in value)
         ):
             yield {"reason": "invalid_package_metadata", "field": field}
     for field in ("engines", "peerDependencies"):
@@ -492,11 +614,16 @@ def _reference(name, reference, version, nodes):
     base = _base_key(value)
     if base is None:
         return None
-    if _exact_version(base) is not None:
-        value = f"{name}@{value}"
-    if version == 6 and not value.startswith("/"):
-        value = "/" + value
-    return value if value in nodes else None
+    candidates = [f"{name}@{value}" if _exact_version(base) is not None else value]
+    if version == 9 and not reference.startswith("npm:"):
+        # pnpm 9 keys tarball/``file:`` references as ``name@<reference>``.
+        candidates.append(f"{name}@{reference}")
+    for candidate in candidates:
+        if version == 6 and not candidate.startswith("/"):
+            candidate = "/" + candidate
+        if candidate in nodes:
+            return candidate
+    return None
 
 
 def _contexts(adjacency, roots, records):
@@ -680,7 +807,14 @@ def parse_pnpm_lock(
     inventory.package_count = len(records) + len(roots)
     if inventory.package_count > max_packages:
         raise LockfileLimitError("lockfile package count exceeds limit")
+    identities = {
+        key: _identity(key, version) or _public_tarball_identity(record[0])
+        for key, record in records.items()
+    }
+    display = {key: _display_key(key, version, identities[key]) for key in records}
     non_registry_names = set()
+    workspace_names = set()
+    missing_references = []
     aliases_by_key = {key: set() for key in records}
     adjacency = {}
     edges_by_key = {}
@@ -715,7 +849,7 @@ def parse_pnpm_lock(
                 if edge_count > _MAX_GRAPH_WORK:
                     raise LockfileLimitError("lockfile dependency graph exceeds limit")
                 problem = {
-                    "package": _display_key(key, version),
+                    "package": display.get(key) or _display_key(key, version),
                     "dependency": name if _name(name) is not None else "<invalid>",
                     "section": section,
                     "line": _line(declarations, name, line),
@@ -760,43 +894,88 @@ def parse_pnpm_lock(
                         )
                     )
                     normalized = "" if target == "." else _root_path(target)
-                    if node_type == "importer" and normalized in roots:
+                    if normalized is not None and normalized in roots:
+                        # Snapshot links (peers resolved to a workspace project)
+                        # are relative to the lockfile; that project is already
+                        # an importer root with its own usage contexts.
                         edge["workspace"] = normalized
-                        adjacency[node].append((("importer", normalized), section))
+                        workspace_names.add(name)
+                        if node_type == "importer":
+                            adjacency[node].append((("importer", normalized), section))
                     else:
-                        inventory.unresolved.append(
-                            dict(
-                                problem,
-                                reason="missing_link_target",
-                                source_type="local",
-                            )
+                        # ``link:`` to a directory that is not a workspace
+                        # project (or outside the lockfile root): local code.
+                        inventory.not_checked.append(
+                            dict(problem, reason="local_link", source_type="local")
                         )
                     continue
                 resolved = _reference(name, reference, version, records)
                 if resolved is None:
-                    inventory.unresolved.append(
-                        dict(problem, reason="missing_locked_dependency")
-                    )
-                    if reference.startswith(
-                        ("file:", "workspace:", "git", "http:", "https:")
-                    ):
+                    if reference.startswith(("file:", "workspace:")):
                         non_registry_names.add(name)
+                        inventory.not_checked.append(
+                            dict(problem, reason="local_package", source_type="local")
+                        )
+                        continue
+                    if reference.startswith(("git", "http:", "https:")):
+                        non_registry_names.add(name)
+                    missing_references.append((problem, name, reference))
                     continue
-                edge["package_path"] = _display_key(resolved, version)
+                edge["package_path"] = display[resolved]
                 aliases_by_key[resolved].add(name)
                 adjacency[node].append((("package", resolved), section))
         if node_type == "package":
             edges_by_key[key] = edges
 
+    for problem, name, reference in missing_references:
+        base = _base_key(reference)
+        if (
+            name in workspace_names
+            and base is not None
+            and _exact_version(base) is not None
+        ):
+            # A peer satisfied by a workspace project is recorded by version
+            # (``zod: 4.6.6``) with no package entry: the project's own code.
+            inventory.not_checked.append(
+                dict(problem, reason="workspace_package", source_type="local")
+            )
+            continue
+        inventory.unresolved.append(dict(problem, reason="missing_locked_dependency"))
+
     contexts, kinds = _contexts(adjacency, roots, records)
     for key, (metadata, snapshot, line) in records.items():
-        problem = {"package": _display_key(key, version), "line": line}
-        identity = _identity(key, version)
+        problem = {"package": display[key], "line": line}
+        identity = identities[key]
         if identity is None:
-            name = _name(metadata.get("name"))
-            if name:
-                non_registry_names.add(name)
-            non_registry_names.update(aliases_by_key[key])
+            names = set(aliases_by_key[key])
+            for candidate in (_name(metadata.get("name")), _key_alias(key, version)):
+                if candidate:
+                    names.add(candidate)
+            non_registry_names.update(names)
+            runtime = _runtime_label(key, metadata, version)
+            if runtime is not None:
+                inventory.not_checked.append(
+                    {
+                        "package": runtime,
+                        "line": line,
+                        "reason": "runtime",
+                        "source_type": "runtime",
+                    }
+                )
+                continue
+            if _local_resolution(metadata) and _local_record_id(
+                key, metadata, snapshot
+            ):
+                label = _name(metadata.get("name")) or _key_alias(key, version)
+                inventory.not_checked.append(
+                    {
+                        "package": f"{label}@<local>" if label else "<local>",
+                        "line": line,
+                        "reason": "local_package",
+                        "source_type": "local",
+                    }
+                )
+                continue
             inventory.unresolved.append(
                 dict(problem, reason="non_registry_source", source_type="unknown")
             )
@@ -811,6 +990,16 @@ def parse_pnpm_lock(
             non_registry_names.update(aliases_by_key[key])
             if _name(metadata.get("name")):
                 non_registry_names.add(metadata["name"])
+            if (
+                source_error == "non_registry_source"
+                and source_type == "local"
+                and _local_resolution(metadata)
+                and _local_record_id(key, metadata, snapshot)
+            ):
+                inventory.not_checked.append(
+                    dict(problem, reason="local_package", source_type="local")
+                )
+                continue
             inventory.unresolved.append(
                 dict(problem, reason=source_error, source_type=source_type)
             )
@@ -835,7 +1024,9 @@ def parse_pnpm_lock(
         if metadata.get("dev") is True:
             groups.add("devDependencies")
         markers = {
-            field: metadata[field]
+            field: [metadata[field]]
+            if isinstance(metadata[field], str) and field != "engines"
+            else metadata[field]
             for field in ("os", "cpu", "libc", "engines")
             if field in metadata
         }
@@ -850,9 +1041,9 @@ def parse_pnpm_lock(
             "ecosystem": "npm",
             "file": str(path),
             "line": line,
-            "snippet": _display_key(key, version),
+            "snippet": display[key],
             "lockfile_version": version,
-            "package_path": _display_key(key, version),
+            "package_path": display[key],
             "dependency_kind": "direct"
             if "direct" in kinds[key]
             else "transitive"

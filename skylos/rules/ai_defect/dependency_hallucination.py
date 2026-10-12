@@ -26,10 +26,17 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
-from skylos.rules.ai_defect import pypi_wheel_modules
-from skylos.rules.ai_defect.installed_modules_cache import (
-    installed_module_mapping,
-    virtual_env_site_packages,
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.core.file_discovery import discover_source_files
+from skylos.core.python_distributions import (
+    distribution_import_paths,
+    path_is_provided,
+    shared_namespace_roots,
+)
+from skylos.core.python_requirements import (
+    parse_setup_cfg_text,
+    parse_setup_py_text,
+    read_requirements_tree,
 )
 from skylos.core.safe_cache_io import (
     load_project_json_cache,
@@ -37,8 +44,11 @@ from skylos.core.safe_cache_io import (
     read_text_no_symlink,
     save_project_json_cache,
 )
-from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
-from skylos.core.file_discovery import discover_source_files
+from skylos.rules.ai_defect import pypi_wheel_modules
+from skylos.rules.ai_defect.installed_modules_cache import (
+    installed_module_mapping,
+    virtual_env_site_packages,
+)
 
 # ---------------------------------------------------------------------------
 # The mapping file uses the pipreqs format: "import_name:dist_name" per line.
@@ -155,6 +165,8 @@ FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
 REQ_LINE_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
 DEPENDENCY_MANIFEST_FILENAMES = ("requirements.txt", "pyproject.toml", "setup.py")
+# Where an undeclared import can be declared (all are read statically).
+DECLARATION_FILES_TEXT = "requirements.txt, pyproject.toml, setup.cfg or setup.py"
 
 
 def _normalize_name(name):
@@ -1441,45 +1453,12 @@ def _diff_file_has_direct_script_evidence(repo_root, file_label):
     return source is not None and _has_direct_script_evidence(source)
 
 
-def _parse_requirements_txt(path):
-    deps = set()
-
-    text = read_text_no_symlink(
-        path,
-        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
-        encoding="utf-8",
-        errors="ignore",
-    )
-    if text is None:
-        return deps
-    lines = text.splitlines()
-
-    for line in lines:
-        line = line.strip()
-
-        if not line:
-            continue
-
-        if line.startswith("#"):
-            continue
-
-        if line.startswith("-e "):
-            continue
-
-        if line.startswith("git+"):
-            continue
-
-        if line.startswith("http://") or line.startswith("https://"):
-            continue
-
-        m = REQ_LINE_RE.match(line)
-        if not m:
-            continue
-
-        name = m.group(1)
-        deps.add(_normalize_name(name))
-
-    return deps
+def _parse_requirements_txt(path, root=None):
+    """Declared names in a requirements file and every ``-r``/``-c`` file it
+    includes inside ``root`` (default: the file's own directory)."""
+    path = Path(path)
+    tree = read_requirements_tree(path, root=root if root is not None else path.parent)
+    return {requirement.normalized for requirement in tree.requirements()}
 
 
 def _dependency_names(specs):
@@ -1592,18 +1571,39 @@ def _parse_pyproject_toml(path, *, project_root=None):
     return _pyproject_dependency_metadata(data)
 
 
-def _parse_setup_py(path):
+def _parse_setup_py(path, *, project_root=None):
+    """Declared names in a static ``setup(...)`` call (never executed).
+
+    Literal ``install_requires``/``extras_require``/``setup_requires``/
+    ``tests_require`` values are read with ``ast``; a file that is not
+    Python 3 falls back to a literal ``install_requires = [...]`` scan.
+    """
+    if project_root is None:
+        txt = read_text_no_symlink(
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    else:
+        txt = read_project_text_no_symlink(
+            project_root,
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    if txt is None:
+        return set(), None
+    parsed = parse_setup_py_text(txt, path)
+    if parsed is not None:
+        return parsed.names(), parsed.name
+    return _parse_setup_py_text_fallback(txt)
+
+
+def _parse_setup_py_text_fallback(txt):
     deps = set()
     project_name = None
-
-    txt = read_text_no_symlink(
-        path,
-        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
-        encoding="utf-8",
-        errors="ignore",
-    )
-    if txt is None:
-        return deps, project_name
 
     name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
     if name_match:
@@ -1644,6 +1644,31 @@ def _parse_setup_py(path):
                 deps.add(_normalize_name(rm.group(1)))
 
     return deps, project_name
+
+
+def _parse_setup_cfg(path, *, project_root=None):
+    """Declared names in ``setup.cfg`` ``[options]`` and extras (static)."""
+    if project_root is None:
+        txt = read_text_no_symlink(
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    else:
+        txt = read_project_text_no_symlink(
+            project_root,
+            path,
+            max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    if txt is None:
+        return set(), None
+    parsed = parse_setup_cfg_text(
+        txt, Path(path), root=project_root if project_root else Path(path).parent
+    )
+    return parsed.names(), parsed.name
 
 
 def _has_dependency_manifest_context(repo_root):
@@ -1697,7 +1722,7 @@ def _collect_declared_metadata(repo_root):
     current = repo_root
     for _ in range(5):
         for req_path in _requirements_files(current):
-            deps |= _parse_requirements_txt(req_path)
+            deps |= _parse_requirements_txt(req_path, current)
 
         pyproj_path = current / "pyproject.toml"
         if pyproj_path.exists():
@@ -1706,17 +1731,20 @@ def _collect_declared_metadata(repo_root):
             if pyproj_name and not project_name:
                 project_name = pyproj_name
 
-        setup_path = current / "setup.py"
-        if setup_path.exists():
-            setup_deps, setup_name = _parse_setup_py(setup_path)
-            deps |= setup_deps
-            if setup_name and not project_name:
-                project_name = setup_name
+        for setup_path, parse in (
+            (current / "setup.py", _parse_setup_py),
+            (current / "setup.cfg", _parse_setup_cfg),
+        ):
+            if setup_path.exists():
+                setup_deps, setup_name = parse(setup_path)
+                deps |= setup_deps
+                if setup_name and not project_name:
+                    project_name = setup_name
 
         req_dir = current / "requirements"
         if req_dir.exists() and req_dir.is_dir():
             for req_file in req_dir.glob("*.txt"):
-                deps |= _parse_requirements_txt(req_file)
+                deps |= _parse_requirements_txt(req_file, current)
 
         if deps:
             break
@@ -1810,6 +1838,11 @@ def _poetry_provider_specifier(value):
         return None
 
 
+def _is_project_editable(target):
+    """``-e .`` installs the scanned project itself, whose modules are local."""
+    return target.strip().rstrip("/") in (".", "file:.", "file:./")
+
+
 def _provider_directory_metadata(directory, *, project_root=None):
     """Bounded static requirements and identity for one manifest directory."""
     specs = {}
@@ -1842,40 +1875,40 @@ def _provider_directory_metadata(directory, *, project_root=None):
         requirement_files += variants
     except OSError:
         unknown = True
+    # Continuation lines, ``--hash`` options and ``-r``/``-c`` includes are
+    # ordinary pip syntax (pip-compile/uv lock files use all three); only
+    # private indexes, non-local editables and unreadable lines leave the
+    # provider inventory open-ended.
+    include_root = project_root if project_root is not None else directory
+    visited = set()
     for path in requirement_files:
-        text = read(path)
-        if text is None:
+        try:
+            if Path(os.path.realpath(path)) in visited:
+                continue
+        except OSError:
             unknown = True
             continue
-        private_index = False
-        file_specs = {}
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line == "--require-hashes":
-                continue
-            if line.startswith(
-                (
-                    "--index-url",
-                    "--extra-index-url",
-                    "--find-links",
-                    "--no-index",
-                    "-i ",
-                    "-i=",
-                    "-f ",
-                    "-f=",
-                )
-            ):
-                private_index = True
+        tree = read_requirements_tree(path, root=include_root, visited=visited)
+        if not tree.files:
+            unknown = True
+            continue
+        if tree.unresolved_includes or tree.limit_reached:
+            unknown = True
+        for parsed in tree.files:
+            if parsed.private_index or parsed.unsupported_lines:
                 unknown = True
-                continue
-            if line.startswith("-"):
+            if any(not _is_project_editable(target) for target in parsed.editables):
                 unknown = True
-                continue
-            if not _add_provider_requirement(file_specs, line):
-                unknown = True
-        if private_index:
-            file_specs = {name: None for name in file_specs}
-        _merge_provider_specs(specs, file_specs)
+            file_specs = {}
+            for requirement in parsed.requirements:
+                if requirement.url:
+                    _merge_provider_specs(file_specs, {requirement.normalized: None})
+                    continue
+                if not _add_provider_requirement(file_specs, requirement.spec):
+                    unknown = True
+            if parsed.private_index:
+                file_specs = {name: None for name in file_specs}
+            _merge_provider_specs(specs, file_specs)
 
     pyproject_text = read(directory / "pyproject.toml")
     if pyproject_text is not None:
@@ -1941,51 +1974,27 @@ def _provider_directory_metadata(directory, *, project_root=None):
                     _merge_provider_specs(specs, {normalized: specifier})
 
     setup_text = read(directory / "setup.py")
-    if setup_text is not None:
-        try:
-            tree = ast.parse(setup_text)
-        except (SyntaxError, ValueError, RecursionError, MemoryError):
-            tree = None
+    setup_cfg_text = read(directory / "setup.cfg")
+    for declaration in (
+        parse_setup_py_text(setup_text, directory / "setup.py")
+        if setup_text is not None
+        else False,
+        parse_setup_cfg_text(setup_cfg_text, directory / "setup.cfg", root=include_root)
+        if setup_cfg_text is not None
+        else False,
+    ):
+        if declaration is False:
+            continue
+        if declaration is None or declaration.dynamic:
+            # Not Python 3, ``setup(**kwargs)``, computed lists, ``attr:``.
             unknown = True
-        for node in ast.walk(tree) if tree is not None else ():
-            if not isinstance(node, ast.Call):
-                continue
-            function = node.func
-            if not (
-                (isinstance(function, ast.Name) and function.id == "setup")
-                or (isinstance(function, ast.Attribute) and function.attr == "setup")
-            ):
-                continue
-            for keyword in node.keywords:
-                if (
-                    keyword.arg == "name"
-                    and isinstance(keyword.value, ast.Constant)
-                    and isinstance(keyword.value.value, str)
-                ):
-                    project_names.add(_normalize_name(keyword.value.value))
-                if keyword.arg not in (
-                    "install_requires",
-                    "setup_requires",
-                    "extras_require",
-                ):
-                    continue
-                try:
-                    value = ast.literal_eval(keyword.value)
-                except (ValueError, TypeError, MemoryError, RecursionError):
-                    unknown = True
-                    continue
-                groups = (
-                    value.values()
-                    if keyword.arg == "extras_require" and isinstance(value, dict)
-                    else [value]
-                )
-                for group in groups:
-                    if not isinstance(group, (list, tuple)):
-                        unknown = True
-                        continue
-                    for raw in group:
-                        if not _add_provider_requirement(specs, raw):
-                            unknown = True
+        if declaration is None:
+            continue
+        if declaration.name:
+            project_names.add(_normalize_name(declaration.name))
+        for raw, _line in declaration.all_requirements():
+            if not _add_provider_requirement(specs, raw):
+                unknown = True
     return specs, project_names, unknown
 
 
@@ -2036,8 +2045,24 @@ def _nested_pyproject_metadata(repo_root, directory, project_names=None):
     deps = set()
     has_manifest = False
     for req_path in _requirements_files(directory):
-        deps |= _parse_requirements_txt(req_path)
+        deps |= _parse_requirements_txt(req_path, repo_root)
         has_manifest = True
+
+    for setup_path, parse in (
+        (directory / "setup.py", _parse_setup_py),
+        (directory / "setup.cfg", _parse_setup_cfg),
+    ):
+        try:
+            if not setup_path.is_file():
+                continue
+        except OSError:
+            continue
+        setup_deps, setup_name = parse(setup_path, project_root=repo_root)
+        if setup_deps or setup_name:
+            deps |= setup_deps
+            if setup_name:
+                deps.add(_normalize_name(setup_name))
+            has_manifest = True
 
     pyproject = directory / "pyproject.toml"
     try:
@@ -2848,17 +2873,70 @@ def _check_declared_providers(
         for path in set(required_paths or (mod,))
         | {base for base, _names in from_imports}
     ):
-        return _undeclared_template(
-            mod,
-            f"Unverified import '{mod}'. Declared distributions provide overlapping module and package paths, so the effective import cannot be established safely.",
-        )
+        _record_unverified(ctx, mod, "overlapping_provider_paths")
+        return None
     if unchecked and ctx["dist_lookups_failed"]:
         ctx["registry_unreachable"] = True
     # Distribution naming, partial installed metadata and source-only/private
-    # declarations cannot disprove an arbitrary module alias.
-    if unchecked or ctx["provider_unknown"]:
-        return _unverified_template(mod, unchecked, registry_missing=hallucination)
+    # declarations cannot disprove an arbitrary module alias. Uncertainty is
+    # not a finding: report only when no declared distribution is even
+    # plausibly related to the import (by name or by known mapping).
+    if ctx["provider_unknown"] or _declared_site_path_loader(unchecked, ctx):
+        _record_unverified(ctx, mod, "open_ended_declarations")
+        return None
+    if unchecked:
+        # Installed metadata naming a different, undeclared distribution is
+        # positive evidence; a similar declared name is only a guess.
+        required = set(required_paths or (mod,)) | {
+            base for base, _names in from_imports
+        }
+        if _declared_inventory_overlaps(required, ctx):
+            # A declared distribution ships this path or a concrete parent of
+            # it; only the exact module is unproven.
+            _record_unverified(ctx, mod, "related_provider_paths")
+            return None
+        if not _installed_from_undeclared(mod, ctx) and any(
+            _name_affinity(mod, dist) for dist in unchecked
+        ):
+            _record_unverified(ctx, mod, "unchecked_related_distributions")
+            return None
+        if hallucination:
+            return _possible_hallucination_template(mod, unchecked)
     return template
+
+
+def _declared_inventory_overlaps(required, ctx):
+    """Known declared paths equal, contain, or concretely enclose an import.
+
+    A shared namespace root (``sphinxcontrib``) alone is not overlap.
+    """
+    paths, concrete, _plain, _packages = _known_provider_paths(ctx)
+    for wanted in required:
+        for path in paths:
+            if path == wanted or path.startswith(wanted + "."):
+                return True
+            if wanted.startswith(path + ".") and path in concrete:
+                return True
+    return False
+
+
+def _declared_site_path_loader(dists, ctx):
+    """A declared wheel ships a ``.pth`` loader that may expose any module."""
+    for dist in dists:
+        inventory = ctx["dist_modules"].get(_dist_key(dist, ctx))
+        if isinstance(inventory, dict) and inventory.get("site_path_loader"):
+            return True
+    return False
+
+
+def _installed_from_undeclared(mod, ctx):
+    providers = ctx["installed_mapping"].get(mod)
+    return bool(providers) and not (set(providers) & set(ctx["declared_deps"]))
+
+
+def _record_unverified(ctx, mod, reason):
+    """Remember an import that could not be verified; never a finding."""
+    ctx.setdefault("unverified_imports", {}).setdefault(mod, reason)
 
 
 def _namespace_distribution(mod, submodules, ctx):
@@ -2918,22 +2996,14 @@ def _undeclared_template(mod, message):
     }
 
 
-def _unverified_template(mod, unchecked, *, registry_missing=True):
-    if not unchecked:
-        return _undeclared_template(
-            mod,
-            f"Unverified import '{mod}'. Dynamic or unsupported dependency declarations prevent establishing which import paths they provide.",
-        )
-    names = ", ".join(f"'{dist}'" for dist in unchecked[:3])
-    if len(unchecked) > 3:
-        names += f" and {len(unchecked) - 3} more"
-    noun = "dependency" if len(unchecked) == 1 else "dependencies"
+def _possible_hallucination_template(mod, unchecked):
+    noun = "distribution" if len(unchecked) == 1 else "distributions"
     return _undeclared_template(
         mod,
         (
-            f"Unverified import '{mod}'. "
-            + ("No PyPI project has this name, and " if registry_missing else "")
-            + f"the declared {noun} {names} could not be checked for this import path, so it is not confirmed as an undeclared or hallucinated dependency."
+            f"Possible hallucinated import '{mod}'. No PyPI project has this "
+            f"name, and no declared dependency is known to provide it "
+            f"({len(unchecked)} declared {noun} could not be inspected)."
         ),
     )
 
@@ -2975,6 +3045,8 @@ def _classify_import(
         and _paths_covered(mod, required_paths, from_imports, ctx)
     ):
         return None
+    if mod and _declared_by_name_mapping(mod, required_paths, from_imports, ctx):
+        return None
     root_only = set(required_paths or (mod,)) <= {mod} and not from_imports
     template = _classify_import_names(
         mod,
@@ -2991,10 +3063,9 @@ def _classify_import(
     if template["rule_id"] == RULE_ID_HALLUCINATION and mod in optional_imports:
         return None
     if mod in uncertain_imports:
-        return _undeclared_template(
-            mod,
-            f"Unverified import '{mod}'. ImportError is handled, but the fallback cannot be proven to complete safely; this is not confirmed as a required hallucinated dependency.",
-        )
+        # ImportError is handled, but the fallback cannot be proven safe.
+        _record_unverified(ctx, mod, "guarded_import_fallback_unproven")
+        return None
     return _check_declared_providers(
         mod, template, ctx, required_paths=required_paths, from_imports=from_imports
     )
@@ -3084,6 +3155,42 @@ def _classify_import_names(
 _NO_FINDING = object()
 
 
+def _declared_import_paths(ctx):
+    """Import paths the declared distributions provide, by name mapping.
+
+    Installed metadata, the curated table, pipreqs and conservative name
+    heuristics (see ``skylos.core.python_distributions``). Namespace roots
+    such as ``google`` only count with a dotted path.
+    """
+    declared = frozenset(set(ctx["declared_deps"]) - set(ctx["project_names"]))
+    cache = ctx.setdefault("declared_import_paths_cache", {})
+    if declared in cache:
+        return cache[declared]
+    installed = ctx["installed_mapping"]
+    shared = ctx.get("shared_namespace_roots")
+    if shared is None:
+        shared = shared_namespace_roots(installed)
+        ctx["shared_namespace_roots"] = shared
+    paths = set()
+    for dist in declared:
+        paths |= distribution_import_paths(
+            dist,
+            installed_modules=installed,
+            import_to_dist=ctx["import_to_dist"],
+            namespace_roots=shared,
+        )
+    cache[declared] = frozenset(paths)
+    return cache[declared]
+
+
+def _declared_by_name_mapping(mod, required_paths, from_imports, ctx):
+    provided = _declared_import_paths(ctx)
+    if not provided:
+        return False
+    paths = set(required_paths or (mod,)) | {base for base, _names in from_imports}
+    return all(path_is_provided(path, provided) for path in paths)
+
+
 def _classify_installed_import(mod, ctx, *, root_only=True):
     if mod not in ctx["installed_mapping"]:
         return _NO_FINDING
@@ -3102,7 +3209,8 @@ def _classify_installed_import(mod, ctx, *, root_only=True):
     dist_hint = ", ".join(sorted(known_dists))
     return _undeclared_template(
         mod,
-        f"Undeclared import '{mod}' (provided by: {dist_hint}). Add to requirements.txt/pyproject.toml/setup.py.",
+        f"Undeclared import '{mod}' (provided by: {dist_hint}). "
+        f"Add to {DECLARATION_FILES_TEXT}.",
     )
 
 
@@ -3126,8 +3234,7 @@ def _classify_mapped_import(mod, ctx, *, root_only=True):
                 mod,
                 (
                     f"Undeclared import '{mod}' (provided by: "
-                    f"{mapped_dist}). Add to "
-                    f"requirements.txt/pyproject.toml/setup.py."
+                    f"{mapped_dist}). Add to {DECLARATION_FILES_TEXT}."
                 ),
             )
     return _NO_FINDING
@@ -3157,17 +3264,14 @@ def _classify_registry_import(mod, ctx, manifest_context, submodules=frozenset()
     if pypi_status == "exists" and manifest_context:
         return _undeclared_template(
             mod,
-            (
-                f"Undeclared import '{mod}'. Not found in "
-                f"requirements.txt/pyproject.toml/setup.py."
-            ),
+            (f"Undeclared import '{mod}'. Not found in {DECLARATION_FILES_TEXT}."),
         )
     if manifest_context:
         return _undeclared_template(
             mod,
             (
                 f"Undeclared import '{mod}'. Not found in "
-                f"requirements.txt/pyproject.toml/setup.py "
+                f"{DECLARATION_FILES_TEXT} "
                 f"(possible import/dist name mismatch)."
             ),
         )
@@ -3211,11 +3315,32 @@ def _is_repository_module_import(template, mod, ctx, src):
     return bool(_SYS_PATH_EDIT_RE.search(src))
 
 
+# setup.py runs under the build backend (PEP 517/518 default: setuptools),
+# which is a build requirement, not a runtime dependency.
+_SETUP_BUILD_MODULES = frozenset({"setuptools", "pkg_resources", "distutils", "wheel"})
+
+
+def _is_build_backend_import(file_path, mod):
+    return mod in _SETUP_BUILD_MODULES and Path(str(file_path)).name == "setup.py"
+
+
+class DependencyImportFindings(list):
+    """Findings plus the imports that could not be verified (not findings).
+
+    ``unverified_imports`` maps an import root to why it could not be
+    verified; callers may show the count as a summary note.
+    """
+
+    def __init__(self, findings=(), *, unverified_imports=None):
+        super().__init__(findings)
+        self.unverified_imports = dict(unverified_imports or {})
+
+
 def scan_python_dependency_hallucinations(repo_root, py_files):
     findings = []
 
     if repo_root is None:
-        return findings
+        return DependencyImportFindings()
 
     root = Path(os.path.abspath(repo_root))
     py_files = list(py_files)
@@ -3258,6 +3383,8 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             _optional_import_roots(src, allow_uncertain=True) - optional_imports
         )
         for mod in sorted(_extract_imports(src)):
+            if _is_build_backend_import(file_path, mod):
+                continue
             required_paths, from_imports = _import_module_requirements(src, mod)
             template = _classify_import(
                 mod,
@@ -3281,7 +3408,11 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             finding["line"] = _find_import_line(src, mod)
             findings.append(finding)
 
-    return findings
+    unverified = ctx.get("unverified_imports", {})
+    return DependencyImportFindings(
+        findings,
+        unverified_imports=dict(sorted(unverified.items())),
+    )
 
 
 def scan_diff_added_imports(
@@ -3331,7 +3462,7 @@ def scan_diff_added_imports(
     uncertain_cache = {}
     for file_label, line_no, module_name in added_imports:
         mod = str(module_name).split(".")[0].strip()
-        if (file_label, mod) in seen:
+        if (file_label, mod) in seen or _is_build_backend_import(file_label, mod):
             continue
         seen.add((file_label, mod))
 
