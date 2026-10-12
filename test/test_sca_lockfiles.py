@@ -232,9 +232,12 @@ def test_private_lock_source_prevents_manifest_public_registry_guess(
         (tmp_path / "requirements.txt").write_text("example==1.2.3\n", encoding="utf-8")
     result = sca.scan_dependencies(tmp_path)
     assert osv.queries == []
-    assert result.receipt["status"] == "incomplete"
+    assert result.receipt["status"] == (
+        "incomplete" if ecosystem == "npm" else "complete_with_non_registry_sources"
+    )
     assert result.receipt["manifest_source_conflict_count"] == 1
-    assert result.receipt["unresolved_lockfile_dependency_count"] == 1
+    assert result.receipt["unresolved_lockfile_dependency_count"] == (1 if ecosystem == "npm" else 0)
+    assert result.receipt["non_registry_lockfile_dependency_count"] == (0 if ecosystem == "npm" else 1)
     assert "private.invalid" not in json.dumps(result.receipt)
 
 

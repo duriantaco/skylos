@@ -150,6 +150,9 @@ def render_pretty_results(
     _print_architecture_advisory_status(console, result)
     _print_publisher_review_status(console, result)
     _print_assessment(console, result)
+    if not isinstance(result.get("assessment"), dict) or not result["assessment"]:
+        for detail in dependency_coverage_lines(result.get("analysis_summary")):
+            console.print(Text("  " + _sanitize_terminal_text(detail), style="dim"))
     summary = result.get("analysis_summary") or {}
     if summary.get("assessment_includes_filtered_findings") or summary.get("grade_includes_filtered_findings"):
         label = "Assessment" if result.get("assessment") else "Grade"

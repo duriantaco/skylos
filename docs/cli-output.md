@@ -101,6 +101,14 @@ manifest versions, and inspect `analysis_summary.sca_coverage` for parsing,
 source or advisory-service gaps. Skylos does not install dependencies or
 resolve ranges. SBOM export is supported; SBOM import is not.
 
+Validated non-registry sources in `uv.lock` are shown as **not checked** in
+rich, pretty, LLM, concise and GitHub output, including scans with no findings.
+Successful public-package queries can exit `0` unless a configured gate fails;
+malformed inputs or advisory-service failures still exit `2`. The JSON receipt
+keeps this limited coverage separate from a clean dependency assessment and
+cannot establish absence-based resolution of dependency findings. See
+[uv source coverage](./dependency-scanning.md#uv-source-coverage).
+
 Expanded signature advice on conventional test functions explains that
 pytest may supply fixtures and parametrized inputs by name. Review fixture
 dependencies and case clarity before applying advice intended for manually

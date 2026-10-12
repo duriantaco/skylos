@@ -1449,9 +1449,12 @@ def _run_scan_command(
                     raise SystemExit(1)
 
         if not machine_output:
+            from skylos.reporting.assessment_display import dependency_coverage_lines
             from skylos.ui.scope_notes import scope_note_lines
 
             for note in scope_note_lines(result):
+                console.print(f"[muted]{escape(note)}[/muted]")
+            for note in dependency_coverage_lines(result.get("analysis_summary")):
                 console.print(f"[muted]{escape(note)}[/muted]")
 
         exit_code = run_gate_interaction(

@@ -174,6 +174,11 @@ def _generate_llm_report(
     result: dict, project_root: pathlib.Path, *, expand_advice: bool = False
 ) -> str:
     all_findings = _collect_llm_report_findings(result)
+    from skylos.reporting.assessment_display import dependency_coverage_lines
+
+    dependency_text = "\n".join(dependency_coverage_lines(result.get("analysis_summary")))
+    if dependency_text:
+        dependency_text += "\n\n"
     assessment_text = ""
     if isinstance(result.get("assessment"), dict):
         from skylos.reporting.assessment_display import (
@@ -191,7 +196,7 @@ def _generate_llm_report(
             "\n\n" + assessment_coverage_text(result["assessment"]) + "\n\n"
         )
     if not all_findings:
-        return "# Skylos Report\n\n" + assessment_text + "No findings.\n"
+        return "# Skylos Report\n\n" + assessment_text + dependency_text + "No findings.\n"
 
     counts = summarize_finding_types(result)
     displayed = [
@@ -213,6 +218,8 @@ def _generate_llm_report(
     ]
     if assessment_text:
         sections.insert(1, assessment_text)
+    if dependency_text:
+        sections.insert(1, dependency_text)
     incomplete = sum(label == "Analysis Incomplete" for _finding, label in all_findings)
     if incomplete:
         sections.insert(

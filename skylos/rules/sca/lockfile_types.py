@@ -25,9 +25,10 @@ class LockfileInventory:
     ``not_checked`` lists entries that were read correctly but are the
     project's own local code, with no public registry identity to check
     (``link:``/``file:`` directories, local tarballs, workspace packages).
-    They are reported and never queried; they do not make an inventory
-    incomplete. Remote non-registry sources (git, private registries) stay
-    in ``unresolved``.
+    They are reported and never queried. Known, validated non-registry entries
+    may also appear here with ``non_registry_source`` or ``non_public_registry``
+    reasons: processing succeeded, but their advisory coverage is incomplete.
+    Malformed or unsupported source metadata stays in ``unresolved``.
     """
 
     format_version: int

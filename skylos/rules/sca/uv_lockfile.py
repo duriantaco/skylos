@@ -72,7 +72,52 @@ def _source_type(source: object) -> str:
     if len(kinds) != 1:
         return "unknown"
     kind = next(iter(kinds))
-    return kind if isinstance(source[kind], str) and source[kind] else "unknown"
+    allowed = {kind, "subdirectory"} if kind == "url" else {kind}
+    if set(source) - allowed:
+        return "unknown"
+    if "subdirectory" in source and not _source_path(source["subdirectory"]):
+        return "unknown"
+    return kind if _source_path(source[kind]) else "unknown"
+
+
+def _source_path(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= 8192
+        and not any(ord(char) < 32 or ord(char) == 127 for char in value)
+    )
+
+
+def _valid_non_registry_source(source: dict, kind: str) -> bool:
+    """Recognize source data without reading local paths or contacting URLs."""
+    value = source[kind]
+    if not _source_path(value):
+        return False
+    if kind == "path":
+        return True
+    # uv also serializes filesystem-backed indexes under ``registry``.
+    if kind == "registry" and (
+        ":" not in value or re.match(r"^[A-Za-z]:[\\/]", value)
+    ):
+        return True
+    if any(char.isspace() for char in value):
+        return False
+    try:
+        url = urlsplit(value)
+        if url.port is not None and not 0 < url.port <= 65535:
+            return False
+        schemes = {"http", "https", "file"}
+        if kind == "git":
+            schemes |= {"ssh", "git"}
+            # uv's locked Git source records the precise commit in its fragment.
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", url.fragment):
+                return False
+        return url.scheme in schemes and (
+            bool(url.path) if url.scheme == "file" else bool(url.hostname)
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _public_registry(source: dict) -> bool:
@@ -449,9 +494,17 @@ def parse_uv_lock(
         elif kind == "unknown":
             reason = "unsupported_package_source"
         elif kind != "registry":
-            reason = "non_registry_source"
+            reason = (
+                "non_registry_source"
+                if _valid_non_registry_source(source, kind)
+                else "invalid_package_source"
+            )
         elif not _public_registry(source):
-            reason = "non_public_registry"
+            reason = (
+                "non_public_registry"
+                if _valid_non_registry_source(source, kind)
+                else "invalid_package_source"
+            )
         elif not _version(version):
             reason = "invalid_locked_version"
         if reason:
@@ -460,7 +513,12 @@ def parse_uv_lock(
                 issue["name"] = name
             if _version(version):
                 issue["version"] = version
-            inventory.unresolved.append(issue)
+            if reason in {"non_registry_source", "non_public_registry"}:
+                issue["source_type"] = kind
+                inventory.not_checked.append(issue)
+                inventory.non_registry_names.append(name)
+            else:
+                inventory.unresolved.append(issue)
             continue
         node["record"] = {
             "name": name,

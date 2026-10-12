@@ -976,6 +976,10 @@ def render_results(
     _render_analysis_warnings(console, result, root_path=root_path, limit=limit)
     _render_publisher_review_status(console, result)
 
+    if not isinstance(result.get("assessment"), dict) or not result["assessment"]:
+        for detail in dependency_coverage_lines(summ):
+            console.print(escape(detail), style="muted")
+
     assessment = result.get("assessment")
     grade_data = result.get("grade")
     if isinstance(assessment, dict) and assessment:

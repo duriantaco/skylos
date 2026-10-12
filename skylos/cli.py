@@ -2810,7 +2810,9 @@ def _concise_line(
 
 
 def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
-    lines: list[str] = []
+    from skylos.reporting.assessment_display import dependency_coverage_lines
+
+    lines: list[str] = dependency_coverage_lines(result.get("analysis_summary"))
 
     for category, fallback_label in CONCISE_FINDING_CATEGORIES:
         items = list(result.get(category, []) or [])
