@@ -538,7 +538,7 @@ NEXT_PACKAGE_JSON = '{"dependencies": {"next": "15.0.0", "react": "19.0.0"}}'
 
 
 def _next_project(tmp_path):
-    (tmp_path / "package.json").write_text(NEXT_PACKAGE_JSON, encoding="utf-8")
+    (tmp_path / "package.json").write_text(NEXT_PACKAGE_JSON, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     return tmp_path
 
 

@@ -64,7 +64,7 @@ def _composer_data(directory: str) -> dict:
     if not os.path.isfile(composer):
         return {}
     try:
-        with open(composer, encoding="utf-8") as handle:
+        with open(composer, encoding="utf-8") as handle:  # skylos: ignore[SKY-D215] analyzer reads the scanned project's composer.json
             data = json.load(handle)
     except (OSError, ValueError):
         return {}
@@ -91,7 +91,7 @@ def _laravel_root_and_path(file_path: str) -> tuple[str, str] | None:
 
 def _read_source(path: str) -> str:
     try:
-        with open(path, encoding="utf-8", errors="replace") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:  # skylos: ignore[SKY-D215] analyzer reads a discovered PHP source file
             return handle.read(_MAX_SOURCE_BYTES)
     except OSError:
         return ""
@@ -140,13 +140,23 @@ def _psr4_directories(root: str) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+def _is_inside_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+    except ValueError:
+        return False
+
+
 def _class_file(root: str, qualified: str) -> str | None:
+    # composer.json comes from the scanned project, so a PSR-4 directory can
+    # point outside it. Only class files inside the project are read.
+    real_root = os.path.realpath(root)
     for prefix, directory in _psr4_directories(root):
         if prefix and not qualified.startswith(f"{prefix}."):
             continue
         rest = qualified[len(prefix) + 1 :] if prefix else qualified
         candidate = os.path.join(directory, *rest.split(".")) + ".php"
-        if os.path.isfile(candidate):
+        if os.path.isfile(candidate) and _is_inside_root(candidate, real_root):
             return candidate
     return None
 
@@ -157,7 +167,7 @@ def _class_summaries(
 ) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
     """``{qualified class: (resolved bases, resolved traits)}`` for one file."""
     try:
-        source = Path(path).read_bytes()[:_MAX_SOURCE_BYTES]
+        source = Path(path).read_bytes()[:_MAX_SOURCE_BYTES]  # skylos: ignore[SKY-D215] analyzer reads a PHP class file inside the project root
     except OSError:
         return {}
     core = PhpCore(path, source)
@@ -215,9 +225,10 @@ def _uses_has_factory(root: str, bases, traits, depth: int = 0) -> bool:
 
 
 def _model_paths(root: str, subdirectory: str, model: str):
+    real_root = os.path.realpath(root)
     for base in ("app/Models", "app"):
         path = os.path.join(root, base, subdirectory, f"{model}.php")
-        if os.path.isfile(path):
+        if os.path.isfile(path) and _is_inside_root(path, real_root):
             yield path
 
 

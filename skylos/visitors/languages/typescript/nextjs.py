@@ -224,7 +224,7 @@ def _nextjs_page_extensions(root: str) -> tuple[str, ...] | None:
         if not os.path.isfile(path):
             continue
         try:
-            with open(path, encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:  # skylos: ignore[SKY-D215] analyzer reads the scanned project's next.config
                 source = handle.read(_MAX_NEXT_CONFIG_BYTES)
         except (OSError, UnicodeDecodeError):
             return None

@@ -372,7 +372,7 @@ def _write_files(root: Path, relatives) -> list[Path]:
     for relative in relatives:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("export {};\n", encoding="utf-8")
+        path.write_text("export {};\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         paths.append(path)
     return paths
 

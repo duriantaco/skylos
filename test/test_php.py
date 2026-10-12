@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -424,17 +425,17 @@ return Application::configure(basePath: dirname(__DIR__))
 
 
 def _laravel_app(tmp_path, bootstrap=_LARAVEL_11_BOOTSTRAP):
-    (tmp_path / "composer.json").write_text(_LARAVEL_COMPOSER, encoding="utf-8")
+    (tmp_path / "composer.json").write_text(_LARAVEL_COMPOSER, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     if bootstrap is not None:
         (tmp_path / "bootstrap").mkdir(exist_ok=True)
-        (tmp_path / "bootstrap" / "app.php").write_text(bootstrap, encoding="utf-8")
+        (tmp_path / "bootstrap" / "app.php").write_text(bootstrap, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     return tmp_path
 
 
 def _write_php(root, relative, code):
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(code, encoding="utf-8")
+    path.write_text(code, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
 
 
 def _framework_roots(tmp_path, relative, code):
@@ -591,6 +592,72 @@ def test_laravel_command_base_must_resolve_to_illuminate_command(tmp_path):
         live |= roots
 
     assert live == {"Report"}
+
+
+def test_laravel_psr4_directories_outside_the_project_are_not_read(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _laravel_app(project)
+    outside = tmp_path / "outside"
+    # composer.json belongs to the scanned project, so its PSR-4 map may
+    # point anywhere: one relative escape, one absolute path.
+    composer = {
+        "require": {"laravel/framework": "^11.0"},
+        "autoload": {
+            "psr-4": {
+                "App\\": "app/",
+                "Up\\": "../outside/up/",
+                "Abs\\": f"{(outside / 'abs').as_posix()}/",
+            }
+        },
+    }
+    _write_php(app, "composer.json", json.dumps(composer))
+    for namespace, directory in (("Up", "up"), ("Abs", "abs")):
+        _write_php(
+            outside,
+            f"{directory}/BaseCommand.php",
+            f"<?php\nnamespace {namespace};\n"
+            "use Illuminate\\Console\\Command as IlluminateCommand;\n"
+            "abstract class BaseCommand extends IlluminateCommand {}\n",
+        )
+    live = set()
+    for name, namespace in (("Escaped", "Up"), ("Absolute", "Abs")):
+        roots, _ = _framework_roots(
+            app,
+            f"app/Console/Commands/{name}.php",
+            "<?php\nnamespace App\\Console\\Commands;\n"
+            f"use {namespace}\\BaseCommand;\nclass {name} extends BaseCommand {{}}\n",
+        )
+        live |= roots
+
+    assert live == set()
+
+
+def test_laravel_model_symlinked_outside_the_project_is_not_read(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _laravel_app(project)
+    _write_php(
+        tmp_path,
+        "outside/Invoice.php",
+        "<?php\nnamespace App\\Models;\n"
+        "use Illuminate\\Database\\Eloquent\\Factories\\HasFactory;\n"
+        "class Invoice { use HasFactory; }\n",
+    )
+    models = app / "app" / "Models"
+    models.mkdir(parents=True)
+    try:
+        (models / "Invoice.php").symlink_to(tmp_path / "outside" / "Invoice.php")
+    except OSError:
+        pytest.skip("filesystem does not allow symlink creation")
+
+    roots, _ = _framework_roots(
+        app,
+        "database/factories/InvoiceFactory.php",
+        "<?php\nnamespace Database\\Factories;\nclass InvoiceFactory {}\n",
+    )
+
+    assert roots == set()
 
 
 def test_laravel_factory_needs_a_model_using_has_factory(tmp_path):
