@@ -1,3 +1,5 @@
+import logging
+import os
 import pytest
 import tempfile
 from pathlib import Path
@@ -187,6 +189,78 @@ def project_with_syntax_error():
 def cleanup_temp_files():
     """auto cleanup any temporary files after each test"""
     yield
+
+
+# pytest sets this itself for every test phase and removes it afterwards.
+_PYTEST_OWNED_ENV = frozenset({"PYTEST_CURRENT_TEST"})
+
+
+@pytest.fixture(autouse=True)
+def _environ_restore():
+    """Put ``os.environ`` back the way the test found it.
+
+    Several CLI paths write the process environment for one run (LLM base
+    URLs, provider API keys, MCP transport); in a shared worker those values
+    reached every later test. After each test, added keys are removed and
+    changed or deleted keys get their old value back.
+
+    pytest orders a conftest's autouse fixtures by name, so this one is set up
+    before any of them requests ``monkeypatch``; ``monkeypatch`` therefore
+    undoes its own ``setenv``/``delenv`` first and this check runs last.
+    Fixtures with a wider scope set up first, so their variables are part of
+    the snapshot and stay until their own teardown.
+    """
+    environ = os.environ
+    saved = {k: v for k, v in environ.items() if k not in _PYTEST_OWNED_ENV}
+    yield
+    for key in [k for k in environ if k not in saved]:
+        if key not in _PYTEST_OWNED_ENV:
+            del environ[key]
+    for key, value in saved.items():
+        if environ.get(key) != value:
+            environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def _restore_skylos_logger():
+    """Undo ``cli.setup_logger`` after every test.
+
+    ``cli.main()`` configures the process-wide "skylos" logger for one CLI run:
+    INFO level, a RichHandler that prints to whatever ``sys.stdout`` is when a
+    record arrives, ``propagate = False`` and a ``console`` attribute. In a
+    shared pytest worker that setup outlived the test, so later tests' log
+    records landed in their captured stdout instead of reaching ``caplog``.
+    """
+    logger = logging.getLogger("skylos")
+    attributes = dict(vars(logger))
+    handlers, filters = list(logger.handlers), list(logger.filters)
+    yield
+    for handler in logger.handlers:
+        if handler not in handlers:
+            handler.close()
+    vars(logger).clear()
+    vars(logger).update(attributes, handlers=handlers, filters=filters)
+    # setLevel also clears every logger's cached isEnabledFor answers.
+    logger.setLevel(attributes["level"])
+
+
+@pytest.fixture
+def unconfigured_skylos_logger(monkeypatch):
+    """The "skylos" logger as a fresh subcommand process has it: no setup.
+
+    Use it where a test checks a command's stdout contract, so the result
+    never depends on a logger configuration left by earlier code.
+    """
+    logger = logging.getLogger("skylos")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "filters", [])
+    monkeypatch.setattr(logger, "propagate", True)
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.delattr(logger, "console", raising=False)
+    level = logger.level
+    logger.setLevel(logging.NOTSET)
+    yield logger
+    logger.setLevel(level)
 
 
 @pytest.fixture(autouse=True)

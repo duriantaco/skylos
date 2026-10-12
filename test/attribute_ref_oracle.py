@@ -45,3 +45,16 @@ def _definition(definition_type, name, initial=None):
     definition.decorators = ["source.decorator"]
     definition.why_unused = ["prior reason"]
     return definition
+
+
+def _fresh_bytecode(monkeypatch, *functions):
+    """Restart CPython's adaptive specialization of ``functions`` for one test.
+
+    Each ``+`` specializes from its own execution history, which every earlier
+    caller in the process shares. CPython 3.14 on arm64 returns different
+    payloads for NaN + NaN from the generic float path and from
+    BINARY_OP_ADD_FLOAT, so two scoring loops give the same NaN bits only when
+    they run their additions from the same interpreter state.
+    """
+    for function in functions:
+        monkeypatch.setattr(function, "__code__", function.__code__.replace())

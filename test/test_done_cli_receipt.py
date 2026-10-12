@@ -16,6 +16,10 @@ from skylos.done.config import DoneConfig
 from skylos.done.engine import CheckOutcome, DoneResult
 from skylos.done.receipt import build_receipt, read_receipt, write_receipt
 
+# These tests read the command's stdout contract; a logger configured by an
+# earlier ``cli.main()`` in the same worker once printed a warning there.
+pytestmark = pytest.mark.usefixtures("unconfigured_skylos_logger")
+
 
 def _git(root: Path, *arguments: str) -> None:
     subprocess.run(
