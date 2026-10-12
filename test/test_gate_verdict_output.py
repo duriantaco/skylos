@@ -69,8 +69,22 @@ def project(tmp_path, monkeypatch):
     (path / "app.py").write_text(CLEAN_APP, encoding="utf-8")
     monkeypatch.chdir(path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("SKYLOS_CONFIG_FILE", raising=False)
-    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    # This non-Git fixture tests local verdicts. The runner's PR base and
+    # policy belong to its checkout, not this temporary project.
+    for name in (
+        "SKYLOS_CONFIG_FILE",
+        "SKYLOS_DIFF_BASE",
+        "SKYLOS_POLICY_BASE",
+        "GITHUB_BASE_REF",
+        "GITHUB_STEP_SUMMARY",
+        "BITBUCKET_BUILD_NUMBER",
+        "BITBUCKET_COMMIT",
+        "BITBUCKET_PR_DESTINATION_BRANCH",
+        "TF_BUILD",
+        "SYSTEM_PULLREQUEST_PULLREQUESTID",
+        "SYSTEM_PULLREQUEST_TARGETBRANCH",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("skylos.cloud.sync.get_token", lambda: None)
 
     def no_upload(*args, **kwargs):
