@@ -20,7 +20,7 @@ def git(root, *args):
 def baseline(root, source, *, path="app.py"):
     target = root / path
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source)
+    target.write_text(source)  # skylos: ignore[SKY-D324] all callers use fresh pytest tmp_path roots and fixed paths
     git(root, "init", "-q")
     git(root, "add", path)
     git(root, "commit", "-q", "-m", "Static baseline")

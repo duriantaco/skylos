@@ -98,7 +98,7 @@ def _write_snapshot(context: GitContext, entries, destination: Path):
         offset += 1
         target = destination.joinpath(*PurePosixPath(name).parts)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        target.write_bytes(content)  # skylos: ignore[SKY-D324] validated Git entry under a fresh private TemporaryDirectory; no checkout or target-code execution
     if offset != len(data):
         raise ImpactUnavailable("invalid_base_blob_batch")
 
@@ -166,7 +166,7 @@ def annotate_dead_code_impact(
                 if not target.exists():
                     if Path(requested_path).is_file():
                         continue
-                    target.mkdir(parents=True, exist_ok=True)
+                    target.mkdir(parents=True, exist_ok=True)  # skylos: ignore[SKY-D215] resolved scope is relative to the Git root, mapped into the private snapshot
                 targets.append(str(target))
             baseline = {}
             if targets:

@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 import skylos
-import skylos.cli as cli
+from skylos import cli
 from skylos.commands import baseline_cmd, cicd_cmd, scan_cmd
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 from skylos.core import baseline as baseline_store
@@ -296,11 +296,17 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
     events: list[str] = []
     uploaded = {}
     filter_new_findings = baseline_store.filter_new_findings
+    rule_coverage = {"status": "not_connected", "rule_count": 0}
+    projected["analysis_summary"]["custom_rules_coverage"] = rule_coverage
 
     def fake_apply(result, project_root, **kwargs):
         events.append("project")
         assert result == {
             **raw,
+            "analysis_summary": {
+                **raw["analysis_summary"],
+                "custom_rules_coverage": rule_coverage,
+            },
             "provenance": None,
             "provenance_status": {
                 "ran": False,
@@ -330,6 +336,10 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
     monkeypatch.setattr(cli, "load_config", lambda *args, **kwargs: {})
     monkeypatch.setattr(cli, "upload_report", fake_upload)
     monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "not_connected"},
+    )
+    monkeypatch.setattr(
         review_decisions, "review_scan_requirements", lambda root: (False, False)
     )
     monkeypatch.setattr(review_decisions, "apply_trusted_review_decisions", fake_apply)
@@ -353,3 +363,4 @@ def test_main_scan_projects_before_baseline_and_keeps_review_audit_for_upload(
     assert uploaded["danger"] == []
     assert uploaded["reviewed_findings"] == projected["reviewed_findings"]
     assert uploaded["reviewed_findings_summary"]["suppressed_count"] == 1
+    assert uploaded["analysis_summary"]["custom_rules_coverage"] == rule_coverage

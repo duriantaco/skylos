@@ -26,10 +26,13 @@ Dry runs preserve existing trust even when validation fails.
 
 The writer refuses a symlinked `.skylos` directory or destination file. Files
 are staged before activation. An exception while activating the second file or
-storing trusted state restores the previous repository file contents; errors
+storing trusted state restores the previous repository file contents. Activation
+also rolls back if the files no longer match the authenticated bytes. Errors
 that prevent restoration are reported explicitly. On platforms supporting
-directory descriptors, writes are pinned to the opened repository directory;
-other platforms recheck paths before replacement.
+directory descriptors, reads and writes use validated filenames beneath held
+no-follow directory descriptors. Windows uses native handle-relative opens,
+renames and deletes. A platform without either capability refuses the pull;
+checking paths before a write is insufficient to prevent directory-swap races.
 
 This is rollback for caught failures, not a multi-file transaction across a
 process crash or power loss. A crash between the two file replacements can

@@ -55,7 +55,7 @@ def _old_files(repo):
         "suppressions.json": '{"suppressions": [], "count": 0}\n',
     }
     for name, text in expected.items():
-        (directory / name).write_text(text)
+        (directory / name).write_text(text)  # skylos: ignore[SKY-D324] pull_repo creates private tmp_path/repo; names are the two literal fixture files
     return expected
 
 
@@ -242,7 +242,9 @@ def test_directory_swap_after_staging_does_not_write_outside_repo(
     assert not list(retained.glob(".*.tmp"))
 
 
-def test_path_checked_fallback_still_refuses_symlink_destination(tmp_path, monkeypatch):
+def test_unsupported_descriptor_platform_refuses_path_fallback(tmp_path, monkeypatch):
+    if sync_state.os.name == "nt":
+        pytest.skip("Windows uses native handle-relative sync")
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".skylos").mkdir()
@@ -250,7 +252,7 @@ def test_path_checked_fallback_still_refuses_symlink_destination(tmp_path, monke
     outside.write_text("sentinel")
     (repo / ".skylos" / "config.yaml").symlink_to(outside)
     monkeypatch.setattr(sync_state.os, "supports_dir_fd", set())
-    with pytest.raises(sync_state.UnsafeSyncPath, match="symlink"):
+    with pytest.raises(sync_state.UnsafeSyncPath, match="no-follow directory"):
         with sync_state.activate_sync_files(repo, {"config.yaml": "new"}):
             pass
     assert outside.read_text() == "sentinel"

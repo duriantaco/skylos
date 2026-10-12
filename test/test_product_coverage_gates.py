@@ -41,7 +41,7 @@ def _sca_receipt(**overrides):
 def _workflow(root, text):
     path = root / ".github" / "workflows" / "ci.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8")  # skylos: ignore[SKY-D324] all callers use fresh pytest tmp_path roots and fixed ci.yml
     return path
 
 
@@ -289,8 +289,8 @@ def test_repo_cannot_loosen_synced_required_coverage(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("strict", [False, True])
 def test_real_cli_gate_rejects_required_unresolved_versions(project, monkeypatch, osv, strict):
-    (project / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
-    (project / "pyproject.toml").write_text(
+    (project / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")  # skylos: ignore[SKY-D324] project fixture creates fresh tmp_path/project
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] project fixture creates fresh tmp_path/project
         '[tool.skylos.gate.coverage]\nrequired = ["sca"]\nrequire_resolved_versions = true\n',
         encoding="utf-8",
     )
@@ -311,9 +311,9 @@ def test_real_cli_malformed_actions_fail_incomplete(project, monkeypatch, osv):
 def test_real_pr_cannot_remove_base_coverage_requirement(project, monkeypatch, osv):
     monkeypatch.delenv("SKYLOS_POLICY_BASE", raising=False)
     monkeypatch.setenv("SKYLOS_DIFF_BASE", "HEAD")
-    (project / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
+    (project / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")  # skylos: ignore[SKY-D324] project fixture creates fresh tmp_path/project
     config_path = project / "pyproject.toml"
-    config_path.write_text(
+    config_path.write_text(  # skylos: ignore[SKY-D324] fixed pyproject.toml in the fresh pytest project fixture
         '[tool.skylos.gate.coverage]\nrequired = ["sca"]\nrequire_resolved_versions = true\n',
         encoding="utf-8",
     )
@@ -322,7 +322,7 @@ def test_real_pr_cannot_remove_base_coverage_requirement(project, monkeypatch, o
     _git(project, "config", "user.email", "skylos-tests@example.invalid")
     _git(project, "add", "--", "pyproject.toml", "requirements.txt")
     _git(project, "commit", "-qm", "fixture baseline")
-    config_path.write_text(
+    config_path.write_text(  # skylos: ignore[SKY-D324] same fixture-owned regular pyproject.toml created above
         '[tool.skylos.gate.coverage]\nrequired = []\nrequire_resolved_versions = false\n',
         encoding="utf-8",
     )
@@ -333,10 +333,12 @@ def test_real_pr_cannot_remove_base_coverage_requirement(project, monkeypatch, o
 
 
 def test_real_cli_required_sca_rejects_unsupported_only_project(project, monkeypatch, osv):
-    (project / "Cargo.toml").write_text('[package]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8")
+    (project / "Cargo.toml").write_text(  # skylos: ignore[SKY-D324] fixed Cargo.toml under the fresh pytest project fixture
+        '[package]\nname = "test"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
     config_dir = project / ".skylos"
     config_dir.mkdir()
-    (config_dir / "config.yaml").write_text(
+    (config_dir / "config.yaml").write_text(  # skylos: ignore[SKY-D324] fresh fixture-owned .skylos directory and fixed config.yaml
         "gate:\n  coverage:\n    required: [sca]\n", encoding="utf-8"
     )
     code, report, _ = _run_cli(project, monkeypatch)

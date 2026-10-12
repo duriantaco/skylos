@@ -1572,7 +1572,12 @@ def test_cicd_review_sidecar_rejects_oversized_file(tmp_path, monkeypatch):
         )
 
 
-def test_cli_guardrail_static_json_output_passthrough(monkeypatch):
+def test_cli_guardrail_static_json_output_passthrough(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "not_connected"},
+    )
     result = {
         "unused_functions": [{"name": "unused_func", "file": "test.py", "line": 10}],
         "unused_imports": [],
@@ -1601,11 +1606,20 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch):
     mock_analyze.assert_called_once()
     mock_print.assert_called_once()
     payload = json.loads(mock_print.call_args.args[0])
-    assert payload["unused_functions"][0].pop("finding_type") == "review"
-    assert payload["analysis_summary"].pop("finding_type_counts") == {
-        "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+    expected = {
+        **result,
+        "unused_functions": [{**result["unused_functions"][0], "finding_type": "review"}],
+        "analysis_summary": {
+            **result["analysis_summary"],
+            "custom_rules_coverage": {
+                "status": "not_connected", "rule_count": 0,
+            },
+            "finding_type_counts": {
+                "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+            },
+        },
     }
-    assert payload == result
+    assert payload == expected
 
 
 def test_cli_guardrail_debt_changed_json_keeps_project_scope(tmp_path, monkeypatch):
