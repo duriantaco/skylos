@@ -1599,7 +1599,13 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch):
         cli.main()
 
     mock_analyze.assert_called_once()
-    mock_print.assert_called_once_with(json.dumps(result))
+    mock_print.assert_called_once()
+    payload = json.loads(mock_print.call_args.args[0])
+    assert payload["unused_functions"][0].pop("finding_type") == "review"
+    assert payload["analysis_summary"].pop("finding_type_counts") == {
+        "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+    }
+    assert payload == result
 
 
 def test_cli_guardrail_debt_changed_json_keeps_project_scope(tmp_path, monkeypatch):

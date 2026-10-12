@@ -15,9 +15,7 @@ def test_pretty_renderer_counts_architecture_advisories_separately():
         "architecture_metrics": {
             "advisory_count": 1,
             "advisory_signal_count": 2,
-            "advisories": [
-                {"name": "shared", "rule_ids": ["SKY-Q802", "SKY-Q803"]}
-            ],
+            "advisories": [{"name": "shared", "rule_ids": ["SKY-Q802", "SKY-Q803"]}],
         },
     }
 
@@ -25,7 +23,7 @@ def test_pretty_renderer_counts_architecture_advisories_separately():
     render_pretty_results(console, result)
     output = console.export_text()
 
-    assert "0 issues" in output
+    assert "0 defects · 0 review · 0 advice in 0 groups" in output
     assert "Architecture: 1 advisory module (2 signals)" in output
     assert "architecture_metrics.advisories" in output
     assert "HIGH" not in output
@@ -57,7 +55,8 @@ def test_pretty_renderer_groups_findings_by_file_and_keeps_copyable_locations(tm
     output = console.export_text()
 
     assert "Skylos static analysis" in output
-    assert "src/app.py · 1 issue" in output
+    assert "src/app.py · 1 review" in output
+    assert "Type: Review  Severity:" in output
     assert " HIGH  SKY-D211  SQL injection risk" in output
     assert "src/app.py:2" in output
     assert "cursor.execute" in output

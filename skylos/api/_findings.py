@@ -1,4 +1,6 @@
 import os
+import json
+from collections import Counter
 
 from skylos.api._snippets import extract_snippet
 from skylos.core.review_decisions import FINDING_SECTIONS
@@ -235,10 +237,13 @@ def _normalize_result_sections(
     analyzer_owned=False,
 ) -> list[dict]:
     findings: list[dict] = []
+    exported_records: list[dict] = []
     for section_name, category, default_rule_id in section_specs:
+        items = result_json.get(section_name, [])
+        exported_records.extend(items or [])
         findings.extend(
             _normalize_findings(
-                result_json.get(section_name, []),
+                items,
                 category,
                 git_root,
                 default_rule_id=default_rule_id,
@@ -248,4 +253,37 @@ def _normalize_result_sections(
                 analyzer_owned=analyzer_owned,
             )
         )
+    if section_specs is UPLOAD_FINDING_SPECS:
+        # Upload all canonical families without broadening which findings the
+        # review-decision policy may suppress. Consume existing occurrences so
+        # report mirrors are not appended again, while repeated evidence stays.
+        from skylos.reporting.finding_types import iter_result_findings
+
+        remaining = Counter(json.dumps(row, sort_keys=True) for row in exported_records)
+        categories = {
+            "dead_code": "DEAD_CODE",
+            "quality": "QUALITY",
+            "custom_rules": "CUSTOM",
+            "security": "SECURITY",
+            "secrets": "SECRET",
+            "dependencies": "DEPENDENCY",
+            "ai_defects": "AI_DEFECT",
+            "reliability": "RELIABILITY",
+        }
+        for category, finding in iter_result_findings(result_json):
+            key = json.dumps(finding, sort_keys=True)
+            if remaining[key]:
+                remaining[key] -= 1
+                continue
+            findings.extend(
+                _normalize_findings(
+                    [finding],
+                    categories[category],
+                    git_root,
+                    default_severity=default_severity,
+                    extract_metadata=extract_metadata,
+                    generate_finding_id=generate_finding_id,
+                    analyzer_owned=analyzer_owned,
+                )
+            )
     return findings

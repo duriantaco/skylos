@@ -1796,7 +1796,9 @@ def _filter_architecture_advisories(result, filtered, keep_signal):
     filtered["architecture_metrics"] = selected_metrics
 
 
-def _apply_display_filters(result, severity=None, category=None, file_filter=None):
+def _apply_display_filters(
+    result, severity=None, category=None, file_filter=None, *, preserve_grade=True
+):
     import copy
 
     min_rank = _display_filter_min_rank(severity)
@@ -1818,8 +1820,10 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
     _filter_architecture_advisories(
         result,
         filtered,
-        lambda signal: (not allowed_cats or "quality" in allowed_cats)
-        and bool(_display_filter_items([signal], file_filter, min_rank)),
+        lambda signal: (
+            (not allowed_cats or "quality" in allowed_cats)
+            and bool(_display_filter_items([signal], file_filter, min_rank))
+        ),
     )
 
     reviewed_items = result.get("reviewed_findings")
@@ -1859,11 +1863,29 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
         )
     if "reviewed_findings_summary" in filtered:
         summary["reviewed_findings"] = copy.copy(filtered["reviewed_findings_summary"])
+    from skylos.reporting.finding_types import summarize_finding_types
+
+    summary["finding_type_counts"] = summarize_finding_types(filtered)
+    if result.get("grade") and preserve_grade:
+        # Display filters do not change the code or the scan's grade. The
+        # scope explicitly includes findings outside the current view.
+        summary["grade_scope"] = "all_analyzed_findings"
+        summary["grade_includes_filtered_findings"] = True
+    if result.get("assessment") and preserve_grade:
+        summary["assessment_scope"] = "all_analyzed_findings"
+        summary["assessment_includes_filtered_findings"] = True
+    elif not preserve_grade:
+        filtered.pop("assessment", None)
+        summary.pop("assessment_scope", None)
+        summary.pop("assessment_includes_filtered_findings", None)
+    if not preserve_grade:
+        filtered.pop("grade", None)
+        summary.pop("grade_scope", None)
+        summary.pop("grade_includes_filtered_findings", None)
     filtered["analysis_summary"] = summary
 
     # These aggregates describe the unfiltered result and must not be emitted
     # alongside a filtered machine-readable finding set.
-    filtered.pop("grade", None)
     filtered.pop("ai_security_stats", None)
     filtered.pop("provenance_summary", None)
 
@@ -1955,6 +1977,9 @@ def _apply_rule_selection(result: dict, selectors) -> dict:
     # Aggregate grades describe the unfiltered scan and would be misleading in
     # a rule-selected report.
     filtered.pop("grade", None)
+    filtered.pop("assessment", None)
+    summary.pop("assessment_scope", None)
+    summary.pop("assessment_includes_filtered_findings", None)
     return filtered
 
 
@@ -2016,10 +2041,17 @@ def render_pretty_results(
     *,
     root_path=None,
     limit=None,
+    expand_advice=False,
 ):
     from skylos.ui.terminal_report import render_pretty_results as render_impl
 
-    return render_impl(console, result, root_path=root_path, limit=limit)
+    return render_impl(
+        console,
+        result,
+        root_path=root_path,
+        limit=limit,
+        **({"expand_advice": True} if expand_advice else {}),
+    )
 
 
 def _write_rich_report_output(
@@ -2029,6 +2061,7 @@ def _write_rich_report_output(
     tree: bool = False,
     root_path=None,
     limit=None,
+    expand_advice=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2043,6 +2076,7 @@ def _write_rich_report_output(
         root_path=root_path,
         limit=limit,
         copy_badge=False,
+        **({"expand_advice": True} if expand_advice else {}),
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")
@@ -2054,6 +2088,7 @@ def _write_pretty_report_output(
     *,
     root_path=None,
     limit=None,
+    expand_advice=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2066,6 +2101,7 @@ def _write_pretty_report_output(
         result,
         root_path=root_path,
         limit=limit,
+        **({"expand_advice": True} if expand_advice else {}),
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")

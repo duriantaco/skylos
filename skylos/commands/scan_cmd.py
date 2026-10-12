@@ -115,7 +115,9 @@ def _public_upload_receipt(response: dict) -> dict:
     return receipt
 
 
-def _verify_security_findings(result: dict, args, console, *, project_root, machine_output: bool) -> None:
+def _verify_security_findings(
+    result: dict, args, console, *, project_root, machine_output: bool
+) -> None:
     """Plan 7.3: attach AI evidence levels to high-severity security findings.
 
     Display only. A missing key or a failed provider leaves findings unchecked;
@@ -124,7 +126,10 @@ def _verify_security_findings(result: dict, args, console, *, project_root, mach
     import os
     from pathlib import Path
 
-    from skylos.llm.finding_verification import VerificationSettings, verify_security_findings
+    from skylos.llm.finding_verification import (
+        VerificationSettings,
+        verify_security_findings,
+    )
     from skylos.llm.runtime import resolve_llm_runtime
 
     def note(message: str) -> None:
@@ -134,9 +139,15 @@ def _verify_security_findings(result: dict, args, console, *, project_root, mach
     runs = int(getattr(args, "verify_runs", 3) or 3)
     max_findings = int(getattr(args, "verify_max", 20) or 0)
     if not 1 <= runs <= 9 or max_findings < 0:
-        note("[warn]AI verification skipped: --verify-runs must be 1-9 and --verify-max 0 or more.[/warn]")
+        note(
+            "[warn]AI verification skipped: --verify-runs must be 1-9 and --verify-max 0 or more.[/warn]"
+        )
         return
-    model = getattr(args, "verify_model", None) or os.getenv("SKYLOS_VERIFY_MODEL") or "gpt-4.1"
+    model = (
+        getattr(args, "verify_model", None)
+        or os.getenv("SKYLOS_VERIFY_MODEL")
+        or "gpt-4.1"
+    )
     provider, api_key, base_url, local = resolve_llm_runtime(
         model=model,
         provider_override=getattr(args, "verify_provider", None),
@@ -155,7 +166,9 @@ def _verify_security_findings(result: dict, args, console, *, project_root, mach
 
     def read_source(path: str) -> str:
         file_path = Path(path)
-        return (file_path if file_path.is_absolute() else root / file_path).read_text(encoding="utf-8")
+        return (file_path if file_path.is_absolute() else root / file_path).read_text(
+            encoding="utf-8"
+        )
 
     findings = [item for item in (result.get("danger") or []) if isinstance(item, dict)]
     try:
@@ -169,10 +182,14 @@ def _verify_security_findings(result: dict, args, console, *, project_root, mach
             read_source=read_source,
         )
     except Exception as exc:  # Never let the optional check break a scan.
-        note(f"[warn]AI verification failed: {type(exc).__name__}. Findings are unchanged.[/warn]")
+        note(
+            f"[warn]AI verification failed: {type(exc).__name__}. Findings are unchanged.[/warn]"
+        )
         return
     result["security_verification"] = {"model": model, "runs": runs, **counts}
-    checked = sum(counts[key] for key in ("traced", "ai_verified", "refuted", "unverified"))
+    checked = sum(
+        counts[key] for key in ("traced", "ai_verified", "refuted", "unverified")
+    )
     if checked or counts.get("not_checked"):
         note(
             f"[muted]AI check ({model}, {runs} runs):[/muted] "
@@ -335,7 +352,6 @@ def _run_scan_command(
         and not machine_output
     )
     selected_prerequisite_ids = _selected_rule_prerequisite_ids(args.select)
-
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
     if explicit_rich_upload:
@@ -622,7 +638,7 @@ def _run_scan_command(
                         in selected_prerequisite_ids
                     ]
             result.pop("unused_fixtures_counts", None)
-            result = _apply_display_filters(result)
+            result = _apply_display_filters(result, preserve_grade=False)
 
         if getattr(args, "diff", None):
             from skylos.analyzer import _split_outside_diff_analysis_errors
@@ -688,7 +704,7 @@ def _run_scan_command(
             # Fixture totals and aggregate grades describe the full scan, not
             # the findings visible in a diff-scoped report.
             result.pop("unused_fixtures_counts", None)
-            result = _apply_display_filters(result)
+            result = _apply_display_filters(result, preserve_grade=False)
             if not changed_ranges and not machine_output:
                 if any(result.get(category) for category in _DIFF_FINDING_CATEGORIES):
                     console.print(
@@ -919,9 +935,53 @@ def _run_scan_command(
 
         if getattr(args, "verify_security", False):
             _verify_security_findings(
-                result, args, console, project_root=project_root, machine_output=machine_output
+                result,
+                args,
+                console,
+                project_root=project_root,
+                machine_output=machine_output,
             )
 
+        if isinstance(result.get("assessment"), dict):
+            from skylos.reporting.assessment import compute_assessment
+
+            result["assessment"] = compute_assessment(result)
+            if args.gate or args.strict and not args.force:
+                from skylos.core.gatekeeper import (
+                    check_gate,
+                    _analysis_incomplete_reasons,
+                )
+
+                gate_config = config.get("gate") or {}
+                policy = config if args.gate else {}
+                passed, reasons = check_gate(
+                    result,
+                    policy,
+                    strict=bool(args.strict or gate_config.get("strict", False)),
+                    provenance=prov_report,
+                )
+                # This is a local report projection. The existing execution
+                # and Cloud gate paths still evaluate and enforce their policy.
+                result["gate"] = {
+                    "passed": passed,
+                    "reasons": reasons,
+                    "scope": "local_configured_policy"
+                    if args.gate
+                    else "local_strict_policy",
+                    "status": "incomplete"
+                    if _analysis_incomplete_reasons(result)
+                    else "evaluated",
+                    "forced": bool(args.force and not passed),
+                }
+        from skylos.reporting.finding_types import (
+            annotate_finding_types,
+            summarize_finding_types,
+        )
+
+        annotate_finding_types(result)
+        result.setdefault("analysis_summary", {})["finding_type_counts"] = (
+            summarize_finding_types(result)
+        )
         output_result = result
         _cli_severity = getattr(args, "severity", None)
         _cli_category = getattr(args, "category", None)
@@ -993,8 +1053,14 @@ def _run_scan_command(
             exit_code = 2 if delivery_exit == 2 else 0 if upload_resp.get("success") else 1
             cloud_gate_passed = upload_resp.get("quality_gate_passed")
             if cloud_gate_passed is None:
-                cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
-            if cloud_gate_passed is False and (args.strict or args.gate) and not args.force:
+                cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
+                    "passed", True
+                )
+            if (
+                cloud_gate_passed is False
+                and (args.strict or args.gate)
+                and not args.force
+            ):
                 exit_code = max(exit_code, 1)
             if exit_code and not defer_exit:
                 raise SystemExit(exit_code)
@@ -1002,9 +1068,11 @@ def _run_scan_command(
 
         if args.sarif:
             all_findings = []
+            exported_records = []
 
             def _add(items, category, default_rule_id):
                 for item in items or []:
+                    exported_records.append(item)
                     f = dict(item)
                     rid = (
                         f.get("rule_id")
@@ -1091,6 +1159,31 @@ def _run_scan_command(
                 "DEAD_CODE",
                 "SKY-E002",
             )
+            # Include canonical families not covered by the historical list
+            # above. Match original records before adding transport defaults;
+            # consume one occurrence at a time so repeated evidence stays.
+            from skylos.reporting.finding_types import iter_result_findings
+            from collections import Counter
+
+            remaining = Counter(
+                json.dumps(row, sort_keys=True) for row in exported_records
+            )
+            sarif_categories = {
+                "dead_code": "DEAD_CODE",
+                "quality": "QUALITY",
+                "custom_rules": "CUSTOM",
+                "security": "SECURITY",
+                "secrets": "SECRET",
+                "dependencies": "DEPENDENCY",
+                "ai_defects": "AI_DEFECT",
+                "reliability": "RELIABILITY",
+            }
+            for category, finding in iter_result_findings(output_result):
+                key = json.dumps(finding, sort_keys=True)
+                if remaining[key]:
+                    remaining[key] -= 1
+                else:
+                    _add([finding], sarif_categories[category], None)
             for reviewed in output_result.get("reviewed_findings", []) or []:
                 if isinstance(reviewed, dict):
                     _add(
@@ -1117,6 +1210,20 @@ def _run_scan_command(
                 }
                 if coverage:
                     sarif_data["runs"][0].setdefault("properties", {})["summary"] = coverage
+            if output_result.get("assessment"):
+                sarif_data["runs"][0].setdefault("properties", {})["assessment"] = (
+                    output_result["assessment"]
+                )
+            if output_result.get("gate"):
+                sarif_data["runs"][0].setdefault("properties", {})["gate"] = (
+                    output_result["gate"]
+                )
+            output_summary = output_result.get("analysis_summary") or {}
+            if "finding_type_counts" in output_summary:
+                run_properties = sarif_data["runs"][0].setdefault("properties", {})
+                run_properties["findingTypeCounts"] = output_summary[
+                    "finding_type_counts"
+                ]
             import json as _json
 
             _write_scan_output(args.sarif, _json.dumps(sarif_data, indent=2))
@@ -1219,7 +1326,11 @@ def _run_scan_command(
             return
 
         if args.llm:
-            llm_report = _generate_llm_report(output_result, project_root)
+            llm_report = _generate_llm_report(
+                output_result,
+                project_root,
+                expand_advice=bool(getattr(args, "expand_advice", False)),
+            )
             if args.output:
                 _write_scan_output(args.output, llm_report)
             else:
@@ -1331,7 +1442,11 @@ def _run_scan_command(
                     cloud_gate_passed = (upload_resp.get("quality_gate") or {}).get(
                         "passed", True
                     )
-                if cloud_gate_passed is False and (args.strict or args.gate) and not args.force:
+                if (
+                    cloud_gate_passed is False
+                    and (args.strict or args.gate)
+                    and not args.force
+                ):
                     raise SystemExit(1)
 
         exit_code = run_gate_interaction(
@@ -1440,12 +1555,16 @@ def _run_scan_command(
     elif not args.upload:
         display_result = output_result
         _cli_limit = getattr(args, "limit", None)
+        advice_options = (
+            {"expand_advice": True} if getattr(args, "expand_advice", False) else {}
+        )
         if getattr(args, "format", "rich") == "pretty":
             render_pretty_results(
                 console,
                 display_result,
                 root_path=project_root,
                 limit=_cli_limit,
+                **advice_options,
             )
             if args.output:
                 _write_pretty_report_output(
@@ -1453,6 +1572,7 @@ def _run_scan_command(
                     display_result,
                     root_path=project_root,
                     limit=_cli_limit,
+                    **advice_options,
                 )
         else:
             render_results(
@@ -1462,6 +1582,7 @@ def _run_scan_command(
                 root_path=project_root,
                 limit=_cli_limit,
                 copy_badge=not getattr(args, "no_clipboard", False),
+                **advice_options,
             )
             if args.output:
                 _write_rich_report_output(
@@ -1470,6 +1591,7 @@ def _run_scan_command(
                     tree=args.tree,
                     root_path=project_root,
                     limit=_cli_limit,
+                    **advice_options,
                 )
 
     unused_total = sum(
@@ -1504,7 +1626,10 @@ def _run_scan_command(
             uncertainty_count=dead_code_uncertainty_summary(result)["count"],
             # The grade panel above already offered the Skylos grade badge.
             show_badge=not (
-                output_result.get("grade") and not args.upload and not args.tui
+                output_result.get("assessment")
+                or output_result.get("grade")
+                and not args.upload
+                and not args.tui
             ),
         )
 
@@ -1615,7 +1740,7 @@ def _run_scan_command(
             console.print("[good]No findings reported at current settings.[/good]")
             if not dead_code_uncertainty_summary(result)["count"]:
                 console.print(
-                    "[dim]Share this scan grade: [/dim][bold cyan]skylos badge[/bold cyan]"
+                    "[dim]Add an Analyzed with Skylos badge: [/dim][bold cyan]skylos badge[/bold cyan]"
                 )
             from skylos.ui.nudge import pick_nudge
 

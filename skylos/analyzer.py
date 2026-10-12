@@ -969,8 +969,7 @@ def _grep_verify_error_payload(
             )
         message = (
             f"Grep verification exceeded its {budget:g}-second budget. "
-            "Dead-code findings that required grep verification were withheld. "
-            + hint
+            "Dead-code findings that required grep verification were withheld. " + hint
         )
         kind = "grep_budget_exhausted"
     else:
@@ -3973,6 +3972,18 @@ class Skylos:
                         expected_checks=self._ai_verification_expectations,
                     )
                 )
+            from skylos.reporting.assessment import compute_assessment
+            from skylos.reporting.finding_types import (
+                annotate_finding_types,
+                summarize_finding_types,
+            )
+
+            annotate_finding_types(result)
+            result["analysis_summary"]["finding_type_counts"] = summarize_finding_types(
+                result
+            )
+            result["assessment"] = compute_assessment(result)
+            result["analysis_summary"]["assessment_scope"] = "all_analyzed_findings"
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -4037,6 +4048,7 @@ class Skylos:
         all_secrets = []
         all_dangers = []
         all_quality = []
+        self._maintainability_inventory = []
         all_ai_defects = []
         all_suppressed = []
         secret_scanned_files = set()
@@ -4229,6 +4241,15 @@ class Skylos:
                 if file_clone_fragments:
                     all_clone_fragments.extend(file_clone_fragments)
                 if file_architecture_metrics:
+                    measured_units = file_architecture_metrics.get(
+                        "maintainability_inventory"
+                    )
+                    if isinstance(measured_units, dict) and measured_units.get(
+                        "rule_units"
+                    ):
+                        self._maintainability_inventory.append(
+                            {"file": str(file), **measured_units}
+                        )
                     abstractness = file_architecture_metrics.get("abstractness")
                     loc = file_architecture_metrics.get("loc")
                     has_main_guard = file_architecture_metrics.get("has_main_guard")

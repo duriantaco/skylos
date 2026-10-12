@@ -46,6 +46,9 @@ const DEAD_CODE_RULES = {
     unused_variables: { ruleId: "SKY-U003", legacyRuleId: "DEAD-VAR", itemType: "variable", label: "variable" },
     unused_classes: { ruleId: "SKY-U004", legacyRuleId: "DEAD-CLASS", itemType: "class", label: "class" },
     unused_parameters: { ruleId: "SKY-U005", legacyRuleId: "DEAD-PARAM", itemType: "parameter", label: "parameter" },
+    unused_files: { ruleId: "SKY-E002", legacyRuleId: "", itemType: "file", label: "file" },
+    unused_exports: { ruleId: "SKYLOS", legacyRuleId: "", itemType: "export", label: "export" },
+    unused_fixtures: { ruleId: "SKY-U000", legacyRuleId: "", itemType: "fixture", label: "fixture" },
 };
 const LEGACY_RULE_ALIASES = {
     "DEAD-FUNC": "SKY-U001",
@@ -64,6 +67,9 @@ function normalizeReportCore(report, options) {
     mapUnused(findings, report.unused_classes, "unused_classes", options);
     mapUnused(findings, report.unused_variables, "unused_variables", options);
     mapUnused(findings, report.unused_parameters, "unused_parameters", options);
+    mapUnused(findings, report.unused_files, "unused_files", options);
+    mapUnused(findings, report.unused_exports, "unused_exports", options);
+    mapUnused(findings, report.unused_fixtures, "unused_fixtures", options);
     for (const secret of report.secrets ?? []) {
         const finding = rawFindingToCore(secret, "secrets", options);
         if (finding)
@@ -78,6 +84,53 @@ function normalizeReportCore(report, options) {
         const finding = rawQualityFindingToCore(quality, options);
         if (finding)
             findings.push(finding);
+    }
+    for (const reliability of report.reliability ?? []) {
+        const finding = rawFindingToCore(reliability, "security", options);
+        if (finding)
+            findings.push(finding);
+    }
+    for (const issue of [...(report.ai_defects ?? []), ...(report.publisher_change_findings ?? [])]) {
+        const finding = rawFindingToCore(issue, "ai", options);
+        if (finding)
+            findings.push(finding);
+    }
+    for (const custom of report.custom_rules ?? []) {
+        const finding = rawFindingToCore(custom, "quality", options);
+        if (finding)
+            findings.push(finding);
+    }
+    for (const dependency of report.dependency_vulnerabilities ?? []) {
+        const finding = rawFindingToCore({
+            ...dependency,
+            message: dependency.message ?? dependency.summary ?? `${dependency.package ?? "Dependency"}: ${dependency.vulnerability_id ?? "review vulnerability"}`,
+        }, "security", options);
+        if (finding)
+            findings.push(finding);
+    }
+    // These families may mirror complete records already emitted above. Keep
+    // every row within its own family, including repeated evidence, and suppress
+    // only identical complete records mirrored from another family.
+    const present = new Set([
+        ...(report.secrets ?? []), ...(report.danger ?? []), ...(report.quality ?? []),
+        ...(report.reliability ?? []), ...(report.ai_defects ?? []),
+        ...(report.publisher_change_findings ?? []), ...(report.custom_rules ?? []),
+        ...(report.dependency_vulnerabilities ?? []),
+    ].map(rawRecordKey));
+    const extras = [
+        report.code_health ?? [],
+        (report.architecture_metrics?.advisories ?? []).flatMap(advisory => advisory.signals ?? []),
+    ];
+    for (const rows of extras) {
+        for (const row of rows) {
+            if (present.has(rawRecordKey(row)))
+                continue;
+            const finding = rawQualityFindingToCore(row, options);
+            if (finding)
+                findings.push(finding);
+        }
+        // Update after a whole family so duplicate observations inside it remain.
+        rows.forEach(row => present.add(rawRecordKey(row)));
     }
     return findings.filter((finding) => {
         if (finding.category !== "dead_code")
@@ -98,10 +151,10 @@ function isDeadCodeRule(ruleId) {
     return canonicalRuleId(ruleId).startsWith("SKY-U");
 }
 function normalizeSeverity(value) {
-    const normalized = String(value ?? "").toUpperCase();
+    const normalized = String(value ?? "").trim().toUpperCase();
     if (normalized === "CRITICAL")
         return "CRITICAL";
-    if (normalized === "HIGH")
+    if (normalized === "HIGH" || normalized === "ERROR")
         return "HIGH";
     if (normalized === "MEDIUM")
         return "MEDIUM";
@@ -145,6 +198,7 @@ function mapUnused(findings, items, key, options) {
             ruleId,
             legacyRuleId: meta.legacyRuleId,
             category: "dead_code",
+            findingType: item.finding_type ?? "review",
             severity: "INFO",
             message,
             file: paths.absolutePath,
@@ -180,7 +234,9 @@ function rawFindingToCore(raw, category, options) {
         fingerprint,
         ruleId,
         category,
+        findingType: raw.finding_type === "defect" || raw.finding_type === "advice" ? raw.finding_type : "review",
         severity: normalizeSeverity(raw.severity),
+        severityUnknown: !["CRITICAL", "HIGH", "ERROR", "MEDIUM", "LOW", "WARN", "WARNING", "INFO"].includes(String(raw.severity ?? "").trim().toUpperCase()) || undefined,
         message,
         file: paths.absolutePath,
         relativePath: paths.relativePath,
@@ -214,6 +270,15 @@ function rawFindingToCore(raw, category, options) {
 function rawQualityFindingToCore(raw, options) {
     const message = raw.message ?? `Quality issue (${raw.kind ?? raw.metric ?? "quality"})`;
     return rawFindingToCore({ ...raw, message, rule_id: raw.rule_id ?? "SKY-Q000" }, "quality", options);
+}
+function rawRecordKey(value) {
+    if (Array.isArray(value))
+        return `[${value.map(rawRecordKey).join(",")}]`;
+    if (value && typeof value === "object") {
+        const row = value;
+        return `{${Object.keys(row).sort().map(key => `${JSON.stringify(key)}:${rawRecordKey(row[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "undefined";
 }
 function normalizePaths(filePath, wsRoot) {
     const absolutePath = path.normalize(path.isAbsolute(filePath) ? filePath : path.join(wsRoot, filePath));

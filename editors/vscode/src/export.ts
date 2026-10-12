@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding } from "./types";
-import { computeSecurityScore } from "./dashboard";
+import { assessmentRows, coverageText, measurementRows } from "./assessmentCore";
 import { getRuleMeta } from "./rules";
 
 export async function exportReport(store: FindingsStore): Promise<void> {
@@ -39,8 +39,7 @@ function getProjectName(): string {
   return ws?.name ?? "Unknown Project";
 }
 
-function buildMarkdown(store: FindingsStore): string {
-  const { score, grade } = computeSecurityScore(store, "raw");
+export function buildMarkdown(store: FindingsStore): string {
   const counts = store.countBySeverity("raw");
   const catCounts = store.countByCategory("raw");
   const findings = store.getAllRawFindings();
@@ -49,7 +48,16 @@ function buildMarkdown(store: FindingsStore): string {
   let md = `# Skylos Security Report\n\n`;
   md += `**Project:** ${getProjectName()}  \n`;
   md += `**Date:** ${date}  \n`;
-  md += `**Score:** ${grade} (${score}/100)\n\n`;
+  md += `\n## Scan assessment\n\n| Area | Result |\n|------|--------|\n`;
+  for (const [area, detail] of assessmentRows(store.assessment, findings, store.gate)) md += `| ${area} | ${markdownCell(detail)} |\n`;
+  md += `\n${markdownCell(coverageText(store.assessment))}\n\n`;
+  if (!store.assessment && store.grade?.overall) md += `Legacy score: ${markdownCell(store.grade.overall.letter)} (${store.grade.overall.score}/100). Historical result; not a current risk assessment.\n\n`;
+  const measurements = measurementRows(store.assessment);
+  if (measurements.length) {
+    md += "| Check | Spread | Magnitude |\n|-------|--------|-----------|\n";
+    for (const row of measurements) md += `| ${row.map(markdownCell).join(" | ")} |\n`;
+    md += "\n";
+  }
 
   md += `## Summary\n\n`;
   md += `| Severity | Count |\n|----------|-------|\n`;
@@ -78,7 +86,7 @@ function buildMarkdown(store: FindingsStore): string {
     for (const f of items) {
       const meta = getRuleMeta(f.ruleId);
       const shortFile = f.file.split("/").slice(-2).join("/");
-      md += `- **[${f.ruleId}]** ${f.message} — \`${shortFile}:${f.line}\` (${f.severity})`;
+      md += `- **[${f.ruleId}]** ${f.message} — \`${shortFile}:${f.line}\` (${f.findingType ?? "review"}, ${f.severityUnknown ? "UNKNOWN" : f.severity})`;
       if (meta?.owasp) md += `  OWASP: ${meta.owasp}`;
       if (meta?.cwe) md += `  ${meta.cwe}`;
       if (meta?.fix) md += `\n  > Fix: ${meta.fix}`;
@@ -91,8 +99,7 @@ function buildMarkdown(store: FindingsStore): string {
   return md;
 }
 
-function buildJson(store: FindingsStore): string {
-  const { score, grade } = computeSecurityScore(store, "raw");
+export function buildJson(store: FindingsStore): string {
   const counts = store.countBySeverity("raw");
   const findings = store.getAllRawFindings();
   const date = new Date().toISOString().split("T")[0];
@@ -101,14 +108,19 @@ function buildJson(store: FindingsStore): string {
     report: {
       project: getProjectName(),
       date,
-      score: { value: score, grade },
+      assessment: store.assessment,
+      gate: store.gate,
+      legacy_score: !store.assessment ? store.grade : undefined,
+      raw_cli_report: store.report,
       summary: counts,
       findings: findings.map((f) => {
         const meta = getRuleMeta(f.ruleId);
         return {
+          ...f,
           ruleId: f.ruleId,
-          severity: f.severity,
+          severity: f.severityUnknown ? "UNKNOWN" : f.severity,
           category: f.category,
+          finding_type: f.findingType ?? "review",
           message: f.message,
           file: f.file,
           line: f.line,
@@ -123,7 +135,7 @@ function buildJson(store: FindingsStore): string {
   return JSON.stringify(report, null, 2);
 }
 
-function buildSarif(store: FindingsStore): string {
+export function buildSarif(store: FindingsStore): string {
   const findings = store.getAllRawFindings();
   const ws = vscode.workspace.workspaceFolders?.[0];
   const wsRoot = ws?.uri.fsPath ?? "";
@@ -158,6 +170,7 @@ function buildSarif(store: FindingsStore): string {
       ruleIndex: ruleIndex.get(f.ruleId) ?? 0,
       level: sarifLevel(f),
       message: { text: f.message },
+      properties: { finding_type: f.findingType ?? "review", severity: f.severityUnknown ? "UNKNOWN" : f.severity },
       locations: [
         {
           physicalLocation: {
@@ -182,12 +195,17 @@ function buildSarif(store: FindingsStore): string {
           },
         },
         results,
+        properties: { assessment: store.assessment, gate: store.gate },
         originalUriBaseIds: wsRoot ? { "%SRCROOT%": { uri: `file://${wsRoot}/` } } : undefined,
       },
     ],
   };
 
   return JSON.stringify(sarif, null, 2);
+}
+
+function markdownCell(value: string): string {
+  return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function sarifLevel(f: SkylosFinding): string {

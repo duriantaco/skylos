@@ -907,6 +907,7 @@ def _prepare_report_upload(
 
     definitions = result_json.get("definitions")
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
+    assessment_data = result_json.get("assessment") if isinstance(result_json, dict) else None
     workspace_data = _extract_workspace_upload_metadata(result_json)
     link = _load_repo_link(git_root)
     project_id = link.get("project_id")
@@ -921,6 +922,7 @@ def _prepare_report_upload(
         ai_code=ai_code,
         provenance_data=provenance_data,
         grade_data=grade_data,
+        assessment_data=assessment_data,
         project_id=project_id,
         scan_bundle_id=scan_bundle_id,
         project_root=project_root,
@@ -1240,6 +1242,7 @@ def _build_report_metadata(
     ai_code=None,
     provenance_data=None,
     grade_data=None,
+    assessment_data=None,
     project_id=None,
     scan_bundle_id=None,
     project_root=None,
@@ -1270,6 +1273,8 @@ def _build_report_metadata(
         metadata["source_revision_state"] = source_revision_state
     if grade_data:
         metadata["grade"] = grade_data
+    if isinstance(assessment_data, dict):
+        metadata["assessment"] = assessment_data
     # The checks this scan ran, sent even when the grade is withheld, so
     # Skylos Cloud tracks each check on its own (a check that did not run is
     # "not checked", never 0 findings).
@@ -1352,6 +1357,7 @@ def _finalize_report_upload(
     response,
     *,
     grade_data,
+    assessment_data=None,
     quiet=False,
     strict=False,
     is_forced=False,
@@ -1392,6 +1398,7 @@ def _finalize_report_upload(
     if not quiet:
         _print_report_upload_success(
             grade_data=grade_data,
+            assessment_data=assessment_data,
             passed=passed,
             new_violations=new_violations,
             plan=plan,
@@ -1435,6 +1442,7 @@ def _safe_response_json(response) -> dict:
 def _print_report_upload_success(
     *,
     grade_data,
+    assessment_data=None,
     passed: bool,
     new_violations: int,
     plan: str,
@@ -1459,7 +1467,14 @@ def _print_report_upload_success(
             f"Skylos Cloud stored {count} {noun} with a warning "
             "(for example, without a file location)."
         )
-    _print_report_grade(grade_data)
+    if isinstance(assessment_data, dict) and assessment_data:
+        from skylos.reporting.assessment_display import assessment_rows, assessment_coverage_text
+
+        for label, detail in assessment_rows(assessment_data)[:3]:
+            print(f"{label}: {detail}")
+        print(assessment_coverage_text(assessment_data))
+    else:
+        _print_report_grade(grade_data)
     _print_quality_gate_result(passed, new_violations, plan, gate_message)
     _print_upload_trust_notice(trust_notice)
     if scan_id:
@@ -1483,7 +1498,7 @@ def _print_upload_trust_notice(notice) -> None:
 def _print_report_grade(grade_data) -> None:
     if grade_data:
         grade = grade_data["overall"]
-        print(f"Grade: {grade['letter']} ({grade['score']}/100)")
+        print(f"Legacy score: {grade['letter']} ({grade['score']}/100)")
 
 
 _GATE_FAILED_PREFIX = "Quality Gate Failed!"
@@ -1905,6 +1920,7 @@ def upload_report_legacy(
     return _finalize_report_upload(
         response,
         grade_data=grade_data,
+        assessment_data=payload.get("assessment") if isinstance(payload, dict) else None,
         quiet=quiet,
         strict=strict,
         is_forced=is_forced,
@@ -2033,6 +2049,7 @@ def _run_artifact_upload(
         result = _finalize_report_upload(
             complete_response["response"],
             grade_data=prepared.grade_data,
+            assessment_data=prepared.metadata.get("assessment"),
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
@@ -2122,6 +2139,7 @@ def _start_report_artifact_upload(
             "result": _finalize_report_upload(
                 init_response,
                 grade_data=prepared.grade_data,
+                assessment_data=prepared.metadata.get("assessment"),
                 quiet=quiet,
                 strict=strict,
                 is_forced=is_forced,
@@ -2650,7 +2668,10 @@ def _save_pending_for_session(
     summary = getattr(prepared, "scan_summary", None) or {}
     try:
         body, artifacts = _pending_request_parts(session, prepared)
-        context: dict[str, Any] = {"grade_data": getattr(prepared, "grade_data", None)}
+        context: dict[str, Any] = {
+            "grade_data": getattr(prepared, "grade_data", None),
+            "assessment_data": metadata.get("assessment"),
+        }
         if mode == "artifact":
             # Needed only if Cloud asks for the init request to be rebuilt.
             context.update(
@@ -2815,6 +2836,7 @@ def _resend_saved_request(token, pending, session, *, quiet, message) -> dict:
         return _finalize_report_upload(
             response,
             grade_data=context.get("grade_data"),
+            assessment_data=context.get("assessment_data"),
             quiet=quiet,
             strict=False,
             is_forced=False,

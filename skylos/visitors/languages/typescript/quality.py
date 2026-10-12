@@ -281,6 +281,7 @@ def scan_quality(
     max_length: int = 50,
     max_params: int = 5,
     lang: Language | None = None,
+    measurement: dict | None = None,
 ) -> list[dict]:
     findings: list[dict] = []
     if lang is None:
@@ -290,6 +291,24 @@ def scan_quality(
 
     func_nodes = _get_func_nodes(root_node, lang)
     is_test_file = get_non_library_dir_kind(file_path) == "test"
+    if measurement is not None:
+        measurement.update(
+            {
+                "language": "TypeScript"
+                if str(file_path).endswith((".ts", ".tsx", ".mts", ".cts"))
+                else "JavaScript",
+                "function_lines": [node.start_point[0] + 1 for node in func_nodes],
+                "rule_units": {
+                    "SKY-Q301": len(func_nodes),
+                    "SKY-Q302": len(func_nodes),
+                    "SKY-C303": len(func_nodes),
+                    "SKY-C304": sum(
+                        not (is_test_file and _is_test_callback(node, source))
+                        for node in func_nodes
+                    ),
+                },
+            }
+        )
 
     for func_node in func_nodes:
         line: int = func_node.start_point[0] + 1
@@ -300,6 +319,8 @@ def scan_quality(
             findings.append(
                 {
                     "rule_id": "SKY-Q301",
+                    "value": complexity,
+                    "threshold": threshold,
                     "severity": "MEDIUM",
                     "message": f"Function '{name}' has cyclomatic complexity {complexity} (limit: {threshold})",
                     "file": str(file_path),
@@ -315,6 +336,8 @@ def scan_quality(
             findings.append(
                 {
                     "rule_id": "SKY-Q302",
+                    "value": nesting,
+                    "threshold": max_nesting,
                     "severity": "MEDIUM",
                     "message": f"Function '{name}' has nesting depth {nesting} (limit: {max_nesting})",
                     "file": str(file_path),
@@ -332,6 +355,8 @@ def scan_quality(
             findings.append(
                 {
                     "rule_id": "SKY-C304",
+                    "value": func_length,
+                    "threshold": max_length,
                     "severity": "LOW",
                     "message": f"Function '{name}' is {func_length} lines long (limit: {max_length})",
                     "file": str(file_path),
@@ -347,6 +372,8 @@ def scan_quality(
             findings.append(
                 {
                     "rule_id": "SKY-C303",
+                    "value": params,
+                    "threshold": max_params,
                     "severity": "LOW",
                     "message": f"Function '{name}' has {params} parameters (limit: {max_params})",
                     "file": str(file_path),

@@ -174,7 +174,11 @@ def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monk
     assert "Source analysis complete; preparing Cloud upload." not in rendered
     assert "Analysis Errors" in rendered
     assert "grep budget exhausted" in rendered
-    assert "Increase SKYLOS_GREP_BUDGET" in rendered
+    # The Type column can wrap the recovery sentence across table rows.
+    # Its actionable instruction must remain visible alongside the exit code.
+    assert "Increase" in rendered
+    assert "SKYLOS_GREP_BUDGET" in rendered
+    assert "(seconds) and rerun." in rendered
     upload.assert_not_called()
 
 

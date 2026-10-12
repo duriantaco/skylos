@@ -6,7 +6,8 @@ If you're unsure which mode to use, the table below provides a quick reference.
 Most entries are `--format` values; the TUI is a separate `--tui` mode because
 it opens an interactive screen instead of printing a report.
 
-Skylos keeps the default terminal output stable for existing scripts and copy/paste workflows, then offers opt-in formats for more focused use cases.
+Choose a human format for review or JSON for a stable structured record of
+findings, assessment and analysis limitations.
 
 ## Choosing an Output Mode
 
@@ -38,11 +39,9 @@ skylos .
 skylos . -a
 ```
 
-The default table report shows a score badge and copies its Markdown to the
-clipboard only when stdout is an interactive terminal and no CI variable is
-set. Redirected or piped output, CI runs and machine formats (`--format json`,
-`--sarif`, `--llm`) never touch the clipboard. Opt out entirely with
-`--no-clipboard` or `SKYLOS_NO_CLIPBOARD=1`.
+The default table report shows separate assessment readouts rather than a
+blended score badge. New source scans do not produce a codebase A–F grade.
+See [scan assessment](#scan-assessment).
 
 Use `pretty` when you want a compact, file-grouped terminal report:
 
@@ -146,8 +145,9 @@ example, comparison setup, and GitLab tier limits, see
 Skylos reserves exit status `0` for successful command completion, `1` for
 finding or policy failures in modes that enforce them, and `2` when required
 analysis could not complete. An unavailable native language engine is an
-incomplete analysis: Skylos emits a `SKY-ANALYSIS-INCOMPLETE` diagnostic, omits
-the grade and clean-code claim, and exits with status `2` in every output mode.
+incomplete analysis: Skylos emits a `SKY-ANALYSIS-INCOMPLETE` diagnostic, marks
+coverage incomplete, omits the clean-code claim, and exits with status `2` in
+every output mode. Findings from completed checks remain available.
 The same applies to `.dart` files when the optional Dart parser is not
 installed (`pip install "skylos[dart]"`).
 `--force` and advisory gate settings do not convert incomplete analysis into a
@@ -196,7 +196,8 @@ cycle. Ordinary package re-exports do not by themselves form a cycle.
 remain in the selected report. Without an explicit `--gate`, concise output
 also exits `1` for cycles, as it does for other findings. Ordinary non-strict
 gates keep their existing thresholds: cycles do not contribute to
-`max_quality` or grades. The existing `--force` override can bypass finding
+`max_quality`. Their Review findings remain visible in the risk assessment.
+The existing `--force` override can bypass finding
 failures, but incomplete analysis still exits `2`.
 
 The legacy flags still work:
@@ -221,10 +222,118 @@ skylos . --select SKY-L012 --select SKY-D225 --format json
 
 `--select` applies to rich, pretty, concise, JSON, LLM, GitHub, GitLab, and SARIF
 reports. It filters reported findings rather than promising that shared
-analysis phases will not execute. A selected report omits the aggregate grade,
-because that grade describes the unfiltered scan. Analysis errors remain
+analysis phases will not execute. A selected report must not reuse a
+full-project assessment for its narrower scope. Analysis errors remain
 visible regardless of selection and still exit with code 2, preventing an
 incomplete scan from appearing clean.
+
+## Finding Types And Advice
+
+Each built-in rule declares `finding_type` in the rule catalog. Reports show
+this as **Type**, separately from severity:
+
+| Type | Meaning | Examples |
+|---|---|---|
+| Defect | A concrete correctness pattern; still verify the finding in context | Mutable defaults, blocking async calls, discarded async results |
+| Review | A potential risk requiring context | Possible SSRF, dead code, unbounded ORM queries, unsafe type assertions |
+| Advice | Maintainability or tooling conventions | Function length, complexity, duplicate literals, missing annotations |
+
+When quality checks are enabled (`--quality` or `-a`), Advice is retained in
+the report. Terminal output leads with counts by type, lists Defect and Review
+individually, then shows one Advice row per rule with its count and top files.
+Use `--expand-advice` for every Advice location and message:
+
+```bash
+skylos . -a
+skylos . -a --expand-advice
+skylos . -a --format json -o report.json
+```
+
+JSON and JSON-CI retain each finding record for the chosen scan scope,
+including Advice and its evidence. Findings carry `finding_type`;
+`analysis_summary.finding_type_counts` contains `defect`, `review`, `advice`
+and `advice_groups`. Grouping and expansion never alter these records or gate
+inputs. Finding Type does not suppress findings or change analyzer thresholds.
+
+Deterministic LLM reports and MCP scan replies list Defect and Review in full
+and summarize Advice by rule by default. `--expand-advice` expands Advice in
+LLM reports. MCP callers can request `expand_advice` or read the complete scan
+resource URI returned with the reply; the stored report retains all Advice.
+An advice-only report says how much Advice exists rather than claiming there
+are no findings.
+
+The assessment is computed before display grouping and filtering. A
+severity/category/file display filter retains the assessment and discloses
+that it describes all analyzed findings, including rows outside that display.
+An explicitly selected-rule or diff-only report must not reuse a full-project
+assessment. Configured gate limits and `--strict` retain their existing
+meanings: finding Type is not a gate exemption.
+
+Changed-code analysis policies remain separate from display grouping. Diff
+metrics still move to `code_health` as described below.
+
+## Scan Assessment
+
+Remember **Risk, Maintainability, Dead code, Gate**. These answer different
+questions, so new source scans do not average them into one score or A–F letter.
+JSON uses the top-level `assessment` object, version `1`; it no longer emits a
+new numeric `grade`. Historical scores describe the older grading formula.
+The separate `skylos debt` and `skylos defend` scores retain their own contracts.
+
+| Readout | Meaning |
+|---|---|
+| Risk | Highest unresolved severity and counts among Defect and Review findings, excluding dead-code candidates. Correctness findings in `quality` are included. |
+| Maintainability | Advice counts and groups, affected code units where measurable, and observed values against their rule limits. |
+| Dead code | Candidate counts, confidence and evidence for deciding what to review or remove. |
+| Gate | PASS or FAIL against the configured policy when a gate is evaluated; otherwise not evaluated. |
+
+One critical secret stays critical regardless of repository size, other clean
+categories or the amount of Advice. A critical Review finding still requires
+urgent assessment, but the label does not establish exploitability. Advice
+does not dilute risk; dead-code candidates are kept in their own readout.
+
+Maintainability describes **spread** and **excess**:
+
+- **Spread:** affected units divided by units actually measured for the same
+  rule and language. For example, 30 of 200 measured Python functions exceed
+  a complexity limit: 15%. This is a prevalence measurement, not a bug probability.
+- **Excess:** observed value relative to the configured threshold. Complexity
+  11 against limit 10 is 1.1× the limit; complexity 45 is 4.5×. These do
+  not receive the same description merely because each produced one finding.
+- Multiple observations on the same unit count that unit once within a rule
+  when measuring spread. Every observation remains in the report.
+- Counts remain available when a rule lacks a complete unit inventory. Its
+  denominator is unavailable and no percentage is guessed. Measurements for
+  one language cannot be diluted by adding unrelated code in another.
+
+Function inventories currently cover these measured checks when quality
+analysis runs successfully:
+
+| Language | Checks with function denominators |
+|---|---|
+| Python | Cyclomatic and cognitive complexity, nesting, argument count, function length |
+| TypeScript / JavaScript | Cyclomatic complexity, nesting, argument count, function length |
+
+Other Advice rules and languages retain counts and evidence, with unavailable
+denominators where no matching inventory exists. Per-rule exclusions are
+respected; for example, TS/JS test callbacks excluded from the function-length
+check are also excluded from that check's denominator.
+
+There is no maintainability letter or numeric health score until its bands
+have been calibrated against manually reviewed repositories. A repository
+with thousands of Advice findings cannot receive an A+ because Advice reached
+a global penalty cap.
+
+Coverage stays alongside the readouts. Disabled checks are **not assessed**;
+failed or unavailable checks are **incomplete**. Known findings remain visible
+when another check fails. Zero findings describes only the checks and scope
+that completed. It does not prove a repository safe or certify a release.
+
+Display grouping, expansion and severity/category/file views cannot improve
+the assessment. True changes in analysis scope, such as exact rule selection
+or a diff, do not borrow a whole-project assessment. Gate enforcement remains
+independent: Advice in `quality` still counts toward applicable limits, while
+the existing code-health and architecture exemptions below remain explicit.
 
 ## Review Changed Lines
 
@@ -239,7 +348,7 @@ a `REF...HEAD` comparison. `skylos cicd review` PR comments still use committed
 changes only (`REF...HEAD`). A valid diff with no
 changed lines or files has no diff findings. An unavailable base ref exits with
 status 2 instead of returning the full scan as a PR result. Both scoped reports
-omit the full-project grade, which would describe findings that are not shown.
+do not reuse a full-project assessment for the narrower findings scope.
 The JSON `definitions` and `dead_code_evidence` fields retain full-project
 analysis context; the finding lists and their summary counts are scoped.
 `--diff` with no value uses the pull request target branch from
@@ -270,11 +379,12 @@ They move to a separate `code_health` list in the JSON report:
 - If the base cannot be measured (a non-Python file, or the base ref is
   unavailable), the metric is listed as `"unverified"`.
 
-`code_health` entries are not counted as findings. They never fail `--gate` or
-`--fail-on`, and they are not posted as PR review comments. A full scan
-(`skylos .`) still reports the other code-health rules under `quality`, and
-there they count toward the gate as before. To enforce one of those metrics in
-PR checks, run a full scan with the gate. Default advisory architecture metrics
+`code_health` entries are included in the type counts and remain available
+as maintainability Advice. They never fail `--gate` or
+`--fail-on`, and they are not posted as PR review comments. A full scan reports
+the other code-health rules under `quality`; there they count toward the
+gate, regardless of whether Advice is grouped or expanded in the display. To enforce one of those metrics in PR
+checks, run a full scan with the gate. Default advisory architecture metrics
 (`SKY-Q802`, `SKY-Q803`) are shown in full scans and omitted from diff-scoped
 reports because their values depend on the whole dependency graph.
 
@@ -288,21 +398,28 @@ and `signals`; the signals retain their original rule IDs, evidence, and
 severity. `architecture_metrics.advisory_count` counts modules, while
 `advisory_signal_count` counts the underlying rule signals.
 
-These advisories are excluded from `quality`, `analysis_summary.quality_count`,
-grades, gates, SARIF issue results, and Cloud issue uploads. They remain in
-local `json` and `json-ci` output, including when selected with
+These advisories remain in the maintainability assessment and type counts.
+They are excluded from local `quality`, `analysis_summary.quality_count` and
+local gate inputs. Complete SARIF and Cloud uploads retain their individual
+records with their Advice type. Cloud evaluates its configured policy over the
+uploaded findings, so retained records may affect its count limits even when
+local analyzer policy treats them as report-only.
+Local `json` and `json-ci` also retain them, including when selected with
 `--select SKY-Q802` or `--select SKY-Q803`. `concise` prints one advisory line
-per module without treating it as a blocking finding. Cloud's issue list no
-longer shows the default I/A/D advisories. Set
+per module without treating it as a blocking finding. Set
 `[tool.skylos.architecture] enforce_iad = true` to put both rules in `quality`
-and make them eligible for enforcement. `SKY-Q804` and `SKY-Q805` remain
-actionable architecture findings in `quality`.
+and make them eligible for enforcement. `SKY-Q805` (layer policy) remains an
+Review finding in `quality`; `SKY-Q804` is Advice, displayed in the grouped
+Advice section by default. See [finding types](#finding-types-and-advice).
 
 ## SARIF And GitHub Code Scanning
 
 `skylos . -a --sarif skylos.sarif` writes a SARIF 2.1.0 log next to any other
 output. Each result carries:
 
+- `properties.finding_type`: `defect`, `review` or `advice`, independently of
+  severity. Advice is retained as individual SARIF results where its existing
+  analyzer policy makes it an issue finding.
 - `partialFingerprints["skylosFindingHash/v1"]`: a SHA-256 of the rule ID, the
   normalized file path, and a line-independent anchor (symbol name, normalized
   snippet or source line, or dependency identity), plus an occurrence suffix.
@@ -438,6 +555,13 @@ the recorded agent counts.
 `skylos . --upload` (and `skylos debt . --upload`) sends the scan to Skylos
 Cloud. The upload follows a versioned contract shared with the server
 (`skylos/api/upload_contract/v1.json`).
+
+New code-scan uploads send `metadata.assessment` with the separate risk,
+maintainability and dead-code readouts, measurements and coverage. Type is
+retained for findings; Cloud derives the canonical built-in classification
+from its rule catalog. The Cloud gate evaluates project policy independently
+of the local readouts. Historical numeric grades describe the legacy model
+and do not become new assessment scores.
 
 Code-scan uploads include a bounded `scan_coverage` receipt with the scan
 scope, completeness, selected rules, and `resolution_covered_checks`. A

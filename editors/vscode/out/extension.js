@@ -146,7 +146,7 @@ function activate(context) {
         statusBar.setScanning(true);
         try {
             const result = await (0, scanner_1.scanWorkspace)(undefined, diffBase);
-            store.setEngineMetadata(result.grade, result.summary, result.circularDeps, result.depVulns);
+            store.setEngineMetadata(result.grade, result.summary, result.circularDeps, result.depVulns, result.assessment, result.report);
             if (result.metadata)
                 store.setLastScan(result.metadata);
             store.setWorkspaceCLIFindings(result.findings);
@@ -166,7 +166,7 @@ function activate(context) {
                 vscode.window.setStatusBarMessage(`Skylos: ${total} issue(s) in workspace`, 5000);
             }
             else if (total === 0) {
-                vscode.window.setStatusBarMessage("Skylos: no issues", 5000);
+                vscode.window.setStatusBarMessage("Skylos: no findings in this scan; check dashboard coverage", 5000);
             }
         }
         catch (err) {
@@ -190,7 +190,7 @@ function activate(context) {
             if (announce) {
                 const fileName = filePath.split("/").pop() ?? filePath;
                 const total = fileFindings.length;
-                vscode.window.setStatusBarMessage(total > 0 ? `Skylos: ${total} issue(s) in ${fileName}` : `Skylos: no issues in ${fileName}`, 4000);
+                vscode.window.setStatusBarMessage(total > 0 ? `Skylos: ${total} issue(s) in ${fileName}` : `Skylos: no findings in ${fileName}; rescan workspace for its assessment`, 4000);
             }
         }
         catch (err) {

@@ -46,6 +46,7 @@ _STALE_SUMMARY_AGGREGATES = (
 )
 _STALE_RESULT_AGGREGATES = (
     "grade",
+    "assessment",
     "ai_security_stats",
     "provenance_summary",
 )

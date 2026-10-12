@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { spawn, type ChildProcess } from "child_process";
 import * as path from "path";
-import type { SkylosFinding, CLIReport, CLIGrade, AnalysisSummary, CircularDependency, DependencyVulnerability, ScanMetadata } from "./types";
+import type { SkylosFinding, CLIReport, CLIGrade, CLIAssessment, AnalysisSummary, CircularDependency, DependencyVulnerability, ScanMetadata } from "./types";
+import { readAssessment } from "./assessmentCore";
 import { getSkylosBin, getConfidenceThreshold, getExcludeFolders, isFeatureEnabled, isDeadCodeEnabled, isShowDeadParams } from "./config";
 import { buildScanCommand, formatCommand, SkylosScanError } from "./scanCore";
 import { normalizeReportCore } from "./findingCore";
@@ -21,6 +22,8 @@ export function cancelScan(): void {
 export interface ScanResult {
   findings: SkylosFinding[];
   grade?: CLIGrade;
+  assessment?: CLIAssessment;
+  report?: CLIReport;
   summary?: AnalysisSummary;
   circularDeps?: CircularDependency[];
   depVulns?: DependencyVulnerability[];
@@ -195,6 +198,8 @@ async function runScan(target: string, wsRoot: string, token?: vscode.Cancellati
       succeed({
         findings,
         grade: report.grade,
+        assessment: readAssessment(report.assessment),
+        report,
         summary: report.analysis_summary,
         circularDeps: report.circular_dependencies,
         depVulns: report.dependency_vulnerabilities,

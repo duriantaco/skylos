@@ -28,7 +28,10 @@ def _selected_rules(summary: dict[str, Any]) -> tuple[list[str], bool]:
         return [], False
     selected = []
     for rule in raw:
-        if not isinstance(rule, str) or not 0 < len(rule.strip()) <= _MAX_RULE_ID_LENGTH:
+        if (
+            not isinstance(rule, str)
+            or not 0 < len(rule.strip()) <= _MAX_RULE_ID_LENGTH
+        ):
             return [], False
         selected.append(rule.strip().upper())
     return selected, True
@@ -88,7 +91,22 @@ def scan_coverage_receipt(
 
     # Rule selection, baseline filtering and display filtering remove the
     # aggregate grade. A grade-less finding set must not close old issues.
-    if not isinstance(result.get("grade"), dict) or not result["grade"]:
+    from skylos.reporting.finding_types import summarize_finding_types
+
+    assessment = result.get("assessment")
+    complete_assessment = (
+        isinstance(assessment, dict)
+        and assessment.get("version") == 1
+        and assessment.get("scope") == "all_analyzed_findings"
+        and assessment.get("finding_counts") == summarize_finding_types(result)
+        and summary.get("assessment_includes_filtered_findings") is not True
+    )
+    has_report_receipt = (
+        complete_assessment
+        if assessment is not None
+        else isinstance(result.get("grade"), dict) and bool(result["grade"])
+    )
+    if not has_report_receipt:
         reasons.append("filtered_findings")
     if summary.get("resolution_scope_limited") is not False:
         reasons.append("configured_suppression")
@@ -126,9 +144,21 @@ def scan_coverage_receipt(
     covered_checks = []
     if complete:
         for check in checks:
+            if check == "ai_defects" and complete_assessment:
+                verification = summary.get("ai_verification")
+                if (
+                    not isinstance(verification, dict)
+                    or verification.get("state") != "complete"
+                    or verification.get("missing_checks")
+                ):
+                    continue
             if check == "dependencies" and not _dependency_coverage_complete(summary):
                 continue
-            if check == "dead_code" and isinstance(grep, dict) and grep.get("enabled") is False:
+            if (
+                check == "dead_code"
+                and isinstance(grep, dict)
+                and grep.get("enabled") is False
+            ):
                 continue
             if check == "quality" and not _architecture_coverage_present(result):
                 continue
@@ -190,8 +220,7 @@ def quality_rule_classification(result: Any) -> dict[str, Any] | None:
         not enforced
         and isinstance(actionable, list)
         and any(
-            isinstance(finding, dict)
-            and finding.get("rule_id") in _IAD_RULES
+            isinstance(finding, dict) and finding.get("rule_id") in _IAD_RULES
             for finding in actionable
         )
     ):
