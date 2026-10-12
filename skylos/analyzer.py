@@ -3801,6 +3801,7 @@ class Skylos:
                             ignore=project_ignore,
                             required_rules=required_config_rules,
                             analysis_errors=result["analysis_errors"],
+                            scan_paths=path if isinstance(path, (list, tuple)) else None,
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -4704,6 +4705,7 @@ class Skylos:
                     ignore=project_ignore,
                     required_rules=required_config_rules,
                     analysis_errors=analysis_errors,
+                    scan_paths=path if isinstance(path, (list, tuple)) else None,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_project_text_no_symlink, read_text_no_symlink
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
 
@@ -153,7 +153,7 @@ def _resolve_gitlab_ci_scan_path(
     *,
     root: Path | None = None,
 ) -> Path | None:
-    candidate = Path(path).resolve()
+    candidate = Path(os.path.abspath(path))
     if root is not None and not _is_under_root(candidate, root):
         return None
     if not candidate.is_file() or not _is_gitlab_ci_file(candidate):
@@ -191,11 +191,20 @@ def _discover_gitlab_ci_files(
     return sorted(candidates)
 
 
-def _load_yaml(path: Path) -> dict[str, Any] | None:
+def _load_yaml(path: Path, *, root: Path | None = None) -> dict[str, Any] | None:
     if yaml is None:
         return None
     try:
-        text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        text = (
+            read_project_text_no_symlink(
+                root.parent if root.is_file() else root,
+                path,
+                max_bytes=MAX_YAML_BYTES,
+                encoding="utf-8",
+            )
+            if root is not None
+            else read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        )
         if text is None:
             return None
         raw = yaml.safe_load(text)
@@ -1008,11 +1017,20 @@ def scan_gitlab_ci_file(
     file_path = _resolve_gitlab_ci_scan_path(path, root=root_path)
     if file_path is None:
         return []
-    data = _load_yaml(file_path)
+    data = _load_yaml(file_path, root=root_path)
     if data is None:
         return []
 
-    text = read_text_no_symlink(file_path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+    text = (
+        read_project_text_no_symlink(
+            root_path.parent if root_path.is_file() else root_path,
+            file_path,
+            max_bytes=MAX_YAML_BYTES,
+            encoding="utf-8",
+        )
+        if root_path is not None
+        else read_text_no_symlink(file_path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+    )
     lines = text.splitlines() if text is not None else []
 
     ignore = ignore or set()
