@@ -2992,6 +2992,34 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
     )
 
     enabled_from_policy = []
+    coverage_policy = gate.get("coverage", {}) if isinstance(gate, dict) else {}
+    required_coverage = (
+        coverage_policy.get("required", [])
+        if isinstance(coverage_policy, dict)
+        else []
+    )
+    if isinstance(required_coverage, str):
+        required_coverage = [required_coverage]
+    if isinstance(required_coverage, list):
+        required_coverage = [
+            str(category).strip().lower() for category in required_coverage
+        ]
+    if bool(project_cfg.get("sca_enabled", False)) or (
+        isinstance(required_coverage, list) and "sca" in required_coverage
+    ) or (
+        isinstance(coverage_policy, dict)
+        and (
+            coverage_policy.get("require_resolved_versions") is True
+            or coverage_policy.get("require_resolved_versions") == "true"
+        )
+    ):
+        if not getattr(args, "sca", False):
+            args.sca = True
+            enabled_from_policy.append("sca")
+    if isinstance(required_coverage, list) and "custom_rules" in required_coverage:
+        if not getattr(args, "quality", False):
+            args.quality = True
+            enabled_from_policy.append("quality")
     if not explicit_category_flags:
         if (
             bool(project_cfg.get("security_enabled", False))
@@ -3369,23 +3397,37 @@ def _run_pre_analysis_steps(args, project_root, console):
                     "[warn]pytest had failures; unused fixture report may be partial[/warn]"
                 )
 
+    # Rendering must never decide which checks execute. Keep a bounded receipt
+    # when Cloud rules cannot be loaded, rather than treating an outage as an
+    # authoritative empty ruleset.
     custom_rules_data = None
-    if not quiet_output:
-        try:
-            from skylos.cloud.sync import get_custom_rules, get_token
+    try:
+        from skylos.cloud.sync import load_custom_rules
 
-            token = get_token()
-            if token:
-                custom_rules_data = get_custom_rules()
-                if custom_rules_data:
-                    console.print(
-                        f"[brand]Loaded {len(custom_rules_data)} custom rules from cloud[/brand]"
-                    )
-        except Exception as e:
-            if args.verbose:
-                console.print(
-                    f"[warn]Could not load custom rules: {_escape_markup(str(e))}[/warn]"
-                )
+        loaded_rules = load_custom_rules()
+        custom_rules_data = loaded_rules.get("rules") or []
+        custom_rules_coverage = {
+            key: value for key, value in loaded_rules.items() if key != "rules"
+        }
+        custom_rules_coverage["rule_count"] = sum(
+            bool(rule.get("enabled", True)) for rule in custom_rules_data
+        )
+        if custom_rules_coverage.get("status") == "complete" and any(
+            rule.get("enabled", True) and rule.get("rule_type") != "yaml"
+            for rule in custom_rules_data
+        ):
+            custom_rules_coverage.update(
+                status="unsupported", reason="unsupported_custom_rule_type"
+            )
+        if custom_rules_data and not quiet_output:
+            console.print(
+                f"[brand]Loaded {len(custom_rules_data)} configured custom rules[/brand]"
+            )
+    except Exception as error:
+        custom_rules_coverage = {
+            "status": "unavailable", "rule_count": 0,
+            "reason": "rule_loader_error", "error_type": type(error).__name__,
+        }
 
     changed_files = None
     if getattr(args, "diff", None) and not getattr(args, "diff_base", None):
@@ -3447,6 +3489,7 @@ def _run_pre_analysis_steps(args, project_root, console):
     return SimpleNamespace(
         pytest_fixtures_ok=pytest_fixtures_ok,
         custom_rules_data=custom_rules_data,
+        custom_rules_coverage=custom_rules_coverage,
         changed_files=changed_files,
         trace_file=trace_file_for_analysis,
         dependency_bump_diff_base=_dependency_bump_cli_diff_base(args),

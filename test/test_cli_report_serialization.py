@@ -63,6 +63,10 @@ def _configure(monkeypatch, tmp_path, output_format, *, upload=False):
     )
     monkeypatch.setattr(cli, "load_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(cli, "print_badge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"status": "complete", "rules": []},
+    )
 
 
 @pytest.mark.parametrize(
@@ -111,6 +115,9 @@ def test_json_bytes_normalization_and_upload_isolation(
         "keys": {1: "first", "1": "last", False: "false"},
     }
     expected["provenance"] = None
+    expected["analysis_summary"]["custom_rules_coverage"] = {
+        "status": "complete", "rule_count": 0
+    }
     expected["provenance_status"] = {
         "ran": False,
         "reason": "skipped with --no-provenance",
@@ -150,6 +157,7 @@ def test_json_bytes_normalization_and_upload_isolation(
         normalized = cli._apply_display_filters(normalized, file_filter="elsewhere.py")
     if output_format == "json-ci":
         normalized = _build_ci_json_payload(normalized)
+    normalized["upload"] = {"status": "uploaded"}
     expected_bytes = json.dumps(normalized) + "\n"
 
     cli.main()

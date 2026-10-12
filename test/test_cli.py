@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree as RichTree
 import skylos.cli as cli
+from skylos.api import BASE_URL
 
 from skylos.cli import (
     CleanFormatter,
@@ -32,13 +33,27 @@ from skylos.reporting.finding_types import (
 
 
 def _with_finding_type_metadata(result):
-    """Expected output adds metadata while preserving every other input field."""
+    """Expected scan output for a disconnected Cloud custom-rule loader."""
     expected = deepcopy(result)
+    expected.setdefault("analysis_summary", {})["custom_rules_coverage"] = {
+        "status": "not_connected",
+        "rule_count": 0,
+    }
     annotate_finding_types(expected)
     expected.setdefault("analysis_summary", {})["finding_type_counts"] = (
         summarize_finding_types(expected)
     )
     return expected
+
+
+@pytest.fixture
+def disconnected_custom_rules(monkeypatch, tmp_path):
+    """These output-contract tests do not load a developer's Cloud rules."""
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "not_connected"},
+    )
+    monkeypatch.chdir(tmp_path)
 
 
 def test_scan_output_rejects_symlink_without_clobbering_target(tmp_path):
@@ -469,7 +484,7 @@ class TestMainFunction:
             "analysis_summary": {"total_files": 2, "excluded_folders": []},
         }
 
-    def test_main_json_output(self, mock_skylos_result):
+    def test_main_json_output(self, mock_skylos_result, disconnected_custom_rules):
         """testing main function with JSON output"""
         test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
 
@@ -492,7 +507,8 @@ class TestMainFunction:
 
     @pytest.mark.parametrize("format_args", [["--json"], ["--format", "json"]])
     def test_main_json_remains_parseable_when_analysis_logs(
-        self, mock_skylos_result, tmp_path, monkeypatch, capsys, format_args
+        self, mock_skylos_result, tmp_path, monkeypatch, capsys, format_args,
+        disconnected_custom_rules,
     ):
         monkeypatch.setattr(
             sys,
@@ -2575,7 +2591,9 @@ def test_explicit_rich_upload_reports_incomplete_scan_before_exit(monkeypatch):
     upload.assert_not_called()
 
 
-def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
+def test_main_json_upload_calls_upload_report_quiet(
+    monkeypatch, tmp_path, disconnected_custom_rules
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -2597,9 +2615,18 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
         patch("skylos.cli.setup_logger", return_value=fake_logger),
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.api.get_git_root", return_value=str(tmp_path)),
+        patch(
+            "skylos.reporting.provenance.analyze_provenance",
+            return_value=ProvenanceReport(),
+        ),
         patch(
             "skylos.cli.upload_report",
-            return_value={"success": True, "quality_gate_passed": True},
+            return_value={
+                "success": True,
+                "scan_id": "fixture-scan",
+                "quality_gate_passed": True,
+            },
         ) as mock_upload,
         patch("builtins.print") as mock_print,
     ):
@@ -2611,6 +2638,9 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     assert upload_result["analysis_summary"] == {
         "total_files": 1,
         "project_root": "",
+        "custom_rules_coverage": {
+            "status": "not_connected", "rule_count": 0,
+        },
         "finding_type_counts": {
             "defect": 0,
             "review": 0,
@@ -2639,6 +2669,12 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     assert printed_payload["quality"] == []
     assert printed_payload["secrets"] == []
     assert "provenance_summary" in printed_payload
+    assert printed_payload["upload"] == {
+        "status": "uploaded",
+        "scan_id": "fixture-scan",
+        "url": f"{BASE_URL.rstrip('/')}/dashboard/scans/fixture-scan",
+        "quality_gate": {"passed": True},
+    }
 
 
 def test_main_linked_repo_does_not_upload_without_upload_flag(monkeypatch):
@@ -2675,7 +2711,9 @@ def test_main_linked_repo_does_not_upload_without_upload_flag(monkeypatch):
     mock_upload.assert_not_called()
 
 
-def test_main_json_gate_failure_exits_nonzero(monkeypatch):
+def test_main_json_gate_failure_exits_nonzero(
+    monkeypatch, disconnected_custom_rules
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -3178,7 +3216,9 @@ addopts = ["--output", "{victim}"]
     assert victim.read_text(encoding="utf-8") == "KEEP\n"
 
 
-def test_main_json_strict_failure_exits_nonzero(monkeypatch):
+def test_main_json_strict_failure_exits_nonzero(
+    monkeypatch, disconnected_custom_rules
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [{"name": "dead", "file": "app.py", "line": 1}],
@@ -3375,7 +3415,9 @@ def test_concise_circular_dependency_without_location_remains_visible():
     )
 
 
-def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
+def test_main_json_incomplete_analysis_exits_two_after_output(
+    monkeypatch, disconnected_custom_rules
+):
     result = {
         "analysis_summary": {
             "total_files": 1,
@@ -3419,7 +3461,9 @@ def test_main_json_incomplete_analysis_exits_two_after_output(monkeypatch):
             cli.main()
 
     assert exc.value.code == 2
-    mock_print.assert_called_once_with(json.dumps(_with_finding_type_metadata(result)))
+    expected = _with_finding_type_metadata(result)
+    expected["upload"] = {"status": "skipped", "reason": "analysis_incomplete"}
+    mock_print.assert_called_once_with(json.dumps(expected))
     upload_report.assert_not_called()
 
 
@@ -3453,7 +3497,7 @@ def test_incomplete_language_summary_uses_operational_exit_code():
 )
 @pytest.mark.parametrize("gate_args", [[], ["--gate"]])
 def test_main_json_sca_operational_status_controls_exit_and_upload(
-    monkeypatch, receipt, expected_exit, gate_args
+    monkeypatch, receipt, expected_exit, gate_args, disconnected_custom_rules
 ):
     result = {
         "analysis_summary": {
@@ -3485,7 +3529,14 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
         patch("skylos.cli.load_config", return_value={}),
-        patch("skylos.cli.upload_report", return_value={"success": True}) as upload,
+        patch(
+            "skylos.cli.upload_report",
+            return_value={
+                "success": True,
+                "scan_id": "fixture-sca-scan",
+                "quality_gate_passed": True,
+            },
+        ) as upload,
         patch("builtins.print") as mock_print,
     ):
         try:
@@ -3494,10 +3545,20 @@ def test_main_json_sca_operational_status_controls_exit_and_upload(
             exit_code = exc.code
 
     assert exit_code == expected_exit
+    expected = _with_finding_type_metadata(result)
+    expected["upload"] = (
+        {"status": "skipped", "reason": "analysis_incomplete"}
+        if expected_exit else {
+            "status": "uploaded",
+            "scan_id": "fixture-sca-scan",
+            "url": f"{BASE_URL.rstrip('/')}/dashboard/scans/fixture-sca-scan",
+            "quality_gate": {"passed": True},
+        }
+    )
     mock_print.assert_called_once()
     printed = json.loads(mock_print.call_args.args[0])
     gate = printed.pop("gate", None)
-    assert printed == _with_finding_type_metadata(result)
+    assert printed == expected
     if gate_args:
         # --gate reports the same verdict it exits with (--force: exit 0 on fail).
         assert gate["verdict"] == ("incomplete" if expected_exit else "passed")
@@ -3739,7 +3800,9 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
     assert len(echo_calls) == 1
 
 
-def test_main_ignores_pyproject_addopts_deployment_command(tmp_path, monkeypatch):
+def test_main_ignores_pyproject_addopts_deployment_command(
+    tmp_path, monkeypatch, disconnected_custom_rules
+):
     (tmp_path / "pyproject.toml").write_text(
         """
 [tool.skylos]
@@ -3779,6 +3842,10 @@ addopts = [".", "--", "sh", "-c", "touch SHOULD_NOT_RUN"]
         ),
         patch("skylos.cli.subprocess.Popen") as popen,
         patch("skylos.api.get_project_token", return_value=None),
+        patch(
+            "skylos.core.review_decisions.review_scan_requirements",
+            return_value=(False, False),
+        ),
     ):
         cli.main()
 

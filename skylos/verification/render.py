@@ -204,5 +204,45 @@ def render_verify_report(payload: dict[str, Any]) -> str:
     ):
         lines.append(summary)
     lines.extend(_findings(payload))
+    lines.extend(render_verification_scope_notes(payload))
     lines.extend(_behavior(payload))
     return "\n".join(lines)
+
+
+def render_verification_scope_notes(payload: dict[str, Any]) -> list[str]:
+    """Show limitations even when another finding determines the verdict."""
+    lines = []
+    coverage = payload.get("coverage")
+    if isinstance(coverage, dict):
+        external = sum(
+            int(check.get("out_of_scope_references") or 0)
+            for check in _rows(coverage.get("checks"))
+        )
+        if external:
+            lines.append(f"External API references unverified: {external}")
+        for check in _rows(coverage.get("checks")):
+            for module in _rows(check.get("unchecked_modules"))[:_DISPLAY_LIMIT]:
+                label = (
+                    "truncated"
+                    if module.get("reason") == "installed_api_metadata_truncated"
+                    else "unavailable"
+                )
+                lines.append(
+                    f"Package API metadata {label}: {_text(module.get('module'))}"
+                )
+            for call in _rows(check.get("unchecked_calls"))[:_DISPLAY_LIMIT]:
+                lines.append(
+                    f"Package API signature unavailable: {_text(call.get('symbol'))}"
+                )
+    for check in _rows(payload.get("contract_checks")):
+        if check.get("id") != "contract_route_decorator_presence":
+            continue
+        label = {
+            "pass": "satisfied",
+            "fail": "missing required decorators",
+            "incomplete": "incomplete",
+            "not_applicable": "no routes matched",
+        }.get(check.get("outcome"), "unavailable")
+        lines.append(f"Route contract: {label} (decorator presence only)")
+        lines.append("Authentication behavior: not verified")
+    return lines

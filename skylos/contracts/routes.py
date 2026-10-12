@@ -25,6 +25,14 @@ _ROUTE_METHOD_NAMES = {
 }
 
 
+class ContractRouteFindings(list):
+    """Structural route evidence; matching a name does not prove authorization."""
+
+    def __init__(self, findings=(), *, check: dict[str, Any]) -> None:
+        super().__init__(findings)
+        self.check = check
+
+
 def scan_contract_route_guardrails(
     contract: HallucinationContract | None,
     project_root: str | Path,
@@ -37,9 +45,25 @@ def scan_contract_route_guardrails(
     assert contract is not None
     root = _safe_resolve(project_root)
     findings: list[dict[str, Any]] = []
+    check = {
+        "id": "contract_route_decorator_presence",
+        "scope": "structural_decorator_presence",
+        "outcome": "not_applicable",
+        "checked_routes": 0,
+        "matched_routes": 0,
+        "missing_guard_routes": 0,
+        "unchecked_files": [],
+        "authentication_behavior": "not_verified",
+    }
     for file_path in _candidate_python_files(root, contract, files=files):
-        findings.extend(_scan_python_file(file_path, root, contract))
-    return findings
+        findings.extend(_scan_python_file(file_path, root, contract, check=check))
+    if findings:
+        check["outcome"] = "fail"
+    elif check["unchecked_files"]:
+        check["outcome"] = "incomplete"
+    elif check["checked_routes"]:
+        check["outcome"] = "pass"
+    return ContractRouteFindings(findings, check=check)
 
 
 def _contract_has_route_guardrail(
@@ -152,6 +176,8 @@ def _scan_python_file(
     file_path: Path,
     root: Path,
     contract: HallucinationContract,
+    *,
+    check: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     source = read_text_no_symlink(
         file_path,
@@ -159,11 +185,15 @@ def _scan_python_file(
         encoding="utf-8",
     )
     if source is None:
+        if check is not None:
+            check["unchecked_files"].append(_relative_path(file_path, root))
         return []
 
     try:
         tree = ast.parse(source, filename=str(file_path))
     except SyntaxError:
+        if check is not None:
+            check["unchecked_files"].append(_relative_path(file_path, root))
         return []
 
     required = contract.security.routes.require_any_decorator
@@ -179,9 +209,15 @@ def _scan_python_file(
         ]
         if not route_decorators:
             continue
+        if check is not None:
+            check["checked_routes"] += 1
         if _has_required_guard(node, required):
+            if check is not None:
+                check["matched_routes"] += 1
             continue
 
+        if check is not None:
+            check["missing_guard_routes"] += 1
         findings.append(_finding(file_path, root, node, route_decorators, required))
     return findings
 
@@ -221,6 +257,8 @@ def _finding(
             "route_path": _route_path(route_decorators[0]),
             "changed_file": _relative_path(file_path, root),
             "required_decorators": list(required),
+            "verification_scope": "structural_decorator_presence",
+            "authentication_behavior": "not_verified",
         },
     }
 

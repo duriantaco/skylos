@@ -513,6 +513,11 @@ exclude = ["customenv"]
 
 
 def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "skylos.cloud.sync.load_custom_rules",
+        lambda: {"rules": [], "status": "not_connected"},
+    )
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [{"name": "u", "file": "a.py", "line": 1}],
@@ -544,11 +549,20 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
         exp.generate.assert_called_once()
         p.assert_called_once()
         payload = json.loads(p.call_args.args[0])
-        assert payload["unused_functions"][0].pop("finding_type") == "review"
-        assert payload["analysis_summary"].pop("finding_type_counts") == {
-            "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+        expected = {
+            **result,
+            "unused_functions": [{**result["unused_functions"][0], "finding_type": "review"}],
+            "analysis_summary": {
+                **result["analysis_summary"],
+                "custom_rules_coverage": {
+                    "status": "not_connected", "rule_count": 0,
+                },
+                "finding_type_counts": {
+                    "defect": 0, "review": 1, "advice": 0, "advice_groups": 0,
+                },
+            },
         }
-        assert payload == result
+        assert payload == expected
 
 
 def test_shorten_path_returns_absolute_when_outside_cwd(tmp_path, monkeypatch):

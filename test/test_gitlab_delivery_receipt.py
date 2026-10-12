@@ -150,6 +150,9 @@ def test_api_key_and_github_finalization_keep_existing_result_and_gate_behavior(
         "quality_gate_passed": False,
         "plan": "free",
         "credits_warning": False,
+        "quality_gate_reported": True,
+        "quality_gate": {"passed": False},
+        "url": f"{api.BASE_URL.rstrip('/')}/dashboard/scans/fixture-saved-scan",
     }
     with pytest.raises(SystemExit) as caught:
         api._finalize_report_upload(response, grade_data=None, quiet=True, strict=True)

@@ -3877,6 +3877,11 @@ class Skylos:
                             changed_files=changed_files,
                             ignore=project_ignore,
                             required_rules=required_config_rules,
+                            analysis_errors=result["analysis_errors"],
+                            scan_paths=path if isinstance(path, (list, tuple)) else None,
+                        )
+                        result["analysis_summary"]["analysis_error_count"] = len(
+                            result["analysis_errors"]
                         )
                         if config_findings:
                             danger_findings.extend(config_findings)
@@ -4776,6 +4781,8 @@ class Skylos:
                     changed_files=changed_files,
                     ignore=project_ignore,
                     required_rules=required_config_rules,
+                    analysis_errors=analysis_errors,
+                    scan_paths=path if isinstance(path, (list, tuple)) else None,
                 )
                 if config_findings:
                     all_dangers.extend(config_findings)
@@ -5006,6 +5013,7 @@ class Skylos:
 
                 try:
                     from skylos.rules.ai_defect.api_signature_hallucination import (
+                        failed_python_api_signature_check,
                         scan_python_api_signature_hallucinations,
                     )
 
@@ -5017,15 +5025,35 @@ class Skylos:
                             py_files,
                             allowed_modules=tuple(api_modules) if api_modules else None,
                         )
-                        _extend_unsuppressed_ai_defect_findings(
+                        _append_ai_verification_result(
                             api_findings,
+                            getattr(
+                                api_findings,
+                                "check",
+                                failed_python_api_signature_check("coverage_receipt_missing"),
+                            ),
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
                             per_file_ignore_rules=per_file_ignore_rules,
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
+                            verification_checks=self._ai_verification_checks,
                         )
                 except Exception:
+                    if _python_signature_files(files):
+                        # The detector import itself may have failed. Build a
+                        # minimal receipt without relying on that import.
+                        self._ai_verification_checks.append(
+                            {
+                                "id": "python_installed_api_signature",
+                                "status": "skipped",
+                                "outcome": "incomplete",
+                                "scope": "installed_python_package_api_metadata",
+                                "languages": ["python"],
+                                "finding_count": 0,
+                                "reasons": [{"code": "detector_error", "count": 1}],
+                            }
+                        )
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
