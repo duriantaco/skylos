@@ -416,6 +416,45 @@ def test_detect_done_setup_skips_repositories_without_tests(tmp_path):
     assert "test_command" in setup.reason
 
 
+def test_detect_done_setup_suggests_vitest_settings(tmp_path):
+    _write(tmp_path / "package.json", '{"devDependencies": {"vitest": "^3.2.0"}}')
+    setup = detect_done_setup(tmp_path)
+    assert not setup.enabled
+    assert setup.reason.startswith("Vitest found")
+    assert setup.suggested_settings == (
+        'test_command = "npx vitest run --reporter=default --reporter=junit '
+        '--outputFile.junit=reports/junit.xml"',
+        'junit_xml = "reports/junit.xml"',
+    )
+    assert setup.suggested_install == ""
+
+
+def test_detect_done_setup_suggests_jest_junit(tmp_path):
+    _write(tmp_path / "package.json", '{"devDependencies": {"jest": "^30.0.0"}}')
+    setup = detect_done_setup(tmp_path)
+    assert setup.suggested_install == "npm install --save-dev jest-junit"
+    assert setup.suggested_settings[-1] == 'junit_xml = "junit.xml"'
+
+    _write(
+        tmp_path / "package.json",
+        '{"devDependencies": {"jest": "^30.0.0", "jest-junit": "^16.0.0"},'
+        ' "jest-junit": {"outputDirectory": "<rootDir>/reports"}}',
+    )
+    setup = detect_done_setup(tmp_path)
+    assert setup.suggested_install == ""
+    assert setup.suggested_settings[-1] == 'junit_xml = "reports/junit.xml"'
+
+
+def test_detect_done_setup_prefers_pytest_and_ignores_bad_package_json(tmp_path):
+    _write(tmp_path / "package.json", "not json")
+    assert detect_done_setup(tmp_path).suggested_settings == ()
+
+    _write(tmp_path / "package.json", '{"devDependencies": {"vitest": "3"}}')
+    _write(tmp_path / "conftest.py")
+    setup = detect_done_setup(tmp_path)
+    assert setup.enabled and setup.suggested_settings == ()
+
+
 def test_detect_done_setup_honours_configured_test_command(tmp_path):
     _write(
         tmp_path / "pyproject.toml",
@@ -504,6 +543,19 @@ def test_cicd_init_leaves_done_out_when_tests_cannot_run(tmp_path, monkeypatch):
     assert "done" not in workflow["jobs"]
     assert "not added" in printed and "--done" in printed
     assert "Wait for: Skylos Quality Gate\n" in printed + "\n"
+
+
+def test_cicd_init_prints_done_settings_for_vitest(tmp_path, monkeypatch):
+    _write(tmp_path / "package.json", '{"devDependencies": {"vitest": "^3.2.0"}}')
+    exit_code, workflow, printed = _run_cicd_init(tmp_path, monkeypatch)
+
+    assert exit_code == 0
+    assert "done" not in workflow["jobs"]
+    assert "Vitest found" in printed
+    assert "tool.skylos.done]" in printed
+    assert "--outputFile.junit=reports/junit.xml" in printed
+    assert "commit it to your default branch" in printed
+    assert "skylos cicd init --done" in printed
 
 
 def test_cicd_init_done_and_upload_flags(tmp_path, monkeypatch):
@@ -690,7 +742,9 @@ def test_cicd_init_force_refuses_symlinked_parents(tmp_path, monkeypatch, parent
     assert not list(victim.parent.glob("*.bak*"))
 
 
-def test_workflow_replacement_is_atomic_and_backup_preserves_bytes(tmp_path, monkeypatch):
+def test_workflow_replacement_is_atomic_and_backup_preserves_bytes(
+    tmp_path, monkeypatch
+):
     import skylos.cicd.workflow as workflow
 
     path = tmp_path / "skylos.yml"
@@ -773,7 +827,9 @@ def test_workflow_refuses_platforms_without_safe_directory_operations(
 
 
 @pytest.mark.parametrize("missing", ["O_DIRECTORY", "O_NOFOLLOW"])
-def test_workflow_refuses_platforms_without_no_follow_flags(tmp_path, monkeypatch, missing):
+def test_workflow_refuses_platforms_without_no_follow_flags(
+    tmp_path, monkeypatch, missing
+):
     import skylos.cicd.workflow as workflow
 
     path = tmp_path / ".github" / "workflows" / "skylos.yml"
