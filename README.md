@@ -97,6 +97,11 @@ tooling. A Review finding can still be critical. Advice stays visible in rule
 groups; `--expand-advice` shows every location and JSON keeps complete records.
 Grouping cannot improve the assessment or bypass a gate.
 
+Security findings show recorded source-to-sink evidence when available, with
+partial static analysis labeled. Dependency coverage names unresolved versions
+and the supported inputs needed to check them. Neither view claims runtime
+exploitability or a complete installed environment; JSON keeps the full evidence.
+
 New source scans replace the blended A–F grade with these readouts. Disabled
 checks are **not assessed**; failed checks are **incomplete**. Maintainability
 percentages use only the relevant units actually measured, with no guessed

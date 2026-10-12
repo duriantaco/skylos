@@ -12,6 +12,7 @@ from rich.tree import Tree
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
+    dependency_coverage_lines,
     maintainability_rows,
 )
 from skylos.reporting.finding_types import (
@@ -27,7 +28,8 @@ from skylos.ui.dead_code_evidence import (
     dead_code_uncertainty_summary,
     dead_code_uncertainty_text,
 )
-
+from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
+from skylos.ui.security_evidence import security_evidence_details
 
 logger = logging.getLogger(__name__)
 
@@ -254,8 +256,11 @@ def _finding_table_cells(item, category, root_path=None):
             details.append(f"Evidence: {why}")
     elif category == "quality":
         kind, name, detail = _quality_detail(item)
-        details.append(str(detail))
-        if item.get("message") and str(item["message"]) != str(detail):
+        test_advice = pytest_signature_advice(item)
+        details.append(pytest_signature_title(item) if test_advice else str(detail))
+        if test_advice:
+            details.append(test_advice)
+        elif item.get("message") and str(item["message"]) != str(detail):
             details.append(str(item["message"]))
         if name and name != "<?>":
             details.append(f"Name: {name}")
@@ -285,6 +290,7 @@ def _finding_table_cells(item, category, root_path=None):
     metadata = item.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    details.extend(security_evidence_details(item))
     if category in {"dependency_vulnerabilities", "publisher_change_findings"}:
         details.append(
             f"Package: {metadata.get('package_name', '?')}@{metadata.get('package_version', '?')}"
@@ -589,7 +595,7 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
     console.print()
 
 
-def _render_assessment(console: Console, assessment, *, gate=None):
+def _render_assessment(console: Console, assessment, *, gate=None, analysis_summary=None):
     table = Table(title="Scan assessment", expand=True)
     table.add_column("Area", style="bold", width=16)
     table.add_column("Result", overflow="fold")
@@ -597,6 +603,8 @@ def _render_assessment(console: Console, assessment, *, gate=None):
         table.add_row(label, escape(detail))
     console.print(table)
     console.print(escape(assessment_coverage_text(assessment)), style="muted")
+    for detail in dependency_coverage_lines(analysis_summary):
+        console.print(escape(detail), style="muted")
     checks = maintainability_rows(assessment)
     if checks:
         maintenance = Table(title="Maintainability measurements", expand=True)
@@ -968,7 +976,12 @@ def render_results(
     assessment = result.get("assessment")
     grade_data = result.get("grade")
     if isinstance(assessment, dict) and assessment:
-        _render_assessment(console, assessment, gate=result.get("gate") or result.get("quality_gate"))
+        _render_assessment(
+            console,
+            assessment,
+            gate=result.get("gate") or result.get("quality_gate"),
+            analysis_summary=summ,
+        )
     elif grade_data:
         _render_grade(console, grade_data, copy_badge=copy_badge)
     if summ.get("assessment_includes_filtered_findings") or summ.get("grade_includes_filtered_findings"):
