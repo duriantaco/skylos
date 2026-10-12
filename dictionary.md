@@ -646,6 +646,17 @@ OpenPGP private keys are reported when key data follows the header.
 Provider-shaped tokens (AWS, GitHub, GitLab, Slack, Stripe, Google,
 SendGrid, Twilio) are never filtered by these shapes.
 
+Descriptive `*_token` labels are also excluded from generic entropy
+findings when the key has at least three words and the complete lowercase
+literal restates every word in order, with ordinary spaces, slashes or hyphens.
+One interior metadata qualifier, such as `model`, `input` or `type`, is
+allowed; arbitrary extra words, prefixes, suffixes, digits and encoded
+values and computed expressions are still scanned. Credential terms such as
+`api`, `access`, `secret` or `password` prevent this exclusion. Spaces alone never exempt
+a value: high-entropy passphrases and provider-shaped credentials remain
+eligible for reporting. This behavior applies across the secret scanner's
+supported source and configuration formats.
+
 `SKY-S102` preserves the `SKY-S101` severity when it reclassifies a concrete
 hardcoded credential; environment-reference exposure is `HIGH`.
 

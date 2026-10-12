@@ -339,3 +339,147 @@ def test_lookalikes_of_public_shapes_are_still_reported(rel, src):
 def test_provider_tokens_in_js_test_files_are_still_reported():
     src = f"const token = '{GITHUB_TOKEN}';\n"
     assert "github" in _providers(src, "src/__tests__/client.test.ts")
+
+
+@pytest.mark.parametrize("rel", ["phases.py", "phases.ts", "phases.go", "phases.json"])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("upstream_prefill_first_token", "upstream model prefill / first-token"),
+        ("response_first_byte_token", "response first byte token"),
+        ("DISPLAY_FIRST_OUTPUT_TOKEN", "display first output token"),
+    ],
+)
+def test_descriptive_token_labels_do_not_become_generic_secrets(rel, key, value):
+    assert _scan(f'"{key}": "{value}"\n', rel) == []
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("PASSWORD", "vivid quartz flamingo jumps over lazy brown hedgehog"),
+        ("upstream_prefill_first_token", "hidden upstream prefill first token"),
+        ("upstream_prefill_first_token", "upstream prefill first token hidden"),
+        (
+            "upstream_prefill_first_token",
+            "upstream opaque prefill / secret first-token",
+        ),
+        ("upstream_prefill_first_token", "upstream emerald prefill / first-token"),
+        ("upstream_prefill_first_token", "upstream qzxjk prefill first token"),
+        ("upstream_prefill_first_token", "upstream vivid prefill first token"),
+        ("upstream_prefill_first_token", "upstream prefill first token qzxjk"),
+        ("upstream_prefill_first_token", "upstream model prefill / first-token 7391"),
+        ("upstream_prefill_first_token", "upstream Model prefill / first-token"),
+        ("upstream_prefill_first_token", "upstream model prefill / first-token!"),
+        ("upstream_prefill_first_token", "upstream\\tmodel prefill / first-token"),
+        ("upstream_prefill_first_token", "upstream\\nmodel prefill / first-token"),
+        (
+            "upstream_prefill_first_token",
+            f"upstream {RANDOM_TOKEN} prefill first token",
+        ),
+        (
+            "upstream_access_prefill_first_token",
+            "upstream access prefill / first-token",
+        ),
+        ("api_upstream_prefill_first_token", "api upstream prefill / first-token"),
+        (
+            "private_upstream_prefill_first_token",
+            "private upstream prefill / first-token",
+        ),
+        (
+            "password_upstream_prefill_first_token",
+            "password upstream prefill / first-token",
+        ),
+    ],
+)
+def test_passphrases_and_token_label_lookalikes_remain_reported(key, value):
+    findings = _scan(f'"{key}": "{value}"\n', "settings.py")
+    assert any(finding["provider"] == "generic" for finding in findings)
+
+
+def test_provider_secret_embedded_in_token_label_remains_reported():
+    value = f"upstream {GITHUB_TOKEN} prefill / first-token"
+    findings = _scan(f'"upstream_prefill_first_token": "{value}"\n')
+    assert any(finding["provider"] == "github" for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        " + runtime_suffix",
+        ' + "qzxjk"',
+        ' "qzxjk"',
+        '.format("qzxjk")',
+        '.replace("upstream", runtime_suffix)',
+        ", runtime_suffix",
+        " \\",
+    ],
+)
+def test_token_label_expression_prefix_remains_reported(suffix):
+    source = 'upstream_prefill_first_token = "upstream model prefill / first-token"'
+    assert "generic" in _providers(source + suffix + "\n")
+
+
+@pytest.mark.parametrize(
+    "rel,ending",
+    [
+        ("phases.py", " # display label"),
+        ("phases.ts", " // display label"),
+        ("phases.go", " // display label"),
+        ("phases.json", ","),
+        ("phases.json", "}"),
+        ("phases.ts", ";"),
+    ],
+)
+def test_complete_token_label_literal_boundaries(rel, ending):
+    source = '"upstream_prefill_first_token": "upstream model prefill / first-token"'
+    assert _scan(source + ending + "\n", rel) == []
+
+
+def test_block_comment_does_not_prove_token_label_is_complete():
+    source = (
+        'upstream_prefill_first_token = "upstream model prefill / first-token"'
+        ' /* comment */ + "qzxjk";\n'
+    )
+    assert "generic" in _providers(source, "phases.ts")
+
+
+@pytest.mark.parametrize(
+    "continued",
+    [
+        '+ "qzxjk"',
+        '"qzxjk"',
+        'f"{runtime_suffix}"',
+        '.replace("upstream", runtime_suffix)',
+    ],
+)
+@pytest.mark.parametrize("between", ["", "\n# continuation comment\n"])
+def test_token_label_mapping_value_continued_on_next_line_remains_reported(
+    continued, between
+):
+    source = (
+        '{"upstream_prefill_first_token": "upstream model prefill / first-token"\n'
+        + between
+        + continued
+        + "}\n"
+    )
+    assert "generic" in _providers(source)
+
+
+@pytest.mark.parametrize("between", ["", "\n# display label\n"])
+def test_last_token_label_in_complete_mapping_is_not_a_secret(between):
+    source = (
+        'PHASES = {\n"upstream_prefill_first_token": '
+        '"upstream model prefill / first-token"\n' + between + "}\n"
+    )
+    assert _scan(source) == []
+
+
+def test_long_unresolved_continuation_stays_reported():
+    source = (
+        'PHASES = {\n"upstream_prefill_first_token": '
+        '"upstream model prefill / first-token"\n'
+        + "# comment\n" * 33
+        + '+ "qzxjk"}\n'
+    )
+    assert "generic" in _providers(source)
