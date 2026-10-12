@@ -146,6 +146,7 @@ _OPTIONAL_RUN_STATE_ATTRIBUTES = (
     "_ts_importers_of",
     "_ts_demoted_exports",
     "_browser_script_entry_files",
+    "_generated_file_scope",
 )
 
 
@@ -1422,6 +1423,40 @@ def _changed_definition_keys(
         for key, definition in definitions.items()
         if _canonical_analysis_path(definition.filename, root) in changed_paths
     )
+
+
+def _without_generated_definitions(
+    scope_keys: frozenset | None,
+    definitions: dict,
+    project_root: str | Path,
+    generated_scope,
+) -> frozenset | None:
+    """Leave definitions in generated files (Django migrations) out of the
+    dead-code scope.
+
+    Like a diff scan, the whole repository is still parsed, so what a
+    migration uses stays alive; the migration's own definitions are neither
+    grep-verified nor reported.
+    """
+    report_only = getattr(generated_scope, "report_only", None)
+    if not report_only:
+        return scope_keys
+    root = Path(project_root)
+    generated = {_canonical_analysis_path(path, root) for path in report_only}
+    canonical_by_file: dict[str, str] = {}
+    kept = []
+    for key in definitions if scope_keys is None else scope_keys:
+        definition = definitions.get(key)
+        if definition is None:
+            continue
+        filename = str(definition.filename)
+        canonical = canonical_by_file.get(filename)
+        if canonical is None:
+            canonical = _canonical_analysis_path(filename, root)
+            canonical_by_file[filename] = canonical
+        if canonical not in generated:
+            kept.append(key)
+    return frozenset(kept)
 
 
 def _suppress_django_admin_stubs(empty_files, file_contexts, project_root) -> None:
@@ -3532,6 +3567,8 @@ class Skylos:
         dependency_bump_diff_base=None,
         include_review_proofs=False,
         include_review_context=False,
+        skip_generated=False,
+        generated_keep_paths=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -3606,6 +3643,11 @@ class Skylos:
         self._project_root = project_root
 
         files, root = self._discover_files(path, exclude_folders)
+        self._generated_file_scope = None
+        if skip_generated and files:
+            files, self._generated_file_scope = _skip_generated_files(
+                path, files, root, generated_keep_paths
+            )
         verification_surface_root = _verification_surface_root(
             path,
             root,
@@ -3714,6 +3756,10 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
+            if self._generated_file_scope is not None:
+                result["analysis_summary"]["generated_files"] = (
+                    self._generated_file_scope.summary()
+                )
             if isinstance(self._review_context, dict):
                 result["analysis_summary"]["review_context"] = dict(
                     self._review_context
@@ -5567,10 +5613,15 @@ class Skylos:
             "enabled": bool(grep_verify),
             "rescued_count": 0,
         }
-        self._dead_code_scope_keys = _changed_definition_keys(
+        self._dead_code_scope_keys = _without_generated_definitions(
+            _changed_definition_keys(
+                self.defs,
+                project_root,
+                requested_changed_files,
+            ),
             self.defs,
             project_root,
-            requested_changed_files,
+            getattr(self, "_generated_file_scope", None),
         )
         self._grep_verify_report = grep_verify_report
         if grep_verify:
@@ -5659,6 +5710,23 @@ class Skylos:
         )
 
         return json.dumps(result, indent=2)
+
+
+def _skip_generated_files(path, files, root, keep_paths):
+    """Apply the default generated/vendored scope (``skylos.core.generated_files``).
+
+    Files named on the command line are never skipped.
+    """
+    from skylos.core.generated_files import partition_generated_files
+
+    targets = path if isinstance(path, (list, tuple)) else [path]
+    explicit_files = [Path(target) for target in targets if Path(target).is_file()]
+    return partition_generated_files(
+        files,
+        Path(root),
+        keep_paths=keep_paths,
+        explicit_files=explicit_files,
+    )
 
 
 def _split_outside_diff_analysis_errors(analysis_errors, changed_files):
@@ -5752,6 +5820,8 @@ def analyze(
     dependency_bump_diff_base=None,
     include_review_proofs=False,
     include_review_context=False,
+    skip_generated=False,
+    generated_keep_paths=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -5776,6 +5846,8 @@ def analyze(
         dependency_bump_diff_base=dependency_bump_diff_base,
         include_review_proofs=include_review_proofs,
         include_review_context=include_review_context,
+        skip_generated=skip_generated,
+        generated_keep_paths=generated_keep_paths,
     )
 
 

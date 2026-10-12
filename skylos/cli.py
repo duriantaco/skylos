@@ -2565,6 +2565,17 @@ def _print_default_excludes(console):
     console.print(f"\n[muted]Total: {len(DEFAULT_EXCLUDE_FOLDERS)} folders[/muted]")
     console.print("\nUse --no-default-excludes to disable these exclusions")
     console.print("Use --include-folder <folder> to force include specific folders")
+    console.print("\n[brand]Generated and vendored files skipped by default:[/brand]")
+    console.print(
+        " Django migrations (<app>/migrations/*.py defining class Migration; "
+        "still read for references, security and secret findings kept)"
+    )
+    console.print(" static/**/lib/** JS/CSS, *.min.js, *.min.css")
+    console.print(" JS/CSS files that open with a vendored-library licence banner")
+    console.print(
+        "\nUse --include-generated (or \\[tool.skylos] include_generated = true) "
+        "to scan them"
+    )
 
 
 def _build_main_scan_context(args):

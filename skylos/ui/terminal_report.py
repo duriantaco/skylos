@@ -30,6 +30,7 @@ from skylos.ui.dead_code_evidence import (
     dead_code_uncertainty_text,
 )
 from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
+from skylos.ui.scope_notes import scope_note_lines
 from skylos.ui.security_evidence import security_evidence_details
 
 CATEGORY_SPECS = (
@@ -158,6 +159,8 @@ def render_pretty_results(
                 style="dim",
             )
         )
+    for note in scope_note_lines(result):
+        console.print(Text(f"  {_sanitize_terminal_text(note)}", style="dim"))
     _print_directory_rollups(console, result)
     console.print()
 

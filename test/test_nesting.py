@@ -73,6 +73,16 @@ def high_nesting():
         assert findings[0]["value"] == 5
         assert findings[0]["severity"] == "HIGH"
 
+    def test_extreme_nesting_is_never_critical(self):
+        lines = ["def deep():"]
+        for i in range(10):
+            lines.append("    " * (i + 1) + f"if x{i}:")
+        lines.append("    " * 11 + "pass")
+        findings = check_code(NestingRule(threshold=2), "\n".join(lines))
+        assert len(findings) == 1
+        assert findings[0]["value"] == 10
+        assert findings[0]["severity"] == "HIGH"
+
     def test_ignore_inner_function_def(self):
         code = """
 def outer():

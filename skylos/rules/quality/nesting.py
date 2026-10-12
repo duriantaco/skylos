@@ -83,12 +83,11 @@ class NestingRule(SkylosRule):
         if depth <= self.threshold:
             return None
 
+        # Capped at HIGH: nesting depth is not an exploitable defect.
         if depth <= self.threshold + 2:
             severity = "MEDIUM"
-        elif depth <= self.threshold + 5:
-            severity = "HIGH"
         else:
-            severity = "CRITICAL"
+            severity = "HIGH"
 
         physical_len = _physical_length(node)
         mod = context.get("mod", "")

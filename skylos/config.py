@@ -85,6 +85,8 @@ DEFAULTS = {
     "secrets_enabled": False,
     "quality_enabled": False,
     "ai_defects_enabled": False,
+    # Scan Django migrations and vendored/minified front-end files as app code.
+    "include_generated": False,
     "api_signature_modules": [],
     "license_deny": [],
     "license_allow": [],
@@ -143,6 +145,7 @@ _BOOL_CONFIG_KEYS = {
     "secrets_enabled",
     "quality_enabled",
     "ai_defects_enabled",
+    "include_generated",
 }
 _SYNCED_SECURITY_POLICY_KEYS = {
     "security_contracts",
@@ -157,6 +160,7 @@ _SYNCED_POLICY_OVERRIDE_KEYS = _SYNCED_SECURITY_POLICY_KEYS | {
 _REPO_POLICY_WEAKENING_KEYS = {
     "ignore",
     "exclude",
+    "include_generated",
 }
 _REPO_SECURITY_POLICY_WEAKENING_KEYS = _REPO_POLICY_WEAKENING_KEYS | {
     "lower_confidence",

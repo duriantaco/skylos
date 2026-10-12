@@ -35,6 +35,7 @@ Rule IDs use a stable public prefix:
 | Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
+| Generated files | Django migrations, `static/**/lib/**`, `*.min.js`, `*.min.css` and JS/CSS files that open with a vendored-library licence banner. Skipped by default with a one-line count; migrations are still parsed for references and keep security and secret findings. Scan them with `--include-generated` or `[tool.skylos] include_generated = true`. |
 | Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
@@ -593,11 +594,17 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
-`SKY-S101` is `CRITICAL` for provider tokens and high-entropy values. Two
-lower-certainty shapes are `HIGH`: a password embedded in a connection URL
+`SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
+under a secret-like name (`key`, `token`, `secret`, `password`, `auth`,
+`credential`, `private`, `api`, `session`, `cookie`, `signature`/`sig`
+before the value on its line, or the user-info, secret-named parameter or
+webhook path of a URL). A generic high-entropy value with no such name is
+`HIGH` with `"severity_reason": "no_secret_name"`; the default gate still
+counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
+a password embedded in a connection URL
 (`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
 non-placeholder literal under a password/secret/token/api-key field in YAML,
 JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
@@ -614,18 +621,26 @@ reported), public keys and certificates (PEM `PUBLIC KEY`/`CERTIFICATE`
 blocks whose body is DER, OpenPGP or SSH key data; `ssh-ed25519 AAAA...`
 lines; the `x`/`y`/`n`/`e` members of a JSON Web Key), `0x` + 40-hex
 contract and wallet addresses, ids in the path of Google Docs/Forms/Drive,
-YouTube, Figma and Notion share URLs, word slugs (`What-is-the-build-volume`,
-`INTRA-001-amendment-v2`), lines of minified `.js` bundles over 1,000
-characters, and, under a secret-sounding name, whole-value references
+YouTube, Figma and Notion share URLs, CSP source and subresource-integrity
+hashes outside lockfiles (`'sha256-<base64 digest>'`, `integrity="sha384-..."`
+with a digest of the algorithm's exact length, unless a secret- or
+session-named value holds it), parts of URLs other than user info,
+secret-named query/fragment parameters (`api_key=`, `access_token=`, `sig=`,
+`X-Amz-Signature=`) and webhook/bot/token paths, file paths (`/srv/x/y`,
+`./a/b`, `C:\\x\\y`, `dir/name.ext`; not `ab/<token>` or a base64 value with
+`+`/`=`), word slugs (`What-is-the-build-volume`, `INTRA-001-amendment-v2`),
+lines of minified `.js` bundles over 1,000 characters, and, under a
+secret-sounding name, a whole file path, a URL with no credential and no
+random component, whole-value references
 (`${{ secrets.X }}`, `${X}`, `$X`, `%X%`, `{{ .Values.x }}`; not
 `${X:-literal}` or `|| 'literal'`), lists of environment variable names
 (`GH_TOKEN,NPM_TOKEN`), the key's own name in another case
 (`ADMIN_PASSWORD: "adminPassword"`), URLs assigned to `*_URL`/`*_URI`/
 `*_ENDPOINT` names (the URL's own parts are still scanned) and Secret Manager
 references (`NAME:latest`). In JS/TS test files (`*.test.*`, `*.spec.*`,
-`__tests__/`, `__mocks__/`) only provider-shaped tokens are reported, as in
-Python test directories. A private-key header in prose, markup or before a
-placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`, `\n...\n`) is
+`__tests__/`, `__mocks__/`) and Go test files (`*_test.go`) only
+provider-shaped tokens are reported, as in Python test directories. A
+private-key header in prose, markup or before a placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`, `\n...\n`) is
 not a key; PKCS#8 (`-----BEGIN PRIVATE KEY-----`), encrypted PKCS#8 and
 OpenPGP private keys are reported when key data follows the header.
 Provider-shaped tokens (AWS, GitHub, GitLab, Slack, Stripe, Google,
@@ -815,7 +830,7 @@ value is the rest of the target's name in UPPER_SNAKE with two or more words
 
 | ID | Severity | Name | Languages / Scope | Threshold / Notes |
 |:---|:---|:---|:---|:---|
-| Q301 | WARN-CRITICAL | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
+| Q301 | WARN-HIGH | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
 | Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |

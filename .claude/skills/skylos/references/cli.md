@@ -90,6 +90,10 @@ Use `--diff REF` for findings on changed lines. Use `--diff-base REF` for
 findings in changed files. Use `--baseline` after `skylos baseline .` to show
 only new findings.
 
+Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
+`*.min.js`, library banners). The count is in
+`analysis_summary.generated_files`; add `--include-generated` to scan them.
+
 ## Gating
 
 - `skylos . --gate`: apply `[tool.skylos.gate]` thresholds.
