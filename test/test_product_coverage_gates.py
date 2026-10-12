@@ -213,6 +213,35 @@ def test_required_sca_rejects_supported_inventory_mixed_with_unsupported_formats
     assert any("unsupported dependency manifest or lockfile" in reason for reason in reasons)
 
 
+@pytest.mark.parametrize("field", ["unsupported_manifest_count", "unsupported_lockfile_count"])
+@pytest.mark.parametrize("invalid", [None, True, -1, "0", 0.5, 9_007_199_254_740_992])
+def test_required_sca_rejects_explicit_malformed_unsupported_accounting(field, invalid):
+    result = {"analysis_summary": {"sca_coverage": _sca_receipt(**{field: invalid})}}
+    passed, reasons = check_gate(result, REQUIRED_SCA)
+    assert passed is False
+    assert reasons == ["Required SCA coverage incomplete: invalid unsupported inventory accounting"]
+
+
+def test_legacy_receipts_may_omit_unsupported_format_counters():
+    receipt = _sca_receipt()
+    receipt.pop("unsupported_lockfile_count")
+    assert "unsupported_manifest_count" not in receipt
+    assert check_gate({"analysis_summary": {"sca_coverage": receipt}}, REQUIRED_SCA) == (True, [])
+
+
+def test_largest_safe_integer_supported_inventory_count_is_valid():
+    receipt = _sca_receipt(supported_manifest_candidate_count=9_007_199_254_740_991)
+    assert check_gate({"analysis_summary": {"sca_coverage": receipt}}, REQUIRED_SCA) == (True, [])
+
+
+@pytest.mark.parametrize("invalid", [None, True, 1, ["complete"], {"status": "complete"}])
+def test_required_sca_rejects_malformed_completion_status_without_crashing(invalid):
+    result = {"analysis_summary": {"sca_coverage": _sca_receipt(status=invalid)}}
+    passed, reasons = check_gate(result, REQUIRED_SCA)
+    assert passed is False
+    assert reasons == ["Required SCA coverage incomplete: supported dependency inventory was not completed"]
+
+
 @pytest.mark.parametrize(
     "overrides",
     [{"unresolved_dependency_count": 1}, {"unresolved_lockfile_dependency_count": 1},

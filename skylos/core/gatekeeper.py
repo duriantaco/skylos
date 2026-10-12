@@ -612,17 +612,22 @@ def _sca_required_coverage_reasons(receipt, *, require_resolved):
         )
     status = receipt.get("status")
     if (
-        status not in {"complete", "complete_with_unresolved_versions"}
+        not isinstance(status, str)
+        or status not in ("complete", "complete_with_unresolved_versions")
         or receipt.get("complete") is not True
     ):
         reasons.append(
             GateReason("Required SCA coverage incomplete: supported dependency inventory was not completed")
         )
-    unsupported = any(
-        (_coverage_count(receipt.get(key)) or 0) > 0
+    unsupported_counts = [
+        _coverage_count(receipt[key]) if key in receipt else 0
         for key in ("unsupported_manifest_count", "unsupported_lockfile_count")
-    )
-    if unsupported:
+    ]
+    if any(count is None for count in unsupported_counts):
+        reasons.append(
+            GateReason("Required SCA coverage incomplete: invalid unsupported inventory accounting")
+        )
+    elif any(count > 0 for count in unsupported_counts):
         reasons.append(
             GateReason("Required SCA coverage incomplete: unsupported dependency manifest or lockfile inventory")
         )
