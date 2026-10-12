@@ -12,7 +12,7 @@ import skylos.analysis.attribute_refs as attribute_module
 from skylos.analysis.attribute_refs import AttributeContextIndex
 from skylos.visitors.base import Definition
 from test.attribute_ref_oracle import _definition as _make_definition
-from test.attribute_ref_oracle import _original, _scores
+from test.attribute_ref_oracle import _fresh_bytecode, _original, _scores
 
 
 _definition = partial(_make_definition, Definition)
@@ -23,7 +23,12 @@ def _warm_paths(index, contexts, warming):
     for iteration in range(32):
         weights = dict.fromkeys(_MARKERS, iteration / 33)
         if warming in ("oracle", "both"):
+            # Warm both original loops alike: the oracle and the index's own
+            # replay, which an attribute's first sighting always takes.
             _original(_definition("alpha.work"), contexts, weights)
+            replay = AttributeContextIndex(contexts)
+            replay.mark(_definition("alpha.work"), weights)
+            assert not replay.indexed_attributes
         if warming in ("index", "both"):
             index.mark(_definition("alpha.work"), weights)
 
@@ -49,6 +54,9 @@ def test_nonfinite_operands_match_original_bits_without_using_cache(
     monkeypatch, modules, warming
 ):
     monkeypatch.setattr(attribute_module, "_MIN_CONTEXTS_TO_INDEX", 0)
+    # From here both loops run the same additions on the same operand types,
+    # so they stay in the same interpreter state through every comparison.
+    _fresh_bytecode(monkeypatch, _original, attribute_module._original_updates)
     contexts = [("work", module, None, line) for line, module in enumerate(modules)]
     index = AttributeContextIndex(contexts)
     index.seen_attributes.add("work")

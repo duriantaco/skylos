@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 from skylos.rules.danger.danger import scan_ctx
 
@@ -814,3 +815,988 @@ def test_command_dispatch_table_argument_url_flags(tmp_path):
     )
     out = _scan_one(tmp_path, "ssrf_dispatch.py", code)
     assert [f["line"] for f in _ssrf_findings(out)] == [14]
+
+
+def test_mock_patch_decorator_is_not_a_route(tmp_path):
+    # mozilla/pontoon: a ``@patch`` test parameter was labelled a PATCH route
+    # parameter, so every Django test-client call became CRITICAL SSRF.
+    code = (
+        "from unittest.mock import patch\n"
+        "from unittest import mock\n"
+        "@patch('app.views.render')\n"
+        "def test_locale_view(render_mock, locale, client):\n"
+        "    client.get(f'/{locale.code}/')\n"
+        "@mock.patch('app.views.render')\n"
+        "def test_team_view(render_mock, team, admin_client):\n"
+        "    admin_client.get(f'/{team.slug}/')\n"
+    )
+    out = _scan_one(tmp_path, "test_views.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_patch_route_decorator_still_flags(tmp_path):
+    code = (
+        "import requests\n"
+        "from litestar import patch\n"
+        "@patch('/proxy')\n"
+        "def proxy(url: str):\n"
+        "    return requests.get(url)\n"
+        "@router.patch('/fetch')\n"
+        "def fetch(url: str):\n"
+        "    return requests.get(url)\n"
+    )
+    out = _scan_one(tmp_path, "routes.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [5, 8]
+
+
+def test_unbound_patch_decorator_still_counts_as_route(tmp_path):
+    code = (
+        "import requests\n"
+        "@patch('/proxy')\n"
+        "def proxy(url):\n"
+        "    return requests.get(url)\n"
+    )
+    out = _scan_one(tmp_path, "routes.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_in_process_test_clients_are_not_ssrf(tmp_path):
+    code = (
+        "from django.test import Client, RequestFactory, TestCase\n"
+        "from rest_framework.test import APIClient, APITestCase\n"
+        "from fastapi.testclient import TestClient\n"
+        "def test_django_client():\n"
+        "    client = Client()\n"
+        "    client.get(input())\n"
+        "def test_api_client():\n"
+        "    api_client = APIClient()\n"
+        "    api_client.post(input(), {})\n"
+        "def test_request_factory():\n"
+        "    request_factory = RequestFactory()\n"
+        "    request_factory.get(input())\n"
+        "def test_fastapi(app):\n"
+        "    with TestClient(app) as client:\n"
+        "        client.get(input())\n"
+        "def test_flask(app):\n"
+        "    app.test_client().get(input())\n"
+        "def test_pytest_django_fixture(client, admin_client):\n"
+        "    client.get(input())\n"
+        "    admin_client.get(input())\n"
+        "class ViewTests(TestCase):\n"
+        "    def test_view(self):\n"
+        "        self.client.get(input())\n"
+        "class ApiTests(APITestCase):\n"
+        "    def test_api(self):\n"
+        "        self.client.get(input())\n"
+        "class SetUpTests(APITestCase):\n"
+        "    def setUp(self):\n"
+        "        self.http_client = APIClient()\n"
+        "    def test_api(self):\n"
+        "        self.http_client.get(input())\n"
+    )
+    out = _scan_one(tmp_path, "test_clients.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_real_http_clients_named_like_test_clients_still_flag(tmp_path):
+    code = (
+        "import httpx, requests\n"
+        "from django.test import Client, TestCase\n"
+        "def test_session():\n"
+        "    client = requests.Session()\n"
+        "    client.get(input())\n"
+        "def test_rebound_client():\n"
+        "    client = Client()\n"
+        "    client = httpx.Client()\n"
+        "    client.get(input())\n"
+        "def fetch(client):\n"
+        "    client.get(input())\n"
+        "class Api:\n"
+        "    def __init__(self):\n"
+        "        self.client = httpx.Client()\n"
+        "    def run(self):\n"
+        "        self.client.get(input())\n"
+        "class Swapped(TestCase):\n"
+        "    client_class = httpx.Client\n"
+        "    def test_x(self):\n"
+        "        self.client.get(input())\n"
+        "class Assigned(TestCase):\n"
+        "    def setUp(self):\n"
+        "        self.client = requests.Session()\n"
+        "    def test_x(self):\n"
+        "        self.client.get(input())\n"
+        "class Plain:\n"
+        "    def test_x(self):\n"
+        "        self.client.get(input())\n"
+    )
+    out = _scan_one(tmp_path, "test_real_clients.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [5, 9, 11, 16, 20, 25, 28]
+
+
+_CONFIGURED_BASE = (
+    "import os\n"
+    "import requests\n"
+    "from urllib.parse import urlencode\n"
+    "from app.settings import SITE_URL\n"
+    "API_BASE = os.environ['API_BASE']\n"
+)
+
+
+def test_module_setting_host_and_helper_built_url_are_not_ssrf(tmp_path):
+    # mozilla/pontoon search/views.py: the URL comes from a helper that returns
+    # f"{SITE_URL}/api/...?{urlencode(...)}"; request data only fills the query.
+    code = _CONFIGURED_BASE + (
+        "def create_api_url(search, page=None):\n"
+        '    return f\'{SITE_URL}/api/v2/search/?{urlencode({"q": search, "p": page})}\'\n'
+        "def search_results(request):\n"
+        "    search = request.GET.get('search')\n"
+        "    if request.GET.get('page'):\n"
+        "        api_url = create_api_url(search, page=1)\n"
+        "        requests.get(api_url)\n"
+        "    else:\n"
+        "        api_url = create_api_url(search)\n"
+        "        requests.get(api_url)\n"
+        "def user(request):\n"
+        "    return requests.get(f\"{API_BASE}/users/{request.GET['id']}\")\n"
+        "def concat(request):\n"
+        "    return requests.get(API_BASE + '/users/' + request.GET['id'])\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def test_request_controlled_base_or_host_still_flags(tmp_path):
+    code = _CONFIGURED_BASE + (
+        "def base_from_request(request):\n"
+        "    base = request.GET['base']\n"
+        "    return requests.get(f'{base}/health')\n"
+        "def no_path_delimiter(request):\n"
+        "    return requests.get(f\"{SITE_URL}{request.GET['p']}\")\n"
+        "def make_url(request, raw):\n"
+        "    if request.GET.get('fixed'):\n"
+        "        return f'{SITE_URL}/a'\n"
+        "    return raw\n"
+        "def mixed_helper(request):\n"
+        "    return requests.get(make_url(request, request.GET['u']))\n"
+        "def mixed_branches(request):\n"
+        "    if request.GET.get('a'):\n"
+        "        url = f'{SITE_URL}/a'\n"
+        "    else:\n"
+        "        url = request.GET['u']\n"
+        "    return requests.get(url)\n"
+        "@app.get('/proxy')\n"
+        "def proxy(url, fixed):\n"
+        "    if fixed:\n"
+        "        url = f'{SITE_URL}/a'\n"
+        "    return requests.get(url)\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [8, 10, 16, 22, 27]
+
+
+def test_setting_rebound_through_global_still_flags(tmp_path):
+    code = _CONFIGURED_BASE + (
+        "def configure(request):\n"
+        "    global SITE_URL\n"
+        "    SITE_URL = request.GET['u']\n"
+        "def fetch(request):\n"
+        "    return requests.get(f\"{SITE_URL}/x/{request.GET['q']}\")\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [10]
+
+
+def test_client_parameter_outside_test_code_or_on_a_route_still_flags(tmp_path):
+    # A FastAPI route named test_* gets ``client`` from dependency injection.
+    code = (
+        "import httpx\n"
+        "from fastapi import APIRouter, Depends\n"
+        "router = APIRouter()\n"
+        "def get_http_client():\n"
+        "    return httpx.AsyncClient()\n"
+        "@router.post('/integrations/webhook/test')\n"
+        "async def test_webhook(url: str, client: httpx.AsyncClient = Depends(get_http_client)):\n"
+        "    return await client.post(url, json={'ping': True})\n"
+        "def test_helper(client):\n"
+        "    return client.get(input())\n"
+    )
+    out = _scan_one(tmp_path, "integrations.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [8, 10]
+
+    # Named test_* but no test framework: app code, so line 10 still flags.
+    app_named_like_test = _scan_one(tmp_path, "test_integrations.py", code)
+    assert [f["line"] for f in _ssrf_findings(app_named_like_test)] == [8, 10]
+
+    route_in_test_module = _scan_one(
+        tmp_path, "test_integrations.py", "import pytest\n" + code
+    )
+    assert [f["line"] for f in _ssrf_findings(route_in_test_module)] == [9]
+
+
+def test_computed_module_value_is_not_a_configured_host(tmp_path):
+    code = (
+        "import requests\n"
+        "REMOTE = requests.get('https://config.example.com').json()['base']\n"
+        "def fetch(request):\n"
+        "    return requests.get(f\"{REMOTE}/x/{request.GET['q']}\")\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [4]
+
+
+def test_quote_with_custom_safe_characters_is_not_a_url_sanitizer(tmp_path):
+    code = (
+        "import requests\n"
+        "import urllib.parse\n"
+        "from urllib.parse import quote\n"
+        "from flask import request\n"
+        "@app.route('/fetch')\n"
+        "def fetch():\n"
+        "    target = request.args['url']\n"
+        "    requests.get(quote(target, safe=':/?&='))\n"
+        "    requests.get(urllib.parse.quote(target, ':/'))\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == [8, 9]
+
+
+def _sink_lines(code):
+    return [n for n, line in enumerate(code.splitlines(), 1) if line.endswith("# sink")]
+
+
+_FLASK_APP = (
+    "import functools, os, sys\n"
+    "import requests\n"
+    "from flask import Flask, request\n"
+    "app = Flask(__name__)\n"
+)
+_FIXED_HELPER = _FLASK_APP + (
+    "API = 'https://api.example.com'\ndef build(path):\n    return f'{API}/{path}'\n"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "def fetch(build, path):\n"
+            "    return requests.get(build(path))  # sink\n"
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    return fetch(lambda p: request.args['base'] + p, '/x')\n",
+            id="parameter",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    build = lambda p: request.args['base'] + p\n"
+            "    return requests.get(build('/x'))  # sink\n",
+            id="local-lambda",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    for build in handlers:\n"
+            "        requests.get(build(request.args['p']))  # sink\n",
+            id="for-target",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    with ctx() as build:\n"
+            "        return requests.get(build(request.args['p']))  # sink\n",
+            id="with-as",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as build:\n"
+            "        return requests.get(build(request.args['p']))  # sink\n",
+            id="except-as",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    from other import make as build\n"
+            "    return requests.get(build(request.args['p']))  # sink\n",
+            id="local-import",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    def build(p):\n"
+            "        return request.args['base'] + p\n"
+            "    return requests.get(build(request.args['p']))  # sink\n",
+            id="nested-def",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    build = make(request.args['base'])\n"
+            "    def inner():\n"
+            "        return requests.get(build(request.args['p']))  # sink\n"
+            "    return inner()\n",
+            id="enclosing-function",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    if (build := make(request.args['base'])):\n"
+            "        return requests.get(build(request.args['p']))  # sink\n",
+            id="walrus",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    return [requests.get(build(request.args['p'])) for build in hs]  # sink\n",
+            id="comprehension-target",
+        ),
+        pytest.param(
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    go = lambda build: requests.get(build(request.args['p']))  # sink\n"
+            "    return go(make(request.args['b']))\n",
+            id="lambda-parameter",
+        ),
+        pytest.param(
+            "@app.route('/cfg')\n"
+            "def cfg():\n"
+            "    globals()['build'] = make(request.args['base'])\n"
+            "@app.route('/f')\n"
+            "def f():\n"
+            "    return requests.get(build(request.args['p']))  # sink\n",
+            id="globals-write",
+        ),
+    ],
+)
+def test_shadowed_fixed_host_helper_still_flags(tmp_path, body):
+    code = _FIXED_HELPER + body
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_decorated_helper_does_not_prove_a_fixed_host(tmp_path):
+    code = _FIXED_HELPER.replace("def build", "@wrap\ndef build") + (
+        "@app.route('/f')\n"
+        "def f():\n"
+        "    return requests.get(build(request.args['p']))  # sink\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+@pytest.mark.parametrize(
+    "setting, url",
+    [
+        pytest.param(
+            "'https:'",
+            "f\"{BASE}//{request.args['host']}/api\"",
+            id="scheme-then-double-slash",
+        ),
+        pytest.param(
+            "'https:'",
+            "BASE + '//' + request.args['host']",
+            id="scheme-concat-double-slash",
+        ),
+        pytest.param(
+            "'https:'", "f\"{BASE}/{request.args['host']}\"", id="scheme-then-slash"
+        ),
+        pytest.param(
+            "'https://'", "f\"{BASE}/{request.args['host']}\"", id="empty-host"
+        ),
+        pytest.param("''", "f\"{BASE}/{request.args['host']}\"", id="empty-string"),
+        pytest.param(
+            "'https://api.example.com@'",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="userinfo-only",
+        ),
+        pytest.param(
+            "'https://api.example.com'",
+            "f\"{BASE}//{request.args['p']}\"",
+            id="host-then-double-slash",
+        ),
+        pytest.param(
+            "os.getenv('SCHEME', 'https:')",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="env-default-without-host",
+        ),
+        pytest.param(
+            "os.getenv('UPSTREAM', '')",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="env-default-empty",
+        ),
+        pytest.param(
+            "'https://' + os.environ['HOST']",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="concat-starts-without-host",
+        ),
+        pytest.param(
+            "SCHEME",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="alias-of-hostless-setting",
+        ),
+        pytest.param(
+            "getenv('https://api.example.com')",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="local-getenv",
+        ),
+        pytest.param(
+            "environ.get('API_BASE')",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="local-environ",
+        ),
+        pytest.param(
+            "os.getenv(input())",
+            "f\"{BASE}/{request.args['host']}\"",
+            id="env-name-from-input",
+        ),
+    ],
+)
+def test_module_setting_without_a_host_still_flags(tmp_path, setting, url):
+    code = _FLASK_APP + (
+        "SCHEME = 'https:'\n"
+        "def getenv(key):\n"
+        "    return request.args['h']\n"
+        "class environ:\n"
+        "    get = staticmethod(getenv)\n"
+        f"BASE = {setting}\n"
+        "@app.route('/f')\n"
+        "def f():\n"
+        f"    return requests.get({url})  # sink\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_helper_returning_hostless_setting_still_flags(tmp_path):
+    code = _FLASK_APP + (
+        "SCHEME = 'https:'\n"
+        "def build(host):\n"
+        "    return f'{SCHEME}//{host}/api'\n"
+        "@app.route('/f')\n"
+        "def f():\n"
+        "    return requests.get(build(request.args['h']))  # sink\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+_BASE_SINK = (
+    "@app.route('/f')\n"
+    "def f():\n"
+    "    return requests.get(f\"{BASE}/{request.args['p']}\")  # sink\n"
+)
+
+
+@pytest.mark.parametrize(
+    "rebind",
+    [
+        pytest.param(
+            "    globals()['BASE'] = request.args['b']\n", id="globals-subscript"
+        ),
+        pytest.param("    globals().update(request.get_json())\n", id="globals-update"),
+        pytest.param(
+            "    g = globals()\n    g[request.args['k']] = request.args['v']\n",
+            id="globals-alias",
+        ),
+        pytest.param(
+            "    setattr(sys.modules[__name__], 'BASE', request.args['b'])\n",
+            id="setattr-sys-modules",
+        ),
+        pytest.param(
+            "    this = sys.modules[__name__]\n"
+            "    setattr(this, request.args['k'], request.args['v'])\n",
+            id="setattr-module-alias",
+        ),
+        pytest.param(
+            "    sys.modules[__name__].BASE = request.args['b']\n",
+            id="module-attribute",
+        ),
+        pytest.param(
+            "    import app as me\n    me.BASE = request.args['b']\n",
+            id="self-import-attribute",
+        ),
+        pytest.param(
+            "    sys.modules[__name__].__dict__['BASE'] = request.args['b']\n",
+            id="module-dict",
+        ),
+        pytest.param(
+            "    vars(sys.modules[__name__])['BASE'] = request.args['b']\n",
+            id="vars-module",
+        ),
+        pytest.param(
+            "    exec('global BASE; BASE = ' + repr(request.args['b']))\n",
+            id="exec",
+        ),
+        pytest.param(
+            "    global BASE\n    BASE = request.args['b']\n",
+            id="global-statement",
+        ),
+        pytest.param(
+            "    import builtins\n    builtins.globals()['BASE'] = request.args['b']\n",
+            id="builtins-globals",
+        ),
+        pytest.param(
+            "    sys._getframe().f_globals['BASE'] = request.args['b']\n",
+            id="frame-globals",
+        ),
+        pytest.param(
+            "    cfg.__globals__['BASE'] = request.args['b']\n",
+            id="function-globals",
+        ),
+        pytest.param(
+            "    g = globals\n    g()['BASE'] = request.args['b']\n",
+            id="globals-function-alias",
+        ),
+        pytest.param(
+            "    def configure(mod, value):\n"
+            "        mod.BASE = value\n"
+            "    configure(sys.modules[__name__], request.args['b'])\n",
+            id="module-passed-to-helper",
+        ),
+        pytest.param(
+            "    import importlib\n"
+            "    os.environ['BASE'] = request.args['b']\n"
+            "    importlib.reload(sys.modules[__name__])\n",
+            id="reload",
+        ),
+        pytest.param(
+            "    sys.modules[__name__].__setattr__('BASE', request.args['b'])\n",
+            id="module-dunder-setattr",
+        ),
+        pytest.param(
+            "    sys.modules.__getitem__(__name__).BASE = request.args['b']\n",
+            id="modules-dunder-getitem",
+        ),
+        pytest.param(
+            "    setter = sys.modules[__name__].__setattr__\n"
+            "    setter('BASE', request.args['b'])\n",
+            id="bound-dunder-alias",
+        ),
+        pytest.param(
+            "    getattr(sys.modules[__name__], '__dict__')['BASE'] = request.args['b']\n",
+            id="getattr-dict",
+        ),
+        pytest.param(
+            "    getattr(cfg, '__globals__')['BASE'] = request.args['b']\n",
+            id="getattr-function-globals",
+        ),
+        pytest.param(
+            "    import builtins\n"
+            "    getattr(builtins, 'globals')()['BASE'] = request.args['b']\n",
+            id="getattr-builtins-globals",
+        ),
+        pytest.param(
+            "    from importlib import import_module as im\n"
+            "    im(__name__).BASE = request.args['b']\n",
+            id="import-module-alias",
+        ),
+        pytest.param(
+            "    import inspect\n    inspect.getmodule(cfg).BASE = request.args['b']\n",
+            id="inspect-getmodule",
+        ),
+        pytest.param(
+            "    import __main__\n    __main__.BASE = request.args['b']\n",
+            id="main-module",
+        ),
+    ],
+)
+def test_dynamically_rebound_module_setting_still_flags(tmp_path, rebind):
+    code = (
+        _FLASK_APP
+        + "BASE = 'https://api.example.com'\n"
+        + "@app.route('/cfg')\n"
+        + "def cfg():\n"
+        + rebind
+        + _BASE_SINK
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+@pytest.mark.parametrize(
+    "module_code",
+    [
+        pytest.param("vars()['BASE'] = input()\n", id="module-vars"),
+        pytest.param("from settings import *\n", id="star-import"),
+        pytest.param("BASE = input()\n", id="second-assignment"),
+    ],
+)
+def test_module_level_rebinding_of_setting_still_flags(tmp_path, module_code):
+    code = _FLASK_APP + "BASE = 'https://api.example.com'\n" + module_code + _BASE_SINK
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        pytest.param("from flask import session as BASE\n", id="flask-session"),
+        pytest.param("from flask import request as BASE\n", id="flask-request"),
+        pytest.param("from flask import g as BASE\n", id="flask-g"),
+        pytest.param("from flask import session\nBASE = session\n", id="alias"),
+        pytest.param(
+            "from werkzeug.local import LocalProxy\n"
+            "BASE = LocalProxy(lambda: request.headers['X-Upstream'])\n",
+            id="local-proxy",
+        ),
+        pytest.param("from aiohttp import web as BASE\n", id="aiohttp-web"),
+        pytest.param(
+            "from contextvars import copy_context as BASE\n", id="contextvars"
+        ),
+    ],
+)
+def test_request_scoped_import_is_not_a_setting(tmp_path, binding):
+    code = _FLASK_APP + binding + _BASE_SINK
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_setting_shadowed_in_enclosing_function_still_flags(tmp_path):
+    code = _FLASK_APP + (
+        "BASE = 'https://api.example.com'\n"
+        "@app.route('/f')\n"
+        "def f():\n"
+        "    BASE = request.args['b']\n"
+        "    def inner():\n"
+        "        return requests.get(f\"{BASE}/{request.args['p']}\")  # sink\n"
+        "    return inner()\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_fixed_host_settings_and_helpers_stay_quiet(tmp_path):
+    code = _FIXED_HELPER + (
+        "BASE = 'https://api.example.com'\n"
+        "V1 = 'https://api.example.com/v1'\n"
+        "ENV_BASE = os.environ['API_BASE']\n"
+        "ENV_DEFAULT = os.getenv('API_BASE', 'https://api.example.com')\n"
+        "ENV_NONE = os.environ.get('API_BASE', None)\n"
+        "from os import getenv as env_get, environ as env_map\n"
+        "IMPORTED_GETENV = env_get('API_BASE')\n"
+        "IMPORTED_ENVIRON = env_map['API_BASE']\n"
+        "ALIAS = BASE\n"
+        "from flaskapp.settings import SITE\n"
+        "SEEN = 'DEBUG' in globals() and globals().get('DEBUG')\n"
+        "HAS = hasattr(sys.modules[__name__], 'X') and 'json' in sys.modules\n"
+        "@functools.lru_cache(maxsize=None)\n"
+        "def cached(path):\n"
+        "    return f'{BASE}/{path}'\n"
+        "@app.route('/f')\n"
+        "def f():\n"
+        "    p = request.args['p']\n"
+        "    requests.get(f'{BASE}/{p}')\n"
+        "    requests.get(V1 + '?q=' + p)\n"
+        "    requests.get(f'{ENV_BASE}/{p}')\n"
+        "    requests.get(f'{ENV_DEFAULT}#{p}')\n"
+        "    requests.get(f'{ENV_NONE}/{p}')\n"
+        "    requests.get(f'{IMPORTED_GETENV}/{p}')\n"
+        "    requests.get(f'{IMPORTED_ENVIRON}/{p}')\n"
+        "    requests.get(f'{ALIAS}/{p}')\n"
+        "    requests.get(f'{SITE}/{p}')\n"
+        "    requests.get(build(p))\n"
+        "    requests.get(cached(p))\n"
+        "    url = build(p)\n"
+        "    requests.get(url)\n"
+        "    requests.get('https://api.example.com/' + p)\n"
+        "    requests.get('https://api.example.com' + p)  # sink\n"
+    )
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+_CLIENT_APP = (
+    "import httpx\n"
+    "from django.test import Client\n"
+    "from rest_framework.test import APIClient\n"
+    "from flask import Flask, request\n"
+    "app = Flask(__name__)\n"
+    "client = httpx.Client()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "@app.route('/proxy')\n"
+            "def proxy():\n"
+            "    def _helper():\n"
+            "        client = Client()\n"
+            "        return client\n"
+            "    return client.get(request.args['url']).text  # sink\n",
+            id="nested-function",
+        ),
+        pytest.param(
+            "@app.route('/proxy')\n"
+            "def proxy():\n"
+            "    make = lambda: [client for client in [Client()]]\n"
+            "    return client.get(request.args['url']).text  # sink\n",
+            id="comprehension-in-lambda",
+        ),
+        pytest.param(
+            "@app.route('/proxy')\n"
+            "def proxy():\n"
+            "    class _Case:\n"
+            "        client = Client()\n"
+            "    return client.get(request.args['url']).text  # sink\n",
+            id="nested-class",
+        ),
+        pytest.param(
+            "def setup():\n"
+            "    global client\n"
+            "    client = Client()\n"
+            "@app.route('/proxy')\n"
+            "def proxy():\n"
+            "    return client.get(request.args['url']).text  # sink\n",
+            id="global-in-other-function",
+        ),
+        pytest.param(
+            "@app.route('/proxy')\n"
+            "def proxy():\n"
+            "    client = httpx.Client()\n"
+            "    def inner():\n"
+            "        def deeper():\n"
+            "            client = Client()\n"
+            "        return client.get(request.args['url']).text  # sink\n"
+            "    return inner()\n",
+            id="enclosing-function-binding",
+        ),
+        pytest.param(
+            "class Proxy:\n"
+            "    class Fixture:\n"
+            "        def setUp(self):\n"
+            "            self.client = APIClient()\n"
+            "    @app.route('/proxy')\n"
+            "    def get(self):\n"
+            "        return self.client.get(request.args['url']).text  # sink\n",
+            id="self-attribute-of-nested-class",
+        ),
+    ],
+)
+def test_client_bound_in_another_scope_is_not_a_test_client(tmp_path, body):
+    code = _CLIENT_APP + body
+    out = _scan_one(tmp_path, "app.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_test_client_resolved_through_enclosing_scopes_stays_quiet(tmp_path):
+    code = (
+        "from django.test import Client\n"
+        "client = Client()\n"
+        "def test_module_client():\n"
+        "    client.get(input())\n"
+        "def test_enclosing_client():\n"
+        "    local = Client()\n"
+        "    def check():\n"
+        "        local.get(input())\n"
+        "    check()\n"
+    )
+    out = _scan_one(tmp_path, "test_views.py", code)
+    assert _ssrf_findings(out) == []
+
+
+def _ssrf_scan_seconds(code):
+    import ast
+    import time
+
+    from skylos.rules.danger.danger_net import ssrf_flow
+
+    tree = ast.parse(code)
+    best = float("inf")
+    for _ in range(3):
+        findings = []
+        start = time.perf_counter()
+        ssrf_flow.scan(tree, "test_items.py", findings)
+        best = min(best, time.perf_counter() - start)
+    return best
+
+
+def _django_test_case(n):
+    return "from django.test import TestCase\nclass ItemTests(TestCase):\n" + "".join(
+        f"    def test_item_{i}(self):\n"
+        f"        self.client.get(f'/items/{i}/')\n"
+        f"        self.client.post('/items/', {{'n': {i}}})\n"
+        for i in range(n)
+    )
+
+
+def _module_functions(n):
+    return "import requests\n" + "".join(
+        f"def f{i}(url):\n    return requests.get(url + '/a').text\n" for i in range(n)
+    )
+
+
+def _many_sinks_in_one_function(n):
+    return (
+        "import requests\nBASE = 'https://api.example.com'\ndef f(x):\n"
+        "    url = f'{BASE}/{x}'\n" + "    requests.get(url)\n" * n
+    )
+
+
+@pytest.mark.parametrize(
+    "make", [_django_test_case, _module_functions, _many_sinks_in_one_function]
+)
+def test_ssrf_scan_time_grows_linearly(make):
+    # Per-call re-walks of the module or class made a 300-test Django
+    # TestCase take ~56s; a linear scan takes well under a second.
+    small = _ssrf_scan_seconds(make(100))
+    large = _ssrf_scan_seconds(make(300))
+    assert large < 3.0
+    assert large / max(small, 0.05) < 6
+
+
+_DJANGO_CASE = "import requests\nfrom django.test import Client, TestCase\n"
+
+
+_PROBE = "    def test_x(self):\n        return self.client.get(input())  # sink\n"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "class T(TestCase):\n"
+            "    def setUp(self):\n"
+            "        setattr(self, 'client', requests.Session())\n" + _PROBE,
+            id="setattr-self",
+        ),
+        pytest.param(
+            "class T(TestCase):\n"
+            "    def setUp(self):\n"
+            "        self.__dict__['client'] = requests.Session()\n" + _PROBE,
+            id="instance-dict",
+        ),
+        pytest.param(
+            "class T(TestCase):\n"
+            "    def setUp(self):\n"
+            "        vars(self).update(client=requests.Session())\n" + _PROBE,
+            id="vars-self",
+        ),
+        pytest.param(
+            "class T(TestCase):\n" + _PROBE + "T.client_class = requests.Session\n",
+            id="client-class-outside",
+        ),
+        pytest.param(
+            "class Real:\n"
+            "    client_class = requests.Session\n"
+            "class T(Real, TestCase):\n" + _PROBE,
+            id="mixin-client-class",
+        ),
+        pytest.param(
+            "from helpers import ApiMixin\nclass T(ApiMixin, TestCase):\n" + _PROBE,
+            id="imported-mixin",
+        ),
+        pytest.param(
+            "class T(TestCase):\n"
+            "    client = requests.Session()\n"
+            "    def _pre_setup(self):\n"
+            "        pass\n" + _PROBE,
+            id="pre-setup-override",
+        ),
+        pytest.param(
+            "class T(TestCase):\n" + _PROBE + "T().client = requests.Session()\n",
+            id="external-store",
+        ),
+        pytest.param(
+            "class T(TestCase):\n"
+            "    def setUp(self):\n"
+            "        self.client = Client()\n"
+            "        class Patch:\n"
+            "            def apply(inner):\n"
+            "                self.client = requests.Session()\n"
+            "        Patch().apply()\n" + _PROBE,
+            id="nested-closure-self",
+        ),
+        pytest.param(
+            "class T(TestCase):\n" + _PROBE + "class T(TestCase):\n"
+            "    def setUp(self):\n"
+            "        self.client = requests.Session()\n",
+            id="redefined-class",
+        ),
+    ],
+)
+def test_django_test_case_client_that_may_be_replaced_still_flags(tmp_path, body):
+    code = _DJANGO_CASE + body
+    out = _scan_one(tmp_path, "test_views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_django_test_case_client_replaced_by_subclass_still_flags(tmp_path):
+    # ``Base.test_x`` also runs on ``Real`` instances, whose client is real.
+    code = _DJANGO_CASE + (
+        "class Base(TestCase):\n"
+        "    def setUp(self):\n"
+        "        self.client = Client()\n"
+        "    def test_x(self):\n"
+        "        return self.client.get(input())  # sink\n"
+        "class Real(Base):\n"
+        "    def setUp(self):\n"
+        "        self.client = requests.Session()\n"
+    )
+    out = _scan_one(tmp_path, "test_views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_self_client_outside_django_test_cases_still_flags(tmp_path):
+    code = (
+        "from django.test import Client\n"
+        "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        "class Svc:\n"
+        "    def __init__(self):\n"
+        "        self.client = Client()\n"
+        "    def go(self):\n"
+        "        return self.client.get(request.args['u']).text  # sink\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+@pytest.mark.parametrize(
+    "rebind",
+    [
+        pytest.param("from requests import *\n", id="star-import"),
+        pytest.param(
+            "sys.modules[__name__].Client = requests.Session\n", id="module-attr"
+        ),
+        pytest.param(
+            "setattr(sys.modules[__name__], 'Client', requests.Session)\n",
+            id="setattr-module",
+        ),
+        pytest.param("globals()['Client'] = requests.Session\n", id="globals-write"),
+    ],
+)
+def test_rebound_test_client_class_still_flags(tmp_path, rebind):
+    code = (
+        "import sys, requests\n"
+        "from django.test import Client\n"
+        + rebind
+        + "from flask import Flask, request\n"
+        "app = Flask(__name__)\n"
+        "@app.route('/p')\n"
+        "def p():\n"
+        "    client = Client()\n"
+        "    return client.get(request.args['u']).text  # sink\n"
+    )
+    out = _scan_one(tmp_path, "views.py", code)
+    assert [f["line"] for f in _ssrf_findings(out)] == _sink_lines(code)
+
+
+def test_django_test_case_subclass_and_local_mixin_stay_quiet(tmp_path):
+    code = (
+        "from django.test import TestCase\n"
+        "class LoginMixin:\n"
+        "    def login(self):\n"
+        "        return None\n"
+        "class Base(LoginMixin, TestCase):\n"
+        "    pass\n"
+        "class Probe(Base):\n"
+        "    def test_x(self):\n"
+        "        return self.client.get(input())\n"
+    )
+    out = _scan_one(tmp_path, "test_views.py", code)
+    assert _ssrf_findings(out) == []

@@ -20,7 +20,8 @@ repository SCA does not inspect the built image.
 | `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
 | `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
 | `yarn.lock` Classic v1; Berry formats 4, 6, 8 | Recorded npm packages, including transitives, aliases, optional/peer declarations and recorded workspaces |
-| `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved |
+| `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved. `requirements.txt` includes its `-r` files inside the project (constraint `-c` files install nothing and are not scanned) |
+| `setup.cfg`, `setup.py` | Exact `install_requires` pins, like `[project].dependencies`. `setup.cfg` is read as INI (including `file:` requirement lists inside the project); `setup.py` is parsed, never run, and only literal lists (or module-level names bound to them) are read. A file without static `install_requires` is not a dependency manifest |
 
 The scanner discovers these files recursively, excluding dependency/build
 directories. It combines lockfiles with direct manifest pins: an old or empty
@@ -36,9 +37,13 @@ metadata. Markers are not evaluated against the scanner's host. npm v1 cannot
 reliably distinguish direct dependencies from hoisted transitives; uncertain
 classification remains `unknown`.
 
-Local workspace packages are not queried as public packages. Explicit private
-registries, Git dependencies, and external archives remain unresolved, rather
-than being guessed to have public-registry identities. Known local/non-registry
+Local workspace packages are not queried as public packages. In pnpm
+lockfiles, the project's own local code (`link:` and `file:` directories, local
+`file:` tarballs, peers satisfied by a workspace project, and pnpm `runtime:`
+entries such as `node@runtime:26.11.1`) is listed as **not checked** instead of
+making the scan incomplete: it has no public registry identity to look up.
+Explicit private registries, Git dependencies, and external archives remain
+unresolved, rather than being guessed to have public-registry identities. Known local/non-registry
 identities also prevent matching direct manifest pins in the lockfile's project
 and recorded workspace directories from being reinterpreted as public packages.
 Unrelated nested projects retain their own manifest inventory.
@@ -103,10 +108,24 @@ workspace, so a baseline cannot hide a move from development to production in
 one workspace just because another workspace already uses that package.
 
 Integrity-only pnpm resolutions use `registry_unspecified`, not verified public
-provenance. Local links are not queried. Git, private-registry, and archive
-sources are reported as gaps rather than guessed from their name/version.
-Missing package/snapshot records and unresolved dependency edges also make the
-scan incomplete without discarding findings for other valid package entries.
+provenance. References are resolved the way pnpm writes them:
+
+| Lockfile form | Result |
+| --- | --- |
+| `1.0.0(react@18.2.0)`, `1.0.0(patch_hash=…)` peer and patch contexts | Same package and version, separate occurrence |
+| `npm:real@1.0.0`, `real@1.0.0` aliases; `catalog:` specifiers | The real package and version |
+| `alias@https://registry.npmjs.org/real/-/real-1.0.0.tgz` | Queried as `real@1.0.0` when the canonical public tarball path and recorded `version` agree |
+| v6 `file:dir` keys, v9 `name@file:dir` keys, `file:` tarballs, `directory` resolutions | Not checked (`local_package`) |
+| `link:` to a directory that is not a workspace project, or outside the lock root | Not checked (`local_link`) |
+| `link:packages/x` from a package snapshot (a peer resolved to a workspace project) | Workspace edge, not a gap |
+| A bare version for a name that an importer links to a workspace project (`zod: 4.6.6` with no `zod@4.6.6` record) | Not checked (`workspace_package`) |
+| `node`/`deno`/`bun@runtime:<version>` | Not checked (`runtime`) |
+| Git, private-registry, and non-canonical archive sources | Unresolved; the scan is incomplete |
+
+OS/CPU/libc constraints may be a single string (`libc: glibc`) or a list.
+Missing package/snapshot records for names that are not workspace projects, and
+other unresolved dependency edges, still make the scan incomplete without
+discarding findings for other valid package entries.
 Source references that may contain URL credentials are redacted; sensitive peer
 contexts use stable hashes so they still remain distinct in baselines.
 
@@ -270,9 +289,16 @@ and unsupported version syntax retain their evidence without a guessed upgrade.
 
 `analysis_summary.sca_coverage` reports parsing/query completion, package and
 occurrence counts, local packages, unresolved entries, unsupported lockfiles,
-and inventory limits. Up to 25 lockfile issues and lockfile limitations are
-included as examples; `unresolved_lockfile_dependency_count` and
-`lockfile_limitation_count` are not truncated. For lockfiles,
+and inventory limits. Up to 25 lockfile issues, lockfile limitations and
+not-checked local lockfile entries (`lockfile_not_checked`) are included as
+examples; `unresolved_lockfile_dependency_count`,
+`not_checked_lockfile_dependency_count` and `lockfile_limitation_count` are not
+truncated. Not-checked entries add the `local_lockfile_packages_not_checked`
+limitation. `unresolved_dependency_count` counts manifest ranges (for example
+`package.json` `^1.2.0`, `workspace:*`, `npm:` aliases);
+`lockfile_covered_unresolved_dependency_count` is the part of it in
+directories that a parsed lockfile records as a project, where the lockfile
+pins the installed versions (its freshness is not verified). For lockfiles,
 `inventory_scope` is `all_recorded_lockfile_environments`.
 
 The nested `query.advisory_details` receipt records distinct IDs, requests,
@@ -285,11 +311,19 @@ retrieved successfully may still legitimately omit optional severity/fix data.
   lock entries, inventory limits, or failed OSV requests produce incomplete
   operational results. CLI exit code **2** signals this failure, even with
   `--force` or an advisory gate. JSON is emitted before exit; upload is skipped.
+  The run ends with a reason that names the cause and its count (unresolved
+  lock entries with file and line, unreadable files, failed OSV.dev batches);
+  to gate without dependency results, run without `--sca`. See
+  [Gate verdict](./cli-output.md#gate-verdict).
 - A completed inventory with findings can fail a configured vulnerability gate
   with exit code **1**. Reporting without a gate does not make findings an
   operational error.
 - Manifest ranges remain explicit unresolved versions. No supported inputs and
   limited category coverage are not, by themselves, operational failures.
+- Not-checked local lockfile entries (local directories, local tarballs,
+  workspace packages, runtimes) are not an operational failure either. They
+  are listed in `lockfile_not_checked`; dependency findings uploaded from such
+  a scan are not treated as full coverage for resolving earlier findings.
 - Lockfile coverage limitations such as unenumerated bundled dependencies do
   not turn a completed OSV query into an operational failure. They remain
   explicit in `limitations` and `lockfile_limitations`; stricter completeness

@@ -21,6 +21,13 @@ class LockfileInventory:
     Local workspace packages are counted separately and never queried as public
     registry packages. Unsupported external entries remain explicit problems;
     known non-operational coverage gaps remain explicit limitations.
+
+    ``not_checked`` lists entries that were read correctly but are the
+    project's own local code, with no public registry identity to check
+    (``link:``/``file:`` directories, local tarballs, workspace packages).
+    They are reported and never queried; they do not make an inventory
+    incomplete. Remote non-registry sources (git, private registries) stay
+    in ``unresolved``.
     """
 
     format_version: int
@@ -31,3 +38,4 @@ class LockfileInventory:
     workspace_paths: list[str] = field(default_factory=list)
     unresolved: list[dict] = field(default_factory=list)
     limitations: list[dict] = field(default_factory=list)
+    not_checked: list[dict] = field(default_factory=list)

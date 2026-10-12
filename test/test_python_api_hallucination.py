@@ -214,15 +214,17 @@ def test_python_local_api_check_keeps_one_sided_and_runtime_names_flagged(tmp_pa
         targets=["app.py"],
     )
 
+    # A name bound inside try/except exists on the path that succeeds, so it
+    # is not a phantom; it is left unverified instead.
     assert {finding["simple_name"] for finding in findings} == {
         "MISSING",
         "NEVER_DEFINED",
         "ONE_SIDED",
-        "TRY_ONLY",
         "TYPE_ONLY",
     }
     assert check["outcome"] == "fail"
-    assert check["finding_count"] == 5
+    assert check["finding_count"] == 4
+    assert {"code": "conditionally_bound_member", "count": 1} in check["reasons"]
 
 
 def test_python_local_api_check_does_not_export_nested_scope_members(tmp_path):
@@ -446,12 +448,11 @@ def test_python_local_api_check_rejects_transient_try_mutations(tmp_path):
         targets=["app.py"],
     )
 
-    assert {finding["name"] for finding in findings} == {
-        "EXPORTED",
-        "provider.unknown",
-    }
+    # EXPORTED is rebound inside the try, so it may exist; the removed
+    # __getattr__ still makes provider.unknown a phantom.
+    assert {finding["name"] for finding in findings} == {"provider.unknown"}
     assert check["outcome"] == "fail"
-    assert check["finding_count"] == 2
+    assert check["finding_count"] == 1
 
 
 def test_python_local_api_check_handles_definite_compound_bindings(tmp_path):
@@ -1169,3 +1170,331 @@ def test_verify_change_keeps_nested_python_surface_inside_requested_scan(tmp_pat
         item for item in payload["findings"] if item["rule_id"] == "SKY-L012"
     )
     assert finding["metadata"]["member_name"] == "verify_session"
+
+
+# False-positive regressions for SKY-L012, which fails the quality gate by
+# default. Each case mirrors code that runs; the paired cases keep real
+# phantoms reported.
+
+
+def _phantom_names(findings):
+    return {finding["name"] for finding in findings}
+
+
+def test_optional_import_whose_handler_exits_is_not_phantom(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/sync.py": (
+                "import sys\n\n"
+                "try:\n"
+                "    import requests\n"
+                "except ImportError as exc:\n"
+                "    print(exc)\n"
+                "    sys.exit(1)\n"
+            ),
+            "tests/test_sync.py": (
+                "import pkg.sync as syncmod\n\n\n"
+                "def test_get(monkeypatch):\n"
+                "    monkeypatch.setattr(syncmod.requests, 'get', print)\n"
+            ),
+        },
+        targets=["tests/test_sync.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "incomplete"
+    assert {"code": "conditionally_bound_member", "count": 1} in check["reasons"]
+
+
+@pytest.mark.parametrize(
+    "handler",
+    ["pass", "ujson = None", "raise RuntimeError('install ujson')"],
+)
+def test_names_bound_inside_try_are_not_phantom(tmp_path, handler):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/fast.py": (
+                "try:\n"
+                "    import ujson\n"
+                "    from json import loads\n"
+                f"except ImportError:\n    {handler}\n"
+            ),
+            "pkg/use.py": (
+                "from pkg import fast\n"
+                "from pkg.fast import loads\n\n"
+                "print(fast.ujson, fast.loads, loads)\n"
+            ),
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert findings == []
+
+
+def test_global_declared_module_name_is_not_phantom(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/client.py": (
+                "def init():\n"
+                "    global CLIENT\n"
+                "    CLIENT = object()\n"
+            ),
+            "pkg/use.py": "from pkg import client\n\nprint(client.CLIENT)\n",
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert findings == []
+
+
+def test_name_deleted_after_try_is_still_phantom(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/fast.py": (
+                "try:\n"
+                "    import ujson\n"
+                "except ImportError:\n"
+                "    pass\n\n"
+                "del ujson\n"
+            ),
+            "pkg/use.py": "from pkg import fast\n\nprint(fast.ujson)\n",
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert _phantom_names(findings) == {"fast.ujson"}
+
+
+def test_type_checking_only_name_bound_in_try_is_still_phantom_at_runtime(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/types_.py": (
+                "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n"
+                "    try:\n"
+                "        from json import JSONDecoder\n"
+                "    except ImportError:\n"
+                "        pass\n"
+            ),
+            "pkg/use.py": "from pkg import types_\n\nprint(types_.JSONDecoder)\n",
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert _phantom_names(findings) == {"types_.JSONDecoder"}
+
+
+PACKAGE_WITH_SHADOWED_SIBLING = {
+    "pkg/__init__.py": "",
+    "pkg/orchestrator.py": "def unrelated():\n    return 1\n",
+    "pkg/sub/orchestrator.py": "class LogicInvestigator:\n    pass\n",
+}
+
+
+def test_relative_import_in_package_init_resolves_inside_the_package(tmp_path):
+    findings, check = _scan(
+        tmp_path,
+        {
+            **PACKAGE_WITH_SHADOWED_SIBLING,
+            "pkg/sub/__init__.py": "from .orchestrator import LogicInvestigator\n",
+        },
+        targets=["pkg/sub/__init__.py"],
+    )
+
+    assert findings == []
+    assert check["outcome"] == "pass"
+
+
+def test_relative_import_in_package_init_still_reports_a_missing_name(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            **PACKAGE_WITH_SHADOWED_SIBLING,
+            "pkg/sub/__init__.py": "from .orchestrator import MissingInvestigator\n",
+        },
+        targets=["pkg/sub/__init__.py"],
+    )
+
+    assert [finding["simple_name"] for finding in findings] == ["MissingInvestigator"]
+    assert "'pkg.sub.orchestrator'" in findings[0]["message"]
+
+
+@pytest.mark.parametrize(
+    "creator",
+    [
+        "monkeypatch.setattr(api, '_fake', {}, raising=False)",
+        "monkeypatch.setattr('pkg.api._fake', {}, raising=False)",
+        "setattr(api, '_fake', {})",
+        "api._fake = {}",
+        "patch.object(api, '_fake', {}, create=True).start()",
+        "patch('pkg.api._fake', {}, create=True).start()",
+    ],
+)
+def test_attribute_created_at_test_time_is_not_phantom(tmp_path, creator):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/api.py": "def upload():\n    return 1\n",
+            "tests/test_api.py": (
+                "from unittest.mock import patch\n\n"
+                "import pytest\n\n"
+                "from pkg import api\n\n\n"
+                "@pytest.fixture(autouse=True)\n"
+                "def fake(monkeypatch):\n"
+                f"    {creator}\n\n\n"
+                "def test_upload():\n"
+                "    api._fake['ok'] = True\n"
+            ),
+        },
+        targets=["tests/test_api.py"],
+    )
+
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "creator",
+    [
+        "monkeypatch.setattr(api, '_fake', {})",
+        "patch.object(api, '_fake', {}).start()",
+    ],
+)
+def test_patching_that_requires_the_attribute_does_not_create_it(tmp_path, creator):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/api.py": "def upload():\n    return 1\n",
+            "tests/test_api.py": (
+                "from unittest.mock import patch\n\n"
+                "from pkg import api\n\n\n"
+                "def test_upload(monkeypatch):\n"
+                f"    {creator}\n"
+                "    api._fake['ok'] = True\n"
+            ),
+        },
+        targets=["tests/test_api.py"],
+    )
+
+    assert _phantom_names(findings) == {"api._fake"}
+
+
+def test_conftest_fixture_attribute_counts_in_a_changed_file_scan(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/api.py": "def upload():\n    return 1\n",
+            "tests/conftest.py": (
+                "import pytest\n\n"
+                "from pkg import api\n\n\n"
+                "@pytest.fixture(autouse=True)\n"
+                "def fake(monkeypatch):\n"
+                "    monkeypatch.setattr(api, '_fake', {}, raising=False)\n"
+            ),
+            "tests/test_api.py": (
+                "from pkg import api\n\n\n"
+                "def test_upload():\n"
+                "    api._fake['ok'] = True\n"
+            ),
+        },
+        targets=["tests/test_api.py"],
+    )
+
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        # requests.packages
+        "for package in ('json', 'csv'):\n    locals()[package] = __import__(package)\n",
+        "globals()['json'] = __import__('json')\n",
+        "def _load():\n    globals().update(json=__import__('json'))\n\n\n_load()\n",
+    ],
+)
+def test_module_that_writes_its_own_namespace_is_not_phantom(tmp_path, provider):
+    findings, check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/packages.py": provider,
+            "pkg/use.py": "from pkg import packages\n\nprint(packages.json)\n",
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert findings == []
+    assert {"code": "dynamic_module_surface", "count": 1} in check["reasons"]
+
+
+def test_function_local_namespace_write_does_not_hide_a_phantom(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def build():\n    locals()['json'] = 1\n",
+            "pkg/use.py": "from pkg import m\n\nprint(m.json)\n",
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert _phantom_names(findings) == {"m.json"}
+
+
+def test_attribute_probe_guarded_by_attribute_error_is_not_phantom(tmp_path):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/api.py": "def upload():\n    return 1\n",
+            "pkg/use.py": (
+                "from pkg import api\n\n"
+                "try:\n"
+                "    api.pyopenssl\n"
+                "    HAS_PYOPENSSL = True\n"
+                "except AttributeError:\n"
+                "    HAS_PYOPENSSL = False\n\n"
+                "try:\n"
+                "    from pkg.api import optional_feature\n"
+                "except ImportError:\n"
+                "    optional_feature = None\n"
+            ),
+        },
+        targets=["pkg/use.py"],
+    )
+
+    assert findings == []
+
+
+@pytest.mark.parametrize("handler", ["except Exception", "except"])
+def test_broad_exception_handler_does_not_hide_a_phantom_call(tmp_path, handler):
+    findings, _check = _scan(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/auth.py": "def verify_token(token):\n    return bool(token)\n",
+            "pkg/hook.py": (
+                "from pkg import auth\n\n\n"
+                "def handle(payload, signature):\n"
+                "    try:\n"
+                "        return auth.verify_signature(payload, signature)\n"
+                f"    {handler}:\n"
+                "        return False\n"
+            ),
+        },
+        targets=["pkg/hook.py"],
+    )
+
+    assert _phantom_names(findings) == {"auth.verify_signature"}

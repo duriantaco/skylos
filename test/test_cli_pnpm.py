@@ -248,3 +248,23 @@ def test_cli_pnpm_baseline_cannot_hide_an_advisory_failure(
     assert (
         result["analysis_summary"]["dependency_baseline"]["status"] == "scan_incomplete"
     )
+
+
+def test_cli_pnpm_workspace_local_code_does_not_stop_the_gate(
+    project, monkeypatch, osv
+):
+    from test.test_pnpm_lockfile import VITE_V9, ZOD_V9
+    from test.test_sca_pnpm import _write_text_lockfile
+
+    _write_text_lockfile(project, ZOD_V9)
+    nested = project / "site"
+    nested.mkdir()
+    _write_text_lockfile(nested, VITE_V9)
+    osv.vulnerable = False
+
+    exit_code, result, _sarif = _run_cli(project, monkeypatch)
+
+    coverage = result["analysis_summary"]["sca_coverage"]
+    assert coverage["status"] == "complete"
+    assert coverage["not_checked_lockfile_dependency_count"] == 5
+    assert exit_code == 0

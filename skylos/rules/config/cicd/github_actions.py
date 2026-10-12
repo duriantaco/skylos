@@ -13,6 +13,7 @@ from skylos.rules.config.cicd.runner_labels import runner_may_be_self_hosted
 from skylos.rules.config.cicd.yaml_source import YamlSource, load_yaml_with_locations
 from skylos.rules.config.findings import config_finding
 from skylos.security.command_guard import scan_shell_command
+from skylos.security.command_guard_parse import dequote_shell, redefines_home
 
 try:
     import yaml
@@ -47,6 +48,14 @@ MAX_YAML_BYTES = 1_000_000
 MAX_YAML_GRAPH_DEPTH = 100
 MAX_YAML_GRAPH_NODES = 50_000
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+WORKSPACE_EXPR_RE = re.compile(
+    r"^\$\{\{\s*github\.workspace\s*\}\}(?:/|$)", re.IGNORECASE
+)
+# Runner labels that are clearly Linux or macOS, where a run block's default
+# shell is bash. Windows runners default to pwsh.
+POSIX_RUNNER_PREFIXES = ("ubuntu-", "macos-")
+POSIX_RUNNER_LABELS = {"linux", "macos"}
+POSIX_SHELLS = {"bash", "sh"}
 TEMPLATE_EXPR_RE = re.compile(
     r"\$\{\{\s*(github\.event(?:[.\[]|\s|\})|github\."
     r"(?:base_ref|head_ref|ref_name)(?:\s|\})|inputs\.)",
@@ -849,6 +858,135 @@ def _iter_steps(data: dict[str, Any], *, is_workflow: bool) -> Iterator[dict[str
         yield from _steps_from_action(data)
 
 
+def _steps_with_jobs(
+    data: dict[str, Any], *, is_workflow: bool
+) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Each step with its job; None for a composite action's steps."""
+    if not is_workflow:
+        for step in _steps_from_action(data):
+            yield step, None
+        return
+    jobs = data.get("jobs")
+    if not isinstance(jobs, dict):
+        return
+    for job in jobs.values():
+        if isinstance(job, dict) and isinstance(job.get("steps"), list):
+            for step in job["steps"]:
+                if isinstance(step, dict):
+                    yield step, job
+
+
+def _run_starts_in_workspace(
+    data: dict[str, Any], job: dict[str, Any] | None, step: dict[str, Any]
+) -> bool:
+    """Default-deny: a bash/sh run block on a Linux or macOS runner whose
+    working directories are all inside the workspace. A composite action's
+    runner and starting directory belong to its caller, so they are unknown."""
+    if job is None or not _runs_on_posix(job.get("runs-on")):
+        return False
+    # BASH_ENV (ENV for sh) names a file every later bash step sources first.
+    if any(
+        _env_may_set(env, {"bash_env", "env"}) for env in _env_layers(data, job, step)
+    ):
+        return False
+    if any(_mentions(run, "BASH_ENV") for run in _job_runs(job)):
+        return False
+    layers = (data, job)
+    shells = [_default_run_setting(layer, "shell") for layer in layers]
+    directories = [_default_run_setting(layer, "working-directory") for layer in layers]
+    shells.append(step.get("shell"))
+    directories.append(step.get("working-directory"))
+    return all(
+        shell is None or (isinstance(shell, str) and shell.strip() in POSIX_SHELLS)
+        for shell in shells
+    ) and _runs_in_workspace(directories)
+
+
+def _home_is_default(
+    data: dict[str, Any], job: dict[str, Any] | None, step: dict[str, Any]
+) -> bool:
+    """Whether HOME is the runner's own for this step: no env sets it and no
+    run block in the job assigns it or writes it to $GITHUB_ENV. Unknown for
+    a composite action, whose calling job is not visible."""
+    if job is None:
+        return False
+    if any(_env_may_set(env, {"home"}) for env in _env_layers(data, job, step)):
+        return False
+    return not any(
+        redefines_home(run) or (_mentions(run, "HOME") and _mentions(run, "GITHUB_ENV"))
+        for run in _job_runs(job)
+    )
+
+
+def _env_layers(
+    data: dict[str, Any], job: dict[str, Any], step: dict[str, Any]
+) -> list[Any]:
+    container = job.get("container")
+    container_env = container.get("env") if isinstance(container, dict) else None
+    return [data.get("env"), job.get("env"), container_env, step.get("env")]
+
+
+def _env_may_set(env: Any, names: set[str]) -> bool:
+    if isinstance(env, dict):
+        return any(str(name).strip().lower() in names for name in env)
+    return env is not None  # an expression can set any variable
+
+
+def _job_runs(job: dict[str, Any]) -> list[str]:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return []
+    return [
+        step["run"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+
+
+def _mentions(run: str, name: str) -> bool:
+    return name in run or name in dequote_shell(run)
+
+
+def _runs_on_posix(runs_on: Any) -> bool:
+    labels = [runs_on] if isinstance(runs_on, str) else runs_on
+    if not isinstance(labels, list) or not labels:
+        return False
+    if not all(isinstance(label, str) for label in labels):
+        return False
+    lowered = [label.strip().lower() for label in labels]
+    if any("${{" in label or label.startswith("windows") for label in lowered):
+        return False
+    return any(
+        label.startswith(POSIX_RUNNER_PREFIXES) or label in POSIX_RUNNER_LABELS
+        for label in lowered
+    )
+
+
+def _default_run_setting(mapping: dict[str, Any], key: str) -> Any:
+    defaults = mapping.get("defaults")
+    run = defaults.get("run") if isinstance(defaults, dict) else None
+    return run.get(key) if isinstance(run, dict) else None
+
+
+def _runs_in_workspace(directories: list[Any]) -> bool:
+    """Whether a run block starts in the checked-out workspace: every working
+    directory set for it is relative to it, without ".." or expressions."""
+    for directory in directories:
+        if directory is None:
+            continue
+        if not isinstance(directory, str):
+            return False
+        text = WORKSPACE_EXPR_RE.sub("", directory.strip()).replace("\\", "/")
+        if (
+            text.startswith(("/", "~", "$"))
+            or "${{" in text
+            or ":" in text
+            or ".." in text.split("/")
+        ):
+            return False
+    return True
+
+
 def _is_false(value: Any) -> bool:
     if value is False:
         return True
@@ -1222,11 +1360,15 @@ def _scan_run_blocks(
 ) -> None:
     rule_id = "SKY-D294"
 
-    for step in _iter_steps(data, is_workflow=is_workflow):
+    for step, job in _steps_with_jobs(data, is_workflow=is_workflow):
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
-        for risk in scan_shell_command(run_body):
+        for risk in scan_shell_command(
+            run_body,
+            cwd_in_project=_run_starts_in_workspace(data, job, step),
+            home_is_default=_home_is_default(data, job, step),
+        ):
             if risk.rule_id in ignore:
                 continue
             _add_finding(

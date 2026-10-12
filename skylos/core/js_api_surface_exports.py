@@ -195,6 +195,12 @@ def _collect_export_statement(
     diagnostics: set[str] | None,
 ) -> None:
     text = _node_text(source, node).strip()
+    if text.startswith("export ="):
+        # ``export = value`` replaces the whole module object; which names an
+        # import can read from it depends on the value, so the surface is
+        # unknown rather than empty.
+        _add_diagnostic(diagnostics, "export_assignment")
+        return
     source_literal = _export_source_literal(source, node)
     type_only_export = _export_statement_is_type_only(text)
 

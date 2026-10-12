@@ -35,6 +35,7 @@ Rule IDs use a stable public prefix:
 | Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
+| Generated files | Django migrations, `static/**/lib/**`, `*.min.js`, `*.min.css` and JS/CSS files that open with a vendored-library licence banner. Skipped by default with a one-line count; migrations are still parsed for references and keep security and secret findings. Scan them with `--include-generated` or `[tool.skylos] include_generated = true`. |
 | Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
@@ -52,7 +53,7 @@ Rule IDs use a stable public prefix:
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
-| Quality gate | A threshold-based pass/fail decision used locally or in CI. |
+| Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. |
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. |
@@ -82,6 +83,7 @@ Rule IDs use a stable public prefix:
 | `skylos verify-verdict` | Verifies a signed check verdict offline against the published keys (`https://skylos.dev/.well-known/skylos-verdict-keys.json` or a local `--keys` file). `--commit`, `--repository`, `--project`, and `--workspace` bind it to what is being deployed; `--require-repository-verified` requires a GitHub OIDC upload bound to the repository; `--max-age` rejects old verdicts; `--require-passed` exits 1 unless the level is `SKYLOS_POLICY_PASSED` (`--allow-override` also accepts `SKYLOS_GATE_OVERRIDDEN`; `SKYLOS_GATE_DISABLED` never passes). Exit 2 means not verified. Needs `skylos[verdict]` (`cryptography`). |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerabilities and opt-in npm publisher review signals. |
+| Not checked (SCA) | A lockfile entry that is the project's own local code, so no advisory database can describe it: pnpm `link:`/`file:` directories, local tarballs, peers satisfied by a workspace project, and `runtime:` entries. Listed in `sca_coverage.lockfile_not_checked` (count `not_checked_lockfile_dependency_count`); it does not make the dependency scan incomplete or stop the gate. Git, private-registry and non-canonical archive sources stay unresolved and do. |
 | npm publisher review | Opt-in `--scan-publisher-changes` checks direct npm dependencies in a lockfile for a newly observed publisher after a long release gap. `publisher_change_findings` are WARN review signals, not evidence of compromise or known vulnerabilities; they do not affect the vulnerability count or gate. |
 | SBOM | `skylos sbom .`; offline dependency inventory as CycloneDX 1.6 (default) or SPDX 2.3 (`--format spdx-json`) JSON, including declared licenses. |
 | License policy | `[tool.skylos] license_deny` / `license_allow` / `license_exceptions` / `license_severity`; flags dependencies whose declared SPDX license violates policy as `SKY-SCA-LIC001`. Unknown licenses are `NOASSERTION` and never fire. |
@@ -214,6 +216,91 @@ are scanned too; the literal pytest parameter proof below still applies.
 Python D211, D215, D217, D324 and D325 findings reached by such a source carry
 `metadata.security_evidence` (`source`, `sink`, `path`), which SARIF output
 renders as `codeFlows`.
+
+Python D216 needs a real untrusted source (route, CLI or MCP-tool argument,
+request data, `input()`, stdin) that can choose the request host. Not SSRF:
+calls through in-process test clients (Django `Client`/`RequestFactory`, DRF
+`APIClient`, Flask `test_client()`, Starlette/FastAPI `TestClient`,
+pytest-django `client` fixtures in `test*` functions of test files that have no
+route decorator, `self.client` in Django test cases; a client name counts only when every
+binding it resolves to, in the current function, an enclosing function or the
+module, creates a test client, and a binding in a nested function or class does
+not count; `self.client` or another `self` attribute counts only in a Django/DRF
+test-case class whose bases are all known test cases or same-module classes,
+when every write to that attribute that can reach the instance creates a test
+client and the module never rewrites it through `setattr`, `__dict__`, `vars()`,
+a `client_class` assignment or a `_pre_setup` override; a test-client class name
+the module rebinds is not trusted); parameters of a function
+decorated with `unittest.mock.patch` (it is not a PATCH route); and URLs whose
+host is fixed by a literal or by a module-level setting followed by `/`, `?` or
+`#` (not `//`), written directly or returned by every path of a same-module
+helper that has no decorator other than `functools.cache`/`lru_cache`. A setting
+counts only when its value is a literal `scheme://host` URL, an environment
+variable (`os.getenv`/`os.environ`, resolved through the module's imports) or
+CLI argument (`sys.argv`) with a literal name and either no fallback, a `None`
+fallback or such a literal, another such setting, or a name imported from
+another module; `"https:"`, `"https://"` and `""` do not fix the host. A name imported from
+a web-framework or request-scoped module (`flask`, `werkzeug`, `quart`,
+`starlette`, `fastapi`, `django.http`, `django.contrib.sessions`,
+`django.core.handlers`, `rest_framework.request`, `aiohttp.web*`, `tornado.web`,
+`sanic`, `bottle`, `falcon`, `pyramid.request`, `litestar`, `contextvars`, or any
+of their submodules) is never a setting. A setting
+or helper name does not count where the current or an enclosing function shadows
+it (parameter, assignment, `for`/`with`/`except` target, comprehension variable,
+lambda argument, import, nested definition, `global`/`nonlocal`), nor when the
+module rebinds it (a second binding, assignment under `global`,
+`setattr(module, "NAME", ...)`, `module.NAME = ...`). A module that can rewrite its
+globals at run time has no fixed settings: a star import, `exec`/`eval`,
+`reload`, a write through `globals()`/`vars()`/`builtins.globals()` or a
+module-level `locals()`, any use of `__globals__`, `f_globals` or a module
+`__dict__`, `sys._getframe`, `globals` used other than as a call, `setattr` on
+the module with a computed name, a dunder attribute of the module object or
+`sys.modules` (`__setattr__`, `__getitem__`, `__dict__`), `getattr(x,
+"__dict__")`-style lookups of those names, a module obtained through
+`import_module`/`__import__`/`inspect.getmodule` under any name or
+`import __main__`, or the module object passed to other code. Only the setting's own module is checked: an
+assignment from another module (`import app; app.BASE = ...`) is not seen, and a
+setting imported from another module is trusted as is. A fixed-host URL that carries request data in its
+query (`f"{RENDERER}/render?url={...}"`) is not reported. `urllib.parse.quote`
+with a `safe=` argument is not a URL sanitizer.
+
+`bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
+are not XSS sanitizers. Path traversal (D215) also accepts a sanitizer imported by name
+(`from os.path import basename`), but only when the module can't swap it out: no
+local function with the same name, no star import, `exec`/`eval` or other write
+to its own namespace, and no attribute write of the same name on any object
+(`os.path.basename = …`, `setattr(x, "basename", …)`, `del x.basename`) or
+`setattr` with a computed name. D325 uses the same sanitizer handling. Other checks recognise sanitizers only by their qualified name.
+
+D338 reports reading sensitive files. It also reports a sensitive-file reader
+(`cat`, `sed`, `base64`, `tar`, ...) whose redirect writes into a sensitive path
+such as `~/.ssh/config`, `~/.aws/config`, `~/.kube/config`, `~/.npmrc`,
+`~/.claude/settings*.json`, `~/.codex/config.toml`, `~/.docker/config.json`,
+`~/.config/gh/` or `/run/secrets/`, because those files run code, steer
+authentication or installs, or hold secrets. Redirect parsing is quote-aware: a
+quoted `">"` is an argument, `<> file` is a read, and a here-string's `$(...)`
+still reads. Routine credential setup is not reported, and only in GitHub Actions run steps:
+a reader command writing `~/.ssh/known_hosts`, `~/.ssh/id_*` (SSH key files,
+including `.pub`, `-cert.pub` and `.pem` forms), `~/.netrc` or `~/.pypirc` under the home directory (`~`, `$HOME`, `/root`, `/home/<user>`),
+when no workflow, job, container or step `env` sets HOME and no run block in the
+job assigns HOME or writes it to `$GITHUB_ENV`; and a project-relative `.env`, in
+a bash/sh step on a Linux or macOS runner whose working directory is in the
+workspace, with no `BASH_ENV`/`ENV` set, and whose script has nothing that may
+change directory or hide a command (`cd`, `pushd`, `popd`, `source`, `.`, `eval`,
+`exec`, `ln`, `trap`, `case`, `alias`, function definitions, PowerShell location
+cmdlets, `env -C`, or a command word built from a variable, glob or brace
+expansion, including escaped or quoted spellings). Shell scripts, GitLab CI and
+Dockerfiles report these writes as before. TLS certificate writes (`*.pem`,
+`*.crt`, `*.cer` outside `~/.ssh/id_*`), targets with `..`, a glob or a
+variable, and every other sensitive path stay reported. A
+reader writing into a persistence file that is also sensitive
+(`~/.ssh/authorized_keys`, `~/.ssh/rc`) is reported as both D338 and D339. A redirect (`>`,
+`>>`, `>&`, `&>`) from any command into a persistence target is D339 (HIGH):
+`authorized_keys`, `~/.ssh/rc`, `~/.ssh/environment`, shell startup files,
+`/etc/profile*`, cron files, systemd units, sudoers, `/etc/ld.so.preload`,
+`/etc/rc.local`, `/etc/init.d/`, or git hook folders outside the project. A glob
+target that could name one of these (for example `~/.ssh/authorized_ke*`) is
+D339, and redundant `//`, `/./` and `..` segments do not hide one.
 
 ### AI Supply Chain Security
 
@@ -507,11 +594,17 @@ across different operating-system/CPU platforms.
 
 | ID | Severity | Name | Languages / Scope | CWE |
 |:---|:---|:---|:---|:---|
-| S101 | CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S101 | HIGH-CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
 | S102 | HIGH* | Secret material or server-only environment variable exposed to client-accessible code | TS/JS, HTML, client bundles | CWE-200 |
 
-`SKY-S101` is `CRITICAL` for provider tokens and high-entropy values. Two
-lower-certainty shapes are `HIGH`: a password embedded in a connection URL
+`SKY-S101` is `CRITICAL` for provider tokens and for high-entropy values
+under a secret-like name (`key`, `token`, `secret`, `password`, `auth`,
+`credential`, `private`, `api`, `session`, `cookie`, `signature`/`sig`
+before the value on its line, or the user-info, secret-named parameter or
+webhook path of a URL). A generic high-entropy value with no such name is
+`HIGH` with `"severity_reason": "no_secret_name"`; the default gate still
+counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
+a password embedded in a connection URL
 (`provider: url_credentials`, e.g. `postgres://app:<pw>@db/app`) and a
 non-placeholder literal under a password/secret/token/api-key field in YAML,
 JSON, TOML, INI or `.env` files (`provider: config_credential`). Env-var and
@@ -528,18 +621,26 @@ reported), public keys and certificates (PEM `PUBLIC KEY`/`CERTIFICATE`
 blocks whose body is DER, OpenPGP or SSH key data; `ssh-ed25519 AAAA...`
 lines; the `x`/`y`/`n`/`e` members of a JSON Web Key), `0x` + 40-hex
 contract and wallet addresses, ids in the path of Google Docs/Forms/Drive,
-YouTube, Figma and Notion share URLs, word slugs (`What-is-the-build-volume`,
-`INTRA-001-amendment-v2`), lines of minified `.js` bundles over 1,000
-characters, and, under a secret-sounding name, whole-value references
+YouTube, Figma and Notion share URLs, CSP source and subresource-integrity
+hashes outside lockfiles (`'sha256-<base64 digest>'`, `integrity="sha384-..."`
+with a digest of the algorithm's exact length, unless a secret- or
+session-named value holds it), parts of URLs other than user info,
+secret-named query/fragment parameters (`api_key=`, `access_token=`, `sig=`,
+`X-Amz-Signature=`) and webhook/bot/token paths, file paths (`/srv/x/y`,
+`./a/b`, `C:\\x\\y`, `dir/name.ext`; not `ab/<token>` or a base64 value with
+`+`/`=`), word slugs (`What-is-the-build-volume`, `INTRA-001-amendment-v2`),
+lines of minified `.js` bundles over 1,000 characters, and, under a
+secret-sounding name, a whole file path, a URL with no credential and no
+random component, whole-value references
 (`${{ secrets.X }}`, `${X}`, `$X`, `%X%`, `{{ .Values.x }}`; not
 `${X:-literal}` or `|| 'literal'`), lists of environment variable names
 (`GH_TOKEN,NPM_TOKEN`), the key's own name in another case
 (`ADMIN_PASSWORD: "adminPassword"`), URLs assigned to `*_URL`/`*_URI`/
 `*_ENDPOINT` names (the URL's own parts are still scanned) and Secret Manager
 references (`NAME:latest`). In JS/TS test files (`*.test.*`, `*.spec.*`,
-`__tests__/`, `__mocks__/`) only provider-shaped tokens are reported, as in
-Python test directories. A private-key header in prose, markup or before a
-placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`, `\n...\n`) is
+`__tests__/`, `__mocks__/`) and Go test files (`*_test.go`) only
+provider-shaped tokens are reported, as in Python test directories. A
+private-key header in prose, markup or before a placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`, `\n...\n`) is
 not a key; PKCS#8 (`-----BEGIN PRIVATE KEY-----`), encrypted PKCS#8 and
 OpenPGP private keys are reported when key data follows the header.
 Provider-shaped tokens (AWS, GitHub, GitLab, Slack, Stripe, Google,
@@ -612,17 +713,38 @@ use the `SKY-A` prefix.
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
-Python import names can differ from distribution names. Skylos checks installed
-distribution metadata and bounded PyPI wheel indexes to resolve declared aliases.
+Python import names can differ from distribution names. Skylos maps declared
+distributions to import paths from installed distribution metadata, a curated
+table of well-known mismatches (`beautifulsoup4` -> `bs4`, `djangorestframework`
+-> `rest_framework`, `PyYAML` -> `yaml`, `Pillow` -> `PIL`), the pipreqs table
+and conservative name rules (`django-guardian` -> `guardian`), then checks
+bounded PyPI wheel indexes for the rest. Requirements files are read like pip
+reads them: `-r`/`-c` includes inside the project, `\` continuations and
+`--hash` options (pip-compile and `uv pip compile` lock files). Declared
+dependencies come from requirements files, `pyproject.toml` (dependencies,
+optional dependencies, dependency groups, Poetry), `setup.cfg` (`[options]`
+`install_requires`/`setup_requires`/`tests_require`, `[options.extras_require]`,
+`file:` requirement lists inside the project) and literal `setup.py` keywords
+(including module-level lists). These files are parsed, never run; a
+`setup(**kwargs)`, `attr:` or computed list leaves the declarations open-ended.
+Nested projects use their own manifests.
 Namespace packages require the imported portion's full path: a distribution
 providing `sphinxcontrib.applehelp` does not establish
 `sphinxcontrib.serializinghtml`. Target packages are never installed or executed.
+`setuptools` and other build-backend imports in `setup.py` are not runtime
+dependencies.
 
 A missing PyPI project for an import name alone does not prove a hallucinated
-dependency. Source-only, private, dynamic, unsupported, unavailable, and unresolved
-version-range providers leave an import unverified; these reports use MEDIUM
-`SKY-D223`. An exact compatible pin with an unambiguous artifact inventory can
-support absence evidence. Compatible platform wheels can confirm import paths
+dependency. "Could not verify" is never a finding: when a declared provider that
+is related to the import (by name, mapping or partial inventory) is source-only,
+private, dynamic, unsupported or unavailable, or the declarations are open-ended
+(private index, dynamic metadata), the import is only counted in
+`analysis_summary.dependency_imports`. An import that no declared distribution
+resembles stays visible: MEDIUM `SKY-D223` "Possible hallucinated import" while
+some declared distributions are uninspected, `SKY-D222` once all are. Installed
+metadata naming a different, undeclared distribution is reported as an
+undeclared import. An exact compatible pin with an unambiguous artifact
+inventory can support absence evidence. Compatible platform wheels can confirm import paths
 they contain, but cannot prove an import is absent, even with an exact pin.
 Editable-install inventories can use compatible wheel paths as positive
 evidence, but their incomplete RECORDs cannot prove that an import is absent,
@@ -690,11 +812,25 @@ uses project ignores, not inline comments, consistently across supported files.
 | L034 | MEDIUM | Repeated mutable alias from sequence multiplication | Python |
 | L035 | HIGH | File-wide blanket ESLint disable | TS/JS |
 
+SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
+bare `return` is inconsistent. SKY-L014 is not reported when the value only
+refers to a setting kept elsewhere: `${NAME}` or `{{ name }}`, where NAME is
+UPPER_SNAKE with two or more words (`${DB_PASSWORD}`) or a dotted lowercase path
+with two or more segments (`{{ django.secret_key }}`); every reference form,
+including `$X` and `%X%`, is accepted only under location names with no
+credential word, such as `DATABASE_URL`, `DSN` or `CONNECTION_STRING`. It is
+also not reported for `<X>_KEY = "X"` on a plain (non-attribute) name, where the
+value is the rest of the target's name in UPPER_SNAKE with two or more words
+(`APP_URL_KEY = "APP_URL"`), unless the name ends in `SECRET_KEY`, `API_KEY`,
+`PRIVATE_KEY`, `ENCRYPTION_KEY`, `SIGNING_KEY`, `MASTER_KEY`, `ACCESS_KEY` or
+`HMAC_KEY`. SKY-L016 is not reported when the read declares a default other than
+`None` (`os.getenv("ENABLE_X", "False")`).
+
 ## Quality, Structure, Architecture, and Performance
 
 | ID | Severity | Name | Languages / Scope | Threshold / Notes |
 |:---|:---|:---|:---|:---|
-| Q301 | WARN-CRITICAL | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
+| Q301 | WARN-HIGH | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
 | Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
@@ -767,7 +903,7 @@ findings in any language.
 | U002 | INFO | Unused import | Upload/API normalized dead-code category |
 | U003 | INFO | Unused variable | Upload/API normalized dead-code category |
 | U004 | INFO | Unused class | Upload/API normalized dead-code category |
-| U005 | MEDIUM | Declared dependency appears unused | Python dependencies |
+| U005 | MEDIUM | Declared dependency appears unused. Run-time declarations only: requirements files, `[project].dependencies`, and `install_requires` in `setup.cfg`/`setup.py` (extras, `setup_requires` and `tests_require` are not reported). Compiled lock entries (pip-compile/uv, `--hash`, `# via`) are never reported; their `.in` inputs are checked instead. Imports, Django settings strings, `import_module` strings, Procfile/Dockerfile/compose/Makefile commands, entry points and mypy plugins count as uses; type-stub and database-driver packages are skipped | Python dependencies |
 | U006 | INFO | Unused parameter | Debt normalized dead-code category |
 | DC001 | MEDIUM | Unused function | LLM report dead-code ID |
 | DC002 | LOW | Unused import | LLM report dead-code ID |
@@ -780,6 +916,50 @@ findings in any language.
 | E002 | LOW | Empty or docstring-only file | Python |
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
 | E004 | LOW | Unnecessary export | TS/JS |
+
+### Framework entrypoints
+
+Dead-code findings skip code a framework or tool loads by convention rather
+than by an import. These conventions apply to TS/JS and PHP:
+
+| Convention | Scope | Kept live |
+|:---|:---|:---|
+| Next.js App Router | `app/`, or `src/app/` when there is no root `app/`, in a Next.js project, outside private `_folders` | `page`, `layout`, `template`, `loading`, `error`, `global-error`, `not-found`, `default`, `route` files (`.js`, `.jsx`, `.ts`, `.tsx`, or the literal `pageExtensions` of `next.config.*`), their default export, route handlers, `metadata`/`generateMetadata`/`viewport`/`generateViewport`/`generateStaticParams` and route segment config exports (`dynamic`, `revalidate`, `runtime`, ...) |
+| Next.js metadata routes | `app/`, or `src/app/` when there is no root `app/`, in a Next.js project, outside private `_folders` | `robots`, `sitemap`, `manifest`, `icon`, `apple-icon`, `opengraph-image`, `twitter-image` files and their default export; `alt`, `size`, `contentType`, `generateImageMetadata` in image routes; `generateSitemaps` in sitemaps |
+| Next.js Pages Router | `pages/**` | default exports, `getServerSideProps`, `getStaticProps`, `getStaticPaths`, `getInitialProps`, `_app`/`_document`/`_error`/`404`/`500`; `config` and `_app`'s `reportWebVitals` in a Next.js project |
+| Next.js root files | project root or `src/` | `middleware`, `proxy`, `instrumentation`, `instrumentation-client`, `mdx-components` and their hook exports |
+| Tool config files | any directory | `next.config.*`, `postcss.config.*` and `tailwind.config.*` (`.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`), the usual Vite, Vitest, ESLint, Jest, Playwright and tsup config names, and their default export, including `const config = {...}; export default config` |
+| Laravel Vite plugin | `vite.config.*` | each `input` of `laravel(...)` from `laravel-vite-plugin` |
+| Laravel | a `composer.json` whose `require` lists `laravel/framework` | `Illuminate\Console\Command` subclasses in `app/Console/Commands` (bases resolved through imports and the PSR-4 map); classes in `app/Listeners` with a `handle*`/`__invoke` method whose first parameter has a class type, when event discovery is on (a provider's `shouldDiscoverEvents()` returns true, or the Laravel 11 `Application::configure()` builder without `withEvents(discover: false)`); `*Factory` in `database/factories` when the model in `app/Models` or `app` uses `HasFactory` (directly or through a project parent); `*Policy` in `app/Policies` when the model exists; classes in `app/Livewire`, `app/Http/Livewire`, `app/View/Components`, `database/migrations`; `DatabaseSeeder`; and the public methods of those classes |
+
+A project is a Next.js project when a `next.config.*` file or a `package.json`
+that depends on `next` sits in the file's directory or a parent. Only the named
+convention exports stay live: an unused helper exported from `page.tsx` or
+`opengraph-image.tsx`, and an unused private method of a Laravel listener, are
+still reported. A helper that only a convention root calls, such as a data
+loader called by a page's default export, stays live; in JS/TS that applies
+only when the file itself is one Next.js routes, Storybook loads or a tool
+reads as config, not to name-only marks such as `use*` hooks or a `page.tsx`
+outside `app/`. With discovery off, a Laravel listener stays live only through
+its `::class` registration in `$listen` or `Event::listen`.
+
+Known limitations: tool config and Storybook story files are recognised by file
+name, so a stale `scripts/old/vite.config.ts` or an unused `*.stories.tsx`
+keeps its callees live; a Laravel policy stays live while its model file
+exists, even if the model is dead; and a class referenced only from a dead
+class (for example an event type-hinted only by an unregistered listener) is
+not reported, as with any other reference from dead code.
+
+PHP classes named only in type positions count as used: parameter, return and
+property types (including nullable, union, intersection and promoted
+constructor parameters), `instanceof`, `catch`, attributes, `::class`, and
+PHPDoc types (`@param`, `@return`, `@var`, `@throws`, `@extends`,
+`@implements`, `@use`, `@template ... of`, `@method`, `@property`, `@mixin`,
+including generics and multi-line array shapes). As in PHP-CS-Fixer, an import
+that a docblock only mentions in prose or in a cross-reference (`@see`,
+`@uses`, PHPUnit `@covers`, `{@see}`, `{@link}`) stays used, but that mention
+does not make the class itself used. A class's own docblock naming the class
+(`@method static Builder|Self query()`, `@mixin Self`) does not make it used.
 
 Pretty output and the TUI use short display labels such as
 `dead-code/function`, `dead-code/import`, `dead-code/class`,

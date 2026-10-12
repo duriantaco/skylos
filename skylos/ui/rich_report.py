@@ -29,6 +29,7 @@ from skylos.ui.dead_code_evidence import (
     dead_code_uncertainty_text,
 )
 from skylos.ui.quality_advice import pytest_signature_advice, pytest_signature_title
+from skylos.ui.scope_notes import scope_note_lines
 from skylos.ui.security_evidence import security_evidence_details
 
 logger = logging.getLogger(__name__)
@@ -968,6 +969,8 @@ def render_results(
             )
             + "[/muted]"
         )
+    for note in scope_note_lines(result):
+        console.print(f"[muted]{escape(note)}[/muted]")
     console.print()
 
     _render_analysis_warnings(console, result, root_path=root_path, limit=limit)

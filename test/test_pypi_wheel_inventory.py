@@ -311,7 +311,9 @@ def test_non_loader_pth_entries_do_not_make_wheel_inventory_incomplete(
 
 
 @pytest.mark.parametrize("mode", ["full", "diff"])
-def test_loader_wheel_unknown_import_stays_unverified(monkeypatch, tmp_path, mode):
+def test_loader_wheel_unknown_import_is_a_note_not_a_finding(
+    monkeypatch, tmp_path, mode
+):
     from skylos.rules.ai_defect import dependency_hallucination as dep
 
     body = _wheel(["known_provider.py", "provider_loader.pth"])
@@ -341,10 +343,13 @@ def test_loader_wheel_unknown_import_stays_unverified(monkeypatch, tmp_path, mod
         )
     else:
         findings = dep.scan_python_dependency_hallucinations(tmp_path, [path])
-    assert [(finding["rule_id"], finding["symbol"]) for finding in findings] == [
-        (dep.RULE_ID_UNDECLARED, "dynamic_provider")
-    ]
-    assert findings[0]["message"].startswith("Unverified import")
+    # The wheel's .pth loader can expose any module, so dynamic_provider is
+    # unverifiable: a summary note, never a finding.
+    assert findings == []
+    if mode == "full":
+        assert findings.unverified_imports == {
+            "dynamic_provider": "open_ended_declarations"
+        }
 
 
 def test_full_module_paths_distinguish_namespace_portions(monkeypatch):

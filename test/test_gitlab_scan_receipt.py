@@ -218,6 +218,17 @@ def test_lockfile_limitation_keeps_receipt_complete_without_full_scan():
     }
 
 
+def test_not_checked_local_packages_keep_receipt_complete_without_full_scan():
+    result = _complete()
+    result["analysis_summary"]["sca_coverage"][
+        "not_checked_lockfile_dependency_count"
+    ] = 3
+    assert scan_receipt(result, analyzer_owned=True, full_scan=True) == {
+        "complete": True,
+        "full_scan": False,
+    }
+
+
 @pytest.fixture
 def full_invocation(tmp_path, monkeypatch):
     monkeypatch.delenv("SKYLOS_PROJECT_ROOT", raising=False)

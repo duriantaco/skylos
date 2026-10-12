@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -94,20 +95,100 @@ def _app_name(name, classes):
     return name
 
 
+# A module assigning INSTALLED_APPS plus one of these is a settings module,
+# even when DJANGO_SETTINGS_MODULE is chosen outside the code.
+_SETTINGS_MARKERS = {"ROOT_URLCONF", "MIDDLEWARE", "DATABASES", "SECRET_KEY"}
+_DOTTED_PATH = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+
+
+def _setting_names(scanner):
+    names = set(scanner.values) | set(getattr(scanner, "module_settings", {}))
+    return {name for name in names if name.isupper()}
+
+
 def _setting_targets(scanner):
+    """Django reads every UPPER_CASE setting by name via django.conf.settings."""
     targets = []
-    for setting in scanner.values:
-        if setting.isupper():
-            definition = scanner.definition(
-                scanner.module + "." + setting, kind="variable"
-            )
-            if definition is not None:
-                targets.append((definition, "django_web_setting"))
+    for setting in sorted(_setting_names(scanner)):
+        definition = scanner.definition(scanner.module + "." + setting, kind="variable")
+        if definition is not None:
+            targets.append((definition, "django_web_setting"))
+        else:
+            # Assigned more than once (e.g. under ``if DEBUG:``): mark each.
+            for candidate in scanner.index.all_by_name.get(
+                scanner.module + "." + setting, ()
+            ):
+                if candidate.type == "variable":
+                    targets.append((candidate, "django_web_setting"))
     return targets
+
+
+def _setting_reference_targets(scanner):
+    """Project classes/functions named by dotted strings in settings.
+
+    ``MIDDLEWARE``, ``STORAGES`` backends, ``TEMPLATES`` context processors,
+    ``AUTHENTICATION_BACKENDS`` and ``REST_FRAMEWORK`` classes are imported by
+    Django from these strings.
+    """
+    targets = []
+    for values in getattr(scanner, "module_settings", {}).values():
+        for value in values:
+            for node in ast.walk(value):
+                if not isinstance(node, ast.Constant) or not isinstance(
+                    node.value, str
+                ):
+                    continue
+                path = node.value.strip().replace(":", ".")
+                if len(path) > 300 or not _DOTTED_PATH.match(path):
+                    continue
+                definition = scanner.definition(path)
+                if definition is not None and definition.type in {
+                    "class",
+                    "function",
+                    "variable",
+                }:
+                    targets.append((definition, "django_web_setting_reference"))
+    return targets
+
+
+def _looks_like_settings(scanner):
+    names = _setting_names(scanner)
+    return "INSTALLED_APPS" in names and bool(names & _SETTINGS_MARKERS)
+
+
+def _settings_closure(roots, scanners):
+    """Settings modules plus the modules they star-import, and settings
+    variants (``settings/production.py``) that star-import them."""
+    settings = set(roots)
+    pending = list(roots)
+    while pending:
+        scanner = scanners.get(pending.pop())
+        if scanner is None:
+            continue
+        for name in getattr(scanner, "star_imports", ()):
+            if name in scanners and name not in settings:
+                settings.add(name)
+                pending.append(name)
+    changed = True
+    while changed:
+        changed = False
+        for name, scanner in scanners.items():
+            if name in settings or not any(
+                "settings" in part for part in name.split(".")
+            ):
+                continue
+            if set(getattr(scanner, "star_imports", ())) & settings:
+                settings.add(name)
+                changed = True
+    return settings
 
 
 def _settings_activation(scanners, classes):
     settings = {name for scanner in scanners.values() for name in scanner.settings}
+    settings |= {
+        name for name, scanner in scanners.items() if _looks_like_settings(scanner)
+    }
+    settings = _settings_closure(settings, scanners)
     activation = _Activation(settings)
     targets = []
     for name in settings:
@@ -115,6 +196,7 @@ def _settings_activation(scanners, classes):
         if scanner is None:
             continue
         targets.extend(_setting_targets(scanner))
+        targets.extend(_setting_reference_targets(scanner))
         urlconf = _literal(scanner.values.get("ROOT_URLCONF"))
         if isinstance(urlconf, str):
             activation.url_roots.add(urlconf)

@@ -523,3 +523,338 @@ def test_php_end_to_end_class_override_keeps_shadowed_trait_member_dead(
         "Helper.process"
     }
     assert result.get("analysis_errors", []) == []
+
+
+def _write_tree(root, files):
+    for relative, source in files.items():
+        path = Path(root) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_fixture(path, source)
+
+
+def test_php_end_to_end_type_only_uses_are_not_dead(tmp_path):
+    # laravel/laravel first run: every import used as a closure parameter
+    # type, attribute, docblock type or `instanceof` target was reported.
+    _write_tree(
+        tmp_path,
+        {
+            "src/Debug/CliRequest.php": (
+                "<?php\nnamespace Acme\\Debug;\nfinal class CliRequest {}\n"
+            ),
+            "src/Collector.php": """<?php
+namespace Acme;
+
+use Acme\\Debug\\CliRequest;
+use Acme\\Http\\Request;
+use Acme\\Attributes\\Fillable;
+use Acme\\Factories\\UserFactory;
+use Acme\\Unused\\Nothing;
+
+#[Fillable(['name'])]
+final class Collector
+{
+    /** @use HasFactory<UserFactory> */
+    use HasFactory;
+
+    public function collect(Request $request): bool
+    {
+        return $request instanceof CliRequest;
+    }
+}
+""",
+            "bootstrap/app.php": """<?php
+use Acme\\Configuration\\Middleware;
+use Acme\\Collector;
+
+/** @var Collector $collector */
+$collector = make();
+configure(function (Middleware $middleware): void {});
+""",
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert result.get("analysis_errors", []) == []
+    assert {finding["name"] for finding in result.get("unused_imports", [])} == {
+        "Nothing"
+    }
+    assert "Acme.Debug.CliRequest" not in {
+        finding["full_name"] for finding in result.get("unused_classes", [])
+    }
+
+
+_LARAVEL_APP_FILES = {
+    "app/Listeners/SendWelcome.php": """<?php
+namespace App\\Listeners;
+
+use App\\Events\\UserRegistered;
+
+final class SendWelcome
+{
+    public function handle(UserRegistered $event): void
+    {
+        if ($this->shouldSend($event)) {
+            echo 'sent';
+        }
+    }
+
+    private function shouldSend($event): bool { return true; }
+
+    private function neverCalled(): int { return 1; }
+}
+""",
+    "app/Listeners/UntypedListener.php": (
+        "<?php\nnamespace App\\Listeners;\n"
+        "final class UntypedListener { public function handle($event): void {} }\n"
+    ),
+    "app/Console/Commands/Prune.php": (
+        "<?php\nnamespace App\\Console\\Commands;\n"
+        "use Illuminate\\Console\\Command;\n"
+        "final class Prune extends Command { public function handle(): void {} }\n"
+    ),
+    "app/Console/Commands/NotACommand.php": (
+        "<?php\nnamespace App\\Console\\Commands;\n"
+        "final class NotACommand { public function handle(): void {} }\n"
+    ),
+    "app/Livewire/Counter.php": (
+        "<?php\nnamespace App\\Livewire;\n"
+        "final class Counter { public function render() { return null; } }\n"
+    ),
+    "app/View/Components/Alert.php": (
+        "<?php\nnamespace App\\View\\Components;\n"
+        "final class Alert { public function render() { return null; } }\n"
+    ),
+    "app/Models/User.php": (
+        "<?php\nnamespace App\\Models;\n"
+        "use Illuminate\\Database\\Eloquent\\Factories\\HasFactory;\n"
+        "final class User { use HasFactory; }\n"
+    ),
+    # The Laravel 11 application builder turns on event discovery.
+    "bootstrap/app.php": (
+        "<?php\nuse Illuminate\\Foundation\\Application;\n"
+        "return Application::configure(basePath: dirname(__DIR__))->create();\n"
+    ),
+    "app/Http/Controllers/UserController.php": (
+        "<?php\nnamespace App\\Http\\Controllers;\n"
+        "use App\\Models\\User;\n"
+        "final class UserController { public function show(User $user) { return $user; } }\n"
+    ),
+    "routes/web.php": (
+        "<?php\nuse App\\Http\\Controllers\\UserController;\n"
+        "Route::get('/', [UserController::class, 'show']);\n"
+    ),
+    "app/Policies/UserPolicy.php": (
+        "<?php\nnamespace App\\Policies;\n"
+        "final class UserPolicy { public function view(): bool { return true; } }\n"
+    ),
+    "app/Policies/GhostPolicy.php": (
+        "<?php\nnamespace App\\Policies;\n"
+        "final class GhostPolicy { public function view(): bool { return true; } }\n"
+    ),
+    "database/factories/UserFactory.php": (
+        "<?php\nnamespace Database\\Factories;\n"
+        "final class UserFactory { public function definition(): array { return []; } }\n"
+    ),
+    "database/factories/GhostFactory.php": (
+        "<?php\nnamespace Database\\Factories;\n"
+        "final class GhostFactory { public function definition(): array { return []; } }\n"
+    ),
+    "database/seeders/DatabaseSeeder.php": (
+        "<?php\nnamespace Database\\Seeders;\n"
+        "final class DatabaseSeeder { public function run(): void {} }\n"
+    ),
+    "app/Queries/SearchArticles.php": (
+        "<?php\nnamespace App\\Queries;\n"
+        "final class SearchArticles { public static function get() { return []; } }\n"
+    ),
+}
+
+_LARAVEL_COMPOSER = (
+    '{"require": {"laravel/framework": "%s"}, "autoload": {"psr-4": '
+    '{"App\\\\": "app/", "Database\\\\Factories\\\\": "database/factories/"}}}'
+)
+
+# Reported in a Laravel app: no event type, no Command base, no matching model.
+_LARAVEL_UNWIRED_CLASSES = {
+    "App.Listeners.UntypedListener",
+    "App.Console.Commands.NotACommand",
+    "App.Policies.GhostPolicy",
+    "Database.Factories.GhostFactory",
+    "App.Queries.SearchArticles",
+}
+
+
+def test_laravel_end_to_end_convention_classes_are_live(tmp_path):
+    _write_tree(
+        tmp_path,
+        {
+            "composer.json": _LARAVEL_COMPOSER % "^11.0",
+            **_LARAVEL_APP_FILES,
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert result.get("analysis_errors", []) == []
+    assert {
+        finding["full_name"] for finding in result["unused_classes"]
+    } == _LARAVEL_UNWIRED_CLASSES
+    assert {finding["full_name"] for finding in result["unused_functions"]} == {
+        "App.Listeners.SendWelcome.neverCalled"
+    }
+
+
+def test_laravel_conventions_do_not_apply_outside_laravel(tmp_path):
+    _write_tree(
+        tmp_path,
+        {
+            # `artisan` alone does not make a Laravel app.
+            "composer.json": '{"require": {"php": "^8.2"}}',
+            "artisan": "#!/usr/bin/env php\n",
+            **_LARAVEL_APP_FILES,
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert {finding["full_name"] for finding in result["unused_classes"]} == {
+        "App.Listeners.SendWelcome",
+        "App.Console.Commands.Prune",
+        "App.Livewire.Counter",
+        "App.View.Components.Alert",
+        "App.Policies.UserPolicy",
+        "Database.Factories.UserFactory",
+        "Database.Seeders.DatabaseSeeder",
+    } | _LARAVEL_UNWIRED_CLASSES
+
+
+def test_php_member_initializer_self_reference_does_not_keep_class_live(tmp_path):
+    _write_tree(
+        tmp_path,
+        {
+            "src/Limits.php": """<?php
+namespace Acme;
+
+#[Marker(self::A)]
+final class Limits
+{
+    const A = 1;
+    const B = self::A;
+    private int $max = self::A;
+
+    public function cap(self $other): static { return $this; }
+}
+""",
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert {finding["full_name"] for finding in result["unused_classes"]} == {
+        "Acme.Limits"
+    }
+
+
+def test_php_docblock_self_and_see_references_do_not_keep_classes_live(tmp_path):
+    _write_tree(
+        tmp_path,
+        {
+            "src/IdeHelperModel.php": """<?php
+namespace Acme;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+/**
+ * @method static Builder|IdeHelperModel query()
+ * @mixin IdeHelperModel
+ */
+class IdeHelperModel {}
+""",
+            "src/SeeOnly.php": "<?php\nnamespace Acme;\nclass SeeOnly {}\n",
+            "src/Service.php": """<?php
+namespace Acme;
+
+final class Service
+{
+    /** @see SeeOnly for the old algorithm */
+    public function run(): string { return 'ok'; }
+}
+""",
+            "index.php": "<?php\n(new Acme\\Service())->run();\n",
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert {finding["full_name"] for finding in result["unused_classes"]} == {
+        "Acme.IdeHelperModel",
+        "Acme.SeeOnly",
+    }
+    assert result["unused_imports"] == []
+
+
+def test_laravel_10_without_event_discovery_reports_unwired_classes(tmp_path):
+    """Laravel 10 with discovery off and nothing registered (review l7 lv2)."""
+    _write_tree(
+        tmp_path,
+        {
+            "composer.json": _LARAVEL_COMPOSER % "^10.0",
+            "app/Providers/EventServiceProvider.php": """<?php
+namespace App\\Providers;
+
+use Illuminate\\Foundation\\Support\\Providers\\EventServiceProvider as ServiceProvider;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [];
+
+    public function shouldDiscoverEvents(): bool
+    {
+        return false;
+    }
+}
+""",
+            "app/Listeners/TypedButUndiscovered.php": """<?php
+namespace App\\Listeners;
+
+use App\\Events\\OrderShipped;
+
+class TypedButUndiscovered
+{
+    public function handle(OrderShipped $event): void {}
+}
+""",
+            "app/Console/Commands/AbstractBusCommand.php": (
+                "<?php\nnamespace App\\Console\\Commands;\n"
+                "abstract class AbstractBusCommand {}\n"
+            ),
+            "app/Console/Commands/CreateInvoiceCommand.php": (
+                "<?php\nnamespace App\\Console\\Commands;\n"
+                "class CreateInvoiceCommand extends AbstractBusCommand {}\n"
+            ),
+            "app/Console/Commands/SymfonyOnly.php": (
+                "<?php\nnamespace App\\Console\\Commands;\n"
+                "use Symfony\\Component\\Console\\Command\\Command;\n"
+                "class SymfonyOnly extends Command {}\n"
+            ),
+            "app/Models/Legacy.php": (
+                "<?php\nnamespace App\\Models;\n"
+                "use Illuminate\\Database\\Eloquent\\Model;\n"
+                "class Legacy extends Model {}\n"
+            ),
+            "database/factories/LegacyFactory.php": (
+                "<?php\nnamespace Database\\Factories;\n"
+                "class LegacyFactory { public function definition(): array { return []; } }\n"
+            ),
+        },
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert {
+        "App.Listeners.TypedButUndiscovered",
+        "App.Console.Commands.CreateInvoiceCommand",
+        "App.Console.Commands.SymfonyOnly",
+        "Database.Factories.LegacyFactory",
+    } <= {finding["full_name"] for finding in result["unused_classes"]}

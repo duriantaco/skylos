@@ -181,10 +181,13 @@ def _dependency_coverage_complete(summary: dict[str, Any]) -> bool:
         return False
     if coverage.get("category_complete") is False:
         return False
+    # Not-checked local lockfile packages are not evidence that an earlier
+    # dependency finding was fixed.
     for key in (
         "parse_error_count",
         "unresolved_dependency_count",
         "unresolved_lockfile_dependency_count",
+        "not_checked_lockfile_dependency_count",
         "lockfile_limitation_count",
     ):
         count = coverage.get(key, 0)

@@ -220,6 +220,16 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="List the default excluded folders and exit.",
     )
     parser.add_argument(
+        "--include-generated",
+        action="store_true",
+        help=(
+            "Also scan generated and vendored files that are skipped by default: "
+            "Django migrations, static/**/lib/**, *.min.js, *.min.css and files "
+            "that start with a vendored-library licence banner. "
+            "Config: [tool.skylos] include_generated = true."
+        ),
+    )
+    parser.add_argument(
         "--secrets", action="store_true", help="Scan for API keys. Off by default."
     )
     parser.add_argument(

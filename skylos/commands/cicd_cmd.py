@@ -12,14 +12,31 @@ from rich.markup import escape
 REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
 
 
-def _cicd_load_results(args, *, console_factory, load_config_func):
+GATE_ERROR_VERDICT = "Quality Gate: ERROR — could not decide (exit 1)"
+
+
+def _print_gate_error(console, message: str) -> None:
+    """`cicd gate` stopped before deciding: verdict line, then the reason."""
+    console.print(f"[bold red]{escape(GATE_ERROR_VERDICT)}[/bold red]", soft_wrap=True)
+    console.print(f"   • {escape(message)}", soft_wrap=True)
+
+
+def _report_load_error(console_factory, message: str, *, gate: bool) -> None:
+    console = console_factory()
+    if gate:
+        _print_gate_error(console, message)
+    else:
+        console.print(f"[bold red]{message}[/bold red]")
+
+
+def _cicd_load_results(args, *, console_factory, load_config_func, gate=False):
     if getattr(args, "input_file", None):
         try:
             with open(args.input_file) as f:
                 return json.load(f), 0
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            console_factory().print(
-                f"[bold red]Error reading {args.input_file}: {e}[/bold red]"
+            _report_load_error(
+                console_factory, f"Error reading {args.input_file}: {e}", gate=gate
             )
             return None, 1
 
@@ -72,7 +89,7 @@ def _cicd_load_results(args, *, console_factory, load_config_func):
                 else:
                     os.environ["SKYLOS_DIFF_BASE"] = previous_diff_base
     except Exception as e:
-        console_factory().print(f"[bold red]Analysis failed: {e}[/bold red]")
+        _report_load_error(console_factory, f"Analysis failed: {e}", gate=gate)
         return None, 1
 
 
@@ -497,6 +514,7 @@ def run_cicd_command(
                     cicd_args,
                     console_factory=console_factory,
                     load_config_func=load_config_func,
+                    gate=True,
                 )
                 if exit_code:
                     return exit_code
@@ -536,7 +554,7 @@ def run_cicd_command(
                     advisory=cicd_args.advisory,
                 )
         except Exception as exc:
-            console.print(f"[bold red]PR gate failed: {escape(str(exc))}[/bold red]")
+            _print_gate_error(console, f"PR gate failed: {exc}")
             return 1
 
     if cicd_args.cicd_cmd == "annotate":
