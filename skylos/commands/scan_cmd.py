@@ -155,6 +155,20 @@ def _verify_security_findings(
         )
 
 
+def _report_scope_options(args, config):
+    """Default report scope for this scan (see ``skylos.core.generated_files``)."""
+    config = config or {}
+    include_generated = bool(
+        getattr(args, "include_generated", False)
+        or getattr(args, "no_default_excludes", False)
+        or config.get("include_generated", False)
+    )
+    return {
+        "skip_generated": not include_generated,
+        "generated_keep_paths": list(getattr(args, "include_folders", None) or []),
+    }
+
+
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     """Keep a compared gate on base policy for the complete scan lifecycle."""
     import os
@@ -293,6 +307,7 @@ def _run_scan_command(
     final_exclude_folders = context.final_exclude_folders
     config = context.config
     config_file = context.config_file
+    report_scope_options = _report_scope_options(args, config)
     machine_output = _is_main_machine_output(args)
     explicit_rich_upload = (
         getattr(args, "_explicit_upload_requested", False)
@@ -354,6 +369,7 @@ def _run_scan_command(
                 required_config_rules=args.select,
                 include_review_proofs=include_review_proofs,
                 include_review_context=include_review_context,
+                **report_scope_options,
             )
 
         def run_main_analysis_with_notice(progress_callback=None):
@@ -1307,6 +1323,12 @@ def _run_scan_command(
                     and not args.force
                 ):
                     raise SystemExit(1)
+
+        if not machine_output:
+            from skylos.ui.scope_notes import scope_note_lines
+
+            for note in scope_note_lines(result):
+                console.print(f"[muted]{escape(note)}[/muted]")
 
         exit_code = run_gate_interaction(
             result=result,

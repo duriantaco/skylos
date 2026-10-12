@@ -674,6 +674,12 @@ precedence over repository-controlled config. The top-level
 `skylos debt` and `skylos clean`; pass `--exclude` for command-local additions
 or `--include-folder` to override an excluded folder.
 
+A full scan skips generated and vendored files (Django migrations,
+`static/**/lib/**`, `*.min.js`, `*.min.css`, vendored-library banners) and says
+how many in one line of output. Set `include_generated = true` under
+`[tool.skylos]` (or pass `--include-generated`) to scan them; see
+[What a full scan leaves out](docs/cli-output.md#what-a-full-scan-leaves-out).
+
 ## Language Support
 
 | Language | Dead Code | Security | Quality | Local API Proof (`verify`) | Notes |

@@ -300,6 +300,35 @@ security_enabled = false
         self.assertEqual(config["ignore"], [])
         self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
 
+    def test_include_generated_defaults_off_and_accepts_only_booleans(self):
+        config = load_config(self.root)
+        self.assertIs(config["include_generated"], False)
+
+        (self.root / "pyproject.toml").write_text(
+            "[tool.skylos]\ninclude_generated = true\n", encoding="utf-8"
+        )
+        self.assertIs(load_config(self.root)["include_generated"], True)
+
+        (self.root / "pyproject.toml").write_text(
+            '[tool.skylos]\ninclude_generated = "yes"\n', encoding="utf-8"
+        )
+        # Only real booleans are accepted.
+        self.assertIs(load_config(self.root)["include_generated"], False)
+
+    def test_synced_policy_include_generated_wins_over_repository(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            "include_generated: true\n", encoding="utf-8"
+        )
+        (self.root / "pyproject.toml").write_text(
+            "[tool.skylos]\ninclude_generated = false\n", encoding="utf-8"
+        )
+
+        config = load_config(self.root)
+
+        self.assertIs(config["include_generated"], True)
+
     def test_load_config_synced_security_policy_rejects_repo_downgrade_knobs(self):
         skylos_dir = self.root / ".skylos"
         skylos_dir.mkdir()

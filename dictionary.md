@@ -35,6 +35,7 @@ Rule IDs use a stable public prefix:
 | Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
 | Core scan | `skylos .`; dead-code focused scan. |
 | Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
+| Generated files | Django migrations, `static/**/lib/**`, `*.min.js`, `*.min.css` and JS/CSS files that open with a vendored-library licence banner. Skipped by default with a one-line count; migrations are still parsed for references and keep security and secret findings. Scan them with `--include-generated` or `[tool.skylos] include_generated = true`. |
 | Ruff lint integration | `skylos lint`; optional Python-only delegation to `ruff check` with native Ruff configuration, output, fixes, and exit codes. Install with `skylos[lint]`; it is not part of normal Skylos scans. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
@@ -694,7 +695,7 @@ uses project ignores, not inline comments, consistently across supported files.
 
 | ID | Severity | Name | Languages / Scope | Threshold / Notes |
 |:---|:---|:---|:---|:---|
-| Q301 | WARN-CRITICAL | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
+| Q301 | WARN-HIGH | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
 | Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |

@@ -408,6 +408,47 @@ checks, run a full scan with the gate. Default advisory architecture metrics
 (`SKY-Q802`, `SKY-Q803`) are shown in full scans and omitted from diff-scoped
 reports because their values depend on the whole dependency graph.
 
+### What a full scan leaves out
+
+A first scan should be quiet and believable. Generated and vendored files are
+left out of a scan by default, and the scan says so in one line:
+
+```text
+Skipped 201 generated/vendored files (190 Django migrations, 11 static/**/lib files); use --include-generated to scan them.
+```
+
+**Generated and vendored files.** These are skipped by default:
+
+- Django migrations: a `.py` file in a `migrations` package (with
+  `__init__.py`) that imports `django.db` and defines
+  `class Migration(...Migration)`. A test package or Alembic folder that is
+  merely called `migrations` is scanned as usual. Migrations are still parsed,
+  so code that only a migration uses is not reported as unused, and their
+  security (`danger`, `reliability`), secret and custom-rule findings are kept,
+  because migrations run at deploy time. Their dead-code, quality and AI-defect
+  findings are not reported.
+- Vendored front-end files, removed from the scan like the `vendor` default
+  exclude: JS/CSS under `static/**/lib/**`, `*.min.js`, `*.min.css`, and JS/CSS
+  files whose first comment is a library licence banner (`/*!` or `@license`
+  with a version and a licence or copyright line).
+
+`analysis_summary.generated_files` lists every skipped file by reason
+(`skipped_count`, `by_reason`, `files`); `findings_not_reported` counts the
+quality and AI-defect findings dropped from migrations (their definitions are
+not dead-code candidates, so dead code there is not evaluated). Scan them
+with `--include-generated`, `--no-default-excludes`, or
+`[tool.skylos] include_generated = true`; keep one folder with
+`--include-folder PATH`. A file named on the command line is never skipped,
+and path rules only look below the directory you scan, so
+`skylos app/migrations` scans those migrations. Synced Skylos Cloud policy can
+set `include_generated`, and repository config cannot turn it back off.
+
+**CRITICAL is for shipped code.** Complexity and nesting rules top out at
+HIGH. A CRITICAL finding in a test file (`tests/`, `test_*.py`, `*.test.ts`,
+`conftest.py`, ...) is reported as HIGH with `"original_severity": "CRITICAL"`
+and `"severity_reason": "test_file"`; `analysis_summary.test_file_severity_capped`
+counts them. Secrets keep CRITICAL wherever they are committed.
+
 ### Architecture advisories in full scans
 
 By default, `SKY-Q802` (distance from the main sequence) and `SKY-Q803`

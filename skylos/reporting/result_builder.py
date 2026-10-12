@@ -17,6 +17,11 @@ from skylos.reporting.dead_code_result import (
 from skylos.reporting.finding_categories import (
     split_security_reliability_findings,
 )
+from skylos.reporting.report_scope import (
+    apply_report_scope,
+    report_only_file_keys,
+    without_report_only_files,
+)
 from skylos.reporting.rollups import attach_directory_rollups
 
 AI_DEFECT_RULE_IDS = {
@@ -104,6 +109,11 @@ def build_analysis_result(
         review_config=project_cfg,
         include_review_proofs=include_review_proofs,
     )
+    # Definitions in generated files (Django migrations) are already outside
+    # the dead-code scope; empty generated files are not reported either.
+    empty_files = without_report_only_files(
+        empty_files, report_only_file_keys(analyzer)
+    )
     context_map = definition_context(analyzer, thr, evidence)
     whitelisted = whitelisted_definitions(analyzer, all_suppressed)
 
@@ -158,6 +168,7 @@ def build_analysis_result(
         workspace_inventory=workspace_inventory,
     )
     graded_files = files
+    apply_report_scope(result, analyzer)
     if isinstance(getattr(analyzer, "_review_context", None), dict):
         _attach_effective_review_config_hashes(result, project_cfg)
     measured_paths = {str(file) for file in graded_files}
