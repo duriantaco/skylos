@@ -58,7 +58,9 @@ Two choices to make here:
 - **Not using Skylos Cloud?** Run `skylos cicd init --no-upload`. Otherwise
   the upload job fails on your default branch until step 7 is done.
 - **"Skylos Done: not added"?** Skylos found no pytest tests and no
-  `test_command`. Continue without it, or see [Troubleshooting](#troubleshooting).
+  `test_command`. For a Vitest or Jest project, the message prints the exact
+  `[tool.skylos.done]` settings to add. Continue without it, or see
+  [Troubleshooting](#troubleshooting).
 
 Check the `Install project test dependencies` step in the file. Skylos Done
 runs your whole test suite with what that step installs.
@@ -221,7 +223,8 @@ Open the check. The first failing line names the problem.
 - `No test command`: Skylos found no pytest project. Add
   `test_command` under `[tool.skylos.done]` in `pyproject.toml` and merge
   that first, because Done reads its settings from the base branch. Then run
-  `skylos cicd init --done`.
+  `skylos cicd init --done`. For Vitest or Jest, `skylos cicd init` prints the
+  settings: a command that writes JUnit XML and the `junit_xml` path.
 - The test run is too slow: raise `test_budget_seconds` in
   `[tool.skylos.done]`, or run `skylos cicd init --no-done` and require only
   Skylos Quality Gate.
