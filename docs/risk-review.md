@@ -164,6 +164,9 @@ repository.
 - Pushing a new commit runs the check again on that commit. If it still has
   risks, the check fails until someone approves the new head commit, whether
   or not branch protection dismisses stale approvals.
+- Updating the branch only with the base branch's changes ("Update branch",
+  or merging the base in) keeps an existing approval: GitHub moves that
+  review to the new head commit, so the check still passes.
 - Dismissing the approval, or requesting changes after it, re-runs the job
   and the check fails again.
 - People and apps on the bypass list of the branch protection rule or
