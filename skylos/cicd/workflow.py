@@ -47,6 +47,7 @@ FIRST_GATED_PR_GUIDE_URL = (
 GATE_JOB_NAME = "Skylos Quality Gate"
 DONE_JOB_NAME = "Skylos Done"
 RISK_REVIEW_JOB_NAME = "Skylos risk review"
+RISK_REVIEW_RECHECK_JOB_NAME = "Skylos risk review (re-check after review)"
 UPLOAD_JOB_NAME = "Skylos Cloud upload"
 # Used when the repository's default branch cannot be read from Git.
 FALLBACK_DEFAULT_BRANCHES = ("main", "master")
@@ -192,12 +193,14 @@ def _build_done_job(
 
 
 def _build_risk_review_job(*, python_version: str, install_command: str) -> str:
-    # Reviews rerun the job: a person approving the head commit turns it green.
-    # pull_request_review runs have no GITHUB_BASE_REF, so the base branch is
-    # read from the event and passed through the environment, never inlined.
+    # The check runs on pull_request only. A review does not run it again
+    # under its own event: GitHub keeps every check run with a required name,
+    # so a passing review-event run would sit next to the failing pull_request
+    # run and the merge would stay blocked. Instead the re-check job below
+    # re-runs this job inside the pull_request run, which replaces its result.
     return f"""
   risk-review:
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    if: github.event_name == 'pull_request'
     name: {RISK_REVIEW_JOB_NAME}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -228,6 +231,48 @@ def _build_risk_review_job(*, python_version: str, install_command: str) -> str:
         env:
           PR_BASE_REF: ${{{{ github.event.pull_request.base.ref }}}}
           GITHUB_TOKEN: ${{{{ github.token }}}}
+
+  risk-review-recheck:
+    # A review was submitted or dismissed: re-run "{RISK_REVIEW_JOB_NAME}" in the
+    # pull request's own run so its result reflects the current approvals.
+    if: github.event_name == 'pull_request_review'
+    name: {RISK_REVIEW_RECHECK_JOB_NAME}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Re-run the risk review for the reviewed commit
+        env:
+          GH_TOKEN: ${{{{ github.token }}}}
+          REPO: ${{{{ github.repository }}}}
+          HEAD_SHA: ${{{{ github.event.pull_request.head.sha }}}}
+          WORKFLOW_REF: ${{{{ github.workflow_ref }}}}
+          JOB_NAME: {RISK_REVIEW_JOB_NAME}
+        run: |
+          set -euo pipefail
+          workflow="${{WORKFLOW_REF%@*}}"
+          workflow="${{workflow##*/}}"
+          run_id=""
+          for _ in $(seq 1 60); do
+            run_id="$(gh api "repos/$REPO/actions/workflows/$workflow/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=1" --jq '.workflow_runs[0].id // empty')"
+            if [ -n "$run_id" ] && [ "$(gh api "repos/$REPO/actions/runs/$run_id" --jq .status)" = "completed" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "No pull_request run of $workflow for $HEAD_SHA yet; push a commit or re-run it to check again."
+            exit 0
+          fi
+          job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs" --jq '.jobs[] | select(.name == env.JOB_NAME) | .id' | head -n 1)"
+          if [ -z "$job_id" ]; then
+            echo "Run $run_id has no '$JOB_NAME' job to re-run."
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/actions/jobs/$job_id/rerun" --silent
+          echo "Re-ran '$JOB_NAME' (job $job_id in run $run_id) for $HEAD_SHA."
 """
 
 

@@ -378,10 +378,9 @@ def test_risk_review_job_runs_on_pull_requests_and_reviews():
     assert on["pull_request_review"] == {"types": ["submitted", "dismissed"]}
     job = parsed["jobs"]["risk-review"]
     assert job["name"] == "Skylos risk review"
-    assert job["if"] == (
-        "github.event_name == 'pull_request' || "
-        "github.event_name == 'pull_request_review'"
-    )
+    # Reviews never run this job under their own event (a second check run with
+    # the required name would keep the merge blocked); the re-check job re-runs it.
+    assert job["if"] == "github.event_name == 'pull_request'"
     assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
     assert job["concurrency"] == {
         "group": "skylos-risk-review-${{ github.event.pull_request.number }}",
@@ -660,7 +659,12 @@ def test_cicd_init_done_and_upload_flags(tmp_path, monkeypatch):
 def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
     _write(tmp_path / "lib.py", "x = 1\n")
     _, workflow, printed = _run_cicd_init(tmp_path, monkeypatch, "--risk-review")
-    assert set(workflow["jobs"]) == {"skylos", "risk-review", "cloud-upload"}
+    assert set(workflow["jobs"]) == {
+        "skylos",
+        "risk-review",
+        "risk-review-recheck",
+        "cloud-upload",
+    }
     assert "Skylos risk review" in printed
     assert "bot approvals do not count" in printed
     assert "Wait for: Skylos Quality Gate, Skylos risk review" in printed
@@ -985,3 +989,27 @@ def test_skylos_init_points_to_the_pull_request_gate(tmp_path, monkeypatch):
     assert "skylos cicd init" in hint
     # Escaped, so Rich prints the table name instead of treating it as markup.
     assert r"\[tool.skylos]" in hint
+
+
+def test_risk_review_recheck_reruns_the_pull_request_job_on_reviews():
+    import subprocess
+
+    content = generate_workflow(use_risk_review=True)
+    job = yaml.safe_load(content)["jobs"]["risk-review-recheck"]
+    assert job["name"] == "Skylos risk review (re-check after review)"
+    assert job["if"] == "github.event_name == 'pull_request_review'"
+    assert job["permissions"] == {"actions": "write", "contents": "read"}
+    step = job["steps"][0]
+    assert step["env"]["JOB_NAME"] == "Skylos risk review"
+    assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    script = step["run"]
+    # Event data reaches the shell only through the environment.
+    assert "${{" not in script
+    assert "event=pull_request&head_sha=$HEAD_SHA" in script
+    assert '/actions/jobs/$job_id/rerun' in script
+    assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
+
+
+def test_risk_review_recheck_is_absent_without_risk_review():
+    assert "risk-review-recheck" not in yaml.safe_load(generate_workflow())["jobs"]
+

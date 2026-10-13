@@ -124,9 +124,10 @@ command lists the risks and exits 1 when there are any.
 skylos cicd init --risk-review --no-upload
 ```
 
-This adds a job named **Skylos risk review** to `.github/workflows/skylos.yml`
-and adds the trigger `pull_request_review: types: [submitted, dismissed]`.
-Only this job runs on review events; the other jobs skip them. The job:
+This adds a job named **Skylos risk review** to `.github/workflows/skylos.yml`,
+a second job named **Skylos risk review (re-check after review)**, and the
+trigger `pull_request_review: types: [submitted, dismissed]`. Only the re-check
+job runs on review events; the other jobs skip them. The risk review job:
 
 - checks out the pull request head with full history;
 - reads the base branch from the event;
@@ -147,17 +148,24 @@ repository.
   cannot be merged, however many approvals it has, including approvals from
   review bots that count toward your required approvals.
 - When a person with write access approves the head commit, GitHub sends a
-  `pull_request_review` event. The job runs again, finds the approval and
-  passes, and the pull request shows the new result for **Skylos risk
-  review**. GitHub's documentation does not say which run counts when a
-  check name has several runs on one commit. After setup, approve a pull
-  request that has risks and confirm the check turns green and the merge
-  button unblocks.
+  `pull_request_review` event. The re-check job waits for the pull request's
+  own run to finish, then re-runs its **Skylos risk review** job, which finds
+  the approval and passes. Because the re-run replaces the result inside the
+  pull request's run, the merge button unblocks.
+- Why not simply run the risk review again on the review event: GitHub
+  treats every check run with a required name on the head commit as
+  required. A passing run from the review event next to the failing run from
+  the pull request event leaves the pull request blocked (verified on GitHub,
+  14 Oct 2026).
+- The re-check job needs `actions: write` to re-run a job. On pull requests
+  from forks, GitHub gives the token read access only, so the re-check fails
+  and the risk review stays failed: re-run the **Skylos risk review** job
+  from the pull request's checks after approving.
 - Pushing a new commit runs the check again on that commit. If it still has
   risks, the check fails until someone approves the new head commit, whether
   or not branch protection dismisses stale approvals.
-- Dismissing the approval, or requesting changes after it, runs the job
-  again and the check fails again.
+- Dismissing the approval, or requesting changes after it, re-runs the job
+  and the check fails again.
 - People and apps on the bypass list of the branch protection rule or
   ruleset (by default, administrators when "Do not allow bypassing the
   above settings" is off) can still merge while the check fails.
