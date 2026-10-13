@@ -627,9 +627,7 @@ def _write_head_snapshot(
             raise OrphansUnavailable("the repository is too large for this check")
         target = destination.joinpath(*PurePosixPath(rel).parts)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(
-            data
-        )  # skylos: ignore[SKY-D215] repository-relative path validated by _skippable, inside a fresh private TemporaryDirectory
+        target.write_bytes(data)  # skylos: ignore[SKY-D215,SKY-D324] repo-relative path validated by _skippable, inside a fresh private TemporaryDirectory
     return _strip_tests(destination, written)
 
 

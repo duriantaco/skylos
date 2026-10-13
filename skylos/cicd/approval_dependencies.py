@@ -40,7 +40,11 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 MAX_PROJECT_MANIFESTS = 3000
 _LISTED = 3
 
-_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+def _load_yaml(text):
+    """Parse YAML with PyYAML's safe loader (the C one when available)."""
+    if hasattr(yaml, "CSafeLoader"):
+        return yaml.load(text, Loader=yaml.CSafeLoader)
+    return yaml.safe_load(text)
 
 # Directories whose files are installed packages, not this project's manifests.
 _VENDORED_DIRS = frozenset({"node_modules", "bower_components", ".venv", "venv"})
@@ -519,7 +523,7 @@ def _composer_own_name(text):
 
 
 def _pubspec_own_name(text):
-    data = yaml.load(text, Loader=_YAML_LOADER)
+    data = _load_yaml(text)
     return data.get("name") if isinstance(data, dict) else None
 
 
@@ -770,7 +774,7 @@ def _pipfile_manifest(text, _path):
 
 
 def _conda_manifest(text, _path):
-    data = yaml.load(text, Loader=_YAML_LOADER)
+    data = _load_yaml(text)
     if not isinstance(data, dict):
         raise TypeError("environment file is not a mapping")
     for item in _as_list(data.get("dependencies")):
@@ -965,7 +969,7 @@ def _gradle_catalog_manifest(text, _path):
 
 
 def _pubspec_manifest(text, _path):
-    data = yaml.load(text, Loader=_YAML_LOADER)
+    data = _load_yaml(text)
     if not isinstance(data, dict):
         raise TypeError("pubspec.yaml is not a mapping")
     for section in ("dependencies", "dev_dependencies", "dependency_overrides"):
@@ -1239,7 +1243,7 @@ def _go_sum(text, _path):
 
 
 def _pubspec_lock(text, _path):
-    data = yaml.load(text, Loader=_YAML_LOADER)
+    data = _load_yaml(text)
     if not isinstance(data, dict):
         raise TypeError("pubspec.lock is not a mapping")
     for name, entry in _as_dict(data.get("packages")).items():

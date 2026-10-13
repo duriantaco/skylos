@@ -140,7 +140,7 @@ def test_trusted_registry_path_prefix(project, home):
 
 
 def test_allowlisted_package_is_not_looked_up(project, home):
-    (project / "pyproject.toml").write_text(
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
         '[tool.skylos]\nhooks_allow_packages = ["npm:my-reactt"]\n'
     )
     registry = Registry({"my-reactt": "missing_package"})
@@ -150,7 +150,7 @@ def test_allowlisted_package_is_not_looked_up(project, home):
 
 
 def test_scoped_npm_registry_from_npmrc(project, home):
-    (project / ".npmrc").write_text("@corp:registry=https://npm.pkg.github.com\n")
+    (project / ".npmrc").write_text("@corp:registry=https://npm.pkg.github.com\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     registry = Registry({"@corp/ui": "missing_package"})
     result = check("npm i @corp/ui lodash", project, home, registry)
     # The scoped package is never sent to the public registry.
@@ -163,7 +163,7 @@ def test_scoped_npm_registry_from_npmrc(project, home):
 
 
 def test_user_npmrc_default_registry_downgrades_missing(project, home):
-    (home / ".npmrc").write_text("registry=https://npm.corp.example/\n")
+    (home / ".npmrc").write_text("registry=https://npm.corp.example/\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     registry = Registry({"internal-lib": "missing_package"})
     result = check("npm i internal-lib lodash", project, home, registry)
     assert result["findings"] == []
@@ -172,7 +172,7 @@ def test_user_npmrc_default_registry_downgrades_missing(project, home):
 
 
 def test_public_npmrc_registry_changes_nothing(project, home):
-    (project / ".npmrc").write_text("registry=https://registry.npmjs.org/\n")
+    (project / ".npmrc").write_text("registry=https://registry.npmjs.org/\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     registry = Registry({"fake-pkg": "missing_package"})
     result = check("npm i fake-pkg", project, home, registry)
     assert [f["name"] for f in result["findings"]] == ["fake-pkg"]
@@ -200,7 +200,7 @@ def test_environment_index_downgrades_missing(project, home):
 
 
 def test_pyproject_uv_index_downgrades_missing(project, home):
-    (project / "pyproject.toml").write_text(
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
         '[[tool.uv.index]]\nname = "corp"\nurl = "https://pypi.corp.example/simple"\n'
     )
     registry = Registry({"corp-utils": "missing_package", "fake": "missing_package"})
@@ -417,7 +417,7 @@ FINDING = {"message": "npm package 'cowsy' does not exist on the npm registry."}
 
 def run_hook(project, result, *, client="claude", pyproject=None, command="npm i x"):
     if pyproject is not None:
-        (project / "pyproject.toml").write_text(pyproject)
+        (project / "pyproject.toml").write_text(pyproject)  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     stdout = io.StringIO()
     deps = HookDeps(
         env={"CLAUDE_PROJECT_DIR": str(project)},
@@ -595,7 +595,7 @@ def test_real_checker_npx_missing_package_denied(project, stub_registry):
 def test_real_checker_local_bin_needs_no_lookup(project, stub_registry):
     bins = project / "node_modules" / ".bin"
     bins.mkdir(parents=True)
-    (bins / "tsc").write_text("")
+    (bins / "tsc").write_text("")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     assert run_real(project, "npx tsc --noEmit") is None
     assert stub_registry.calls == []
 
@@ -609,7 +609,7 @@ def test_real_checker_unreachable_registry_asks(project, stub_registry):
 
 
 def test_real_checker_trusted_registry_from_pyproject(project, stub_registry):
-    (project / "pyproject.toml").write_text(
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
         '[tool.skylos.hooks]\ntrusted_registries = ["https://pypi.corp.example"]\n'
     )
     assert (

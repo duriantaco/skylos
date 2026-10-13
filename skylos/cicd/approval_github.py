@@ -109,7 +109,7 @@ def _read_event(event_path: str) -> dict:
         size = os.path.getsize(event_path)
         if size > _MAX_EVENT_BYTES:
             raise GitHubApiError("the GitHub event file is too large")
-        with open(event_path, encoding="utf-8") as handle:
+        with open(event_path, encoding="utf-8") as handle:  # skylos: ignore[SKY-D215] GITHUB_EVENT_PATH is set by the Actions runner; size checked above
             data = json.load(handle)
     except (OSError, ValueError) as exc:
         raise GitHubApiError("could not read the GitHub event file") from exc

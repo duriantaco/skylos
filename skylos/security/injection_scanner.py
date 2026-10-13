@@ -196,7 +196,7 @@ def scan_file(
             and char_hex == "U+200D"
             and _only_emoji_joiners(source_lines, line_no)
         ):
-            # A joiner inside an emoji sequence ("👩‍💻") hides nothing.
+            # A zero-width joiner between emoji (U+1F469 U+200D U+1F4BB, "woman technologist") hides nothing.
             if high_only:
                 continue
             hidden_severity, hidden_rule = "HIGH", RULE_ID

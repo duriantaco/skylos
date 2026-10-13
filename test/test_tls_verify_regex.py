@@ -2,7 +2,7 @@ from skylos.rules.quality.regression import detect_security_regressions
 
 
 def _diff(removed, added):
-    lines = ["@@ -1,%d +1,%d @@" % (max(len(removed), 1), max(len(added), 1))]
+    lines = [f"@@ -1,{max(len(removed), 1)} +1,{max(len(added), 1)} @@"]
     lines += ["-" + line for line in removed]
     lines += ["+" + line for line in added]
     return "\n".join(lines) + "\n"

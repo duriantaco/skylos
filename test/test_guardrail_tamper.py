@@ -724,7 +724,7 @@ def test_cli_diff_keeps_findings_off_added_lines(tmp_path):
 def _scan(tmp_path, rel, text, **kwargs):
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     return scan_file(path, scan_path=rel, **kwargs)
 
 

@@ -17,7 +17,7 @@ def _hooks(directory: Path, *names: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     for name in names:
         path = directory / name
-        path.write_text("#!/bin/sh\nexit 0\n")
+        path.write_text("#!/bin/sh\nexit 0\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
         path.chmod(0o755)
     return directory
 
@@ -233,7 +233,7 @@ def test_real_repository_end_to_end(tmp_path):
 
 def _run(tmp_path, command, *, client="claude", pyproject=None, hooks=None):
     if pyproject is not None:
-        (tmp_path / "pyproject.toml").write_text(pyproject)
+        (tmp_path / "pyproject.toml").write_text(pyproject)  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     stdout = io.StringIO()
     directory = hooks if hooks is not None else tmp_path / ".git" / "hooks"
     deps = HookDeps(

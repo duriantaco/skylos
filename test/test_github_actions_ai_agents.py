@@ -18,7 +18,7 @@ def _write(tmp_path, text, name="agent.yml"):
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True, exist_ok=True)
     path = workflows / name
-    path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
+    path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     return path
 
 

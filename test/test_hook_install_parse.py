@@ -35,7 +35,7 @@ def project(tmp_path_factory) -> Path:
     bins = root / "node_modules" / ".bin"
     bins.mkdir(parents=True)
     for name in ("tsc", "eslint", "prettier", "vitest", "jest", "next"):
-        (bins / name).write_text("#!/bin/sh\n")
+        (bins / name).write_text("#!/bin/sh\n")  # skylos: ignore[SKY-D324] test fixture under pytest tmp_path
     (root / "web").mkdir()
     return root
 

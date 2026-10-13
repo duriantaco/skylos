@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from skylos.core.safe_cache_io import read_project_text_no_symlink
+
 ASK = "ask"
 DENY = "deny"
 ALLOW = "allow"
@@ -74,15 +76,16 @@ def _decision(data: dict[str, Any], key: str, problems: list[str]) -> str:
 def _hooks_table(root: Path | None) -> dict[str, Any]:
     if root is None:
         return {}
-    pyproject = Path(root) / "pyproject.toml"
     try:
-        if not pyproject.is_file() or pyproject.stat().st_size > MAX_PYPROJECT_BYTES:
+        # Refuses symlinks and oversized files: the repository is agent-editable.
+        text = read_project_text_no_symlink(Path(root), "pyproject.toml", max_bytes=MAX_PYPROJECT_BYTES)
+        if text is None:
             return {}
         try:
             import tomllib
         except ModuleNotFoundError:  # Python < 3.11
             import tomli as tomllib  # type: ignore[no-redef]
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        data = tomllib.loads(text)
     except (OSError, ValueError, ImportError):  # TOMLDecodeError is a ValueError
         return {}
     table: Any = data

@@ -131,7 +131,7 @@ def _snapshot(root: Path, *, outputs: frozenset[str] = frozenset()) -> dict:
     worktrees = git_dir / "worktrees"
     return {
         "status": _git(root, "status", "--porcelain=v1", "--untracked-files=all"),
-        "index": hashlib.sha256((git_dir / "index").read_bytes()).hexdigest(),
+        "index": hashlib.sha256((git_dir / "index").read_bytes()).hexdigest(),  # skylos: ignore[SKY-D215] test fixture under pytest tmp_path
         "head": _git(root, "rev-parse", "HEAD"),
         "refs": _git(root, "for-each-ref"),
         "stash": _git(root, "stash", "list"),
@@ -672,7 +672,7 @@ def test_only_skylos_stale_registrations_are_pruned(repo: Path):
     _git(repo, "worktree", "add", "--detach", "-q", str(ours), "main")
     _git(repo, "worktree", "add", "--detach", "-q", str(theirs), "main")
     shutil.rmtree(parent)  # a killed run: folder gone, registration left
-    shutil.rmtree(theirs)  # the user's own worktree on an unmounted disk
+    shutil.rmtree(theirs)  # skylos: ignore[SKY-D215] test fixture under pytest tmp_path; the user's own worktree on an unmounted disk
     assert len(os.listdir(git_dir / "worktrees")) == 2
 
     with preexisting.base_checkout(
@@ -681,7 +681,7 @@ def test_only_skylos_stale_registrations_are_pruned(repo: Path):
         pass
 
     remaining = [
-        (git_dir / "worktrees" / name / "gitdir").read_text().strip()
+        (git_dir / "worktrees" / name / "gitdir").read_text().strip()  # skylos: ignore[SKY-D215] test fixture under pytest tmp_path
         for name in os.listdir(git_dir / "worktrees")
     ]
     assert remaining == [str(theirs.resolve() / ".git")] or remaining == [
