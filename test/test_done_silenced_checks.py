@@ -16,7 +16,7 @@ from skylos.done.ci_checks import classify
 from skylos.done.config import DEFAULT_MODES, DoneConfig, parse_done_config
 from skylos.done.engine import run
 from skylos.done.receipt import FIXES, LABELS
-from skylos.done.suppressions import directives
+from skylos.done.suppressions import directives, silences_everything
 from skylos.done.test_config import detect_loosened_test_config
 
 A118, A119, A121 = "SKY-A118", "SKY-A119", "SKY-A121"
@@ -146,6 +146,42 @@ def test_directives_read_each_language_and_skip_strings():
     assert [(d.line, d.rules) for d in directives("A.java", java)] == [
         (1, ("unchecked",))
     ]
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "blanket"),
+    [
+        ("a.js", "/* eslint-disable */\nf();\n", True),
+        ("a.js", "/* eslint-disable no-console */\nf();\n", False),
+        ("a.js", "// eslint-disable-next-line\nf();\n", False),
+        ("a.ts", "// @ts-nocheck\nf();\n", True),
+        ("a.ts", "// @ts-ignore\nf();\n", False),
+        ("a.ts", "// biome-ignore-all lint: legacy\nf();\n", True),
+        ("a.ts", "// biome-ignore-all lint/suspicious/noDebugger: x\nf();\n", False),
+        ("a.py", "# ruff: noqa\nx = 1\n", True),
+        ("a.py", "# ruff: noqa: E501\nx = 1\n", False),
+        ("a.py", "# pylint: disable-all\nx = 1\n", True),
+        ("a.py", "# pylint: skip-file\nx = 1\n", True),
+        ("a.py", "# mypy: ignore-errors\nx = 1\n", True),
+        ("a.py", "# type: ignore\nx = 1\n", True),
+        ("a.py", "x = 1  # type: ignore\n", False),
+        ("a.py", "x = 1\n# pylint: disable=all\ny = 2\n", True),
+        ("a.py", "x = 1  # noqa\n", False),
+        ("a.go", "//nolint\npackage main\n", True),
+        ("a.go", "package main // nolint:all\n", True),
+        ("a.go", "//nolint:unparam\npackage main\n", False),
+        ("a.go", "//nolint\n\npackage main\n", False),
+        ("a.go", "package main\n\nfunc f() {} //nolint\n", False),
+        ("a.rs", "#![allow(warnings)]\nfn f() {}\n", True),
+        ("a.rs", "#![allow(dead_code)]\nfn f() {}\n", False),
+    ],
+)
+def test_blanket_suppressions_are_told_apart_from_named_and_one_line_ones(
+    path: str, text: str, blanket: bool
+):
+    found = directives(path, text)
+    assert found
+    assert any(silences_everything(d) for d in found) is blanket
 
 
 def test_added_suppression_without_a_reason_is_advice_and_counted(tmp_path: Path):

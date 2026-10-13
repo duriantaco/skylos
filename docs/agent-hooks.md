@@ -7,9 +7,14 @@ makes it, instead of waiting for CI:
   tells the agent what to fix.
 - **Before the agent reads a file**, Skylos blocks the read if the file contains
   a hard-coded secret, so the key is never sent to the model provider.
-- **Before a package install**, Skylos blocks `pip`/`uv`/`poetry`/`npm`/`pnpm`/
-  `yarn`/`bun`/`go` installs of packages that do not exist (hallucinated) or
-  are one-letter look-alikes of popular packages (typosquats).
+- **Before a package install or one-shot run** (`pip`, `uv`/`uvx`, `poetry`,
+  `pipx`, `npm`/`npx`, `pnpm dlx`, `yarn dlx`, `bun`/`bunx`, `go`, `deno`),
+  Skylos blocks packages that do not exist (hallucinated) or are one-letter
+  look-alikes of popular packages (typosquats), and asks you before installs
+  it cannot verify: git and URL sources, registries it does not know, and
+  lookups that fail.
+- **Before a git command**, Skylos blocks ways around the repository's git
+  hooks: `--no-verify`, `HUSKY=0`, `core.hooksPath=/dev/null` and similar.
 - **When the agent says it is done**, Skylos blocks the stop while issues the
   agent added in this session are still open.
 
@@ -97,7 +102,7 @@ entries are easy to find because every Skylos command contains
 |:---|:---|:---|:---|:---|
 | `post-edit` | `PostToolUse` on `Edit\|Write\|MultiEdit` | `PostToolUse` on `apply_patch` | `afterFileEdit` | Verifies the changed lines and reports failures to the agent |
 | `pre-read` | `PreToolUse` on `Read` | not available (Codex reads files through the shell; `pre-bash` covers that) | `beforeReadFile` | Blocks reading a file that contains secrets |
-| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, and installs of hallucinated or typosquatted packages |
+| `pre-bash` | `PreToolUse` on `Bash\|PowerShell` | `PreToolUse` on `Bash` | `beforeShellExecution` | Blocks commands that would print a secret file or variable, installs of hallucinated or typosquatted packages, and git-hook bypasses; asks before installs it cannot verify |
 | `stop` | `Stop` | `Stop` | `stop` | Blocks "done" while issues this session added are still open |
 
 ### post-edit
@@ -229,32 +234,134 @@ followed: a program that opens the file itself
 back under another name, and files the secrets scanner does not read
 (`.npmrc`, `~/.aws/credentials`), which `pre-read` does not check either.
 
-**Package installs.** These install commands are checked:
+**Package installs and one-shot runners.** Skylos reads the command the
+way the shell would (pipes, `&&`/`;`, line continuations, `VAR=1 cmd`,
+`export VAR=1`, `sudo`/`env`/`timeout`/`xargs`, `bash -c '...'`, `eval`,
+`$(...)`) and finds every package it would fetch:
 
-- `pip`/`pip3`/`pipx install`, `python -m pip install`, `uv pip install`,
-  `uv add`, `poetry add`
-- `npm install|i|add`, `pnpm add`, `yarn add`, `bun add`
-- `go get`, `go install`
+| Ecosystem | Commands |
+|:---|:---|
+| PyPI | `pip`/`pip3`/`pip3.12 install`, `python -m pip install`, `uv pip install`, `uv add`, `uv tool install`, `uv tool run`, `uvx`, `uv run --with`, `poetry add`, `pdm add`, `pipenv install`, `pipx install`/`run`/`inject` |
+| npm | `npm install` (and its aliases, `i`, `add`, `install-test`), `npm exec`/`npm x`, `npm init`/`npm create <initializer>` (runs `create-<initializer>`), `npx`, `pnpm add`/`install <pkg>`/`dlx`/`create`, `pnpx`, `yarn add`/`global add`/`dlx`/`create`, `yarn workspace <ws> add`, `bun add`/`install <pkg>`/`x`/`create`, `bunx`, `deno run`/`install`/`add` with `npm:` specifiers |
+| JSR | `deno add`/`install`/`run` with `jsr:` specifiers (and `deno add @scope/name`) |
+| Go | `go get`, `go install`, `go run pkg@version` |
 
-Other commands skip the registry lookup. For each named
-package, Skylos checks that it exists on PyPI, npm or the Go module proxy (and,
-for exact pins, that the version exists), and flags one-edit look-alikes of
-popular packages. Well-known packages that sit one edit from a popular name
-(`preact`, `pyaml`, `react-dom`, ...) are never flagged, and neither is any
-package in the popular list itself. To allow your own names (internal
-packages, deliberate look-alikes), list them in `pyproject.toml`:
+Options before the package name (`npx -y --package=foo bar`,
+`uvx --from foo bar`, `pip install -U -r reqs.txt pkg`, `pnpm --filter web add
+x`), several packages in one command, version pins, scoped npm names,
+`pkg[extra]`, PEP 508 markers and npm aliases (`foo@npm:bar@1`) are handled.
+For a runner, only the package is checked; the arguments after it belong to
+the program it runs.
+
+Each command gets one of these outcomes:
+
+| Outcome | Examples | What happens |
+|:---|:---|:---|
+| Package does not exist, pinned version does not exist, or one-edit look-alike of a popular package (SKY-D222/D225) | `pip install fastapi-authz`, `npx -y cowsy`, `npm create foo` when `create-foo` is not published | **Blocked** on every agent |
+| Direct source: code from outside a registry | `npm install github:user/repo#b181e0`, `npm install user/repo`, `pip install git+https://...`, `uvx --from git+https://...`, a tarball or wheel URL, `deno run https://...`, an archive outside the project, an archive downloaded by the same command (`curl -LO ... && npm i ./x.tgz`) | `direct_source` policy (default: ask) |
+| Untrusted registry or index | `--index-url`/`--extra-index-url`/`-i`/`-f URL`, `--registry`, `--@scope:registry=`, `PIP_INDEX_URL=`, `UV_INDEX_URL=`, `NPM_CONFIG_REGISTRY=`, `GOPROXY=`, `GOSUMDB=off` on the command line | `direct_source` policy (default: ask), unless the registry is in `trusted_registries` |
+| Could not verify | registry unreachable, timeout, HTTP 429/5xx; package named at run time (`pip install $PKG`, `xargs npm i`, `npx $(...)`); a name Skylos cannot read; more than 25 packages in one command; a package missing from the public registry while your configuration points at a private one; an install or git command longer than Skylos reads (16,384 characters, not counting here-document bodies) | `on_unverified` policy (default: ask) |
+| Not fetched from a registry | `npx tsc` when `tsc` is the project's own `bin`, in `node_modules/.bin` (this directory or any parent) or a global npm bin, as npm itself resolves it; `npx --no`; local paths and archives inside the project (`pip install -e .`, `npm i ../lib`, `workspace:`/`file:`/`link:`); `pip install --no-index` | allowed |
+| Manifest install | `npm ci`, `npm install`, `pip install -r requirements.txt`, `uv sync`, `poetry install`, `go mod download` | allowed; manifests are checked by `skylos . -a` and `skylos done` (SKY-D222), not here |
+
+A git commit hash ref (`github:cline/cline#b181e0`) is called out in the
+message: GitHub serves commits from any fork through the parent repository's
+URL, so a commit ref can point at a fork's code.
+
+What "ask" means for each agent:
+
+| Agent | `ask` | `deny` | `allow` |
+|:---|:---|:---|:---|
+| Claude Code | `permissionDecision: "ask"`: you approve or reject in the permission prompt, which shows the reason; Claude also gets it as `additionalContext`. In auto mode the hook's ask still forces a prompt. In `-p` runs, where nobody can answer, Claude Code denies the call and Claude reads the reason | `permissionDecision: "deny"` | runs through your normal permission flow, with a note (`systemMessage` + `additionalContext`) |
+| Cursor | `permission: "ask"` with `user_message`/`agent_message` | `permission: "deny"` | `permission: "allow"`; the note goes to the Hooks output channel |
+| Codex | **denied**: Codex does not support `ask` in `PreToolUse` and would run the command, so Skylos denies and says so | `permissionDecision: "deny"` | runs, with a `systemMessage` note |
+
+An `allow` is never silent: the agent and you are told the install was not
+verified. Cursor documents `ask` for `beforeShellExecution`; if your Cursor
+version or a cloud agent runs the command without asking, set
+`direct_source = "deny"` and `on_unverified = "deny"`.
+
+**Policy.** Set it in `pyproject.toml` at the project root:
+
+```toml
+[tool.skylos.hooks]
+direct_source = "ask"        # git/URL/tarball installs and untrusted registries: "ask" | "deny" | "allow"
+on_unverified = "ask"        # registry unreachable, run-time names: "ask" | "deny" | "allow"
+block_hook_bypass = true     # see "Git hook bypass" below
+trusted_registries = ["https://pypi.corp.example/simple", "npm.corp.example"]
+```
+
+A value that is not one of these falls back to the default (which never
+allows), and the message says so. `trusted_registries` entries match a
+registry by host, and by path prefix when the entry has a path. Packages
+installed from a trusted registry (on the command line or in your
+configuration) skip the public check.
+
+**Your own registry configuration.** "Not on npmjs.org" is not evidence of a
+hallucination when your configuration fetches from somewhere else. Skylos
+reads `registry=` and `@scope:registry=` from `.npmrc` (from the working
+directory up to the project root, and `~/.npmrc`), `npm_config_registry`,
+`PIP_INDEX_URL`/`PIP_EXTRA_INDEX_URL`/`UV_*INDEX*` from the environment,
+`pip.conf`/`pip.ini`, `uv.toml`, `[[tool.uv.index]]`, `[[tool.poetry.source]]`
+and `[[tool.pdm.source]]`, and `GOPROXY`/`GOPRIVATE`/`GONOPROXY` (environment
+or `go env -w`). With such a registry configured:
+
+- a scoped npm package whose scope has its own registry is never sent to
+  npmjs.org; it is allowed if that registry is trusted, otherwise it is
+  "could not verify";
+- a `GOPRIVATE` module is never sent to the Go proxy and is allowed;
+- any other package missing from the public registry becomes "could not
+  verify" (ask) instead of a block. Look-alikes of popular packages are still
+  blocked.
+
+To allow your own names (internal packages, deliberate look-alikes) without
+any check, list them in `pyproject.toml`:
 
 ```toml
 [tool.skylos]
-hooks_allow_packages = ["internal-pkg", "npm:my-reactt"]   # optional npm:/pypi:/go: prefix
+hooks_allow_packages = ["internal-pkg", "npm:my-reactt"]   # optional npm:/pypi:/go:/jsr: prefix
 ```
 
-Allowlisted packages skip every registry check. The block message names this
-setting, so the agent can suggest it when a flagged package is correct. If the command uses a private index or registry
-(`--index-url`, `--registry`, `PIP_INDEX_URL=`, and similar), the public
-registry doesn't apply, so Skylos skips the check. An unreachable registry
-never blocks the install. Answers are cached in
-`.skylos/cache/dependency_versions.json`.
+Well-known packages that sit one edit from a popular name (`preact`, `pyaml`,
+`react-dom`, ...) are never flagged, and neither is any package in the
+popular list itself. Registry answers that settle the question (exists, does
+not exist, version does not exist) are cached in
+`.skylos/cache/dependency_versions.json`; "could not verify" answers are
+retried next time. A PEP 440 local version (`torch==1.11.0+cu113`) is never on
+PyPI, so only the public version (`1.11.0`) is checked.
+
+**Git hook bypass.** Agents skip a failing pre-commit hook instead of fixing
+it. With `block_hook_bypass = true` (the default), pre-bash blocks:
+
+- `--no-verify` (and git's abbreviations such as `--no-veri`) on `git commit`,
+  `merge`, `pull`, `push`, `rebase` and `am`; `-n` on `commit` and `am`,
+  including short-option clusters (`-anm "msg"`; in `-amn` the `n` is the
+  message, so it is not a bypass);
+- `git -c core.hooksPath=...`, `--config-env=core.hooksPath=...`, and the
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_<n>` and `GIT_CONFIG_PARAMETERS`
+  environment forms, when the new path has no hooks;
+- hook managers' skip switches on a `git commit`/`push`/`merge`/`pull`/
+  `rebase`/`am` command: `HUSKY=0` and `HUSKY_SKIP_HOOKS` (husky),
+  `SKIP=...` and `PRE_COMMIT_ALLOW_NO_CONFIG` (pre-commit; `SKIP` is also
+  overcommit's), `LEFTHOOK=0`/`false` and `LEFTHOOK_EXCLUDE` (lefthook),
+  `SKIP_SIMPLE_GIT_HOOKS` (simple-git-hooks), `OVERCOMMIT_DISABLE`
+  (overcommit), whether as a prefix (`HUSKY=0 git commit`) or exported earlier
+  in the same command (`export HUSKY=0 && git commit`);
+- persistent changes: `git config core.hooksPath <path without hooks>` (or
+  `/dev/null`), `git config --unset core.hooksPath` when a hooks path is set,
+  and a git alias whose value adds `--no-verify`;
+- removing a hook, or taking away its execute bit, in the active hooks
+  directory (`rm .git/hooks/pre-commit`, `chmod -x .husky/_/pre-commit`).
+
+A bypass only counts when a hook it would skip is installed and executable
+in the directory git runs hooks from (`git rev-parse --git-path hooks`, so
+`core.hooksPath` and husky's `.husky/_` are followed; for husky, a hook counts
+when its `.husky/<hook>` script exists). In a repository without hooks
+`--no-verify` changes nothing and is allowed. `HUSKY=0 npm ci` (skipping hook
+installation in CI) is allowed. The block is a `deny` on all three agents; the
+message names the hooks that would not run and tells the agent to fix what the
+hook reports, or to stop and tell you if the hook fails for an unrelated
+reason.
 
 ### stop
 
@@ -284,6 +391,8 @@ Every hook exits `0` and signals through JSON on stdout.
 | Situation | Claude Code / Codex output | Cursor output |
 |:---|:---|:---|
 | pre-read / pre-bash block | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}` | `{"permission": "deny", "user_message": "...", "agent_message": "..."}` (`beforeReadFile`: `permission` + `user_message`) |
+| pre-bash ask (unverifiable install) | Claude: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "...", "additionalContext": "..."}}`; Codex: the deny shape above (Codex has no `ask`) | `{"permission": "ask", "user_message": "...", "agent_message": "..."}` |
+| pre-bash allowed by policy (`"allow"`) | Claude: `{"systemMessage": "...", "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "..."}}` (no `permissionDecision`); Codex: `{"systemMessage": "..."}` | `{"permission": "allow"}`; the note goes to stderr |
 | pre-read / pre-bash allow | no output, so the normal permission flow applies (Skylos never sends `"allow"`, which would skip your permission prompt) | `{"permission": "allow"}` (Cursor treats empty output from permission hooks as a deny) |
 | post-edit fail | `{"decision": "block", "reason": "..."}` | none (`afterFileEdit` can't send feedback) |
 | post-edit, notes only | Claude: `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}`; Codex: none | none |
@@ -342,7 +451,9 @@ timeouts set by the installer are 15 s (`pre-read`), 30 s
 timeout as a non-blocking failure.
 
 Each hook call appends one JSON line to `.skylos/hook.log` with the time,
-event, client, outcome, counts and duration. The log never holds file
+event, client, outcome, counts and duration. `pre-bash` outcomes are `skip`,
+`pass`, `ask`, `note` (allowed by policy), `block` and `block-bypass`, with
+counts of `packages`, `findings`, `direct`, `unverified` and `bypasses`. The log never holds file
 contents, secrets or shell commands. It rotates at 512 KB.
 
 The session file and log live in the project's `.skylos/` only when the
@@ -367,6 +478,24 @@ These times were measured on an Apple Silicon laptop (Python 3.14) by running
 | `pre-read` | small file containing secrets (blocked) | 0.11 s | 0.11 s |
 | `pre-bash` | unrelated command (`ls -la`) | 0.08 s | 0.08 s |
 | `pre-bash` | `pip install requests fastapi` (registry answers cached) | 0.29 s | 0.40 s |
+
+Install hook v2 was measured on 13 Oct 2026 on a heavily loaded machine (load
+average 10-30), interleaving the new code with the previous release run by
+run, so compare the columns rather than the absolute numbers (warm cache):
+
+| `pre-bash` command | new p50 / p95 | previous p50 / p95 |
+|:---|---:|---:|
+| `ls -la` (unrelated) | 0.30 s / 0.39 s | 0.32 s / 0.39 s |
+| `pip install requests fastapi` | 0.95 s / 2.59 s | 0.88 s / 2.40 s |
+| `npx -y cowsay hi` (newly checked) | 0.84 s / 1.64 s | 0.40 s / 0.49 s (not checked) |
+| `uvx ruff check .` (newly checked) | 0.78 s / 1.64 s | 0.41 s / 0.51 s (not checked) |
+| `npx tsc --noEmit` (local binary) | 0.48 s / 0.68 s | 0.54 s / 0.72 s |
+| `pip install -r requirements.txt` | 0.49 s / 0.74 s | 1.70 s / 2.17 s |
+| `npm install github:cline/cline#b181e0` (asks) | 0.38 s / 0.43 s | 1.14 s / 1.22 s (not checked) |
+| `git commit --no-verify -m x` (blocked) | 0.39 s / 0.54 s | 0.43 s / 0.55 s (not checked) |
+
+Commands that need no registry lookup (local binaries, manifests, git
+sources, hook bypasses) are decided without loading the registry checker.
 | `stop` | one edited file, unchanged since post-edit | 0.09 s | 0.14 s |
 
 `post-edit` checks the edited file against the whole project's module surface
@@ -411,9 +540,18 @@ takes about 3 s with a warm index.
 - It doesn't guard every way to read a file. `pre-read` covers Claude Code's
   `Read` tool and Cursor's `beforeReadFile`, but `cat .env` through the shell
   and Codex file reads are not blocked.
-- It doesn't check installs from requirement files, lockfiles or URLs
-  (`pip install -r`, `npm ci`, `pip install git+https://...`). Use
-  `skylos . -a` or `skylos verify` for manifests.
+- It doesn't check the packages inside requirement files, manifests or
+  lockfiles (`pip install -r`, `npm ci`, `uv sync`); `skylos . -a` and
+  `skylos done` do. A requirements file named by URL (`pip install -r
+  https://...`) is a direct source.
+- It doesn't follow dependencies declared inside a script (`uv run
+  script.py` with inline PEP 723 metadata), `cargo`, `gem` or `composer`
+  installs, `conda`, or package managers' own lifecycle scripts.
+- It is not a sandbox. A command that downloads and runs code in a way it does
+  not parse (a script that calls `pip`, `npm run` scripts that install,
+  `curl ... | sh`) is not checked; `npx`/`uvx` resolve the package at run
+  time, so a package that exists but is malicious is not caught by an
+  existence check.
 - It doesn't check edits made through the shell (`sed -i`, heredocs) at edit
   time. `stop` still re-checks files that earlier `post-edit` calls recorded,
   if they changed on disk.

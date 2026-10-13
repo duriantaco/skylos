@@ -106,8 +106,11 @@ _STRONG_HASHES = {"sha256", "sha384", "sha512", "bcrypt", "argon2", "scrypt", "p
 
 _DECORATOR_RE = re.compile(r"^[-]\s*@(\w+(?:\.\w+)*)")
 _DEPENDS_RE = re.compile(r"Depends\((\w+)\)")
-_VERIFY_TRUE_RE = re.compile(r"verify\s*=\s*True")
-_VERIFY_FALSE_RE = re.compile(r"verify\s*=\s*False")
+# `verify` as its own name (requests/httpx `verify=`, `session.verify =`) or
+# with an ssl_/tls_ prefix; not other flags that end in "verify" (`grep_verify=`).
+_VERIFY_NAME = r"(?:(?<![\w])|(?<=ssl_)|(?<=tls_)|(?<=SSL_)|(?<=TLS_))verify"
+_VERIFY_TRUE_RE = re.compile(_VERIFY_NAME + r"\s*=\s*True")
+_VERIFY_FALSE_RE = re.compile(_VERIFY_NAME + r"\s*=\s*False")
 _CSRF_EXEMPT_RE = re.compile(r"^\s*@csrf_exempt\b")
 _HASH_CALL_RE = re.compile(r"(?:hashlib\.)?(\w+)\(")
 

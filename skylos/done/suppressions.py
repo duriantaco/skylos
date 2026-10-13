@@ -16,6 +16,9 @@ directive, ``-- why`` for ESLint, ``reason = "..."`` in Rust, a comment on
 the line above) says so; one without a reason asks for one. A suppression of
 a whole file (``@ts-nocheck``, ``# mypy: ignore-errors``, ``/* eslint-disable
 */``) in a file that existed at the base says the file is no longer checked.
+``silences_everything`` names the suppressions that stop a tool checking a
+whole file or region at all; ``skylos cicd risk-review`` asks a person to
+approve those.
 
 Also advice: ``_ = name`` (Python) and ``void name;`` (JS/TS) added where
 that is the only use of the variable, which hides an unused-variable warning
@@ -29,7 +32,7 @@ import io
 import re
 import tokenize
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 RULE_SUPPRESSION = "SKY-A118"
@@ -385,6 +388,12 @@ _PY_DIRECTIVES = (
         "file",
     ),
     (
+        "pylint: disable-all",
+        "pylint",
+        re.compile(r"#\s*pylint\s*:\s*disable-all\b"),
+        "file",
+    ),
+    (
         "pylint: disable",
         "pylint",
         re.compile(
@@ -623,7 +632,12 @@ def _comment_directives(kind: str, line: int, comment: str, source: _Source):
     if kind in {"js", "js-like"}:
         found += _js_directives(line, comment)
     elif kind == "go":
-        found += _go_directives(line, comment)
+        found += [
+            replace(d, scope="file")
+            if d.name == "nolint" and _go_package_level(source, line)
+            else d
+            for d in _go_directives(line, comment)
+        ]
     elif kind == "jvm":
         found += _jvm_comment_directives(line, comment)
     if not found:
@@ -704,6 +718,18 @@ def _go_directives(line: int, comment: str) -> list[Directive]:
             shown += " " + ",".join(rules)
         found.append(Directive(line, name, tool, rules, scope, reason, shown))
     return found
+
+
+def _go_package_level(source: _Source, line: int) -> bool:
+    """A ``//nolint`` on the package clause, or in the comment block right
+    above it, covers the whole file (golangci-lint)."""
+    for number in range(line, len(source.lines) + 1):
+        code = source.code.get(number, "").strip()
+        if code:
+            return code == "package" or code.startswith("package ")
+        if number > line and not source.lines[number - 1].strip():
+            return False  # a blank line detaches the comment
+    return False
 
 
 def _jvm_comment_directives(line: int, comment: str) -> list[Directive]:
@@ -968,16 +994,50 @@ def _line_text(lines: list[str], number: int) -> str:
     return lines[number - 1] if 1 <= number <= len(lines) else ""
 
 
+# Rule names that mean every rule of the tool.
+_EVERY_RULE = frozenset({"all", "warnings", "clippy::all"})
+
+
+def silences_everything(directive: Directive) -> bool:
+    """The suppression covers a whole file or every line after it, and names
+    no rule (or only a group meaning all of them): ``/* eslint-disable */``,
+    ``@ts-nocheck``, ``# ruff: noqa``, ``# mypy: ignore-errors``. The tool
+    stops checking that code at all."""
+    if directive.scope not in ("file", "block"):
+        return False
+    rules = {rule.lower() for rule in directive.rules}
+    if directive.name.startswith("biome-ignore"):
+        rules -= {"lint"}  # Biome's category for every lint rule
+    return rules <= _EVERY_RULE
+
+
 def is_vendored(path: str) -> bool:
     return bool(_VENDORED_DIRS.intersection(PurePosixPath(path).parts[:-1]))
 
 
-def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
-    """Suppressions on added lines that the files did not already hold."""
-    outcome = SuppressionOutcome(findings=[])
+@dataclass(frozen=True)
+class AddedSuppression:
+    """A suppression on an added line that its file did not already hold."""
+
+    path: str
+    directive: Directive
+    existed: bool  # the file was there at the base
+    in_test: bool
+    generated: bool
+
+
+def added_suppressions(comparison, is_test, is_generated) -> list[AddedSuppression]:
+    """Every new suppression, uncapped; test and generated files included
+    and flagged."""
+    heads, bases, base_texts, _ = _read_changed(comparison)
+    return _added(comparison, heads, bases, base_texts, is_test, is_generated)
+
+
+def _read_changed(comparison):
     heads: dict[str, tuple[str, list[Directive], set[int]]] = {}
     bases: dict[str, list[Directive]] = {}
     base_texts: dict[str, str] = {}
+    files = 0
     for changed in comparison.changed:
         base_path = changed.base_path
         if base_path and language(base_path):
@@ -994,9 +1054,14 @@ def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
         text = comparison.head_text(path)
         if not text:
             continue
-        outcome.files += 1
+        files += 1
         heads[path] = (text, directives(path, text), added)
+    return heads, bases, base_texts, files
 
+
+def _added(
+    comparison, heads, bases, base_texts, is_test, is_generated
+) -> list[AddedSuppression]:
     # Suppressed lines that left their place: moved or reindented elsewhere.
     pool: Counter = Counter()
     for base_path, found in bases.items():
@@ -1010,7 +1075,7 @@ def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
                 pool[(directive.key, _normal(_line_text(lines, directive.line)))] -= 1
 
     base_of = {c.head_path: c.base_path for c in comparison.changed if c.head_path}
-    new: list[tuple[str, Directive, bool]] = []
+    new: list[AddedSuppression] = []
     for path, (text, found, added) in sorted(heads.items()):
         lines = _physical_lines(text)
         base_path = base_of.get(path)
@@ -1018,6 +1083,8 @@ def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
         head_counts = Counter(d.key for d in found)
         room = {key: head_counts[key] - base_counts[key] for key in head_counts}
         existed = base_path is not None and base_path in base_texts
+        test = is_test(path)
+        generated: bool | None = None
         for directive in found:
             if directive.line not in added:
                 continue
@@ -1028,16 +1095,28 @@ def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
             if room.get(directive.key, 0) <= 0:
                 continue  # an edited line that kept its suppression
             room[directive.key] -= 1
-            if is_test(path):
-                outcome.in_tests += 1
-                continue
-            if is_generated(path, text):
-                continue
-            new.append((path, directive, existed))
+            if generated is None:
+                generated = is_generated(path, text)
+            new.append(AddedSuppression(path, directive, existed, test, generated))
+    return new
+
+
+def new_suppressions(comparison, is_test, is_generated) -> SuppressionOutcome:
+    """Suppressions on added lines that the files did not already hold."""
+    outcome = SuppressionOutcome(findings=[])
+    heads, bases, base_texts, outcome.files = _read_changed(comparison)
+    new = []
+    for item in _added(comparison, heads, bases, base_texts, is_test, is_generated):
+        if item.in_test:
+            outcome.in_tests += 1
+        elif not item.generated:
+            new.append(item)
 
     by_line: dict[tuple[str, int], list[tuple[Directive, bool]]] = {}
-    for path, directive, existed in new:
-        by_line.setdefault((path, directive.line), []).append((directive, existed))
+    for item in new:
+        by_line.setdefault((item.path, item.directive.line), []).append(
+            (item.directive, item.existed)
+        )
     for (path, line), items in sorted(by_line.items()):
         outcome.added += len(items)
         outcome.unexplained += sum(not d.reason for d, _ in items)

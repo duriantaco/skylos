@@ -721,6 +721,14 @@ def test_pre_bash_allows_commands_that_print_no_secret(tmp_path, command):
     assert text == ""
 
 
+def test_pre_bash_line_continuation_does_not_hide_a_secret_read(tmp_path):
+    # "cat \\<newline> .env" is one command to the shell.
+    _write(tmp_path / ".env", f"AWS_SECRET_ACCESS_KEY={AWS_SECRET}\n")
+    _, out, text = _run(tmp_path, "pre-bash", _bash("cat \\\n  .env"), client="claude")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert AWS_SECRET not in text
+
+
 def test_pre_bash_secret_block_names_file_and_lines_only(tmp_path):
     _env_files(tmp_path)
     _, out, text = _run(

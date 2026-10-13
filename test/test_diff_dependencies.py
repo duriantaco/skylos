@@ -1074,6 +1074,34 @@ class TestManifestDiffChecks:
         )
         assert seen == [("PyPI", "totally-fake-lib", "1.0")]
 
+    def test_poetry_style_lines_count_only_in_poetry_dependency_tables(
+        self, tmp_path
+    ):
+        text = (
+            "[tool.uv]\n"
+            'required-version = "==0.12.23"\n'
+            "[tool.bumpversion]\n"
+            'current_version = "1.2.3"\n'
+            "[tool.poetry.dependencies]\n"
+            'fakepkg = "1.2.3"\n'
+            "[tool.poetry.group.dev.dependencies]\n"
+            'otherfake = "^2.0.1"'
+        )
+        (tmp_path / "pyproject.toml").write_text(text + "\n")
+        seen = []
+
+        def checker(ecosystem, name, version, _cache):
+            seen.append((ecosystem, name, version))
+            return "present"
+
+        scan_diff_dependency_hallucinations(
+            _new_file_diff("pyproject.toml", text),
+            str(tmp_path),
+            import_scanner=_noop_import_scanner,
+            status_checker=checker,
+        )
+        assert seen == [("PyPI", "fakepkg", "1.2.3"), ("PyPI", "otherfake", "2.0.1")]
+
     def test_unknown_status_reports_unreachable_without_findings(self):
         def checker(_ecosystem, _name, _version, _cache):
             return "unknown"

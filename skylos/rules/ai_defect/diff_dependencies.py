@@ -131,7 +131,9 @@ def scan_diff_dependency_hallucinations(
                 if mod:
                     added_imports.append((file_path, line_no, mod))
             continue
-        manifest_specs.extend(_manifest_specs_for_file(file_path, added_lines))
+        manifest_specs.extend(
+            _manifest_specs_for_file(file_path, added_lines, repo_root)
+        )
     manifest_specs.extend(_package_json_specs_from_diff(diff_text, repo_root))
 
     findings: list[dict[str, Any]] = []
@@ -209,12 +211,24 @@ def _local_roots_for_path(file_path: str) -> set[str]:
 def _manifest_specs_for_file(
     file_path: str,
     added_lines: list[tuple[int, str]],
+    repo_root=None,
 ) -> list[dict[str, Any]]:
     name = PurePosixPath(file_path).name.lower()
     if _is_requirements_file(file_path):
         return _requirement_specs(file_path, added_lines)
     if name == "pyproject.toml":
-        return _pyproject_specs(file_path, added_lines)
+        head_text = (
+            read_project_text_no_symlink(
+                repo_root,
+                file_path,
+                max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            if repo_root is not None
+            else None
+        )
+        return _pyproject_specs(file_path, added_lines, head_text=head_text)
     if name == "go.mod":
         return _go_mod_specs(file_path, added_lines)
     return []
@@ -257,10 +271,36 @@ def _requirement_specs(
     return specs
 
 
+_TOML_HEADER_RE = re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?$")
+_POETRY_DEPENDENCY_TABLE_RE = re.compile(
+    r"tool\.poetry\.(?:dependencies|dev-dependencies|group\.[^.]+\.dependencies)"
+)
+
+
+def _toml_tables_by_line(text: str) -> dict[int, str]:
+    """The table each line of a TOML document belongs to ("" before any)."""
+    tables: dict[int, str] = {}
+    current = ""
+    for line_no, line in enumerate(text.splitlines(), 1):
+        header = _TOML_HEADER_RE.match(line)
+        if header:
+            current = ".".join(
+                part.strip().strip("\"'") for part in header.group(1).split(".")
+            )
+        tables[line_no] = current
+    return tables
+
+
 def _pyproject_specs(
     file_path: str,
     added_lines: list[tuple[int, str]],
+    *,
+    head_text: str | None = None,
 ) -> list[dict[str, Any]]:
+    # `name = "1.2"` is a dependency only in Poetry's dependency tables; in
+    # other tables it is a setting ([tool.uv] required-version, a version
+    # bumper's current_version). Without the file, every table is assumed.
+    tables = _toml_tables_by_line(head_text) if head_text is not None else None
     specs = []
     for line_no, text in added_lines:
         stripped = text.strip()
@@ -287,6 +327,12 @@ def _pyproject_specs(
             continue
 
         poetry_match = _POETRY_DEP_RE.match(stripped)
+        if (
+            poetry_match is not None
+            and tables is not None
+            and not _POETRY_DEPENDENCY_TABLE_RE.fullmatch(tables.get(line_no, ""))
+        ):
+            poetry_match = None
         if poetry_match is not None:
             name = poetry_match.group(1)
             version = poetry_match.group(2).strip()

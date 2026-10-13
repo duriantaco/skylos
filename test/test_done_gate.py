@@ -990,8 +990,10 @@ def test_verdict_names_the_failed_tests_plainly(repo: Path):
 
     receipt = build_receipt(result)
     verdict = render_text(receipt).splitlines()[-1]
+    # Every failure passes on main, so each is labeled introduced.
     assert verdict == (
         f"Verdict: FAIL: {failed} of {ran} tests failed when Skylos ran them"
+        f" ({failed} introduced)"
     )
     assert f"**{verdict}**" in render_markdown(receipt)
 
@@ -1776,6 +1778,38 @@ def test_opaque_test_candidate_makes_inventory_unfinished(repo: Path, opaque):
     result = done_checks.run_check("test_tampering", _ctx(repo))
     assert result.status == "incomplete"
     assert "Cannot inventory tests/test_calc.py" in result.summary
+
+
+def test_inventory_parses_a_file_the_change_left_alone_once(repo: Path, monkeypatch):
+    calls: list[str] = []
+    original = done_checks.collect_tests
+
+    def counting(path, source, **kwargs):
+        calls.append(path)
+        return original(path, source, **kwargs)
+
+    _write(repo, "tests/test_other.py", "def test_other():\n    assert 1 + 1 == 2\n")
+    _make_current_base(repo)
+    _write(repo, "tests/test_calc.py", TESTS.replace("test_add_negative", "test_neg"))
+    monkeypatch.setattr(done_checks, "collect_tests", counting)
+    base, head = _ctx(repo).tests()
+    assert calls.count("tests/test_other.py") == 1
+    assert calls.count("tests/test_calc.py") == 2
+    assert [t for t in base if t.path == "tests/test_other.py"] == [
+        t for t in head if t.path == "tests/test_other.py"
+    ]
+    assert {t.name for t in base if t.path == "tests/test_calc.py"} - {
+        t.name for t in head
+    } == {"test_add_negative"}
+
+
+def test_unchanged_symlinked_test_file_still_stops_the_inventory(repo: Path):
+    (repo / "tests/test_link.py").symlink_to(repo / "tests/test_calc.py")
+    _make_current_base(repo)
+    _write(repo, "app/calc.py", CALC + "\n# harmless change\n")
+    result = done_checks.run_check("test_tampering", _ctx(repo))
+    assert result.status == "incomplete"
+    assert "Cannot inventory tests/test_link.py" in result.summary
 
 
 @pytest.mark.parametrize("candidate", [False, True])

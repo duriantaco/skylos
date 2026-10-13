@@ -717,6 +717,13 @@ def _run_scan_command(
                             item.get("rule_id") == "SKY-L021"
                             and item.get("kind") == "security_regression"
                         )
+                        # Base-against-head comparisons (reviewer settings
+                        # removed, a config file deleted) are diff-scoped by
+                        # construction and need not sit on an added line.
+                        or (
+                            item.get("rule_id") in {"SKY-A122", "SKY-A125"}
+                            and item.get("kind") == "guardrail_tamper"
+                        )
                         or str(item.get("rule_id", "")).upper()
                         in selected_prerequisite_ids
                     ]

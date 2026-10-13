@@ -2445,6 +2445,12 @@ def scan_github_actions_file(
         _scan_broad_secret_env(data, file_path, lines, findings, ignore)
         _scan_oidc_build_script_exposure(data, file_path, lines, findings, ignore)
         _scan_privileged_job_timeouts(data, file_path, lines, findings, ignore)
+        # Imported here: ai_agents builds on this module's helpers.
+        from skylos.rules.config.cicd.ai_agents import scan_ai_agent_workflows
+
+        scan_ai_agent_workflows(
+            data, file_path, lines, findings, ignore, root=root_path
+        )
 
     _scan_uses(data, file_path, lines, findings, ignore, is_workflow=is_workflow)
     _scan_run_blocks(data, file_path, lines, findings, ignore, is_workflow=is_workflow)

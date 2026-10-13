@@ -34,6 +34,8 @@ from skylos.done.js_inventory import (
     js_non_code_lines,
     newly_focused,
 )
+from skylos.done.preexisting import label as preexisting_label
+from skylos.done.preexisting import summary_counts
 
 if TYPE_CHECKING:
     from skylos.done.runner import TestRunResult
@@ -67,6 +69,8 @@ class CheckResult:
     findings: list[Finding] = field(default_factory=list)
     # Changed lines no test checks (file, line): the receipt's "unverified".
     unverified: list[tuple[str, int]] = field(default_factory=list)
+    # tests_pass only: whether each failing test also fails on the base.
+    failure_origins: dict | None = None
 
 
 @dataclass
@@ -138,9 +142,19 @@ class CheckContext:
             head: list[TestItem] = []
             base_paths, head_paths, removed_head_paths = self._repository_paths()
             argv = self.config.test_command or ("pytest",)
+            changed = {
+                path
+                for item in self.comparison.changed
+                for path in (item.path, item.base_path)
+                if path
+            }
+            # A file the change did not touch is the same at the base: it is
+            # read and parsed once, at head (where an unreadable test file
+            # still stops the inventory), and its tests reused for the base.
+            at_head: dict[str, list[TestItem]] = {}
             for paths, destination, read in (
-                (base_paths, base, self.comparison.base_text),
                 (head_paths, head, self.comparison.head_text),
+                (base_paths, base, self.comparison.base_text),
             ):
                 python_paths = sorted({path for path in paths if path.endswith(".py")})
                 if len(python_paths) > 10000:
@@ -148,15 +162,19 @@ class CheckContext:
                 for path in python_paths:
                     if destination is head and path in removed_head_paths:
                         continue
+                    if destination is base and path not in changed and path in at_head:
+                        base.extend(at_head[path])
+                        continue
                     candidate = is_pytest_file(path) or PurePosixPath(path).name in {
                         "test.py",
                         "tests.py",
                     }
                     source = read(path)
                     try:
-                        destination.extend(
-                            collect_tests(path, source, strict=candidate)
-                        )
+                        items = collect_tests(path, source, strict=candidate)
+                        destination.extend(items)
+                        if destination is head:
+                            at_head[path] = items
                     except ValueError as exc:
                         opaque = TestItem(
                             path, (), "test_inventory", 1, "", "", unittest_style=True
@@ -743,16 +761,24 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         trace_targets=trace_targets,
     )
     ctx.test_run = result
-    findings = [
-        Finding(
-            RULE_TESTS_PASS,
-            case.file,
-            case.line,
-            f"{case.node_id or case.name} failed"
-            + (f": {case.message}" if case.message else ""),
+    origins = _failure_origins(ctx, result)
+    findings = []
+    for index, case in enumerate(result.failures):
+        origin = origins.tests[index] if origins is not None else None
+        words = f" ({preexisting_label(origin, origins.base_label)})" if origin else ""
+        allowed = (
+            origins is not None and origins.allowed and origin.origin == "preexisting"
         )
-        for case in result.failures
-    ]
+        findings.append(
+            Finding(
+                RULE_TESTS_PASS,
+                case.file,
+                case.line,
+                f"{case.node_id or case.name} failed{words}"
+                + (f": {case.message}" if case.message else ""),
+                blocking=not allowed,
+            )
+        )
     findings += [
         Finding(
             RULE_TESTS_PASS,
@@ -785,8 +811,16 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         summary = f"{result.run} tests run by Skylos, {result.passed} passed ({result.seconds:.0f} s)"
         if result.flaky:
             summary += f", {len(result.flaky)} flaky"
+        if origins is not None and origins.allowed:
+            summary += (
+                f", {len(result.failures)} failing also on the base "
+                "(allow_preexisting_failures)"
+            )
     else:
         summary = result.reason[0].upper() + result.reason[1:] if result.reason else ""
+        counts = summary_counts(origins.as_dict()) if origins is not None else None
+        if counts and result.failures and result.status == "fail":
+            summary += f": {counts}"
     findings += [
         Finding(
             RULE_TESTS_PASS,
@@ -839,7 +873,53 @@ def check_tests_pass(ctx: CheckContext) -> CheckResult:
         summary=summary,
         evidence=evidence,
         findings=findings,
+        failure_origins=origins.as_dict() if origins is not None else None,
     )
+
+
+def _failure_origins(ctx: CheckContext, result: TestRunResult):
+    """Rerun the failing tests on the base and, when a person allowed it,
+    let failures verified there stop blocking (see preexisting.py)."""
+    from skylos.done.preexisting import TRUSTED_BASES, attribute_failures
+
+    if (
+        result.status != "fail"
+        or not result.failures
+        or not ctx.config.verify_preexisting
+        or ctx.config.mode("tests_pass") == "off"
+    ):
+        return None
+    try:
+        origins = attribute_failures(ctx, result)
+    except Exception as exc:
+        # The failures stand either way; only their origin is unknown.
+        logger.debug("rerunning failing tests on the base failed", exc_info=True)
+        from skylos.done.preexisting import unchecked
+
+        origins = unchecked(
+            ctx.comparison,
+            result,
+            f"the base rerun could not finish ({type(exc).__name__})",
+        )
+    if (
+        ctx.config.allow_preexisting_failures
+        and ctx.comparison.base_source in TRUSTED_BASES
+        and not ctx.comparison._session_late
+        and all(origin.origin == "preexisting" for origin in origins.tests)
+    ):
+        origins.allowed = True
+        _allow_preexisting(result)
+    return origins
+
+
+def _allow_preexisting(result: TestRunResult) -> None:
+    """Every failure also fails on the base: judge the run without them,
+    keeping every other reason it could be unfinished."""
+    from skylos.done.runner import escalate_missing
+
+    result.status = "pass"
+    result.reason = f"{result.passed} of {result.run} tests passed"
+    escalate_missing(result)
 
 
 def _js_test_files(ctx: CheckContext) -> set[str]:
@@ -1229,6 +1309,57 @@ def check_silenced_checks(ctx: CheckContext) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# guardrail_tampering: A122 AI-reviewer instructions or settings changed,
+# A125 code-scanning platform suppression markers added.
+# ---------------------------------------------------------------------------
+
+
+def check_guardrail_tampering(ctx: CheckContext) -> CheckResult:
+    from skylos.rules.ai_defect.guardrails import (
+        RULE_REVIEWER_CONFIG,
+        RULE_SCANNER_MARKER,
+        changes_from_comparison,
+        detect_guardrail_tampering,
+    )
+
+    outcome = detect_guardrail_tampering(changes_from_comparison(ctx.comparison))
+    findings = [
+        Finding(f.rule, f.file, f.line, f.message) for f in outcome.findings
+    ]
+    reviewer = sum(f.rule == RULE_REVIEWER_CONFIG for f in findings)
+    markers = sum(f.rule == RULE_SCANNER_MARKER for f in findings)
+    narrowed = sum(
+        f.rule == RULE_REVIEWER_CONFIG and f.details.get("narrows") is True
+        for f in outcome.findings
+    )
+    if findings:
+        parts = []
+        if reviewer:
+            parts.append(f"{reviewer} AI-reviewer file(s) changed")
+        if markers:
+            parts.append(f"{markers} scanner suppression marker(s) added")
+        summary = "; ".join(parts)
+    else:
+        summary = "AI-reviewer settings unchanged; no scanner suppression markers added"
+    return CheckResult(
+        id="guardrail_tampering",
+        rule=next((f.rule for f in findings), RULE_REVIEWER_CONFIG),
+        status=_status(findings),
+        summary=summary,
+        evidence={
+            "reviewer_files_changed": reviewer,
+            "reviewer_review_narrowed": narrowed,
+            "scanner_markers_added": markers,
+            "markers_in_tests": outcome.markers_in_tests,
+            "files_read": outcome.files_read,
+            "unparsed_files": len(outcome.unparsed),
+            "summary": summary[:120],
+        },
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -1237,6 +1368,96 @@ def _check_security_controls(ctx: CheckContext) -> CheckResult:
     from skylos.done.security_controls import check_security_controls
 
     return check_security_controls(ctx)
+
+
+def check_branch_orphans(ctx: CheckContext) -> CheckResult:
+    """A135 code made unused, A136 new code nothing calls, A137 new code only
+    tests call, in every language the dead-code engine supports."""
+    from skylos.done.orphans import RULES, OrphansUnavailable, find_branch_orphans
+
+    _, head_paths, removed = ctx._repository_paths()
+    paths = sorted({p for p in head_paths if p and p not in removed})
+    try:
+        report = find_branch_orphans(ctx.comparison, paths)
+    except OrphansUnavailable as exc:
+        summary = f"Not checked: {exc}"
+        return CheckResult(
+            "branch_orphans",
+            RULES[0],
+            "incomplete",
+            summary,
+            evidence={"summary": summary},
+        )
+    blocking = set(ctx.config.orphans_block_rules)
+    findings = [
+        Finding(
+            o.rule,
+            o.path,
+            o.line,
+            o.message,
+            blocking=o.rule in blocking and not o.advice,
+        )
+        for o in report.orphans
+    ]
+    made, new, tested = (sum(f.rule == rule for f in findings) for rule in RULES)
+    summary = _orphans_summary(report, made, new, tested)
+    status = _status(findings)
+    if status == "pass" and report.unchecked_changed:
+        status = "incomplete"
+    return CheckResult(
+        id="branch_orphans",
+        rule=next((f.rule for f in findings if f.blocking), RULES[0]),
+        status=status,
+        summary=summary,
+        evidence={
+            "summary": summary[:120],
+            "made_unused": made,
+            "new_unused": new,
+            "test_only": tested,
+            "not_judged": report.not_judged,
+            "lost_callers_not_judged": "; ".join(report.lost_unjudged)[:120],
+            "not_checked": "; ".join(sorted(report.not_checked.values()))[:120],
+            "grep_incomplete": report.grep_incomplete,
+            "base_cached": report.base_cached,
+            "base_seconds": round(report.base_seconds, 1),
+            "head_seconds": round(report.head_seconds, 1),
+            "files_analyzed": report.files_analyzed,
+        },
+        findings=findings,
+    )
+
+
+def _orphans_summary(report, made: int, new: int, tested: int) -> str:
+    if report.skipped:
+        text = report.skipped
+    elif made or new or tested:
+        parts = (
+            f"{made} existing symbol(s) left unused" if made else "",
+            f"{new} new symbol(s) nothing calls" if new else "",
+            f"{tested} new symbol(s) only tests call" if tested else "",
+        )
+        text = "; ".join(part for part in parts if part)
+    elif report.lost_unjudged:
+        text = ""
+    else:
+        text = "No code left without callers"
+    lost = report.lost_unjudged
+    if lost:
+        shown = ", ".join(lost[:3]) + (
+            f" and {len(lost) - 3} more" if len(lost) > 3 else ""
+        )
+        noun = "symbol" if len(lost) == 1 else "symbols"
+        verb = "lost its callers" if len(lost) == 1 else "lost their callers"
+        note = f"{len(lost)} {noun} {verb} but couldn't be judged: {shown}"
+        text = f"{text}; {note}" if text else note
+    others = report.not_judged - len(lost)
+    if others:
+        text += (
+            f"; {others} new symbol(s) not judged (used where the analyzer cannot see)"
+        )
+    if report.not_checked:
+        text += "; not checked: " + ", ".join(sorted(report.not_checked.values()))
+    return text
 
 
 CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
@@ -1250,6 +1471,8 @@ CHECKS: dict[str, tuple[Callable[[CheckContext], CheckResult], str]] = {
     "test_special_casing": (check_test_special_casing, "SKY-A115"),
     "silenced_checks": (check_silenced_checks, "SKY-A119"),
     "security_controls": (_check_security_controls, "SKY-L021"),
+    "guardrail_tampering": (check_guardrail_tampering, "SKY-A122"),
+    "branch_orphans": (check_branch_orphans, "SKY-A135"),
 }
 # Cheap checks first; the test run (slowest) last.
 RUN_ORDER = (
@@ -1257,9 +1480,11 @@ RUN_ORDER = (
     "test_tampering",
     "test_special_casing",
     "silenced_checks",
+    "guardrail_tampering",
     "security_controls",
     "secrets",
     "unknown_imports",
+    "branch_orphans",  # two dead-code analyses; the base one is cached
     "tests_pass",
     "changed_lines_checked",  # reuses the tests_pass run and its line trace
 )

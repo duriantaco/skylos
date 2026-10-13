@@ -42,10 +42,11 @@ GITIGNORE_HEADER = "# Skylos agent hooks: local session state, log and cache"
 # surface either.
 CURSOR_PERMISSION_FALLBACK = '{"permission":"allow"}'
 CURSOR_PROMPT_FALLBACK = '{"continue":true}'
-# The trusted done configuration permits up to 3,600 seconds for tests and
-# 1,800 for changed-line mutation checks. Leave time to persist the receipt
-# and render feedback; never derive this ceiling from the working tree.
-STOP_TIMEOUT_SECONDS = 3600 + 1800 + 60
+# The trusted done configuration permits up to 3,600 seconds for tests,
+# 1,800 for changed-line mutation checks and 1,800 for rerunning failing tests
+# on the base. Leave time to persist the receipt and render feedback; never
+# derive this ceiling from the working tree.
+STOP_TIMEOUT_SECONDS = 3600 + 1800 + 1800 + 60
 
 Probe = Callable[[Sequence[str]], "str | None"]
 
@@ -80,7 +81,7 @@ CURSOR_HOOKS = (
 STATUS_MESSAGES = {
     "session-start": "Skylos: recording the starting checkout",
     "pre-read": "Skylos: checking file for secrets",
-    "pre-bash": "Skylos: checking packages",
+    "pre-bash": "Skylos: checking packages and git hooks",
     "pre-edit": "Skylos: capturing edit baseline",
     "post-bash": "Skylos: recording command changes",
     "post-failure": "Skylos: recording partial tool changes",
@@ -98,7 +99,8 @@ def add_install_hooks_parser(agent_sub) -> None:
         help="Install Skylos agent-loop hooks for Claude Code, Codex, or Cursor",
         description=(
             "Merge Skylos hooks (prompt baseline, post-edit verify, secret-read guard, "
-            "package-install guard, stop gate) into the agent's hook config. "
+            "package-install and git-hook-bypass guard, stop gate) into the agent's "
+            "hook config. "
             "Existing hooks are preserved; re-running is a no-op."
         ),
     )

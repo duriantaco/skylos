@@ -3,9 +3,9 @@
 `skylos done` decides whether a change is finished, with evidence. It runs
 the tests itself, compares the tests and test settings with the base, looks
 for edits to Skylos's own settings, for added secrets and made-up imports, for
-code written to pass particular tests instead of being right, and for
-linters, type checkers, scanners and CI checks the change silenced, then
-writes a receipt.
+code written to pass particular tests instead of being right, for
+linters, type checkers, scanners and CI checks the change silenced, and for
+code the change left without callers, then writes a receipt.
 
 It gives no opinions and writes no style comments: each check passes or
 fails with evidence, the way CI does.
@@ -20,11 +20,15 @@ skylos done receipt             # print the latest receipt again
 Exit codes: `0` pass, `1` a blocking check failed or did not finish, `2`
 Skylos could not run (for example, the base is not fetched).
 
+To make a pull request with any of these findings wait for a human approval
+before it merges, use the [risk review](./risk-review.md). It reuses these
+checks without running the tests, and review-bot approvals do not count.
+
 ## Checks
 
 | Check | Rules | Blocks by default | What it checks |
 |:--|:--|:--|:--|
-| Tests pass when Skylos runs them | SKY-A113 | yes | Skylos runs `test_command` and reads the JUnit XML. A test that fails twice fails the check; one that fails once and then passes is reported as flaky. Running out of `test_budget_seconds` is "unfinished", never "pass". An expected Python test producing no results is "unfinished" unless the trusted base's collection settings explain its exclusion. |
+| Tests pass when Skylos runs them | SKY-A113 | yes | Skylos runs `test_command` and reads the JUnit XML. A test that fails twice fails the check; one that fails once and then passes is reported as flaky. Running out of `test_budget_seconds` is "unfinished", never "pass". An expected Python test producing no results is "unfinished" unless the trusted base's collection settings explain its exclusion. Failing tests are rerun on the base and labeled "already failing" or "introduced" (see [below](#already-failing-on-the-base)); they still block. |
 | No tests deleted, skipped or weakened | SKY-A110, SKY-A111, SKY-A112, SKY-A101 (advice) | yes | Python and JavaScript/TypeScript tests. A test that existed at the base is gone (a moved, renamed or rewritten test is not; a pasted copy of a test that is still there is), lost parametrize or `.each` cases, is left with no countable assertion, or gained skip/xfail (`.skip`, `.todo`, `.fixme`, `skipIf` and the like for JS/TS); a JS/TS test file gained a focus (`.only`, `fit`, `fdescribe`). Test settings loosened: pytest `-k`/`-m`/`--deselect`/`--ignore`/`--lf`/`-p no:`, `norecursedirs`, `testpaths`, `conftest.py` hooks that can drop tests or rewrite results, `collect_ignore`, lower coverage floors, Jest/Vitest settings that stop running existing test files, `passWithNoTests`, lower Jest/Vitest coverage thresholds, package.json test scripts that filter tests, may now fail or no longer run a runner, and CI test steps that may now fail (an unrelated command's `|| true` in the same step does not count). A test overwritten in place by a test of something else, while the code the old test exercised is still there, blocks. Not reported: a deleted test whose feature the change removed (see below), and settings that leave out no test that existed (a brand-new pytest config, a project's first `test` script, an ignore pattern that matches no existing test or whose tests run in their own CI step, a new advisory CI step). Advice: weakened assertions (SKY-A101), tests renamed, merged or rewritten with a different body, fewer countable assertions, a new `return` before assertions, deletions that are feature removals. |
 | Skylos settings and hooks left alone | SKY-A114 | yes | Edits to `protected_paths`, to `[tool.skylos]` in pyproject.toml, or to a CI workflow that runs Skylos. |
 | No secrets added | SKY-S101 | yes | Secrets on added lines. A suppression comment added in the same change does not count. Values that are public by structure are not secrets: hex digests that name their algorithm, public keys and certificates, contract addresses, document ids in share URLs, references to secrets stored elsewhere (`${{ secrets.X }}`), URL slugs; see [dictionary.md](../dictionary.md) (S101). |
@@ -32,6 +36,8 @@ Skylos could not run (for example, the base is not fetched).
 | Tests check the changed lines | SKY-A120 | advise | Each changed line in non-test Python code is run by a test, and a test fails when Skylos changes that line on purpose. Lines that fail either are listed on the receipt as unverified. See below. |
 | Code doesn't special-case the tests | SKY-A115, SKY-A116, SKY-A117 | yes | Added non-test Python and JS/TS code that answers a test's exact input with that test's expected value, asks whether a test runner is running it, reads the tests' own files, or rigs a comparison so it always passes. Weaker signals are advice. See below. |
 | Linters, type checkers, scanners and CI not silenced | SKY-A119, SKY-A121, SKY-A118 | advise | Linter, type-checker and scanner settings weakened (rules ignored or turned off, source paths excluded, `strict` off, secrets allow-listed), CI lint, type-check, scan and test steps that may now fail or no longer run, and inline suppressions added to code (`# noqa`, `@ts-ignore`, `//nolint`, ...). With `block`, settings and CI findings block; inline suppressions stay advice. See below. |
+| AI-reviewer settings and scanner markers left alone | SKY-A122, SKY-A125 | advise | Changes to the files AI code reviewers read their instructions and settings from (`.coderabbit.yaml`, `.github/copilot-instructions.md`, `REVIEW.md`, `.cursor/BUGBOT.md`, `.gemini/`, `greptile.json`, `.pr_agent.toml`, `.macroscope/` and others), and added comments that tell a scanning platform to stop reporting (`skipcq`, `noinspection`, `qlty-ignore`, `checkov:skip`, `trivy:ignore`, `codeql[...]`, `NOSONAR` outside A118's languages). See below. |
+| No code left without callers | SKY-A135, SKY-A136, SKY-A137 | advise | Code the change left unused: existing functions, methods and classes that lost their last production caller (often in files the change did not touch), new ones nothing calls, and new ones only tests call. Uses the dead-code engine on the base and the head with test files left out. See below. |
 
 **Feature removal (advice).** A deleted test is a feature removal, reported
 as advice instead of a deletion, when the change removed what it tested:
@@ -320,6 +326,108 @@ says so, instead of an automatic pytest run; the static checks above still
 run. When pytest runs automatically in a repository that also has JS/TS
 tests, the receipt notes that those tests were not run.
 
+## Already failing on the base?
+
+When tests fail, agents often say the failures were "pre-existing" and
+stop. `skylos done` checks that claim instead of taking it. After the tests
+fail, it checks the base commit out into a temporary Git worktree, runs only
+the failing tests there with the same command, and labels each failure:
+
+| Label | Meaning |
+|:--|:--|
+| already failing (`preexisting`) | The same test ran on the base and failed there too, in its own body and with the same kind of failure, and failed again the same way on a second base run. |
+| introduced (`introduced`) | It passes on the base: this change broke it. |
+| new test (`new_test`) | It does not exist on the base: its file is not there, or pytest collected that file on the base without it. Counts as introduced. |
+| not checked (`undetermined`) | The base run could not tell. See the reasons below. |
+
+```text
+FAIL       Tests pass when Skylos runs them: 3 of 5 tests failed: 2 introduced (1 new test), 1 already failing on the base
+           Failing tests rerun on main (merge base cd8a705): 2 introduced (1 new test), 1 already failing on the base (0.3 s)
+           tests/test_calc.py:6  SKY-A113 tests/test_calc.py::test_sub failed (introduced by this change: passes on main (merge base cd8a705)): assert 4 == 2
+           tests/test_calc.py:9  SKY-A113 tests/test_calc.py::test_mul failed (already failing on main (merge base cd8a705)): assert 7 == 6
+           tests/test_calc.py:15  SKY-A113 tests/test_calc.py::test_new_thing failed (introduced by this change: new test, not on main (merge base cd8a705)): assert 4 == 5
+```
+
+The base is the one the run compares with: the merge base for `--base`,
+the session start for `--session` and the Stop hook, and HEAD otherwise. The
+agent's Stop-hook message starts with the same answer, for example: "2 failing
+tests are new in this change: …; 1 was already failing on origin/main (merge
+base 1a2b3c4): … Fix the 2 new failures before saying you are done."
+
+**Labels do not change the verdict.** Every failing test still fails the
+check, including ones already failing on the base. To let verified
+already-failing tests stop blocking, a person sets
+`allow_preexisting_failures = true` in the base's `[tool.skylos.done]`.
+Then the check passes only if every failing test is labeled already
+failing; introduced, new and not-checked failures still block, and the
+receipt says the allowance was used. The setting applies only with `--base`
+or `--session` (including the Stop hook). It never applies against HEAD,
+because an agent's own commits would count as the base there.
+
+**When a failure is "not checked".** A failure is labeled already failing
+only when the base run gives positive evidence. Anything that could be the
+base checkout's setup rather than the test is labeled not checked:
+
+- On the base the test errored outside its body (fixture or setup error), its
+  file did not collect (import or syntax error), it raised an import, syntax,
+  missing-file, permission or connection error, or the output says a module,
+  package or fixture is missing.
+- It failed on the base with a different kind of failure (for example
+  `TypeError` on the base, `AssertionError` here), or it failed on the base
+  once and passed on a second base run (flaky).
+- A dependency manifest or lockfile changed (`requirements*.txt`, the
+  dependency tables of `pyproject.toml` or `package.json`, `uv.lock`,
+  `poetry.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.mod`,
+  `go.sum`, `Cargo.lock` and others). The installed packages then match only
+  one side.
+- The base has Git submodules, or the repository uses Git filters such as
+  LFS, which the base checkout does not run.
+- The base run imported a project module from the working tree or from an
+  installed copy instead of from the base checkout (an editable install that
+  could not be redirected).
+- A few tests that pass in the working tree, in files this change did not
+  touch, failed in the base checkout. The base checkout is then probably
+  missing something the tests need, such as an ignored config file or a built
+  extension.
+- The base run ran out of `preexisting_timeout_seconds`, could not start,
+  wrote no results, skipped the test, or the results name several tests the
+  same way. For runners other than pytest, a test whose name does not appear
+  in the base results is not checked either: JUnit lists only the tests that
+  ran, so a missing name does not prove the test is new.
+- The test command sets up its own environment (`uv run`, `poetry run`,
+  `pdm`, `hatch`, `tox`, `nox`, `pipenv`, `pixi`, `conda`). Skylos installs
+  nothing into the base checkout. Point `test_command` at the environment's
+  interpreter instead, such as `.venv/bin/python -m pytest`.
+
+**How the base run works.** Nothing is installed:
+
+- **pytest**: the same interpreter or command, with the base checkout first
+  on the import path and `PYTHONPATH` entries inside the repository moved to
+  the base checkout. Only the failing tests run, plus up to three passing
+  control tests. A test missing on the base, or a test file that does not
+  import there, never stops the other tests from running.
+- **Jest and Vitest**: the repository's `node_modules` folders are shared
+  through symlinks. Workspace package links point at the base checkout's
+  copies, so the base run never loads the working tree's code through them.
+  When the results name each test's file (Vitest, or `jest-junit` with
+  `addFileAttribute`) and `test_command` runs Jest or Vitest directly, or
+  through an `npm` script that is a single Jest or Vitest command, only the
+  failing files run. Otherwise the whole command runs on the base, and
+  results are matched by JUnit class name and test name.
+- **Other commands that write JUnit** (for example `gotestsum` for Go): the
+  whole command runs on the base. Skylos does not narrow them.
+
+The base checkout is a detached `git worktree` in a private temporary folder.
+Repository hooks, filters and helpers are disabled as in every other Git call.
+The user's working tree, index, HEAD and refs are not touched. The checkout
+and its registration are removed afterwards, including after errors, Ctrl-C
+and SIGTERM. A run killed with SIGKILL can leave a registration behind; the
+next run removes the ones Skylos created and leaves other worktrees alone. At
+most 100 failing tests are rerun; the rest are labeled not checked. Tests
+labeled already failing run once more on the base, so a test that fails there
+only sometimes is not called already failing. A flaky test that happens to pass
+on the base is still labeled introduced; it keeps blocking either way.
+
 ## Settings
 
 Settings live in `[tool.skylos.done]` and are read from the **base commit**,
@@ -337,6 +445,9 @@ protected_paths = [                # default: Skylos settings and agent hook fil
   ".codex/hooks.json", ".codex/config.toml", ".cursor/hooks.json",
 ]
 # junit_xml = "reports/junit.xml" # for non-pytest commands that write JUnit
+verify_preexisting = true          # rerun failing tests on the base and label them
+preexisting_timeout_seconds = 120  # 10 to 1800, for that rerun
+allow_preexisting_failures = false # true: verified already-failing tests stop blocking
 
 [tool.skylos.done.checks]
 tests_pass = "block"              # block | advise | shadow | off
@@ -347,7 +458,13 @@ unknown_imports = "advise"
 changed_lines_checked = "advise"
 test_special_casing = "block"
 silenced_checks = "advise"
+security_controls = "block"
+guardrail_tampering = "advise"
+branch_orphans = "advise"
 ```
+
+`branch_orphans_block_rules` (default `["SKY-A135", "SKY-A136"]`) lists the
+rules that block when `branch_orphans = "block"`; the others stay advice.
 
 `changed_lines_budget_seconds` (default 120, 10 to 1800) bounds the
 changed-lines check separately from `test_budget_seconds`.
@@ -383,6 +500,8 @@ skylos agent install-hooks --claude --project
    edits and committed edits count even if no post-edit hook saw them. It runs
    cheap tampering and secret checks before the configured tests.
 4. A failed or incomplete check returns up to ten reasons and a recheck command.
+   When tests fail, the message first says which failures this session
+   introduced and which were already failing at the session start.
    After `max_stop_blocks` on the same checkout and policy, the local hook lets
    the agent stop with a warning. The receipt stays failed or incomplete and
    another unchanged Stop does not rerun the tests. Changed source earns a new
@@ -424,7 +543,9 @@ The manual Done command exits 2 if verification or receipt publication fails
 and invalidates the latest receipt when it can safely write.
 
 The current Stop check runs the full configured test command within its
-budget. Automatic test selection and passing-result caching are not yet
+budget, then reruns only the failing tests on the session start's commit within
+`preexisting_timeout_seconds`. Reinstall the hooks to raise the agent's Stop
+timeout to cover that rerun. Automatic test selection and passing-result caching are not yet
 implemented; slow suites still need a deliberate command and budget.
 
 Stop also rechecks unresolved findings recorded by the existing post-edit
@@ -812,6 +933,200 @@ rule off or excluding a directory on purpose is reported too: it is a
 policy change, and under `block` a person should make it (commit it to the
 base first, or use Skylos Cloud's "Merge anyway").
 
+## AI-reviewer settings and scanner markers left alone (SKY-A122, A125)
+
+A pull request can quietly change the checks that judge it. Several AI code
+reviewers read their instructions from the pull request's own head branch
+(GitHub Copilot code review since 17 July 2026, CodeRabbit, Macroscope,
+Bito), so the change can tell its reviewer what not to flag or what it may
+approve. And a quality or security platform that runs somewhere else
+(SonarQube, DeepSource, Qodana, CodeQL, Checkov, Trivy) stops reporting a
+line when the code says so in a comment. This check compares the base and
+the head for both. It advises by default; `guardrail_tampering = "block"` at
+the base makes its findings block. Each finding is MEDIUM.
+
+The same rules run in diff-aware scans (`skylos . -a --diff origin/main`,
+`--diff-base`, the PR gate), where they are reported as AI defects
+(`ai_defects`, `kind: "guardrail_tamper"`, `metadata.guardrail_class`
+`guardrail_config_changed` or `checks_silenced`). They are kept even when
+they do not sit on an added line (a deleted config file, a removed setting),
+they run when the change touches no file Skylos otherwise analyzes (only
+YAML, Markdown, Ruby or Terraform, say), and a local `.skylos/baseline.json`
+entry does not hide them: the change cannot excuse itself.
+
+**AI-reviewer settings changed (SKY-A122).** Any change to a file an AI
+reviewer reads, checked against each vendor's documentation on 13 October
+2026:
+
+| Reviewer | Files | Read from |
+|:--|:--|:--|
+| GitHub Copilot code review | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `.github/skills/`, root `REVIEW.md` | the pull request's head |
+| CodeRabbit | `.coderabbit.yaml`, `.coderabbit.config.ts` | the pull request's head |
+| Macroscope | `.macroscope/`, `macroscope_approvability.md`, `.macroscope-ignore` | the pull request's head |
+| Bito | `.bito.yaml` | the pull request's head |
+| Claude Code Review, Qodo | root `REVIEW.md` | not documented |
+| Cursor Bugbot | `.cursor/BUGBOT.md` (any folder); `.cursor/config/bugbot.yaml` | not documented; the YAML from the default branch |
+| Greptile | `greptile.json`, `.greptile/` (any folder) | not documented |
+| Gemini Code Assist | `.gemini/styleguide.md`, `.gemini/config.yaml` | not documented |
+| Qodo Merge (PR-Agent) | `.pr_agent.toml`; root `best_practices.md` | the default branch; not documented |
+| Ellipsis | `.ellipsis/code-review.yaml` | the default branch |
+
+The message names what changed, with the changes that narrow the review
+first: an exclusion or ignore pattern added (`reviews.path_filters gained
+`!src/auth/**``), review or a review tool turned off, a higher
+`comment_severity_threshold`, a lower `max_review_comments`, a quieter
+CodeRabbit `profile`, auto-approval turned on, an added instruction such as
+"Do not flag missing tests", a Macroscope ignore or approvability line. YAML,
+JSON and TOML files are compared as parsed settings, so comments,
+formatting and key or list order do not count; Markdown and other text is
+compared line by line, ignoring whitespace and line order; quotes skip
+front matter and bare `---` or heading marks. A deleted file is reported (the
+reviewer falls back to its defaults), and so is a file moved out of the
+paths the reviewer reads. A skill moved between `.github/skills/`,
+`.agents/skills/` and `.claude/skills/` is not: GitHub lists all three as
+skill folders Copilot reads (only `.github/skills/` is named for code
+review, so only it is checked for content changes).
+
+Copilot code review also reads the root `AGENTS.md`, `CLAUDE.md` and
+`GEMINI.md`, and Claude Code Review reads every `CLAUDE.md`. Those files
+change for many other reasons, so only added lines aimed at the reviewer
+count there ("do not flag ...", "approve this pull request", "reviewers
+should ignore ...").
+
+Not checked: `.coderabbit.yml` and `.sourcery.yaml` (not in the vendors'
+current documentation), organization-level settings held by the vendor,
+and reviewer settings changed in a vendor's web interface.
+
+**Scanner suppression markers added (SKY-A125).** A comment on an added line
+that tells a code-scanning platform to stop reporting:
+
+| Platform | Marker | Stops reporting |
+|:--|:--|:--|
+| DeepSource | `skipcq`, `skipcq: PYL-W0612` | this line or the next |
+| JetBrains IDEs, Qodana | `noinspection Id`, `@noinspection Id` | the next statement; at the top of a JS/TS file, the file |
+| Qlty | `qlty-ignore: tool:rule`, `qlty-ignore(tool:rule): reason` | the next line; with `+rule`, up to `-rule` (the rest of the file if none) |
+| CodeScene | `@codescene(disable:"Complex Method")`, `@codescene(disable-all)` | the next function |
+| CodeQL alert suppression | `codeql[rule]`, `lgtm[rule]` | the next line, this line |
+| Checkov | `checkov:skip=CKV_AWS_20:reason` | the resource block; in a Dockerfile, the file |
+| Trivy | `trivy:ignore:AVD-...`, legacy `tfsec:ignore:...` | the resource or instruction below it |
+| KICS | `kics-scan ignore`, `ignore-line`, `ignore-block`, `disable=` | the file, next line, next block |
+| SonarQube, Semgrep | `NOSONAR`, `nosemgrep` | this line (or the next) |
+
+`NOSONAR` and `nosemgrep` in Python, JavaScript/TypeScript, Go, Rust,
+Java/Kotlin and C# are SKY-A118's (above) and are not reported twice; this
+rule reports them in the other languages (PHP, Ruby, Swift, Scala, Dart,
+C/C++, shell, Terraform, YAML, SQL, Dockerfiles). Only comments count (a
+marker inside a string does not; `NOSONAR` on a line with no code is prose,
+since it silences only its own line), and only when the file now holds more
+of that marker than at the base, so moved or reindented lines and edited
+lines that keep their marker are not new. `noinspection` needs an
+inspection id and `qlty-ignore` its documented `qlty-ignore:` or
+`qlty-ignore(...)` form, so prose mentioning them does not count. Test files
+are counted, not listed (any language: `FooTest.java`, `FooTests.swift`,
+`foo_spec.rb`, `*.tst.ts`, `MyAppTests/`, `spec/`, ...); generated, vendored
+and documentation files are left out. The message says what stops being
+reported and whether a reason is given.
+
+Not covered: Snyk Code's `deepcode ignore` (behind a feature flag and not
+publicly documented), Codacy (no marker of its own; it uses the underlying
+tools'), and language linters in the languages A118 does not read
+(RuboCop, PHPStan, Psalm, SwiftLint, Dart `// ignore:`, clang-tidy
+`NOLINT`, ShellCheck, hadolint).
+
+**Prompt injection in reviewer files (SKY-D260, D266).** The full scan
+also reads AI reviewers' files kept in tool folders (`.gemini/`,
+`.cursor/BUGBOT.md`, `.github/instructions/`, `.greptile/`,
+`.macroscope/`), which it skipped before, for instruction overrides,
+requests to reveal or send data, encoded payloads and invisible characters.
+In any reviewer file those are SKY-D266 at CRITICAL. "Do not flag" and
+"skip review" are what reviewer files say, so they keep their usual SKY-D260
+severity where Skylos already read the file and are not reported where it
+did not.
+
+## No code left without callers (SKY-A135, A136, A137)
+
+Agents replace a helper and leave the old one, change a call site so that a
+function in another file loses its last caller, or add a helper and a test
+for it with no production caller. Line-based diff checks only look at the
+lines a change touched, so the first two usually go unseen: the code that
+became unused sits on lines nobody edited.
+
+| Rule | Reports | Example message |
+|:--|:--|:--|
+| SKY-A135 (MEDIUM) | A function, method or class that production code used at the base and that nothing in production calls at the head. A JS/TS file nothing imports any more. | `` `price_label` (not touched by this change) lost its last caller when app/checkout.py:6 changed (`return price_label(total)`) `` |
+| SKY-A136 (LOW) | A function, method, class or JS/TS file the change added that nothing calls, or whose only callers are themselves unused. | `` `seasonal_discount` was added by this change and nothing calls it `` |
+| SKY-A137 (LOW) | A symbol or JS/TS file the change added that only tests call. | `` `loyalty_discount` was added by this change and only tests call it (tests/test_discounts.py:5); no production code does `` |
+
+**How it works.** Skylos copies the base commit (from Git objects) and the
+head (the working tree, including uncommitted and untracked files) into
+private temporary folders, leaves out test files, and runs the regular
+dead-code engine on both: the same entry-point, framework, export and
+dynamic-dispatch rules as `skylos .`, at confidence 75 or more. Nothing in
+the repository runs. With test files left out, a symbol only tests call
+counts as unused, which is how "only tests call it now" (A135) and A137 are
+found. Candidates then go through the same grep verification `skylos .`
+uses, against the head without tests; one it finds a use for is dropped,
+together with the candidates its body names. A use inside the symbol's own
+definition (its doctest, a recursive call) does not count as a caller.
+
+- **Which edit did it.** For A135 the message names the removed or changed
+  line that used the symbol, as its head line (`app/checkout.py:6 changed`)
+  or `... was deleted` for a removed file, with the old line's text. Python
+  references are read from the base file's syntax tree; other languages by
+  name on the removed line, skipping comments, strings and declarations of
+  the same name. When no removed line used it (its remaining callers became
+  unused), the message says so instead. When the only removed reference is
+  an import, it says "lost its last import".
+- **New or not.** A definition counts as added when its declaration line is
+  new, its name appears in no line the change removed, and fewer than 80% of
+  its body lines are unchanged lines or lines removed elsewhere in the
+  change. A moved or renamed definition is therefore not "new"; it is
+  compared with the base definition of the same name when one exists.
+- **When the analyzer abstains.** Some symbols with no static reference
+  left are not reported by `skylos .` because the analyzer is unsure (for
+  example a "weak helper function" such as `format_price`). If a line this
+  change removed used such a symbol, it is still reported as A135, as advice
+  that never blocks, ending "Skylos isn't certain nothing else uses it
+  (weak helper function)". New code the analyzer abstains on is not
+  reported.
+- **Not reported:** code already unused at the base; definitions in test,
+  fixture and generated files; framework roots, entry points and exported
+  public API (as `skylos .` decides them). A file unused on both sides (for
+  example JavaScript with no `package.json` entry) is not reported, but its
+  symbols are judged one by one. A candidate whose name appears in a file
+  the analyzer could not parse, or in a template, markup or configuration
+  file it does not read for calls (HTML, Jinja, Vue, Svelte, XML, YAML,
+  JSON, TOML, INI, SQL, shell, Makefile, Dockerfile), is counted as "not
+  judged" instead. So is a symbol a decorator may register with a framework:
+  in Python an attribute or call decorator (`@app.route(...)`,
+  `@bus.subscribe("x")`, `@receiver(signal)`; a bare `@login_required`-style
+  wrapper does not count), in other languages any annotation except plain
+  ones such as `@Override` or `@SuppressWarnings`. The summary names every
+  symbol that lost its callers but was not judged (``1 symbol lost its
+  callers but couldn't be judged: `format_price` (util.py:1)``), so the check
+  never reads "No code left without callers" while one is pending.
+- **Languages:** whatever the dead-code engine covers. Java reports private
+  and package-private members and Kotlin private ones (public members are
+  API); Go reports unexported functions and needs the `skylos-go` engine. Without the engine
+  the summary says `not checked: Go (skylos-go engine not installed)`, and
+  the check is unfinished when the change touched Go files.
+- **Cost:** two analyses (base and head) plus a grep pass over the
+  candidates' names when there are any. The base result is cached in `.skylos/cache/done-orphans/`
+  by base commit and Skylos version, so later runs against the same base
+  (the agent Stop hook) analyze only the head. The receipt's evidence lists
+  `base_seconds`, `head_seconds`, `base_cached` and `files_analyzed`.
+  Repositories over 20,000 files or 128 MB of source (after the default
+  excludes) are not checked; files over 2 MB, symlinks and submodules are
+  left out of both sides.
+
+Dead-code analysis has known false alarms, so the check advises by default.
+With `branch_orphans = "block"`, SKY-A135 and SKY-A136 block and SKY-A137
+stays advice; `branch_orphans_block_rules` changes that list.
+
+The cached base result is local state: like the session baseline, an agent
+with write access to `.skylos/` could alter it. Required CI starts without
+it.
+
 ## Receipt
 
 Each run writes `.skylos/receipts/<head>-<base>.json` and
@@ -839,6 +1154,12 @@ Cloud records these results as claims from the uploading CLI. A Cloud
 signature authenticates the stored report and uploader identity; it does
 not prove that the reported test execution happened. GitHub OIDC identifies
 the uploading workflow separately from the receipt's claimed check results.
+
+When tests fail, the receipt also has `failure_origins`: the base it
+reran them on, whether the rerun happened and why not, the time it took,
+whether `allow_preexisting_failures` was used, counts per label and, for
+each failing test, its label and a short reason or the base's failure message.
+Readers of the v1 contract ignore it; Skylos Cloud does not read it yet.
 
 The done receipt contains check summaries and finding locations, without
 source snippets. The code scan attached to it can include finding snippets
@@ -904,7 +1225,15 @@ boundaries needs the CI runner or an external sandbox.
 - `skylos done init`, automatic test selection and passing-result caching.
 - Authenticated organization-policy sync into local Done checks and automatic
   session-receipt upload to Cloud.
-- Rerunning a failing test on the base to call it pre-existing.
+- Narrowing the base rerun for runners other than pytest, Jest and Vitest
+  (the whole command runs), and rerunning tests whose results name no test
+  (exit-code-only commands).
+- Branch orphans: a definition renamed and left unused at the same time is
+  not compared with its old name; Java overloads share one identity in the
+  dead-code engine, so an overload that lost its last caller is not reported
+  while another overload is still called; module-level constants, variables and
+  imports are not reported; Rust `#[cfg(test)]` modules inside a source file
+  still count as callers.
 - Counting computed parametrize cases, and excluding individual parameter
   cases. Literal lists, tuples and simple module-level constant aliases are
   counted. A computed case list is trusted while the change leaves alone

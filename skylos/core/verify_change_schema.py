@@ -29,6 +29,7 @@ AI_VIBE_CATEGORIES = {
     "missing_contract_guardrail",
     "public_api_surface_drift",
     "mirrored_dependency_bump",
+    "guardrail_tamper",
 }
 
 AI_RULE_DEFAULTS = {
@@ -38,6 +39,8 @@ AI_RULE_DEFAULTS = {
     "SKY-A104": ("public_api_surface_drift", "medium"),
     "SKY-A105": ("missing_contract_guardrail", "high"),
     "SKY-A106": ("mirrored_dependency_bump", "low"),
+    "SKY-A122": ("guardrail_tamper", "medium"),
+    "SKY-A125": ("guardrail_tamper", "medium"),
     "SKY-F102": ("missing_auth_guard", "medium"),
     "SKY-L030": ("swallowed_error", "medium"),
     "SKY-L012": ("hallucinated_reference", "high"),
@@ -105,6 +108,10 @@ SUGGESTED_FIX_BY_VIBE = {
     "mirrored_dependency_bump": (
         "Review whether the dependency change was intentional; restore its previous "
         "version only if the change was accidental."
+    ),
+    "guardrail_tamper": (
+        "Undo the AI-reviewer setting change or remove the suppression marker, or "
+        "have a person approve it in a separate change."
     ),
     "security_vulnerability": (
         "Remove the unsafe sink or validate, escape, or parameterize the untrusted input."

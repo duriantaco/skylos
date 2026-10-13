@@ -221,6 +221,7 @@ def _run_cicd_init(cicd_args, console) -> int:
             use_done=use_done,
             done_install_commands=done_setup.install_commands,
             default_branch=default_branch,
+            use_risk_review=cicd_args.risk_review,
         )
     except ValueError as e:
         console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
@@ -266,6 +267,7 @@ def _run_cicd_init(cicd_args, console) -> int:
             (default_branch,) if default_branch else FALLBACK_DEFAULT_BRANCHES
         ),
         branch_detected=bool(default_branch),
+        risk_review=cicd_args.risk_review and "pull_request" in cicd_args.triggers,
     )
     return 0
 
@@ -401,6 +403,16 @@ def run_cicd_command(
         help="Include AI Defense check step (skylos defend)",
     )
     p_ci_init.add_argument(
+        "--risk-review",
+        action="store_true",
+        help=(
+            'Add the "Skylos risk review" job: it fails while a pull request has '
+            "risks (deleted tests, removed auth, new dependencies, weakened CI, "
+            "...) that no person with write access has approved; bot approvals "
+            "do not count. Also runs when a review is submitted or dismissed"
+        ),
+    )
+    p_ci_init.add_argument(
         "--advisory-gate",
         action="store_true",
         help="Report gate failures but let the generated CI job pass.",
@@ -483,6 +495,10 @@ def run_cicd_command(
         help="Format PR comments with Proven, Likely, or Speculative evidence labels.",
     )
 
+    from skylos.commands.risk_review_cmd import add_risk_review_parser
+
+    add_risk_review_parser(cicd_sub)
+
     if not argv:
         cicd_parser.print_help()
         return 0
@@ -492,6 +508,11 @@ def run_cicd_command(
 
     if cicd_args.cicd_cmd == "init":
         return _run_cicd_init(cicd_args, console)
+
+    if cicd_args.cicd_cmd == "risk-review":
+        from skylos.commands.risk_review_cmd import run_risk_review
+
+        return run_risk_review(cicd_args, console=console)
 
     if cicd_args.cicd_cmd == "gate":
         from skylos.cicd.policy import base_policy_context

@@ -103,11 +103,20 @@ CURSOR_EVENTS = frozenset(
 )
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "apply_patch"})
 _REDACTED_RE = re.compile(r"\s*\(redacted:[^)]*\)")
-# Same pre-filter as skylos.rules.ai_defect.install_command (kept here so the
-# common "not an install" path costs no heavy imports).
+# Same pre-filter as skylos.commands.hook_install_parse (kept here so the
+# common "not an install" path costs no imports).
 _INSTALL_HINT_RE = re.compile(
-    r"\b(?:pip3?|pipx|uv|poetry|npm|pnpm|yarn|bun|go)\b[^\n]*?\b(?:install|add|get|i)\b"
+    r"(?i)(?<![\w.-])(?:pip[0-9.]*|pipx|pipenv|uvx?|poetry|pdm|npm|npx|pnpm|pnpx|"
+    r"yarn|bunx?|go|deno|python[0-9.]*|pypy[0-9.]*|py)(?:\.exe)?(?![\w-])"
 )
+# Words a git-hook bypass needs; anything else skips the bypass parser.
+_BYPASS_HINT_RE = re.compile(
+    r"(?i)--no-v|hookspath|husky|lefthook|\bskip\w*=|pre_commit_allow|overcommit"
+    r"|git_config|alias\.|hooks|\bpre-commit\b|commit-msg|pre-push"
+)
+# "git commit -n" / "-anm": two linear searches, never one backtracking one.
+_GIT_WORD_RE = re.compile(r"\bgit\b")
+_SHORT_N_RE = re.compile(r"(?i)\s-[a-z]*n")
 _WS_RE = re.compile(r"\s+")
 
 VerifyFunc = Callable[..., dict[str, Any]]
@@ -121,6 +130,8 @@ class HookDeps:
     install_checker: InstallChecker | None = None
     env: dict[str, str] = field(default_factory=lambda: dict(os.environ))
     standards_policy: AgentStandardsPolicy | None = None
+    # cwd -> the directory git runs hooks from (None: unknown). Tests stub it.
+    hooks_dir: Callable[[Path], Path | None] | None = None
 
 
 @dataclass
@@ -266,10 +277,14 @@ def run_hook_command(
             notices.append(text)
             output = _with_notice(event, client, output, text)
 
+    # Messages for stderr only; never written to the log (they can name
+    # packages from the command).
+    stderr_notes = record.pop("_stderr_notes", [])
     if client == "cursor":
         # Cursor shows no message on an allowed action or a non-blocking stop;
         # its Hooks output channel shows stderr.
-        for text in ([record["warning"]] if record.get("warning") else []) + notices:
+        warning = [record["warning"]] if record.get("warning") else []
+        for text in warning + stderr_notes + notices:
             print(text, file=sys.stderr)
     if output is not None:
         stdout.write(json.dumps(output) + "\n")
@@ -1160,49 +1175,267 @@ def _handle_pre_bash(payload, root, client, deps, record):
         record["outcome"] = "skip"
         return _allow_output("pre-bash", client)
 
-    reason = _shell_secret_reason(command, _cwd(payload, root), root, deps, record)
+    cwd = _cwd(payload, root)
+    reason = _shell_secret_reason(command, cwd, root, deps, record)
     if reason is not None:
         record["outcome"] = "block"
         return _deny_output(client, reason)
 
-    if not _INSTALL_HINT_RE.search(command):
-        # Fast path: unrelated commands never import the registry checker.
+    install_hint = bool(_INSTALL_HINT_RE.search(command))
+    bypass_hint = bool(_BYPASS_HINT_RE.search(command)) or bool(
+        _GIT_WORD_RE.search(command) and _SHORT_N_RE.search(command)
+    )
+    if not install_hint and not bypass_hint:
+        # Fast path: unrelated commands never import the parsers or checker.
+        record["outcome"] = "skip"
+        return _allow_output("pre-bash", client)
+
+    from skylos.commands.hook_install_policy import load_install_policy
+
+    policy = load_install_policy(root)
+    if bypass_hint and policy.block_hook_bypass:
+        reason = _hook_bypass_reason(command, cwd, deps, record)
+        if reason is not None:
+            record["outcome"] = "block-bypass"
+            return _deny_output(client, reason)
+    from skylos.commands.hook_shell_lex import MAX_COMMAND_CHARS, truncates
+
+    if truncates(command):
+        # Only the start of the command can be parsed; what follows the cut
+        # (an install, a --no-verify) must not pass as checked.
+        result = {
+            "unverified": [
+                {
+                    "tool": "command",
+                    "name": f"of {len(command)} characters",
+                    "reason": f"too long to check (Skylos reads the first "
+                    f"{MAX_COMMAND_CHARS} characters); split it into shorter commands",
+                    "outcome": "too_long",
+                }
+            ]
+        }
+        return _install_output(result, policy, client, record)
+    if not install_hint:
         record["outcome"] = "skip"
         return _allow_output("pre-bash", client)
 
     checker = deps.install_checker
-    if checker is None:
+    if checker is not None:
+        return _install_output(checker(command, root), policy, client, record)
+    from skylos.commands.hook_install_parse import install_targets, split_targets
+
+    targets = install_targets(command, cwd, root=root)
+    registry_targets, result = split_targets(targets)
+    if registry_targets:
+        # Only registry lookups need the (heavier) checker module.
         from skylos.rules.ai_defect.install_command import check_install_command
 
-        checker = check_install_command
-    if deps.install_checker is None:
-        result = checker(command, root, cache_root=_state_root(root))
-    else:
-        result = checker(command, root)
+        result = check_install_command(
+            command,
+            root,
+            cache_root=_state_root(root),
+            cwd=cwd,
+            env=deps.env,
+            trusted_registries=policy.trusted_registries,
+            home=deps.env.get("HOME") or None,
+            targets=targets,
+        )
+    return _install_output(result, policy, client, record)
+
+
+def _hook_bypass_reason(command, cwd, deps, record) -> str | None:
+    from skylos.commands.hook_git_bypass import hook_bypasses
+    from skylos.commands.hook_shell_commands import simple_commands
+
+    bypasses = hook_bypasses(simple_commands(command, cwd), hooks_dir=deps.hooks_dir)
+    if not bypasses:
+        return None
+    record["bypasses"] = len(bypasses)
+    hooks = list(dict.fromkeys(name for b in bypasses for name in b.hooks))
+    hows = list(dict.fromkeys(b.how for b in bypasses))
+    persistent = any(b.operation == "config" for b in bypasses)
+    what = (
+        "turns off this repository's git hooks for later commands"
+        if persistent
+        else "skips this repository's git hooks"
+    )
+    return (
+        f"Skylos blocked this command: it {what} ({'; '.join(hows[:4])}). "
+        f"Hooks that would not run: {', '.join(hooks[:MAX_ITEMS])}. "
+        "Fix what the hook reports, then run the command again without the "
+        "bypass. If the hook fails for a reason unrelated to your change, stop "
+        "and tell the user instead of skipping it."
+    )
+
+
+# Outcome groups of check_install_command's "unverified" entries.
+_SILENT_OUTCOMES = frozenset({"allowlisted", "private"})
+_DIRECT_OUTCOMES = frozenset({"registry_override"})
+_DECISION_RANK = {"allow": 1, "ask": 2, "deny": 3}
+
+
+def _install_output(result, policy, client, record):
     findings = result.get("findings") or []
+    unverified = result.get("unverified") or []
+    direct = list(result.get("direct") or [])
+    overrides = [u for u in unverified if u.get("outcome") in _DIRECT_OUTCOMES]
+    unknown = [
+        u
+        for u in unverified
+        if u.get("outcome") not in _SILENT_OUTCOMES | _DIRECT_OUTCOMES
+    ]
     record["packages"] = len(result.get("packages") or [])
     record["findings"] = len(findings)
-    if not findings:
+    if direct or overrides:
+        record["direct"] = len(direct) + len(overrides)
+    if unknown:
+        record["unverified"] = len(unknown)
+
+    decision = None
+    if direct or overrides:
+        decision = policy.direct_source
+    if unknown:
+        decision = _stricter(decision, policy.on_unverified)
+    if findings:
+        decision = "deny"
+    if decision is None:
         record["outcome"] = "pass"
         return _allow_output("pre-bash", client)
+    if decision == "ask" and client == "codex":
+        decision = "deny"  # Codex runs the command on "ask"; never let it through
 
-    record["outcome"] = "block"
-    items = [f"- {f.get('message')}" for f in findings[:MAX_ITEMS]]
-    reason = (
-        "Skylos blocked this install: "
-        + (
-            "1 package looks"
-            if len(findings) == 1
-            else f"{len(findings)} packages look"
+    sections = []
+    if findings:
+        items = [f"- {f.get('message')}" for f in findings[:MAX_ITEMS]]
+        sections.append(
+            (
+                "1 package looks"
+                if len(findings) == 1
+                else f"{len(findings)} packages look"
+            )
+            + " hallucinated or typosquatted.\n"
+            + "\n".join(items)
         )
-        + " hallucinated or typosquatted.\n"
-        + "\n".join(items)
-        + "\nCheck the real package name (docs, registry search) and retry. "
-        "If the package is internal, install it with your private index/registry "
-        "flag so Skylos skips the public-registry check. If this package is "
-        "correct, add it to [tool.skylos] hooks_allow_packages in pyproject.toml."
+    if direct or overrides:
+        items = [_direct_item(d) for d in direct[:MAX_ITEMS]]
+        items += [_override_item(o) for o in overrides[: MAX_ITEMS - len(items)]]
+        sections.append(
+            "Installs from a source Skylos cannot verify against a package "
+            "registry:\n" + "\n".join(items)
+        )
+    if unknown:
+        items = [_unverified_item(u) for u in unknown[:MAX_ITEMS]]
+        sections.append("Packages Skylos could not verify:\n" + "\n".join(items))
+    body = "\n".join(sections)
+    if policy.problems:
+        body += "\nSkylos hook policy problem, using the default: " + "; ".join(
+            policy.problems
+        )
+
+    if decision == "allow":
+        record["outcome"] = "note"
+        text = (
+            "Skylos did not verify this install (allowed by [tool.skylos.hooks] "
+            "in pyproject.toml):\n" + body
+        )
+        if client == "cursor":
+            record["_stderr_notes"] = [text]
+        return _with_notice("pre-bash", client, _allow_output("pre-bash", client), text)
+    if decision == "ask":
+        record["outcome"] = "ask"
+        text = (
+            "Skylos could not verify this install. Approve it only if you trust "
+            "these sources.\n" + body
+        )
+        return _ask_output(client, text)
+    record["outcome"] = "block"
+    if findings:
+        guidance = (
+            "\nCheck the real package name (docs, registry search) and retry. "
+            "If the package is internal, install it with your private index/registry "
+            "flag and ask the user to list that registry in trusted_registries under "
+            "[tool.skylos.hooks]. If this package is correct, add it to [tool.skylos] "
+            "hooks_allow_packages in pyproject.toml."
+        )
+        head = "Skylos blocked this install: "
+    else:
+        steps = []
+        if direct or overrides:
+            steps.append(
+                "install the published package by name from the public registry"
+            )
+        outcomes = {u.get("outcome") for u in unknown}
+        if "unreachable" in outcomes:
+            steps.append("retry when the registry answers")
+        if outcomes & {"dynamic", "too_long", "too_many"}:
+            steps.append(
+                "write the package names out in a short command (no variables, "
+                "substitutions or xargs)"
+            )
+        if "not_public" in outcomes:
+            steps.append(
+                "ask the user to list your registry in trusted_registries under "
+                "[tool.skylos.hooks]"
+            )
+        steps.append("ask the user to run this command themselves")
+        guidance = "\n" + "; or ".join(steps).capitalize() + "."
+        if client == "codex":
+            guidance += " (Codex hooks cannot ask the user, so Skylos blocks instead.)"
+        head = "Skylos blocked this install because it could not verify it.\n"
+    return _deny_output(client, head + body + guidance)
+
+
+def _stricter(current: str | None, new: str) -> str:
+    if current is None:
+        return new
+    return current if _DECISION_RANK[current] >= _DECISION_RANK[new] else new
+
+
+def _direct_item(entry: dict[str, Any]) -> str:
+    spec = _clean_message(entry.get("spec"), MAX_MESSAGE_CHARS)
+    source = _clean_message(entry.get("source"), MAX_MESSAGE_CHARS)
+    runs = " (runs it immediately)" if entry.get("runs") else ""
+    return f"- {entry.get('tool')} {spec}: {source}{runs}"
+
+
+def _override_item(entry: dict[str, Any]) -> str:
+    registry = _clean_message(
+        _redact_url(str(entry.get("registry", ""))), MAX_MESSAGE_CHARS
     )
-    return _deny_output(client, reason)
+    return (
+        f"- {entry.get('tool')} {entry.get('name')}: uses the package index "
+        f"{registry}, which Skylos cannot check (the user can list it in "
+        "trusted_registries)"
+    )
+
+
+def _unverified_item(entry: dict[str, Any]) -> str:
+    label = entry.get("name") or entry.get("spec") or "?"
+    reason = _clean_message(
+        _redact_url(str(entry.get("reason", ""))), MAX_MESSAGE_CHARS
+    )
+    return f"- {entry.get('tool')} {_clean_message(label, MAX_MESSAGE_CHARS)}: {reason}"
+
+
+def _redact_url(value: str) -> str:
+    return re.sub(r"(?<=://)[^/@\s]*@", "", value)
+
+
+def _ask_output(client: str, reason: str) -> dict[str, Any]:
+    """Ask the user to approve. Claude Code shows the reason in the
+    permission prompt (and denies in -p runs where nobody can answer);
+    Cursor shows user_message. Codex has no "ask" (callers deny instead)."""
+    if client == "cursor":
+        return {"permission": "ask", "user_message": reason, "agent_message": reason}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+            "additionalContext": "Skylos asked the user to approve this command. "
+            + reason,
+        }
+    }
 
 
 _ENV_LINE_RE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)")
@@ -1437,6 +1670,21 @@ def _done_problem_lines(result) -> list[str]:
     return list(dict.fromkeys(lines))
 
 
+MAX_ORIGINS_CHARS = 1200
+
+
+def _done_origins_sentence(result) -> str | None:
+    """Which failing tests this change introduced and which already failed
+    on the base, verified by rerunning them there."""
+    from skylos.done.preexisting import agent_message
+
+    for outcome in result.checks:
+        if outcome.result.id == "tests_pass":
+            sentence = agent_message(getattr(outcome.result, "failure_origins", None))
+            return _clean_message(sentence, MAX_ORIGINS_CHARS) if sentence else None
+    return None
+
+
 def _done_stop_count(root: Path, session_id: str, digest: str | None, maximum: int):
     """Increment only actual stop blocks, under the shared session lock."""
     from skylos.done.base import DoneError
@@ -1647,6 +1895,10 @@ def _handle_done_stop(payload, root, client, deps, record):
         )
     record["outcome"] = "block"
     lines = [f"Skylos Done: change is {result.verdict}."]
+    origins = _done_origins_sentence(result)
+    if origins:
+        # Settles "these failures were already there" before the agent says it.
+        lines.append(origins)
     lines.extend(f"- {problem}" for problem in problems[:MAX_ITEMS])
     if len(problems) > MAX_ITEMS:
         lines.append(

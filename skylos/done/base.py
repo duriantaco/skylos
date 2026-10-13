@@ -172,6 +172,8 @@ class Comparison:
     _head_tree: str | None = field(default=None, repr=False)
     _session_late: bool = field(default=False, repr=False)
     _index_owner: Any = field(default=None, repr=False)
+    # The --base ref as given (e.g. origin/main), for messages only.
+    base_ref: str | None = field(default=None, repr=False)
 
     # -- file contents ---------------------------------------------------
 
@@ -294,6 +296,7 @@ def open_comparison(path: str | Path, base_ref: str | None = None) -> Comparison
         changed=changed,
         _context=context,
         _untracked=untracked,
+        base_ref=base_ref or None,
     )
 
 
