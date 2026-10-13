@@ -13,6 +13,11 @@ names an input or output file.
   speed; falls back to sys.settrace.
 * SKYLOS_DONE_MUTANT: load one module from a mutated copy of its source, in
   memory. The file on disk is never modified and no bytecode is written.
+* SKYLOS_DONE_SELECT: run only the listed node ids, and record every node id
+  pytest collected (the base-commit rerun of failing tests: a test that is not
+  collected does not exist there, and asking for it must not abort the run).
+* SKYLOS_DONE_MODULES: record which file each imported module came from, so
+  a base-commit run that imported the working tree's code is not trusted.
 """
 
 import importlib.machinery
@@ -312,11 +317,56 @@ def pytest_runtest_protocol(item, nextitem):
         _CURRENT[0] = None
 
 
+# ---------------------------------------------------------------------------
+# Selecting node ids that may not exist
+# ---------------------------------------------------------------------------
+
+_SELECT = _read_json("SKYLOS_DONE_SELECT")
+if not (isinstance(_SELECT, dict) and isinstance(_SELECT.get("ids"), list)):
+    _SELECT = None
+_MAX_IDS = 200000
+
+
+def _per_process(path):
+    # pytest-xdist workers each collect and import: one file per process.
+    return f"{path}.{os.getpid()}"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(session, config, items):
+    if _SELECT is None:
+        return
+    out = _SELECT.get("collected")
+    if isinstance(out, str) and out:
+        _write_json(_per_process(out), [item.nodeid for item in items][:_MAX_IDS])
+    wanted = {node for node in _SELECT["ids"] if isinstance(node, str)}
+    kept = [item for item in items if item.nodeid in wanted]
+    removed = [item for item in items if item.nodeid not in wanted]
+    if removed:
+        config.hook.pytest_deselected(items=removed)
+    items[:] = kept
+
+
 def pytest_deselected(items):
     _deselected.extend(item.nodeid for item in items)
 
 
+def _write_modules():
+    path = os.environ.get("SKYLOS_DONE_MODULES")
+    if not path:
+        return
+    files = {}
+    for name, module in list(sys.modules.items()):
+        module_file = getattr(module, "__file__", None)
+        if isinstance(name, str) and isinstance(module_file, str) and module_file:
+            files[name] = _real(module_file)
+            if len(files) >= _MAX_IDS:
+                break
+    _write_json(_per_process(path), files)
+
+
 def pytest_sessionfinish(session, exitstatus):
+    _write_modules()
     path = os.environ.get("SKYLOS_DONE_DESELECTED")
     if path:
         _write_json(path, _deselected[:100000])

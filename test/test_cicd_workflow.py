@@ -371,6 +371,89 @@ def test_header_names_the_required_checks():
     assert '"Skylos Done"' not in generate_workflow(use_done=False).split("\nname:")[0]
 
 
+def test_risk_review_job_runs_on_pull_requests_and_reviews():
+    content = generate_workflow(use_risk_review=True)
+    parsed = yaml.safe_load(content)
+    on = parsed.get("on") or parsed.get(True)
+    assert on["pull_request_review"] == {"types": ["submitted", "dismissed"]}
+    job = parsed["jobs"]["risk-review"]
+    assert job["name"] == "Skylos risk review"
+    assert job["if"] == (
+        "github.event_name == 'pull_request' || "
+        "github.event_name == 'pull_request_review'"
+    )
+    assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert job["concurrency"] == {
+        "group": "skylos-risk-review-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": False,
+    }
+    assert job["steps"][0]["with"] == {
+        "ref": "${{ github.event.pull_request.head.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    step = job["steps"][-1]
+    assert step["run"] == 'skylos cicd risk-review --base "origin/$PR_BASE_REF"'
+    # The base branch reaches the shell through the environment, never inlined.
+    assert step["env"] == {
+        "PR_BASE_REF": "${{ github.event.pull_request.base.ref }}",
+        "GITHUB_TOKEN": "${{ github.token }}",
+    }
+    # Other jobs do not rerun on reviews.
+    assert parsed["jobs"]["skylos"]["if"] == (
+        "github.event_name != 'push' && github.event_name != 'pull_request_review'"
+    )
+    assert parsed["jobs"]["done"]["if"] == "github.event_name == 'pull_request'"
+    assert '"Skylos risk review"' in content.split("\nname:", 1)[0]
+    no_upload = yaml.safe_load(generate_workflow(use_risk_review=True, use_upload=False))
+    assert no_upload["jobs"]["skylos"]["if"] == "github.event_name != 'pull_request_review'"
+    claude = yaml.safe_load(
+        generate_workflow(use_risk_review=True, use_claude_security=True)
+    )
+    assert claude["jobs"]["claude-security"]["if"] == (
+        "github.event_name != 'pull_request_review'"
+    )
+
+
+def test_risk_review_is_off_by_default_and_needs_pull_requests():
+    content = generate_workflow()
+    assert "pull_request_review" not in content and "risk-review" not in content
+    parsed = yaml.safe_load(generate_workflow(use_risk_review=True, triggers=["push"]))
+    assert "risk-review" not in parsed["jobs"]
+    assert "pull_request_review" not in str(parsed.get("on") or parsed.get(True))
+
+
+def test_generated_risk_review_workflow_passes_skylos_actions_audit(tmp_path):
+    workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
+    _write(workflow, generate_workflow(use_risk_review=True, use_claude_security=True))
+
+    assert scan_github_actions(tmp_path) == []
+
+
+def test_risk_review_command_parses_the_generated_step(monkeypatch):
+    from unittest.mock import Mock
+
+    from skylos.commands import cicd_cmd, risk_review_cmd
+
+    seen = {}
+
+    def fake(args, console=None):
+        seen.update(vars(args))
+        return 0
+
+    monkeypatch.setattr(risk_review_cmd, "run_risk_review", fake)
+    code = cicd_cmd.run_cicd_command(
+        ["risk-review", "--base", "origin/$PR_BASE_REF", "--format", "json"],
+        console_factory=Mock,
+        load_config_func=lambda path: {},
+        run_gate_interaction_func=Mock(),
+        emit_github_annotations_func=Mock(),
+    )
+    assert code == 0
+    assert seen["base"] == "origin/$PR_BASE_REF" and seen["format"] == "json"
+    assert seen["path"] == "."
+
+
 def test_generated_minimal_workflow_passes_skylos_actions_audit(tmp_path):
     workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
     _write(workflow, generate_workflow(use_upload=False, use_done=False))
@@ -572,6 +655,15 @@ def test_cicd_init_done_and_upload_flags(tmp_path, monkeypatch):
         tmp_path, monkeypatch, "--no-done", "--upload", "--force"
     )
     assert set(workflow["jobs"]) == {"skylos", "cloud-upload"}
+
+
+def test_cicd_init_risk_review_flag(tmp_path, monkeypatch):
+    _write(tmp_path / "lib.py", "x = 1\n")
+    _, workflow, printed = _run_cicd_init(tmp_path, monkeypatch, "--risk-review")
+    assert set(workflow["jobs"]) == {"skylos", "risk-review", "cloud-upload"}
+    assert "Skylos risk review" in printed
+    assert "bot approvals do not count" in printed
+    assert "Wait for: Skylos Quality Gate, Skylos risk review" in printed
 
 
 def test_cicd_init_uses_origin_head_as_default_branch(tmp_path, monkeypatch):

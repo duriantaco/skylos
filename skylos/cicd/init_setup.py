@@ -20,6 +20,7 @@ from skylos.cicd.workflow import (
     DONE_JOB_NAME,
     FIRST_GATED_PR_GUIDE_URL,
     GATE_JOB_NAME,
+    RISK_REVIEW_JOB_NAME,
     UPLOAD_JOB_NAME,
 )
 
@@ -238,6 +239,7 @@ def print_init_next_steps(
     done_setup: DoneSetup,
     push_branches: tuple[str, ...],
     branch_detected: bool,
+    risk_review: bool = False,
 ) -> None:
     """Say what each generated job does and how to open the first gated PR."""
     pr = "pull_request" in triggers
@@ -286,6 +288,13 @@ def print_init_next_steps(
                     "set test_command in [tool.skylos.done], then rerun with --done"
                 ),
             )
+        if risk_review:
+            row(
+                RISK_REVIEW_JOB_NAME,
+                "fails while the PR has risks no person with write access approved",
+                "(deleted tests, removed auth, new dependencies, weakened CI, ...);",
+                "bot approvals do not count; reruns when a review is submitted",
+            )
     if upload and "push" in triggers:
         console.print(f"[bold]Pushes to {branch_text}[/bold]")
         row(
@@ -301,7 +310,11 @@ def print_init_next_steps(
             soft_wrap=True,
         )
 
-    required = [GATE_JOB_NAME] + ([DONE_JOB_NAME] if done else [])
+    required = (
+        [GATE_JOB_NAME]
+        + ([DONE_JOB_NAME] if done else [])
+        + ([RISK_REVIEW_JOB_NAME] if pr and risk_review else [])
+    )
     console.print()
     console.print("[bold]Next[/bold]")
     console.print("  1. Open a pull request that adds the workflow:")

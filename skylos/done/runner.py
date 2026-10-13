@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -80,6 +81,9 @@ class CaseResult:
     outcome: str  # "passed", "failed", "error" or "skipped"
     message: str = ""
     seconds: float = 0.0
+    # The exception or failure type, when the results name one
+    # ("AssertionError", "ImportError"); "" when unknown.
+    kind: str = ""
 
     @property
     def classes(self) -> tuple[str, ...]:
@@ -135,6 +139,8 @@ class TestRunResult:
     import_lines: set[tuple[str, int]] = field(default_factory=set)
     trace: dict | None = None
     node_seconds: dict[str, float] = field(default_factory=dict)
+    # Every case the first run reported (the base rerun picks controls here).
+    cases: list[CaseResult] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -202,6 +208,7 @@ def run_tests(
         result = _assess(first, invocation, shown)
         result.pytest = invocation.pytest
         result.node_seconds = {c.node_id: c.seconds for c in first.cases if c.node_id}
+        result.cases = list(first.cases)
         if trace_out is not None:
             _read_trace(result, trace_out, root)
         if result.status != "fail" or not invocation.pytest:
@@ -530,6 +537,11 @@ def _run_once(
             return _RunOutcome(
                 None, time.monotonic() - started, [], False, _tail(log_fd), "timeout"
             )
+        except BaseException:
+            # Ctrl-C reaches only Skylos: the tests run in their own session.
+            # Stop them too, or they keep running (and writing) after we exit.
+            _kill(process)
+            raise
         tail = _tail(log_fd)
     finally:
         os.close(log_fd)
@@ -817,6 +829,11 @@ def _with_missing(
     result.unknown_cases = [
         (test, case_changes[test.id]) for test in expected if test.id in case_changes
     ]
+    return escalate_missing(result)
+
+
+def escalate_missing(result: TestRunResult) -> TestRunResult:
+    """A passing run with tests that reported no result is unfinished."""
     if (
         result.missing
         or result.silent_files
@@ -875,6 +892,7 @@ def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
     for case in tree.iter("testcase"):
         outcome = "passed"
         message = ""
+        kind = ""
         for child in case:
             if child.tag in {"failure", "error", "skipped"}:
                 outcome = {"failure": "failed", "error": "error", "skipped": "skipped"}[
@@ -882,6 +900,7 @@ def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
                 ]
                 message = (child.get("message") or "").strip()
                 if outcome != "skipped":
+                    kind = failure_kind(child.get("type"), message, child.text)
                     break
         file_attr = case.get("file")
         cases.append(
@@ -893,9 +912,39 @@ def _parse_junit_bytes(data: bytes, root: Path) -> list[CaseResult] | None:
                 outcome=outcome,
                 message=message,
                 seconds=_float(case.get("time")),
+                kind=kind,
             )
         )
     return cases
+
+
+_KIND_RE = re.compile(r"^\s*(?:E\s+)?([A-Za-z_][\w.]*?)(?::|$)")
+_KIND_LINE_RE = re.compile(
+    r"^\s*(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Failed|Interrupt))\b"
+)
+
+
+def failure_kind(type_attr: str | None, message: str, text: str | None) -> str:
+    """The failure's exception type: the JUnit ``type`` attribute, else the
+    name that starts the message ("ImportError: ...", pytest's "assert ..."
+    is an AssertionError), else the last "<Name>Error" line of the output."""
+    value = (type_attr or "").strip()
+    if value and re.fullmatch(r"[A-Za-z_][\w.]*", value):
+        return value.rsplit(".", 1)[-1][:80]
+    first = (message or "").strip().splitlines()[0] if (message or "").strip() else ""
+    if first.startswith("assert ") or first == "assert":
+        return "AssertionError"
+    match = _KIND_RE.match(first)
+    if match and first[match.end(1) : match.end(1) + 1] == ":":
+        name = match.group(1).rsplit(".", 1)[-1]
+        if name[:1].isupper():
+            return name[:80]
+    kind = ""
+    for line in (text or "")[-20000:].splitlines():
+        found = _KIND_LINE_RE.match(line)
+        if found:
+            kind = found.group(1).rsplit(".", 1)[-1]
+    return kind[:80]
 
 
 def _relative(file_attr: str, root: Path) -> str:

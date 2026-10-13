@@ -105,6 +105,17 @@ COMMANDS = [
             'silenced_checks = "block" makes A119/A121 block',
             "Advises on changed lines no test checks (SKY-A120): no test runs the "
             "line, or no test fails when Skylos deliberately changes it",
+            (
+                "Advises on AI-reviewer instructions or settings the change edits "
+                "(.coderabbit.yaml, copilot-instructions.md, REVIEW.md, BUGBOT.md; "
+                "SKY-A122) and scanner suppression markers it adds (skipcq, "
+                "noinspection, checkov:skip, trivy:ignore; SKY-A125); "
+                'guardrail_tampering = "block" makes them block'
+            ),
+            "Advises on code the change left without callers: existing code that "
+            "lost its last production caller, often in files the change did not "
+            "touch (SKY-A135), new code nothing calls (SKY-A136) and new code "
+            "only tests call (SKY-A137)",
             "--base origin/main: compare a pull request with its merge base (CI)",
             "--session ID: recheck all edits against the captured session baseline",
             "Settings come from [tool.skylos.done] at the base, never the change",
@@ -275,6 +286,22 @@ COMMANDS = [
     {
         "name": "skylos cicd review [path]",
         "desc": "Post inline PR review comments",
+        "group": "CI/CD",
+    },
+    {
+        "name": "skylos cicd risk-review [path] [--base REF]",
+        "desc": "List a PR's risks that need a human approval; bot approvals do not count",
+        "details": [
+            "Risk classes: tests_weakened, auth_removed, dependency_changed, "
+            "ci_weakened, checks_silenced, secret_added, guardrail_config_changed, "
+            "migration_changed, large_diff",
+            "Reuses the skylos done checks without running tests, plus "
+            "dependency manifest/lockfile, migration path and diff size checks",
+            "In GitHub Actions: passes once a person with write access approves "
+            "the head commit (skylos cicd init --risk-review adds the job)",
+            "Settings come from [tool.skylos.approval] at the base, never the change",
+            "Exit 0 pass, 1 needs a human approval, 2 could not decide",
+        ],
         "group": "CI/CD",
     },
     {

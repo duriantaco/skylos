@@ -13,9 +13,11 @@ from skylos.security.canonicalize import (
 )
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 from skylos.security.agent_instruction_paths import (
+    AGENT_RULE_ID,
     agent_rule_id,
     agent_severity,
     is_agent_instruction_path,
+    is_ai_reviewer_config_path,
 )
 
 RULE_ID = "SKY-D260"
@@ -120,8 +122,23 @@ def _is_allowed_json_bom(
 
 
 def scan_file(
-    filepath: str | Path, *, scan_path: str | Path | None = None
+    filepath: str | Path,
+    *,
+    scan_path: str | Path | None = None,
+    high_only: bool = False,
 ) -> list[dict]:
+    """Prompt-injection findings for one file.
+
+    AI code reviewers' config and instruction files (``.coderabbit.yaml``,
+    ``.gemini/styleguide.md``, ``.cursor/BUGBOT.md`` ...) are instructions to
+    an agent: HIGH signals in them (instruction overrides, role changes,
+    requests to reveal or send data, encoded payloads, invisible characters)
+    are reported as SKY-D266 at CRITICAL. Reviewing vocabulary ("do not
+    flag", "skip review") is what those files exist to say, so it keeps its
+    ordinary SKY-D260 severity; SKY-A122 reports changes to them in a diff.
+    ``high_only`` limits a file to the HIGH signals (used for reviewer files
+    found by the full-scan walk, which did not read them before).
+    """
     filepath = Path(filepath)
     if not filepath.is_file():
         return []
@@ -131,8 +148,17 @@ def scan_file(
     else:
         display_path = filepath
     is_agent_instruction = is_agent_instruction_path(display_path)
+    is_reviewer_config = not is_agent_instruction and is_ai_reviewer_config_path(
+        display_path
+    )
     if not is_scannable_path(filepath, display_path):
         return []
+
+    def high_signal(severity: str) -> tuple[str, str]:
+        """(severity, rule) for a signal whose base severity is HIGH."""
+        if is_agent_instruction or is_reviewer_config:
+            return "CRITICAL", AGENT_RULE_ID
+        return severity, RULE_ID
 
     ext = filepath.suffix.lower()
     basename = filepath.name
@@ -151,35 +177,50 @@ def scan_file(
         return []
 
     findings: list[dict] = []
-    _add_path_homoglyph_findings(findings, filepath, scan_path or filepath.name)
+    if not high_only:
+        _add_path_homoglyph_findings(findings, filepath, scan_path or filepath.name)
 
     if not source.strip():
         return findings
 
     _, zero_width_hits = strip_zero_width(source, max_hits=MAX_ZERO_WIDTH_HITS)
+    source_lines = source.split("\n")
     for char_hex, line_no in zero_width_hits:
         if _is_allowed_json_bom(
             source, ext, char_hex, line_no, is_agent_instruction
         ):
             continue
+        hidden_severity, hidden_rule = high_signal("HIGH")
+        if (
+            is_reviewer_config
+            and char_hex == "U+200D"
+            and _only_emoji_joiners(source_lines, line_no)
+        ):
+            # A zero-width joiner between emoji (U+1F469 U+200D U+1F4BB, "woman technologist") hides nothing.
+            if high_only:
+                continue
+            hidden_severity, hidden_rule = "HIGH", RULE_ID
         findings.append(
             _make_finding(
                 filepath,
                 line_no,
                 "hidden_char",
-                agent_severity("HIGH", is_agent_instruction),
+                hidden_severity,
                 char_hex,
                 char_hex,
                 f"Invisible Unicode character {char_hex} found. "
                 f"Zero-width characters in source code can hide "
                 f"prompt injection payloads from human reviewers.",
-                rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
+                rule_id=hidden_rule,
             )
         )
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return findings
 
-    _add_source_homoglyph_findings(findings, filepath, source, is_agent_instruction)
+    if not high_only:
+        _add_source_homoglyph_findings(
+            findings, filepath, source, is_agent_instruction
+        )
     if len(findings) >= MAX_FINDINGS_PER_FILE:
         return findings
 
@@ -195,11 +236,16 @@ def scan_file(
         normalized = normalize(text)
 
         for pattern, base_severity in _PATTERNS:
+            if high_only and base_severity != "HIGH":
+                continue
             if pattern.search(normalized):
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
                 severity = agent_severity(severity, is_agent_instruction)
+                rule_id = agent_rule_id(is_agent_instruction, RULE_ID)
+                if base_severity == "HIGH":
+                    severity, rule_id = high_signal(severity)
 
                 finding_type = "literal_payload"
                 if segment_type == "html_comment":
@@ -226,7 +272,7 @@ def scan_file(
                         "prompt_injection",
                         f"Prompt injection pattern in {segment_type}: '{snippet}'. "
                         f"This may attempt to manipulate AI agents processing this content.",
-                        rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
+                        rule_id=rule_id,
                     )
                 )
                 if len(findings) >= MAX_FINDINGS_PER_FILE:
@@ -239,18 +285,19 @@ def scan_file(
         for pattern, base_severity in _PATTERNS:
             if pattern.search(normalized):
                 snippet = decoded_text.strip()[:80]
+                payload_severity, payload_rule = high_signal("HIGH")
                 findings.append(
                     _make_finding(
                         filepath,
                         line_no,
                         "obfuscated_payload",
-                        agent_severity("HIGH", is_agent_instruction),
+                        payload_severity,
                         "prompt_injection",
                         "base64",
                         f"Base64-encoded string decodes to prompt injection: '{snippet}'. "
                         f"Encoded payloads bypass human review while remaining effective "
                         f"against AI agents.",
-                        rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
+                        rule_id=payload_rule,
                     )
                 )
                 if len(findings) >= MAX_FINDINGS_PER_FILE:
@@ -258,6 +305,31 @@ def scan_file(
                 break
 
     return findings
+
+
+def _is_pictographic(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x1F000 <= code <= 0x1FAFF
+        or 0x2600 <= code <= 0x27BF
+        or code in (0xFE0F, 0x2640, 0x2642, 0x2695, 0x2696, 0x2708, 0x2764)
+        or 0x1F3FB <= code <= 0x1F3FF
+    )
+
+
+def _only_emoji_joiners(lines: list[str], line_no: int) -> bool:
+    """Every U+200D on the line joins two emoji characters."""
+    if not 1 <= line_no <= len(lines):
+        return False
+    line = lines[line_no - 1]
+    for index, char in enumerate(line):
+        if char != "\u200d":
+            continue
+        before = line[index - 1] if index > 0 else ""
+        after = line[index + 1] if index + 1 < len(line) else ""
+        if not (before and after and _is_pictographic(before) and _is_pictographic(after)):
+            return False
+    return True
 
 
 def scan_directory(

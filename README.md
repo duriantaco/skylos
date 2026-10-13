@@ -190,7 +190,10 @@ skylos done --base main
 `skylos done` compares the branch with its merge base on `main` and runs your
 tests. It flags deleted or skipped tests, loosened test settings and CI test
 steps, silenced lint or type checks, and code that special-cases the tests,
-then writes a receipt to `.skylos/receipts/`. It runs pytest automatically;
+advises on code the branch left without callers (including in files it did
+not touch), then writes a receipt to `.skylos/receipts/`. When tests fail, it
+reruns them on the merge base and labels each failure "introduced" or "already
+failing"; every failure still blocks by default. It runs pytest automatically;
 other test runners need one `test_command` line in `[tool.skylos.done]`. See
 the [done gate guide](./docs/done-gate.md) for every check and its limits.
 
@@ -336,7 +339,12 @@ skylos agent install-hooks --cursor   # Cursor (.cursor/hooks.json)
 - **After each edit:** verifies only the changed lines (security, secrets,
   AI-code mistakes) and tells the agent what to fix.
 - **Before a file read:** blocks files that contain hard-coded secrets.
-- **Before a package install:** blocks hallucinated or typosquatted packages.
+- **Before a package install or one-shot run** (`pip`, `uvx`, `npx`,
+  `pnpm dlx`, `bunx`, `go run pkg@v`, ...): blocks hallucinated or
+  typosquatted packages, and asks before installs it cannot verify (git and
+  URL sources, unknown registries, failed lookups).
+- **Before a git command:** blocks `--no-verify`, `HUSKY=0` and other ways
+  around the repository's git hooks.
 - **At stop:** blocks "done" while issues the agent added are still open.
 
 Hooks fail open, but never silently: if Skylos errors, the agent and you are
@@ -360,6 +368,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Combined repo report | `skylos suite .` | Reports static findings, technical debt, AI defense, and provenance; SCA can query OSV, and findings alone exit `0` | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Optional Python linting | `pip install "skylos[lint]" && skylos lint .` | Runs Ruff with its native configuration, output, fixes, and exit codes through the Skylos CLI | [Python linting](./docs/python-linting.md) |
 | Agent branch done check | `skylos done --base origin/main` | Runs your tests and flags deleted, skipped or weakened tests, loosened test settings and CI test steps, silenced checks, and test-only special cases; writes a receipt | [Done gate](./docs/done-gate.md) |
+| Risks that need a human approval | `skylos cicd risk-review --base origin/main` | Lists deleted or weakened tests, removed auth checks, added or changed dependencies, weakened CI, silenced checks, added secrets, guardrail setting edits, migration changes and very large diffs. As a required GitHub check (`skylos cicd init --risk-review`) it fails until a person with write access approves the head commit; bot approvals do not count | [Risk review](./docs/risk-review.md) |
 | PR gate | `skylos cicd init --no-upload` | Generates a GitHub Actions workflow that gates pull requests and runs `skylos done` when your tests can run. Drop `--no-upload` to also upload default-branch scans to Skylos Cloud with GitHub OIDC; that job fails until the Skylos GitHub App is installed on the repository | [First gated PR](./docs/first-gated-pr.md) |
 | GitLab merge request report | `skylos . --format gitlab -o gl-code-quality-report.json` | Exports a native Code Quality report for GitLab CI artifacts | [GitLab Code Quality](./docs/gitlab-code-quality.md) |
 | Offline dependency SBOM | `skylos sbom . -o sbom.cdx.json` | Lists supported recorded dependencies as CycloneDX 1.6 JSON without network requests | [Dependency scanning](./docs/dependency-scanning.md#export-an-sbom-offline) |
@@ -381,7 +390,7 @@ every command. See [what they don't do](./docs/agent-hooks.md#what-it-doesnt-do)
 | Agent harness replay | `skylos agent replay .skylos/runs/<run-id>` | Validates and summarizes saved agent verification phases, tool calls, decisions, and budgets | [Agent harness artifacts](#agent-harness-artifacts) |
 | Runtime agent behavior test | `skylos agent init && skylos agent test --allow-contract-endpoint` | Checks final responses, tool selection, explicit refusals, and source IDs against a versioned contract | [Agent Behavior Testing](./docs/agent-behavior-testing.md) |
 | Verification-backed remediation | `skylos agent remediate .` | Scans and fixes supported findings, then re-scans them and records proof-test metadata when available | [AI features](https://docs.skylos.dev/ai-features) |
-| Agent-loop hooks | `skylos agent install-hooks [--codex\|--cursor]` | Verifies every agent edit, blocks secret reads and hallucinated package installs, and holds "done" while new issues are open | [Agent-loop hooks](./docs/agent-hooks.md) |
+| Agent-loop hooks | `skylos agent install-hooks [--codex\|--cursor]` | Verifies every agent edit, blocks secret reads, hallucinated package installs and git-hook bypasses, asks before unverifiable installs, and holds "done" while new issues are open | [Agent-loop hooks](./docs/agent-hooks.md) |
 | Project standards for agents | `skylos agent install-standards --enforce SKY-L002` | Gives Codex, Claude Code, and Cursor a project skill and selects measurable quality rules for hook and CI checks | [Project standards](./docs/agent-standards.md) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify`. Requires a free Skylos API key (`SKYLOS_API_KEY`). `skylos verify` and agent-loop hooks need no key | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps recognized LLM calls, agent tools, prompt sites, and input sources in Python and TypeScript/JavaScript | [Agent verification](./docs/agent-verification.md) |
@@ -1045,6 +1054,7 @@ Generate a GitHub Actions workflow from the CLI:
 skylos cicd init --no-upload                       # without Skylos Cloud
 skylos cicd init --no-upload --scan-path apps/api  # a monorepo subproject
 skylos cicd init                                   # with Skylos Cloud uploads
+skylos cicd init --no-upload --risk-review         # plus the "Skylos risk review" check
 ```
 
 The generated workflow reviews changed lines on pull requests and adds a
@@ -1083,6 +1093,7 @@ See [container-image scanning](./docs/container-image-reports.md#scan-an-image-w
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | Claude Code, Codex, and Cursor hooks | [Agent-loop hooks](./docs/agent-hooks.md) |
 | Done gate for agent changes (`skylos done`) | [Done gate](./docs/done-gate.md) |
+| Risks a pull request should not merge on a bot's approval (`skylos cicd risk-review`) | [Risk review](./docs/risk-review.md) |
 | First gated pull request with GitHub Actions | [Your first gated PR](./docs/first-gated-pr.md) |
 | MCP server setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
 | Every Skylos-assisted cleanup PR and its outcome | [Real-World Results](./REAL_WORLD_RESULTS.md) |

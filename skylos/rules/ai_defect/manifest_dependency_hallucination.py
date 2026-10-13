@@ -62,6 +62,7 @@ ALLOWED_REGISTRY_HOSTS = {
     "pypi.org",
     "registry.npmjs.org",
     "proxy.golang.org",
+    "jsr.io",
 }
 INSTALL_SURFACE_MAX_DEPTH = 5
 INSTALL_SURFACE_SOURCE = "install_surface"

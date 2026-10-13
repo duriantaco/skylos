@@ -54,8 +54,12 @@ Rule IDs use a stable public prefix:
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
 | Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. |
+| Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
+| Risk class | One of the nine facts the risk review reports, each needing a human approval: `tests_weakened`, `auth_removed`, `dependency_changed`, `ci_weakened`, `checks_silenced`, `secret_added`, `guardrail_config_changed`, `migration_changed`, `large_diff`. Rule findings map to classes by rule ID; findings `skylos done` reports only as advice are listed and need no approval. The names are shared with Skylos Cloud. |
+| Eligible (risk review) | No risk class found and every class checked: an approval from anyone, a review bot included, is enough. An incomplete analysis is never eligible. |
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
+| Failure origin | `skylos done` reruns each failing test on the base commit, in a temporary Git worktree, and labels it `preexisting` (the same test ran there and failed the same way), `introduced` (it passes there), `new_test` (it does not exist there; counts as introduced) or `undetermined` (the base run could not tell: a setup or import error, a different kind of failure, a timeout, changed dependencies). Shown on the receipt as `failure_origins` and in the Stop-hook message. |
 | Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. |
 | Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
@@ -325,7 +329,7 @@ Finding types:
 | D263 | HIGH | Sensitive data sent to LLM | Python | Secrets, credential fields, or sensitive environment values flow into LLM or embedding API input |
 | D264 | HIGH | Excessive agent tool privilege | Python | Agent frameworks are granted shell, code execution, unrestricted HTTP, or broad file-management tools |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | Pickle-backed model/checkpoint loading such as `torch.load`, `joblib.load`, or `numpy.load(..., allow_pickle=True)` |
-| D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files |
+| D266 | CRITICAL | AI config instruction injection | Agent config and instruction files, AI code reviewer config files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files. In AI code reviewers' own files (the SKY-A122 list, apart from `.github/copilot-instructions.md`, which stays a full agent instruction file), only HIGH signals become D266: instruction overrides, role changes, requests to reveal or send data, encoded payloads and invisible characters (an emoji joiner is not one). Reviewing vocabulary such as "do not flag" or "skip review" is what those files say, so it stays D260 at its usual severity, and a full scan that reaches a reviewer file inside a tool folder (`.gemini/`, `.cursor/`, `.github/`, `.greptile/`, `.macroscope/`), which it did not read before, reports only the HIGH signals there; a diff scan of a changed file reads it in full as before |
 | D267 | MEDIUM | Unbounded LLM consumption | Python | LLM calls or agent executors lack token, timeout, iteration, or obvious loop bounds |
 
 ### MCP Server Security
@@ -420,6 +424,11 @@ that directory.
 | D311 | MEDIUM | Lax artifact upload | GitHub Actions |
 | D312 | MEDIUM | JavaScript install scripts in CI | GitHub Actions |
 | D313 | MEDIUM | Privileged job missing timeout | GitHub Actions |
+| D350 | MEDIUM-CRITICAL | AI agent on an untrusted trigger with no actor gate | GitHub Actions |
+| D351 | MEDIUM-CRITICAL | AI agent action's write-access check widened (`*`) | GitHub Actions |
+| D352 | MEDIUM-HIGH | AI agent can run any shell command on an untrusted trigger | GitHub Actions |
+| D353 | MEDIUM-HIGH | Untrusted event text interpolated into an AI agent prompt | GitHub Actions |
+| D354 | LOW-HIGH | AI agent action or CLI version with a published advisory | GitHub Actions |
 | D314 | HIGH | Mutable container image | GitLab CI |
 | D315 | HIGH | Unpinned external include | GitLab CI |
 | D316 | HIGH | Literal secret variable | GitLab CI |
@@ -447,6 +456,103 @@ D295 reports at HIGH severity. Runner-label order does not affect the check.
 Simple literal matrices are exempt only when every possible runner value can be
 proved to be a known GitHub-hosted label. Runner groups, unknown expressions and
 matrix combinations that cannot be resolved conservatively still produce a warning.
+
+### AI Agents In GitHub Actions (D350-D354)
+
+These rules look at steps that run an AI coding agent:
+`anthropics/claude-code-action`, `anthropics/claude-code-base-action`,
+`openai/codex-action`, `google-github-actions/run-gemini-cli`,
+`actions/ai-inference`, the opencode action (`anomalyco/opencode/github`), and
+`claude`, `codex exec`, `gemini` or `copilot` CLIs started from a `run:` block.
+Input names and built-in checks were read from each action's `action.yml` and
+source on 13 Oct 2026.
+
+An event is untrusted when an account without write access can start it:
+`issues` (opened, edited, closed, reopened), `issue_comment`,
+`pull_request_target` (fork pull requests), `pull_request_review`,
+`pull_request_review_comment`, `discussion`, `discussion_comment`, and
+`workflow_run` when an upstream workflow (resolved by name, through chained
+`workflow_run`s) runs on pull requests or other untrusted events. Types such as
+`labeled` or `assigned` need triage access, so they count as trusted. A local
+reusable workflow inherits its caller's events and gate (`via caller.yml`).
+
+A finding needs a path for attacker-written text to reach the agent: the action
+loads the triggering thread itself (claude-code-action without `prompt`, the
+opencode action), the prompt interpolates event text, an earlier step or job
+writes that text to a file or output the agent reads, an env var holds it, the
+agent has a tool that reads issues or pull requests (`gh`, GitHub MCP, shell),
+or the job checks out the pull request's code. A fixed prompt over the base
+branch with no such tool is not reported.
+
+**Gates.** The `if:` conditions on the job, its `needs` chain and the step are
+evaluated per event. These count as gates: `author_association` of the account
+that triggered the event equal to, or in a `fromJSON` list of, OWNER, MEMBER or
+COLLABORATOR; an exact `github.actor` or `sender.login`; a same-repository
+pull request check (`head.repo.full_name == github.repository`, `!fork`) under
+`pull_request_target`; `workflow_run.event` of a trusted event;
+`workflow_run.pull_requests` (GitHub leaves it empty for fork pull requests);
+`github.event.repository.private == true`; a gated `needs` job; an earlier step
+that calls a collaborator or membership API, a known permission-check action,
+or a script comparing `author_association` with a member value; and an
+expression-valued `environment` (the fork-approval pattern). A fixed
+`environment:` name is noted in the message, not treated as a gate, because
+required reviewers are a repository setting Skylos cannot see; such findings
+are capped at HIGH. Another entity's association (for example
+`github.event.issue.author_association` on a comment event), `!= 'NONE'`, or
+CONTRIBUTOR does not gate. A job that runs only for one value of a dispatcher
+job's output, when that job reads the event type, is not assumed to run for
+every event (a deliberate false-negative risk).
+
+**Built-in checks.** claude-code-action refuses accounts without write access
+on issue, comment, review and pull request events (and on `workflow_run` from
+v1.0.185); `allowed_non_write_users` turns this off only when `github_token`
+is passed, and `allowed_bots: "*"` lets any GitHub App through.
+codex-action checks write access on every event unless `allow-users: "*"`.
+The opencode action checks write access. claude-code-base-action,
+run-gemini-cli, ai-inference and the CLIs have no check.
+
+**Capability.** shell (any command: `Bash`, `Bash(*)`, wildcard rules on an
+interpreter or package manager such as `Bash(python:*)`, `Bash(npm:*)` or
+`Bash(bash -c:*)` (an exact rule such as `Bash(bun install)` is not),
+`--dangerously-skip-permissions`, permission mode
+`bypassPermissions`, codex `sandbox: danger-full-access` or
+`safety-strategy: unsafe`, Gemini YOLO with no `tools.core` allowlist or a
+pinned CLI before 0.39.1, Copilot `--allow-all-tools`); tools (can change
+things: claude-code-action tag mode, edit or write tools, write-capable `gh` or
+MCP tools, codex sandbox with network access); read (read-only tools, codex's
+default sandbox without network, Gemini without
+`GEMINI_CLI_TRUST_WORKSPACE`, which ignores workspace settings and turns off
+auto-approval); none (no tools: `tools.core: []`, ai-inference without MCP or
+`copilot-allow-tools`, every built-in tool denied). Agents with no tools are
+not reported by D350 to D353.
+
+- **D350** — an untrusted event reaches the agent with no gate while the job
+  holds secrets, a write token, undeclared token permissions or
+  `id-token: write`. CRITICAL with shell, HIGH with tools, MEDIUM with
+  read-only tools. The message gives the path, for example
+  `issue_comment (anyone who can comment) → run-gemini-cli (...) with shell
+  commands (...) and secrets GEMINI_API_KEY`.
+- **D351** — the action's own check is widened with `"*"`; same severity model,
+  capped at HIGH for `allowed_bots` alone.
+- **D352** — the agent can run any shell command and an untrusted event can
+  start it (HIGH), or a maintainer starts it on a comment or review thread that
+  others wrote (MEDIUM).
+- **D353** — untrusted event text (`issue.title/body`, `comment.body`,
+  `review.body`, `pull_request.title/body/head.ref`, `github.head_ref`,
+  `discussion.title/body`, `workflow_run.head_branch/display_title`,
+  `toJSON(github.event...)`) is interpolated into a prompt input. Text written
+  by the gated account that starts the agent does not count. HIGH when anyone
+  can trigger it and the agent can act, otherwise MEDIUM.
+- **D354** — the pinned release (tag or known release commit) is affected by
+  GHSA-8q5r-mmjf-575q (CVE-2026-47751, claude-code-action 1.0.0-1.0.73, fixed
+  in 1.0.74) or GHSA-wpqr-6v78-jr5g (CVE-2026-12537, run-gemini-cli before
+  0.1.22, or `gemini_cli_version` before 0.39.1). The claude advisory range
+  says `< 1.0.74`, but its text says `@beta` (which is v0.0.63) is fixed, so v0
+  is not reported. HIGH for a critical advisory on a workflow with an untrusted
+  event, MEDIUM otherwise; LOW for the medium advisory without one.
+
+Suppress with `# skylos: ignore[SKY-D35x]` on the reported line or the line
+above it. SKY-D355 to SKY-D359 are reserved.
 
 ## Kubernetes Deployment Exposure (SKY-DEP)
 
@@ -709,7 +815,7 @@ use the `SKY-A` prefix.
 | A110 | HIGH | Test deleted (`skylos done`): a test that existed at the base is gone and no moved, renamed or rewritten test replaces it (a pasted copy of a test that is still there never does), it lost literal parametrize/`.each` cases, it is left with no countable assertion, or it was overwritten in place by a test of something else while the code it tested is still there. Advice: a test renamed, merged or rewritten with a different body, fewer countable assertions, a new `return` before assertions, a deletion that goes with removed code (feature removal: a deleted module, export, function, method, object member, checked text, or a module the change stopped using) | Python and JS/TS tests |
 | A111 | HIGH | Test newly skipped (`skylos done`): skip, skipif, xfail, `pytest.skip()`, `importorskip` or `skipTest` added to an existing test; for JS/TS `.skip`, `xit`/`xdescribe`, `.todo`, `.fixme`, `skipIf`/`runIf`, `.failing`/`.fails`, or a runtime skip, and any newly added focus (`.only`, `fit`, `fdescribe`), which stops the other tests in the file from running | Python and JS/TS tests (Jest, Vitest, Mocha, node:test, Playwright Test) |
 | A112 | HIGH | Test settings loosened (`skylos done`): pytest selection options, `conftest.py` hooks that drop tests or rewrite results, coverage floors, CI test steps that may fail; Jest/Vitest ignore, exclude, `testMatch`/`testRegex`/`roots`/`include`/`dir` and `projects` changes that stop running existing test files, `passWithNoTests`, lower coverage thresholds, package.json test scripts that filter tests, may fail or no longer run a test runner. Not reported: a brand-new pytest config or a filter that leaves out no existing test file, a project's first `test` script, ignored tests that run in their own CI step, a new advisory CI step | pytest, coverage, Jest, Vitest, package.json, GitHub Actions |
-| A113 | HIGH | Tests fail when Skylos runs them (`skylos done`), or an expected Python test did not run | Any test command; JUnit XML for details |
+| A113 | HIGH | Tests fail when Skylos runs them (`skylos done`), or an expected Python test did not run. Each failing test is rerun on the base commit and labeled with its failure origin (`preexisting`, `introduced`, `new_test` or `undetermined`); every failure still blocks unless `allow_preexisting_failures` is set | Any test command; JUnit XML for details |
 | A114 | HIGH | Skylos settings or hooks changed (`skylos done`): protected paths, `[tool.skylos]`, the CI workflow that runs Skylos | Repository files |
 | A115 | HIGH | Test answer hard-coded in code (`skylos done`): an added branch, `match`/`switch` case, conditional expression or lookup table answers one test assertion's literal input with that assertion's literal expected value (`if n == 3: return 6` for `assert factorial(3) == 6`), in a function that otherwise computes its answer, for an assertion that existed at the base. Advice: the same pattern for a test added in the change, a function that is only a table, a test that does not call the function, an input the code or docs already use, a word mapped to a word, an input a test passes with a different answer, small pairs a real edge case could produce, code in generated files or in a new script nothing imports or runs, a result that depends on a call count | Python and JS/TS non-test code; Python/JS/TS tests and JSON input/output test data |
 | A116 | HIGH | Code detects the test run (`skylos done`): added non-test code reads the variables pytest sets while it runs (`PYTEST_CURRENT_TEST`), checks `"pytest" in sys.modules`, `sys.argv`, `sys._called_from_test` or the call stack for a test, reads `process.env.JEST_WORKER_ID`/`VITEST`/other variables a runner sets, `typeof jest`/`globalThis.vi` and other runner globals, `import.meta.vitest` outside an in-source test block, or opens the tests' own files. Advice: `NODE_ENV`/`import.meta.env.MODE` or an environment variable compared with `"test"`, and test files read by a new script nothing imports or runs or by repository tooling (`scripts/`, `tools/`, `bin/`, `.github/`, `validate-*`) that no production code imports. Test helpers, setup, config files and pytest plugins are left out | Python and JS/TS non-test code |
@@ -718,6 +824,11 @@ use the `SKY-A` prefix.
 | A119 | HIGH | Linter or scanner settings weakened (`skylos done`, advice by default; blocks with `silenced_checks = "block"`): a rule ignored, disabled, turned off or lowered, a path excluded that holds checked source files, `strict` or a strictness flag turned off, a type-checking mode or level lowered, a preset or selected rule dropped, a secret or finding allow-listed. Paths holding only test files are advice; `skipLibCheck` and new rules are not weakening | ruff, flake8, pylint, mypy, pyright, bandit, tsconfig, ESLint, Biome, SonarQube, Semgrep, CodeQL, Snyk, gitleaks, detect-secrets, Trivy, OSV-Scanner, golangci-lint, Cargo lints, pre-commit, Checkstyle/SpotBugs suppressions |
 | A120 | MEDIUM | Changed line not checked by tests (`skylos done`, advice by default): no test runs the line, or no test fails when Skylos deliberately changes it | Python with pytest |
 | A121 | HIGH | CI check weakened (`skylos done`, advice by default; blocks with `silenced_checks = "block"`): a lint, type-check, format-check, scan or test step or job that can now fail without failing the build (`continue-on-error`, `\|\| true`, `--exit-zero`, `--max-warnings` raised, `allow_failure`, `when: manual`), was removed and nothing else runs that tool, is disabled (`if: false`, `when: never`), whose workflow no longer runs on pull requests, or that an aggregate job no longer needs | GitHub Actions, GitLab CI |
+| A122 | MEDIUM | AI-reviewer settings changed (`skylos done` advice by default, blocks with `guardrail_tampering = "block"`; also in diff-aware scans): the change edits a file an AI code reviewer reads its instructions or settings from: `.coderabbit.yaml`, `.coderabbit.config.ts`, root `REVIEW.md`, `.cursor/BUGBOT.md` (any folder), `.cursor/config/bugbot.yaml`, `greptile.json`, `.greptile/`, `.gemini/styleguide.md`, `.gemini/config.yaml`, `.pr_agent.toml`, root `best_practices.md`, `.macroscope/`, `macroscope_approvability.md`, `.macroscope-ignore`, `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `.github/skills/`, `.bito.yaml`, `.ellipsis/code-review.yaml`. The message names each changed setting and says which branch the reviewer reads (Copilot, CodeRabbit, Macroscope and Bito read the pull request's head). Changes that narrow the review come first: exclusions or ignore patterns added, review or a review tool turned off, a higher comment threshold, fewer comments, a quieter profile, approval turned on, added "do not flag"/"ignore"/"approve" instructions. In root `AGENTS.md`/`GEMINI.md` and any `CLAUDE.md`, which Copilot code review and Claude Code Review also read, only added lines aimed at the reviewer count. Not reported: edits to comments, whitespace, formatting, key or line order, or reformatted YAML/JSON/TOML with the same settings, or a skill moved between `.github/skills/`, `.agents/skills/` and `.claude/skills/`. Findings are kept by `--diff` off added lines, run when no supported source file changed, and are not hidden by a local baseline | Any repository |
+| A125 | MEDIUM | Scanner suppression marker added (`skylos done` advice by default, blocks with `guardrail_tampering = "block"`; also in diff-aware scans): a comment on an added line that tells a code-scanning platform to stop reporting: DeepSource `skipcq`, JetBrains/Qodana `noinspection`, Qlty `qlty-ignore`, CodeScene `@codescene(disable...)`, CodeQL alert-suppression `codeql[...]`/`lgtm[...]`, Checkov `checkov:skip=`, Trivy `trivy:ignore:`/`tfsec:ignore:`, KICS `kics-scan`; and `NOSONAR`/`nosemgrep` in languages SKY-A118 does not read (PHP, Ruby, Swift, Scala, Dart, C/C++, shell, Terraform, YAML, SQL and others). Says what stops being reported (line, next statement, function, resource block or file) and whether a reason is given. Not reported: markers SKY-A118 covers, markers in strings or documentation, `NOSONAR` on a comment-only line (prose), prose mentions of `noinspection` or `qlty-ignore` without their directive form, markers moved or kept on an edited line, test files in any language (counted), generated and vendored files. Not covered: Snyk Code `deepcode ignore` (undocumented) and Codacy (no marker of its own) | Any language with comments |
+| A135 | MEDIUM | Code left unused by the change (`skylos done`, advice by default; blocks with `branch_orphans = "block"`): a function, method or class (or a JS/TS file) that production code used at the base and that no production code calls at the head, most often in a file the change did not touch, where line-based diff checks never look. The message names the removed or changed line that called it (``"`price_label` (not touched by this change) lost its last caller when app/checkout.py:6 changed"``) and says when only tests still call it. Liveness comes from the dead-code engine with test files left out on both sides (confidence 75 or more). A symbol the engine abstains on (for example a weak helper name) is still reported, as advice that never blocks, when a removed line used it and no static reference is left. Not reported: code already unused at the base, code moved with its callers, renames whose callers were all updated, and anything whose name appears in a file the analyzer could not parse or in a template or configuration file (counted as not judged) | Languages the dead-code engine covers: Python, JS/TS, Java (private and package-private members), Kotlin (private members), Go (unexported, needs the skylos-go engine), PHP, Rust and others; an engine that is not installed is listed as not checked |
+| A136 | LOW | New code nothing calls (`skylos done`, advice; blocks with `branch_orphans = "block"`): a function, method, class or JS/TS file the change added that nothing calls, or whose only callers are themselves unused. Entry points, framework roots (routes, views, fixtures, commands), exported public API and dispatch the dead-code engine recognizes are alive; a definition moved or renamed from elsewhere in the change is not new; a name that appears in a template or configuration file, or a symbol a decorator may register (`@app.route(...)`, `@bus.subscribe(...)`, a Java annotation), is not judged | Languages the dead-code engine covers: Python, JS/TS, Java (private and package-private members), Kotlin (private members), Go (unexported, needs the skylos-go engine), PHP, Rust and others; an engine that is not installed is listed as not checked |
+| A137 | LOW | New code only tests call (`skylos done`, advice even with `branch_orphans = "block"` unless listed in `branch_orphans_block_rules`): a symbol or JS/TS file the change added whose only callers are test files ("added `foo()` and a test for it, and no production caller"). The message names the test. Test files: `tests/`, `test_*.py` using a test framework, `conftest.py`, `*.test.*`/`*.spec.*`, `__tests__/`, `*_test.go`, `src/test/` | Languages the dead-code engine covers: Python, JS/TS, Java (private and package-private members), Kotlin (private members), Go (unexported, needs the skylos-go engine), PHP, Rust and others; an engine that is not installed is listed as not checked |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |

@@ -541,6 +541,22 @@ def _scan_ai_defect_diff_signals(
                 all_suppressed=all_suppressed,
             )
 
+    if {"SKY-A122", "SKY-A125"} - set(project_ignore):
+        # AI-reviewer settings changed (A122) and scanner suppression markers
+        # added (A125): base against head, like `skylos done`.
+        from skylos.rules.ai_defect.guardrails import scan_git_changes
+
+        _extend_unsuppressed_ai_defect_findings(
+            scan_git_changes(
+                root, changed_files, diff_base, project_ignore=project_ignore
+            ),
+            project_ignore=project_ignore,
+            per_file_ignore_lines=per_file_ignore_lines,
+            per_file_ignore_rules=per_file_ignore_rules,
+            all_ai_defects=all_ai_defects,
+            all_suppressed=all_suppressed,
+        )
+
 
 def _dependency_bump_findings(
     root, scan_paths, changed_files, excludes, project_ignore, diff_base=None
@@ -3964,6 +3980,27 @@ class Skylos:
                             diff_base=dependency_bump_diff_base,
                         )
                     )
+                    # Reviewer settings and scanner markers live in files
+                    # Skylos may not otherwise analyze (YAML, Markdown, Ruby,
+                    # PHP, Terraform): compare them even without source files.
+                    try:
+                        from skylos.rules.ai_defect.guardrails import (
+                            scan_git_changes,
+                        )
+                        from skylos.security.contracts import resolve_diff_base_ref
+
+                        ai_defect_findings.extend(
+                            scan_git_changes(
+                                project_root,
+                                changed_files,
+                                resolve_diff_base_ref(root),
+                                project_ignore=project_ignore,
+                                scope=path,
+                            )
+                        )
+                    except Exception:
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.exception("Guardrail diff scan failed")
                 if ai_defect_findings:
                     result["ai_defects"] = ai_defect_findings
                     result["analysis_summary"]["ai_defects_count"] = len(
@@ -4815,6 +4852,7 @@ class Skylos:
                         injection_root = injection_root.parent
                     injection_candidates = []
                     seen_injection_files = set()
+                    reviewer_high_only = set()
                     high_priority_injection_names = (
                         "readme.md",
                         "readme.rst",
@@ -4903,6 +4941,33 @@ class Skylos:
                                 ):
                                     break
                                 _add_injection_candidate(candidate)
+                        # AI code reviewers' instruction files. Those in tool
+                        # folders were never read by the walk below; for them
+                        # only HIGH signals count ("do not flag" is what a
+                        # reviewer config says; A122 reports its changes).
+                        from skylos.security.agent_instruction_paths import (
+                            AI_REVIEWER_GLOBS,
+                        )
+
+                        for pattern in AI_REVIEWER_GLOBS:
+                            if len(injection_candidates) >= _INJECTION_MAX_SCAN_FILES:
+                                break
+                            for candidate in sorted(injection_root.glob(pattern)):
+                                if (
+                                    len(injection_candidates)
+                                    >= _INJECTION_MAX_SCAN_FILES
+                                ):
+                                    break
+                                if not _add_injection_candidate(candidate):
+                                    continue
+                                relative_parts = candidate.relative_to(
+                                    injection_root
+                                ).parts
+                                if any(
+                                    part.startswith(".")
+                                    for part in relative_parts[:-1]
+                                ):
+                                    reviewer_high_only.add(str(candidate))
                         if injection_root.is_dir():
                             pending_dirs = [injection_root]
                             excluded_dirs = {
@@ -4958,7 +5023,15 @@ class Skylos:
                             scan_path = Path(f).resolve().relative_to(injection_root)
                         except ValueError:
                             scan_path = None
-                        inj_hits = _injection_scan_file(f, scan_path=scan_path)
+                        inj_hits = _injection_scan_file(
+                            f,
+                            scan_path=scan_path,
+                            **(
+                                {"high_only": True}
+                                if str(f) in reviewer_high_only
+                                else {}
+                            ),
+                        )
                         if inj_hits:
                             remaining = (
                                 _INJECTION_MAX_SCAN_FINDINGS - injection_findings
@@ -5379,7 +5452,8 @@ class Skylos:
                 )
 
             if diff_signal_files and (
-                "SKY-A103" not in project_ignore or "SKY-A104" not in project_ignore
+                {"SKY-A103", "SKY-A104", "SKY-A122", "SKY-A125"}
+                - set(project_ignore)
             ):
                 try:
                     _scan_ai_defect_diff_signals(

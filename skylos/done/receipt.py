@@ -63,6 +63,8 @@ LABELS = {
     "test_special_casing": "Code doesn't special-case the tests",
     "silenced_checks": "Linters, type checkers, scanners and CI not silenced",
     "security_controls": "Security controls checked for removals",
+    "guardrail_tampering": "AI-reviewer settings and scanner markers left alone",
+    "branch_orphans": "No code left without callers",
 }
 # What went wrong when a check fails, for the verdict line.
 PROBLEMS = {
@@ -76,6 +78,8 @@ PROBLEMS = {
     "test_special_casing": "code special-cases the tests",
     "silenced_checks": "linters, type checkers, scanners or CI were silenced",
     "security_controls": "security controls were removed",
+    "guardrail_tampering": "AI-reviewer settings changed or scanner suppression markers were added",
+    "branch_orphans": "the change left code that nothing calls",
 }
 # What an unfinished check could not do.
 UNCHECKED = {
@@ -89,6 +93,8 @@ UNCHECKED = {
     "test_special_casing": "the code was not checked for test special-casing",
     "silenced_checks": "linter, type-checker, scanner and CI settings were not checked",
     "security_controls": "security control changes were not checked",
+    "guardrail_tampering": "AI-reviewer settings and scanner markers were not checked",
+    "branch_orphans": "the change was not checked for code left without callers",
 }
 FIXES = {
     "agent_edits": "Fix the remaining edit findings and run skylos hook recheck --session.",
@@ -101,6 +107,8 @@ FIXES = {
     "test_special_casing": "Remove the code that answers the tests' exact inputs, detects the test run or rigs comparisons, and make the general code right.",
     "silenced_checks": "Put back the linter, type-checker, scanner and CI settings, and fix what they report instead. A person should change them.",
     "security_controls": "Restore the removed security controls or use a proven authentication boundary that rejects unauthorized callers before the handler runs.",
+    "guardrail_tampering": "Undo the AI-reviewer setting changes and remove the added suppression markers, or have a person approve them in a separate change.",
+    "branch_orphans": "Delete the code nothing calls any more, or call it from production code; export it if it is public API.",
 }
 
 
@@ -144,7 +152,7 @@ def build_receipt(
                 ],
             }
         )
-    return {
+    receipt = {
         "schema": SCHEMA,
         "skylos_version": _version(),
         "base": {"sha": comparison.base_sha, "source": comparison.base_source},
@@ -166,6 +174,115 @@ def build_receipt(
         "checks": checks,
         "unverified": _unverified(result),
     }
+    origins = _failure_origins(result)
+    if origins is not None:
+        # Optional and additive: readers of the v1 contract ignore it.
+        receipt["failure_origins"] = origins
+    return receipt
+
+
+ORIGINS = ("preexisting", "introduced", "new_test", "undetermined")
+_ORIGIN_STATUSES = ("checked", "not_checked")
+
+
+def _failure_origins(result: DoneResult) -> dict[str, Any] | None:
+    """Whether each failing test also fails on the base (tests_pass only)."""
+    for outcome in result.checks:
+        origins = getattr(outcome.result, "failure_origins", None)
+        if outcome.result.id != "tests_pass" or not isinstance(origins, dict):
+            continue
+        tests = []
+        for test in origins.get("tests", [])[:MAX_FINDINGS]:
+            origin = test.get("origin")
+            tests.append(
+                {
+                    "test": _clean_text(test.get("test"), MAX_MESSAGE) or "test",
+                    "file": _clean_path(test.get("file")),
+                    "line": test.get("line")
+                    if isinstance(test.get("line"), int)
+                    and not isinstance(test.get("line"), bool)
+                    and test["line"] >= 1
+                    else None,
+                    "origin": origin if origin in ORIGINS else "undetermined",
+                    "detail": _clean_text(test.get("detail"), MAX_MESSAGE),
+                }
+            )
+        base = origins.get("base") or {}
+        seconds = origins.get("seconds")
+        return {
+            "base": {
+                "sha": result.comparison.base_sha,
+                "label": _clean_text(base.get("label"), MAX_EVIDENCE_TEXT) or "base",
+            },
+            "status": origins.get("status")
+            if origins.get("status") in _ORIGIN_STATUSES
+            else "not_checked",
+            "reason": _clean_text(origins.get("reason"), MAX_MESSAGE),
+            "seconds": float(seconds)
+            if isinstance(seconds, (int, float))
+            and not isinstance(seconds, bool)
+            and math.isfinite(seconds)
+            and seconds >= 0
+            else 0.0,
+            "allowed": origins.get("allowed") is True,
+            "counts": {
+                key: sum(1 for test in tests if test["origin"] == key)
+                for key in ORIGINS
+            },
+            "tests": tests,
+        }
+    return None
+
+
+def _failure_origins_problems(origins: Any) -> list[str]:
+    if not isinstance(origins, dict):
+        return ["failure_origins is malformed"]
+    base, tests, counts = (
+        origins.get("base"),
+        origins.get("tests"),
+        origins.get("counts"),
+    )
+    if not (
+        isinstance(base, dict)
+        and isinstance(base.get("sha"), str)
+        and _SHA_RE.match(base["sha"])
+        and isinstance(base.get("label"), str)
+        and _clean_text(base["label"], MAX_EVIDENCE_TEXT) == base["label"]
+        and origins.get("status") in _ORIGIN_STATUSES
+        and isinstance(origins.get("reason"), str)
+        and _clean_text(origins["reason"], MAX_MESSAGE) == origins["reason"]
+        and isinstance(origins.get("seconds"), float)
+        and math.isfinite(origins["seconds"])
+        and isinstance(origins.get("allowed"), bool)
+        and isinstance(tests, list)
+        and len(tests) <= MAX_FINDINGS
+        and isinstance(counts, dict)
+        and set(counts) == set(ORIGINS)
+    ):
+        return ["failure_origins is malformed"]
+    for test in tests:
+        if not (
+            isinstance(test, dict)
+            and isinstance(test.get("test"), str)
+            and test["test"]
+            and _clean_text(test["test"], MAX_MESSAGE) == test["test"]
+            and (test.get("file") is None or _clean_path(test["file"]) == test["file"])
+            and (
+                test.get("line") is None
+                or (
+                    isinstance(test["line"], int)
+                    and not isinstance(test["line"], bool)
+                    and test["line"] >= 1
+                )
+            )
+            and test.get("origin") in ORIGINS
+            and isinstance(test.get("detail"), str)
+            and _clean_text(test["detail"], MAX_MESSAGE) == test["detail"]
+        ):
+            return ["failure_origins has a malformed test"]
+    if counts != {key: sum(t["origin"] == key for t in tests) for key in ORIGINS}:
+        return ["failure_origins counts do not match its tests"]
+    return []
 
 
 def _marked(finding: Any) -> str:
@@ -258,6 +375,8 @@ def validate_receipt(receipt: Any) -> list[str]:
             if check.get("id") in seen:
                 problems.append(f"check {check.get('id')} appears twice")
             seen.add(check.get("id"))
+    if "failure_origins" in receipt:
+        problems += _failure_origins_problems(receipt["failure_origins"])
     unverified = receipt.get("unverified", [])
     if not isinstance(unverified, list) or len(unverified) > MAX_UNVERIFIED:
         problems.append("unverified is malformed")
@@ -541,6 +660,14 @@ def _verdict_line(receipt: dict[str, Any]) -> str:
         and (c.get("evidence") or {}).get("summary") == WAITING_SUMMARY
     ]
     problems = [_problem(c) for c in blocking if c not in waiting]
+    origins = _origins_counts(receipt)
+    if origins:
+        problems = [
+            f"{problem} ({origins})"
+            if problem.endswith("when Skylos ran them")
+            else problem
+            for problem in problems
+        ]
     word = "FAIL" if verdict == "fail" else "UNFINISHED"
     line = f"Verdict: {word}"
     if problems:
@@ -569,6 +696,36 @@ def _problem(check: dict[str, Any]) -> str:
     return PROBLEMS.get(check_id, f"{LABELS.get(check_id, check_id)}: failed")
 
 
+def _origins_counts(receipt: dict[str, Any]) -> str | None:
+    from skylos.done.preexisting import summary_counts
+
+    origins = receipt.get("failure_origins")
+    if not isinstance(origins, dict):
+        return None
+    return summary_counts(origins)
+
+
+def _origins_line(receipt: dict[str, Any]) -> str | None:
+    """ "Rerun on origin/main (merge base 1a2b3c4): 2 introduced, 1 already
+    failing on the base (3 s)", or why the rerun did not happen."""
+    origins = receipt.get("failure_origins")
+    if not isinstance(origins, dict):
+        return None
+    label = (origins.get("base") or {}).get("label") or "the base"
+    counts = _origins_counts(receipt) or "nothing checked"
+    line = f"Failing tests rerun on {label}: {counts}"
+    seconds = origins.get("seconds")
+    if isinstance(seconds, (int, float)) and seconds:
+        line += f" ({seconds:.1f} s)" if seconds < 10 else f" ({seconds:.0f} s)"
+    if origins.get("status") == "not_checked" and origins.get("reason"):
+        line += f". Not checked: {origins['reason']}"
+    elif origins.get("reason"):
+        line += f". {origins['reason'][0].upper()}{origins['reason'][1:]}"
+    if origins.get("allowed"):
+        line += ". Allowed by allow_preexisting_failures"
+    return line
+
+
 def _is_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -585,6 +742,9 @@ def render_text(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         lines.append(
             f"{_status_word(check):<11}{LABELS.get(check['id'], check['id'])}: {summary}"
         )
+        origins_line = _origins_line(receipt) if check["id"] == "tests_pass" else None
+        if origins_line:
+            lines.append(f"           {origins_line}")
         if check.get("status") in {"fail", "incomplete"} or check.get("findings"):
             for finding in check.get("findings", [])[:max_findings]:
                 where = finding.get("file") or ""
@@ -618,6 +778,9 @@ def render_markdown(receipt: dict[str, Any], *, max_findings: int = 10) -> str:
         if not findings:
             continue
         out += ["", f"**{_md(LABELS.get(check['id'], check['id']))}**", ""]
+        origins_line = _origins_line(receipt) if check["id"] == "tests_pass" else None
+        if origins_line:
+            out += [_md(origins_line), ""]
         for finding in findings[:max_findings]:
             where = finding.get("file") or ""
             if where and finding.get("line"):

@@ -143,9 +143,15 @@ def filter_new_findings(
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
             # A control removed in this comparison is a new regression, even
             # when a PR adds its fingerprint to the local debt baseline.
-            if fp not in known or (
-                finding.get("rule_id") == "SKY-L021"
-                and finding.get("kind") == "security_regression"
+            if (
+                fp not in known
+                or (
+                    finding.get("rule_id") == "SKY-L021"
+                    and finding.get("kind") == "security_regression"
+                )
+                # Reviewer settings changed or a scanner marker added in this
+                # comparison (SKY-A122/A125): the change cannot excuse itself.
+                or finding.get("kind") == "guardrail_tamper"
             ):
                 new_findings.append(finding)
         filtered[category] = new_findings

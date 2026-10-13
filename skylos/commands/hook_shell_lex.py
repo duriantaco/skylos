@@ -92,6 +92,15 @@ def prepare(text: str) -> tuple[str, list[str]]:
     return "".join(out), bodies
 
 
+def truncates(text: str) -> bool:
+    """Whether :func:`prepare` would cut ``text`` short: the command, without
+    here-document bodies, is longer than MAX_COMMAND_CHARS. Callers must not
+    treat what follows the cut as checked."""
+    if len(text) <= MAX_COMMAND_CHARS:
+        return False
+    return len(_LONG_WORD.sub("long", _strip_heredoc_bodies(text))) > MAX_COMMAND_CHARS
+
+
 def tokens(text: str) -> list[str]:
     lexer = shlex.shlex(text, posix=True, punctuation_chars=PUNCTUATION)
     lexer.whitespace = " \t\r"
@@ -139,6 +148,10 @@ def _copy_quoted(text: str, index: int, quote: str, out: list[str]) -> tuple[str
     char = text[index]
     if char == "\\":
         escaped = text[index + 1 : index + 2]
+        if escaped in {"\n", ""}:
+            # Line continuation (and a trailing backslash): the shell removes
+            # it, so "pip install \<newline> x" is one command.
+            return quote, index + 2
         out.append("\\" + (LITERAL_DOLLAR if escaped == "$" else escaped))
         return quote, index + 2
     if char == "'" and not quote:

@@ -2,18 +2,35 @@
 
 The install-surface scanner in ``manifest_dependency_hallucination`` only
 checks pinned specs found in files. An agent typing ``pip install foo`` is the
-opposite case: one command, usually unpinned, checked *before* it runs. This
-module reuses that scanner's tokenizer, private-registry detection, registry
-URL guards and look-alike heuristic, and adds package-only existence checks.
+opposite case: one command, usually unpinned, checked *before* it runs.
+:mod:`skylos.commands.hook_install_parse` reads the command (install
+commands, one-shot runners such as ``npx``/``uvx``/``pnpm dlx``, direct git
+and URL sources, registry overrides); this module checks the registry
+packages and sorts everything into explicit outcomes. Nothing it cannot
+check is reported as checked.
 """
 
 from __future__ import annotations
 
 import re
-import shlex
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from skylos.commands.hook_install_parse import (
+    JSR,
+    OUTCOME_DYNAMIC,
+    REGISTRY,
+    InstallTarget,
+    install_targets,
+    looks_like_install,
+    split_targets,
+)
+from skylos.commands.hook_registry_context import (
+    RegistryContext,
+    is_trusted,
+    registry_context,
+)
 from skylos.rules.ai_defect.dependency_truth import (
     DependencyTruthState,
     dependency_truth_cache_key,
@@ -22,57 +39,41 @@ from skylos.rules.ai_defect.dependency_truth import (
 from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     AUTHORITATIVE_CACHE_STATES,
     GO_PROXY_ORIGIN,
-    NPM_PRIVATE_REGISTRY_ENV_PREFIXES,
-    NPM_PRIVATE_REGISTRY_FLAGS,
     NPM_REGISTRY_ORIGIN,
-    NPM_VALUE_FLAGS,
-    PIP_PRIVATE_REGISTRY_ENV_PREFIXES,
-    PIP_VALUE_FLAGS,
     PYPI_JSON_ORIGIN,
     STATUS_MISSING_PACKAGE,
+    STATUS_MISSING_VERSION,
     STATUS_PRESENT,
     STATUS_UNKNOWN,
     _check_registry_package_url,
-    _command_prefix_tokens,
-    _go_install_args_start,
     _load_version_cache,
-    _npm_install_args_start,
-    _package_specs,
-    _pip_install_args_start,
     _registry_http_status,
-    _safe_go_path_part,
     _safe_npm_package_path,
     _safe_pypi_package_path,
     _save_version_cache,
-    _space_shell_command_separators,
     _suspicious_existing_dependency_reason,
-    _tokens_have_private_pip_index,
-    _tokens_have_private_registry_env,
-    _tokens_have_private_registry_option,
     check_dependency_version_status,
 )
 from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
     ECOSYSTEM_PYPI,
-    _classify_npm_registry_spec,
 )
 
 PACKAGE_ONLY_VERSION = "<package-only>"
 MAX_COMMAND_CHARS = 20_000
 MAX_PACKAGES_PER_COMMAND = 25
+JSR_ORIGIN = "https://jsr.io"
 
-# Cheap pre-filter so unrelated commands never pay for tokenizing.
-INSTALL_COMMAND_HINT_RE = re.compile(
-    r"\b(?:pip3?|pipx|uv|poetry|npm|pnpm|yarn|bun|go)\b[^\n]*?\b(?:install|add|get|i)\b"
-)
-_PIP_SPEC_RE = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?"
-    r"(?:\s*(?P<op>===|==|~=|>=|<=|!=|>|<)\s*(?P<version>\S+))?$"
-)
-_EXACT_PIP_VERSION_RE = re.compile(r"^[0-9][A-Za-z0-9._+-]*$")
-_ARCHIVE_SUFFIXES = (".whl", ".tar.gz", ".tgz", ".zip", ".tar.bz2", ".egg")
-_GO_MIN_MODULE_PARTS = 2
+# Outcomes of entries in ``unverified``. The hook allows "allowlisted" and
+# "private" (the user configured them); every other outcome goes through the
+# project's hook policy, which by default asks the user.
+OUTCOME_ALLOWLISTED = "allowlisted"
+OUTCOME_PRIVATE = "private"
+OUTCOME_REGISTRY_OVERRIDE = "registry_override"
+OUTCOME_NOT_PUBLIC = "not_public"
+OUTCOME_UNREACHABLE = "unreachable"
+OUTCOME_TOO_MANY = "too_many"
 
 StatusChecker = Callable[[str, str, str, dict[str, Any]], str]
 
@@ -103,40 +104,22 @@ CONFIG_ALLOW_KEY = "hooks_allow_packages"
 
 
 def looks_like_install_command(command: str) -> bool:
-    return bool(command) and bool(INSTALL_COMMAND_HINT_RE.search(command))
+    return looks_like_install(command)
 
 
-def install_command_packages(command: str) -> list[dict[str, Any]]:
+def install_command_packages(
+    command: str, cwd: str | Path | None = None
+) -> list[dict[str, Any]]:
     """Return registry packages named by install commands in ``command``.
 
     Each entry: ``ecosystem``, ``name``, ``version`` ("" when unpinned or a
     range), ``private`` (alternate index/registry in use, so the public
     registry is not authoritative).
     """
-    if not isinstance(command, str) or len(command) > MAX_COMMAND_CHARS:
-        return []
-    if not looks_like_install_command(command):
-        return []
-    spaced = _space_shell_command_separators(command)
-    try:
-        tokens = shlex.split(spaced, comments=True, posix=True)
-    except ValueError:
-        tokens = spaced.split()
-
-    packages: list[dict[str, Any]] = []
-    for idx in range(len(tokens)):
-        prefix = _command_prefix_tokens(tokens, idx)
-        pip_start = _pip_install_args_start(tokens, idx)
-        if pip_start is not None:
-            packages.extend(_pip_packages(tokens[pip_start:], prefix))
-            continue
-        npm_start = _npm_install_args_start(tokens, idx)
-        if npm_start is not None:
-            packages.extend(_npm_packages(tokens[npm_start:], prefix))
-            continue
-        go_start = _go_install_args_start(tokens, idx)
-        if go_start is not None:
-            packages.extend(_go_packages(tokens[go_start:]))
+    targets = _parse(command, Path(cwd) if cwd is not None else Path.cwd(), None)
+    packages = [
+        _package_from_target(target) for target in targets if target.kind == REGISTRY
+    ]
     return _dedupe(packages)[:MAX_PACKAGES_PER_COMMAND]
 
 
@@ -146,56 +129,185 @@ def check_install_command(
     *,
     status_checker: StatusChecker | None = None,
     cache_root: str | Path | None = None,
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+    trusted_registries: tuple[str, ...] | None = None,
+    context: RegistryContext | None = None,
+    home: str | Path | None = None,
+    targets: list[InstallTarget] | None = None,
 ) -> dict[str, Any]:
-    """Check packages in ``command`` against their public registries.
+    """Check what ``command`` installs and sort it into explicit outcomes.
 
-    ``repo_root`` supplies the project config (allowlist); registry answers
-    are cached under ``cache_root`` (default: ``repo_root``).
+    ``repo_root`` supplies the project config (allowlist, trusted
+    registries); registry answers are cached under ``cache_root`` (default:
+    ``repo_root``).
 
-    Returns ``{"packages": [...], "findings": [...], "unverified": [...]}``.
-    A finding means the package does not exist, the pinned version does not
-    exist, or the name is a one-edit look-alike of a popular package.
-    ``unverified`` lists packages that could not be checked (private
-    registry, network failure); callers must treat them as allowed.
+    Returns a dict with:
+
+    * ``packages``: registry packages the command names;
+    * ``findings``: packages that do not exist, pinned versions that do not
+      exist, and one-edit look-alikes of popular packages (block);
+    * ``unverified``: packages not checked or not checkable, each with a
+      ``reason`` and an ``outcome`` (see the ``OUTCOME_*`` constants);
+    * ``direct``: code fetched from outside a registry (git, URL, tarball,
+      archive outside the project);
+    * ``local`` / ``manifest``: counts of local and manifest installs.
+
+    ``targets`` skips parsing when the caller already parsed ``command``.
     """
-    packages = install_command_packages(command)
-    result: dict[str, Any] = {"packages": packages, "findings": [], "unverified": []}
+    root = _existing_dir(repo_root)
+    base = Path(cwd) if cwd is not None else (root or Path.cwd())
+    if targets is None:
+        targets = _parse(command, base, root)
+    registry_targets, result = split_targets(targets)
+    if not registry_targets:
+        return result
+
+    if trusted_registries is None:
+        from skylos.commands.hook_install_policy import load_install_policy
+
+        trusted_registries = load_install_policy(root).trusted_registries
+    trusted = tuple(trusted_registries or ())
+
+    packages = _dedupe([_package_from_target(t) for t in registry_targets])
+    result["packages"] = packages[:MAX_PACKAGES_PER_COMMAND]
+    for package in packages[MAX_PACKAGES_PER_COMMAND:]:
+        result["unverified"].append(
+            {
+                **package,
+                "reason": "too many packages in one command",
+                "outcome": OUTCOME_TOO_MANY,
+            }
+        )
+    packages = packages[:MAX_PACKAGES_PER_COMMAND]
     if not packages:
         return result
 
-    checker = status_checker or check_install_package_status
-    root = _existing_dir(repo_root)
     allowed = _user_allowed_packages(root)
-    kept = []
+    if context is None:
+        context = registry_context(
+            root, base, env or {}, Path(home) if home is not None else None
+        )
+    to_check: list[dict[str, Any]] = []
     for package in packages:
-        if _allowed(package, allowed):
-            result["unverified"].append({**package, "reason": "allowlisted"})
+        entry = _route(package, allowed, trusted, context)
+        if entry is None:
+            to_check.append(package)
         else:
-            kept.append(package)
-    packages = kept
+            result["unverified"].append(entry)
+    if not to_check:
+        return result
+
+    checker = status_checker or check_install_package_status
     store = _existing_dir(cache_root) if cache_root is not None else root
     cache = _load_version_cache(store) if store is not None else {"statuses": {}}
     cache_changed = False
-
-    public = [package for package in packages if not package["private"]]
-    for package in packages:
-        if package["private"]:
-            result["unverified"].append({**package, "reason": "private registry"})
-    statuses = _lookup_statuses(public, cache, checker)
-
-    for package, (status, fresh) in zip(public, statuses):
+    statuses = _lookup_statuses(to_check, cache, checker)
+    for package, (status, fresh) in zip(to_check, statuses):
         if fresh and _record_status(package, cache, status):
             cache_changed = True
         state = normalize_dependency_truth_state(status)
+        alternates = package.get("alternate") or []
+        if (
+            state
+            in {
+                DependencyTruthState.MISSING_PACKAGE,
+                DependencyTruthState.MISSING_VERSION,
+            }
+            and alternates
+        ):
+            registry = alternates[0]
+            outcome = (
+                OUTCOME_PRIVATE if is_trusted(registry, trusted) else OUTCOME_NOT_PUBLIC
+            )
+            result["unverified"].append(
+                {
+                    **package,
+                    "outcome": outcome,
+                    "registry": registry,
+                    "reason": f"not on {_REGISTRY_LABELS.get(package['ecosystem'], 'the public registry')}; "
+                    f"may be on {_registry_label(registry)}",
+                }
+            )
+            continue
         finding = _finding(package, state)
         if finding is not None:
             result["findings"].append(finding)
         elif state == DependencyTruthState.UNKNOWN:
-            result["unverified"].append({**package, "reason": "registry unreachable"})
+            result["unverified"].append(
+                {
+                    **package,
+                    "reason": "registry unreachable",
+                    "outcome": OUTCOME_UNREACHABLE,
+                }
+            )
 
     if cache_changed and store is not None:
         _save_version_cache(store, cache)
     return result
+
+
+def _parse(command: str, cwd: Path, root: Path | None) -> list[InstallTarget]:
+    if not isinstance(command, str) or len(command) > MAX_COMMAND_CHARS:
+        return []
+    if not looks_like_install(command):
+        return []
+    return install_targets(command, cwd, root=root)
+
+
+def _route(
+    package: dict[str, Any],
+    allowed: set[tuple[str, str]],
+    trusted: tuple[str, ...],
+    context: RegistryContext,
+) -> dict[str, Any] | None:
+    """An ``unverified`` entry for a package that skips the public check,
+    or None when the public registry should be asked."""
+    if _allowed(package, allowed):
+        return {**package, "reason": "allowlisted", "outcome": OUTCOME_ALLOWLISTED}
+    registries = package.get("registries") or []
+    if registries:
+        if all(is_trusted(r, trusted) for r in registries):
+            return {**package, "reason": "trusted registry", "outcome": OUTCOME_PRIVATE,
+                    "registry": registries[0]}  # fmt: skip
+        if any(r.startswith("configured:") for r in registries):
+            package["alternate"] = [r for r in registries]
+            return None
+        untrusted = next(r for r in registries if not is_trusted(r, trusted))
+        return {**package, "reason": "private registry",
+                "outcome": OUTCOME_REGISTRY_OVERRIDE, "registry": untrusted}  # fmt: skip
+    ecosystem, name = package["ecosystem"], package["name"]
+    if ecosystem == ECOSYSTEM_GO and context.go_is_private(name):
+        return {**package, "reason": "GOPRIVATE module", "outcome": OUTCOME_PRIVATE}
+    scoped = context.scoped(ecosystem, name)
+    if scoped is not None:
+        outcome = OUTCOME_PRIVATE if is_trusted(scoped, trusted) else OUTCOME_NOT_PUBLIC
+        return {**package, "registry": scoped, "outcome": outcome,
+                "reason": f"scope registry {scoped}"}  # fmt: skip
+    alternates = context.alternate(ecosystem, name)
+    if alternates:
+        package["alternate"] = alternates
+    return None
+
+
+def _registry_label(registry: str) -> str:
+    if registry.startswith("configured:"):
+        return registry.split(":", 1)[1]
+    return f"the configured registry {registry}"
+
+
+def _package_from_target(target: InstallTarget) -> dict[str, Any]:
+    package = {
+        "ecosystem": target.ecosystem,
+        "name": target.name,
+        "version": target.version,
+        "private": bool(target.registries),
+        "tool": target.tool,
+        "runs": target.runs,
+    }
+    if target.registries:
+        package["registries"] = list(target.registries)
+    return package
 
 
 def _lookup_statuses(
@@ -234,6 +346,8 @@ def check_install_package_status(
 ) -> str:
     if ecosystem == ECOSYSTEM_GO:
         return _check_go_module_exists(name)
+    if ecosystem == JSR:
+        return _check_jsr_package(name, version)
     if version:
         return check_dependency_version_status(ecosystem, name, version, cache)
     if ecosystem == ECOSYSTEM_PYPI:
@@ -255,86 +369,33 @@ def check_install_package_status(
     return STATUS_UNKNOWN
 
 
-def _pip_packages(args: list[str], prefix: list[str]) -> list[dict[str, Any]]:
-    private = _tokens_have_private_pip_index(args) or _tokens_have_private_registry_env(
-        prefix, PIP_PRIVATE_REGISTRY_ENV_PREFIXES
-    )
-    packages = []
-    for spec in _package_specs(args, value_flags=PIP_VALUE_FLAGS):
-        parsed = _parse_pip_spec(spec)
-        if parsed is None:
-            continue
-        name, version = parsed
-        packages.append(_package(ECOSYSTEM_PYPI, name, version, private))
-    return packages
+_JSR_NAME_RE = re.compile(r"^@[a-z0-9-]+/[a-z0-9-]+$")
+_JSR_VERSION_RE = re.compile(r"^[0-9][A-Za-z0-9.+-]*$")
 
 
-def _parse_pip_spec(spec: str) -> tuple[str, str] | None:
-    raw = spec.strip()
-    if not raw or "/" in raw or "\\" in raw or ":" in raw:
-        return None
-    if raw.lower().endswith(_ARCHIVE_SUFFIXES):
-        return None
-    if "@" in raw:
-        # poetry/uv ``name@^1.2`` constraint; only the name is checkable.
-        raw = raw.split("@", 1)[0].strip()
-    match = _PIP_SPEC_RE.match(raw)
-    if not match:
-        return None
-    version = ""
-    if match.group("op") in {"==", "==="}:
-        candidate = match.group("version") or ""
-        if _EXACT_PIP_VERSION_RE.match(candidate) and "*" not in candidate:
-            version = candidate
-    return match.group("name"), version
+def _check_jsr_package(name: str, version: str) -> str:
+    if not _JSR_NAME_RE.match(name):
+        return STATUS_UNKNOWN
+    package_url = f"{JSR_ORIGIN}/{name}/meta.json"
+    if version and _JSR_VERSION_RE.match(version):
+        status = _registry_http_status(
+            f"{JSR_ORIGIN}/{name}/{version}_meta.json", user_agent="skylos-jsr/1.0"
+        )
+        if status == 200:
+            return STATUS_PRESENT
+        if status not in {404, 410}:
+            return STATUS_UNKNOWN
+        package = _registry_http_status(package_url, user_agent="skylos-jsr/1.0")
+        if package == 200:
+            return STATUS_MISSING_VERSION
+        return STATUS_MISSING_PACKAGE if package in {404, 410} else STATUS_UNKNOWN
+    status = _registry_http_status(package_url, user_agent="skylos-jsr/1.0")
+    if status == 200:
+        return STATUS_PRESENT
+    return STATUS_MISSING_PACKAGE if status in {404, 410} else STATUS_UNKNOWN
 
 
-def _npm_packages(args: list[str], prefix: list[str]) -> list[dict[str, Any]]:
-    private = _tokens_have_private_registry_option(
-        args, NPM_PRIVATE_REGISTRY_FLAGS
-    ) or _tokens_have_private_registry_env(prefix, NPM_PRIVATE_REGISTRY_ENV_PREFIXES)
-    packages = []
-    for spec in _package_specs(args, value_flags=NPM_VALUE_FLAGS):
-        parsed = _parse_npm_spec(spec)
-        if parsed is None:
-            continue
-        name, version = parsed
-        packages.append(_package(ECOSYSTEM_NPM, name, version, private))
-    return packages
-
-
-def _parse_npm_spec(spec: str) -> tuple[str, str] | None:
-    raw = spec.strip()
-    if not raw or ":" in raw:
-        return None
-    split_at = raw.rfind("@")
-    if split_at > 0:
-        name, version_spec = raw[:split_at], raw[split_at + 1 :]
-    else:
-        name, version_spec = raw, ""
-    if _safe_npm_package_path(name) is None:
-        return None
-    version = ""
-    if version_spec:
-        classified = _classify_npm_registry_spec(version_spec)
-        if classified is None:
-            return None
-        lookup, exact = classified
-        version = lookup if exact else ""
-    return name, version
-
-
-def _go_packages(args: list[str]) -> list[dict[str, Any]]:
-    packages = []
-    for spec in _package_specs(args, value_flags=set()):
-        name = spec.strip().split("@", 1)[0]
-        parts = name.split("/")
-        if len(parts) < _GO_MIN_MODULE_PARTS or "." not in parts[0]:
-            continue  # local package pattern such as ./... or a stdlib path
-        if not all(_safe_go_path_part(part) for part in parts):
-            continue
-        packages.append(_package(ECOSYSTEM_GO, name, "", False))
-    return packages
+_GO_MIN_MODULE_PARTS = 2
 
 
 def _check_go_module_exists(name: str) -> str:
@@ -359,20 +420,16 @@ def _go_escape(part: str) -> str:
     return "".join(f"!{ch.lower()}" if ch.isupper() else ch for ch in part)
 
 
-def _package(ecosystem: str, name: str, version: str, private: bool) -> dict[str, Any]:
-    return {
-        "ecosystem": ecosystem,
-        "name": name,
-        "version": version,
-        "private": bool(private),
-    }
-
-
 def _dedupe(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
     unique = []
     for package in packages:
-        key = (package["ecosystem"], package["name"].lower(), package["version"])
+        key = (
+            package["ecosystem"],
+            package["name"].lower(),
+            package["version"],
+            tuple(package.get("registries") or ()),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -456,6 +513,7 @@ _REGISTRY_LABELS = {
     ECOSYSTEM_PYPI: "PyPI",
     ECOSYSTEM_NPM: "the npm registry",
     ECOSYSTEM_GO: "the Go module proxy",
+    JSR: "JSR",
 }
 
 
@@ -472,6 +530,7 @@ _ECOSYSTEM_PREFIXES = {
     "pip": ECOSYSTEM_PYPI,
     "npm": ECOSYSTEM_NPM,
     "go": ECOSYSTEM_GO,
+    "jsr": JSR,
 }
 
 
@@ -527,6 +586,13 @@ def _existing_dir(value: str | Path | None) -> Path | None:
 
 
 __all__ = [
+    "OUTCOME_ALLOWLISTED",
+    "OUTCOME_DYNAMIC",
+    "OUTCOME_NOT_PUBLIC",
+    "OUTCOME_PRIVATE",
+    "OUTCOME_REGISTRY_OVERRIDE",
+    "OUTCOME_TOO_MANY",
+    "OUTCOME_UNREACHABLE",
     "check_install_command",
     "check_install_package_status",
     "install_command_packages",
