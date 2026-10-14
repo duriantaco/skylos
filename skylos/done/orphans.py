@@ -242,8 +242,14 @@ class _BaseView:
 # ---------------------------------------------------------------------------
 
 
-def find_branch_orphans(comparison: Comparison, head_paths: list[str]) -> OrphanReport:
-    """Orphans this change left, from base and head production views."""
+def find_branch_orphans(
+    comparison: Comparison, head_paths: list[str], *, trust_cache: bool = True
+) -> OrphanReport:
+    """Orphans this change left, from base and head production views.
+
+    ``trust_cache=False`` rebuilds the base view from Git objects instead of
+    reading ``.skylos/cache/done-orphans/``: anything in the working tree can
+    write that cache, so a check that can block never reads it."""
     report = OrphanReport()
     if not _touches_production(comparison):
         report.skipped = "No production code changed"
@@ -258,7 +264,9 @@ def find_branch_orphans(comparison: Comparison, head_paths: list[str]) -> Orphan
         report.head_seconds = time.monotonic() - started
         report.files_analyzed = sum(1 for p in head_root.rglob("*") if p.is_file())
         started = time.monotonic()
-        base, report.base_cached = _base_view(comparison, workspace / "base")
+        base, report.base_cached = _base_view(
+            comparison, workspace / "base", trust_cache=trust_cache
+        )
         report.base_seconds = time.monotonic() - started
         _judge(comparison, changes, base, head, head_root, head_tests, report)
     return report
@@ -554,7 +562,9 @@ def _skippable(path: str) -> bool:
         or pure.is_absolute()
         or "\\" in path
         or "�" in path
-        or path.startswith("~")  # read as a home directory by path helpers
+        # Office/editor lock files (~$deck.pptx); a receipt cannot name a
+        # path that starts with "~" either.
+        or path.startswith("~")
         or is_runtime_path(path)
         or any(part in {"", ".", ".."} for part in path.split("/"))
     ):
@@ -831,9 +841,14 @@ def _alive_index(result: dict, root: Path) -> dict[str, dict[str, tuple[str, int
 # ---------------------------------------------------------------------------
 
 
-def _base_view(comparison: Comparison, root: Path) -> tuple[_BaseView, bool]:
+def _base_view(
+    comparison: Comparison, root: Path, *, trust_cache: bool = True
+) -> tuple[_BaseView, bool]:
+    # The cache is local, unauthenticated state: an agent running as the same
+    # user can write it (an integrity key would be just as readable). It only
+    # speeds up advice; a blocking run recomputes and rewrites it.
     cache_path = _cache_path(comparison)
-    cached = _load_base(comparison.root, cache_path)
+    cached = _load_base(comparison.root, cache_path) if trust_cache else None
     if cached is not None:
         return cached, True
     _write_base_snapshot(comparison, root)

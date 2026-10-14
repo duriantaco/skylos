@@ -35,7 +35,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_text_no_symlink, strip_utf8_bom
 
 # Read modes. Each mirrors the exact read semantics of the call sites it
 # replaces; adding a mode must not change an existing one.
@@ -68,6 +68,12 @@ def mode_max_bytes(mode: str) -> int | None:
 
 
 def _read_source(path: Path, mode: str) -> str | None:
+    source = _read_source_text(path, mode)
+    # Python skips a leading byte-order mark; ast.parse(str) does not.
+    return None if source is None else strip_utf8_bom(source)
+
+
+def _read_source_text(path: Path, mode: str) -> str | None:
     if mode == MODE_REPLACE:
         try:
             return path.read_text(encoding="utf-8", errors="replace")

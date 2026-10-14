@@ -920,6 +920,107 @@ def test_secrets_only_count_added_lines_and_ignore_doc_examples(repo: Path):
     assert GH_TOKEN[4:] not in json.dumps([f.message for f in result.findings])
 
 
+VALID_YAML = "language: en\nreviews:\n  profile: chill\n"
+HELM_TEMPLATE = (
+    "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Values.name }}\n"
+    '  labels: {{- include "x" . | nindent 4 }}\nspec:\n  containers: []\n'
+)
+
+
+def _yaml_base(repo: Path, rel: str, text: str) -> None:
+    _write(repo, rel, text)
+    _commit(repo, "yaml base")
+    _git(repo, "branch", "-f", "main", "HEAD")
+
+
+def test_unparsable_yaml_is_an_incomplete_secrets_check_not_a_secret(repo: Path):
+    _yaml_base(repo, ".coderabbit.yaml", VALID_YAML)
+    _write(repo, ".coderabbit.yaml", VALID_YAML + "reviews: [unclosed\n")
+
+    result = check_secrets(_ctx(repo))
+
+    assert result.status == "incomplete"
+    assert result.summary.startswith("Not fully checked: .coderabbit.yaml")
+    assert "does not parse as YAML" in result.summary
+    assert [(f.rule, f.file) for f in result.findings] == [
+        ("SKY-ANALYSIS-INCOMPLETE", ".coderabbit.yaml")
+    ]
+    assert "Could not parse this YAML file" in result.findings[0].message
+    assert all("secret added" not in f.message for f in result.findings)
+    assert result.evidence["secrets"] == 0
+    assert result.evidence["not_fully_checked"] == 1
+
+
+def test_unparsable_yaml_with_a_real_secret_still_fails(repo: Path):
+    _yaml_base(repo, ".coderabbit.yaml", VALID_YAML)
+    _write(
+        repo,
+        ".coderabbit.yaml",
+        VALID_YAML + f"token: {GH_TOKEN}\nreviews: [unclosed\n",
+    )
+
+    result = check_secrets(_ctx(repo))
+
+    assert result.status == "fail"
+    assert [f.rule for f in result.findings] == [
+        "SKY-S101",
+        "SKY-ANALYSIS-INCOMPLETE",
+    ]
+    assert result.findings[0].line == 4
+    assert result.evidence["secrets"] == 1
+
+
+def test_change_that_breaks_yaml_on_an_unchanged_line_is_incomplete(repo: Path):
+    # The added line (2) opens a flow sequence; the parser fails on a later,
+    # unchanged line. The base parsed, so this change made it unparsable.
+    _yaml_base(repo, ".coderabbit.yaml", VALID_YAML)
+    _write(
+        repo,
+        ".coderabbit.yaml",
+        "language: en\npaths: [a,\nreviews:\n  profile: chill\n",
+    )
+
+    result = check_secrets(_ctx(repo))
+
+    assert result.status == "incomplete"
+    assert result.findings[0].rule == "SKY-ANALYSIS-INCOMPLETE"
+    assert result.findings[0].line != 2
+
+
+def test_already_unparsable_template_edited_elsewhere_passes_and_says_so(
+    repo: Path,
+):
+    _yaml_base(repo, "chart/templates/pod.yaml", HELM_TEMPLATE)
+    _write(repo, "chart/templates/pod.yaml", HELM_TEMPLATE + "status: {}\n")
+
+    result = check_secrets(_ctx(repo))
+
+    assert result.status == "pass"
+    assert result.findings == []
+    assert "chart/templates/pod.yaml was checked line by line only" in (
+        result.summary
+    )
+    assert result.evidence["checked_line_by_line"] == 1
+
+
+def test_new_unparsable_template_is_incomplete(repo: Path):
+    _write(repo, "chart/templates/pod.yaml", HELM_TEMPLATE)
+
+    result = check_secrets(_ctx(repo))
+
+    assert result.status == "incomplete"
+    assert result.findings[0].rule == "SKY-ANALYSIS-INCOMPLETE"
+
+
+def test_unfinished_secrets_check_still_stops_a_block_mode_run(repo: Path):
+    _yaml_base(repo, ".coderabbit.yaml", VALID_YAML)
+    _write(repo, ".coderabbit.yaml", VALID_YAML + "reviews: [unclosed\n")
+
+    secrets = check_secrets(_ctx(repo))
+
+    assert decide_verdict([CheckOutcome("block", secrets)]) == "incomplete"
+
+
 # ---------------------------------------------------------------------------
 # runner (A113)
 # ---------------------------------------------------------------------------

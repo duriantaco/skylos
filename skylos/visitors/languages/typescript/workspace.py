@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.core.safe_cache_io import UTF8_BOM
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - pyyaml is a runtime dependency.
@@ -96,6 +98,9 @@ class WorkspaceInventory:
 def _read_json_file(path: Path) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
+            # npm and Node skip a leading byte-order mark.
+            if f.read(1) != UTF8_BOM:
+                f.seek(0)
             data = json.load(f)
         if isinstance(data, dict):
             return data

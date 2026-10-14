@@ -1026,11 +1026,66 @@ def _is_workflow(path: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_ANALYSIS_INCOMPLETE = "SKY-ANALYSIS-INCOMPLETE"
+
+
+def _secret_scan(path: str, lines: list[str]) -> list[dict]:
+    from skylos.rules.secrets import scan_ctx
+
+    # Suppression comments written in this change do not count: the change
+    # under review cannot excuse itself.
+    return scan_ctx(
+        {
+            "relpath": path,
+            "lines": lines,
+            "tree": None,
+            "honor_inline_ignores": False,
+        },
+        ignore_tests=False,
+    )
+
+
+def _is_scan_incomplete(item: dict) -> bool:
+    # The scanner reports a file it could not fully analyse (a YAML file that
+    # does not parse, a context budget) as a processing error, not a secret.
+    return (
+        item.get("kind") == "processing_error"
+        or item.get("rule_id") == _ANALYSIS_INCOMPLETE
+    )
+
+
+def _base_scan_complete(comparison, changed) -> bool:
+    """Whether the base version of ``changed`` was fully analysed (or did not
+    exist), i.e. this change made the file one the scanner cannot finish."""
+    text = comparison.base_text(changed.base_path) if changed.base_path else None
+    if text is None:
+        return True
+    raw = _secret_scan(changed.base_path, text.splitlines(True))
+    return not any(_is_scan_incomplete(item) for item in raw)
+
+
+def _unchecked_reason(path: str, line: int, item: dict) -> str:
+    from skylos.rules.secrets import SECRET_CONTEXT_UNPARSED
+
+    diagnostics = (item.get("metadata") or {}).get("analysis_diagnostics") or ()
+    if SECRET_CONTEXT_UNPARSED in diagnostics:
+        return f"{path} does not parse as YAML (line {line})"
+    return f"{path} hit a scanner safety limit"
+
+
 def check_secrets(ctx: CheckContext) -> CheckResult:
-    from skylos.rules.secrets import IGNORE_DIRECTIVE, scan_ctx
+    from skylos.rules.secrets import IGNORE_DIRECTIVE
 
     comparison = ctx.comparison
     findings: list[Finding] = []
+    # Files the scanner could not fully analyse. They make the check
+    # incomplete (an unfinished check still stops a block-mode run), never
+    # "a secret was added".
+    unchecked: list[Finding] = []
+    reasons: list[str] = []
+    # Already unanalysable at the base and not broken on a line this change
+    # added (an edited Helm template): checked line by line, named only.
+    line_by_line: list[str] = []
     scanned = 0
     for changed in comparison.changed:
         if changed.head_path is None:
@@ -1043,19 +1098,11 @@ def check_secrets(ctx: CheckContext) -> CheckResult:
             continue
         scanned += 1
         lines = text.splitlines(True)
-        # Suppression comments written in this change do not count: the
-        # change under review cannot excuse itself.
-        raw = scan_ctx(
-            {
-                "relpath": changed.path,
-                "lines": lines,
-                "tree": None,
-                "honor_inline_ignores": False,
-            },
-            ignore_tests=False,
-        )
+        raw = _secret_scan(changed.path, lines)
         seen = set()
         for item in raw:
+            if _is_scan_incomplete(item):
+                continue
             line = _int(item.get("line"))
             # One finding per line: a token matched by a provider pattern is
             # often matched by the generic high-entropy pattern too.
@@ -1079,18 +1126,60 @@ def check_secrets(ctx: CheckContext) -> CheckResult:
                     ),
                 )
             )
-    summary = f"{len(findings)} secret(s) added" if findings else "No secrets added"
+        incomplete = next((item for item in raw if _is_scan_incomplete(item)), None)
+        if incomplete is None:
+            continue
+        line = _int(incomplete.get("line")) or 1
+        if line in added or _base_scan_complete(comparison, changed):
+            unchecked.append(
+                Finding(
+                    _ANALYSIS_INCOMPLETE,
+                    changed.path,
+                    line,
+                    str(incomplete.get("message") or "Could not fully check this file"),
+                )
+            )
+            reasons.append(_unchecked_reason(changed.path, line, incomplete))
+        else:
+            line_by_line.append(changed.path)
+    # Status comes from the secrets alone; an unanalysed file only turns a
+    # pass into incomplete.
+    status = _status(findings)
+    if status == "pass" and unchecked:
+        status = "incomplete"
+    if findings:
+        summary = f"{len(findings)} secret(s) added"
+        if unchecked:
+            summary += f"; {len(unchecked)} file(s) not fully checked"
+    elif len(unchecked) == 1:
+        summary = f"Not fully checked: {reasons[0]}"
+    elif unchecked:
+        summary = f"Not fully checked: {len(unchecked)} files ({reasons[0]}; ...)"
+    elif len(line_by_line) == 1:
+        summary = (
+            f"No secrets added; {line_by_line[0]} was checked line by line "
+            "only (it does not parse at the base either)"
+        )
+    elif line_by_line:
+        summary = (
+            f"No secrets added; {len(line_by_line)} files were checked line by "
+            "line only (they do not parse at the base either)"
+        )
+    else:
+        summary = "No secrets added"
     return CheckResult(
         id="secrets",
         rule="SKY-S101",
-        status=_status(findings),
+        status=status,
         summary=summary,
         evidence={
             "files_scanned": scanned,
             "secrets": len(findings),
+            "not_fully_checked": len(unchecked),
+            "checked_line_by_line": len(line_by_line),
             "summary": summary,
         },
-        findings=findings,
+        findings=findings + unchecked,
     )
 
 
@@ -1378,7 +1467,12 @@ def check_branch_orphans(ctx: CheckContext) -> CheckResult:
     _, head_paths, removed = ctx._repository_paths()
     paths = sorted({p for p in head_paths if p and p not in removed})
     try:
-        report = find_branch_orphans(ctx.comparison, paths)
+        # A blocking check never trusts the working-tree base cache.
+        report = find_branch_orphans(
+            ctx.comparison,
+            paths,
+            trust_cache=ctx.config.mode("branch_orphans") != "block",
+        )
     except OrphansUnavailable as exc:
         summary = f"Not checked: {exc}"
         return CheckResult(

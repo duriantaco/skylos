@@ -87,7 +87,7 @@ UNCHECKED = {
     "tests_pass": "the tests did not run",
     "test_tampering": "test changes were not checked",
     "gate_tampering": "Skylos settings and hooks were not checked",
-    "secrets": "the change was not checked for secrets",
+    "secrets": "the change was not fully checked for secrets",
     "unknown_imports": "imports and packages were not checked",
     "changed_lines_checked": "changed lines were not checked against the tests",
     "test_special_casing": "the code was not checked for test special-casing",

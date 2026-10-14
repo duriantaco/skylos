@@ -18,6 +18,16 @@ PROJECT_CACHE_LOCK_POLL_SECONDS = 0.01
 PROJECT_CACHE_LOCK_STALE_SECONDS = 3600.0
 
 
+UTF8_BOM = "\ufeff"
+
+
+def strip_utf8_bom(text: str) -> str:
+    """Drop one leading U+FEFF. In a UTF-8 file it is the byte-order mark, a
+    file signature rather than content: CPython, Node's module loader, npm
+    and pip all skip it, and Windows editors write it."""
+    return text[1:] if text.startswith(UTF8_BOM) else text
+
+
 def read_text_no_symlink(
     path: str | Path,
     *,
@@ -142,10 +152,14 @@ def _project_relative_path(
     path: str | Path,
 ) -> tuple[Path, Path] | None:
     try:
-        root = Path(project_root).expanduser().resolve(strict=True)
+        root = _expand_user(Path(project_root)).resolve(strict=True)
     except OSError:
         return None
-    candidate = Path(path).expanduser()
+    # A path inside the project is literal: Git never expands "~", so
+    # "~notes/todo.py" or "~/x.py" name folders in the repository, not a
+    # home directory (expanding them crashed on unknown users and read
+    # outside the project for known ones).
+    candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
     try:
@@ -155,6 +169,15 @@ def _project_relative_path(
     if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
         return None
     return root, relative
+
+
+def _expand_user(path: Path) -> Path:
+    """``path.expanduser()``, or ``path`` itself when "~name" names no user
+    (or there is no home directory): then it is a literal folder name."""
+    try:
+        return path.expanduser()
+    except (RuntimeError, KeyError):
+        return path
 
 
 def _read_project_text_fallback(

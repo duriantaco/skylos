@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_text_no_symlink, strip_utf8_bom
 
 MAX_JS_API_PACKAGE_JSON_BYTES = 1_000_000
 MAX_JS_API_SURFACE_SOURCE_BYTES = 1_000_000
@@ -52,7 +52,8 @@ def read_package_json(path: Path) -> dict[str, Any]:
     if text is None:
         return {}
     try:
-        data = json.loads(text)
+        # npm and Node skip a leading byte-order mark.
+        data = json.loads(strip_utf8_bom(text))
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}

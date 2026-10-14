@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,8 +13,8 @@ import pytest
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.done.base import open_comparison
 from skylos.done.checks import CheckContext, check_branch_orphans
-from skylos.done.config import DoneConfig, parse_done_config
-from skylos.done.engine import run
+from skylos.done.config import DEFAULT_MODES, DoneConfig, parse_done_config
+from skylos.done.engine import CheckOutcome, decide_verdict, run
 from skylos.done.orphans import removed_lines
 from skylos.done.receipt import build_receipt, render_text, validate_receipt
 
@@ -941,6 +942,67 @@ def test_base_analysis_is_cached_by_base_commit(tmp_path):
     assert second.evidence["base_cached"] is True
     assert _found(first) == _found(second)
     assert not _git(root, "status", "--porcelain")
+
+
+def _forge_base_cache(root: Path, alive: dict) -> None:
+    files = sorted((root / ".skylos" / "cache" / "done-orphans").glob("*.json"))
+    assert files
+    for path in files:
+        data = json.loads(path.read_text())
+        data["alive"] = alive
+        assert write_text_no_symlink(path, json.dumps(data))
+
+
+def test_block_mode_never_reads_a_forged_base_cache(tmp_path):
+    # Anything in the working tree (an agent) can write the cache. A blocking
+    # check rebuilds the base view from Git instead, and repairs the cache.
+    root = _repo(tmp_path, PY_BASE)
+    _change(root, {"app/checkout.py": CHECKOUT_INLINED})
+    block = DoneConfig(modes={**DEFAULT_MODES, "branch_orphans": "block"})
+    assert _found(_check(root, block)) == [(A135, "app/pricing.py", 1)]
+    _forge_base_cache(root, {})
+
+    result = _check(root, block)
+
+    assert result.status == "fail"
+    assert result.evidence["base_cached"] is False
+    assert _found(result) == [(A135, "app/pricing.py", 1)]
+    advise = _check(root)
+    assert advise.evidence["base_cached"] is True
+    assert _found(advise) == [(A135, "app/pricing.py", 1)]
+
+
+def test_block_mode_ignores_an_invented_base_cache_entry(tmp_path):
+    pricing = PY_BASE["app/pricing.py"] + "\n\n        def legacy(x):\n            return x\n"
+    root = _repo(tmp_path, {**PY_BASE, "app/pricing.py": pricing})
+    _change(root, {"app/checkout.py": CHECKOUT_INLINED})
+    block = DoneConfig(modes={**DEFAULT_MODES, "branch_orphans": "block"})
+    _check(root, block)
+    # `legacy` is unused at the base too; the forged cache says it was alive.
+    invented = {"app/pricing.py": [["app.pricing.legacy", "function", 9]]}
+    _forge_base_cache(root, invented)
+
+    result = _check(root, block)
+
+    assert _found(result) == [(A135, "app/pricing.py", 1)]
+    # The block run rewrote the cache; forged again, it does reach advice.
+    _forge_base_cache(root, invented)
+    assert (A135, "app/pricing.py", 9) in _found(_check(root))
+
+
+def test_advise_mode_trusts_the_cache_for_advice_only(tmp_path):
+    # The documented residual: a forged cache can change advice, never a
+    # verdict, because advise-mode findings never block.
+    root = _repo(tmp_path, PY_BASE)
+    _change(root, {"app/checkout.py": CHECKOUT_INLINED})
+    _check(root)
+    _forge_base_cache(root, {})
+
+    result = _check(root)
+
+    assert result.evidence["base_cached"] is True
+    assert result.findings == []
+    assert decide_verdict([CheckOutcome("advise", result)]) == "pass"
 
 
 def test_removed_lines_reads_hunk_lengths_not_line_prefixes():

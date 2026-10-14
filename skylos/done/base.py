@@ -20,7 +20,7 @@ from typing import Any
 
 from skylos.core.git_context import GitContext
 from skylos.core.git_safety import read_only_git_command
-from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.core.safe_cache_io import read_project_text_no_symlink, strip_utf8_bom
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_DIFF_BYTES = 32 * 1024 * 1024
@@ -142,6 +142,15 @@ def _egg_info_is_metadata_only(root: Path, artifact: str) -> bool:
     return True
 
 
+_PYTHON_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
+def _python_text(path: str, text: str) -> str:
+    """Python source without a leading byte-order mark, which Python skips and
+    ``ast.parse(str)`` rejects. Other files are returned unchanged."""
+    return strip_utf8_bom(text) if path.endswith(_PYTHON_SUFFIXES) else text
+
+
 @dataclass(frozen=True)
 class ChangedFile:
     """One changed path. ``base_path`` is None when the file is new."""
@@ -187,7 +196,7 @@ class Comparison:
         if data is None or len(data) > MAX_FILE_BYTES:
             return None
         try:
-            return data.decode("utf-8")
+            return _python_text(path, data.decode("utf-8"))
         except UnicodeDecodeError:
             return None
 
@@ -195,9 +204,10 @@ class Comparison:
         """Text of ``path`` in the working tree, never through a symlink."""
         if not path:
             return None
-        return read_project_text_no_symlink(
+        text = read_project_text_no_symlink(
             self.root, path, max_bytes=MAX_FILE_BYTES, errors="strict"
         )
+        return None if text is None else _python_text(path, text)
 
     def relative_path(self, path: str) -> str | None:
         return self._context.relative_path(path)

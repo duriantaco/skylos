@@ -1112,8 +1112,9 @@ definition (its doctest, a recursive call) does not count as a caller.
   the check is unfinished when the change touched Go files.
 - **Cost:** two analyses (base and head) plus a grep pass over the
   candidates' names when there are any. The base result is cached in `.skylos/cache/done-orphans/`
-  by base commit and Skylos version, so later runs against the same base
-  (the agent Stop hook) analyze only the head. The receipt's evidence lists
+  by base commit and Skylos version, so later advise-mode runs against the
+  same base (the agent Stop hook) analyze only the head. In block mode the
+  cache is never read (see below). The receipt's evidence lists
   `base_seconds`, `head_seconds`, `base_cached` and `files_analyzed`.
   Repositories over 20,000 files or 128 MB of source (after the default
   excludes) are not checked; files over 2 MB, symlinks and submodules are
@@ -1123,9 +1124,13 @@ Dead-code analysis has known false alarms, so the check advises by default.
 With `branch_orphans = "block"`, SKY-A135 and SKY-A136 block and SKY-A137
 stays advice; `branch_orphans_block_rules` changes that list.
 
-The cached base result is local state: like the session baseline, an agent
-with write access to `.skylos/` could alter it. Required CI starts without
-it.
+The cached base result is local state: anything that can write to
+`.skylos/`, including an agent running as you, could alter it, and a signature
+would not help because its key would be just as readable. So it is used only
+for advice: with `branch_orphans = "block"` the check ignores the cache, builds
+the base view from Git objects on every run and rewrites the cache with the
+true result. In advise or shadow mode a tampered cache can change what the
+check advises, never a verdict. Required CI starts without a cache.
 
 ## Receipt
 

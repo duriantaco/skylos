@@ -346,7 +346,14 @@ it. With `block_hook_bypass = true` (the default), pre-bash blocks:
   overcommit's), `LEFTHOOK=0`/`false` and `LEFTHOOK_EXCLUDE` (lefthook),
   `SKIP_SIMPLE_GIT_HOOKS` (simple-git-hooks), `OVERCOMMIT_DISABLE`
   (overcommit), whether as a prefix (`HUSKY=0 git commit`) or exported earlier
-  in the same command (`export HUSKY=0 && git commit`);
+  in the same command (`export HUSKY=0 && git commit`). A switch counts only
+  when its manager is in use: its config file or folder is at the top of the
+  repository (`.husky/`, `.pre-commit-config.yaml`, `.overcommit.yml`,
+  `lefthook.yml` and the other lefthook names, `.simple-git-hooks.json` or a
+  `simple-git-hooks` key in `package.json`), the hooks directory is inside
+  `.husky`, or an installed hook script names the manager. A plain
+  `.git/hooks/pre-commit` never reads `HUSKY`, so `HUSKY=0 git commit` is
+  allowed there;
 - persistent changes: `git config core.hooksPath <path without hooks>` (or
   `/dev/null`), `git config --unset core.hooksPath` when a hooks path is set,
   and a git alias whose value adds `--no-verify`;
