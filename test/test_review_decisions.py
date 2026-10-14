@@ -1115,7 +1115,7 @@ def _security_review_repo(tmp_path, *, validator_imports=""):
         "def write_report():\n"
         "    open(safe_path(input())).write('unsafe')\n"
     )
-    validator.write_text(
+    validator.write_text(  # skylos: ignore[SKY-D324] fixed file in pytest tmp_path
         validator_imports + "def safe_path(value):\n    return '/tmp/report'\n"
     )
     unrelated.write_text("VALUE = 'old'\n")

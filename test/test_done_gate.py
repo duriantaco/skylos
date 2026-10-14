@@ -1048,12 +1048,12 @@ def _fake_venv(env_dir: Path, *, with_pytest: bool = True) -> Path:
         python = env_dir / "bin" / "python"
         site = env_dir / "lib" / "python3.12" / "site-packages"
     python.parent.mkdir(parents=True)
-    python.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    python.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")  # skylos: ignore[SKY-D324] fake venv under pytest tmp_path
     python.chmod(0o755)
     site.mkdir(parents=True)
     if with_pytest:
         (site / "pytest").mkdir()
-        (site / "pytest" / "__init__.py").write_text("", encoding="utf-8")
+        (site / "pytest" / "__init__.py").write_text("", encoding="utf-8")  # skylos: ignore[SKY-D324] fake venv under pytest tmp_path
     return python
 
 
