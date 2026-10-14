@@ -1073,3 +1073,18 @@ def test_unparseable_settings_file_is_still_called_settings():
         "CodeRabbit review settings (read from the pull request's head) changed"
         in finding.message
     )
+
+
+def test_skylos_source_comments_quote_no_scanner_marker():
+    # A comment that spells a marker out is read as one whenever its file
+    # changes, so diff-aware scans of Skylos itself would report SKY-A125.
+    # Describe marker syntax in words (strings and docstrings are fine).
+    package = Path(__file__).resolve().parents[1] / "skylos"
+    hits = []
+    for path in sorted(package.rglob("*.py")):
+        rel = path.relative_to(package.parent).as_posix()
+        hits.extend(
+            f"{rel}:{item.line}: {item.shown}"
+            for item in find_markers(rel, path.read_text(encoding="utf-8"))
+        )
+    assert hits == []

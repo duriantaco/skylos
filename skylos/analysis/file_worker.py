@@ -28,6 +28,7 @@ from skylos.core.linter import LinterVisitor
 from skylos.core.safe_cache_io import (
     read_project_text_no_symlink,
     read_text_no_symlink,
+    strip_utf8_bom,
 )
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.quality.clones import extract_fragments
@@ -125,7 +126,8 @@ def _read_python_source(file, project_root=None) -> str:
             "source must be a regular, non-symlink UTF-8 file no larger than "
             f"{MAX_PYTHON_SOURCE_BYTES} bytes"
         )
-    return source
+    # Python skips a leading byte-order mark; ast.parse(str) does not.
+    return strip_utf8_bom(source)
 
 
 class SourceReadError(OSError):

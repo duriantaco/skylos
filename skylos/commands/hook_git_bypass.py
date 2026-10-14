@@ -15,7 +15,11 @@ uses this module to block that. It recognises:
   and ``HUSKY_SKIP_HOOKS`` (husky), ``SKIP`` and
   ``PRE_COMMIT_ALLOW_NO_CONFIG`` (pre-commit; ``SKIP`` is also overcommit's),
   ``LEFTHOOK=0|false`` and ``LEFTHOOK_EXCLUDE`` (lefthook),
-  ``SKIP_SIMPLE_GIT_HOOKS`` (simple-git-hooks), ``OVERCOMMIT_DISABLE``;
+  ``SKIP_SIMPLE_GIT_HOOKS`` (simple-git-hooks), ``OVERCOMMIT_DISABLE``.
+  A switch counts only when its manager is in use: its config file or folder
+  is at the top of the repository, the hooks directory is inside its folder
+  (``.husky``), or an installed hook script names it. A plain
+  ``.git/hooks/pre-commit`` never reads ``HUSKY``;
 * persistent changes: ``git config core.hooksPath <dir without the
   hooks>``, ``git config --unset core.hooksPath``, and a git alias whose
   value contains ``--no-verify``;
@@ -36,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skylos.commands.hook_shell_commands import SimpleCommand
+from skylos.core.safe_cache_io import read_text_no_symlink
 
 # Hooks that can stop each operation (the gates), and the subset that
 # --no-verify skips.
@@ -108,17 +113,76 @@ def hook_bypasses(
     return found
 
 
+@dataclass(frozen=True)
+class _Manager:
+    files: tuple[str, ...]  # config files or folders at the repository top
+    words: tuple[str, ...]  # text an installed hook script of theirs contains
+    folder: str | None = None  # a hooks directory inside this folder is theirs
+
+
+# The hook managers whose environment switches skip hooks. Hook-script words
+# are matched case-insensitively.
+_MANAGERS = {
+    "husky": _Manager((".husky",), ("husky",), folder=".husky"),
+    "pre-commit": _Manager(
+        (".pre-commit-config.yaml", ".pre-commit-config.yml"),
+        ("pre-commit.com", "pre_commit"),
+    ),
+    "overcommit": _Manager((".overcommit.yml",), ("overcommit",)),
+    "lefthook": _Manager(
+        tuple(
+            f"{prefix}{name}{suffix}"
+            for prefix in ("", ".", ".config/")
+            for name in ("lefthook", "lefthook-local")
+            for suffix in (".yml", ".yaml", ".toml", ".json", ".jsonc")
+        ),
+        ("lefthook",),
+    ),
+    "simple-git-hooks": _Manager(
+        tuple(
+            f"{prefix}simple-git-hooks{suffix}"
+            for prefix in ("", ".")
+            for suffix in (".json", ".js", ".cjs", ".mjs")
+        ),
+        ("simple-git-hooks", "skip_simple_git_hooks"),
+    ),
+}
+_SWITCH_MANAGERS = {
+    "HUSKY": ("husky",),
+    "HUSKY_SKIP_HOOKS": ("husky",),
+    "SKIP": ("pre-commit", "overcommit"),
+    "PRE_COMMIT_ALLOW_NO_CONFIG": ("pre-commit",),
+    "LEFTHOOK": ("lefthook",),
+    "LEFTHOOK_EXCLUDE": ("lefthook",),
+    "SKIP_SIMPLE_GIT_HOOKS": ("simple-git-hooks",),
+    "OVERCOMMIT_DISABLE": ("overcommit",),
+}
+_SMALL_FILE_BYTES = 1_000_000
+
+
 class _ActiveHooks:
     """Installed hooks per working directory (one git call per directory)."""
 
     def __init__(self, lookup: HooksLookup):
         self.lookup = lookup
         self.cache: dict[Path, Path | None] = {}
+        self.manager_cache: dict[Path, frozenset[str] | None] = {}
 
     def directory(self, cwd: Path) -> Path | None:
         if cwd not in self.cache:
             self.cache[cwd] = self.lookup(cwd)
         return self.cache[cwd]
+
+    def managers(self, cwd: Path) -> frozenset[str] | None:
+        """Hook managers in use in ``cwd``'s repository; None when the hooks
+        directory or an installed hook cannot be read (then every manager is
+        assumed)."""
+        if cwd not in self.manager_cache:
+            directory = self.directory(cwd)
+            self.manager_cache[cwd] = (
+                None if directory is None else _managers_in_use(cwd, directory)
+            )
+        return self.manager_cache[cwd]
 
     def __call__(self, cwd: Path, names: tuple[str, ...]) -> tuple[str, ...]:
         directory = self.directory(cwd)
@@ -203,11 +267,56 @@ def _git_bypasses(simple: SimpleCommand, active) -> list[HookBypass]:
         if skipped:
             shown = hooks_path_override or "(empty)"
             found.append(HookBypass(f"core.hooksPath={shown}", sub, skipped))
-    for how in _env_switches(simple.env):
-        skipped = active(cwd, GATE_HOOKS[sub])
-        if skipped:
-            found.append(HookBypass(how, sub, skipped))
+    switches = _env_switches(simple.env)
+    skipped = active(cwd, GATE_HOOKS[sub]) if switches else ()
+    if skipped:
+        in_use = active.managers(cwd)
+        for how, variable in switches:
+            # HUSKY=0 means nothing to a plain .git/hooks script.
+            if in_use is None or in_use.intersection(_SWITCH_MANAGERS[variable]):
+                found.append(HookBypass(how, sub, skipped))
     return found
+
+
+def _managers_in_use(cwd: Path, directory: Path) -> frozenset[str] | None:
+    top = _toplevel(cwd) or cwd
+    try:
+        parts = Path(os.path.normpath(str(directory))).parts
+    except (OSError, ValueError):
+        parts = ()
+    scripts = _hook_scripts_text(directory)
+    if scripts is None:
+        return None  # an installed hook that cannot be read: assume any manager
+    found = set()
+    for name, manager in _MANAGERS.items():
+        if (
+            (manager.folder is not None and manager.folder in parts)
+            or any(os.path.lexists(top / file) for file in manager.files)
+            or any(word in scripts for word in manager.words)
+        ):
+            found.add(name)
+    package = _small_text(top / "package.json")
+    if package is not None and '"simple-git-hooks"' in package:
+        found.add("simple-git-hooks")
+    return frozenset(found)
+
+
+def _hook_scripts_text(directory: Path) -> str | None:
+    """The installed gate hooks' text, lower-cased; None when one of them is
+    a symlink, too large or unreadable."""
+    texts = []
+    for name in sorted(ALL_GATE_HOOKS):
+        if _hook_active(directory, name):
+            text = _small_text(directory / name)
+            if text is None:
+                return None
+            texts.append(text.lower())
+    return "\n".join(texts)
+
+
+def _small_text(path: Path) -> str | None:
+    # A regular file, never through a symlink, at most 1 MB.
+    return read_text_no_symlink(path, max_bytes=_SMALL_FILE_BYTES, errors="replace")
 
 
 def _no_verify(sub: str, args: list[str]) -> bool:
@@ -273,31 +382,36 @@ def _env_hooks_path(env: dict[str, str]) -> str | None:
     return None
 
 
-def _env_switches(env: dict[str, str]) -> list[str]:
+def _env_switches(env: dict[str, str]) -> list[tuple[str, str]]:
+    """(how it reads, variable) for each hook-manager skip switch set."""
     found = []
 
     def value(name: str) -> str:
         return env.get(name, "").strip()
 
     if value("HUSKY") == "0":
-        found.append("HUSKY=0")
+        found.append(("HUSKY=0", "HUSKY"))
     if value("HUSKY_SKIP_HOOKS") and value("HUSKY_SKIP_HOOKS").lower() not in {
         "0",
         "false",
     }:
-        found.append(f"HUSKY_SKIP_HOOKS={value('HUSKY_SKIP_HOOKS')}")
+        found.append(
+            (f"HUSKY_SKIP_HOOKS={value('HUSKY_SKIP_HOOKS')}", "HUSKY_SKIP_HOOKS")
+        )
     if value("SKIP"):
-        found.append(f"SKIP={value('SKIP')}")
+        found.append((f"SKIP={value('SKIP')}", "SKIP"))
     if value("PRE_COMMIT_ALLOW_NO_CONFIG"):
-        found.append("PRE_COMMIT_ALLOW_NO_CONFIG")
+        found.append(("PRE_COMMIT_ALLOW_NO_CONFIG", "PRE_COMMIT_ALLOW_NO_CONFIG"))
     if value("LEFTHOOK").lower() in {"0", "false"} and "LEFTHOOK" in env:
-        found.append(f"LEFTHOOK={value('LEFTHOOK')}")
+        found.append((f"LEFTHOOK={value('LEFTHOOK')}", "LEFTHOOK"))
     if value("LEFTHOOK_EXCLUDE"):
-        found.append(f"LEFTHOOK_EXCLUDE={value('LEFTHOOK_EXCLUDE')}")
+        found.append(
+            (f"LEFTHOOK_EXCLUDE={value('LEFTHOOK_EXCLUDE')}", "LEFTHOOK_EXCLUDE")
+        )
     if value("SKIP_SIMPLE_GIT_HOOKS") and value("SKIP_SIMPLE_GIT_HOOKS") != "0":
-        found.append("SKIP_SIMPLE_GIT_HOOKS")
+        found.append(("SKIP_SIMPLE_GIT_HOOKS", "SKIP_SIMPLE_GIT_HOOKS"))
     if value("OVERCOMMIT_DISABLE") and value("OVERCOMMIT_DISABLE") != "0":
-        found.append("OVERCOMMIT_DISABLE")
+        found.append(("OVERCOMMIT_DISABLE", "OVERCOMMIT_DISABLE"))
     return found
 
 

@@ -1135,6 +1135,19 @@ class _SecretContextLimit(ValueError):
         self.line = max(1, line)
 
 
+@dataclass(frozen=True)
+class _ContextUnparsed:
+    """A structured file that could not be parsed, as opposed to one whose
+    analysis hit a size budget (reported as a bare line number)."""
+
+    line: int
+    problem: str = ""
+
+
+SECRET_CONTEXT_UNPARSED = "secret_context_unparsed"
+SECRET_CONTEXT_LIMIT = "secret_context_limit"
+
+
 class _JsonSpanParser:
     def __init__(self, source: str, *, capture_path, root_keys, jsonc: bool = False):
         self.source = source
@@ -2314,9 +2327,12 @@ def _yaml_checksum_context_spans(file_lines: list[str]):
     except RecursionError:
         incomplete_line = 1
     except yaml.YAMLError as exc:
-        incomplete_line = getattr(getattr(exc, "problem_mark", None), "line", 0) + 1
+        incomplete_line = _ContextUnparsed(
+            getattr(getattr(exc, "problem_mark", None), "line", 0) + 1,
+            " ".join(str(getattr(exc, "problem", None) or "").split())[:80],
+        )
     except ValueError:
-        incomplete_line = 1
+        incomplete_line = _ContextUnparsed(1)
 
     all_contexts = []
     single_line_contexts = []
@@ -3535,22 +3551,41 @@ def _append_client_analysis_incomplete(
     )
 
 
-def _append_secret_context_incomplete(findings, *, rel_path: str, line: int) -> None:
+def _context_incomplete_line(incomplete) -> int:
+    if isinstance(incomplete, _ContextUnparsed):
+        return incomplete.line
+    return int(incomplete)
+
+
+def _append_secret_context_incomplete(
+    findings, *, rel_path: str, line: int, unparsed: _ContextUnparsed | None = None
+) -> None:
+    line = max(1, line)
+    if unparsed is not None:
+        problem = f": {unparsed.problem}" if unparsed.problem else ""
+        message = (
+            f"Could not parse this YAML file (line {line}{problem}); secrets in "
+            "it were checked line by line only, without its keys and values."
+        )
+        diagnostic = SECRET_CONTEXT_UNPARSED
+    else:
+        message = (
+            "Secret-field context analysis reached its safety limit; "
+            "later contextual findings may be incomplete."
+        )
+        diagnostic = SECRET_CONTEXT_LIMIT
     findings.append(
         {
             "rule_id": "SKY-ANALYSIS-INCOMPLETE",
             "severity": "HIGH",
             "kind": "processing_error",
-            "message": (
-                "Secret-field context analysis reached its safety limit; "
-                "later contextual findings may be incomplete."
-            ),
+            "message": message,
             "file": rel_path,
-            "line": max(1, line),
+            "line": line,
             "col": 0,
             "metadata": {
                 "analysis_complete": False,
-                "analysis_diagnostics": ["secret_context_limit"],
+                "analysis_diagnostics": [diagnostic],
             },
         }
     )
@@ -4021,12 +4056,14 @@ def scan_ctx(
         data_decoded_context_spans,
         data_context_incomplete_line,
     ) = _data_checksum_context_spans(rel_name, file_lines)
-    incomplete_lines = [
-        line
-        for line in (lock_context_incomplete_line, data_context_incomplete_line)
-        if line is not None
+    incompletes = [
+        item
+        for item in (lock_context_incomplete_line, data_context_incomplete_line)
+        if item is not None
     ]
-    context_incomplete_line = min(incomplete_lines) if incomplete_lines else None
+    context_incomplete = (
+        min(incompletes, key=_context_incomplete_line) if incompletes else None
+    )
     decoded_context_spans = _merge_context_maps(
         structural_context_spans,
         data_decoded_context_spans,
@@ -4055,11 +4092,18 @@ def scan_ctx(
     )
 
     findings = []
-    if context_incomplete_line is not None:
+    if context_incomplete is not None:
         _append_secret_context_incomplete(
             findings,
             rel_path=rel_path,
-            line=min(context_incomplete_line, max(1, len(file_lines))),
+            line=min(
+                _context_incomplete_line(context_incomplete), max(1, len(file_lines))
+            ),
+            unparsed=(
+                context_incomplete
+                if isinstance(context_incomplete, _ContextUnparsed)
+                else None
+            ),
         )
 
     for line_number, raw_line in enumerate(file_lines, start=1):

@@ -49,7 +49,7 @@ MAX_LISTED = 20
 
 @dataclass(frozen=True)
 class Marker:
-    name: str  # stable key, e.g. "skipcq"
+    name: str  # stable key: the marker's own keyword
     tool: str  # who stops reporting
     pattern: re.Pattern
     scope: str  # "line", "next line", "block" or "file"
@@ -60,42 +60,46 @@ class Marker:
 _RULE_LIST = r"[\w./\-:]+(?:\s*,\s*[\w./\-:]+)*"
 
 MARKERS: tuple[Marker, ...] = (
-    # "<comment> skipcq: CODE" on the line or the line above (DeepSource docs).
+    # DeepSource's keyword (below), optionally a colon and codes, in a comment
+    # on the line or the line above (DeepSource docs).
     Marker(
         "skipcq",
         "DeepSource",
         re.compile(rf"\bskipcq\b(?:\s*:\s*(?P<rules>{_RULE_LIST}))?"),
         "line or next",
     ),
-    # "//noinspection Id", "# noinspection Id", "@noinspection Id": the next
-    # statement; at the top of a JS/TS file, the whole file (JetBrains docs).
+    # The JetBrains keyword then an inspection id, after "//", "#" or as a
+    # docblock tag: the next statement; at the top of a JS/TS file, the whole
+    # file (JetBrains docs).
     Marker(
         "noinspection",
         "JetBrains IDEs and Qodana",
         re.compile(
             # An inspection id: CamelCase (PyUnresolvedReferences) or a
-            # kebab-case Python id (unused-local); "noinspection comments"
-            # in prose is not a directive.
+            # kebab-case Python id (unused-local); the keyword followed by a
+            # plain word, as in prose, is not a directive.
             r"(?<![\w-])@?noinspection\s+(?P<rules>(?:[A-Z]\w+|[a-z]+(?:-[a-z]+)+)"
             r"(?:\s*,\s*(?:[A-Z]\w+|[a-z]+(?:-[a-z]+)+))*)"
         ),
         "next statement",
     ),
-    # "qlty-ignore: tool:rule" or "qlty-ignore(tool:rule): reason" (Qlty docs).
+    # Qlty's keyword followed by a colon and tool:rule, or by tool:rule in
+    # parentheses, a colon and a reason (Qlty docs).
     Marker(
         "qlty-ignore",
         "Qlty",
         re.compile(
-            # The documented forms only: "qlty-ignore: spec" and
-            # "qlty-ignore(spec): reason"; a bare word in prose is not one.
+            # The documented forms only (a spec after a colon, or a spec in
+            # parentheses then a colon); a bare word in prose is not one.
             r"\bqlty-ignore(?:\((?P<long>[^)]*)\)\s*:|\s*:\s*"
             r"(?P<rules>[+\->]?[\w./\-]+(?::[\w./\-]+)?"
             r"(?:[\s,]+[+\->]?[\w./\-]+:[\w./\-]+)*))"
         ),
         "next line",
     ),
-    # "@codescene(disable:"Complex Method")", "@codescene(disable-all)": the
-    # function after it (CodeScene docs; written in lower case there).
+    # CodeScene's annotation with "disable" plus quoted rule names, or with
+    # "disable-all", in parentheses: the function after it (CodeScene docs;
+    # written in lower case there).
     Marker(
         "@codescene(disable)",
         "CodeScene",
@@ -105,8 +109,9 @@ MARKERS: tuple[Marker, ...] = (
         ),
         "next function",
     ),
-    # CodeQL's alert-suppression query (AlertSuppression.qll): "codeql[id]"
-    # covers the next line, "lgtm[id]" the same line. Case-insensitive.
+    # CodeQL's alert-suppression query (AlertSuppression.qll): the codeql
+    # keyword with ids in square brackets covers the next line, the lgtm one
+    # the same line. Case-insensitive.
     Marker(
         "codeql[...]",
         "CodeQL alert suppression",
@@ -119,23 +124,27 @@ MARKERS: tuple[Marker, ...] = (
         re.compile(r"(?<![\w-])lgtm\s*\[(?P<rules>[^\]]*)\]", re.IGNORECASE),
         "line",
     ),
-    # "checkov:skip=CKV_AWS_20:reason" inside the resource (Checkov docs).
+    # Checkov's skip comment (its prefix, "skip=", a check id such as
+    # CKV_AWS_20, then an optional colon and reason) inside the resource
+    # (Checkov docs).
     Marker(
         "checkov:skip",
         "Checkov",
         re.compile(r"\bcheckov:skip=(?P<rules>[A-Za-z0-9_]+)"),
         "block",
     ),
-    # "trivy:ignore:AVD-AWS-0086" next to the resource; "tfsec:" is the legacy
-    # prefix Trivy still accepts.
+    # Trivy's ignore comment (prefix, "ignore", a check id such as
+    # AVD-AWS-0086, colon-separated) next to the resource; the legacy tfsec
+    # prefix is still accepted.
     Marker(
         "trivy:ignore",
         "Trivy",
         re.compile(r"\b(?:trivy|tfsec):ignore:(?P<rules>[\w\-*]+)"),
         "block",
     ),
-    # "kics-scan ignore-line" (next line), "ignore-block" (next block),
-    # "ignore" / "disable=ids" at the top of the file (KICS docs).
+    # KICS's comment keyword with a variant: "ignore-line" (next line),
+    # "ignore-block" (next block), "ignore" or "disable=ids" at the top of
+    # the file (KICS docs).
     Marker(
         "kics-scan ignore",
         "KICS",
@@ -492,7 +501,7 @@ def _reason(marker: Marker, rest: str, comments, line: int) -> str:
 
     text = rest
     if marker.name == "checkov:skip":
-        # "checkov:skip=ID:reason"
+        # The check id, then an optional colon and the reason.
         text = rest.split(":", 1)[1] if rest.startswith(":") else ""
     reason = a118._clean_reason(text.replace("*/", " ").replace("-->", " "))
     if reason:

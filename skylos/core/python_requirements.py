@@ -16,7 +16,15 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from skylos.core.safe_cache_io import read_text_no_symlink
+from skylos.core.safe_cache_io import read_text_no_symlink, strip_utf8_bom
+
+
+def _read_manifest_text(path, **kwargs) -> str | None:
+    """A manifest's text without a leading byte-order mark, which pip, npm
+    and NuGet skip and Windows editors write."""
+    text = read_text_no_symlink(path, **kwargs)
+    return None if text is None else strip_utf8_bom(text)
+
 
 MAX_REQUIREMENTS_BYTES = 5_000_000
 MAX_INCLUDED_REQUIREMENTS_FILES = 64
@@ -225,7 +233,7 @@ def parse_requirements_text(text: str, path: Path) -> RequirementsFile:
 
 
 def read_requirements_file(path, *, max_bytes=MAX_REQUIREMENTS_BYTES):
-    text = read_text_no_symlink(
+    text = _read_manifest_text(
         path, max_bytes=max_bytes, encoding="utf-8", errors="ignore"
     )
     if text is None:
@@ -539,7 +547,7 @@ def parse_setup_cfg_text(text, path, *, root=None):
 
 
 def read_setup_cfg(path, *, root=None, max_bytes=MAX_REQUIREMENTS_BYTES):
-    text = read_text_no_symlink(
+    text = _read_manifest_text(
         path, max_bytes=max_bytes, encoding="utf-8", errors="ignore"
     )
     if text is None:
@@ -655,7 +663,7 @@ def parse_setup_py_text(text, path):
 
 
 def read_setup_py(path, *, max_bytes=MAX_REQUIREMENTS_BYTES):
-    text = read_text_no_symlink(
+    text = _read_manifest_text(
         path, max_bytes=max_bytes, encoding="utf-8", errors="ignore"
     )
     if text is None:

@@ -109,18 +109,6 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
-def _is_allowed_json_bom(
-    source: str, ext: str, char_hex: str, line_no: int, is_agent_instruction: bool
-) -> bool:
-    return (
-        not is_agent_instruction
-        and ext == ".json"
-        and char_hex == "U+FEFF"
-        and line_no == 1
-        and source.startswith("\ufeff")
-    )
-
-
 def scan_file(
     filepath: str | Path,
     *,
@@ -185,10 +173,17 @@ def scan_file(
 
     _, zero_width_hits = strip_zero_width(source, max_hits=MAX_ZERO_WIDTH_HITS)
     source_lines = source.split("\n")
-    for char_hex, line_no in zero_width_hits:
-        if _is_allowed_json_bom(
-            source, ext, char_hex, line_no, is_agent_instruction
-        ):
+    # A U+FEFF that starts the file is the UTF-8 byte-order mark (Windows
+    # editors write it in any file type); it precedes all text and hides
+    # nothing. Hits are in file order, so it is the first one. Agent
+    # instruction files, and AI-reviewer configs other than JSON, stay strict.
+    leading_bom = (
+        source.startswith("\ufeff")
+        and not is_agent_instruction
+        and (not is_reviewer_config or ext == ".json")
+    )
+    for index, (char_hex, line_no) in enumerate(zero_width_hits):
+        if index == 0 and leading_bom:
             continue
         hidden_severity, hidden_rule = high_signal("HIGH")
         if (

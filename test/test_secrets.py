@@ -756,13 +756,33 @@ def test_malformed_yaml_before_checksum_fails_closed():
     assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
 
 
+def test_malformed_yaml_is_reported_as_unparsed_not_as_a_limit():
+    src = "language: en\nreviews: [unclosed\n  profile: chill\n"
+
+    findings = list(scan_ctx(_ctx_from_source(src, rel=".coderabbit.yaml")))
+
+    incomplete = [f for f in findings if f["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"]
+    assert len(incomplete) == 1
+    assert incomplete[0]["metadata"]["analysis_diagnostics"] == [
+        "secret_context_unparsed"
+    ]
+    assert incomplete[0]["message"].startswith("Could not parse this YAML file (line ")
+    assert "safety limit" not in incomplete[0]["message"]
+    assert not any(f.get("provider") for f in incomplete)
+
+
 def test_yaml_context_budget_fails_closed(monkeypatch):
     monkeypatch.setattr("skylos.rules.secrets._MAX_GENERIC_YAML_EVENTS", 32)
     src = "items: [" + ("x, " * 40) + ("x]\nintegrity: aB3dE5fG7hJ9$kL2mN4pQ\n")
 
     findings = list(scan_ctx(_ctx_from_source(src, rel="metadata.yaml")))
 
-    assert any(finding["rule_id"] == "SKY-ANALYSIS-INCOMPLETE" for finding in findings)
+    incomplete = [f for f in findings if f["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"]
+    assert incomplete
+    assert incomplete[0]["metadata"]["analysis_diagnostics"] == [
+        "secret_context_limit"
+    ]
+    assert "safety limit" in incomplete[0]["message"]
 
 
 def test_yaml_checksum_alias_scans_the_anchored_scalar():
