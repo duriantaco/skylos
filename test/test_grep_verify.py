@@ -519,9 +519,15 @@ class TestGrepVerifyFindings:
         one_candidate_checked = run_with_clock([0.0, 0.1, 0.2])
         two_candidates_checked = run_with_clock([0.0, 0.05, 0.1, 0.2])
 
-        assert one_candidate_checked == two_candidates_checked == {}
+        # Fail closed: both results are incomplete. Verified candidates keep
+        # their verdicts; the rest stay unverified.
+        assert set(one_candidate_checked) == {"mod.func_0"}
+        assert set(two_candidates_checked) == {"mod.func_0", "mod.func_1"}
+        assert one_candidate_checked.verified_keys == {"mod.func_0"}
+        assert two_candidates_checked.verified_keys == {"mod.func_0", "mod.func_1"}
         assert one_candidate_checked.verified_count == 1
         assert two_candidates_checked.verified_count == 2
+        assert one_candidate_checked.complete is False
         assert one_candidate_checked.budget_exhausted is True
         assert two_candidates_checked.budget_exhausted is True
 
@@ -2519,6 +2525,103 @@ class TestBatchedGrepVerify:
         assert verdicts.incomplete_reason == "verification_incomplete"
         assert cache.size == 0
 
+    def test_one_unsafe_search_leaves_only_its_candidate_unverified(
+        self, tmp_path
+    ):
+        library = tmp_path / "library.py"
+        library.write_text(
+            "def first():\n    return 1\n\n"
+            "def second():\n    return 2\n\n"
+            "def third():\n    return 3\n"
+        )
+        findings = [
+            {
+                "name": name,
+                "full_name": f"library.{name}",
+                "simple_name": name,
+                "type": "function",
+                "file": str(library),
+                "line": line,
+                "confidence": 80,
+            }
+            for line, name in ((1, "first"), (4, "second"), (7, "third"))
+        ]
+
+        def second_search_incomplete(requests, **_kwargs):
+            results = _GrepBatchResults()
+            for request in requests:
+                results[request] = ()
+                if "second" in str(request.pattern):
+                    results.incomplete_requests.add(request)
+            return results
+
+        with patch(
+            "skylos.core.grep_verify.execute_grep_batch",
+            side_effect=second_search_incomplete,
+        ):
+            verdicts = grep_verify_findings(
+                findings, str(tmp_path), cache=GrepCache(), time_budget=5.0
+            )
+
+        assert verdicts.complete is False
+        assert verdicts.incomplete_reason == "verification_incomplete"
+        # The other candidates were still verified (no usage found).
+        assert verdicts.verified_keys == {"library.first", "library.third"}
+        assert verdicts.verified_count == 2
+
+    def test_truncated_evidence_leaves_only_its_candidate_unverified(
+        self, tmp_path
+    ):
+        from skylos.core.grep_verify_common import _GrepExecutionIncomplete
+
+        library = tmp_path / "library.py"
+        library.write_text("def common():\n    return 1\n\ndef rare():\n    return 2\n")
+        findings = [
+            {
+                "name": name,
+                "full_name": f"library.{name}",
+                "simple_name": name,
+                "type": "function",
+                "file": str(library),
+                "line": line,
+                "confidence": 80,
+            }
+            for line, name in ((1, "common"), (4, "rare"))
+        ]
+        original = __import__(
+            "skylos.core.grep_verify", fromlist=["_apply_deterministic_rules"]
+        )._apply_deterministic_rules
+
+        def truncated_for_common(results, finding, *args, **kwargs):
+            if finding["name"] == "common":
+                raise _GrepExecutionIncomplete(
+                    "Grep evidence was truncated before verification"
+                )
+            return original(results, finding, *args, **kwargs)
+
+        def empty_results(requests, **_kwargs):
+            results = _GrepBatchResults()
+            for request in requests:
+                results[request] = ()
+            return results
+
+        with (
+            patch(
+                "skylos.core.grep_verify.execute_grep_batch",
+                side_effect=empty_results,
+            ),
+            patch(
+                "skylos.core.grep_verify._apply_deterministic_rules",
+                side_effect=truncated_for_common,
+            ),
+        ):
+            verdicts = grep_verify_findings(
+                findings, str(tmp_path), cache=GrepCache(), time_budget=5.0
+            )
+
+        assert verdicts.incomplete_reason == "verification_incomplete"
+        assert verdicts.verified_keys == {"library.rare"}
+
     def test_malformed_cached_group_is_treated_as_a_cache_miss(self, tmp_path):
         library = tmp_path / "library.py"
         library.write_text("def helper():\n    return 1\n")
@@ -2890,7 +2993,7 @@ class TestQualifiedReferenceSubstring:
 
 
 class TestAnalyzerIntegration:
-    def test_exhausted_budget_withholds_candidates_and_marks_scan_incomplete(
+    def test_exhausted_budget_withholds_unverified_candidates_as_a_coverage_gap(
         self, tmp_path, monkeypatch
     ):
         (tmp_path / "app.py").write_text(
@@ -2922,17 +3025,23 @@ class TestAnalyzerIntegration:
             "complete": False,
             "status": "incomplete",
             "candidate_count": 4,
+            "verified_candidate_count": 0,
+            "unverified_candidate_count": 4,
             "candidate_file_count": 2,
             "time_budget_seconds": 0.0,
             "incomplete_reason": "budget_exhausted",
         }
         assert result["analysis_errors"][0]["file"] == str(tmp_path / "app.py")
         assert result["analysis_errors"][0]["affected_file_count"] == 2
+        assert result["analysis_errors"][0]["candidate_count"] == 4
+        assert result["analysis_errors"][0]["unverified_candidate_count"] == 4
         assert "grade" not in result
         assert result["analysis_summary"]["grade_unavailable_reason"] == (
             "analysis_incomplete"
         )
-        assert cli._analysis_incomplete_exit_code(result) == 2
+        # A coverage gap: reported, never exit 2 on its own; --strict blocks.
+        assert cli._analysis_incomplete_exit_code(result) == 0
+        assert cli._analysis_incomplete_exit_code(result, strict=True) == 2
 
         assert result["unused_functions"] == []
         assert result["unused_imports"] == []
@@ -3226,6 +3335,54 @@ class TestAnalyzerGrepVerifyOrdering:
             Path(item["file"]).resolve()
             for item in result["unused_functions"]
         } == {first.resolve(), second.resolve()}
+
+    def test_incomplete_result_keeps_verified_verdicts_and_withholds_the_rest(
+        self, tmp_path, monkeypatch
+    ):
+        from skylos.analyzer import Skylos
+        from skylos.visitors.base import Definition
+
+        source = tmp_path / "mod.py"
+        source.write_text(
+            "def alive():\n    return 1\n\n"
+            "def dead():\n    return 2\n\n"
+            "def unchecked():\n    return 3\n"
+        )
+        analyzer = Skylos()
+        analyzer._project_root = tmp_path
+        definitions = {}
+        for line, name in ((1, "alive"), (4, "dead"), (7, "unchecked")):
+            definition = Definition(f"mod.{name}", "function", source, line)
+            definition.confidence = 80
+            definitions[f"mod.{name}"] = definition
+        analyzer.defs = definitions
+        partial = GrepVerificationResult(
+            {"mod.alive": GrepVerdict(alive=True)},
+            candidate_count=3,
+            verified_count=2,
+            time_budget=1.0,
+            incomplete_reason="budget_exhausted",
+            verified_keys={"mod.alive", "mod.dead"},
+        )
+
+        with patch(
+            "skylos.core.grep_verify.grep_verify_findings",
+            return_value=partial,
+        ):
+            rescued = analyzer._grep_verify()
+
+        assert rescued == 1
+        assert definitions["mod.alive"].references == 1
+        # Verified dead stays a candidate; only the unverified one abstains.
+        assert definitions["mod.dead"].references == 0
+        assert [
+            candidate["full_name"]
+            for candidate in analyzer._grep_verify_incomplete_candidates
+        ] == ["mod.unchecked"]
+        report = analyzer._grep_verify_report
+        assert report["complete"] is False
+        assert report["verified_candidate_count"] == 2
+        assert report["unverified_candidate_count"] == 1
 
     def test_incomplete_result_does_not_apply_partial_rescues(
         self, tmp_path, monkeypatch

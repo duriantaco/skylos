@@ -60,9 +60,13 @@ def test_missing_go_engine_table_says_how_to_fix_once():
 
     assert rendered.count("How to fix:") == 1
     flat = " ".join(rendered.split())
-    assert "PyPI package does not include" in flat
+    assert "skylos-go engine, which was not found" in flat
     assert "SKYLOS_GO_BIN" in flat
-    assert "go build -o skylos-go ./cmd/skylos-go" in flat
+    # A version-matched build onto PATH, the image, and the Action.
+    assert "git clone --depth 1 --branch v" in flat
+    assert "go build -trimpath -o \"$HOME/.local/bin/skylos-go\" ./cmd/skylos-go" in flat
+    assert "ghcr.io/duriantaco/skylos:" in flat
+    assert "GitHub Action" in flat
 
 
 def test_syntax_error_keeps_python_runtime_and_single_file_rendering():

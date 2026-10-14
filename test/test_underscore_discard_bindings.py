@@ -92,7 +92,8 @@ other_bindings(object(), {"key": object()})
         encoding="utf-8",
     )
 
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    # Unused parameters are listed from confidence 50 (below the default 60).
+    result = json.loads(analyze(str(tmp_path), conf=50, grep_verify=False))
     unused_parameters = {
         item["simple_name"] for item in result.get("unused_parameters", [])
     }

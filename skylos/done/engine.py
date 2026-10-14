@@ -8,7 +8,12 @@ from pathlib import Path
 
 from skylos.done.base import Comparison, open_comparison
 from skylos.done.checks import CHECKS, RUN_ORDER, CheckContext, CheckResult, run_check
-from skylos.done.config import CHECK_IDS, DoneConfig, parse_done_config
+from skylos.done.config import (
+    CHECK_IDS,
+    DoneConfig,
+    base_config_text,
+    parse_done_config,
+)
 
 # Summary of a check that waits for the earlier required checks to pass.
 WAITING_SUMMARY = "Earlier required checks failed or were incomplete"
@@ -53,9 +58,7 @@ def run(
         comparison = open_comparison(path, base_ref)
     # The change under review never supplies its own settings: they come
     # from the base commit (the target branch's tip for a pull request).
-    config = parse_done_config(
-        comparison.base_text("pyproject.toml", sha=comparison.config_sha)
-    )
+    config = parse_done_config(base_config_text(comparison, sha=comparison.config_sha))
     ctx = CheckContext(comparison, config, run_tests=run_tests)
     results: dict[str, CheckOutcome] = {}
     for check_id in RUN_ORDER:

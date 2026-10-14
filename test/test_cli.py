@@ -32,13 +32,31 @@ from skylos.reporting.finding_types import (
 )
 
 
-def _with_finding_type_metadata(result):
+@pytest.fixture(autouse=True)
+def _placeholder_scan_paths(monkeypatch):
+    """These tests mock the analyzer and pass placeholder paths such as
+    ``test_path``; the missing-path check has its own tests."""
+    import skylos.commands.scan_cmd as scan_cmd
+
+    monkeypatch.setattr(
+        scan_cmd, "_exit_on_missing_scan_paths", lambda args, *, cli_module: None
+    )
+
+
+def _with_finding_type_metadata(result, *, strict=False):
     """Expected scan output for a disconnected Cloud custom-rule loader."""
+    from skylos.core.gate_incomplete import analysis_coverage, coverage_record
+
     expected = deepcopy(result)
     expected.setdefault("analysis_summary", {})["custom_rules_coverage"] = {
         "status": "not_connected",
         "rule_count": 0,
     }
+    # What was and was not analysed, as this run's exit code sees it
+    # (test/test_coverage_gaps.py covers the record itself).
+    expected["analysis_summary"]["analysis_coverage"] = coverage_record(
+        analysis_coverage(expected, strict=strict)
+    )
     annotate_finding_types(expected)
     expected.setdefault("analysis_summary", {})["finding_type_counts"] = (
         summarize_finding_types(expected)
@@ -2635,7 +2653,9 @@ def test_main_json_upload_calls_upload_report_quiet(
     mock_upload.assert_called_once()
     upload_result = mock_upload.call_args.args[0]
     assert upload_result["project_root"] == ""
-    assert upload_result["analysis_summary"] == {
+    upload_summary = dict(upload_result["analysis_summary"])
+    assert upload_summary.pop("analysis_coverage")["status"] == "complete"
+    assert upload_summary == {
         "total_files": 1,
         "project_root": "",
         "custom_rules_coverage": {
@@ -3293,8 +3313,14 @@ def test_main_json_strict_failure_exits_nonzero(
         pytest.param(
             "json", ["--strict", "--gate"], True, 2, True, id="json-incomplete"
         ),
+        # One of two files did not parse: a coverage gap, so --force decides
+        # the exit; --strict still makes the scan incomplete.
         pytest.param(
-            "concise", ["--force"], True, 2, True, id="concise-incomplete-forced"
+            "concise", ["--force"], True, 0, True, id="concise-coverage-gap-forced"
+        ),
+        pytest.param("concise", [], True, 1, True, id="concise-coverage-gap"),
+        pytest.param(
+            "concise", ["--strict"], True, 2, True, id="concise-coverage-gap-strict"
         ),
     ],
 )
@@ -4713,3 +4739,17 @@ class TestDiffFlag:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_repository_policy_advice_alone_does_not_fail_a_concise_scan():
+    policy = [
+        {"rule_id": "SKY-R103", "kind": "repo_policy", "severity": "LOW"},
+        {"rule_id": "SKY-R104", "kind": "repo_policy", "severity": "LOW"},
+    ]
+    assert cli._has_concise_findings({"quality": policy}) is False
+    assert cli._has_concise_findings(
+        {"quality": policy + [{"rule_id": "SKY-Q301", "severity": "MEDIUM"}]}
+    )
+    assert cli._has_concise_findings(
+        {"quality": policy, "danger": [{"rule_id": "SKY-D211"}]}
+    )

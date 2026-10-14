@@ -1,0 +1,100 @@
+name: dist-check
+
+# Builds the release artefacts exactly as publish.yml does (both call
+# tools/release/build_dist.py) on pull requests that could break them, so a
+# packaging change fails here instead of at the next release. It never
+# publishes: no secrets, read-only token, and the only upload is a short-lived
+# workflow artifact the install jobs below read.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/publish.yml"
+      - ".github/workflows/dist-check.yml"
+      - "tools/release/**"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - "skylos/engines/go/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dist-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build sdist and wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "build>=1.2.2" "packaging>=24.2" "twine>=6.1.0"
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22.x"
+          cache: false
+
+      # Same command as publish.yml: sdist, pure wheel, six platform wheels,
+      # then a check that each wheel holds the engine built for its platform.
+      - name: Build sdist and wheels
+        run: python tools/release/build_dist.py build --out dist
+
+      - name: Smoke test the bundled Go engine
+        run: python tools/release/build_dist.py smoke --dist dist
+
+      - name: Check dist contents
+        run: |
+          ls -lah dist
+          python -m twine check dist/*
+
+      - name: Keep the built dist for the install jobs
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: dist-check
+          path: dist
+          retention-days: 3
+          if-no-files-found: error
+
+  install:
+    name: install on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple silicon and Windows x86_64; build covers Linux x86_64.
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the built dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist-check
+          path: dist
+
+      - name: Smoke test the bundled Go engine
+        run: python tools/release/build_dist.py smoke --dist dist

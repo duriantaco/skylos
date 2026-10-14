@@ -27,13 +27,15 @@ _WORKFLOW = (
     "      - uses: actions/checkout@v4\n"
     "      - run: echo hello\n"
 )
-_CONFIG = "[tool.skylos]\n\n[tool.skylos.gate]\nmax_high = 0\n"
+# Any security finding fails the gate: the point is that repository CI findings
+# reach it, whatever their severity (an unpinned GitHub-owned action is LOW).
+_CONFIG = "[tool.skylos]\n\n[tool.skylos.gate]\nmax_security = 0\n"
 _SOURCE = "answer = 42\nprint(answer)\n"
 _RULE_COUNTS = Counter({"SKY-D291": 2, "SKY-D292": 1, "SKY-D293": 1})
 _RECORD_SIGNATURES = {
     ("SKY-D291", "MEDIUM", 1),
     ("SKY-D291", "MEDIUM", 6),
-    ("SKY-D292", "HIGH", 9),
+    ("SKY-D292", "LOW", 9),
     ("SKY-D293", "MEDIUM", 9),
 }
 

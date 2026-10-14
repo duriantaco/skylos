@@ -53,6 +53,36 @@ HTTP_RECEIVER_NAMES = frozenset(
     }
 )
 
+# ORM sessions share method names with HTTP sessions (``get``, ``delete``...),
+# so ``session.delete(item)`` in a FastAPI/SQLModel route is a database call,
+# not an outbound request. A receiver counts as an ORM session only on proof:
+# an ORM session type annotation or constructor, or a unit-of-work method that
+# HTTP clients (requests, httpx, aiohttp, urllib3) do not have.
+_ORM_MODULE_ROOTS = frozenset({"sqlalchemy", "sqlmodel", "flask_sqlalchemy"})
+_ORM_SESSION_CLASSES = frozenset(
+    {"Session", "AsyncSession", "scoped_session", "async_scoped_session"}
+)
+_ORM_SESSION_FACTORIES = frozenset(
+    {"sessionmaker", "async_sessionmaker", "scoped_session", "async_scoped_session"}
+)
+_ORM_ONLY_SESSION_METHODS = frozenset(
+    {
+        "add",
+        "add_all",
+        "commit",
+        "rollback",
+        "flush",
+        "refresh",
+        "expunge",
+        "expunge_all",
+        "exec",
+        "execute",
+        "scalars",
+        "query",
+    }
+)
+_MAX_ORM_ALIAS_DEPTH = 3
+
 NON_HTTP_RECEIVER_NAMES = frozenset(
     {
         "dict",
@@ -489,6 +519,92 @@ def _walk_function_body(func):
         stack.extend(ast.iter_child_nodes(node))
 
 
+def _is_orm_session_class(dotted: str) -> bool:
+    parts = dotted.split(".")
+    return parts[0] in _ORM_MODULE_ROOTS and parts[-1] in _ORM_SESSION_CLASSES
+
+
+def _is_orm_session_factory(dotted: str) -> bool:
+    parts = dotted.split(".")
+    return parts[0] in _ORM_MODULE_ROOTS and parts[-1] in _ORM_SESSION_FACTORIES
+
+
+def _is_none_annotation(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Constant) and node.value is None) or (
+        isinstance(node, ast.Name) and node.id == "None"
+    )
+
+
+def _is_generic_annotation(node: ast.AST) -> bool:
+    """``Any``/``object``/a bare string: says nothing about the parameter's
+    type, so one function's ORM use of it proves nothing about another's."""
+    if isinstance(node, ast.Constant):
+        return True
+    dotted = _qualified_name_from_expr(node)
+    if dotted is None:
+        return False
+    return dotted.rsplit(".", 1)[-1] in {"Any", "object"}
+
+
+def _calls_orm_unit_of_work(scope: ast.AST, receiver: str) -> bool:
+    """``scope`` calls an ORM-only session method (``commit``, ``add``...) on
+    ``receiver``. A class is searched whole, for ``self.session`` receivers."""
+    nodes = (
+        ast.walk(scope)
+        if isinstance(scope, ast.ClassDef)
+        else _walk_function_body(scope)
+    )
+    for node in nodes:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _ORM_ONLY_SESSION_METHODS
+            and _qualified_name_from_expr(node.func.value) == receiver
+        ):
+            return True
+    return False
+
+
+def _parameter(func: ast.AST, name: str) -> ast.arg | None:
+    if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    args = func.args
+    for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+        if arg.arg == name:
+            return arg
+    return None
+
+
+def _simple_bindings(node: ast.AST):
+    """``(target, value)`` pairs a statement binds directly: assignments,
+    walrus and ``with ... as name``."""
+    if isinstance(node, ast.Assign):
+        return [(target, node.value) for target in node.targets]
+    if isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+        return [(node.target, node.value)]
+    if isinstance(node, ast.withitem):
+        return [(node.optional_vars, node.context_expr)]
+    return []
+
+
+def _local_binding_values(scope: ast.AST, name: str) -> list[ast.AST | None]:
+    """What each binding of ``name`` in ``scope``'s own body is bound to: the
+    assigned value or ``with`` context expression, ``None`` for any other
+    binding (``for``/``except``/import/tuple target/pattern...)."""
+    values: list[ast.AST | None] = []
+    simple: set[int] = set()
+    nodes = list(_walk_function_body(scope))
+    for node in nodes:
+        for target, value in _simple_bindings(node):
+            if isinstance(target, ast.Name) and target.id == name:
+                values.append(value)
+                simple.add(id(target))
+    for node in nodes:
+        if id(node) not in simple and name in _bound_names(node, scope):
+            values.append(None)
+    return values
+
+
 _FUNCTION_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
@@ -755,6 +871,7 @@ class _SSRFFlowChecker(TaintVisitor):
         self._test_client_attributes: dict[tuple[int, str], bool] = {}
         self._fixed_host_helpers: dict[int, bool] = {}
         self._fixed_host_locals: dict[tuple[int, str], bool] = {}
+        self._orm_unit_of_work_memo: dict[tuple[int, str], bool] = {}
 
     def _push(self):
         super()._push()
@@ -1379,6 +1496,9 @@ class _SSRFFlowChecker(TaintVisitor):
         if self._is_known_http_receiver_name(name):
             return True
 
+        if self._receiver_is_orm_session(node):
+            return False
+
         if name.lower() in NON_HTTP_RECEIVER_NAMES:
             return False
 
@@ -1390,6 +1510,204 @@ class _SSRFFlowChecker(TaintVisitor):
             return True
 
         return False
+
+    def _receiver_is_orm_session(self, node: ast.Call) -> bool:
+        """The call's receiver is proven to be an ORM (SQLAlchemy/SQLModel)
+        session, so ``get``/``delete``/... on it never leaves the process."""
+        if not isinstance(node.func, ast.Attribute):
+            return False
+        receiver = _qualified_name_from_expr(node.func.value)
+        if receiver is None:
+            return False
+        func = self._enclosing_function(node)
+        if receiver.startswith(("self.", "cls.")):
+            klass = self._enclosing_class(node)
+            return klass is not None and self._calls_orm_unit_of_work(klass, receiver)
+        scope = func if func is not None else self.tree
+        if scope is not None and self._calls_orm_unit_of_work(scope, receiver):
+            return True
+        head, _, rest = receiver.partition(".")
+        if rest:
+            # Flask-SQLAlchemy: ``db = SQLAlchemy(app)`` ... ``db.session``.
+            return (
+                rest == "session"
+                and self._module_global_is_stable(head)
+                and self._names_orm_object(
+                    self._module_scope.values.get(head), "SQLAlchemy", 0
+                )
+            )
+        if func is not None:
+            param = _parameter(func, receiver)
+            values = _local_binding_values(func, receiver)
+            if param is not None or values:
+                proofs = [self._is_orm_session_value(value, 0) for value in values]
+                if param is not None:
+                    proofs.append(self._parameter_is_orm_session(param))
+                return all(proofs)
+            if receiver in self._names_bound_under(func):
+                return False  # bound by a nested scope or a pattern: unknown
+        if not self._module_global_is_stable(receiver):
+            return False
+        return self._is_orm_session_value(
+            self._module_scope.values.get(receiver), 0
+        )
+
+    def _calls_orm_unit_of_work(self, scope: ast.AST, receiver: str) -> bool:
+        key = (id(scope), receiver)
+        known = self._orm_unit_of_work_memo.get(key)
+        if known is None:
+            known = self._orm_unit_of_work_memo[key] = _calls_orm_unit_of_work(
+                scope, receiver
+            )
+        return known
+
+    def _parameter_is_orm_session(self, param: ast.arg) -> bool:
+        annotation = param.annotation
+        if annotation is None:
+            return False
+        return self._names_orm_session_type(
+            annotation, 0
+        ) or self._annotation_used_as_orm_session(ast.dump(annotation))
+
+    @cached_property
+    def _orm_session_annotations(self) -> frozenset[str]:
+        """Parameter annotations that some function in this module uses as an
+        ORM session (calls ``commit``, ``exec``... on the parameter). Covers a
+        ``SessionDep`` alias imported from another module."""
+        found: set[str] = set()
+        if self.tree is None:
+            return frozenset()
+        for func in ast.walk(self.tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = func.args
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                if arg.annotation is None or _is_generic_annotation(arg.annotation):
+                    continue
+                key = ast.dump(arg.annotation)
+                if key in found or _local_binding_values(func, arg.arg):
+                    continue
+                if _calls_orm_unit_of_work(func, arg.arg):
+                    found.add(key)
+        return frozenset(found)
+
+    def _annotation_used_as_orm_session(self, annotation_key: str) -> bool:
+        return annotation_key in self._orm_session_annotations
+
+    def _resolved_dotted(self, node: ast.AST) -> str | None:
+        """``node``'s dotted name with its imported head replaced by the
+        module it comes from (``Session`` -> ``sqlmodel.Session``)."""
+        dotted = _qualified_name_from_expr(node)
+        if dotted is None:
+            return None
+        head, _, rest = dotted.partition(".")
+        sources = self._module_scope.imported.get(head)
+        if not sources or not self._module_global_is_stable(head):
+            return None
+        return sources[-1] + (f".{rest}" if rest else "")
+
+    def _module_value(self, node: ast.AST) -> ast.AST | None:
+        if not isinstance(node, ast.Name) or not self._module_global_is_stable(
+            node.id
+        ):
+            return None
+        return self._module_scope.values.get(node.id)
+
+    def _names_orm_session_type(self, node: ast.AST | None, depth: int) -> bool:
+        """``node`` (an annotation) names an ORM session class, through
+        ``Annotated[...]``, ``Optional[...]``, ``X | None``, string
+        annotations and module-level aliases."""
+        if node is None or depth > _MAX_ORM_ALIAS_DEPTH:
+            return False
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            try:
+                parsed = ast.parse(node.value.strip(), mode="eval").body
+            except SyntaxError:
+                return False
+            return self._names_orm_session_type(parsed, depth + 1)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            members = [
+                member
+                for member in (node.left, node.right)
+                if not _is_none_annotation(member)
+            ]
+            return bool(members) and all(
+                self._names_orm_session_type(member, depth + 1) for member in members
+            )
+        if isinstance(node, ast.Subscript):
+            base = _qualified_name_from_expr(node.value) or ""
+            base = base.rsplit(".", 1)[-1]
+            inner = node.slice
+            if base == "Annotated" and isinstance(inner, ast.Tuple) and inner.elts:
+                return self._names_orm_session_type(inner.elts[0], depth + 1)
+            if base == "Optional":
+                return self._names_orm_session_type(inner, depth + 1)
+            if base == "Union" and isinstance(inner, ast.Tuple):
+                members = [m for m in inner.elts if not _is_none_annotation(m)]
+                return bool(members) and all(
+                    self._names_orm_session_type(m, depth + 1) for m in members
+                )
+            return False
+        resolved = self._resolved_dotted(node)
+        if resolved is not None:
+            return _is_orm_session_class(resolved)
+        alias = self._module_value(node)
+        return alias is not None and self._names_orm_session_type(alias, depth + 1)
+
+    def _names_orm_object(self, node: ast.AST | None, cls: str, depth: int) -> bool:
+        """``node`` is a call constructing ``<orm module>.<cls>``."""
+        if not isinstance(node, ast.Call) or depth > _MAX_ORM_ALIAS_DEPTH:
+            return False
+        resolved = self._resolved_dotted(node.func)
+        if resolved is None:
+            return False
+        parts = resolved.split(".")
+        return parts[0] in _ORM_MODULE_ROOTS and parts[-1] == cls
+
+    def _is_orm_session_factory_value(self, node: ast.AST | None, depth: int) -> bool:
+        """``node`` is (a module alias of) ``sessionmaker(...)`` and friends."""
+        if node is None or depth > _MAX_ORM_ALIAS_DEPTH:
+            return False
+        if isinstance(node, ast.Call):
+            resolved = self._resolved_dotted(node.func)
+            return resolved is not None and _is_orm_session_factory(resolved)
+        alias = self._module_value(node)
+        return alias is not None and self._is_orm_session_factory_value(
+            alias, depth + 1
+        )
+
+    def _is_orm_session_value(self, node: ast.AST | None, depth: int) -> bool:
+        """``node`` evaluates to an ORM session: ``Session(engine)``,
+        ``SessionLocal()`` for a ``sessionmaker``, ``factory.begin()``, or a
+        ``scoped_session`` registry used directly."""
+        if node is None or depth > _MAX_ORM_ALIAS_DEPTH:
+            return False
+        if isinstance(node, ast.Await):
+            return self._is_orm_session_value(node.value, depth + 1)
+        if isinstance(node, ast.Call):
+            func = node.func
+            resolved = self._resolved_dotted(func)
+            if resolved is not None and _is_orm_session_class(resolved):
+                return True
+            if self._is_orm_session_factory_value(func, depth + 1):
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "begin":
+                return self._is_orm_session_factory_value(func.value, depth + 1)
+            return False
+        if self._is_orm_session_factory_value(node, depth + 1):
+            # ``Session = scoped_session(...)`` proxies a session directly.
+            value = self._module_value(node)
+            resolved = (
+                self._resolved_dotted(value.func)
+                if isinstance(value, ast.Call)
+                else None
+            )
+            return resolved is not None and resolved.rsplit(".", 1)[-1] in {
+                "scoped_session",
+                "async_scoped_session",
+            }
+        alias = self._module_value(node)
+        return alias is not None and self._is_orm_session_value(alias, depth + 1)
 
     @cached_property
     def _module_scope(self) -> _ModuleScope:

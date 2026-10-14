@@ -15,6 +15,37 @@ from skylos.visitors.registration_decorators import (
 )
 from typing import Any, Optional, Union
 
+# SQLAlchemy / SQLModel declarative attribute constructors. The ORM reads
+# class attributes built by these through its metaclass, not by name.
+ORM_DECLARATIVE_CONSTRUCTORS = frozenset(
+    {
+        "Relationship",
+        "relationship",
+        "RelationshipProperty",
+        "mapped_column",
+        "Column",
+        "column_property",
+        "association_proxy",
+        "backref",
+        "synonym",
+        "composite",
+        "deferred",
+        "dynamic_loader",
+        "query_expression",
+        # Django / django-modelcluster / django-taggit relations
+        "ForeignKey",
+        "ParentalKey",
+        "GenericRelation",
+        "GenericForeignKey",
+        "TaggableManager",
+        "ClusterTaggableManager",
+    }
+)
+# ``models.CharField(...)``, ``forms.EmailField(...)``, Wagtail's
+# ``RichTextField``/``StreamField``, DRF serializer fields: a class attribute
+# built by a ``*Field`` constructor is collected by the class's metaclass.
+_FIELD_CONSTRUCTOR_RE = re.compile(r"^[A-Z][A-Za-z0-9]*Field$")
+
 PYTHON_BUILTINS = {
     "print",
     "len",
@@ -430,6 +461,7 @@ class Definition:
         "folder_role",
         "suppression_lines",
         "module_shadows_getattr",
+        "confidence_factors",
     )
 
     def __init__(
@@ -474,6 +506,9 @@ class Definition:
         self.folder_role = None
         self.suppression_lines = {line}
         self.module_shadows_getattr = False
+        # Evidence that lowers a dead-code candidate's confidence without
+        # making it uncertain (see skylos/deadcode/confidence.py).
+        self.confidence_factors = []
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -523,6 +558,8 @@ class Definition:
             result["why_unused"] = list(self.why_unused)
         if self.why_confidence_reduced:
             result["why_confidence_reduced"] = list(self.why_confidence_reduced)
+        if self.confidence_factors:
+            result["confidence_factors"] = list(self.confidence_factors)
         if self.conditional_import:
             result["conditional_import"] = True
         if self.is_exported:
@@ -567,6 +604,10 @@ class Visitor(ast.NodeVisitor):
         self.enum_classes = set()
         self.attrs_classes = set()
         self.orm_model_classes = set()
+        # Class attributes the ORM's declarative machinery reads
+        # (``owner = Relationship(back_populates="items")``).
+        self.orm_declarative_fields = set()
+        self._class_base_simple_names: dict[str, tuple[str, ...]] = {}
         self.type_alias_names = set()
         self.all_exports = set()
         self.abc_classes = set()
@@ -1542,6 +1583,11 @@ class Visitor(ast.NodeVisitor):
         is_namedtuple = False
         is_enum = False
         is_orm_model = False
+        self._class_base_simple_names[node.name] = tuple(
+            base.id if isinstance(base, ast.Name) else base.attr
+            for base in node.bases
+            if isinstance(base, (ast.Name, ast.Attribute))
+        )
 
         for base in node.bases:
             base_name = ""
@@ -1567,6 +1613,16 @@ class Visitor(ast.NodeVisitor):
                 "DeclarativeBase",
                 "SQLModel",
                 "Document",
+            ):
+                is_orm_model = True
+
+        for keyword in node.keywords:
+            # ``class Item(ItemBase, table=True)``: a SQLModel table model,
+            # whatever its (often local) base class is called.
+            if (
+                keyword.arg == "table"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
             ):
                 is_orm_model = True
 
@@ -1804,6 +1860,7 @@ class Visitor(ast.NodeVisitor):
         )
         for target in node.targets:
             self._process_target_for_def(target, declaration_only=declaration_only)
+        self._record_orm_declarative_fields(node.targets, node.value)
 
         if isinstance(node.value, ast.Dict):
             self._track_dict_dispatch(node)
@@ -1813,6 +1870,45 @@ class Visitor(ast.NodeVisitor):
         self._extract_string_refs(node.value)
         self.generic_visit(node)
         self._track_instance_attr_types(node)
+
+    def _record_orm_declarative_fields(self, targets, value) -> None:
+        if not (self.cls and not self.current_function_scope):
+            return
+        if not isinstance(value, ast.Call):
+            return
+        func = value.func
+        called = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if called is None:
+            return
+        if called not in ORM_DECLARATIVE_CONSTRUCTORS:
+            bases = self._class_base_simple_names.get(self.cls, ())
+            declarative = bool(bases) and (
+                bool(_FIELD_CONSTRUCTOR_RE.match(called))
+                # django-filter: declared filters on a FilterSet.
+                or (
+                    called.endswith("Filter")
+                    and any(base.endswith(("FilterSet", "FilterSetMixin")) for base in bases)
+                )
+                # Wagtail StructBlock/StreamBlock: child blocks declared as
+                # class attributes.
+                or (
+                    called.endswith("Block")
+                    and any(base.endswith("Block") for base in bases)
+                )
+            )
+            if not declarative:
+                return
+        for target in targets:
+            if isinstance(target, ast.Name):
+                self.orm_declarative_fields.add(
+                    self._compute_variable_name(target.id)
+                )
 
     def visit_TypeAlias(self, node: ast.AST) -> None:
         name_node = getattr(node, "name", None)
@@ -1852,6 +1948,7 @@ class Visitor(ast.NodeVisitor):
         if node.value:
             self.visit(node.value)
             self._extract_string_refs(node.value)
+            self._record_orm_declarative_fields([node.target], node.value)
 
         def _define(t):
             if isinstance(t, ast.Name):

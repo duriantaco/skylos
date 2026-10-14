@@ -9,9 +9,10 @@ from __future__ import annotations
 
 _GENERATED_REASON_NOUNS = {
     "django_migration": ("Django migration", "Django migrations"),
-    "vendored_static_lib": ("static/**/lib file", "static/**/lib files"),
+    "vendored_static_lib": ("web-root library file", "web-root library files"),
     "minified": ("minified file", "minified files"),
     "vendored_banner": ("vendored-library file", "vendored-library files"),
+    "generated_source": ("generated source file", "generated source files"),
 }
 
 
@@ -23,7 +24,53 @@ def scope_note_lines(result: dict) -> list[str]:
     generated = _generated_note(summary.get("generated_files"))
     if generated:
         lines.append(generated)
+    lines.extend(_below_threshold_notes(summary.get("dead_code_below_threshold")))
+    lines.extend(_experimental_dead_code_notes(summary.get("dead_code_experimental")))
+    bare_noqa = _count(summary.get("bare_noqa_security_findings"))
+    if bare_noqa:
+        noun = "finding sits" if bare_noqa == 1 else "findings sit"
+        lines.append(
+            f"{bare_noqa:,} HIGH/CRITICAL security {noun} on a bare `# noqa`, "
+            "which does not hide security findings; to accept one, use "
+            "`# skylos: ignore[SKY-...] <reason>`."
+        )
     return lines
+
+
+def _below_threshold_notes(below) -> list[str]:
+    if not isinstance(below, dict):
+        return []
+    info = below.get("unused_parameters")
+    count = _count(info.get("count")) if isinstance(info, dict) else 0
+    if not count:
+        return []
+    noun = "unused parameter is" if count == 1 else "unused parameters are"
+    show_with = info.get("show_with") or "--confidence 50"
+    note = (
+        f"{count:,} {noun} below the default confidence threshold "
+        f"(callback and override signatures often require them); "
+        f"use {show_with} to see them."
+    )
+    return [note]
+
+
+_EXPERIMENTAL_LANGUAGE_NAMES = {"rust": "Rust"}
+
+
+def _experimental_dead_code_notes(experimental) -> list[str]:
+    if not isinstance(experimental, dict):
+        return []
+    notes = []
+    for language, info in sorted(experimental.items()):
+        if not isinstance(info, dict) or info.get("listed") is not False:
+            continue
+        name = _EXPERIMENTAL_LANGUAGE_NAMES.get(str(language), str(language))
+        notes.append(
+            f"{name} dead code is experimental and is not listed at the default "
+            f"confidence threshold; use {info.get('show_with') or '--confidence 40'} "
+            f"to see {name} candidates."
+        )
+    return notes
 
 
 def _generated_note(generated) -> str | None:

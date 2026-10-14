@@ -559,6 +559,35 @@ _ESCAPED_BREAK_RE = re.compile(r"^(?:\\[nr]|[\s'\"`+,])+")
 _PROSE_RE = re.compile(r"^\s*(?:</?[A-Za-z]|[`*_)\]]|[A-Za-z]{1,12}\s)")
 
 
+# A line that stands for omitted key data: ``...``, ``…``, ``[...]``,
+# ``<snip>``. A PEM body with one is an excerpt, not a usable key.
+_ELIDED_BODY_LINE_RE = re.compile(
+    r"^(?:\.{3,}|…+|\[\s*(?:\.{3,}|…|snip|truncated)\s*\]"
+    r"|<\s*(?:\.{3,}|…|snip|truncated)\s*>)$",
+    re.IGNORECASE,
+)
+_PEM_BODY_SPLIT_RE = re.compile(r"\\[nr]|\n")
+_PEM_BODY_STRIP = " \t\r'\"`+,;"
+_MAX_PEM_BODY_LINES = 80
+
+
+def private_key_body_is_elided(
+    line: str, header_end: int, following: list[str]
+) -> bool:
+    """The key body after a ``-----BEGIN ... PRIVATE KEY-----`` header, up to
+    its ``-----END`` line, contains an elision line such as ``...``."""
+    segments = _PEM_BODY_SPLIT_RE.split(line[header_end:])
+    for text in following[:_MAX_PEM_BODY_LINES]:
+        segments.extend(_PEM_BODY_SPLIT_RE.split(text))
+    for segment in segments[: _MAX_PEM_BODY_LINES * 2]:
+        body = segment.strip(_PEM_BODY_STRIP)
+        if body.startswith("-----END"):
+            return False
+        if _ELIDED_BODY_LINE_RE.match(body):
+            return True
+    return False
+
+
 def private_key_header_material(
     line: str, header_end: int, following: list[str]
 ) -> str:

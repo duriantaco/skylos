@@ -21,6 +21,17 @@ from skylos.ui.help import COMMANDS
 
 
 @pytest.fixture(autouse=True)
+def _placeholder_scan_paths(monkeypatch):
+    """These tests mock the analyzer and pass placeholder paths such as
+    ``test_path``; the missing-path check has its own tests."""
+    import skylos.commands.scan_cmd as scan_cmd
+
+    monkeypatch.setattr(
+        scan_cmd, "_exit_on_missing_scan_paths", lambda args, *, cli_module: None
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_github_step_summary(monkeypatch):
     # These tests run inside GitHub Actions where GITHUB_STEP_SUMMARY is set;
     # commands would otherwise append real summaries during unit tests.
@@ -917,7 +928,8 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     assert "Skylos 9.9.9" in printed
     assert "Go engine available" in printed
     assert "Cloud connected" in printed
-    assert "pyproject.toml [tool.skylos] config found" in printed
+    # Escaped so Rich prints the brackets instead of reading a style tag.
+    assert "pyproject.toml \\[tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
     assert "community rule pack(s) installed" in printed
     assert "ripgrep (rg) unavailable to Skylos" in printed
@@ -1619,6 +1631,9 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch, tmp_path):
             },
         },
     }
+    coverage = payload["analysis_summary"].pop("analysis_coverage")
+    assert coverage["status"] == "complete"
+    assert coverage["exit_blocking"] is False
     assert payload == expected
 
 

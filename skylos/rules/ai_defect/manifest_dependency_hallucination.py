@@ -51,7 +51,10 @@ STATUS_MISSING_VERSION = "missing_version"
 STATUS_SUSPICIOUS_EXISTING = "suspicious_existing"
 STATUS_PRIVATE_OR_UNVERIFIED = "private_or_unverified"
 STATUS_UNKNOWN = "unknown"
-VERSION_CACHE_SCHEMA_VERSION = 2
+# 3: Go module paths and versions are case-escaped for the module proxy.
+# Version-2 caches can hold a false "missing" for every Go module path with an
+# uppercase letter (github.com/BurntSushi/toml), and "missing" never expires.
+VERSION_CACHE_SCHEMA_VERSION = 3
 VERSION_CACHE_PATH = Path(".skylos") / "cache" / "dependency_versions.json"
 MAX_VERSION_CACHE_BYTES = 5_000_000
 MAX_INSTALL_SURFACE_BYTES = 1_000_000
@@ -2076,8 +2079,10 @@ def _check_go_version(name: str, version: str) -> str:
     if module_path is None:
         return STATUS_UNKNOWN
 
-    go_version = _go_version(version)
-    safe_go_version = quote(go_version, safe="")
+    escaped_version = go_proxy_escape(_go_version(version))
+    if escaped_version is None:
+        return STATUS_UNKNOWN
+    safe_go_version = quote(escaped_version, safe="!")
     info_url = f"{GO_PROXY_ORIGIN}/{module_path}/@v/{safe_go_version}.info"
     list_url = f"{GO_PROXY_ORIGIN}/{module_path}/@v/list"
     return _check_registry_version_urls(
@@ -2170,6 +2175,26 @@ def _safe_npm_name_part(value: str) -> bool:
     return True
 
 
+def go_proxy_escape(value: str) -> str | None:
+    """Case-encode a module path or version for the Go module proxy.
+
+    ``go help goproxy``: "every uppercase letter [is replaced] with an
+    exclamation mark followed by the corresponding lower-case letter", so
+    ``github.com/BurntSushi/toml`` is served at ``github.com/!burnt!sushi/toml``.
+    The unescaped path is a 404, which read as a nonexistent (hallucinated)
+    module. ``!`` itself is not allowed in a path or version: ``None``.
+    """
+    if "!" in value:
+        return None
+    return "".join(f"!{char.lower()}" if "A" <= char <= "Z" else char for char in value)
+
+
+def go_proxy_module_path(name: str) -> str | None:
+    """The URL path segment for module ``name`` on the Go module proxy, or
+    ``None`` when the name is not a safe module path."""
+    return _safe_go_module_path(name)
+
+
 def _safe_go_module_path(name: str) -> str | None:
     raw = name.strip()
     if not raw:
@@ -2185,7 +2210,10 @@ def _safe_go_module_path(name: str) -> str | None:
     for part in parts:
         if not _safe_go_path_part(part):
             return None
-        encoded_parts.append(quote(part, safe=""))
+        escaped = go_proxy_escape(part)
+        if escaped is None:
+            return None
+        encoded_parts.append(quote(escaped, safe="!"))
     return "/".join(encoded_parts)
 
 

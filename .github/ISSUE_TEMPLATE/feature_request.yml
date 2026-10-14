@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an idea for Skylos.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: A clear description of the problem. For example, "I'm always frustrated when ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen, alternatives you considered, and examples from other tools.

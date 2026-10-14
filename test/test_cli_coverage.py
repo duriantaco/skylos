@@ -1,5 +1,20 @@
-from unittest.mock import patch, MagicMock
+import shlex
 import sys
+from pathlib import PurePath
+from unittest.mock import MagicMock, call, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _placeholder_scan_paths(monkeypatch):
+    """These tests mock the analyzer and pass placeholder paths such as
+    ``/some/project``; the missing-path check has its own tests."""
+    import skylos.commands.scan_cmd as scan_cmd
+
+    monkeypatch.setattr(
+        scan_cmd, "_exit_on_missing_scan_paths", lambda args, *, cli_module: None
+    )
 
 
 def _command_text(call) -> str:
@@ -14,6 +29,61 @@ def _command_text(call) -> str:
         if isinstance(command, (list, tuple))
         else str(command)
     )
+
+
+def _command_argv(call) -> list[str]:
+    command = call.args[0] if call.args else call.kwargs.get("args", "")
+    if isinstance(command, (list, tuple)):
+        return [str(part) for part in command]
+    return shlex.split(str(command))
+
+
+def _runs_coverage(call) -> bool:
+    """Whether a mocked subprocess.run call starts a coverage run.
+
+    It looks at what is executed (``coverage run``, ``python -m coverage``,
+    ``pytest --cov``), never at substrings: the scan's own subprocesses (git)
+    can carry a checkout path that contains the word "coverage".
+    """
+    argv = _command_argv(call)
+    if not argv:
+        return False
+    program = PurePath(argv[0]).name.lower()
+    if program in {"coverage", "coverage.exe"}:
+        return True
+    module = (
+        argv[argv.index("-m") + 1].lower()
+        if "-m" in argv[:-1] and program.startswith("python")
+        else None
+    )
+    if module == "coverage":
+        return True
+    runs_pytest = program in {"pytest", "pytest.exe", "py.test"} or module == "pytest"
+    return runs_pytest and any(
+        arg == "--cov" or arg.startswith("--cov=") for arg in argv[1:]
+    )
+
+
+def test_coverage_run_matcher_looks_at_the_command_not_its_paths():
+    def call(command):
+        return MagicMock(args=(command,), kwargs={})
+
+    for command in (
+        ["coverage", "run", "-m", "pytest", "-q"],
+        ["/venv/bin/coverage", "run", "-m", "unittest", "discover"],
+        ["python3", "-m", "coverage", "run", "-m", "pytest"],
+        ["pytest", "--cov=skylos", "-q"],
+        ["python", "-m", "pytest", "--cov"],
+        "coverage run -m pytest",
+    ):
+        assert _runs_coverage(call(command)), command
+    for command in (
+        ["git", "-C", "/work/t0-exit-and-coverage", "rev-parse", "HEAD"],
+        ["pytest", "-q", "tests/test_coverage.py"],
+        ["python", "/tools/coverage_report.py"],
+        ["git", "log", "--", "coverage"],
+    ):
+        assert not _runs_coverage(call(command)), command
 
 
 class TestCoverageFlag:
@@ -45,8 +115,7 @@ class TestCoverageFlag:
 
         calls = mock_run.call_args_list
         assert any(
-            "coverage" in _command_text(call) and "pytest" in _command_text(call)
-            for call in calls
+            _runs_coverage(call) and "pytest" in _command_argv(call) for call in calls
         )
 
     @patch("skylos.cli.subprocess.run")
@@ -68,9 +137,7 @@ class TestCoverageFlag:
                 pass
 
         coverage_calls = [
-            call
-            for call in mock_run.call_args_list
-            if "coverage" in _command_text(call)
+            call for call in mock_run.call_args_list if _runs_coverage(call)
         ]
         assert coverage_calls == []
         mock_analyze.assert_called_once()
@@ -132,7 +199,9 @@ class TestCoverageFlag:
         call_order = []
 
         def track_subprocess(*args, **kwargs):
-            call_order.append("coverage")
+            # Only a coverage run counts; the scan's git calls do not.
+            if _runs_coverage(call(*args, **kwargs)):
+                call_order.append("coverage")
             return MagicMock(returncode=0)
 
         def track_analyze(*args, **kwargs):
@@ -206,9 +275,7 @@ class TestCoverageFlag:
                     pass
 
             # subprocess.run should not be called for coverage
-            coverage_calls = [
-                c for c in mock_run.call_args_list if "coverage" in _command_text(c)
-            ]
+            coverage_calls = [c for c in mock_run.call_args_list if _runs_coverage(c)]
             assert len(coverage_calls) == 0
 
     @patch("skylos.cli.subprocess.run")

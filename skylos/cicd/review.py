@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import posixpath
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 from rich.console import Console
+from rich.markup import escape
 
 from skylos.cicd.evidence import (
     EvidenceCard,
@@ -136,17 +139,21 @@ def run_pr_review(
         defense_report=defense_report,
     )
 
+    identity = _TokenIdentity()
+    review_outcome = None
     if findings and not summary_only:
-        _post_pr_review(
-            findings[:max_comments],
+        review_outcome = _post_pr_review(
+            findings,
             pr_number,
             repo,
             evidence_cards=evidence_cards,
             changed_ranges=comment_ranges,
             project_root=review_root,
+            max_comments=max_comments,
+            identity=identity,
         )
 
-    _post_summary_comment(
+    summary_outcome = _post_summary_comment(
         all_findings,
         findings,
         pr_number,
@@ -156,11 +163,12 @@ def run_pr_review(
         assessment=results.get("assessment") if isinstance(results, dict) else None,
         evidence_cards=evidence_cards,
         risk_passport=risk_passport,
+        identity=identity,
     )
 
     console.print(
-        f"[green]Posted review on PR #{pr_number} "
-        f"({len(findings)} inline, {len(all_findings)} total)[/green]"
+        _review_outcome_line(pr_number, review_outcome, summary_outcome),
+        soft_wrap=True,
     )
 
 
@@ -287,7 +295,11 @@ def get_changed_line_ranges(
             diff_cmd,
             cwd=cwd,
             capture_output=True,
-            text=True,
+            # Only file names and hunk headers are read: a changed file in
+            # another encoding (or a binary git treats as text) must not
+            # stop the scan.
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             if raise_on_error:
@@ -1136,6 +1148,149 @@ def _to_relative_path(filepath: str) -> str:
     return filepath
 
 
+# One summary comment per PR, edited in place. Inline comments carry a hidden
+# per-finding key so a later run does not repeat them. Both markers are only
+# trusted on comments written by a bot (GITHUB_TOKEN / GitHub App) or by the
+# account the token belongs to, so a PR author cannot plant one to hijack the
+# summary or hide an inline finding.
+SUMMARY_MARKER = "<!-- skylos-review -->"
+_SUMMARY_HEADING = "## Skylos Analysis Summary"
+_SUMMARY_STATE_RE = re.compile(r"<!-- skylos-review-state: changed=(\d{1,9}) max=(\d{1,9}) -->")
+_LEGACY_CHANGED_COUNT_RE = re.compile(r"\*\*(\d{1,9})\*\* issue\(s\) on changed lines")
+_FINDING_KEY_RE = re.compile(r"<!-- skylos-finding:([0-9a-f]{20}) -->")
+_LEGACY_INLINE_FOOTER = "Analyzed by [Skylos]"
+_LEGACY_RULE_RE = re.compile(r"`(SKY-[A-Z0-9-]{1,40})`")
+_GH_TIMEOUT_SECONDS = 60
+_GH_PAGE_SIZE = 100
+_GH_MAX_PAGES = 30
+
+
+@dataclass
+class _CommentOutcome:
+    action: str  # created | updated | unchanged | skipped | failed
+    error: str = ""
+    new_inline: int = 0
+    existing_inline: int = 0
+    note: str = ""
+
+
+def _gh_error_text(exc: BaseException) -> str:
+    if isinstance(exc, subprocess.CalledProcessError):
+        raw = exc.stderr or exc.stdout or f"gh exited {exc.returncode}"
+    elif isinstance(exc, subprocess.TimeoutExpired):
+        raw = "gh timed out"
+    else:
+        raw = str(exc) or type(exc).__name__
+    if not isinstance(raw, str):
+        raw = str(raw)
+    first = next((line.strip() for line in raw.splitlines() if line.strip()), "")
+    return sanitize_untrusted_text(first or "unknown gh error", max_length=200)
+
+
+def _gh_write(args: list[str], payload: dict | None = None):
+    return subprocess.run(
+        ["gh", *args],
+        input=json.dumps(payload) if payload is not None else None,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=_GH_TIMEOUT_SECONDS,
+    )
+
+
+def _gh_list(endpoint: str) -> tuple[list[dict] | None, str]:
+    """All items of a paginated GitHub list endpoint, or (None, error)."""
+    items: list[dict] = []
+    for page in range(1, _GH_MAX_PAGES + 1):
+        try:
+            result = subprocess.run(
+                ["gh", "api", f"{endpoint}?per_page={_GH_PAGE_SIZE}&page={page}"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=_GH_TIMEOUT_SECONDS,
+            )
+            batch = json.loads(result.stdout)
+        except (subprocess.SubprocessError, OSError) as exc:
+            return None, _gh_error_text(exc)
+        except (TypeError, ValueError):
+            return None, "unreadable gh api output"
+        if not isinstance(batch, list):
+            return None, "unexpected gh api output"
+        items.extend(item for item in batch if isinstance(item, dict))
+        if len(batch) < _GH_PAGE_SIZE:
+            return items, ""
+    logger.debug("Stopped reading %s after %d pages", endpoint, _GH_MAX_PAGES)
+    return items, ""
+
+
+class _TokenIdentity:
+    """Decides which existing comments Skylos may treat as its own."""
+
+    def __init__(self) -> None:
+        self._login: str | None = None
+        self._looked_up = False
+
+    def _self_login(self) -> str | None:
+        if not self._looked_up:
+            self._looked_up = True
+            try:
+                result = subprocess.run(
+                    ["gh", "api", "/user"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=_GH_TIMEOUT_SECONDS,
+                )
+                login = json.loads(result.stdout).get("login")
+                self._login = login if isinstance(login, str) and login else None
+            except (subprocess.SubprocessError, OSError, TypeError, ValueError, AttributeError):
+                # GITHUB_TOKEN and GitHub App tokens cannot read /user.
+                self._login = None
+        return self._login
+
+    def owns(self, comment: dict) -> bool:
+        user = comment.get("user")
+        if not isinstance(user, dict):
+            return False
+        if user.get("type") == "Bot":
+            return True
+        login = user.get("login")
+        return isinstance(login, str) and bool(login) and login == self._self_login()
+
+
+def _inline_comment_key(path: str, line: int, finding: dict) -> str:
+    rule_id = str(finding.get("rule_id") or "").strip().upper()
+    parts = [path, str(line), rule_id]
+    if not rule_id or finding.get("category") == "dead_code":
+        # Several unused names can share one line and one dead-code rule.
+        parts.append(" ".join(str(finding.get("message") or "").split()))
+    digest = hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+    return digest[:20]
+
+
+def _existing_inline_identities(
+    comments: list[dict], identity: _TokenIdentity
+) -> tuple[set[str], set[tuple[str, int, str]]]:
+    keys: set[str] = set()
+    legacy: set[tuple[str, int, str]] = set()
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        found_keys = _FINDING_KEY_RE.findall(body)
+        is_legacy = not found_keys and _LEGACY_INLINE_FOOTER in body
+        if not (found_keys or is_legacy) or not identity.owns(comment):
+            continue
+        keys.update(found_keys)
+        if is_legacy:
+            path, line = comment.get("path"), comment.get("line")
+            rule = _LEGACY_RULE_RE.search(body)
+            if isinstance(path, str) and isinstance(line, int) and rule:
+                legacy.add((path, line, rule.group(1)))
+    return keys, legacy
+
+
 def _post_pr_review(
     findings: list[dict],
     pr_number: int,
@@ -1144,14 +1299,22 @@ def _post_pr_review(
     evidence_cards: bool = False,
     changed_ranges: list[dict] | None = None,
     project_root: str | os.PathLike[str] | None = None,
-) -> None:
+    max_comments: int | None = None,
+    identity: _TokenIdentity | None = None,
+) -> _CommentOutcome:
     comments = []
+    seen_keys: set[str] = set()
     for f in findings:
         if not f.get("file") or not f.get("line"):
             continue
         comment_file, comment_line = _review_comment_location(
             f, changed_ranges, project_root=project_root
         )
+        path = _to_relative_path(comment_file)
+        key = _inline_comment_key(path, comment_line, f)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         body = (
             _format_evidence_card_comment(f)
             if evidence_cards
@@ -1159,30 +1322,58 @@ def _post_pr_review(
         )
         comments.append(
             {
-                "path": _to_relative_path(comment_file),
+                "path": path,
                 "line": comment_line,
-                "body": body,
+                "body": f"{body}\n<!-- skylos-finding:{key} -->",
+                "_key": key,
+                "_legacy": (path, comment_line, str(f.get("rule_id") or "").upper()),
             }
         )
 
     if not comments:
-        return
+        return _CommentOutcome("skipped")
+
+    existing, list_error = _gh_list(f"/repos/{repo}/pulls/{pr_number}/comments")
+    note = ""
+    if existing is None:
+        # Better one possible repeat than a silently missing finding.
+        note = f"could not read existing inline comments ({list_error})"
+        posted_keys, legacy = set(), set()
+    else:
+        posted_keys, legacy = _existing_inline_identities(
+            existing, identity or _TokenIdentity()
+        )
+
+    new_comments = [
+        c
+        for c in comments
+        if c["_key"] not in posted_keys and c["_legacy"] not in legacy
+    ]
+    already = len(comments) - len(new_comments)
+    if max_comments is not None:
+        # The cap is per PR, not per push: findings that already have an
+        # inline comment use up slots, so an unchanged PR gets no new review.
+        new_comments = new_comments[: max(0, max_comments - already)]
+    if not new_comments:
+        return _CommentOutcome("unchanged", existing_inline=already, note=note)
 
     payload = {
         "body": (
-            f"Skylos found {len(comments)} issue(s) on changed lines.\n\n"
+            f"Skylos found {len(new_comments)} new issue(s) on changed lines.\n\n"
             "---\n"
             "_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • "
             "[Set up in 30 seconds](https://github.com/duriantaco/skylos#cicd)_"
         ),
         "event": "COMMENT",
-        "comments": comments,
+        "comments": [
+            {"path": c["path"], "line": c["line"], "body": c["body"]}
+            for c in new_comments
+        ],
     }
 
     try:
-        subprocess.run(
+        _gh_write(
             [
-                "gh",
                 "api",
                 "--method",
                 "POST",
@@ -1190,13 +1381,16 @@ def _post_pr_review(
                 "--input",
                 "-",
             ],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            check=True,
+            payload,
         )
-    except subprocess.CalledProcessError as e:
-        console.print(f"[yellow]Failed to post PR review: {e.stderr}[/yellow]")
+    except (subprocess.SubprocessError, OSError) as exc:
+        return _CommentOutcome("failed", error=_gh_error_text(exc), note=note)
+    return _CommentOutcome(
+        "created",
+        new_inline=len(new_comments),
+        existing_inline=already,
+        note=note,
+    )
 
 
 def _related_location_spans(finding: dict) -> list[tuple[str, int, int]]:
@@ -1281,7 +1475,19 @@ def _post_summary_comment(
     assessment: dict | None = None,
     evidence_cards: bool = False,
     risk_passport: dict | None = None,
-) -> None:
+    identity: _TokenIdentity | None = None,
+) -> _CommentOutcome:
+    existing_comments, list_error = _gh_list(
+        f"/repos/{repo}/issues/{pr_number}/comments"
+    )
+    previous = (
+        _previous_summary_comment(existing_comments, identity or _TokenIdentity())
+        if existing_comments is not None
+        else None
+    )
+    previous_changed, previous_max = _previous_summary_counts(previous)
+    changed_now = len(diff_findings)
+
     by_severity = {}
     for f in all_findings:
         sev = f.get("severity", "MEDIUM")
@@ -1292,12 +1498,24 @@ def _post_summary_comment(
         cat = f.get("category", "other")
         by_category[cat] = by_category.get(cat, 0) + 1
 
-    lines = [
-        "## Skylos Analysis Summary",
-        "",
-        f"**{len(diff_findings)}** issue(s) on changed lines | "
-        f"**{len(all_findings)}** total",
-    ]
+    was = (
+        f" (was {previous_changed})"
+        if previous_changed is not None and previous_changed != changed_now
+        else ""
+    )
+    lines = [SUMMARY_MARKER, _SUMMARY_HEADING, ""]
+    if changed_now == 0 and previous_max > 0:
+        lines.extend(
+            [
+                "✅ **All issues Skylos reported on this PR's changed lines are "
+                f"fixed.** Earlier runs reported up to {previous_max}.",
+                "",
+            ]
+        )
+    lines.append(
+        f"**{changed_now}** issue(s) on changed lines{was} | "
+        f"**{len(all_findings)}** total"
+    )
     lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
         [
@@ -1475,17 +1693,111 @@ def _post_summary_comment(
             )
         lines.extend(["", "Historical result; this score is not a current risk assessment."])
 
+    lines.extend(
+        [
+            "",
+            "---",
+            "_Skylos edits this comment on each push instead of adding a new "
+            "one. Inline comments from earlier runs stay on the PR._",
+            "<!-- skylos-review-state: "
+            f"changed={changed_now} max={max(previous_max, changed_now)} -->",
+        ]
+    )
     body = "\n".join(lines)
 
+    note = (
+        f"could not read existing comments ({list_error})"
+        if existing_comments is None
+        else ""
+    )
+    if previous is not None:
+        try:
+            _gh_write(
+                [
+                    "api",
+                    "--method",
+                    "PATCH",
+                    f"/repos/{repo}/issues/comments/{previous['id']}",
+                    "--input",
+                    "-",
+                ],
+                {"body": body},
+            )
+            return _CommentOutcome("updated")
+        except (subprocess.SubprocessError, OSError) as exc:
+            note = f"could not edit the earlier summary ({_gh_error_text(exc)})"
+
     try:
-        subprocess.run(
-            ["gh", "pr", "comment", str(pr_number), "--body", body, "--repo", repo],
-            capture_output=True,
-            text=True,
-            check=True,
+        _gh_write(
+            ["pr", "comment", str(pr_number), "--body", body, "--repo", repo]
         )
-    except subprocess.CalledProcessError as e:
-        console.print(f"[yellow]Failed to post summary comment: {e.stderr}[/yellow]")
+    except (subprocess.SubprocessError, OSError) as exc:
+        return _CommentOutcome("failed", error=_gh_error_text(exc), note=note)
+    return _CommentOutcome("created", note=note)
+
+
+def _previous_summary_comment(
+    comments: list[dict], identity: _TokenIdentity
+) -> dict | None:
+    """Newest summary Skylos itself posted: marked ones first, then legacy."""
+    marked: list[dict] = []
+    legacy: list[dict] = []
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str) or not isinstance(comment.get("id"), int):
+            continue
+        head = body.lstrip()
+        if head.startswith(SUMMARY_MARKER):
+            marked.append(comment)
+        elif head.startswith(_SUMMARY_HEADING):
+            legacy.append(comment)
+    for group in (marked, legacy):
+        for comment in reversed(group):
+            if identity.owns(comment):
+                return comment
+    return None
+
+
+def _previous_summary_counts(comment: dict | None) -> tuple[int | None, int]:
+    if not comment:
+        return None, 0
+    body = comment.get("body") or ""
+    state = _SUMMARY_STATE_RE.search(body)
+    if state:
+        return int(state.group(1)), int(state.group(2))
+    legacy = _LEGACY_CHANGED_COUNT_RE.search(body)
+    if legacy:
+        count = int(legacy.group(1))
+        return count, count
+    return None, 0
+
+
+def _review_outcome_line(
+    pr_number: int,
+    review: object,
+    summary: object,
+) -> str:
+    outcomes = [o for o in (review, summary) if isinstance(o, _CommentOutcome)]
+    failed = [o for o in outcomes if o.action == "failed"]
+    if failed:
+        return (
+            f"[yellow]Skylos could not post PR comments on #{pr_number} "
+            f"({escape(failed[0].error)}). A read-only token, as on a fork PR, "
+            "cannot comment; scan and gate results are unaffected.[/yellow]"
+        )
+    parts = []
+    if isinstance(summary, _CommentOutcome):
+        parts.append(f"summary {summary.action}")
+    if isinstance(review, _CommentOutcome):
+        parts.append(
+            f"{review.new_inline} new inline comment(s), "
+            f"{review.existing_inline} already on the PR"
+        )
+    notes = [o.note for o in outcomes if o.note]
+    if notes:
+        parts.append(escape(notes[0]))
+    detail = "; ".join(parts) if parts else "done"
+    return f"[green]Skylos PR review on #{pr_number}: {detail}[/green]"
 
 
 def _format_assessment_markdown(assessment: dict) -> list[str]:

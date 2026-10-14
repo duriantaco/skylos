@@ -22,6 +22,7 @@ EARLY_COMMAND_HANDLERS = {
     "cache": "_run_cache_command",
     "contract": "_handle_contract_command",
     "doctor": "_run_doctor_command",
+    "feedback": "_run_feedback_command",
     "whoami": "_run_whoami_command",
     "login": "_run_login_command",
     "sync": "_run_sync_command",

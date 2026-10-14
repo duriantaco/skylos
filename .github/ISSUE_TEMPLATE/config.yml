@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Private report (no GitHub account needed, or it involves company code)
+    url: https://skylos.dev/feedback?src=github
+    about: Goes privately to the founder. Nothing is posted publicly. From a terminal, run `skylos feedback`.
+  - name: Security vulnerability (private)
+    url: https://github.com/duriantaco/skylos/security/advisories/new
+    about: Report vulnerabilities through GitHub private vulnerability reporting, never in a public issue.
+  - name: Questions
+    url: https://github.com/duriantaco/skylos/discussions
+    about: Ask and answer questions in GitHub Discussions.

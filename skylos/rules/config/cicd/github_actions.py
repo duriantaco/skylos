@@ -993,6 +993,29 @@ def _is_false(value: Any) -> bool:
     return isinstance(value, str) and value.lower() == "false"
 
 
+# GitHub-owned actions and reusable workflows. GitHub runs the workflow and
+# owns these repositories, so trusting their tags adds no new party; zizmor's
+# default ``unpinned-uses`` policy allows ref-pins for ``actions/*`` and
+# ``github/*`` and OpenSSF Scorecard scores GitHub-owned actions apart from
+# third-party ones. An unpinned one is LOW hygiene; any other owner stays HIGH.
+_GITHUB_OWNED_ACTION_OWNERS = frozenset({"actions", "github"})
+
+
+def _unpinned_uses_severity(value: str) -> str:
+    value = value.strip()
+    owner, slash, rest = value.partition("/")
+    ref = value.rsplit("@", 1)[1] if "@" in value else ""
+    if (
+        slash
+        and owner.lower() in _GITHUB_OWNED_ACTION_OWNERS
+        and "@" in rest
+        and ref.strip()
+        and "${{" not in value
+    ):
+        return "LOW"
+    return "HIGH"
+
+
 def _is_pinned_uses(value: str) -> bool:
     value = value.strip()
     if not value or value.startswith("./") or value.startswith("../"):
@@ -1301,7 +1324,7 @@ def _scan_uses(
                     message="Reusable workflow reference is not pinned to a full commit SHA.",
                     file=path,
                     line=_line_for_contains(lines, job_uses),
-                    severity="HIGH",
+                    severity=_unpinned_uses_severity(job_uses),
                     value=job_uses,
                 ),
             )
@@ -1321,7 +1344,7 @@ def _scan_uses(
                     message="Action reference is not pinned to a full commit SHA.",
                     file=path,
                     line=_line_for_contains(lines, uses_value),
-                    severity="HIGH",
+                    severity=_unpinned_uses_severity(uses_value),
                     value=uses_value,
                 ),
             )

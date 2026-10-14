@@ -372,6 +372,9 @@ def test_json_gate_carries_verdict_and_reasons_without_stderr(
                 "hint": SCA_REQUIRED_HINT,
             }
         ],
+        "coverage_status": "incomplete",
+        "coverage_warnings": [],
+        "coverage_warning_details": [],
     }
     assert "Quality Gate" not in err
 
@@ -470,12 +473,27 @@ def test_lockfile_parse_failure_gate_says_how_to_find_the_file(
 def test_source_parse_failure_gate_lists_the_file(project, monkeypatch, capsys):
     (project / "broken.py").write_text("def broken(:\n    return 2\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest project fixture under tmp_path
 
+    # One of two files did not parse: the gate is decided on app.py and the
+    # unanalysed file is a coverage warning under the verdict.
     exit_code, out, _err = _scan(monkeypatch, capsys, "--gate")
+
+    assert exit_code == 0
+    assert "Quality Gate: PASSED" in out
+    block = _verdict_block(out, "Coverage: INCOMPLETE")
+    assert block[1] == (
+        "   • Incomplete coverage: 1 of 2 source files could not be analysed"
+    )
+    assert block[2] == "       broken.py:1  syntax error: invalid syntax"
+    assert "--exclude <folder>" in block[3]
+    assert "--strict" in block[-1]
+
+    # --strict asks for complete coverage: the gate cannot decide.
+    exit_code, out, _err = _scan(monkeypatch, capsys, "--gate", "--strict")
 
     assert exit_code == 2
     block = _verdict_block(out, INCOMPLETE_VERDICT)
     assert block[2] == (
-        "   • Analysis incomplete: 1 analysis error(s) prevented a complete scan"
+        "   • Incomplete coverage: 1 of 2 source files could not be analysed"
     )
     assert block[3] == "       broken.py:1  syntax error: invalid syntax"
     assert "--exclude <folder>" in block[-1]

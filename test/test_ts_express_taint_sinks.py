@@ -216,3 +216,24 @@ def test_node_tls_reject_unauthorized_disabled(stmt):
 
 def test_node_tls_reject_unauthorized_enabled_is_safe():
     assert _hits(_scan("process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';"), "SKY-D210") == []
+
+
+# rejectUnauthorized: false (D210), not reported in test files
+# (get_non_library_dir_kind(...) == "test"), like D346 in Python.
+_AGENT = "const agent = new https.Agent({ rejectUnauthorized: false });"
+
+
+@pytest.mark.parametrize(
+    ("file_path", "body", "expected"),
+    [
+        ("src/api.ts", _AGENT, 1),
+        ("src/db.ts", "const pool = new Pool({ ssl: { rejectUnauthorized: false } });", 1),
+        ("src/api.ts", "const opts = { 'rejectUnauthorized': false };", 1),
+        ("src/api.test.ts", _AGENT, 0),
+        ("src/__tests__/api.ts", _AGENT, 0),
+        ("src/api.ts", "const agent = new https.Agent({ rejectUnauthorized: true });", 0),
+        ("src/env.spec.ts", "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';", 0),
+    ],
+)
+def test_reject_unauthorized_false_follows_the_test_path_rule(file_path, body, expected):
+    assert len(_hits(_scan(body, file_path), "SKY-D210")) == expected

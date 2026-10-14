@@ -21,6 +21,7 @@ SCAN_INCOMPLETE_EXPLANATION = (
     "Required analysis did not finish, so this scan cannot count as complete "
     "or clean. --force does not change this."
 )
+COVERAGE_WARNING_HEADLINE = "Coverage: INCOMPLETE — some code was not analysed"
 
 
 @dataclass
@@ -32,6 +33,9 @@ class GateOutcome:
     strict: bool = False
     details: str = ""
     hint: str | None = None
+    # Coverage gaps that did not block: the verdict was decided on the code
+    # that was analysed, and these say what was not.
+    coverage_gaps: list = field(default_factory=list)
 
     def exit_code(self, *, force=False):
         if self.verdict == INCOMPLETE:
@@ -45,22 +49,59 @@ def evaluate_gate(results, config, *, strict=False, provenance=None):
     """Decide the gate exactly as ``check_gate`` does, keeping the reasons."""
     results = results or {}
     config = config or {}
-    incomplete = gatekeeper._analysis_incomplete_reasons(results)
+    incomplete = gatekeeper._analysis_blocking_reasons(
+        results, strict=strict, config=config
+    )
     if incomplete:
         return GateOutcome(INCOMPLETE, incomplete, strict)
+    gaps = gatekeeper._coverage_gap_reasons(results, strict=strict, config=config)
     passed, reasons = gatekeeper.check_gate(
         results, config, strict=strict, provenance=provenance
     )
     if passed:
         details, hint = gatekeeper._passed_gate_summary(results, config, strict=strict)
-        return GateOutcome(PASSED, list(reasons), strict, details, hint)
-    return GateOutcome(FAILED, list(reasons), strict)
+        return GateOutcome(PASSED, list(reasons), strict, details, hint, gaps)
+    return GateOutcome(FAILED, list(reasons), strict, coverage_gaps=gaps)
 
 
-def incomplete_scan_outcome(results):
+def incomplete_scan_outcome(results, *, strict=False):
     """An exit-2 scan that ran no gate still says why it is incomplete."""
-    reasons = gatekeeper._analysis_incomplete_reasons(results)
-    return GateOutcome(INCOMPLETE, reasons) if reasons else None
+    reasons = gatekeeper._analysis_blocking_reasons(results, strict=strict)
+    return GateOutcome(INCOMPLETE, reasons, strict) if reasons else None
+
+
+def coverage_gap_reasons(results, *, strict=False):
+    """Coverage gaps a scan reports as a warning (none when they block)."""
+    return gatekeeper._coverage_gap_reasons(results, strict=strict)
+
+
+def coverage_warning_lines(gaps):
+    """Plain-text coverage warning for stderr: headline, reasons, next step."""
+    if not gaps:
+        return []
+    from skylos.core.gate_incomplete import COVERAGE_STRICT_HINT
+
+    return [
+        COVERAGE_WARNING_HEADLINE,
+        *gatekeeper.gate_reasons_text(gaps),
+        f"   {COVERAGE_STRICT_HINT}",
+    ]
+
+
+def print_coverage_warning(console, gaps):
+    """Rich coverage warning: yellow headline, the reasons, the next step."""
+    if not gaps:
+        return
+    from rich.markup import escape
+
+    from skylos.core.gate_incomplete import COVERAGE_STRICT_HINT
+
+    console.print(
+        f"\n[bold yellow]{escape(COVERAGE_WARNING_HEADLINE)}[/bold yellow]",
+        soft_wrap=True,
+    )
+    gatekeeper._print_gate_reasons(console, gaps)
+    console.print(f"   [yellow]{escape(COVERAGE_STRICT_HINT)}[/yellow]", soft_wrap=True)
 
 
 def verdict_line(outcome, *, gate=True):
@@ -89,6 +130,7 @@ def outcome_text_lines(outcome, *, force=False, gate=True):
     lines.extend(gatekeeper.gate_reasons_text(outcome.reasons))
     if outcome.verdict == FAILED and force:
         lines.append(f"   {FORCED_PASS_NOTE}")
+    lines.extend(coverage_warning_lines(outcome.coverage_gaps))
     return lines
 
 
@@ -110,6 +152,7 @@ def print_outcome(console, outcome, *, force=False, gate=True):
         gatekeeper._handle_failed_gate(
             console, outcome.reasons, force=force, strict=True
         )
+    print_coverage_warning(console, outcome.coverage_gaps)
 
 
 def _reason_json(reason):
@@ -139,4 +182,13 @@ def gate_record(outcome, *, scope, force=False):
         "headline": verdict_line(outcome),
         "hint": outcome.hint if passed else None,
         "reason_details": [_reason_json(reason) for reason in outcome.reasons],
+        "coverage_status": "incomplete"
+        if outcome.verdict == INCOMPLETE
+        else "partial"
+        if outcome.coverage_gaps
+        else "complete",
+        "coverage_warnings": [str(reason) for reason in outcome.coverage_gaps],
+        "coverage_warning_details": [
+            _reason_json(reason) for reason in outcome.coverage_gaps
+        ],
     }

@@ -49,12 +49,10 @@ def run_credits_command() -> int:
     if org_name:
         plan_name = plan_display_name(plan)
         console.print(f"[bold]{escape(str(org_name))}[/bold] ({escape(plan_name)} plan)")
-    if plan == "enterprise":
-        console.print("[green]Unlimited credits[/green]")
-    else:
-        console.print(f"Balance: [bold]{balance:,}[/bold] credits")
-        if balance < 10:
-            console.print("[yellow]Low credits![/yellow]")
+    # Every plan has a credit balance, Enterprise included.
+    console.print(f"Balance: [bold]{balance:,}[/bold] credits")
+    if balance < 10:
+        console.print("[yellow]Low credits![/yellow]")
 
     if recent:
         console.print()
@@ -75,10 +73,9 @@ def run_credits_command() -> int:
 
             console.print(f"  [{color}]{sign}{amt}[/{color}]  {desc}")
 
-    if plan != "enterprise":
-        console.print()
-        console.print(
-            f"Buy credits: [link={BASE_URL}/dashboard/billing]{BASE_URL}/dashboard/billing[/link]"
-        )
+    console.print()
+    console.print(
+        f"Buy credits: [link={BASE_URL}/dashboard/billing]{BASE_URL}/dashboard/billing[/link]"
+    )
 
     return 0

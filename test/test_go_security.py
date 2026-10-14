@@ -342,7 +342,26 @@ func run(name string) error {
     assert "SKY-D212" not in _rule_ids(findings)
 
 
-def test_http_new_request_variable_url_flags_ssrf(tmp_path):
+# SSRF needs an untrusted URL: request or network input (coordinator round
+# 3). A parameter with no untrusted caller, config, flags or a fixed host are
+# the program's own inputs.
+def test_http_new_request_request_url_flags_ssrf(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "net/http"
+
+func run(r *http.Request) (*http.Request, error) {
+    target := r.URL.Query().Get("u")
+    return http.NewRequest("GET", target, nil)
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_http_new_request_parameter_without_untrusted_source_is_not_ssrf(tmp_path):
     findings = _scan_go(
         tmp_path,
         """package main
@@ -354,7 +373,7 @@ func run(target string) (*http.Request, error) {
 }
 """,
     )
-    assert "SKY-D216" in _rule_ids(findings)
+    assert "SKY-D216" not in _rule_ids(findings)
 
 
 def test_http_new_request_alias_import_variable_url_flags_ssrf(tmp_path):
@@ -364,8 +383,8 @@ def test_http_new_request_alias_import_variable_url_flags_ssrf(tmp_path):
 
 import h "net/http"
 
-func run(target string) (*h.Request, error) {
-    return h.NewRequest("GET", target, nil)
+func run(r *h.Request) (*h.Request, error) {
+    return h.NewRequest("GET", r.FormValue("target"), nil)
 }
 """,
     )
@@ -382,8 +401,8 @@ import (
     "net/http"
 )
 
-func run(ctx context.Context, target string) (*http.Request, error) {
-    return http.NewRequestWithContext(ctx, "GET", target, nil)
+func run(ctx context.Context, r *http.Request) (*http.Request, error) {
+    return http.NewRequestWithContext(ctx, "GET", r.Header.Get("X-Target"), nil)
 }
 """,
     )
@@ -1037,3 +1056,123 @@ func untar(reader *tar.Reader, dest string) error {
 """,
     )
     assert "SKY-D215" in _rule_ids(findings)
+
+
+@pytest.mark.parametrize(
+    ("body", "rule", "severity"),
+    [
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            '    http.Get(r.URL.Query().Get("u"))\n}\n',
+            "SKY-D216",
+            "CRITICAL",
+            id="request-query-ssrf",
+        ),
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            '    exec.Command("sh", "-c", r.FormValue("cmd")).Run()\n}\n',
+            "SKY-D212",
+            "CRITICAL",
+            id="request-shell-command",
+        ),
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            '    exec.Command(r.FormValue("bin")).Run()\n}\n',
+            "SKY-D212",
+            "CRITICAL",
+            id="request-program-path",
+        ),
+    ],
+)
+def test_untrusted_request_input_reaches_go_sinks(tmp_path, body, rule, severity):
+    findings = _scan_go(
+        tmp_path,
+        'package main\n\nimport (\n    "net/http"\n    "os/exec"\n)\n\n'
+        "var _ = exec.Command\n\n" + body,
+    )
+    assert [f["severity"] for f in findings if f["rule_id"] == rule] == [severity]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            'func run(addr string) {\n'
+            '    exec.Command(os.Args[0], "run", "--pingback", addr).Run()\n}\n',
+            id="re-exec-self",
+        ),
+        pytest.param(
+            'func run() {\n    self, _ := os.Executable()\n'
+            '    exec.Command(self, "version").Run()\n}\n',
+            id="own-binary",
+        ),
+        pytest.param(
+            'func run(port int) {\n'
+            '    http.Get(fmt.Sprintf("http://localhost:%d/config/", port))\n}\n',
+            id="loopback",
+        ),
+        pytest.param(
+            'type Loader struct{ URL string }\n\n'
+            'func (l Loader) Load() { http.NewRequest("GET", l.URL, nil) }\n',
+            id="config-url",
+        ),
+    ],
+)
+def test_program_inputs_are_not_go_ssrf_or_command_injection(tmp_path, body):
+    findings = _scan_go(
+        tmp_path,
+        'package main\n\nimport (\n    "fmt"\n    "net/http"\n    "os"\n'
+        '    "os/exec"\n)\n\nvar _ = fmt.Sprintf\nvar _ = http.Get\n'
+        "var _ = os.Args\nvar _ = exec.Command\n\n" + body,
+    )
+    assert not {"SKY-D212", "SKY-D216"} & _rule_ids(findings)
+
+
+# Go path traversal needs untrusted input (coordinator round 4), like
+# SSRF and command injection in round 3.
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            '    os.ReadFile(r.URL.Query().Get("f"))\n}\n',
+            id="request-query-read",
+        ),
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            "    http.ServeFile(w, r, filepath.Join(root, r.URL.Path))\n}\n",
+            id="serve-file-join",
+        ),
+    ],
+)
+def test_untrusted_go_path_is_traversal(tmp_path, body):
+    findings = _scan_go(tmp_path, _GO_PATH_PRELUDE + body)
+    assert [f["severity"] for f in findings if f["rule_id"] == "SKY-D215"] == [
+        "HIGH"
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("func load(name string) { os.ReadFile(name) }\n", id="param"),
+        pytest.param(
+            'func h(w http.ResponseWriter, r *http.Request) {\n'
+            '    p := filepath.Join(root, r.FormValue("n"))\n'
+            "    rel, err := filepath.Rel(root, p)\n"
+            '    if err != nil || strings.HasPrefix(rel, "..") {\n        return\n    }\n'
+            "    os.ReadFile(p)\n}\n",
+            id="rel-guard",
+        ),
+    ],
+)
+def test_program_or_guarded_go_path_is_not_traversal(tmp_path, body):
+    findings = _scan_go(tmp_path, _GO_PATH_PRELUDE + body)
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+_GO_PATH_PRELUDE = (
+    'package main\n\nimport (\n    "net/http"\n    "os"\n    "path/filepath"\n'
+    '    "strings"\n)\n\nvar root = "/srv"\nvar _ = strings.HasPrefix\n'
+    "var _ = http.ServeFile\nvar _ = filepath.Join\nvar _ = os.ReadFile\n\n"
+)

@@ -61,6 +61,54 @@ _EXECUTION_MARKERS = {
     "test_entrypoint",
     "package_entrypoint",
 }
+# Positional arguments Flask passes to each callback kind (None: all of them,
+# for template filters/tests/globals that take the template's arguments).
+_FLASK_CALLBACK_ARITY = {
+    "teardown_appcontext": 1,
+    "teardown_request": 1,
+    "teardown_app_request": 1,
+    "after_request": 1,
+    "after_app_request": 1,
+    "errorhandler": 1,
+    "app_errorhandler": 1,
+    "register_error_handler": 1,
+    "url_value_preprocessor": 2,
+    "app_url_value_preprocessor": 2,
+    "url_defaults": 2,
+    "app_url_defaults": 2,
+    "template_filter": None,
+    "app_template_filter": None,
+    "add_template_filter": None,
+    "app_template_test": None,
+    "template_test": None,
+    "add_template_test": None,
+    "template_global": None,
+    "app_template_global": None,
+    "add_template_global": None,
+}
+# ``app.teardown_appcontext(close_db)``-style registration: the method name
+# and the index of the callback argument.
+_FLASK_REGISTRATION_CALLS = {
+    "before_request": 0,
+    "before_app_request": 0,
+    "after_request": 0,
+    "after_app_request": 0,
+    "teardown_request": 0,
+    "teardown_app_request": 0,
+    "teardown_appcontext": 0,
+    "context_processor": 0,
+    "app_context_processor": 0,
+    "url_value_preprocessor": 0,
+    "url_defaults": 0,
+    "register_error_handler": 1,
+    "add_template_filter": 0,
+    "add_template_test": 0,
+    "add_template_global": 0,
+}
+# ``flask run`` / ``flask --app pkg`` calls a module-level factory with one of
+# these names (Flask "Application Discovery"), so its body runs and the
+# blueprints it registers are installed.
+_FLASK_APP_FACTORY_NAMES = frozenset({"create_app", "make_app"})
 _HANDLERS = {
     ast.Import: "_scan_import",
     ast.ImportFrom: "_scan_import",
@@ -135,9 +183,34 @@ class _WebScanner:
         self._imports = _FrameworkScanner(module, index)._imports
 
     def collect(self):
-        self.suite(self.tree.body, {})
+        module_bindings = {}
+        self.suite(self.tree.body, module_bindings)
         self._collect_module_level()
+        self._collect_callback_signatures(module_bindings)
         return self.evidence
+
+    def _collect_callback_signatures(self, module_bindings):
+        """Flask fixes the signature of any function registered as a callback,
+        wherever the registration call is (``init_app(app)`` included)."""
+        if "flask" in self.index.shadowed or not self._module_imports_flask():
+            return
+        for call in ast.walk(self.tree):
+            if not isinstance(call, ast.Call) or not isinstance(
+                call.func, ast.Attribute
+            ):
+                continue
+            position = _FLASK_REGISTRATION_CALLS.get(call.func.attr)
+            if position is None or len(call.args) <= position:
+                continue
+            argument = call.args[position]
+            if not isinstance(argument, ast.Name):
+                continue
+            target = module_bindings.get(argument.id)
+            definition = (
+                self.evidence.definition(target, kind="function") if target else None
+            )
+            if definition is not None:
+                self._flask_signature(definition, call.func.attr)
 
     def _collect_module_level(self):
         package = self.evidence.module
@@ -326,6 +399,7 @@ class _WebScanner:
             if registered is None:
                 continue
             source, symbol = registered
+            self._flask_signature(definition, _qualified(function, bindings))
             if source == "flask.Blueprint":
                 self.evidence.blueprint_callbacks.append((definition, symbol))
                 # Its body cannot prove that its own Blueprint is installed.
@@ -334,12 +408,68 @@ class _WebScanner:
             return True
         return None
 
+    def _flask_signature(self, definition, registration):
+        """Keep the parameters Flask passes to a callback (``close_db(e)``)."""
+        method = (registration or "").rpartition(".")[2]
+        if method not in _FLASK_CALLBACK_ARITY:
+            return
+        node = getattr(definition, "node", None)
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return
+        positional = [*node.args.posonlyargs, *node.args.args]
+        count = _FLASK_CALLBACK_ARITY[method]
+        supplied = positional if count is None else positional[:count]
+        parameters = self.index.parameters.get(definition.name, {})
+        for argument in supplied:
+            parameter = parameters.get(argument.arg)
+            if parameter is not None:
+                self.evidence.targets.append((parameter, "flask_callback_signature"))
+
+    def _flask_registration_call(self, call, bindings):
+        """``app.teardown_appcontext(close_db)`` in a module importing Flask.
+
+        Flask's extension pattern registers callbacks on an ``app`` parameter
+        (``def init_app(app)``), so the receiver cannot be proven a Flask
+        object; the module importing Flask and Flask's method name are the
+        evidence.
+        """
+        if "flask" in self.index.shadowed or not self._module_imports_flask():
+            return
+        if not isinstance(call.func, ast.Attribute):
+            return
+        method = call.func.attr
+        position = _FLASK_REGISTRATION_CALLS.get(method)
+        if position is None or len(call.args) <= position:
+            return
+        argument = call.args[position]
+        if not isinstance(argument, ast.Name):
+            return
+        target = bindings.get(argument.id)
+        if not target:
+            return
+        definition = self.evidence.definition(target, kind="function")
+        if definition is None:
+            return
+        self.evidence.targets.append((definition, "flask_web_callback"))
+        self._flask_signature(definition, method)
+
+    def _module_imports_flask(self):
+        cached = getattr(self, "_imports_flask", None)
+        if cached is None:
+            cached = any(
+                path == self.evidence.path and name.split(".", 1)[0] == "flask"
+                for path, name in self.index.imports
+            )
+            self._imports_flask = cached
+        return cached
+
     def _calls(self, expression, bindings, *, routes=False):
         for call in _eager_nodes(expression):
             if not isinstance(call, ast.Call):
                 continue
             function = _qualified(call.func, bindings)
             self._blueprint_call(call, function, bindings)
+            self._flask_registration_call(call, bindings)
             if function == "os.environ.setdefault" and len(call.args) >= 2:
                 if _literal(call.args[0]) == "DJANGO_SETTINGS_MODULE":
                     self.settings_module = _literal(call.args[1])
@@ -469,6 +599,26 @@ def _execution_graph(index, definitions):
     return children
 
 
+def _flask_app_factories(index):
+    """Module-level ``create_app``/``make_app`` in modules that import Flask."""
+    if "flask" in index.shadowed:
+        return []
+    flask_modules = {
+        path for path, name in index.imports if name.split(".", 1)[0] == "flask"
+    }
+    factories = []
+    for name, group in index.by_name.items():
+        if name.rpartition(".")[2] not in _FLASK_APP_FACTORY_NAMES:
+            continue
+        for definition in group:
+            if definition.type != "function":
+                continue
+            path = index._resolve_path(Path(definition.filename))
+            if path in flask_modules:
+                factories.append(definition)
+    return factories
+
+
 def _executed_definitions(index):
     """Follow existing execution evidence once, rather than per function."""
     definitions = [
@@ -482,6 +632,7 @@ def _executed_definitions(index):
         for item in definitions
         if _EXECUTION_MARKERS.intersection(item.heuristic_refs)
     }
+    roots.update(id(item) for item in _flask_app_factories(index))
     children = _execution_graph(index, definitions)
     pending = list(roots)
     while pending:
@@ -521,6 +672,9 @@ def find_web_framework_targets(
         name: info for module in modules for name, info in module.classes.items()
     }
     targets = [target for module in modules for target in module.targets]
+    targets.extend(
+        (definition, "flask_app_factory") for definition in _flask_app_factories(index)
+    )
     targets.extend(_blueprint_targets(modules))
     targets.extend(
         find_django_targets(

@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from skylos.api._snippets import _resolve_snippet_path
+from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -130,7 +131,19 @@ def render_pretty_results(
     limit: int | None = None,
     expand_advice: bool = False,
 ) -> None:
-    findings = collect_pretty_findings(result, root_path=root_path, limit=limit)
+    from skylos.reporting.sca_summary import group_advisories, is_advisory
+
+    # Advisories print as one row per package; JSON keeps every advisory.
+    advisory_groups = group_advisories(result.get("dependency_vulnerabilities") or [])
+    display = result
+    if advisory_groups:
+        display = dict(result)
+        display["dependency_vulnerabilities"] = [
+            item
+            for item in result.get("dependency_vulnerabilities") or []
+            if not is_advisory(item)
+        ]
+    findings = collect_pretty_findings(display, root_path=root_path, limit=limit)
     total_files = (result.get("analysis_summary") or {}).get("total_files", "?")
 
     header = Text.assemble(
@@ -167,10 +180,11 @@ def render_pretty_results(
     _print_directory_rollups(console, result)
     console.print()
 
-    if not findings:
+    if not findings and not advisory_groups:
         console.print(Text("  No findings to display.", style="bold green"))
         return
 
+    _print_sca_packages(console, advisory_groups, root_path=root_path, limit=limit)
     for finding_type in ("defect", "review", "advice"):
         if finding_type == "advice" and not expand_advice:
             _print_advice_groups(console, result, root_path=root_path, limit=limit)
@@ -205,6 +219,36 @@ def render_pretty_results(
             console.print()
 
     _print_footer(console, findings)
+
+
+def _print_sca_packages(console: Console, groups, *, root_path=None, limit=None):
+    from skylos.reporting.sca_summary import summary_footer
+
+    if not groups:
+        return
+    console.print(Text("  Dependency vulnerabilities, by package", style="bold"))
+    shown = groups if limit is None else groups[:limit]
+    for group in shown:
+        location = _sanitize_terminal_text(
+            f"{_shorten_path(group.file, root_path)}:{group.line}"
+        )
+        console.print(
+            Text.assemble(
+                ("  ", ""),
+                (_severity_badge(group.worst_severity), _severity_rail_style(group.worst_severity)),
+                (" ", ""),
+                (_sanitize_terminal_text(f"{group.name}@{group.version}"), "bold"),
+                (_sanitize_terminal_text(f"  upgrade to {group.fix_text()}"), ""),
+                (_sanitize_terminal_text(f"  {group.count}: {group.ids_text()}"), "dim"),
+                (f"  {location}", "dim"),
+            )
+        )
+    if len(shown) < len(groups):
+        console.print(
+            Text(f"  ... and {len(groups) - len(shown)} more packages", style="dim")
+        )
+    console.print(Text("  " + summary_footer(groups), style="dim"))
+    console.print()
 
 
 def _print_assessment(console: Console, result: dict) -> None:
@@ -432,8 +476,9 @@ def _context_details(item):
     test_advice = pytest_signature_advice(item)
     if test_advice:
         details.append(test_advice)
-    if item.get("confidence") is not None:
-        details.append(f"Confidence: {item['confidence']}%")
+    confidence = confidence_detail(item)
+    if confidence:
+        details.append(confidence)
     symbol = item.get("symbol")
     if symbol and symbol != "<module>":
         details.append(f"Symbol: {symbol}")

@@ -75,6 +75,7 @@ _SCA_COMPLETION_STATES = {
     "unknown": False,
     "no_supported_manifests": False,
     "complete_with_non_registry_sources": False,
+    "complete_with_unsupported_inputs": False,
 }
 _SCA_CONTEXT_FIELDS = (
     "dependency_section",

@@ -323,3 +323,60 @@ def test_scan_of_a_named_migration_file_is_not_skipped(tmp_path):
     assert "unused_in_migration" in {
         item["simple_name"] for item in result["unused_functions"]
     }
+
+
+# W3 (14 Oct 2026): a one-line bundle in caddy's testdata (no ``.min``
+# suffix) and BookStack's ``public/libs/tinymce`` produced 22 CRITICAL
+# "secrets". Both are machine output or copied libraries.
+
+
+def test_minified_js_without_min_suffix_is_classified_by_content(tmp_path):
+    bundle = "".join(f"var a{i}=function(x){{return x*{i}}};" for i in range(200))
+    _write(
+        tmp_path,
+        {
+            "testdata/player.js": bundle + "\n",
+            "src/hand_written.js": "".join(
+                f"function f{i}(x) {{ return x + {i}; }}\n" for i in range(100)
+            ),
+            # One long data-URI line among short ones: average below 110.
+            "src/logo.js": "const logo = 'data:image/png;base64," + "A" * 3000 + "';\n"
+            + "".join(f"export const v{i} = {i};\n" for i in range(80)),
+            # Long lines but under 1 KB: too small to call minified.
+            "src/tiny.js": "x" * 300 + "\n",
+            "src/style.css": ".a{color:red}" * 200 + "\n",
+        },
+    )
+
+    assert classify_generated_file(tmp_path / "testdata/player.js", tmp_path) == (
+        REASON_MINIFIED
+    )
+    assert classify_generated_file(tmp_path / "src/style.css", tmp_path) == (
+        REASON_MINIFIED
+    )
+    for name in ("src/hand_written.js", "src/logo.js", "src/tiny.js"):
+        assert classify_generated_file(tmp_path / name, tmp_path) is None, name
+
+
+def test_web_root_library_folders_are_vendored(tmp_path):
+    _write(
+        tmp_path,
+        {
+            "public/libs/tinymce/skins/content.js": "tinymce.Resource.add('x');\n",
+            "public/vendor/chart.js": "window.Chart = 1;\n",
+            "static/libs/jquery.js": "window.$ = 1;\n",
+            "public/js/app.js": "console.log(1);\n",
+            "src/lib/helpers.js": "export const a = 1;\n",
+            "public/libs/tool.py": "x = 1\n",
+        },
+    )
+    for name in (
+        "public/libs/tinymce/skins/content.js",
+        "public/vendor/chart.js",
+        "static/libs/jquery.js",
+    ):
+        assert classify_generated_file(tmp_path / name, tmp_path) == (
+            REASON_STATIC_LIB
+        ), name
+    for name in ("public/js/app.js", "src/lib/helpers.js", "public/libs/tool.py"):
+        assert classify_generated_file(tmp_path / name, tmp_path) is None, name

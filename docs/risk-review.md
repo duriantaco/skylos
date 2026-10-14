@@ -127,14 +127,17 @@ skylos cicd init --risk-review --no-upload
 This adds a job named **Skylos risk review** to `.github/workflows/skylos.yml`,
 a second job named **Skylos risk review (re-check after review)**, and the
 trigger `pull_request_review: types: [submitted, dismissed]`. Only the re-check
-job runs on review events; the other jobs skip them. The risk review job:
+job runs on review events; the other jobs skip them. The workflow also runs
+on `merge_group` events (see [Merge queues](#merge-queues)). The risk review
+job:
 
-- checks out the pull request head with full history;
-- reads the base branch from the event;
+- checks out the pull request head with full history (on a merge group: the
+  merge-group commit);
+- reads the base branch from the event (on a merge group: its `base_sha`);
 - has `contents: read` and `pull-requests: read` permissions;
 - passes `GITHUB_TOKEN` to the command;
-- shares a concurrency group per pull request, so its runs finish in the
-  order they started.
+- shares a concurrency group per pull request (per merge-group commit in a
+  queue), so its runs finish in the order they started.
 
 Then make it a required check: in branch protection or a ruleset for your
 default branch, turn on **Require status checks to pass before merging** and
@@ -193,9 +196,77 @@ repository.
 - On a `pull_request_review` event GitHub does not set `GITHUB_BASE_REF`.
   The generated step reads the base branch from the event instead.
 - With a merge queue, required checks must also report on `merge_group`
-  events. The generated workflow does not run on them.
+  events. The generated workflow runs on them; see
+  [Merge queues](#merge-queues).
 - The check reads only the static facts above. A person still has to review
   the change.
+
+## Merge queues
+
+GitHub only merges a queued pull request when its required checks pass on
+the commit the queue builds, and it reports them from `merge_group` events.
+A workflow without that trigger never reports there, and the queue waits
+until it times out. `skylos cicd init` adds `merge_group:
+types: [checks_requested]`, and **Skylos risk review**, **Skylos Quality
+Gate** and **Skylos Done** run on it under the same names, so one set of
+required checks works for pull requests and the queue.
+
+On a merge group the risk review:
+
+1. Checks out the merge-group commit (`github.sha`) and compares it with
+   `merge_group.base_sha`, the base-branch commit the queue built it on.
+   That is exactly the code the queue would land. Settings come from that
+   base commit. Any other checkout or base exits 2.
+2. Passes when the merge group has no risk class, as a pull request does.
+3. Otherwise finds which pull request added each risk. The queue keeps one
+   branch per entry, `gh-readonly-queue/<base>/pr-<number>-<sha>`, each
+   built on the one before. With `fetch-depth: 0` the checkout has them, so
+   the group splits into one part per pull request: from the base to the
+   first entry's branch, from there to the next, and so on up to the
+   merge-group commit, which belongs to the queued pull request named in
+   `merge_group.head_ref`. When the group holds more than one pull request,
+   each part is analysed again with the base commit's settings. A risk no
+   part explains (for example a total diff that is only large in
+   combination) belongs to every pull request in the group.
+4. Passes only when every pull request that added a risk has a person's
+   approval on its current head commit, under the rules in
+   [Human approval in GitHub Actions](#human-approval-in-github-actions). It
+   reads each pull request through the API: it must be open (or already
+   merged) and target the queue's base branch.
+5. Exits 2 when any of this cannot be established: a `head_ref` that names
+   no pull request, queue branches that do not form one chain, a closed pull
+   request or one targeting another branch, or an API error.
+
+Why this is the evidence:
+
+- Nobody reviews the merge-group commit, so the approval has to come from
+  the pull requests in it. GitHub removes a pull request from the queue when
+  its head commit changes, so the head a person approved is the head that
+  was queued.
+- Every pull request in the group is covered, not only the queued one. With
+  **Only merge non-failing pull requests** turned off, GitHub merges an entry
+  whose own check failed when a later group that contains it passes; the
+  later group then vouches for it. A pull request that added no risk needs no
+  approval, so a documentation change behind a risky, approved one passes.
+- Check-run conclusions, commit messages and pull request titles are never
+  evidence. A pull request controls its own commit messages and title, and
+  on GitHub any app can report a check with a required name unless the
+  required check is pinned to an app.
+- The pull request's own run already required the approval before it could
+  be queued; the merge-group run checks again on the code that actually
+  lands, combined with the base and the entries ahead.
+
+Fixing a failed merge-group check: a person with write access approves the
+pull request's head commit (the pull request's own **Skylos risk review**
+then passes again, through the re-check job), and someone queues it again.
+
+Limits:
+
+- When an entry ahead has already merged, its queue branch is gone and its
+  changes are attributed to the next entry, which then needs an approval
+  for them. Queue it again; the new group starts after the merged commit.
+- The text and JSON outputs list each pull request with risks, its risk
+  classes, its head commit and who approved it, under `merge_group`.
 
 ## Settings
 

@@ -208,9 +208,35 @@ jobs:
             echo "tools/release/pypi_readme.py not in ${RELEASE_TAG}; README links stay relative"
           fi
 
-      - name: Build sdist + wheel
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.22.x"
+          cache: false
+
+      # The sdist, the pure py3-none-any wheel, and one wheel per platform
+      # with the skylos-go engine inside, so `pip install skylos` gets Go
+      # dead-code and security checks. tools/release/build_dist.py is shared
+      # with .github/workflows/dist-check.yml, which runs this same build on
+      # pull requests that touch packaging.
+      - name: Build sdist and wheels
         run: |
-          python -m build --sdist --wheel --outdir dist
+          set -euo pipefail
+          # Tags cut before the script existed build the sdist and pure wheel only.
+          if [ -f tools/release/build_dist.py ]; then
+            python tools/release/build_dist.py build --out dist
+          else
+            python -m build --sdist --wheel --outdir dist
+          fi
+
+      - name: Smoke test the bundled Go engine
+        run: |
+          set -euo pipefail
+          if [ -f tools/release/build_dist.py ]; then
+            python tools/release/build_dist.py smoke --dist dist
+          else
+            echo "No platform wheels for this tag; nothing to smoke test"
+          fi
 
       - name: Check dist contents
         run: |

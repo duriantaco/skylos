@@ -136,10 +136,23 @@ _REFS_PATTERN = """
 (extends_clause (identifier) @ref)
 (ternary_expression consequence: (identifier) @ref)
 (ternary_expression alternative: (identifier) @ref)
+(ternary_expression condition: (identifier) @ref)
+(parenthesized_expression (identifier) @ref)
+(arrow_function body: (identifier) @ref)
+(non_null_expression (identifier) @ref)
+(sequence_expression (identifier) @ref)
+(throw_statement (identifier) @ref)
+(yield_expression (identifier) @ref)
+(switch_case value: (identifier) @ref)
+(export_statement value: (identifier) @ref)
 (as_expression (identifier) @ref)
 (satisfies_expression (identifier) @ref)
 (type_identifier) @type_ref
 """
+
+# Angle-bracket casts (`<string>value`) exist only in the TypeScript grammar;
+# the TSX grammar parses `<` there as JSX.
+_REFS_TS_ONLY_PATTERN = "(type_assertion (identifier) @ref)"
 
 _REFS_JSX_PATTERN = """
 (jsx_expression (identifier) @ref)
@@ -441,6 +454,10 @@ class TypeScriptCore:
         for k, v in ts_only.items():
             self._defs_captures.setdefault(k, []).extend(v)
         self._refs_captures = self._run_batch("refs", _REFS_PATTERN)
+        if self.lang is TS_LANG:
+            ts_only_refs = self._run_batch("refs_ts_only", _REFS_TS_ONLY_PATTERN)
+            for k, v in ts_only_refs.items():
+                self._refs_captures.setdefault(k, []).extend(v)
         if self._uses_jsx_parser:
             jsx_refs = self._run_batch("refs_jsx", _REFS_JSX_PATTERN)
             for k, v in jsx_refs.items():
@@ -452,6 +469,42 @@ class TypeScriptCore:
         self._scan_imports()
         self._scan_raw_imports()
         self._build_call_graph()
+        self._mark_default_export_defs()
+
+    _DEFAULT_EXPORT_DECLARATIONS = frozenset(
+        {
+            "function_declaration",
+            "generator_function_declaration",
+            "class_declaration",
+            "abstract_class_declaration",
+        }
+    )
+
+    def _mark_default_export_defs(self) -> None:
+        """Tag the module's default export: frameworks and tools load a module
+        through it (routes, templates, configs, stories), so an unimported
+        default export is weaker evidence of dead code."""
+        names: set[str] = set()
+        for statement in self.root_node.named_children:
+            if statement.type != "export_statement":
+                continue
+            if not any(child.type == "default" for child in statement.children):
+                continue
+            for child in statement.named_children:
+                if child.type in self._DEFAULT_EXPORT_DECLARATIONS:
+                    name_node = child.child_by_field_name("name")
+                    if name_node is not None:
+                        names.add(self._get_text(name_node))
+                elif child.type == "identifier":
+                    names.add(self._get_text(child))
+        if not names:
+            return
+        for definition in self.defs:
+            if (
+                definition.type in {"function", "class", "variable"}
+                and definition.name in names
+            ):
+                definition.confidence_factors.append("default_export")
 
     def _scan_defs(self) -> None:
         c = self._defs_captures
@@ -536,7 +589,12 @@ class TypeScriptCore:
 
         for node in c.get("type_ref", []):
             parent = node.parent
-            if parent and parent.type in self._TYPE_DEF_PARENTS:
+            if (
+                parent
+                and parent.type in self._TYPE_DEF_PARENTS
+                and parent.child_by_field_name("name") == node
+            ):
+                # The declared name, not a use. ``type A = B`` still uses ``B``.
                 continue
             self._add_ref(node)
 
@@ -781,6 +839,10 @@ class TypeScriptCore:
                     break
                 if "export" in current.type:
                     return True
+                # A function body is a scope boundary: a helper declared
+                # inside an exported function is not exported itself.
+                if current.type == "statement_block":
+                    return False
                 current = current.parent
         except Exception:
             pass

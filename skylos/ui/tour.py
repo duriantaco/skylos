@@ -7,10 +7,11 @@ STEPS = [
         "step": 1,
         "body": (
             "[bold]Skylos[/bold] finds dead code, security vulnerabilities, and quality\n"
-            "issues in [bold cyan]Python[/bold cyan], [bold cyan]TypeScript[/bold cyan], and [bold cyan]Go[/bold cyan] codebases.\n"
+            "issues in [bold cyan]Python, TypeScript/JavaScript, Java, Go, PHP, Rust[/bold cyan]\n"
+            "and [bold cyan]Dart[/bold cyan] codebases.\n"
             "\n"
-            "It combines static analysis with optional LLM verification\n"
-            "for results that match human-level accuracy."
+            "It runs static analysis locally, and can optionally ask an LLM\n"
+            "to double-check findings before you act on them."
         ),
     },
     {
@@ -36,7 +37,8 @@ STEPS = [
         "title": "AI Agent",
         "step": 3,
         "body": (
-            "[bold]LLM-verified dead code[/bold] (100% accuracy on benchmarks):\n"
+            "[bold]Double-check dead-code findings with an LLM[/bold]\n"
+            "(it searches for uses a static scan can miss):\n"
             "  [bold cyan]skylos agent verify .[/bold cyan]\n"
             "\n"
             "[bold]Auto-fix and create PR[/bold]:\n"

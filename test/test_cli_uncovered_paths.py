@@ -562,6 +562,9 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
                 },
             },
         }
+        assert payload["analysis_summary"].pop("analysis_coverage")["status"] == (
+            "complete"
+        )
         assert payload == expected
 
 

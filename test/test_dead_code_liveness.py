@@ -632,7 +632,8 @@ def test_unused_hook_parameter_on_a_plain_class_is_still_reported(tmp_path):
         """,
     )
 
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    # Unused parameters are listed from confidence 50 (below the default 60).
+    result = json.loads(analyze(str(tmp_path), conf=50, grep_verify=False))
 
     assert "dialect" in {
         name.rsplit(".", 1)[-1] for name in _unused_names(result, "unused_parameters")

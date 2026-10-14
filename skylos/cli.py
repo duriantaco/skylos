@@ -2362,6 +2362,12 @@ def _run_doctor_command(argv):
     return run_doctor_command(argv)
 
 
+def _run_feedback_command(argv):
+    from skylos.commands.feedback_cmd import run_feedback_command
+
+    return run_feedback_command(argv)
+
+
 def _run_whoami_command(_argv):
     from skylos.commands.whoami_cmd import run_whoami_command
 
@@ -2466,19 +2472,25 @@ def _upload_agent_run_best_effort(
     command: str,
     summary: dict,
     *,
+    requested: bool,
     model: str | None = None,
     provider: str | None = None,
     duration_seconds: float | None = None,
 ) -> None:
+    # Only an explicit --upload on this command sends the run summary; a
+    # saved login, SKYLOS_TOKEN or CI OIDC token alone never does.
+    if requested is not True:
+        return
     try:
         from skylos.api import upload_agent_run
     except ImportError as exc:
-        logger.debug("Agent run telemetry unavailable: %s", exc)
+        logger.debug("Agent run upload unavailable: %s", exc)
         return
 
     upload_agent_run(
         command,
         summary,
+        requested=True,
         model=model,
         provider=provider,
         duration_seconds=duration_seconds,
@@ -2684,7 +2696,49 @@ def _announce_outcome(outcome, args, *, gate: bool = True) -> None:
 def _announce_incomplete_scan(result: dict, args) -> None:
     from skylos.core.gate_outcome import incomplete_scan_outcome
 
-    _announce_outcome(incomplete_scan_outcome(result), args, gate=False)
+    _announce_outcome(
+        incomplete_scan_outcome(result, strict=_scan_strict(args)), args, gate=False
+    )
+
+
+def _scan_strict(args) -> bool:
+    return bool(getattr(args, "strict", False))
+
+
+def _announce_coverage_gaps(result: dict, args) -> None:
+    """A scan that finished with coverage gaps says what was not analysed.
+
+    Printed on stderr; JSON on stdout carries the same facts in
+    ``analysis_summary.analysis_coverage`` instead.
+    """
+    if _machine_report_on_stdout(args):
+        return
+    from skylos.core.gate_outcome import coverage_gap_reasons, coverage_warning_lines
+
+    lines = coverage_warning_lines(
+        coverage_gap_reasons(result, strict=_scan_strict(args))
+    )
+    if lines:
+        sys.stdout.flush()
+        print("\n".join(lines), file=sys.stderr)
+
+
+def _attach_analysis_coverage(result: dict, config: dict, args) -> dict:
+    """Record what was and was not analysed, as this run's exit code sees it."""
+    from skylos.core.gate_incomplete import coverage_record
+    from skylos.core.gatekeeper import gate_analysis_coverage
+
+    gate = bool(getattr(args, "gate", False))
+    gate_cfg = (config or {}).get("gate") or {}
+    strict = _scan_strict(args) or (gate and bool(gate_cfg.get("strict", False)))
+    coverage = gate_analysis_coverage(
+        result, strict=strict, config=config if gate else None
+    )
+    record = coverage_record(coverage)
+    summary = result.setdefault("analysis_summary", {})
+    if isinstance(summary, dict):
+        summary["analysis_coverage"] = record
+    return record
 
 
 def _formatted_output_gate_exit_code(
@@ -2734,6 +2788,8 @@ def _finish_formatted_scan(result: dict, config: dict, args, *, provenance=None)
         _announce_outcome(_strict_outcome(result), args)
     elif exit_code == 2:
         _announce_incomplete_scan(result, args)
+    else:
+        _announce_coverage_gaps(result, args)
     return exit_code
 
 
@@ -2748,10 +2804,13 @@ def _concise_scan_exit_code(
             provenance=provenance,
         )
 
-    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    incomplete_exit_code = _analysis_incomplete_exit_code(
+        result, strict=_scan_strict(args)
+    )
     if incomplete_exit_code:
         _announce_incomplete_scan(result, args)
         return incomplete_exit_code
+    _announce_coverage_gaps(result, args)
 
     if not bool(getattr(args, "force", False)):
         return 1 if _has_concise_findings(result) else 0
@@ -2781,10 +2840,17 @@ CONCISE_FINDING_CATEGORIES = (
 
 
 def _has_concise_findings(result: dict) -> bool:
+    from skylos.reporting.assessment_display import is_repository_policy_finding
+
     for category, _label in CONCISE_FINDING_CATEGORIES:
         if category == "publisher_change_findings":
             continue
-        if result.get(category):
+        items = result.get(category)
+        if category == "quality" and isinstance(items, list):
+            # Repository-policy advice alone (no mypy/Ruff/gate/pre-commit
+            # config) is not a finding in the code; it does not fail the scan.
+            items = [item for item in items if not is_repository_policy_finding(item)]
+        if items:
             return True
     return False
 
@@ -2861,8 +2927,15 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
 
 
 def _strict_scan_exit_code(result: dict, args) -> int:
-    """Evaluate --strict when it is used without --gate."""
-    incomplete_exit_code = _analysis_incomplete_exit_code(result)
+    """Evaluate --strict when it is used without --gate.
+
+    Coverage gaps (a file that did not parse, a missing language engine,
+    unverified dead-code candidates) exit 2 only with --strict, or when most
+    of the code was not analysed.
+    """
+    incomplete_exit_code = _analysis_incomplete_exit_code(
+        result, strict=_scan_strict(args)
+    )
     if incomplete_exit_code:
         return incomplete_exit_code
 
@@ -2877,16 +2950,26 @@ def _strict_scan_exit_code(result: dict, args) -> int:
     return 0 if passed else 1
 
 
-def _analysis_incomplete_exit_code(result: dict) -> int:
-    """Return the operational-error exit code when required analysis failed."""
-    from skylos.core.gatekeeper import _analysis_incomplete_reasons
+def _analysis_incomplete_exit_code(result: dict, *, strict: bool = False) -> int:
+    """Return exit 2 when analysis could not produce a usable result.
 
-    return 2 if _analysis_incomplete_reasons(result) else 0
+    Coverage gaps do not count unless ``strict``; see
+    :func:`skylos.core.gate_incomplete.analysis_coverage`.
+    """
+    from skylos.core.gatekeeper import _analysis_blocking_reasons
+
+    return 2 if _analysis_blocking_reasons(result, strict=strict) else 0
 
 
 def _print_rich_scan_outcome(console, result: dict, args) -> None:
-    """End a rich scan with the --strict verdict, or with why it is incomplete."""
-    from skylos.core.gate_outcome import incomplete_scan_outcome, print_outcome
+    """End a rich scan with the --strict verdict, why it is incomplete, or
+    what it did not analyse."""
+    from skylos.core.gate_outcome import (
+        coverage_gap_reasons,
+        incomplete_scan_outcome,
+        print_coverage_warning,
+        print_outcome,
+    )
 
     if bool(getattr(args, "strict", False)):
         print_outcome(
@@ -2898,6 +2981,8 @@ def _print_rich_scan_outcome(console, result: dict, args) -> None:
     outcome = incomplete_scan_outcome(result)
     if outcome is not None:
         print_outcome(console, outcome, gate=False)
+        return
+    print_coverage_warning(console, coverage_gap_reasons(result))
 
 
 def _print_rich_incomplete_gate(console, result: dict, args) -> int:
@@ -2908,7 +2993,7 @@ def _print_rich_incomplete_gate(console, result: dict, args) -> int:
     from skylos.core.gate_outcome import incomplete_scan_outcome, print_outcome
     from skylos.core.gatekeeper import build_summary_markdown, write_github_summary
 
-    outcome = incomplete_scan_outcome(result)
+    outcome = incomplete_scan_outcome(result, strict=_scan_strict(args))
     if outcome is None:
         return 0
     if bool(getattr(args, "summary", False)):
@@ -3819,7 +3904,10 @@ def _build_agent_parser():
     p_scan.add_argument(
         "--upload",
         action="store_true",
-        help="Upload results to skylos.dev dashboard",
+        help=(
+            "Upload findings and this run's summary (counts, model, provider, "
+            "duration, commit, branch, actor) to Skylos Cloud. Off by default"
+        ),
     )
     p_scan.add_argument(
         "--force",
@@ -4047,6 +4135,14 @@ def _build_agent_parser():
         const="__builtin__",
         default=None,
         help="Enable LLM-guided cleanup mode (optional: path to custom standards .md file)",
+    )
+    p_remediate.add_argument(
+        "--upload",
+        action="store_true",
+        help=(
+            "Send this run's summary (counts, model, provider, duration, "
+            "commit, branch, actor) to Skylos Cloud. Off by default"
+        ),
     )
     _add_agent_quiet_arg(p_remediate)
     _add_agent_provider_arg(p_remediate)
@@ -5747,7 +5843,8 @@ def main() -> None:
 
             _upload_agent_run_best_effort(
                 "scan",
-                {
+                requested=bool(getattr(agent_args, "upload", False)),
+                summary={
                     "total": len(merged_findings),
                     "reviewed": reviewed_count,
                     "static_only": static_only,
@@ -5818,7 +5915,8 @@ def main() -> None:
 
                 _upload_agent_run_best_effort(
                     "cleanup",
-                    {
+                    requested=bool(getattr(agent_args, "upload", False)),
+                    summary={
                         "total_items": summary.get("total_items", 0),
                         "applied": summary.get("applied", 0),
                         "reverted": summary.get("reverted", 0),
@@ -5868,7 +5966,8 @@ def main() -> None:
 
                 _upload_agent_run_best_effort(
                     "remediate",
-                    {
+                    requested=bool(getattr(agent_args, "upload", False)),
+                    summary={
                         "total_findings": summary.get("total_findings", 0),
                         "fixed": summary.get("fixed", 0),
                         "failed": summary.get("failed", 0),

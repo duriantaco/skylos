@@ -4,10 +4,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"skylos/engines/go/internal/output"
 )
@@ -22,7 +25,7 @@ var cmdSinks = map[string][]string{
 }
 
 var pathSinks = map[string][]string{
-	"os":        {"Open", "OpenFile", "ReadFile", "WriteFile", "Remove", "RemoveAll", "Mkdir", "MkdirAll"},
+	"os":        {"Open", "OpenFile", "ReadFile", "WriteFile", "Create", "Remove", "RemoveAll", "Mkdir", "MkdirAll"},
 	"io/ioutil": {"ReadFile", "WriteFile"},
 }
 
@@ -46,10 +49,13 @@ var defaultSkipDirs = map[string]bool{
 }
 
 type Analyzer struct {
-	fset     *token.FileSet
-	findings []output.Finding
-	imports  map[string]string
-	seen     map[string]bool
+	fset      *token.FileSet
+	findings  []output.Finding
+	imports   map[string]string
+	seen      map[string]bool
+	callTaint map[*ast.CallExpr]*funcTaint
+	// the current file is test-support code (see isTestSupportFile)
+	testSupport bool
 }
 
 func New() *Analyzer {
@@ -128,6 +134,9 @@ func (a *Analyzer) analyzeFile(path string) {
 		a.imports[alias] = importPath
 	}
 
+	a.computeTaint(file)
+	a.testSupport = a.isTestSupportFile(file)
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.FuncDecl:
@@ -152,6 +161,20 @@ func (a *Analyzer) analyzeFile(path string) {
 			}
 		case *ast.BasicLit:
 			a.checkHardcodedSecret(node, path)
+		case *ast.AssignStmt:
+			if len(node.Lhs) == len(node.Rhs) {
+				for i, lhs := range node.Lhs {
+					a.checkCredentialAssignment(credentialName(lhs), node.Rhs[i], path)
+				}
+			}
+		case *ast.ValueSpec:
+			if len(node.Names) == len(node.Values) {
+				for i, name := range node.Names {
+					a.checkCredentialAssignment(name.Name, node.Values[i], path)
+				}
+			}
+		case *ast.KeyValueExpr:
+			a.checkCredentialAssignment(credentialName(node.Key), node.Value, path)
 		}
 		return true
 	})
@@ -159,6 +182,7 @@ func (a *Analyzer) analyzeFile(path string) {
 
 func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 	pkg, funcName := a.getFuncInfo(call.Fun)
+	ft := a.taintFor(call)
 
 	sqlMatched := false
 	if funcs, ok := sqlSinks[pkg]; ok && contains(funcs, funcName) {
@@ -171,38 +195,46 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 		}
 	}
 	if sqlMatched {
-		if len(call.Args) > 0 {
-			if a.isStringConcat(call.Args[0]) || a.isFormatString(call.Args[0]) {
-				a.addFinding(call, path, "SKY-G211", "CRITICAL", "SQL Injection",
-					"SQL query built with string concatenation or formatting. Use parameterized queries instead.")
+		queryArg := 0
+		if strings.HasSuffix(funcName, "Context") {
+			queryArg = 1 // QueryContext(ctx, query, args...)
+		}
+		if len(call.Args) > queryArg {
+			if severity, detail := a.sqlQuerySeverity(call.Args[queryArg], ft); severity != "" {
+				a.addFinding(call, path, "SKY-G211", severity, "SQL Injection", detail)
 			}
 		}
 	}
 
 	if funcs, ok := cmdSinks[pkg]; ok && contains(funcs, funcName) {
-		unsafeCommand := false
+		severity, detail := "", ""
 		if pkg == "os/exec" && (funcName == "Command" || funcName == "CommandContext") {
-			unsafeCommand = a.isUnsafeExecCommand(call, funcName)
-		} else {
-			unsafeCommand = a.hasVariableArgs(call)
+			severity, detail = a.execCommandSeverity(call, funcName, ft)
+		} else if len(call.Args) > 0 && a.isTainted(call.Args[0], ft.tainted) {
+			severity = "CRITICAL"
+			detail = "The program path comes from request or network input. Run a fixed program and validate its arguments."
 		}
-		if unsafeCommand {
-			a.addFinding(call, path, "SKY-G212", "CRITICAL", "Command Injection",
-				"Command executed with variable arguments. Validate and sanitize all inputs.")
+		if severity != "" {
+			a.addFinding(call, path, "SKY-G212", severity, "Command Injection", detail)
 		}
 	}
 
+	pathArg := -1
 	if funcs, ok := pathSinks[pkg]; ok && contains(funcs, funcName) {
-		if len(call.Args) > 0 && a.isVariable(call.Args[0]) {
-			a.addFinding(call, path, "SKY-G215", "HIGH", "Potential Path Traversal",
-				"File path includes variable input. Validate path does not escape intended directory.")
-		}
+		pathArg = 0
+	} else if pkg == "net/http" && funcName == "ServeFile" {
+		pathArg = 2
+	}
+	if pathArg >= 0 && len(call.Args) > pathArg && a.isUntrustedPath(call.Args[pathArg], ft) {
+		a.addFinding(call, path, "SKY-G215", "HIGH", "Potential Path Traversal",
+			"File path comes from request or network input without a containment check. "+
+				"Use filepath.Base, or clean it and verify it stays under a fixed base (filepath.Rel or a prefix check).")
 	}
 
 	if funcs, ok := httpSinks[pkg]; ok && contains(funcs, funcName) {
-		if len(call.Args) > 0 && a.isVariable(call.Args[0]) {
+		if len(call.Args) > 0 && a.isSSRFURL(call.Args[0], ft) {
 			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
-				"HTTP request URL includes variable input. Validate against allowlist.")
+				"HTTP request URL comes from request or network input and can choose the host. Validate it against an allowlist.")
 		}
 	}
 
@@ -214,9 +246,9 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 		case "NewRequestWithContext":
 			urlArg = 2
 		}
-		if urlArg >= 0 && len(call.Args) > urlArg && a.isVariable(call.Args[urlArg]) {
+		if urlArg >= 0 && len(call.Args) > urlArg && a.isSSRFURL(call.Args[urlArg], ft) {
 			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
-				"HTTP request URL includes variable input. Validate against allowlist.")
+				"HTTP request URL comes from request or network input and can choose the host. Validate it against an allowlist.")
 		}
 	}
 
@@ -237,17 +269,19 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 			"math/rand is not cryptographically secure. Use crypto/rand for security-sensitive operations.")
 	}
 
-	// SKY-G206: Unsafe package usage
+	// SKY-G206: Unsafe package usage. LOW, like gosec's G103 ("use of unsafe
+	// calls should be audited"): a review prompt, not a vulnerability.
 	if pkg == "unsafe" {
-		a.addFinding(call, path, "SKY-G206", "HIGH", "Unsafe Package Usage",
+		a.addFinding(call, path, "SKY-G206", "LOW", "Unsafe Package Usage",
 			"The unsafe package bypasses Go's type safety. Avoid unless absolutely necessary.")
 	}
 
 	// SKY-G220: Open redirect
 	if pkg == "net/http" && funcName == "Redirect" {
-		if len(call.Args) >= 3 && a.isVariable(call.Args[2]) {
+		if len(call.Args) >= 3 && a.isOpenRedirectTarget(call.Args[2], ft) {
 			a.addFinding(call, path, "SKY-G220", "HIGH", "Open Redirect",
-				"http.Redirect with variable URL. Validate redirect target against allowlist.")
+				"Redirect target comes from request or network input and can choose where the redirect goes. "+
+					"Allow only same-origin paths (one leading \"/\", not \"//\") or an allowlist.")
 		}
 	}
 }
@@ -271,7 +305,9 @@ func (a *Analyzer) checkCompositeLit(lit *ast.CompositeLit, path string) {
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
 				if key, ok := kv.Key.(*ast.Ident); ok {
 					if key.Name == "InsecureSkipVerify" {
-						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" {
+						// Not in test-support code, like Python's D346 (debug
+						// mode) in test modules: a deployment-only hazard.
+						if val, ok := kv.Value.(*ast.Ident); ok && val.Name == "true" && !a.testSupport {
 							a.addFinding(lit, path, "SKY-G210", "HIGH", "TLS Verification Disabled",
 								"InsecureSkipVerify disables certificate validation, enabling MITM attacks.")
 						}
@@ -329,21 +365,254 @@ func (a *Analyzer) checkHardcodedSecret(lit *ast.BasicLit, path string) {
 		return
 	}
 
-	patterns := []string{
-		"sk-", "sk_live_", "sk_test_",
-		"ghp_", "gho_", "ghu_", "ghs_", "ghr_",
-		"xoxb-", "xoxp-", "xoxa-",
-		"AKIA",
-		"eyJ",
+	if hasProviderSecretPrefix(val, valLower) {
+		a.addFinding(lit, path, "SKY-S101", "CRITICAL", "Hardcoded Secret",
+			"Potential secret or API key found in source code. Use environment variables instead.")
 	}
+}
 
-	for _, p := range patterns {
+var providerSecretPrefixes = append([]string{
+	"sk-",
+	"ghp_", "gho_", "ghu_", "ghs_", "ghr_",
+	"xoxb-", "xoxp-", "xoxa-",
+	"AKIA",
+	"eyJ",
+}, stripeStylePrefixes()...)
+
+// stripeStylePrefixes joins "sk_live_" and "sk_test_" at run time. As string
+// constants the linker can pack them against other text, and secret scanners
+// (GitHub push protection) then read the engine binary as holding a key.
+func stripeStylePrefixes() []string {
+	modes := []string{"live", "test"}
+	prefixes := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		prefixes = append(prefixes, "sk_"+mode+"_")
+	}
+	return prefixes
+}
+
+func hasProviderSecretPrefix(val, valLower string) bool {
+	if len(val) < 16 {
+		return false
+	}
+	for _, p := range providerSecretPrefixes {
 		if strings.HasPrefix(val, p) || strings.HasPrefix(valLower, strings.ToLower(p)) {
-			a.addFinding(lit, path, "SKY-S101", "CRITICAL", "Hardcoded Secret",
-				"Potential secret or API key found in source code. Use environment variables instead.")
-			return
+			return true
 		}
 	}
+	return false
+}
+
+// A keyword in a string ("loading password hasher module", "insecure_secrets_log",
+// CLI usage text) is not a secret. A credential is a literal value assigned to a
+// credential-named variable, struct field or map key, judged by the same rules as
+// the Python secrets scanner (skylos/rules/secrets.py: _is_credential_key,
+// _is_placeholder_credential, _looks_like_config_credential).
+var credentialKeySuffixes = []string{
+	"password", "passwd", "passphrase", "pwd", "secret", "secretkey",
+	"clientsecret", "token", "apikey", "accesskey", "privatekey", "authkey",
+}
+
+// Names that end with a credential word but name, point to or describe it.
+var credentialKeyExcludedPrefixes = []string{
+	"existing", "use", "enable", "require", "min", "max", "no", "skip",
+	"generate", "auto", "random", "has", "is",
+}
+
+var credentialPlaceholderValues = map[string]bool{
+	"": true, "password": true, "passwd": true, "pass": true, "pwd": true,
+	"secret": true, "token": true, "changeme": true, "change_me": true,
+	"change-me": true, "changeit": true, "example": true, "placeholder": true,
+	"redacted": true, "hidden": true, "masked": true, "dummy": true, "none": true,
+	"null": true, "nil": true, "undefined": true, "true": true, "false": true,
+	"yes": true, "no": true, "on": true, "off": true, "todo": true, "tbd": true,
+	"fixme": true, "default": true, "user": true, "username": true, "pw": true,
+	"xxx": true, "test": true, "testing": true, "foo": true, "bar": true,
+	"baz": true, "qux": true, "foobar": true, "hunter2": true, "secret123": true,
+	"password123": true, "password1": true,
+}
+
+var credentialPlaceholderHints = []string{
+	"example", "changeme", "change_me", "change-me", "placeholder", "your_",
+	"your-", "yourpass", "yoursecret", "yourtoken", "replace", "dummy", "sample",
+	"redacted", "fake", "insert", "not_a_real", "notreal", "do_not_use", "xxxx",
+	"****", "....",
+}
+
+var credentialReferenceMarkers = []string{
+	"${", "{{", "}}", "$(", "%(", "<%", "#{", "enc[", "vault:", "secretref",
+	"secretkeyref", "valuefrom", "arn:aws:secretsmanager", "projects/",
+}
+
+var (
+	envVarNameRE      = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	formatVerbRE      = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
+	numericValueRE    = regexp.MustCompile(`^[+-]?\d+(?:\.\d+)?$`)
+	tokenValueShapeRE = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]+$`)
+)
+
+// credentialName is the name a value is bound to: a variable, a selector's
+// field (cfg.Password), a struct-literal key (Password:) or a string map key.
+func credentialName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		return e.Sel.Name
+	case *ast.IndexExpr:
+		return credentialName(e.Index)
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			if unquoted, err := strconv.Unquote(e.Value); err == nil {
+				return unquoted
+			}
+		}
+	}
+	return ""
+}
+
+func normalizedCredentialKey(name string) string {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		name = name[dot+1:]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isCredentialKey(name string) bool {
+	key := normalizedCredentialKey(name)
+	matched := false
+	for _, suffix := range credentialKeySuffixes {
+		if strings.HasSuffix(key, suffix) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return false
+	}
+	for _, prefix := range credentialKeyExcludedPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPlaceholderCredential(value string) bool {
+	stripped := strings.TrimSpace(value)
+	lowered := strings.ToLower(stripped)
+	if credentialPlaceholderValues[lowered] {
+		return true
+	}
+	if stripped != "" && strings.ContainsAny(stripped[:1], "$%<{!@&-") {
+		return true
+	}
+	for _, prefix := range []string{"/", "./", "../", "~/", "file:"} {
+		if strings.HasPrefix(stripped, prefix) {
+			return true
+		}
+	}
+	distinct := map[rune]bool{}
+	for _, r := range stripped {
+		distinct[r] = true
+	}
+	if len(distinct) <= 2 {
+		return true
+	}
+	for _, marker := range credentialReferenceMarkers {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	for _, hint := range credentialPlaceholderHints {
+		if strings.Contains(lowered, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func shannonEntropy(value string) float64 {
+	if value == "" {
+		return 0
+	}
+	counts := map[rune]int{}
+	total := 0
+	for _, r := range value {
+		counts[r]++
+		total++
+	}
+	entropy := 0.0
+	for _, count := range counts {
+		p := float64(count) / float64(total)
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
+}
+
+func looksLikeCredentialValue(value, key string) bool {
+	if len(value) < 8 || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return false
+	}
+	if envVarNameRE.MatchString(value) || formatVerbRE.MatchString(value) {
+		return false // an environment variable's name, or a format string
+	}
+	if strings.HasSuffix(normalizedCredentialKey(key), "token") {
+		// "token" is also a lexer/parser term: require a long random value.
+		return len(value) >= 16 && shannonEntropy(value) >= 3.5 &&
+			tokenValueShapeRE.MatchString(value)
+	}
+	if numericValueRE.MatchString(value) || strings.Contains(value, "://") {
+		return false
+	}
+	hasLower, hasUpper, hasDigit, hasOther := false, false, false, false
+	for _, r := range value {
+		switch {
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		default:
+			hasOther = true
+		}
+	}
+	classes := 0
+	for _, has := range []bool{hasLower, hasUpper, hasDigit, hasOther} {
+		if has {
+			classes++
+		}
+	}
+	hasLetter := hasLower || hasUpper
+	if classes >= 3 && hasLetter {
+		return true
+	}
+	return hasLetter && hasDigit && len(value) >= 12 && shannonEntropy(value) >= 3.3
+}
+
+func (a *Analyzer) checkCredentialAssignment(name string, value ast.Expr, path string) {
+	lit, ok := value.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING || name == "" || !isCredentialKey(name) {
+		return
+	}
+	unquoted, err := strconv.Unquote(lit.Value)
+	if err != nil || hasProviderSecretPrefix(unquoted, strings.ToLower(unquoted)) {
+		return // reported as CRITICAL by checkHardcodedSecret
+	}
+	if isPlaceholderCredential(unquoted) ||
+		strings.EqualFold(normalizedCredentialKey(unquoted), normalizedCredentialKey(name)) ||
+		!looksLikeCredentialValue(unquoted, name) {
+		return
+	}
+	a.addFinding(lit, path, "SKY-S101", "HIGH", "Potential Hardcoded Secret",
+		"Literal credential assigned to '"+name+"'. Use environment variables or a secrets manager instead.")
 }
 
 func (a *Analyzer) getFuncInfo(expr ast.Expr) (pkg, funcName string) {
@@ -403,15 +672,6 @@ func (a *Analyzer) isVariable(expr ast.Expr) bool {
 		return true
 	case *ast.BinaryExpr:
 		return a.isVariable(e.X) || a.isVariable(e.Y)
-	}
-	return false
-}
-
-func (a *Analyzer) hasVariableArgs(call *ast.CallExpr) bool {
-	for _, arg := range call.Args {
-		if a.isVariable(arg) {
-			return true
-		}
 	}
 	return false
 }
@@ -594,32 +854,6 @@ func (a *Analyzer) hasVariablePotentialShellCommandArg(shellName string, args []
 	return false
 }
 
-func (a *Analyzer) isUnsafeExecCommand(call *ast.CallExpr, funcName string) bool {
-	args := call.Args
-	if funcName == "CommandContext" {
-		if len(args) < 2 {
-			return false
-		}
-		args = args[1:]
-	}
-	if len(args) == 0 {
-		return false
-	}
-
-	commandName, ok := stringLiteralValue(args[0])
-	if !ok {
-		return a.isVariable(args[0])
-	}
-	if !isShellCommandName(commandName) {
-		return false
-	}
-	commandIndex, ok := shellCommandArgIndex(commandName, args)
-	if !ok {
-		return a.hasVariablePotentialShellCommandArg(commandName, args)
-	}
-	return a.isVariable(args[commandIndex])
-}
-
 func (a *Analyzer) addFinding(node ast.Node, path, ruleID, severity, message, detail string) {
 	pos := a.fset.Position(node.Pos())
 	fullMessage := message + " " + detail
@@ -665,38 +899,75 @@ func (a *Analyzer) isSQLReceiver(expr ast.Expr) bool {
 	return false
 }
 
+// checkDeferInLoop (SKY-G203, MEDIUM like Python's SKY-L008 missing resource
+// cleanup): a defer inside a loop delays every iteration's cleanup to the end
+// of the function. Not reported when, after the defer, the loop body ends with
+// an unconditional return (or break, in a loop no other loop encloses), since
+// the defer then runs at most once per call.
 func (a *Analyzer) checkDeferInLoop(body *ast.BlockStmt, path string) {
-	ast.Inspect(body, func(n ast.Node) bool {
-		isLoop := false
-		switch n.(type) {
-		case *ast.ForStmt, *ast.RangeStmt:
-			isLoop = true
-		case *ast.FuncLit:
-			return false // don't cross closure boundaries
-		}
-		if !isLoop {
-			return true
-		}
-		ast.Inspect(n, func(inner ast.Node) bool {
-			if inner == n {
-				return true
-			}
-			if d, ok := inner.(*ast.DeferStmt); ok {
-				a.addFinding(d, path, "SKY-G203", "HIGH", "Defer in Loop",
-					"defer inside a loop may cause resource leak. Execute cleanup explicitly per iteration.")
-			}
-			if _, ok := inner.(*ast.FuncLit); ok {
+	a.walkDefersInLoops(body.List, nil, path)
+}
+
+func loopBody(node ast.Node) *ast.BlockStmt {
+	switch loop := node.(type) {
+	case *ast.ForStmt:
+		return loop.Body
+	case *ast.RangeStmt:
+		return loop.Body
+	}
+	return nil
+}
+
+func (a *Analyzer) walkDefersInLoops(stmts []ast.Stmt, loops []ast.Node, path string) {
+	for _, stmt := range stmts {
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.FuncLit:
+				return false // a closure has its own defers
+			case *ast.ForStmt, *ast.RangeStmt:
+				a.walkDefersInLoops(loopBody(node).List, append(loops, node), path)
 				return false
+			case *ast.DeferStmt:
+				if len(loops) > 0 && !deferRunsOnce(node, loops) {
+					a.addFinding(node, path, "SKY-G203", "MEDIUM", "Defer in Loop",
+						"defer inside a loop delays every iteration's cleanup to the end of the function. Execute cleanup explicitly per iteration.")
+				}
 			}
 			return true
 		})
-		return false
-	})
+	}
 }
 
+func deferRunsOnce(d *ast.DeferStmt, loops []ast.Node) bool {
+	body := loopBody(loops[len(loops)-1])
+	seen := false
+	for _, stmt := range body.List {
+		if stmt == d {
+			seen = true
+			continue
+		}
+		if !seen {
+			continue
+		}
+		switch exit := stmt.(type) {
+		case *ast.ReturnStmt:
+			return true
+		case *ast.BranchStmt:
+			if exit.Tok == token.BREAK && exit.Label == nil && len(loops) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkUnclosedResource (SKY-G260, MEDIUM like Python's SKY-L008): a file or
+// database handle opened in the function with no cleanup and no hand-off. A
+// Close() call anywhere (deferred, explicit or in a deferred closure),
+// returning the handle (directly or wrapped) or storing it in a field counts.
 func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 	openVars := make(map[string]ast.Node)
-	closedVars := make(map[string]bool)
+	handled := make(map[string]bool)
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		if _, ok := n.(*ast.FuncLit); ok {
@@ -716,12 +987,36 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 				}
 			}
 		}
-		if d, ok := n.(*ast.DeferStmt); ok {
-			if sel, ok := d.Call.Fun.(*ast.SelectorExpr); ok {
-				if sel.Sel.Name == "Close" {
-					if id, ok := sel.X.(*ast.Ident); ok {
-						closedVars[id.Name] = true
-					}
+		return true
+	})
+	if len(openVars) == 0 {
+		return
+	}
+
+	mark := func(expr ast.Expr) {
+		for _, name := range identNames(expr) {
+			if _, ok := openVars[name]; ok {
+				handled[name] = true
+			}
+		}
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Close" {
+				mark(sel.X)
+			}
+		case *ast.ReturnStmt:
+			for _, result := range node.Results {
+				mark(result)
+			}
+		case *ast.AssignStmt:
+			for i, lhs := range node.Lhs {
+				if _, isField := lhs.(*ast.SelectorExpr); isField && i < len(node.Rhs) {
+					mark(node.Rhs[i])
+				}
+				if _, isIndex := lhs.(*ast.IndexExpr); isIndex && i < len(node.Rhs) {
+					mark(node.Rhs[i])
 				}
 			}
 		}
@@ -729,9 +1024,9 @@ func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 	})
 
 	for varName, node := range openVars {
-		if !closedVars[varName] {
-			a.addFinding(node, path, "SKY-G260", "HIGH", "Unclosed Resource",
-				"Resource opened but no defer .Close() found. This may cause resource leaks.")
+		if !handled[varName] {
+			a.addFinding(node, path, "SKY-G260", "MEDIUM", "Unclosed Resource",
+				"Resource opened but never closed, returned or stored. This may leak file or connection handles.")
 		}
 	}
 }

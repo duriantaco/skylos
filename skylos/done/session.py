@@ -40,7 +40,7 @@ from skylos.done.base import (
     is_untracked_build_artifact,
     open_comparison,
 )
-from skylos.done.config import parse_done_config
+from skylos.done.config import base_config_text, parse_done_config
 
 SESSION_PATH = Path(".skylos/agent-session.json")
 LOCK_PATH = Path(".skylos/agent-session.lock")
@@ -100,7 +100,7 @@ def capture_session(
             record = session["done_base"]
             _validate_record(comparison, record)
             return record
-        config = parse_done_config(comparison.base_text("pyproject.toml"))
+        config = parse_done_config(base_config_text(comparison))
         if not config.configured:
             return None
         try:
@@ -467,9 +467,7 @@ def _validate_record(comparison: Comparison, record: Any) -> None:
         raise DoneError(
             "the session baseline and its configuration do not share the recorded history"
         )
-    config = parse_done_config(
-        comparison.base_text("pyproject.toml", sha=record["config_sha"])
-    )
+    config = parse_done_config(base_config_text(comparison, sha=record["config_sha"]))
     if not config.configured or record.get("config_digest") != config.digest():
         raise DoneError("the session's trusted configuration cannot be verified")
     if record.get("tree_digest") != _tree_digest(comparison, record["base_sha"]):

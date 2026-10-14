@@ -249,7 +249,10 @@ def test_real_cli_multiple_unused_parameters_retain_distinct_messages(
         "repos: []\n",
         encoding="utf-8",
     )
-    code, _stdout, _stderr = _invoke(project, monkeypatch, capsys, "--all", "--upload")
+    # Unused parameters are listed from --confidence 50 (below the default).
+    code, _stdout, _stderr = _invoke(
+        project, monkeypatch, capsys, "--all", "--upload", "--confidence", "50"
+    )
     assert code == 0, _stderr
     findings = managed[0][1]["runs"][0]["results"]
     parameters = [item for item in findings if item["ruleId"] == "SKY-U006"]
@@ -269,8 +272,16 @@ def test_repo_level_policy_findings_without_file_locations_remain_incomplete(
         "def calculate(first, second):\n    return 1\n\nprint(calculate(1, 2))\n",
         encoding="utf-8",
     )
+    # Unused parameters are listed from --confidence 50 (below the default).
     code, stdout, stderr = _invoke(
-        project, monkeypatch, capsys, "--all", "--upload", "--force"
+        project,
+        monkeypatch,
+        capsys,
+        "--all",
+        "--upload",
+        "--force",
+        "--confidence",
+        "50",
     )
     assert code == 2
     assert json.loads(stdout)
@@ -282,8 +293,13 @@ def test_minimal_repository_managed_json_upload_retains_repository_policy_findin
     project, osv, managed, monkeypatch, capsys
 ):
     source = project / "app.py"
+    # Unused parameters are below the default confidence threshold; unused
+    # functions carry the located dead-code findings at the default (full) scan.
     source.write_text(  # skylos: ignore[SKY-D324] fixed file in fresh pytest project directory
-        "def calculate(first, second):\n    return 1\n\nprint(calculate(1, 2))\n",
+        "def calculate(first, second):\n    return 1\n\n\n"
+        "def stale_one():\n    return 2\n\n\n"
+        "def stale_two():\n    return 3\n\n\n"
+        "print(calculate(1, 2))\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(project.parent)
@@ -296,13 +312,13 @@ def test_minimal_repository_managed_json_upload_retains_repository_policy_findin
     assert "Scan saved." in stderr
     assert len(managed) == 1
     body = managed[0][1]
-    parameters = [
-        item for item in body["runs"][0]["results"] if item["ruleId"] == "SKY-U006"
+    dead_functions = [
+        item for item in body["runs"][0]["results"] if item["ruleId"] == "SKY-U001"
     ]
-    assert len(parameters) == 2
+    assert len(dead_functions) == 2
     assert all(
         item["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "app.py"
-        for item in parameters
+        for item in dead_functions
     )
     policies = [
         item

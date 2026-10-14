@@ -42,6 +42,7 @@ from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
     _discover_ts_vscode_lifecycle_entry_files,
+    discover_ts_bundle_entry_files,
     find_dead_ts_files,
     find_unused_ts_exports,
     mark_package_api_ts_exports_consumed,
@@ -976,9 +977,25 @@ def _grep_verify_error_payload(
     candidates: tuple[dict, ...] | list[dict] = (),
 ) -> dict:
     reason = str(report.get("incomplete_reason") or "verification_incomplete")
+    total = int(report.get("candidate_count") or 0)
+    unverified = int(report.get("unverified_candidate_count", total) or 0)
+    verified = max(0, total - unverified)
+    if total and verified:
+        outcome = (
+            f"It verified {verified} of {total} dead-code candidates; those "
+            f"results are reported. The other {unverified} were not verified and "
+            "are not reported as dead code."
+        )
+    elif total:
+        outcome = (
+            f"It verified none of the {total} dead-code candidates, so none of "
+            "them are reported as dead code."
+        )
+    else:
+        outcome = "Unverified dead-code candidates are not reported."
     if reason == "budget_exhausted":
         budget = report.get("time_budget_seconds", 120)
-        hint = "Increase SKYLOS_GREP_BUDGET (seconds) and rerun."
+        hint = "Increase SKYLOS_GREP_BUDGET (seconds) and rerun to check them."
         if report.get("backend") in {"in_process", "serial_grep"}:
             hint += (
                 " Installing ripgrep makes verification much faster (macOS: brew "
@@ -988,13 +1005,13 @@ def _grep_verify_error_payload(
             )
         message = (
             f"Grep verification exceeded its {budget:g}-second budget. "
-            "Dead-code findings that required grep verification were withheld. " + hint
+            f"{outcome} {hint}"
         )
         kind = "grep_budget_exhausted"
     else:
         message = (
-            "Grep verification could not complete safely. Dead-code findings "
-            "that required grep verification were withheld."
+            "Grep verification could not complete safely for some candidates "
+            f"(a search did not finish or its results were incomplete). {outcome}"
         )
         kind = "grep_verification_incomplete"
     located_candidates = sorted(
@@ -1022,6 +1039,8 @@ def _grep_verify_error_payload(
         1,
         int(report.get("candidate_file_count") or 0),
     )
+    payload["candidate_count"] = total
+    payload["unverified_candidate_count"] = unverified
     return payload
 
 
@@ -1179,13 +1198,16 @@ def _sanitize_go_engine_reason(value) -> str:
     return " ".join(text.split())[:500]
 
 
-GO_ENGINE_SETUP_HINT = (
-    "Go dead-code and security checks need the native skylos-go engine, which "
-    "the PyPI package does not include. Build it from a Skylos source checkout "
-    "(cd skylos/engines/go && go build -o skylos-go ./cmd/skylos-go) and set "
-    "SKYLOS_GO_BIN to its absolute path, or scan with the Skylos GitHub Action, "
-    "which builds it. `skylos doctor` shows whether the engine is found."
-)
+def _go_engine_setup_hint() -> str:
+    from skylos.engines.go_runner import go_engine_install_hint
+
+    return (
+        "Go dead-code and security checks need the native skylos-go engine, "
+        "which was not found. " + go_engine_install_hint()
+    )
+
+
+GO_ENGINE_SETUP_HINT = _go_engine_setup_hint()
 
 
 def _go_engine_analysis_error(files, report: dict | None) -> dict | None:
@@ -2151,10 +2173,17 @@ class Skylos:
             workspace_inventory=workspace_inventory,
             exclude_folders=exclude_folders,
         )
+        bundle_entry_points = discover_ts_bundle_entry_files(
+            files or [],
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
         self._ts_demoted_exports = demote_unconsumed_ts_exports(
             self.defs,
             self.ts_consumed_exports,
             lifecycle_entry_points=lifecycle_entry_points,
+            bundle_entry_points=bundle_entry_points,
         )
 
     def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):
@@ -2527,11 +2556,22 @@ class Skylos:
                 grep_cache.save(grep_root)
 
         if not getattr(verdicts, "complete", True):
-            self._grep_verify_incomplete_candidates = tuple(candidates)
+            # Keep what was verified: rescued candidates stay rescued and
+            # verified-dead ones are reported. Only candidates grep never
+            # reached are withheld, as abstentions.
+            from skylos.core.grep_verify import _finding_verdict_key
+
+            verified_keys = getattr(verdicts, "verified_keys", frozenset())
+            unverified = tuple(
+                candidate
+                for candidate in candidates
+                if _finding_verdict_key(candidate) not in verified_keys
+            )
+            self._grep_verify_incomplete_candidates = unverified
             candidate_file_count = len(
                 {
                     str(candidate.get("file"))
-                    for candidate in candidates
+                    for candidate in unverified
                     if candidate.get("file")
                 }
             )
@@ -2540,6 +2580,8 @@ class Skylos:
                     "complete": False,
                     "status": "incomplete",
                     "candidate_count": len(candidates),
+                    "verified_candidate_count": len(candidates) - len(unverified),
+                    "unverified_candidate_count": len(unverified),
                     "candidate_file_count": candidate_file_count,
                     "time_budget_seconds": grep_budget,
                     "incomplete_reason": getattr(
@@ -2549,7 +2591,16 @@ class Skylos:
                     ),
                 }
             )
-            return 0
+            rescued = _apply_grep_verify_verdicts(
+                candidate_defs,
+                {
+                    key: verdict
+                    for key, verdict in verdicts.items()
+                    if key in verified_keys
+                },
+            )
+            self._refresh_python_reachability()
+            return rescued
 
         rescued = _apply_grep_verify_verdicts(candidate_defs, verdicts)
         self._refresh_python_reachability()
@@ -5871,6 +5922,20 @@ def _split_outside_diff_analysis_errors(analysis_errors, changed_files):
             changed.add(str(changed_file))
     errors, warnings = [], []
     for error in analysis_errors:
+        if (
+            isinstance(error, dict)
+            and error.get("kind") == "language_engine_unavailable"
+        ):
+            # One record covers every file of the language; it names only the
+            # first. It blocks the diff when any changed file needs the engine.
+            if _changed_files_need_engine(error, changed):
+                errors.append(error)
+            else:
+                warning = dict(error)
+                warning["severity"] = "LOW"
+                warning["outside_diff"] = True
+                warnings.append(warning)
+            continue
         file_value = error.get("file") if isinstance(error, dict) else None
         resolved = None
         if file_value:
@@ -5888,6 +5953,19 @@ def _split_outside_diff_analysis_errors(analysis_errors, changed_files):
         warning["outside_diff"] = True
         warnings.append(warning)
     return errors, warnings
+
+
+_ENGINE_LANGUAGE_SUFFIXES = {
+    "go": (".go",),
+    "dart": _DART_SOURCE_EXTS,
+}
+
+
+def _changed_files_need_engine(error, changed):
+    suffixes = _ENGINE_LANGUAGE_SUFFIXES.get(str(error.get("language") or ""))
+    if not suffixes:
+        return True
+    return any(str(path).endswith(suffixes) for path in changed)
 
 
 def proc_file(

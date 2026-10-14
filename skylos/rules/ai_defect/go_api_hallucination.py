@@ -32,7 +32,9 @@ class _GoImportBinding:
 
 @dataclass
 class _GoScanState:
-    surface_cache: dict[tuple[str, str], GoPackageSurface] = field(default_factory=dict)
+    surface_cache: dict[tuple[str, str, bool], GoPackageSurface] = field(
+        default_factory=dict
+    )
     allowed_surface_files: frozenset[Path] | None = None
     exclude_folders: tuple[str, ...] = ()
     reasons: Counter[str] = field(default_factory=Counter)
@@ -148,7 +150,13 @@ def _local_import_bindings(
             state.references += 1
             state.skip("unresolved_local_package")
             continue
-        surface = _go_surface(module, import_path, directory, state)
+        surface = _go_surface(
+            module,
+            import_path,
+            directory,
+            state,
+            include_internal_tests=_is_same_directory_test(parsed.path, directory),
+        )
         alias = _import_alias(parsed, spec, surface)
         if alias == "_":
             continue
@@ -175,8 +183,14 @@ def _go_surface(
     import_path: str,
     directory: Path,
     state: _GoScanState,
+    *,
+    include_internal_tests: bool = False,
 ) -> GoPackageSurface:
-    key = (import_path, str(directory.resolve(strict=False)))
+    key = (
+        import_path,
+        str(directory.resolve(strict=False)),
+        include_internal_tests,
+    )
     if key not in state.surface_cache:
         state.surface_cache[key] = inspect_go_package_surface(
             module,
@@ -184,8 +198,22 @@ def _go_surface(
             directory,
             allowed_files=state.allowed_surface_files,
             exclude_folders=state.exclude_folders,
+            include_internal_tests=include_internal_tests,
         )
     return state.surface_cache[key]
+
+
+def _is_same_directory_test(importer: Path, directory: Path) -> bool:
+    """A ``_test.go`` file in the imported package's own directory: ``go
+    test`` builds it with the package's internal test files."""
+    if not importer.name.endswith("_test.go"):
+        return False
+    try:
+        return importer.parent.resolve(strict=False) == directory.resolve(
+            strict=False
+        )
+    except (OSError, RuntimeError):
+        return False
 
 
 def _inspect_selector(

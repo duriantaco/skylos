@@ -81,6 +81,53 @@ skylos agent install-hooks --uninstall            # add --user / --codex / --cur
 This removes only the Skylos entries: any hook whose command runs
 `skylos hook <event>`. All other hooks stay.
 
+## Check the hooks
+
+Because every hook falls back to "allow" when Skylos cannot run, a deleted
+venv or a moved install leaves hooks that look installed and do nothing.
+`skylos doctor` checks them:
+
+```bash
+skylos doctor                 # "Agent hooks" section
+skylos doctor --format json   # checks.agent_hooks
+```
+
+For Claude Code, Codex and Cursor, at project scope (the Git root of the
+current directory) and user scope (`~`), it reports:
+
+- whether Skylos hooks are installed, in which file, and how many of the
+  installer's hooks are there (`9 of 9`); missing ones are named;
+- whether the Skylos executable the hook commands call still exists;
+- a self-test of the pre-bash hook. Doctor sends it two payloads in a
+  throwaway directory: `ls` (expected: allowed) and `cat .env`, where `.env`
+  holds a token generated for the test (expected: blocked). The commands are
+  described to the hook, never run. It also prints how long each answer took.
+
+```
+  Agent hooks
+  OK  Claude Code: 9 of 9 hooks in .claude/settings.json (project) → /home/me/proj/.venv/bin/skylos
+      Self-test (passed): pre-bash allowed `ls` (0.2 s) and blocked `cat .env` of a file with a token (0.2 s)
+  FAIL Codex: ~/.codex/hooks.json (user): points at a missing Skylos executable /old/venv/bin/skylos; these hooks do nothing (they fall back to allow)
+      Reinstall: skylos agent install-hooks --codex --user
+  --  Cursor: not installed (optional: skylos agent install-hooks --cursor)
+```
+
+Not installed is information, not a failure. A missing executable, an
+unreadable config file, or a self-test that answers wrongly or takes longer
+than 10 seconds makes doctor's status `degraded` and prints the reinstall
+command. When `SKYLOS_HOOKS_DISABLE` turns pre-bash off in doctor's
+environment, the self-test says so instead of running.
+
+Doctor only reads the config files. It runs the self-test only when a hook
+command is exactly what the installer writes (the executable, `hook pre-bash
+--client <client>` and the fallback). It runs that executable directly,
+without a shell, and does not run one that is a file committed to the
+repository, because a project config is repository content. Other commands
+are listed as "not checked". Doctor cannot see whether a client has loaded or
+trusted the hooks (Codex asks you to trust them in `/hooks`), or whether a
+client update stopped calling them; the self-test shows only that the hook
+answers when called.
+
 ## Turn one hook off
 
 Set `SKYLOS_HOOKS_DISABLE` in the environment the agent runs in. Its value is a

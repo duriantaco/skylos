@@ -379,6 +379,18 @@ COMMANDS = [
         "group": "Utility",
     },
     {
+        "name": "skylos feedback [--github] [--print] [--type bug|wrong-finding|idea|question]",
+        "desc": "Open a prefilled form to report a problem or send feedback (you review it before sending)",
+        "details": [
+            "Attaches the Skylos version, OS, Python version and the last failed command, with paths and secrets masked",
+            "Never attaches code, file paths, repository names or environment variables; the CLI makes no network request",
+            "--github  Open the public GitHub issue form instead of the private form",
+            "--print   Print the URL without opening a browser",
+            "Set SKYLOS_FEEDBACK_CONTEXT=0 to stop recording failed commands in ~/.skylos/last_error.json",
+        ],
+        "group": "Utility",
+    },
+    {
         "name": "skylos clean [path] [--dry-run|--apply]",
         "desc": "Preview or apply Python import/function cleanup",
         "details": [
@@ -458,7 +470,7 @@ COMMANDS = [
             "trivy --input report.json: import container vulnerability results offline",
             "--fail-on high --expect-image repository@sha256:digest: check a pinned image report",
             "--output report.json / --sarif image.sarif: export imported image findings",
-            "claude-security --input report.json: ingest Claude Code Security findings",
+            "claude-security --input report.json: upload Claude Code Security findings to Skylos Cloud (--no-upload keeps them local)",
         ],
         "group": "Utility",
     },
@@ -567,7 +579,8 @@ def print_command_overview(console):
     )
     console.print("[dim]Command details:[/dim] [bold]skylos <command> --help[/bold]")
     console.print("[dim]Source-scan flags:[/dim] [bold]skylos PATH --help[/bold]")
-    console.print("[dim]All commands:[/dim] [bold]skylos commands[/bold]\n")
+    console.print("[dim]All commands:[/dim] [bold]skylos commands[/bold]")
+    console.print("[dim]Report a problem:[/dim] [bold]skylos feedback[/bold]\n")
 
 
 def print_flat_commands(console):
@@ -609,4 +622,5 @@ def print_flat_commands(console):
         "\n[dim]Family details:[/dim] [bold]skylos <family> --help[/bold]"
         "  [dim]Removed:[/dim] [bold]skylos run[/bold], [bold]skylos city[/bold]"
     )
+    console.print("[dim]Report a problem:[/dim] [bold]skylos feedback[/bold]")
     console.print()

@@ -15,15 +15,20 @@ class ExplodingFuture:
 
 
 class DummyExecutor:
-    def __init__(self, max_workers=None):
+    def __init__(self, max_workers=None, initializer=None):
         self.max_workers = max_workers
+        self.initializer = initializer
         self.futures = []
+        self.shutdown_calls = []
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        self.shutdown_calls.append((wait, cancel_futures))
 
     def submit(self, fn, *args, **kwargs):
         file_str, out = fn(*args, **kwargs)
@@ -33,7 +38,7 @@ class DummyExecutor:
 
 
 class ExplodingExecutor:
-    def __init__(self, max_workers=None):
+    def __init__(self, max_workers=None, initializer=None):
         self.max_workers = max_workers
         self.futures = []
 
@@ -43,6 +48,9 @@ class ExplodingExecutor:
     def __exit__(self, exc_type, exc, tb):
         return False
 
+    def shutdown(self, wait=True, cancel_futures=False):
+        pass
+
     def submit(self, fn, *args, **kwargs):
         fut = ExplodingFuture()
         self.futures.append(fut)
@@ -50,7 +58,7 @@ class ExplodingExecutor:
 
 
 class ShouldNotRunExecutor:
-    def __init__(self, max_workers=None):
+    def __init__(self, max_workers=None, initializer=None):
         raise AssertionError("parallel executor should not be used")
 
 
@@ -240,3 +248,81 @@ def test_analyzer_reports_worker_crash_as_analysis_error(monkeypatch, tmp_path):
     assert errors[0]["file"].endswith("crash_me.py")
     assert errors[0]["message"] == ps.WORKER_CRASH_MESSAGE
     assert errors[0]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+
+
+class InterruptedFuture:
+    def result(self):
+        raise KeyboardInterrupt
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.terminated = False
+        self.joined = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def join(self, timeout=None):
+        self.joined = True
+
+
+class InterruptingExecutor(DummyExecutor):
+    instances = []
+
+    def __init__(self, max_workers=None, initializer=None):
+        super().__init__(max_workers, initializer)
+        self._processes = {1: _FakeProcess(), 2: _FakeProcess()}
+        InterruptingExecutor.instances.append(self)
+
+    def submit(self, fn, *args, **kwargs):
+        fut = InterruptedFuture()
+        self.futures.append(fut)
+        return fut
+
+
+def test_ctrl_c_stops_workers_without_waiting_for_queued_files(monkeypatch, tmp_path):
+    import pytest
+
+    InterruptingExecutor.instances.clear()
+    monkeypatch.setattr(ps, "ProcessPoolExecutor", InterruptingExecutor)
+    monkeypatch.setattr(ps, "as_completed", fake_as_completed)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    files = [tmp_path / "x.py", tmp_path / "y.py"]
+    modmap = {files[0]: "mx", files[1]: "my"}
+
+    with pytest.raises(KeyboardInterrupt):
+        ps.run_proc_file_parallel(files, modmap, jobs=2, project_root=tmp_path)
+
+    (executor,) = InterruptingExecutor.instances
+    # Queued work is cancelled and the call does not wait for it.
+    assert executor.shutdown_calls == [(False, True)]
+    assert all(p.terminated and p.joined for p in executor._processes.values())
+    # Workers ignore SIGINT; the parent stops them, so they print no traceback.
+    assert executor.initializer is ps._ignore_sigint
+
+
+def test_pool_shuts_down_and_waits_after_normal_completion(monkeypatch, tmp_path):
+    created = []
+
+    class RecordingExecutor(DummyExecutor):
+        def __init__(self, max_workers=None, initializer=None):
+            super().__init__(max_workers, initializer)
+            created.append(self)
+
+    monkeypatch.setattr(ps, "ProcessPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(ps, "as_completed", fake_as_completed)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    import skylos.analyzer
+
+    monkeypatch.setattr(
+        skylos.analyzer,
+        "proc_file",
+        lambda file_path, mod, extra_visitors=None, full_scan=True, **kw: ("ok",),
+    )
+    files = [tmp_path / "x.py", tmp_path / "y.py"]
+    ps.run_proc_file_parallel(files, {files[0]: "a", files[1]: "b"}, jobs=2)
+
+    assert created[0].shutdown_calls == [(True, False)]

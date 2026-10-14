@@ -51,7 +51,13 @@ evidence. Do not use trace mode as the default answer for untrusted PR review.
 
 ## Suppression Options
 
-- `# skylos: ignore`: suppress a finding on one line.
+- `# skylos: ignore`: suppress a finding on one line;
+  `# skylos: ignore[SKY-D211] reason` suppresses only that rule.
+- A bare `# noqa` hides dead-code, quality and LOW/MEDIUM findings, but
+  not HIGH/CRITICAL security findings (`SKY-D*`, `SKY-S*`); those stay
+  reported with `bare_noqa_ignored: true`. `# noqa: <ruff code>` never
+  hides Skylos security/quality findings (F401/F841 only mark the
+  matching unused import/variable).
 - `# skylos: ignore-start` / `# skylos: ignore-end`: suppress a block.
 - `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide.
 - `skylos whitelist <pattern>`: manage whitelisted symbols.

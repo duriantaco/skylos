@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.prompt import Confirm, Prompt
 
-from skylos.core.gate_incomplete import incomplete_analysis_reasons
+from skylos.core.gate_incomplete import analysis_coverage, incomplete_analysis_reasons
 
 
 class _LazyInquirer:
@@ -650,11 +650,53 @@ def _gate_findings(results):
 
 
 def _analysis_incomplete_reasons(results):
-    """Why required analysis did not finish; each reason says what to do next."""
-    return [
-        GateReason(reason.text, hint=reason.hint, details=reason.details)
-        for reason in incomplete_analysis_reasons(results)
-    ]
+    """Everything not analysed, blockers and coverage gaps alike.
+
+    For consumers that need a complete scan (baselines, GitLab completeness).
+    Exit codes and gates use :func:`_analysis_blocking_reasons`.
+    """
+    return [_gate_reason(reason) for reason in incomplete_analysis_reasons(results)]
+
+
+def _gate_reason(reason):
+    return GateReason(reason.text, hint=reason.hint, details=reason.details)
+
+
+def coverage_requires_complete(config):
+    """``require_complete = true`` under ``[tool.skylos.gate.coverage]``."""
+    gate = config.get("gate") if isinstance(config, dict) else None
+    coverage = gate.get("coverage") if isinstance(gate, dict) else None
+    if not isinstance(coverage, dict):
+        return False
+    value = coverage.get("require_complete")
+    return value is True or value == "true"
+
+
+def gate_analysis_coverage(results, *, strict=False, config=None):
+    """Coverage as a gate or an exit code sees it (``strict`` blocks on gaps)."""
+    return analysis_coverage(
+        results,
+        strict=bool(strict),
+        require_complete=coverage_requires_complete(config),
+    )
+
+
+def _analysis_blocking_reasons(results, *, strict=False, config=None):
+    """Why the analysis cannot be decided (exit 2); coverage gaps excluded.
+
+    A file that did not parse, a language without its engine or unverified
+    dead-code candidates are coverage gaps: the gate is decided on what was
+    checked and they are reported as warnings, unless ``strict`` or the gate
+    policy requires complete coverage, or most of the code went unchecked.
+    """
+    coverage = gate_analysis_coverage(results, strict=strict, config=config)
+    return [_gate_reason(reason) for reason in coverage.blocking]
+
+
+def _coverage_gap_reasons(results, *, strict=False, config=None):
+    """Coverage gaps that are warnings for this run (empty when they block)."""
+    coverage = gate_analysis_coverage(results, strict=strict, config=config)
+    return [_gate_reason(reason) for reason in coverage.gaps]
 
 
 def sca_coverage_warnings(results):
@@ -663,21 +705,30 @@ def sca_coverage_warnings(results):
     receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
     if not isinstance(receipt, dict):
         return []
+    from skylos.core.sca_coverage import unsupported_inputs_line
+
     status = receipt.get("status")
+    not_read = unsupported_inputs_line(receipt)
     if status == "no_supported_manifests":
+        if not_read:
+            return [
+                "SCA coverage limited: 0 dependencies queried; no dependency file "
+                f"Skylos reads was found. {not_read}"
+            ]
         return [
             "SCA coverage limited: no supported dependency manifests found; "
             "0 dependencies queried"
         ]
+    queried = receipt.get("queried_dependency_count", 0)
     unresolved = receipt.get("unresolved_dependency_count", 0)
     if isinstance(unresolved, int) and not isinstance(unresolved, bool) and unresolved > 0:
-        queried = receipt.get("queried_dependency_count", 0)
         return [
             f"SCA coverage limited: {queried} dependencies queried; "
             f"{unresolved} dependencies have unresolved versions"
+            + (f". {not_read}" if not_read else "")
         ]
-    if receipt.get("unsupported_lockfile_count", 0):
-        return ["SCA coverage limited: unsupported dependency lockfile inventory"]
+    if not_read:
+        return [f"SCA coverage limited: {queried} dependencies queried. {not_read}"]
     return []
 
 
@@ -702,7 +753,11 @@ def _sca_required_coverage_reasons(receipt, *, require_resolved):
             GateReason("Required SCA coverage missing: no supported dependency manifests found")
         )
     status = receipt.get("status")
-    if (
+    supported_complete = (
+        status == "complete_with_unsupported_inputs"
+        and receipt.get("supported_inputs_complete") is True
+    )  # the unsupported files get their own reason below
+    if not supported_complete and (
         not isinstance(status, str)
         or status not in ("complete", "complete_with_unresolved_versions")
         or receipt.get("complete") is not True
@@ -808,7 +863,8 @@ def check_gate(results, config, strict=False, provenance=None):
     results = results or {}
     config = config or {}
 
-    reasons = _analysis_incomplete_reasons(results)
+    gate_strict = bool(strict or (_effective_gate_config(config).get("strict")))
+    reasons = _analysis_blocking_reasons(results, strict=gate_strict, config=config)
     if reasons:
         return False, reasons
 
@@ -1045,7 +1101,7 @@ def _summary_status(passed, *, advisory, incomplete):
 
 
 def build_summary_markdown(
-    results, passed, reasons, *, advisory=False, incomplete=False
+    results, passed, reasons, *, advisory=False, incomplete=False, coverage_gaps=()
 ):
     results = results or {}
 
@@ -1088,6 +1144,23 @@ def build_summary_markdown(
     if coverage_warnings:
         lines.extend(["", "### Coverage Limitations"])
         lines.extend(f"- {warning}" for warning in coverage_warnings)
+    if coverage_gaps:
+        lines.extend(
+            [
+                "",
+                "### Incomplete Coverage",
+                "The result above covers the code that was analysed. Not analysed:",
+            ]
+        )
+        for gap in coverage_gaps:
+            lines.append(f"- {gap}")
+            for detail in getattr(gap, "details", ()) or ():
+                # A code span keeps repository paths and messages literal.
+                literal = str(detail).replace("`", "'")
+                lines.append(f"  - `{literal}`")
+            hint = getattr(gap, "hint", None)
+            if hint:
+                lines.append(f"  - {hint}")
     _append_failure_reasons(lines, reasons, heading=heading)
 
     return "\n".join(lines)
@@ -1213,7 +1286,14 @@ def run_gate_interaction(
     strict = bool(strict or gate_cfg.get("strict", False))
     for warning in sca_coverage_warnings(results):
         console.print(f"[yellow]{escape(warning)}[/yellow]", soft_wrap=True)
-    incomplete_reasons = _analysis_incomplete_reasons(results)
+    incomplete_reasons = _analysis_blocking_reasons(
+        results, strict=strict, config=config
+    )
+    coverage_gaps = (
+        []
+        if incomplete_reasons
+        else _coverage_gap_reasons(results, strict=strict, config=config)
+    )
     passed, reasons = _resolve_gate_check(results, config, strict, provenance)
     if incomplete_reasons:
         reasons = incomplete_reasons
@@ -1225,6 +1305,7 @@ def run_gate_interaction(
             reasons,
             advisory=advisory and not incomplete_reasons,
             incomplete=bool(incomplete_reasons),
+            coverage_gaps=coverage_gaps,
         )
         write_github_summary(md)
 
@@ -1233,9 +1314,18 @@ def run_gate_interaction(
 
     if passed:
         details, hint = _passed_gate_summary(results, config, strict=strict)
-        return _handle_passed_gate(console, command_to_run, details=details, hint=hint)
+        exit_code = _handle_passed_gate(
+            console, command_to_run, details=details, hint=hint
+        )
+    elif advisory:
+        exit_code = _handle_advisory_gate(console, reasons)
+    else:
+        exit_code = _handle_failed_gate(console, reasons, force=force, strict=strict)
+    _print_coverage_gaps(console, coverage_gaps)
+    return exit_code
 
-    if advisory:
-        return _handle_advisory_gate(console, reasons)
 
-    return _handle_failed_gate(console, reasons, force=force, strict=strict)
+def _print_coverage_gaps(console, gaps):
+    from skylos.core.gate_outcome import print_coverage_warning
+
+    print_coverage_warning(console, gaps)

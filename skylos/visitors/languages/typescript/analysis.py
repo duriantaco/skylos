@@ -35,6 +35,12 @@ from .safe_glob import (
     resolve_bounded_base,
     safe_glob_paths,
 )
+from skylos.deadcode.confidence import (
+    export_finding_confidence,
+    file_finding_confidence,
+)
+
+from .conventions import convention_reason, is_dev_convention_file
 from .tool_configs import RUNNER_CONFIG_FILES as _PLAYWRIGHT_CONFIG_FILES
 from .tool_configs import TOOL_CONFIG_FILES as _CONFIG_FILES
 
@@ -326,9 +332,16 @@ _JSX_RUNTIME_PROTOCOL_EXPORTS = frozenset(
 )
 
 
-def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=None):
+def demote_unconsumed_ts_exports(
+    defs, consumed_exports, lifecycle_entry_points=None, bundle_entry_points=None
+):
     lifecycle_entry_points = {
         os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
+    }
+    # A bundler entry's exports are the bundle's interface (``markdown.init()``
+    # on a dynamically imported esbuild bundle), not module-internal API.
+    bundle_entry_points = {
+        os.path.realpath(str(path)) for path in bundle_entry_points or ()
     }
     demoted = []
     for _name, defn in defs.items():
@@ -355,6 +368,9 @@ def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=
             os.path.realpath(str(defn.filename)) in lifecycle_entry_points
             and defn.simple_name in _VSCODE_EXTENSION_LIFECYCLE_EXPORTS
         ):
+            continue
+
+        if os.path.realpath(str(defn.filename)) in bundle_entry_points:
             continue
 
         consumed = consumed_exports.get(str(defn.filename), set())
@@ -454,7 +470,9 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
         return True
     if basename in _CONFIG_FILES:
         return True
-    return is_nextjs_project_entry_file(sf)
+    if is_nextjs_project_entry_file(sf):
+        return True
+    return convention_reason(sf) is not None
 
 
 def _is_ts_dev_or_test_root(sf: str) -> bool:
@@ -485,7 +503,7 @@ def _is_ts_dev_or_test_root(sf: str) -> bool:
     basename = os.path.basename(sf)
     if basename in _CONFIG_FILES or basename in _PLAYWRIGHT_CONFIG_FILES:
         return True
-    return False
+    return is_dev_convention_file(sf)
 
 
 def _classify_entry_scope(file_path: str, kind: str, reason: str) -> str:
@@ -1472,6 +1490,11 @@ def _discover_script_entry_candidates(
     return direct_files, executable_files, config_files
 
 
+def _path_is_inside(path: str, directory: str) -> bool:
+    real_directory = os.path.realpath(directory)
+    return os.path.realpath(path).startswith(real_directory.rstrip(os.sep) + os.sep)
+
+
 def _iter_entry_discoveries(
     ts_files: set[str],
     project_root: str | None = None,
@@ -1542,27 +1565,32 @@ def _iter_entry_discoveries(
                         _classify_entry_scope(entry_file, "script", reason),
                     )
                 )
-                if entry_file not in executable_entries:
-                    continue
-                esbuild_entries = _discover_esbuild_config_entries(
-                    entry_file,
-                    ts_files,
-                    str(package_root),
-                )
-                for build_entry in sorted(esbuild_entries):
-                    build_reason = "esbuild-derived-root"
-                    discoveries.append(
-                        _TsEntryDiscovery(
+            elif not _path_is_inside(entry_file, str(package_root)):
+                continue
+            # A build script under an excluded folder (``dev/build/esbuild.mjs``
+            # with the default ``build`` exclude) is not analysed, but the
+            # entry points it names are still roots of the analysed sources.
+            if entry_file not in executable_entries:
+                continue
+            esbuild_entries = _discover_esbuild_config_entries(
+                entry_file,
+                ts_files,
+                str(package_root),
+            )
+            for build_entry in sorted(esbuild_entries):
+                build_reason = "esbuild-derived-root"
+                discoveries.append(
+                    _TsEntryDiscovery(
+                        build_entry,
+                        "config",
+                        build_reason,
+                        _classify_entry_scope(
                             build_entry,
                             "config",
                             build_reason,
-                            _classify_entry_scope(
-                                build_entry,
-                                "config",
-                                build_reason,
-                            ),
-                        )
+                        ),
                     )
+                )
         custom_config_tools.update(script_configs)
 
     default_configs: dict[str, tuple[str, str]] = {}
@@ -1791,6 +1819,34 @@ def _discover_ts_reachability_entry_files(
         for discovery in discoveries
         if discovery.file in ts_files
         and (include_dev_roots or discovery.scope == "prod")
+    }
+
+
+def discover_ts_bundle_entry_files(
+    files,
+    project_root: str | None = None,
+    workspace_inventory=None,
+    exclude_folders=None,
+) -> set[str]:
+    """Files a package script's esbuild build names as entry points."""
+    exclude_root = _resolve_exclude_root(files, project_root)
+    ts_files = {
+        os.path.realpath(str(f))
+        for f in files
+        if str(f).endswith(_TS_JS_EXTENSIONS)
+        and not _is_excluded_path(str(f), exclude_folders, exclude_root)
+    }
+    if not ts_files or not project_root:
+        return set()
+    return {
+        discovery.file
+        for discovery in _iter_entry_discoveries(
+            ts_files,
+            project_root=project_root,
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
+        if discovery.reason == "esbuild-derived-root" and discovery.file in ts_files
     }
 
 
@@ -2109,14 +2165,24 @@ def find_dead_ts_files(
 
     dead_files = []
     for tf in sorted(dead_set):
+        has_importers = bool(norm_importers.get(tf))
+        confidence, factors = file_finding_confidence(has_importers=has_importers)
+        message = (
+            "Unused TypeScript/JavaScript file (only imported by files that "
+            "are themselves unused)"
+            if has_importers
+            else "Unused TypeScript/JavaScript file (not imported by any other file)"
+        )
         dead_files.append(
             {
                 "rule_id": "SKY-E003",
-                "message": "Unused TypeScript/JavaScript file (not imported by any other file)",
+                "message": message,
                 "file": tf,
                 "line": 1,
                 "severity": "LOW",
                 "category": "DEAD_CODE",
+                "confidence": confidence,
+                "confidence_factors": factors,
             }
         )
     return dead_files
@@ -2183,9 +2249,12 @@ def find_unused_ts_exports(
             continue
         if is_nextjs_convention_export(defn.simple_name, fname):
             continue
+        confidence, factors = export_finding_confidence()
         findings.append(
             {
                 "rule_id": "SKY-E004",
+                "confidence": confidence,
+                "confidence_factors": factors,
                 "name": defn.simple_name,
                 "message": (
                     f"Unnecessary `export` on `{defn.simple_name}` "

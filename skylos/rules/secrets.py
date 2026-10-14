@@ -226,12 +226,28 @@ _COMPACT_SECRET_KEY_RE = (
 )
 _SECRET_KEY_NAME_RE = rf"(?:{_SEGMENTED_SECRET_KEY_RE}|{_COMPACT_SECRET_KEY_RE})"
 
+# How a name is bound to a quoted value: ``name = "v"``, ``name: "v"``, Go's
+# ``name := "v"``, a type annotation (``API_TOKEN: &str = "v"`` in Rust,
+# ``apiToken: string = "v"`` in TypeScript, ``API_TOKEN: str = "v"`` in
+# Python) and Go's ``var apiToken string = "v"``. The annotation is a type
+# expression (``&'static str``, ``Option<&str>``, ``Final[str]``,
+# ``string | undefined``); it never contains a quote-delimited value.
+_TYPE_ANNOTATION_RE = (
+    r"(?:&(?:'[A-Za-z_]\w*\s+)?(?:mut\s+)?)?[A-Za-z_][\w.]*"
+    r"(?:<[\w&'.\s,|]*>|\[[\w.\s,|]*\])?"
+    r"(?:\s*\|\s*[A-Za-z_][\w.]*)*"
+)
+_KEYED_VALUE_SEPARATOR_RE = (
+    rf"(?:\s*:=\s*|\s*:\s*{_TYPE_ANNOTATION_RE}\s*=\s*"
+    r"|[ \t]+string[ \t]*=\s*|\s*[:=]\s*)"
+)
+
 GENERIC_KEYED_VALUE = re.compile(
     rf"""(?x)
     (?<![A-Za-z0-9_-])
-    (?P<key_quote>['"]?){_SECRET_KEY_NAME_RE}(?P=key_quote)
+    (?P<key_quote>['"]?)(?P<key>{_SECRET_KEY_NAME_RE})(?P=key_quote)
     (?![A-Za-z0-9_-])
-    \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{{16,}})(?P=q)
+    {_KEYED_VALUE_SEPARATOR_RE}(?P<q>['"])(?P<val>[^'"]{{16,}})(?P=q)
 """
 )
 
@@ -269,7 +285,7 @@ GENERIC_VALUE = re.compile(
       (?<![A-Za-z0-9_-])
       (?P<key_quote>['"]?){_SECRET_KEY_NAME_RE}(?P=key_quote)
       (?![A-Za-z0-9_-])
-      \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{{16,}})(?P=q)
+      {_KEYED_VALUE_SEPARATOR_RE}(?P<q>['"])(?P<val>[^'"]{{16,}})(?P=q)
     )
     |
     (?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{{32,}}(?![A-Za-z0-9_-]))
@@ -450,6 +466,11 @@ _JS_TEST_PATH = re.compile(
     r"(^|/)(__tests__|__mocks__|__fixtures__)/"
     r"|\.(test|spec)\.[cm]?[jt]sx?$"
 )
+# Go's test-fixture directory: the go tool ignores ``testdata`` ("go help
+# packages"), and Rust and Python projects use the name the same way. Its
+# files are test inputs (captured pages, bundles, sample configs), so, as in
+# other test files, only provider-shaped secrets count there.
+_TEST_FIXTURE_DIR = re.compile(r"(^|/)testdata/")
 
 
 def _entropy(s):
@@ -581,7 +602,10 @@ def _has_bare_token_charset_mix(s):
 
 
 def _keyed_match_name(match) -> str:
-    """The secret-sounding name of a ``name = "value"`` match."""
+    """The secret-sounding name of a ``name = "value"`` match (without any
+    type annotation between the name and the value)."""
+    if "key" in match.re.groupindex and match.group("key") is not None:
+        return match.group("key")
     return match.group(0)[: match.start("val") - match.start()].strip(" \t'\":=")
 
 
@@ -703,6 +727,11 @@ def _structural_generic_candidates(structural_contexts, keyed_spans, approved_sp
             continue
         candidates.append((context_start, 1, value, False, context_end))
     return candidates
+
+
+# Files whose syntax has YAML anchors and tags (pnpm and Yarn Berry lockfiles
+# are YAML; other lockfiles never contain ``&anchor``/``!!tag`` tokens).
+_YAML_SYNTAX_SUFFIXES = (".yml", ".yaml", ".lock")
 
 
 def _decorated_generic_candidates(
@@ -928,9 +957,15 @@ def _find_generic_values(
     )
 
     integrity_spans = list(context_spans)
-    decorated, decorated_spans = _decorated_generic_candidates(
-        line_content, keyed_spans, context_spans, approved_spans
-    )
+    if rel_name.lower().endswith(_YAML_SYNTAX_SUFFIXES):
+        decorated, decorated_spans = _decorated_generic_candidates(
+            line_content, keyed_spans, context_spans, approved_spans
+        )
+    else:
+        # ``&anchor value`` / ``!!tag value`` is YAML syntax. In Rust, C++ or
+        # Go source ``&mut DecompressionMatcherBuilder`` is a reference to a
+        # type, not an anchored value (W3 R6: 8 "secrets" in ripgrep).
+        decorated, decorated_spans = [], []
     integrity, field_spans = _integrity_field_candidates(
         line_content,
         keyed_spans,
@@ -3981,11 +4016,19 @@ def _is_public_bare_token(file_lines, line_number, token, start, public_pem):
 
 
 def _private_key_material(file_lines, line_number, match) -> str:
-    return secret_shapes.private_key_header_material(
-        file_lines[line_number - 1].rstrip("\n"),
+    line = file_lines[line_number - 1].rstrip("\n")
+    material = secret_shapes.private_key_header_material(
+        line,
         match.end(),
         file_lines[line_number : line_number + 2],
     )
+    if material == "key" and secret_shapes.private_key_body_is_elided(
+        line, match.end(), file_lines[line_number : line_number + 80]
+    ):
+        # One real-looking line, then ``...``: an excerpt of a key in a test
+        # or a doc, which cannot be used (W3 R3: caddy admin_test.go).
+        return "documentation"
+    return material
 
 
 def _extra_private_key_findings(file_lines, line_number, rel_path):
@@ -4270,6 +4313,7 @@ def scan_ctx(
         in_tests = bool(
             IS_TEST_PATH.search(rel_path.replace("\\", "/"))
             or _JS_TEST_PATH.search(rel_path.replace("\\", "/"))
+            or _TEST_FIXTURE_DIR.search(rel_path.replace("\\", "/"))
             or rel_path.endswith("_test.go")
         )
 

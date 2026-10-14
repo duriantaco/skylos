@@ -75,8 +75,11 @@ The top level may also include `grade`, `provenance`, and
 `analysis_summary`. Empty arrays can be omitted, so use `.get(key, [])`.
 With `--gate` (or `--strict` without `--force`), `gate` holds `passed`,
 `reasons` (strings), `scope`, `status`, `forced`, the `verdict` (`passed`,
-`failed`, `incomplete`), its `exit_code`, and `reason_details` (`message`,
-`details`, `hint` per reason).
+`failed`, `incomplete`), its `exit_code`, `reason_details` (`message`,
+`details`, `hint` per reason), and `coverage_status` / `coverage_warnings`.
+`analysis_summary.analysis_coverage` says what was not analysed (`status`
+`complete` / `partial` / `incomplete`, `exit_blocking`, `unchecked_files`,
+`unverified_dead_code_candidates`).
 
 ## Filtering
 
@@ -110,6 +113,15 @@ Full scans skip generated/vendored files (Django migrations, `static/**/lib`,
   could not decide (exit 2)` when required analysis did not finish (the reason
   names the check, the counts, and the fix; `--force` does not override it).
   Concise, LLM, GitHub, and GitLab output print it on stderr.
+- Coverage gaps (a file that does not parse, `.go`/`.dart` files without
+  their engine, dead-code candidates grep verification did not reach) are
+  warnings: the scan and gate are decided on the analysed code and end with
+  `Coverage: INCOMPLETE — some code was not analysed`. They exit 2 only with
+  `--strict`, `require_complete = true` under `[tool.skylos.gate.coverage]`,
+  when most source files were not analysed, or for a changed file in a
+  `--diff` scan.
+- A missing path or mistyped command (`skylos donee`) exits 2 with a "did
+  you mean" line.
 - `--format concise`: exits non-zero when findings exist.
 
 ## Useful Subcommands

@@ -2312,15 +2312,33 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_local_environment_uses_git(self, mock_git):
-        mock_git.side_effect = [b"localcommit123\n", b"my-branch\n"]
+        mock_git.side_effect = [
+            b"localcommit123\n",
+            b"my-branch\n",
+            b"Commit Author\n",
+        ]
         os.environ["USER"] = "localuser"
 
         commit, branch, actor, ci = get_git_info()
 
         self.assertEqual(commit, "localcommit123")
         self.assertEqual(branch, "my-branch")
-        self.assertEqual(actor, "localuser")
+        # The HEAD commit's author, never the OS login name.
+        self.assertEqual(actor, "Commit Author")
         self.assertEqual(ci, {})
+
+    @patch("subprocess.check_output")
+    def test_local_environment_never_sends_the_os_user(self, mock_git):
+        mock_git.side_effect = [
+            b"localcommit123\n",
+            b"my-branch\n",
+            subprocess.CalledProcessError(128, "git log"),
+        ]
+        os.environ["USER"] = "localuser"
+
+        _commit, _branch, actor, _ci = get_git_info()
+
+        self.assertEqual(actor, "unknown")
 
     @patch("subprocess.check_output")
     def test_env_overrides_always_win(self, mock_git):
@@ -2426,7 +2444,11 @@ class TestGetGitInfo(unittest.TestCase):
         os.environ["JENKINS_URL"] = "https://jenkins.example.com"
         os.environ["BUILD_NUMBER"] = "1"
 
-        mock_git.side_effect = [b"gitfallbacksha\n", b"fallback-branch\n"]
+        mock_git.side_effect = [
+            b"gitfallbacksha\n",
+            b"fallback-branch\n",
+            b"Commit Author\n",
+        ]
 
         commit, branch, actor, ci = get_git_info()
 

@@ -79,14 +79,16 @@ class TestGetCreditBalance:
 
 class TestPrintCreditStatus:
     @patch("skylos.api.get_credit_balance")
-    def test_enterprise_shows_unlimited(self, mock_balance, capsys):
+    def test_enterprise_shows_its_balance(self, mock_balance, capsys):
+        # Enterprise has a credit balance like every plan (14 Oct 2026).
         mock_balance.return_value = {
-            "balance": 0,
+            "balance": 4990,
             "plan": "enterprise",
         }
-        result = print_credit_status("token")
+        print_credit_status("token")
         output = capsys.readouterr().out
-        assert "unlimited" in output.lower() or "Enterprise" in output
+        assert "Credits: 4,990" in output
+        assert "unlimited" not in output.lower()
 
     @patch("skylos.api.get_credit_balance")
     def test_low_balance_shows_warning(self, mock_balance, capsys):
@@ -398,3 +400,51 @@ class TestCreditsCommandPlanName:
 
         assert credits_cmd.run_credits_command() == 0
         assert "charge [/red] customer" in capsys.readouterr().out
+
+
+class TestEnterpriseCreditDisplays:
+    """Enterprise has a credit balance like every plan (14 Oct 2026)."""
+
+    ENTERPRISE = {
+        "balance": 4990,
+        "plan": "enterprise",
+        "org_name": "Acme",
+        "recent_transactions": [],
+    }
+
+    def test_credits_command_shows_balance_and_buy_link(self):
+        from io import StringIO
+
+        from rich.console import Console
+
+        import skylos.commands.credits_cmd as credits_cmd
+
+        buffer = StringIO()
+        with (
+            patch.object(credits_cmd, "get_project_token", return_value="token"),
+            patch.object(
+                credits_cmd, "print_credit_status", return_value=dict(self.ENTERPRISE)
+            ),
+            patch.object(
+                credits_cmd, "Console", return_value=Console(file=buffer, width=200)
+            ),
+        ):
+            assert credits_cmd.run_credits_command() == 0
+        output = buffer.getvalue()
+        assert "Balance: 4,990 credits" in output
+        assert "unlimited" not in output.lower()
+        assert "dashboard/billing" in output
+
+    def test_doctor_shows_balance(self):
+        from io import StringIO
+
+        from rich.console import Console
+
+        from skylos.commands.doctor_cmd import _print_credit_status
+
+        buffer = StringIO()
+        with patch("skylos.api.get_credit_balance", return_value=dict(self.ENTERPRISE)):
+            _print_credit_status(Console(file=buffer, width=200), "token")
+        output = buffer.getvalue()
+        assert "Credits: 4,990" in output
+        assert "unlimited" not in output.lower()

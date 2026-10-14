@@ -738,29 +738,19 @@ class TestConvenienceFunction:
 
 
 class TestSeverity:
-    def test_2_node_cycle_low_severity(self):
+    # A cycle's length says nothing about its impact; every module-level
+    # cycle is a LOW design finding (W3: 144 x HIGH on django).
+    @pytest.mark.parametrize("length", [2, 3, 4, 7])
+    def test_every_cycle_is_low_whatever_its_length(self, length):
+        names = [f"m{i}" for i in range(length)]
         analyzer = CircularDependencyAnalyzer()
-        analyzer.modules = {"a": "a.py", "b": "b.py"}
-        analyzer.dependencies = {"a": {"b"}, "b": {"a"}}
+        analyzer.modules = {name: f"{name}.py" for name in names}
+        analyzer.dependencies = {
+            name: {names[(index + 1) % length]} for index, name in enumerate(names)
+        }
 
         findings = analyzer.analyze()
-        assert findings[0].severity in ("LOW", "MEDIUM")
-
-    def test_3_node_cycle_medium_severity(self):
-        analyzer = CircularDependencyAnalyzer()
-        analyzer.modules = {"a": "a.py", "b": "b.py", "c": "c.py"}
-        analyzer.dependencies = {"a": {"b"}, "b": {"c"}, "c": {"a"}}
-
-        findings = analyzer.analyze()
-        assert findings[0].severity == "MEDIUM"
-
-    def test_4_plus_node_cycle_high_severity(self):
-        analyzer = CircularDependencyAnalyzer()
-        analyzer.modules = {"a": "a.py", "b": "b.py", "c": "c.py", "d": "d.py"}
-        analyzer.dependencies = {"a": {"b"}, "b": {"c"}, "c": {"d"}, "d": {"a"}}
-
-        findings = analyzer.analyze()
-        assert findings[0].severity == "HIGH"
+        assert [finding.severity for finding in findings] == ["LOW"]
 
 
 class TestRealWorldPatterns:
@@ -1030,13 +1020,7 @@ def test_set_backed_findings_are_identical_across_hash_seeds(hash_seed):
     )
     findings = json.loads(completed.stdout)
     assert [finding["cycle"] for finding in findings] == _ORDER_SENSITIVE_CYCLES
-    assert [finding["severity"] for finding in findings] == [
-        "LOW",
-        "LOW",
-        "MEDIUM",
-        "MEDIUM",
-        "HIGH",
-    ]
+    assert [finding["severity"] for finding in findings] == ["LOW"] * 5
 
 
 if __name__ == "__main__":

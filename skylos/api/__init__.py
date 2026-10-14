@@ -530,14 +530,12 @@ def print_credit_status(token=None, quiet=False):
         return data
 
     balance = data.get("balance", 0)
-    plan = data.get("plan", "free")
 
-    if plan == "enterprise":
-        print("Credits: unlimited (Enterprise)")
-    else:
-        print(f"Credits: {balance:,}")
-        if balance < 10:
-            print(f"Low credits! Buy more: {BASE_URL}/dashboard/billing")
+    # Every plan has a credit balance, Enterprise included (no unlimited
+    # credits since 14 Oct 2026).
+    print(f"Credits: {balance:,}")
+    if balance < 10:
+        print(f"Low credits! Buy more: {BASE_URL}/dashboard/billing")
 
     return data
 
@@ -611,10 +609,34 @@ def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
     return str(project_id) if project_id else None
 
 
+def _git_head_author() -> str | None:
+    """Author name recorded on the HEAD commit, or None (no repo, no commits)."""
+    try:
+        name = subprocess.check_output(
+            read_only_git_command(["log", "-1", "--format=%an"]),
+            env=read_only_git_environment(),
+            stderr=subprocess.DEVNULL,
+            timeout=SUBPROCESS_TIMEOUT,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return name.decode("utf-8", "replace").strip() or None
+
+
+def _consented_actor(meta: dict) -> str | None:
+    """SKYLOS_ACTOR, the CI-reported actor, or the HEAD commit's git author.
+
+    The local OS login name is never used: nobody agreed to share it, and it
+    is not part of the repository history. None when nothing names anyone.
+    """
+    return (
+        os.getenv("SKYLOS_ACTOR") or _ci_actor(meta) or _git_head_author() or None
+    )
+
+
 def get_git_info() -> tuple[str, str, str, dict]:
     override_sha = os.getenv("SKYLOS_COMMIT")
     override_branch = os.getenv("SKYLOS_BRANCH")
-    override_actor = os.getenv("SKYLOS_ACTOR")
     provider, meta = _detect_ci()
     git_commit, git_branch = _read_git_head()
     # CI event SHAs can name a merge commit even when the workflow checks out
@@ -622,7 +644,7 @@ def get_git_info() -> tuple[str, str, str, dict]:
     # SHA in CI metadata and explicit overrides for artifact publishing.
     commit = override_sha or git_commit or _ci_commit(meta) or "unknown"
     branch = override_branch or _ci_branch(provider, meta) or git_branch or "unknown"
-    actor = override_actor or _ci_actor(meta) or os.getenv("USER") or "unknown"
+    actor = _consented_actor(meta) or "unknown"
     branch = _normalize_branch(branch)
     pr_number = _extract_pr_number(provider, meta)
     return commit, branch, actor, _build_ci_metadata(provider, meta, pr_number)
@@ -3133,18 +3155,30 @@ def upload_agent_run(
     command,
     summary,
     *,
+    requested=False,
     model=None,
     provider=None,
     duration_seconds=None,
     status="completed",
 ):
-    """Upload agent run telemetry to the cloud dashboard. Fire-and-forget."""
+    """Send an agent run summary to Skylos Cloud. Fire-and-forget.
+
+    Nothing is sent unless ``requested`` is True, i.e. the user ran the
+    command with its explicit upload flag. A token (``SKYLOS_TOKEN``, a saved
+    login, CI OIDC) alone is never consent, so without the flag this returns
+    before looking a token up or touching the network.
+    """
+    if requested is not True:
+        return
     try:
         token = get_project_token()
         if not token:
             return
 
-        commit, branch, actor, _ci = get_git_info()
+        commit, branch, _actor, _ci = get_git_info()
+        # No "unknown" placeholder and never the OS user name: null when
+        # neither SKYLOS_ACTOR, the CI system nor git names an author.
+        actor = _consented_actor(_detect_ci()[1])
 
         payload = {
             "command": command,

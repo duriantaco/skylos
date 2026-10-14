@@ -6,8 +6,9 @@ subclasses in ``app/Console/Commands``, event discovery wires ``app/Listeners``
 classes whose ``handle*``/``__invoke`` method type-hints the event,
 ``HasFactory`` maps ``Model`` to ``Database\\Factories\\ModelFactory``, policy
 discovery maps ``Model`` to ``ModelPolicy``, ``db:seed`` runs
-``DatabaseSeeder``, Blade resolves ``<x-name>`` and ``<livewire:name>`` tags,
-and the migrator loads every migration file.
+``DatabaseSeeder`` (and ``db:seed --class=Name`` any other ``Seeder``
+subclass in ``database/seeders``), Blade resolves ``<x-name>`` and
+``<livewire:name>`` tags, and the migrator loads every migration file.
 
 The rules apply only inside a Laravel application root, a directory whose
 ``composer.json`` requires ``laravel/framework``, and only to classes that
@@ -30,6 +31,8 @@ _COMMANDS_DIR = "app/Console/Commands/"
 _LISTENERS_DIR = "app/Listeners/"
 _POLICIES_DIR = "app/Policies/"
 _FACTORIES_DIR = "database/factories/"
+_SEEDERS_DIRS = ("database/seeders/", "database/seeds/")
+_ILLUMINATE_SEEDER = "Illuminate.Database.Seeder"
 _COMPONENT_DIRECTORIES = (
     "app/Livewire/",
     "app/Http/Livewire/",
@@ -210,6 +213,20 @@ def _extends_illuminate_command(root: str, bases, depth: int = 0) -> bool:
     return False
 
 
+def _extends_illuminate_seeder(root: str, bases, depth: int = 0) -> bool:
+    if depth > _MAX_PARENT_DEPTH:
+        return False
+    for base in bases:
+        if base == _ILLUMINATE_SEEDER:
+            return True
+        parent = _project_class(root, base)
+        if parent is not None and _extends_illuminate_seeder(
+            root, parent[0], depth + 1
+        ):
+            return True
+    return False
+
+
 def _uses_has_factory(root: str, bases, traits, depth: int = 0) -> bool:
     if any(trait.rpartition(".")[2] == _HAS_FACTORY_TRAIT for trait in traits):
         return True
@@ -268,6 +285,12 @@ def _is_convention_class(
         return name == exact
     if relative.startswith(_COMMANDS_DIR):
         return _extends_illuminate_command(
+            root, getattr(definition, "base_classes", None) or ()
+        )
+    if relative.startswith(_SEEDERS_DIRS):
+        # ``php artisan db:seed --class=LargeContentSeeder`` runs a seeder by
+        # name; DatabaseSeeder reaches the others through ``::class``.
+        return _extends_illuminate_seeder(
             root, getattr(definition, "base_classes", None) or ()
         )
     if relative.startswith(_LISTENERS_DIR):

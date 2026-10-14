@@ -1,6 +1,7 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 import logging
+import signal
 
 
 logger = logging.getLogger("Skylos")
@@ -31,51 +32,104 @@ def _run_pool(files, modmap, changed_files, jobs, worker_fn, proc_kwargs, progre
     """
     results = {}
     broken = []
-    with ProcessPoolExecutor(max_workers=jobs) as ex:
-        fut_to_file = {}
-        for f in files:
-            full_scan = changed_files is None or str(f) in changed_files
-            try:
-                fut = ex.submit(
-                    worker_fn,
-                    f,
-                    modmap[f],
-                    proc_kwargs["extra_visitors"],
-                    full_scan,
-                    proc_kwargs["collect_clone_fragments"],
-                    proc_kwargs["clone_cfg"],
-                    proc_kwargs["collect_architecture_metrics"],
-                    proc_kwargs["enable_quality_rules"],
-                    proc_kwargs["enable_danger_rules"],
-                    proc_kwargs["config_file"],
-                    proc_kwargs["project_root"],
-                )
-            except BrokenProcessPool:
-                broken.append(f)
-                continue
-            fut_to_file[fut] = f
-
-        for fut in as_completed(fut_to_file):
-            f = fut_to_file[fut]
-            file_str = str(f)
-            try:
-                file_str, out = fut.result()
-            except BrokenProcessPool:
-                broken.append(f)
-                continue
-            except Exception:
-                logger.warning(
-                    "Parallel static worker failed for %s; retrying in parent process",
-                    file_str,
-                    exc_info=True,
-                )
-                out = _retry_in_parent(f, modmap, changed_files, proc_kwargs)
-            results[file_str] = out
-            progress(f)
+    ex = ProcessPoolExecutor(max_workers=jobs, initializer=_ignore_sigint)
+    interrupted = False
+    try:
+        _drain_pool(
+            ex,
+            files,
+            modmap,
+            changed_files,
+            worker_fn,
+            proc_kwargs,
+            progress,
+            results,
+            broken,
+        )
+    except KeyboardInterrupt:
+        # Ctrl-C: drop queued files and stop the workers now. Leaving the
+        # executor's context would wait for every queued file first.
+        interrupted = True
+        _abort_pool(ex)
+        raise
+    finally:
+        if not interrupted:
+            ex.shutdown(wait=True)
 
     order = {id(f): i for i, f in enumerate(files)}
     broken.sort(key=lambda f: order.get(id(f), 0))
     return results, broken
+
+
+def _ignore_sigint():
+    """Workers leave Ctrl-C to the parent, which stops them without tracebacks."""
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except (OSError, ValueError):
+        pass
+
+
+def _abort_pool(ex):
+    processes = list((getattr(ex, "_processes", None) or {}).values())
+    try:
+        ex.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        logger.debug("process pool shutdown failed", exc_info=True)
+    for process in processes:
+        try:
+            process.terminate()
+        except Exception:
+            logger.debug("could not stop a static worker", exc_info=True)
+    for process in processes:
+        try:
+            process.join(timeout=2)
+        except Exception:
+            logger.debug("could not join a static worker", exc_info=True)
+
+
+def _drain_pool(
+    ex, files, modmap, changed_files, worker_fn, proc_kwargs, progress, results, broken
+):
+    fut_to_file = {}
+    for f in files:
+        full_scan = changed_files is None or str(f) in changed_files
+        try:
+            fut = ex.submit(
+                worker_fn,
+                f,
+                modmap[f],
+                proc_kwargs["extra_visitors"],
+                full_scan,
+                proc_kwargs["collect_clone_fragments"],
+                proc_kwargs["clone_cfg"],
+                proc_kwargs["collect_architecture_metrics"],
+                proc_kwargs["enable_quality_rules"],
+                proc_kwargs["enable_danger_rules"],
+                proc_kwargs["config_file"],
+                proc_kwargs["project_root"],
+            )
+        except BrokenProcessPool:
+            broken.append(f)
+            continue
+        fut_to_file[fut] = f
+
+    for fut in as_completed(fut_to_file):
+        f = fut_to_file[fut]
+        file_str = str(f)
+        try:
+            file_str, out = fut.result()
+        except BrokenProcessPool:
+            broken.append(f)
+            continue
+        except Exception:
+            logger.warning(
+                "Parallel static worker failed for %s; retrying in parent process",
+                file_str,
+                exc_info=True,
+            )
+            out = _retry_in_parent(f, modmap, changed_files, proc_kwargs)
+        results[file_str] = out
+        progress(f)
 
 
 def _retry_in_parent(f, modmap, changed_files, proc_kwargs):

@@ -101,10 +101,14 @@ The gate checks only the lines a pull request changes, so findings already in
 your code do not fail this first pull request. On the pull request you will
 also see:
 
-- a **Skylos Analysis Summary** comment;
+- a **Skylos Analysis Summary** comment. Later pushes edit this same comment
+  instead of adding new ones, and it says so when every issue it reported on
+  the changed lines is fixed;
 - the gate table and the Done receipt in each job's summary (click the check,
   then **Summary**);
-- inline comments and file annotations when a changed line has a finding.
+- inline comments and file annotations when a changed line has a finding. A
+  finding gets one inline comment: later pushes add comments only for new
+  findings, up to `--max-comments` (default 25) per pull request.
 
 If both checks pass, the gate works. Merge the pull request:
 
@@ -255,9 +259,55 @@ those; add yourself to the ruleset's bypass list to do it.
   default branch into it.
 - Actions are disabled for the repository, or a first-time contributor's
   fork pull request is waiting for a maintainer to approve the run.
+- The pull request is in a merge queue and the workflow predates the
+  `merge_group` trigger. Regenerate it with `skylos cicd init` (see
+  [Merge queues and monorepos](#merge-queues-and-monorepos)).
+- You added a `paths:` filter to the workflow. GitHub never reports a
+  check from a workflow a path filter skipped, so a pull request outside
+  those paths waits forever. Remove the filter; see below.
 
 Pull requests from forks get a read-only token, so the summary and inline
-comments are skipped there. The checks still run and still block.
+comments are skipped there: the `PR Review Comments` step prints one line
+saying it could not comment and does not fail. The checks still run and still
+block.
+
+## Merge queues and monorepos
+
+**Merge queues.** GitHub merges a queued pull request only when its required
+checks pass on the commit the queue builds, reported from a `merge_group`
+event. The generated workflow has `merge_group: types: [checks_requested]`,
+and each required check runs there under the same name:
+
+- **Skylos Quality Gate** scans the merge-group commit against the queue's
+  base commit (`merge_group.base_sha`), changed lines only, with policy from
+  that base commit.
+- **Skylos Done** runs your tests on the merge-group commit against the same
+  base.
+- **Skylos risk review** checks the risks in the merge group and the
+  approvals of the pull requests that added them; see
+  [Merge queues](./risk-review.md#merge-queues).
+
+Review comments, the Cloud upload and the Claude jobs do not run on merge
+groups. Turn the queue on in the same ruleset (**Require merge queue**); the
+required checks stay the same.
+
+**One required check per job, no path filters.** GitHub does not report a
+check from a workflow that a `paths:` filter skipped, so a required check
+on a path-filtered workflow blocks every pull request outside those paths.
+The generated workflow has no path filter: every job runs on every pull
+request and merge group, and scopes itself to the change. With
+`--scan-path apps/api`, a pull request that touches only `apps/web/` still
+gets a passing **Skylos Quality Gate** with a receipt in the log and job
+summary, for example:
+
+```text
+Nothing in scope: none of the 3 changed file(s) is under apps/api (e.g. apps/web/page.tsx, apps/web/layout.tsx, apps/web/api.ts). Skylos had nothing to check in this change.
+```
+
+The receipt also appears when every changed file is an image, font, media
+or extensionless licence file. Markdown, RST and text files are in scope:
+Skylos reads them for hidden prompt-injection text (SKY-D260). The receipt
+never changes the gate's result.
 
 ## What the workflow contains
 
@@ -266,8 +316,8 @@ to three jobs:
 
 | Job | Runs on | Permissions |
 |:---|:---|:---|
-| `skylos` (Skylos Quality Gate) | pull requests (and default-branch pushes with `--no-upload`) | read code, write PR comments |
-| `done` (Skylos Done) | pull requests, checking out the PR head with full history | read code |
+| `skylos` (Skylos Quality Gate) | pull requests, merge groups (and default-branch pushes with `--no-upload`) | read code, write PR comments |
+| `done` (Skylos Done) | pull requests, checking out the PR head with full history, and merge groups, checking out the merge-group commit | read code |
 | `cloud-upload` (Skylos Cloud upload) | pushes to the default branch | read code, GitHub OIDC token |
 
 Useful options: `--no-upload`, `--done` / `--no-done`, `--default-branch`,

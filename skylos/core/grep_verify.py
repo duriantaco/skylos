@@ -94,7 +94,11 @@ class GrepVerificationResult(dict[str, GrepVerdict]):
     """Verdicts plus whether every candidate was safely verified.
 
     This remains a ``dict`` so existing callers can keep using membership,
-    indexing, and equality without an API migration.
+    indexing, and equality without an API migration. When verification stops
+    early, the dict still holds the verdicts of every candidate whose
+    verification finished, and ``verified_keys`` names those candidates (alive
+    or not); any other candidate was not verified. Callers that need every
+    candidate verified must check ``complete``.
     """
 
     def __init__(
@@ -105,6 +109,7 @@ class GrepVerificationResult(dict[str, GrepVerdict]):
         verified_count: int,
         time_budget: float,
         incomplete_reason: str | None = None,
+        verified_keys=None,
     ) -> None:
         super().__init__(verdicts or {})
         self.candidate_count = candidate_count
@@ -113,6 +118,7 @@ class GrepVerificationResult(dict[str, GrepVerdict]):
         self.incomplete_reason = incomplete_reason
         self.complete = incomplete_reason is None
         self.budget_exhausted = incomplete_reason == "budget_exhausted"
+        self.verified_keys = frozenset(verified_keys or ())
 
 
 @dataclass
@@ -507,7 +513,15 @@ def _execute_pending_findings(
     cache: Any,
     deadline: float,
     evidence_filter: GrepEvidenceFilter | None = None,
-) -> tuple[dict[str, GrepVerdict], int, str | None]:
+) -> tuple[dict[str, GrepVerdict], list[str], str | None]:
+    """Run one batch; return its verdicts, the keys it verified, and why
+    verification is not complete.
+
+    A finding whose searches did not finish safely stays unverified and the
+    others are still verified (``"verification_incomplete"``). Only the
+    deadline stops the batch (``"budget_exhausted"``). ``None`` means every
+    pending finding was verified.
+    """
     requests = [request for item in pending for request in item.requests]
     try:
         batch_results = execute_grep_batch(requests, deadline=deadline)
@@ -517,20 +531,19 @@ def _execute_pending_findings(
             if isinstance(exc, _GrepDeadlineExceeded) or time.monotonic() >= deadline
             else "verification_incomplete"
         )
-        return {}, 0, reason
+        return {}, [], reason
     incomplete_requests = getattr(batch_results, "incomplete_requests", set())
     verdicts: dict[str, GrepVerdict] = {}
-    verified_count = 0
+    verified: list[str] = []
+    unverified = False
     for index, item in enumerate(pending):
         if time.monotonic() >= deadline:
-            return verdicts, verified_count, "budget_exhausted"
+            return verdicts, verified, "budget_exhausted"
         if any(request not in batch_results for request in item.requests):
-            reason = (
-                "budget_exhausted"
-                if time.monotonic() >= deadline
-                else "verification_incomplete"
-            )
-            return verdicts, verified_count, reason
+            if time.monotonic() >= deadline:
+                return verdicts, verified, "budget_exhausted"
+            unverified = True
+            continue
         try:
             with replay_grep_results(batch_results, deadline=deadline):
                 search_results = _search_verification_evidence(
@@ -540,13 +553,10 @@ def _execute_pending_findings(
                 )
         except _GrepExecutionIncomplete as exc:
             logger.debug("grep replay was incomplete: %s", exc)
-            reason = (
-                "budget_exhausted"
-                if isinstance(exc, _GrepDeadlineExceeded)
-                or time.monotonic() >= deadline
-                else "verification_incomplete"
-            )
-            return verdicts, verified_count, reason
+            if isinstance(exc, _GrepDeadlineExceeded) or time.monotonic() >= deadline:
+                return verdicts, verified, "budget_exhausted"
+            unverified = True
+            continue
         request_incomplete = any(
             request in incomplete_requests for request in item.requests
         )
@@ -554,17 +564,27 @@ def _execute_pending_findings(
             _store_cached_group_results(
                 cache, item.group_name, item.finding, search_results
             )
-        verdict = _apply_deterministic_rules(
-            search_results, item.finding, evidence_filter
-        )
+        try:
+            verdict = _apply_deterministic_rules(
+                search_results, item.finding, evidence_filter
+            )
+        except _GrepExecutionIncomplete as exc:
+            # Truncated evidence cannot prove that a candidate is unused.
+            logger.debug("grep evidence incomplete for one candidate: %s", exc)
+            if isinstance(exc, _GrepDeadlineExceeded) or time.monotonic() >= deadline:
+                return verdicts, verified, "budget_exhausted"
+            unverified = True
+            continue
         if request_incomplete and not (verdict and verdict.alive):
-            return verdicts, verified_count, "verification_incomplete"
+            # Partial search results can prove a use, never its absence.
+            unverified = True
+            continue
         if verdict:
             verdicts[_finding_verdict_key(item.finding)] = verdict
-        verified_count += 1
+        verified.append(_finding_verdict_key(item.finding))
         if time.monotonic() >= deadline and index + 1 < len(pending):
-            return verdicts, verified_count, "budget_exhausted"
-    return verdicts, verified_count, None
+            return verdicts, verified, "budget_exhausted"
+    return verdicts, verified, "verification_incomplete" if unverified else None
 
 
 def _grep_verify_findings_batched(
@@ -581,8 +601,10 @@ def _grep_verify_findings_batched(
     verdicts: dict[str, GrepVerdict] = {}
     pending: list[_PendingBatchFinding] = []
     deadline = start_time + time_budget
+    verified: set[str] = set()
     verified_count = 0
     incomplete_reason: str | None = None
+    partial_reason: str | None = None
 
     for finding in eligible_findings:
         if time.monotonic() >= deadline:
@@ -590,54 +612,78 @@ def _grep_verify_findings_batched(
             break
         full_name = _finding_verdict_key(finding)
 
-        if evidence_filter is None:
-            verdict, planned = _plan_batched_finding(finding, project_root, cache)
-        else:
-            verdict, planned = _plan_batched_finding(
-                finding, project_root, cache, evidence_filter
-            )
+        try:
+            if evidence_filter is None:
+                verdict, planned = _plan_batched_finding(finding, project_root, cache)
+            else:
+                verdict, planned = _plan_batched_finding(
+                    finding, project_root, cache, evidence_filter
+                )
+        except _GrepExecutionIncomplete as exc:
+            if isinstance(exc, _GrepDeadlineExceeded) or time.monotonic() >= deadline:
+                incomplete_reason = "budget_exhausted"
+                break
+            # This candidate stays unverified; the others are still checked.
+            logger.debug("grep verification incomplete for one candidate: %s", exc)
+            partial_reason = "verification_incomplete"
+            continue
         if verdict:
             verdicts[full_name] = verdict
         if planned:
             pending.append(planned)
         else:
+            verified.add(full_name)
             verified_count += 1
         if len(pending) < _GREP_FINDING_BATCH_SIZE:
             continue
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
             break
-        batch_verdicts, batch_verified, incomplete_reason = _execute_pending_findings(
+        batch_verdicts, batch_verified, batch_reason = _execute_pending_findings(
             pending, project_root, cache, deadline, evidence_filter
         )
         verdicts.update(batch_verdicts)
-        verified_count += batch_verified
+        verified.update(batch_verified)
+        verified_count += len(batch_verified)
         pending.clear()
-        if incomplete_reason:
+        if batch_reason == "budget_exhausted":
+            incomplete_reason = batch_reason
             break
+        # A finding that could not be verified safely stays unverified; the
+        # remaining findings are still checked.
+        partial_reason = partial_reason or batch_reason
 
     if pending and incomplete_reason is None:
         if time.monotonic() >= deadline:
             incomplete_reason = "budget_exhausted"
         else:
-            batch_verdicts, batch_verified, incomplete_reason = (
+            batch_verdicts, batch_verified, batch_reason = (
                 _execute_pending_findings(
                     pending, project_root, cache, deadline, evidence_filter
                 )
             )
             verdicts.update(batch_verdicts)
-            verified_count += batch_verified
+            verified.update(batch_verified)
+            verified_count += len(batch_verified)
+            if batch_reason == "budget_exhausted":
+                incomplete_reason = batch_reason
+            else:
+                partial_reason = partial_reason or batch_reason
+    incomplete_reason = incomplete_reason or partial_reason
 
     candidate_count = len(eligible_findings)
     if incomplete_reason is None and verified_count != candidate_count:
         incomplete_reason = "verification_incomplete"
 
+    # Verdicts are only ever recorded for verified candidates, so a partial
+    # result keeps them: verified candidates need not be withheld.
     return GrepVerificationResult(
-        verdicts if incomplete_reason is None else {},
+        {key: verdict for key, verdict in verdicts.items() if key in verified},
         candidate_count=candidate_count,
         verified_count=verified_count,
         time_budget=time_budget,
         incomplete_reason=incomplete_reason,
+        verified_keys=verified,
     )
 
 
@@ -683,6 +729,7 @@ def _collect_finished_findings(
     done: set[_FindingFuture],
     verdicts: dict[str, GrepVerdict],
     deadline: float | None = None,
+    verified: set[str] | None = None,
 ) -> tuple[int, str | None]:
     completed: list[tuple[str, GrepVerdict | None]] = []
     incomplete_reasons: set[str] = set()
@@ -704,6 +751,8 @@ def _collect_finished_findings(
     for full_name, verdict in sorted(completed, key=lambda item: item[0]):
         if full_name and verdict:
             verdicts[full_name] = verdict
+        if full_name and verified is not None:
+            verified.add(full_name)
     if "verification_incomplete" in incomplete_reasons:
         reason = "verification_incomplete"
     elif "budget_exhausted" in incomplete_reasons:
@@ -730,6 +779,7 @@ def _grep_verify_findings_parallel(
     pending: set[_FindingFuture] = set()
     findings_iter = iter(eligible_findings)
     verified_count = 0
+    verified: set[str] = set()
     incomplete_reason: str | None = None
 
     try:
@@ -749,7 +799,7 @@ def _grep_verify_findings_parallel(
             if not done:
                 break
             newly_verified, incomplete_reason = _collect_finished_findings(
-                done, verdicts, deadline
+                done, verdicts, deadline, verified
             )
             verified_count += newly_verified
             if incomplete_reason:
@@ -771,11 +821,12 @@ def _grep_verify_findings_parallel(
             else "verification_incomplete"
         )
     return GrepVerificationResult(
-        verdicts if incomplete_reason is None else {},
+        {key: verdict for key, verdict in verdicts.items() if key in verified},
         candidate_count=candidate_count,
         verified_count=verified_count,
         time_budget=time_budget,
         incomplete_reason=incomplete_reason,
+        verified_keys=verified,
     )
 
 
