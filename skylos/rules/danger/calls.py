@@ -546,7 +546,9 @@ class DangerousCallsRule(SkylosRule):
                 assigned_calls[target.id] = call_name
 
     def visit_node(self, node, context):
-        if isinstance(node, ast.Module) and not self._parents_annotated:
+        if isinstance(node, ast.Module):
+            self.aliases.clear()
+            self.assigned_calls_by_scope.clear()
             self._annotate_parents(node)
             self._parents_annotated = True
             self.assigned_calls_by_scope.setdefault(id(node), {})
