@@ -63,6 +63,10 @@ _MAPPING_FILENAME = "pipreqs_import_mapping.txt"
 MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
 MAX_DEPENDENCY_SCOPE_COMPONENTS = 256
 MAX_DEPENDENCY_SCOPE_PATH_CHARS = 4096
+# Directory entries read while looking for ``requirements*.txt`` variants.
+MAX_SERVICE_ROOT_ENTRIES = 4096
+# A nested Python project root (monorepo service) is marked by one of these.
+SERVICE_ROOT_MANIFESTS = ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt")
 MAX_PYTHON_SOURCE_ROOTS = 256
 MAX_PYTHON_LAYOUT_CANDIDATES = 1024
 MAX_ROS_MANIFEST_BYTES = 256_000
@@ -870,6 +874,120 @@ def _is_file_local_import(mod, ctx, importer, *, direct_script=False):
     )
     ctx["file_local_cache"][cache_key] = is_local
     return is_local
+
+
+def _context_has_regular_file(ctx, relative_path):
+    """A regular file (not a symlink) inside the repository."""
+    if relative_path.suffix in PYTHON_SOURCE_SUFFIXES:
+        return _context_has_local_python_file(ctx, relative_path)
+    if _supports_directory_fd_access():
+        return _is_local_python_file(ctx["repo_root"], relative_path)
+    directory = _contained_directory(ctx["repo_root"], relative_path.parent)
+    if directory is None:
+        return False
+    try:
+        return stat.S_ISREG(os.lstat(directory / relative_path.name).st_mode)
+    except OSError:
+        return False
+
+
+def _has_requirements_variant(repo_root, relative_directory):
+    """``requirements-dev.txt`` and similar, read through a held, no-follow
+    directory handle with a bounded number of entries."""
+    if not _supports_directory_fd_access(require_scandir=True):
+        return False
+    directory_fd = _open_contained_directory_fd(repo_root, relative_directory)
+    if directory_fd is None:
+        return False
+    try:
+        with os.scandir(directory_fd) as entries:
+            for index, entry in enumerate(entries):
+                if index >= MAX_SERVICE_ROOT_ENTRIES:
+                    return False
+                name = entry.name
+                if not (
+                    name.startswith("requirements")
+                    and name.endswith(".txt")
+                    and len(name) > len("requirements.txt")
+                    and name[len("requirements")] in "-_."
+                ):
+                    continue
+                if stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode):
+                    return True
+    except OSError:
+        return False
+    finally:
+        _close_directory_fd(directory_fd)
+    return False
+
+
+def _is_service_root(ctx, relative_directory):
+    cache = ctx.setdefault("service_root_cache", {})
+    if relative_directory in cache:
+        return cache[relative_directory]
+    result = any(
+        _context_has_regular_file(ctx, relative_directory / name)
+        for name in SERVICE_ROOT_MANIFESTS
+    ) or _has_requirements_variant(ctx["repo_root"], relative_directory)
+    cache[relative_directory] = result
+    return result
+
+
+def _importer_module_roots(ctx, directory):
+    """Directories that act as ``sys.path`` entries for files in
+    ``directory``, below the repository root (which is handled separately):
+    the nearest enclosing nested project root (a directory with its own
+    pyproject.toml, setup.py, setup.cfg or requirements*.txt) and the parent
+    of the importer's top-level package."""
+    cache = ctx.setdefault("importer_module_roots_cache", {})
+    if directory in cache:
+        return cache[directory]
+    roots = []
+    package_root = None
+    current = directory
+    while current.parts and _context_has_local_python_file(
+        ctx, current / "__init__.py"
+    ):
+        package_root = current.parent
+        current = current.parent
+    if package_root is not None and package_root.parts:
+        roots.append(package_root)
+    current = directory
+    while current.parts:
+        if _is_service_root(ctx, current):
+            if current not in roots:
+                roots.append(current)
+            break
+        current = current.parent
+    cache[directory] = tuple(roots)
+    return cache[directory]
+
+
+def _is_nested_project_import(mod, ctx, importer):
+    """``mod`` is a top-level module of the nested project that holds the
+    importer: ``services/api/app/main.py`` importing ``app.db`` where
+    ``services/api`` has its own manifest, or a package next to the
+    importer's top-level package."""
+    if importer is None or not str(mod).isidentifier():
+        return False
+    directory = importer.parent
+    cache = ctx.setdefault("nested_project_cache", {})
+    key = (directory, mod)
+    if key in cache:
+        return cache[key]
+    result = False
+    for root in _importer_module_roots(ctx, directory):
+        depth = len(root.parts)
+        if len(importer.parts) > depth + 1 and importer.parts[depth] == mod:
+            result = True
+            break
+        if _context_has_local_python_file(
+            ctx, root / f"{mod}.py"
+        ) or _context_has_local_python_file(ctx, root / mod / "__init__.py"):
+            result = True
+            break
+    cache[key] = result
+    return result
 
 
 def _has_direct_script_evidence(source):
@@ -3106,6 +3224,7 @@ def _classify_import_names(
     if local_scope_valid and (
         mod in ctx["local_modules"]
         or _is_file_local_import(mod, ctx, importer, direct_script=direct_script)
+        or _is_nested_project_import(mod, ctx, importer)
         or mod in local_fallbacks
     ):
         return None

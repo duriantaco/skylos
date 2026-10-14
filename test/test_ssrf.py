@@ -1800,3 +1800,125 @@ def test_django_test_case_subclass_and_local_mixin_stay_quiet(tmp_path):
     )
     out = _scan_one(tmp_path, "test_views.py", code)
     assert _ssrf_findings(out) == []
+
+
+_ALLOWLIST_PRELUDE = (
+    "from urllib.parse import urlparse\n"
+    "import requests\n"
+    "from fastapi import FastAPI, HTTPException\n"
+    "app = FastAPI()\n"
+    "LOGO_HOSTS = {'cdn.example.com', 'images.example.com'}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        # The fix the finding recommends: parse, then reject unlisted hosts.
+        "    parsed = urlparse(url)\n"
+        "    if parsed.scheme != 'https' or parsed.hostname not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n",
+        "    host = urlparse(url).hostname\n"
+        "    if host not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n",
+        "    if urlparse(url).netloc not in ('cdn.example.com',):\n"
+        "        return {'error': 'bad host'}\n",
+        "    if not LOGO_HOSTS.__contains__(urlparse(url).hostname):\n"
+        "        raise HTTPException(status_code=400)\n",
+        "    parsed = urlparse(url)\n"
+        "    if not (parsed.scheme == 'https' and parsed.hostname in LOGO_HOSTS):\n"
+        "        raise HTTPException(status_code=400)\n",
+        "    if not url.startswith('https://cdn.example.com/'):\n"
+        "        raise HTTPException(status_code=400)\n",
+    ],
+)
+def test_dominating_host_allowlist_guard_clears_ssrf(tmp_path, guard):
+    code = (
+        _ALLOWLIST_PRELUDE
+        + "@app.post('/logo')\n"
+        + "def set_logo(url: str):\n"
+        + guard
+        + "    resp = requests.get(url, timeout=5)\n"
+        + "    return resp.content\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_allowlisted.py", code)
+    assert _ssrf_findings(out) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Guard only logs: the request still goes out.
+        "    parsed = urlparse(url)\n"
+        "    if parsed.hostname not in LOGO_HOSTS:\n"
+        "        print('unexpected host')\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # Guard checks a different variable than the one requested.
+        "    parsed = urlparse(fallback)\n"
+        "    if parsed.hostname not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # Guard after the sink.
+        "    resp = requests.get(url, timeout=5)\n"
+        "    if urlparse(url).hostname not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return resp.content\n",
+        # URL rebound after the check.
+        "    if urlparse(url).hostname not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    url = fallback\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # A string "allowlist" is a substring test.
+        "    if urlparse(url).hostname not in 'cdn.example.com':\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # The caller picks the allowlist.
+        "    if urlparse(url).hostname not in fallback:\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # The exit is swallowed by a handler before the request.
+        "    try:\n"
+        "        if urlparse(url).hostname not in LOGO_HOSTS:\n"
+        "            raise ValueError(url)\n"
+        "    except ValueError:\n"
+        "        pass\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # Only on one branch.
+        "    if fallback:\n"
+        "        if urlparse(url).hostname not in LOGO_HOSTS:\n"
+        "            raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # A scheme-only or unterminated host prefix does not pin the host.
+        "    if not url.startswith('https://cdn.example.com'):\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+        # An ``and`` guard where only one side checks the host.
+        "    parsed = urlparse(url)\n"
+        "    if parsed.scheme != 'https' and parsed.hostname not in LOGO_HOSTS:\n"
+        "        raise HTTPException(status_code=400)\n"
+        "    return requests.get(url, timeout=5).content\n",
+    ],
+)
+def test_host_guard_that_does_not_dominate_still_flags(tmp_path, body):
+    code = (
+        _ALLOWLIST_PRELUDE
+        + "@app.post('/logo')\n"
+        + "def set_logo(url: str, fallback: str = ''):\n"
+        + body
+    )
+    out = _scan_one(tmp_path, "ssrf_unguarded.py", code)
+    assert len(_ssrf_findings(out)) == 1
+
+
+def test_host_guard_in_another_function_still_flags(tmp_path):
+    code = (
+        _ALLOWLIST_PRELUDE
+        + "def check(url):\n"
+        + "    if urlparse(url).hostname not in LOGO_HOSTS:\n"
+        + "        raise HTTPException(status_code=400)\n"
+        + "@app.post('/logo')\n"
+        + "def set_logo(url: str):\n"
+        + "    return requests.get(url, timeout=5).content\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_other_function.py", code)
+    assert len(_ssrf_findings(out)) == 1

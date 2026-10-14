@@ -1,4 +1,7 @@
+import difflib
 from unittest.mock import patch
+
+import pytest
 
 from skylos.rules.quality.regression import detect_security_regressions
 from skylos.cicd.review import (
@@ -50,6 +53,86 @@ class TestAuthDecoratorRemoval:
         )
         findings = detect_security_regressions(diff, "utils.py")
         assert len(findings) == 0
+
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            "require_admin",
+            "admin_required",
+            "requires_admin",
+            "staff_member_required",
+            "superuser_required",
+            "roles_required('admin')",
+            "role_required('admin')",
+            "user_passes_test(lambda u: u.is_staff)",
+            "requires_roles('admin')",
+            "admin_only",
+            "auth.ensure_login",
+            "check_permissions('billing')",
+            "staff_required",
+        ],
+    )
+    def test_project_auth_decorator_removed(self, decorator):
+        diff = _make_diff(
+            [f"@{decorator}", "async def delete_user(user_id: int):"],
+            ["async def delete_user(user_id: int):"],
+            context='@router.post("/admin/users/{user_id}/delete")',
+        )
+        findings = detect_security_regressions(diff, "routes.py")
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L021"
+        assert findings[0]["control_type"] == "auth"
+        assert decorator.split("(")[0] in findings[0]["message"]
+
+    def test_require_admin_removed_from_fastapi_route_with_sources(self):
+        before = (
+            "from fastapi import APIRouter\n"
+            "from app.auth import require_admin\n"
+            "\n"
+            "router = APIRouter()\n"
+            "\n"
+            "\n"
+            '@router.post("/admin/users/{user_id}/delete")\n'
+            "@require_admin\n"
+            "async def delete_user(user_id: int):\n"
+            "    return {'deleted': user_id}\n"
+        )
+        after = before.replace("@require_admin\n", "")
+        diff = "".join(
+            difflib.unified_diff(
+                before.splitlines(True),
+                after.splitlines(True),
+                fromfile="a/app/routes.py",
+                tofile="b/app/routes.py",
+            )
+        )
+        findings = detect_security_regressions(
+            diff, "app/routes.py", old_source=before, new_source=after
+        )
+        assert [(f["rule_id"], f["control_type"]) for f in findings] == [
+            ("SKY-L021", "auth")
+        ]
+        assert "@require_admin" in findings[0]["message"]
+        assert "delete_user" in findings[0]["message"]
+
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            'router.post("/admin/users")',
+            "lru_cache(maxsize=128)",
+            "require_json",
+            "requires_python",
+            "check_input",
+            "admin_view_cache",
+            "require_admin_header_parsed",
+        ],
+    )
+    def test_unrelated_decorator_removed_no_finding(self, decorator):
+        diff = _make_diff(
+            [f"@{decorator}", "async def handler():"],
+            ["async def handler():"],
+        )
+        assert detect_security_regressions(diff, "routes.py") == []
 
 
 class TestAuthDependencyRemoval:
