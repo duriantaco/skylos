@@ -990,13 +990,24 @@ value is the rest of the target's name in UPPER_SNAKE with two or more words
 | T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
 | T106 | MEDIUM | Unsafe exported API type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
-| F102 | HIGH | Framework endpoint missing object-level authorization guard | Python |
+| F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check | Python |
 | R101 | MEDIUM | Repository missing Python type-check command | Repo policy |
 | R102 | MEDIUM | Repository missing Python lint command | Repo policy |
 | R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy |
 | R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | varies | Circular dependency | Python |
+
+SKY-F102 retains its MEDIUM review for mutating routes without an obvious auth
+guard. It also reports a HIGH review when a FastAPI route contains an explicit
+owner or tenant comparison but returns or changes a selected object without
+that check protecting it. This includes identity changes through principal
+aliases, replacing the checked object, and late-bound local presenters.
+Copied authenticated IDs and captured, checked objects retain their proof.
+Fetching an object without an ownership comparison does not alone trigger
+this additional review. Arbitrary permission helpers, ORM query scoping,
+Django/Flask ownership flows, and unsupported control flow remain outside
+this narrow check; absence of F102 is not proof of authorization.
 
 SKY-L009 does not assume ordinary `print()` or `pprint()` output is debugging.
 It reports explicit `DEBUG:`/`DBG:` labels, raw `locals()`/`globals()`/`vars()`
