@@ -2,6 +2,8 @@ import json
 import subprocess
 import time
 
+import pytest
+
 import skylos.rules.ai_defect.dependency_hallucination as dep
 
 
@@ -509,6 +511,111 @@ def test_nested_local_imports_use_discovered_files_without_directory_fds(
         (finding["rule_id"], finding["symbol"], finding["line"])
         for finding in diff_findings
     ] == expected
+
+
+def _monorepo_service(repo, manifest_name="requirements.txt"):
+    service = repo / "services" / "api"
+    manifest = {
+        "requirements.txt": "fastapi\n",
+        "requirements-dev.txt": "fastapi\n",
+        "pyproject.toml": '[project]\nname = "api"\ndependencies = ["fastapi"]\n',
+    }[manifest_name]
+    _write_py(service / manifest_name, manifest)
+    _write_py(service / "app" / "__init__.py", "")
+    _write_py(service / "app" / "db.py", "x = 1\n")
+    _write_py(service / "settings.py", "DEBUG = False\n")
+    main = _write_py(
+        service / "app" / "main.py",
+        "from app.db import x\n"
+        "import settings\n"
+        "import fastapi\n"
+        "import missing_service_dependency\n",
+    )
+    return service, main
+
+
+@pytest.mark.parametrize(
+    "manifest_name", ["requirements.txt", "requirements-dev.txt", "pyproject.toml"]
+)
+def test_monorepo_service_package_imports_are_local(
+    monkeypatch, tmp_path, manifest_name
+):
+    repo = tmp_path / "repo"
+    _service, main = _monorepo_service(repo, manifest_name)
+    _stub_dependency_registry(
+        monkeypatch,
+        {"app": "exists", "settings": "exists", "fastapi": "exists"},
+    )
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [main])
+    diff_findings, _ = dep.scan_diff_added_imports(
+        repo,
+        [
+            ("services/api/app/main.py", 1, "app.db"),
+            ("services/api/app/main.py", 2, "settings"),
+            ("services/api/app/main.py", 3, "fastapi"),
+            ("services/api/app/main.py", 4, "missing_service_dependency"),
+        ],
+    )
+
+    # Only the genuinely missing module is reported; ``app`` and ``settings``
+    # live in the service root next to the importer's package.
+    expected = [("missing_service_dependency", 4)]
+    assert [(f["symbol"], f["line"]) for f in findings] == expected
+    assert [(f["symbol"], f["line"]) for f in diff_findings] == expected
+
+
+def test_monorepo_namespace_package_without_init_is_local_to_its_files(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    service = repo / "services" / "api"
+    _write_py(service / "requirements.txt", "fastapi\n")
+    _write_py(service / "app" / "db.py", "x = 1\n")
+    routes = _write_py(
+        service / "app" / "routes" / "users.py", "from app.db import x\n"
+    )
+    _stub_dependency_registry(monkeypatch, {"app": "exists"})
+
+    assert dep.scan_python_dependency_hallucinations(repo, [routes]) == []
+
+
+def test_monorepo_sibling_service_package_is_not_local(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    _monorepo_service(repo)
+    _write_py(repo / "services" / "worker" / "requirements.txt", "celery\n")
+    worker = _write_py(
+        repo / "services" / "worker" / "jobs.py", "from app.db import x\n"
+    )
+    _stub_dependency_registry(monkeypatch, {"app": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [worker])
+
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "app")
+    ]
+
+
+def test_monorepo_service_root_does_not_follow_symlinked_package(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    service = repo / "services" / "api"
+    _write_py(service / "requirements.txt", "fastapi\n")
+    outside = tmp_path / "outside" / "vendored"
+    _write_py(outside / "__init__.py", "")
+    try:
+        (service / "vendored").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    main = _write_py(service / "main.py", "import vendored\n")
+    _stub_dependency_registry(monkeypatch, {"vendored": "exists"})
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [main])
+
+    assert [(f["rule_id"], f["symbol"]) for f in findings] == [
+        (dep.RULE_ID_UNDECLARED, "vendored")
+    ]
 
 
 def test_known_source_root_lookup_is_linear_in_file_depth():

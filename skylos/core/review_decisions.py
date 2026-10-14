@@ -1865,17 +1865,16 @@ def _repository_semantic_hash(
     project_root: str | Path,
     *,
     source_cache: dict[str, str | None] | None,
-    semantic_cache: dict[str, str] | None,
     dependency_cache: dict[str, Any] | None,
 ) -> str | None:
-    """Bind a high-risk review to inputs the analyzer can actually consume.
+    """Bind a review to every input the analyzer can actually consume.
 
     Repository checkouts routinely contain large images, archives, generated
     output, and worktree metadata.  Those files cannot change a Skylos proof,
     so reading them made review identities both slow and needlessly fragile.
-    The inventory below follows Skylos' source/config/dependency inputs.  The
-    finding's proven dependency closure uses syntax hashes; reverse runtime
-    setup uses a fast conservative content hash.
+    The inventory below follows Skylos' source/config/dependency inputs and
+    hashes their raw contents only, so the envelope is the same whichever
+    findings were identified first.
     """
     if dependency_cache is None:
         dependency_cache = {}
@@ -1904,28 +1903,20 @@ def _repository_semantic_hash(
         )
         if environment_hash is None:
             return None
-        overrides = {
-            item["file_path"]: semantic_cache[item["file_path"]]
-            for item in cached_records
-            if semantic_cache is not None and item.get("file_path") in semantic_cache
-        }
-        digest_cache_key = "repository-input-envelope-v3:" + sha256_value(overrides)
+        digest_cache_key = "repository-input-envelope-v4"
         if dependency_cache is not None and digest_cache_key in dependency_cache:
             return dependency_cache[digest_cache_key]
-        effective_records = [
-            {
-                "file_path": item["file_path"],
-                "semantic_hash": overrides.get(
-                    item["file_path"], item["semantic_hash"]
-                ),
-            }
-            for item in cached_records
-        ]
         digest = sha256_value(
             {
-                "scope": "repository-input-envelope-v3",
+                "scope": "repository-input-envelope-v4",
                 "environment_hash": environment_hash,
-                "files": effective_records,
+                "files": [
+                    {
+                        "file_path": item["file_path"],
+                        "semantic_hash": item["semantic_hash"],
+                    }
+                    for item in cached_records
+                ],
             }
         )
         if dependency_cache is not None:
@@ -2101,12 +2092,11 @@ def _repository_semantic_hash(
     records = sorted(records, key=lambda item: item["file_path"])
     if dependency_cache is not None:
         dependency_cache[records_cache_key] = records
-    # Re-enter through the cached-record branch so semantic overrides are
-    # applied consistently on the first and subsequent findings.
+    # Re-enter through the cached-record branch so the first and subsequent
+    # findings share one digest.
     return _repository_semantic_hash(
         root,
         source_cache=source_cache,
-        semantic_cache=semantic_cache,
         dependency_cache=dependency_cache,
     )
 
@@ -2155,7 +2145,6 @@ def _prepare_dead_code_symbol_support(
         _repository_semantic_hash(
             project_root,
             source_cache=source_cache,
-            semantic_cache=semantic_cache,
             dependency_cache=dependency_cache,
         )
         is None
@@ -2965,7 +2954,6 @@ def finding_identity(
             dead_code_support_hash = _repository_semantic_hash(
                 project_root,
                 source_cache=source_cache,
-                semantic_cache=semantic_cache,
                 dependency_cache=dependency_cache,
             )
             if dead_code_support_hash is None:
@@ -3014,21 +3002,28 @@ def finding_identity(
             )
             if local_dependency_hash is None:
                 return None
-        # A forward import closure cannot see startup monkeypatches, reverse
-        # importers, or framework registries.  Retain a fast, bounded envelope
-        # of other analyzer inputs until each language exposes those proof
-        # edges directly.
-        repository_hash = _repository_semantic_hash(
-            project_root,
-            source_cache=source_cache,
-            semantic_cache=semantic_cache,
-            dependency_cache=dependency_cache,
-        )
-        if repository_hash is None:
-            return None
+        if local_dependency_hash in (None, "dependency-closure-incomplete"):
+            # No proven local closure (another language, or a Python import
+            # the closure could not follow): bind the review to the bounded
+            # snapshot of every analyzer input instead.
+            repository_hash = _repository_semantic_hash(
+                project_root,
+                source_cache=source_cache,
+                dependency_cache=dependency_cache,
+            )
+            if repository_hash is None:
+                return None
+        else:
+            # The finding's file, its proven import closure and the language's
+            # dependency environment are already bound above.  Folding in the
+            # whole-repository snapshot made every unrelated commit reopen each
+            # approved high-risk review.  Trade-off: a reverse importer,
+            # startup monkeypatch or framework registry outside the closure no
+            # longer invalidates the review on its own.
+            repository_hash = "local-dependency-closure-complete"
         semantic_dependency_hash = sha256_value(
             {
-                "scope": "high-risk-proof-envelope-v2",
+                "scope": "high-risk-proof-envelope-v3",
                 "local_dependency_hash": local_dependency_hash,
                 "repository_hash": repository_hash,
             }

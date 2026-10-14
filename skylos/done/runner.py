@@ -71,6 +71,18 @@ _PLUGIN_SOURCE = Path(__file__).with_name("pytest_probe.py").read_text(encoding=
 _MAX_DESELECTED_BYTES = 16 * 1024 * 1024
 _MAX_TRACE_BYTES = 64 * 1024 * 1024
 
+# Where the project's own interpreter lives when no test_command is set: the
+# Python running Skylos (pipx, uv tool, another venv) usually lacks the
+# project's dependencies, so every test would fail to import.
+_REPO_VENV_DIRECTORIES = (".venv", "venv")
+_PATH_PYTHONS = ("python3", "python")
+_PYTEST_PROBE = (
+    "import importlib.util, sys; sys.exit(importlib.util.find_spec('pytest') is None)"
+)
+_PYTEST_PROBE_TIMEOUT = 15.0
+_MAX_VENV_SITE_DIRS = 8
+_path_python_has_pytest_cache: dict[str, bool] = {}
+
 
 @dataclass(frozen=True)
 class CaseResult:
@@ -411,8 +423,104 @@ def _invocation(root: Path, config: DoneConfig) -> _Invocation | None:
     if config.test_command:
         argv = tuple(config.test_command)
         return _Invocation(argv, _is_pytest(argv), auto=False)
-    if _looks_like_pytest_project(root) and importlib.util.find_spec("pytest"):
-        return _Invocation((sys.executable, "-m", "pytest"), True, auto=True)
+    if _looks_like_pytest_project(root):
+        python = _project_python(root)
+        if python is not None:
+            return _Invocation((python, "-m", "pytest"), True, auto=True)
+    return None
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    candidate = Path(os.path.abspath(path))
+    lexical = Path(os.path.abspath(root))
+    try:
+        bases = (lexical, root.resolve())
+    except (OSError, RuntimeError):
+        bases = (lexical,)
+    return any(base == candidate or base in candidate.parents for base in bases)
+
+
+def _venv_python(env_dir: Path, *, in_repo: bool) -> str | None:
+    """The interpreter of the virtualenv at ``env_dir`` when pytest is
+    installed in it. Checked on disk; nothing is run. An in-repository
+    environment must be a real directory, not a symlink out of the checkout
+    (its ``python`` is normally a symlink to the base interpreter)."""
+    windows = os.name == "nt"
+    scripts = env_dir / ("Scripts" if windows else "bin")
+    python = scripts / ("python.exe" if windows else "python")
+    try:
+        if in_repo and not all(
+            stat.S_ISDIR(os.lstat(directory).st_mode) for directory in (env_dir, scripts)
+        ):
+            return None
+        if not (python.is_file() and os.access(python, os.X_OK)):
+            return None
+        if windows:
+            site_dirs = [env_dir / "Lib" / "site-packages"]
+        else:
+            site_dirs = sorted((env_dir / "lib").glob("python*/site-packages"))
+        return (
+            str(python)
+            if any(
+                (site / "pytest" / "__init__.py").is_file()
+                for site in site_dirs[:_MAX_VENV_SITE_DIRS]
+            )
+            else None
+        )
+    except OSError:
+        return None
+
+
+def _path_python_has_pytest(python: str) -> bool:
+    cached = _path_python_has_pytest_cache.get(python)
+    if cached is not None:
+        return cached
+    try:
+        # -I: no current directory, user site or PYTHON* variables, so the
+        # probe cannot import anything from the repository.
+        probe = subprocess.run(
+            [python, "-I", "-c", _PYTEST_PROBE],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_PYTEST_PROBE_TIMEOUT,
+            check=False,
+        )
+        result = probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        result = False
+    _path_python_has_pytest_cache[python] = result
+    return result
+
+
+def _project_python(root: Path) -> str | None:
+    """The interpreter to run the project's tests with, first match wins:
+    the active virtualenv ($VIRTUAL_ENV), an in-repository ``.venv``/``venv``
+    (each only with pytest installed), ``python3``/``python`` on PATH when it
+    can import pytest, then the Python running Skylos when it has pytest.
+    Only interpreters in the active virtualenv, the repository's own
+    environment directories or absolute PATH entries outside the repository
+    are considered."""
+    virtual_env = os.environ.get("VIRTUAL_ENV", "")
+    if virtual_env and os.path.isabs(virtual_env):
+        python = _venv_python(Path(virtual_env), in_repo=False)
+        if python is not None:
+            return python
+    for name in _REPO_VENV_DIRECTORIES:
+        python = _venv_python(root / name, in_repo=True)
+        if python is not None:
+            return python
+    for name in _PATH_PYTHONS:
+        found = shutil.which(name)
+        if (
+            found
+            and os.path.isabs(found)
+            and not _is_within(Path(found), root)
+            and _path_python_has_pytest(found)
+        ):
+            return found
+    if importlib.util.find_spec("pytest"):
+        return sys.executable
     return None
 
 

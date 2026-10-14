@@ -1109,6 +1109,8 @@ def test_verdict_for_unrun_tests_says_they_did_not_run(repo: Path):
 def test_runner_says_plainly_when_pytest_is_not_installed(repo: Path, monkeypatch):
     import skylos.done.runner as runner
 
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
     real_find_spec = runner.importlib.util.find_spec
     monkeypatch.setattr(
         runner.importlib.util,
@@ -1138,6 +1140,123 @@ def test_runner_without_a_pytest_project_asks_for_a_test_command(
 
     assert result.status == "skipped"
     assert "no pytest project was found" in result.reason
+
+
+def _fake_venv(env_dir: Path, *, with_pytest: bool = True) -> Path:
+    """A virtualenv layout on disk; its python is never executed."""
+    if sys.platform == "win32":
+        python = env_dir / "Scripts" / "python.exe"
+        site = env_dir / "Lib" / "site-packages"
+    else:
+        python = env_dir / "bin" / "python"
+        site = env_dir / "lib" / "python3.12" / "site-packages"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")  # skylos: ignore[SKY-D324] fake venv under pytest tmp_path
+    python.chmod(0o755)
+    site.mkdir(parents=True)
+    if with_pytest:
+        (site / "pytest").mkdir()
+        (site / "pytest" / "__init__.py").write_text("", encoding="utf-8")  # skylos: ignore[SKY-D324] fake venv under pytest tmp_path
+    return python
+
+
+@pytest.fixture
+def isolated_python_choice(monkeypatch):
+    """No active virtualenv, nothing on PATH, and no pytest in Skylos's own
+    environment unless a test says otherwise."""
+    import skylos.done.runner as runner
+
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+    monkeypatch.setattr(runner, "_path_python_has_pytest_cache", {})
+    real_find_spec = runner.importlib.util.find_spec
+    monkeypatch.setattr(
+        runner.importlib.util,
+        "find_spec",
+        lambda name, *a: None if name == "pytest" else real_find_spec(name, *a),
+    )
+    return runner
+
+
+@pytest.mark.parametrize("venv_name", [".venv", "venv"])
+def test_auto_test_command_prefers_the_repository_virtualenv(
+    tmp_path: Path, isolated_python_choice, venv_name
+):
+    runner = isolated_python_choice
+    python = _fake_venv(tmp_path / venv_name)
+    (tmp_path / "tests").mkdir()
+
+    invocation = runner._invocation(tmp_path, DoneConfig())
+
+    assert invocation is not None
+    assert invocation.argv == (str(python), "-m", "pytest")
+    assert invocation.pytest and invocation.auto
+    assert runner._shown_command(invocation) == "python -m pytest"
+
+
+def test_auto_test_command_prefers_the_active_virtualenv(
+    tmp_path: Path, isolated_python_choice, monkeypatch
+):
+    runner = isolated_python_choice
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    _fake_venv(repo / ".venv")
+    active = _fake_venv(tmp_path / "active-env")
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "active-env"))
+
+    assert runner._project_python(repo) == str(active)
+
+
+def test_auto_test_command_skips_virtualenvs_without_pytest(
+    tmp_path: Path, isolated_python_choice, monkeypatch
+):
+    runner = isolated_python_choice
+    _fake_venv(tmp_path / ".venv", with_pytest=False)
+
+    assert runner._project_python(tmp_path) is None
+
+    monkeypatch.setattr(runner.importlib.util, "find_spec", lambda name, *a: object())
+    assert runner._project_python(tmp_path) == sys.executable
+
+
+def test_auto_test_command_ignores_a_symlinked_repository_virtualenv(
+    tmp_path: Path, isolated_python_choice
+):
+    runner = isolated_python_choice
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _fake_venv(tmp_path / "elsewhere")
+    try:
+        (repo / ".venv").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+
+    assert runner._project_python(repo) is None
+
+
+def test_auto_test_command_uses_a_path_python_with_pytest_outside_the_repo(
+    tmp_path: Path, isolated_python_choice, monkeypatch
+):
+    runner = isolated_python_choice
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    inside = repo / "bin" / "python3"
+    outside = tmp_path / "usr" / "bin" / "python"
+    probed = []
+    monkeypatch.setattr(
+        runner.shutil,
+        "which",
+        lambda name: str(inside) if name == "python3" else str(outside),
+    )
+    monkeypatch.setattr(
+        runner, "_path_python_has_pytest", lambda python: probed.append(python) or True
+    )
+    monkeypatch.setattr(runner.importlib.util, "find_spec", lambda name, *a: object())
+
+    # The repository's own bin/python3 is never run; the PATH interpreter
+    # outside it wins over the Python running Skylos.
+    assert runner._project_python(repo) == str(outside)
+    assert probed == [str(outside)]
 
 
 def test_runner_strips_pytest_addopts_from_the_environment(repo: Path, monkeypatch):

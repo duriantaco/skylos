@@ -15,16 +15,53 @@ from skylos.constants import get_non_library_dir_kind
 
 RULE_ID = "SKY-L021"
 
-_AUTH_DECORATORS = {
-    "login_required",
-    "require_auth",
-    "requires_auth",
-    "authenticated",
-    "permission_required",
-    "permissions_required",
-    "jwt_required",
-    "token_required",
-}
+_AUTH_DECORATOR_NAMES = frozenset(
+    {
+        "login_required",
+        "require_auth",
+        "requires_auth",
+        "authenticated",
+        "permission_required",
+        "permissions_required",
+        "jwt_required",
+        "token_required",
+        "require_admin",
+        "admin_required",
+        "requires_admin",
+        "staff_member_required",
+        "superuser_required",
+        "roles_required",
+        "role_required",
+        "user_passes_test",
+        "requires_roles",
+        "admin_only",
+    }
+)
+
+# Conservative naming conventions for project-defined auth decorators, e.g.
+# @require_admin, @ensure_login, @check_permissions, @admin_only,
+# @staff_required. Matched against the decorator's base name only.
+_AUTH_DECORATOR_NAME_RE = re.compile(
+    r"^(?:(?:require|requires|ensure|check)_?"
+    r"(?:admin|auth|login|role|roles|permission|permissions|staff|superuser)"
+    r"|(?:admin|login|auth|staff|superuser|permission|role)s?_(?:required|only))$"
+)
+
+
+class _AuthDecoratorNames:
+    """Membership test for auth decorator base names (exact or by convention)."""
+
+    __slots__ = ()
+
+    def __contains__(self, name: object) -> bool:
+        if not isinstance(name, str):
+            return False
+        return name in _AUTH_DECORATOR_NAMES or bool(
+            _AUTH_DECORATOR_NAME_RE.match(name)
+        )
+
+
+_AUTH_DECORATORS = _AuthDecoratorNames()
 
 _AUTH_DEPENDS = {
     "get_current_user",
@@ -208,6 +245,7 @@ def detect_security_regressions(
             current_line += 1
             current_old_line += 1
 
+    auth_decorator_indexes = set()
     for removed_index, (line_no, line) in enumerate(removed_lines):
         m = _DECORATOR_RE.match("-" + line.lstrip())
         if not m:
@@ -221,6 +259,8 @@ def detect_security_regressions(
 
         base_name = dec_name.split(".")[-1]
 
+        if base_name in _AUTH_DECORATORS:
+            auth_decorator_indexes.add(removed_index)
         if (
             base_name in _AUTH_DECORATORS
             and removed_old_lines[removed_index] not in handled_auth_decorators
@@ -458,7 +498,11 @@ def detect_security_regressions(
                 )
             )
 
-    for line_no, line in removed_lines:
+    for removed_index, (line_no, line) in enumerate(removed_lines):
+        if removed_index in auth_decorator_indexes:
+            # A removed @user_passes_test(...) is already reported as an auth
+            # decorator removal; don't double-count it as a permission call.
+            continue
         if _PERMISSION_CALLS_RE.search(line):
             findings.append(
                 _make_finding(

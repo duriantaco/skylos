@@ -1106,7 +1106,7 @@ def test_imported_security_dependency_change_resurfaces_finding(tmp_path):
     assert len(projected["danger"]) == 1
 
 
-def test_unimported_python_change_conservatively_invalidates_security_review(tmp_path):
+def _security_review_repo(tmp_path, *, validator_imports=""):
     source = tmp_path / "app.py"
     validator = tmp_path / "validator.py"
     unrelated = tmp_path / "unrelated.py"
@@ -1115,8 +1115,58 @@ def test_unimported_python_change_conservatively_invalidates_security_review(tmp
         "def write_report():\n"
         "    open(safe_path(input())).write('unsafe')\n"
     )
-    validator.write_text("def safe_path(value):\n    return '/tmp/report'\n")
+    validator.write_text(  # skylos: ignore[SKY-D324] fixed file in pytest tmp_path
+        validator_imports + "def safe_path(value):\n    return '/tmp/report'\n"
+    )
     unrelated.write_text("VALUE = 'old'\n")
+    return source, validator, unrelated
+
+
+def test_unimported_python_change_keeps_security_review(tmp_path):
+    # Any commit elsewhere in the repository used to reopen every approved
+    # high-risk review: the identity folded in a whole-repository snapshot.
+    source, _validator, unrelated = _security_review_repo(tmp_path)
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+    bundle = {
+        "version": 2,
+        "decisions": [_v2_decision(identity, line_number=3)],
+    }
+
+    unrelated.write_text("VALUE = 'new'\n")
+    (tmp_path / "added.py").write_text("def helper():\n    return 1\n")
+    changed = annotate_result_identities(result, tmp_path)["danger"][0]
+    projected = apply_review_decisions(result, bundle, tmp_path, now=NOW)
+
+    assert changed["context_hash"] == identity["context_hash"]
+    assert projected["danger"] == []
+    assert len(projected["reviewed_findings"]) == 1
+
+
+@pytest.mark.parametrize("target", ["source", "validator"])
+def test_finding_file_or_import_closure_change_still_reopens_review(
+    tmp_path, target
+):
+    source, validator, _unrelated = _security_review_repo(tmp_path)
+    result = _result(source, line=3)
+    identity = annotate_result_identities(result, tmp_path)["danger"][0]
+
+    if target == "source":
+        source.write_text(source.read_text() + "def other():\n    return 2\n")
+    else:
+        validator.write_text("def safe_path(value):\n    return value\n")
+    changed = annotate_result_identities(result, tmp_path)["danger"][0]
+
+    assert changed["stable_fingerprint"] == identity["stable_fingerprint"]
+    assert changed["context_hash"] != identity["context_hash"]
+
+
+def test_incomplete_python_closure_keeps_repository_envelope(tmp_path):
+    # The closure cannot follow a runtime loader in validator.py, so the
+    # review stays bound to every analyzer input.
+    source, _validator, unrelated = _security_review_repo(
+        tmp_path, validator_imports="import runpy\nrunpy.run_path('plugin.py')\n"
+    )
     result = _result(source, line=3)
     identity = annotate_result_identities(result, tmp_path)["danger"][0]
     bundle = {
@@ -1129,6 +1179,29 @@ def test_unimported_python_change_conservatively_invalidates_security_review(tmp
 
     assert len(projected["danger"]) == 1
     assert projected["reviewed_findings"] == []
+
+
+def test_repository_envelope_does_not_depend_on_finding_order(tmp_path):
+    source, _validator, _unrelated = _security_review_repo(tmp_path)
+    go_source = tmp_path / "main.go"
+    go_source.write_text("package main\nfunc main() { writeFile(path) }\n")
+    go_finding = {
+        "rule_id": "SKY-D215",
+        "file": str(go_source),
+        "line": 2,
+        "symbol": "main",
+        "severity": "HIGH",
+        "message": "unsafe call",
+    }
+    python_first = _result(source, line=3)
+    python_first["danger"].append(dict(go_finding))
+    go_only = _result(source, line=3)
+    go_only["danger"] = [dict(go_finding)]
+
+    after_python = annotate_result_identities(python_first, tmp_path)["danger"][1]
+    alone = annotate_result_identities(go_only, tmp_path)["danger"][0]
+
+    assert after_python["context_hash"] == alone["context_hash"]
 
 
 def test_imported_typescript_dependency_change_resurfaces_finding(tmp_path):
