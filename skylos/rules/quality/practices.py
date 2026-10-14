@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._object_auth import defeated_owner_guard
 
 
 AUTH_MARKERS = (
@@ -175,9 +176,10 @@ def _has_dependency_call(node: ast.AST | None) -> bool:
     if node is None:
         return False
     for sub in ast.walk(node):
-        if isinstance(sub, ast.Call) and _last_name_part(
-            _dotted_name(sub.func)
-        ) in {"depends", "security"}:
+        if isinstance(sub, ast.Call) and _last_name_part(_dotted_name(sub.func)) in {
+            "depends",
+            "security",
+        }:
             return True
     return False
 
@@ -346,6 +348,97 @@ def _module_has_typing_signal(module: ast.Module) -> bool:
     return False
 
 
+def _route_object_inputs(function):
+    positional = [*function.args.posonlyargs, *function.args.args]
+    parameters = {arg.arg for arg in [*positional, *function.args.kwonlyargs]}
+    defaults = dict(
+        zip(
+            [arg.arg for arg in positional[-len(function.args.defaults) :]]
+            if function.args.defaults
+            else [],
+            function.args.defaults,
+        )
+    )
+    defaults.update(
+        {
+            arg.arg: value
+            for arg, value in zip(function.args.kwonlyargs, function.args.kw_defaults)
+            if value is not None
+        }
+    )
+    principals = {}
+    dependencies = set()
+    dependency_cache = {}
+    for arg in [*positional, *function.args.kwonlyargs]:
+        dependency = next(
+            (
+                item
+                for value in [defaults.get(arg.arg), arg.annotation]
+                if value is not None
+                for item in ast.walk(value)
+                if isinstance(item, ast.Call)
+                and _last_name_part(_dotted_name(item.func)) in {"depends", "security"}
+            ),
+            None,
+        )
+        if dependency is None:
+            continue
+        dependencies.add(arg.arg)
+        if not (_call_uses_auth(dependency) or _has_auth_marker(arg.arg)):
+            continue
+        key = _dependency_object_key(dependency, arg.arg)
+        use_cache = next(
+            (
+                keyword.value
+                for keyword in dependency.keywords
+                if keyword.arg == "use_cache"
+            ),
+            None,
+        )
+        cached = (
+            use_cache is None
+            or isinstance(use_cache, ast.Constant)
+            and use_cache.value is True
+        )
+        token = dependency_cache.get(key) if cached else None
+        if token is None:
+            token = f"dependency:{arg.arg}"
+        # FastAPI stores the first result even if that parameter opted out of
+        # reading the cache; a later cached parameter still receives it.
+        dependency_cache.setdefault(key, token)
+        principals[arg.arg] = token
+    # FastAPI also binds query/body parameters from the caller. A second
+    # selected object need not be named in the path to defeat the first guard.
+    return parameters - dependencies, principals
+
+
+def _dependency_object_key(dependency, parameter):
+    """Repeated cached dependency parameters share the same returned object."""
+    keywords = {keyword.arg: keyword.value for keyword in dependency.keywords}
+    use_cache = keywords.get("use_cache")
+    if use_cache is not None and not (
+        isinstance(use_cache, ast.Constant) and isinstance(use_cache.value, bool)
+    ):
+        return f"opaque:{parameter}"
+    callable_node = (
+        dependency.args[0] if dependency.args else keywords.get("dependency")
+    )
+    if not isinstance(callable_node, (ast.Name, ast.Attribute)):
+        return f"opaque:{parameter}"
+    scopes = keywords.get("scopes")
+    if scopes is not None:
+        if not isinstance(scopes, (ast.List, ast.Tuple)) or any(
+            not isinstance(item, ast.Constant) or not isinstance(item.value, str)
+            for item in scopes.elts
+        ):
+            return f"opaque:{parameter}"
+        scope_names = tuple(sorted({item.value for item in scopes.elts}))
+    else:
+        scope_names = ()
+    scope = keywords.get("scope")
+    return f"cached:{ast.dump(callable_node)}:{scope_names}:{ast.dump(scope) if scope is not None else ''}"
+
+
 class TypeAnnotationPracticeRule(SkylosRule):
     rule_id = "SKY-T101"
     name = "Typed API Surface"
@@ -502,5 +595,30 @@ class FrameworkPracticeRule(SkylosRule):
                         "col": function.col_offset,
                     }
                 )
+
+            if any(_is_fastapi_route(decorator) for decorator in route_decorators):
+                identifiers, principals = _route_object_inputs(function)
+                if defeated_owner_guard(node, function, identifiers, principals):
+                    findings.append(
+                        {
+                            "rule_id": "SKY-F102",
+                            "kind": "framework_security",
+                            "severity": "HIGH",
+                            "type": "route",
+                            "name": function.name,
+                            "simple_name": function.name,
+                            "value": "defeated_owner_guard",
+                            "threshold": 0,
+                            "message": (
+                                f"Route '{function.name}' may expose or change a caller-selected "
+                                "object without a valid ownership check on that object. "
+                                "Review principal mutation, object rebinding, and guard paths."
+                            ),
+                            "file": filename,
+                            "basename": _basename(filename),
+                            "line": function.lineno,
+                            "col": function.col_offset,
+                        }
+                    )
 
         return findings or None
