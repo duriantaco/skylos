@@ -577,17 +577,6 @@ class _PathFlowChecker(TaintVisitor):
             return self._get_basename_sanitized(node.id)
         return False
 
-    def _is_fixed_base_with_sanitized_name(self, node):
-        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
-            return False
-        if not self._is_basename_sanitized_expr(node.right):
-            return False
-        return (
-            self._is_path_like_expr(node.left)
-            and not self.is_tainted(node.left)
-            and not self._is_symlink_sensitive_expr(node.left)
-        )
-
     def is_tainted(self, node):
         if _is_path_name_projection(node):
             return False
@@ -1028,8 +1017,6 @@ class _PathFlowChecker(TaintVisitor):
         )
 
     def _flag_symlink_read_if_unsafe(self, node, path_expr):
-        if self._is_fixed_base_with_sanitized_name(path_expr):
-            return
         if not self._path_needs_symlink_protection(path_expr):
             return
         if self._has_symlink_read_guard():

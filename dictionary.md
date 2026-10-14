@@ -350,6 +350,10 @@ Finding types:
 | D325 | MEDIUM | Symlink-following file read | Python |
 | D326 | HIGH | Unsafe archive extraction | Python |
 
+`Path(name).name` strips directory components but can still select an existing
+final symlink. D325 does not exempt a read solely because that basename is
+joined to a fixed base directory.
+
 For Python path checks (`D215`, `D324`, `D325`), direct
 `pytest.mark.parametrize` decorators can establish that a filename parameter
 contains only literal relative paths. Supported forms include import aliases,
