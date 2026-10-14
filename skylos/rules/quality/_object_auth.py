@@ -9,6 +9,8 @@ outside this rule rather than being treated as a safety proof.
 from __future__ import annotations
 
 import ast
+import builtins
+from copy import copy
 from dataclasses import dataclass, field, replace
 
 
@@ -20,6 +22,12 @@ _WRITE_METHODS = {"update", "delete", "remove", "save"}
 
 class _Unsupported(Exception):
     pass
+
+
+class _Abrupt(Exception):
+    def __init__(self, state, exception):
+        self.state = state.copy()
+        self.exception = exception
 
 
 @dataclass(frozen=True)
@@ -70,7 +78,7 @@ class _Exit:
 
 
 class _Flow:
-    def __init__(self, *, shadowed_builtins=()):
+    def __init__(self, *, shadowed_builtins=(), exception_aliases=None):
         self.saw_owner_check = False
         self.unsafe = False
         self.steps = 0
@@ -80,6 +88,52 @@ class _Flow:
         self.exception_outcomes = None
         self.call_frames = []
         self.try_depth = 0
+        self.exception_aliases = exception_aliases or {}
+
+    def _constant_truth(self, test, state):
+        if isinstance(test, ast.Constant):
+            return bool(test.value)
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            truth = self._constant_truth(test.operand, state)
+            return None if truth is None else not truth
+        if (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+            and isinstance(test.left, ast.Name)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+            and state.values.get(test.left.id, _Value()).selector
+            == ("literal", "NoneType", None)
+        ):
+            return isinstance(test.ops[0], ast.Is)
+        return None
+
+    def _branches(self, test, state):
+        known = self._constant_truth(test, state)
+        for truth in [True, False] if known is None else [known]:
+            child = state.copy()
+            child.authorized.update(self._facts(test, child, truth))
+            if (
+                isinstance(test, ast.Compare)
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+                and isinstance(test.left, ast.Name)
+                and isinstance(test.comparators[0], ast.Constant)
+                and test.comparators[0].value is None
+                and truth == isinstance(test.ops[0], ast.Is)
+            ):
+                original = child.values.get(test.left.id, _Value())
+                for name, value in list(child.values.items()):
+                    if (
+                        name == test.left.id
+                        or original.principals
+                        and value.principals == original.principals
+                    ):
+                        child.values[name] = _Value(
+                            selector=("literal", "NoneType", None)
+                        )
+            yield truth, child
 
     def _fresh_identity(self):
         self.next_identity += 1
@@ -101,12 +155,15 @@ class _Flow:
     def _may_raise(self, state, exceptions):
         if self.exception_outcomes is not None:
             for exception in exceptions:
-                snapshot = state.copy()
-                if self.call_frames:
-                    snapshot.values = dict(self.call_frames[0].values)
                 self.exception_outcomes.append(
-                    _Exit(snapshot, "raise", exception=exception)
+                    _Exit(self._exception_state(state), "raise", exception=exception)
                 )
+
+    def _exception_state(self, state):
+        snapshot = state.copy()
+        if self.call_frames:
+            snapshot.values = dict(self.call_frames[0].values)
+        return snapshot
 
     def _value(self, node, state, depth=0):
         if node is None:
@@ -117,6 +174,12 @@ class _Flow:
             return state.values.get(node.id, _Value())
         if isinstance(node, ast.Constant):
             return _Value(selector=("literal", type(node.value).__name__, node.value))
+        if isinstance(node, ast.IfExp):
+            truth = self._constant_truth(node.test, state)
+            if truth is not None:
+                return self._value(
+                    node.body if truth else node.orelse, state, depth + 1
+                )
         if isinstance(node, ast.Await):
             return self._value(node.value, state, depth + 1)
         if isinstance(node, ast.Lambda):
@@ -124,6 +187,13 @@ class _Flow:
             return _Value(closure=(node.args, node.body, defaults))
         if isinstance(node, (ast.Attribute, ast.Subscript)):
             base = self._value(node.value, state, depth + 1)
+            if base.selector == ("literal", "NoneType", None):
+                raise _Abrupt(
+                    self._exception_state(state),
+                    "AttributeError"
+                    if isinstance(node, ast.Attribute)
+                    else "TypeError",
+                )
             if isinstance(node, ast.Subscript) and base.mappings:
                 selected = self._value(node.slice, state, depth + 1)
                 self._may_raise(state, {"KeyError", "TypeError"})
@@ -242,7 +312,11 @@ class _Flow:
             if (
                 name == "get"
                 and function.mappings
-                and len(arguments) == 1
+                and (
+                    len(arguments) == 1
+                    or len(arguments) == 2
+                    and isinstance(node.args[1], ast.Constant)
+                )
                 and not keywords
             ):
                 self._may_raise(state, {"TypeError"})
@@ -372,6 +446,11 @@ class _Flow:
         if not isinstance(target, (ast.Attribute, ast.Subscript)):
             raise _Unsupported
         base = self._value(target.value, state)
+        if base.selector == ("literal", "NoneType", None):
+            raise _Abrupt(
+                self._exception_state(state),
+                "AttributeError" if isinstance(target, ast.Attribute) else "TypeError",
+            )
         self._expose(base, state)
         name = (
             target.attr
@@ -398,16 +477,54 @@ class _Flow:
                     _IDENTITY_FIELDS if name is None else {name}
                 )
 
+    def _exception_name(self, node):
+        if isinstance(node, ast.Attribute):
+            base = self._exception_name(node.value)
+            return f"{base}.{node.attr}" if base else ""
+        if not isinstance(node, ast.Name):
+            return ""
+        if node.id in self.exception_aliases:
+            return self.exception_aliases[node.id]
+        builtin = getattr(builtins, node.id, None)
+        if (
+            node.id not in self.shadowed_builtins
+            and isinstance(builtin, type)
+            and issubclass(builtin, BaseException)
+        ):
+            return f"builtins.{node.id}"
+        return f"local.{node.id}"
+
+    def _canonical_exception(self, node):
+        name = self._exception_name(node)
+        if name in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}:
+            return "fastapi.HTTPException"
+        return name.removeprefix("builtins.")
+
     def _catches(self, exception_type, exception):
         if exception_type is None:
             return True
         if isinstance(exception_type, ast.Tuple):
             return any(self._catches(item, exception) for item in exception_type.elts)
-        if not isinstance(exception_type, ast.Name):
+        if not isinstance(exception_type, (ast.Name, ast.Attribute)):
             return False
-        if exception == "*" or exception_type.id in {exception, "BaseException"}:
+        handler = self._canonical_exception(exception_type)
+        if exception == "*" or handler in {exception, "BaseException"}:
             return True
-        return exception_type.id == "Exception" and exception not in {
+        raised_type = getattr(builtins, exception, None)
+        handler_type = getattr(builtins, handler, None)
+        if (
+            isinstance(raised_type, type)
+            and issubclass(raised_type, BaseException)
+            and isinstance(handler_type, type)
+            and issubclass(handler_type, BaseException)
+        ):
+            return issubclass(raised_type, handler_type)
+        if (
+            exception == "fastapi.HTTPException"
+            and handler == "starlette.exceptions.HTTPException"
+        ):
+            return True
+        return handler == "Exception" and exception not in {
             "KeyboardInterrupt",
             "SystemExit",
             "GeneratorExit",
@@ -433,7 +550,10 @@ class _Flow:
         previous = self.exception_outcomes
         self.exception_outcomes = [] if self.try_depth else None
         try:
-            outcomes = self._execute_statement(stmt, state)
+            try:
+                outcomes = self._execute_statement(stmt, state)
+            except _Abrupt as abrupt:
+                outcomes = [_Exit(abrupt.state, "raise", exception=abrupt.exception)]
             return [*(self.exception_outcomes or []), *outcomes]
         finally:
             self.exception_outcomes = previous
@@ -441,12 +561,20 @@ class _Flow:
     def _execute_statement(self, stmt, state):
         if isinstance(stmt, ast.If):
             outcomes = []
-            for truth, branch in [(True, stmt.body), (False, stmt.orelse)]:
-                child = state.copy()
-                child.authorized.update(self._facts(stmt.test, child, truth))
-                outcomes.extend(self._block(branch, child))
+            for truth, child in self._branches(stmt.test, state):
+                outcomes.extend(self._block(stmt.body if truth else stmt.orelse, child))
             return outcomes
         if isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            if isinstance(stmt.value, ast.IfExp):
+                outcomes = []
+                for truth, child in self._branches(stmt.value.test, state):
+                    self.steps += 1
+                    if self.steps > 256:
+                        raise _Unsupported
+                    branch = copy(stmt)
+                    branch.value = stmt.value.body if truth else stmt.value.orelse
+                    outcomes.extend(self._statement(branch, child))
+                return outcomes
             value = self._value(stmt.value, state)
             targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
             for target in targets:
@@ -457,7 +585,9 @@ class _Flow:
             return [_Exit(state, "return", self._value(stmt.value, state))]
         elif isinstance(stmt, ast.Raise):
             exception = stmt.exc.func if isinstance(stmt.exc, ast.Call) else stmt.exc
-            name = exception.id if isinstance(exception, ast.Name) else ""
+            name = (
+                self._canonical_exception(exception) if exception is not None else "*"
+            )
             return [_Exit(state, "raise", exception=name)]
         elif isinstance(stmt, ast.Try):
             outcomes = []
@@ -477,12 +607,7 @@ class _Flow:
                         if outcome.exception != "*" and handlers:
                             break
                         if outcome.exception == "*" and (
-                            handler.type is None
-                            or any(
-                                isinstance(node, ast.Name)
-                                and node.id in {"Exception", "BaseException"}
-                                for node in ast.walk(handler.type)
-                            )
+                            self._catches(handler.type, "Exception")
                         ):
                             break
                     if not handlers:
@@ -565,7 +690,19 @@ def defeated_owner_guard(module, function, identifiers, principals):
             bindings.setdefault(node.arg, []).append(node)
         elif isinstance(node, ast.alias):
             bindings.setdefault(node.asname or node.name.split(".")[0], []).append(node)
-    flow = _Flow(shadowed_builtins=bindings)
+    exception_aliases = {}
+    for statement in [*module.body, *function.body]:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                name = alias.asname or alias.name.split(".")[0]
+                if len(bindings.get(name, [])) == 1:
+                    exception_aliases[name] = alias.name if alias.asname else name
+        elif isinstance(statement, ast.ImportFrom) and statement.module:
+            for alias in statement.names:
+                name = alias.asname or alias.name
+                if len(bindings.get(name, [])) == 1:
+                    exception_aliases[name] = f"{statement.module}.{alias.name}"
+    flow = _Flow(shadowed_builtins=bindings, exception_aliases=exception_aliases)
     for statement in module.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
             body = statement.body

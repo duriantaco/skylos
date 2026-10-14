@@ -1004,6 +1004,9 @@ owner or tenant comparison but returns or changes a selected object without
 that check protecting it. This includes identity changes through principal
 aliases, replacing the checked object, and late-bound local presenters.
 Copied authenticated IDs and captured, checked objects retain their proof.
+Conditional assignments keep the identities from each reachable path;
+literal branches that cannot run do not create findings. A checked literal
+dictionary lookup also remains checked when repeated as `get(key, None)`.
 Fetching an object without an ownership comparison does not alone trigger
 this additional review. Arbitrary permission helpers, ORM query scoping,
 Django/Flask ownership flows, and unsupported control flow remain outside

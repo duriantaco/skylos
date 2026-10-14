@@ -10,6 +10,7 @@ from skylos.rules.quality.practices import FrameworkPracticeRule
 
 PRELUDE = """\
 from types import SimpleNamespace
+import fastapi
 from fastapi import Depends, FastAPI, HTTPException, Request
 app = FastAPI()
 documents = {1: SimpleNamespace(id=1, owner_id=7), 2: SimpleNamespace(id=2, owner_id=8)}
@@ -25,7 +26,7 @@ def noop():
 def _source(body):
     return (
         PRELUDE
-        + '\n@app.get("/documents/{document_id}/preview/{preview_id}")\n'
+        + '\n@app.get("/documents/{document_id}/preview/{preview_id}", response_model=None)\n'
         + "def endpoint(document_id: int, preview_id: int, request: Request, current_user=Depends(get_current_user)) -> dict:\n"
         + indent(dedent(body).strip(), "    ")
         + "\n"
@@ -252,6 +253,53 @@ CASES = [
         False,
         id="exception-does-not-catch-keyboard-interrupt",
     ),
+    pytest.param(
+        "document = documents[document_id]\nactor = current_user if current_user is not None else None\n"
+        "actor.id = preview_id\n" + CHECK + "return document",
+        True,
+        id="conditional-principal-alias",
+    ),
+    pytest.param(
+        "document = documents[document_id]\nprincipal_id = current_user.id if current_user is not None else None\n"
+        "actor = current_user\nactor.id = preview_id\n"
+        "if document.owner_id != principal_id:\n    raise HTTPException(status_code=403)\nreturn document",
+        False,
+        id="conditional-scalar-snapshot",
+    ),
+    pytest.param(
+        "document = documents[document_id]\ntry:\n"
+        "    if document.owner_id != current_user.id:\n        raise fastapi.HTTPException(status_code=403)\n"
+        "except fastapi.HTTPException:\n    pass\nreturn document",
+        True,
+        id="qualified-caught-denial",
+    ),
+    pytest.param(
+        "def selected():\n    return documents.get(document_id, None)\ndocument = selected()\n"
+        + CHECK
+        + "return selected()",
+        False,
+        id="literal-dictionary-get-none-default",
+    ),
+    pytest.param(
+        "document = documents[document_id]\n"
+        + CHECK
+        + "if False:\n    document = documents[preview_id]\nreturn document",
+        False,
+        id="unreachable-object-replacement",
+    ),
+    pytest.param(
+        "document = documents[document_id]\nprincipal_id = current_user.id if preview_id == 1 else preview_id\n"
+        "if document.owner_id != principal_id:\n    raise HTTPException(status_code=403)\nreturn document",
+        True,
+        id="caller-identity-conditional-branch",
+    ),
+    pytest.param(
+        "first = documents.get(document_id, documents[preview_id])\n"
+        "if first.owner_id != current_user.id:\n    raise HTTPException(status_code=403)\n"
+        "return documents.get(document_id, documents[int(request.query_params['other_id'])])",
+        True,
+        id="different-mutable-dictionary-default",
+    ),
 ]
 
 
@@ -316,7 +364,7 @@ def test_cached_dependency_parameters_share_principal(
 ):
     source = (
         PRELUDE
-        + '\n@app.get("/documents/{document_id}")\n'
+        + '\n@app.get("/documents/{document_id}", response_model=None)\n'
         + f"def endpoint(document_id: int, actor_id: int, current_user=Depends(get_current_user, use_cache={first_cache}), "
         + f"other_user=Depends(get_current_user, use_cache={second_cache})) -> dict:\n"
         + "    document = documents[document_id]\n    current_user.id = actor_id\n"
