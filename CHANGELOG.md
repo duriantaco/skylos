@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.49.0](https://github.com/duriantaco/skylos/compare/v4.48.0...v4.49.0) (2026-10-14)
+
+
+### Features
+
+* **agents:** human approval for risky PRs, guardrail and AI-agent workflow rules, hook v2, done failure origins and orphans ([#998](https://github.com/duriantaco/skylos/issues/998)) ([4b956b0](https://github.com/duriantaco/skylos/commit/4b956b02ce97e4bec911ff254d66cde80d82f6b1))
+
+
+### Bug Fixes
+
+* **agents:** production hardening for the agent-guardrails checks ([#1001](https://github.com/duriantaco/skylos/issues/1001)) ([1327e36](https://github.com/duriantaco/skylos/commit/1327e36659e2b37dcf4116722d41e7b180161072))
+* **cicd:** let a person's approval unblock the risk review check ([#1000](https://github.com/duriantaco/skylos/issues/1000)) ([bb5dc94](https://github.com/duriantaco/skylos/commit/bb5dc94dcbe354c33b1b09a64eee14671f2f38c7))
+
 ## [4.48.0](https://github.com/duriantaco/skylos/compare/v4.47.2...v4.48.0) (2026-10-12)
 
 
