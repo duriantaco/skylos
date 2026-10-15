@@ -458,19 +458,32 @@ jobs:
     }.issubset(_rule_ids(findings))
 
 
-def test_publish_workflow_keeps_pypi_token_out_of_tool_install():
-    workflow = _publish_workflow()
-    publish_steps = workflow["jobs"]["publish"]["steps"]
-    install_step = next(
-        s for s in publish_steps if s.get("name") == "Install publish tools"
-    )
-    upload_step = next(s for s in publish_steps if s.get("name") == "Publish to PyPI")
+def _assert_trusted_publishing_job(job):
+    assert job["environment"]["name"] == "pypi"
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    upload_step = next(s for s in job["steps"] if s.get("name") == "Publish to PyPI")
+    action, _, ref = upload_step["uses"].partition("@")
+    assert action == "pypa/gh-action-pypi-publish"
+    assert len(ref.split()[0]) == 40
+    assert "password" not in upload_step.get("with", {})
+    assert not any("run" in step for step in job["steps"])
 
-    assert "TWINE_PASSWORD" not in install_step.get("env", {})
-    assert "pip install" in install_step["run"]
-    assert upload_step["env"]["TWINE_PASSWORD"] == "${{ secrets.PYPI_TOKEN }}"
-    assert "pip install" not in upload_step["run"]
-    assert "twine upload" in upload_step["run"]
+
+def test_publish_workflows_use_trusted_publishing_without_a_stored_token():
+    publish_text = Path(".github/workflows/publish.yml").read_text()
+    release_text = Path(".github/workflows/release-please.yml").read_text()
+    assert "PYPI_TOKEN" not in publish_text
+    assert "PYPI_TOKEN" not in release_text
+    assert "TWINE_PASSWORD" not in publish_text + release_text
+
+    release_please = _release_please_workflow()
+    pypi_publish = release_please["jobs"]["pypi-publish"]
+    assert pypi_publish["needs"] == "publish-release"
+    _assert_trusted_publishing_job(pypi_publish)
+
+    publish = _publish_workflow()["jobs"]["publish"]
+    assert publish["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    _assert_trusted_publishing_job(publish)
 
 
 def test_publish_workflow_validates_strict_semver_release_tags():

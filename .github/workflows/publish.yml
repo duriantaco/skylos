@@ -7,9 +7,6 @@ on:
         description: "Release tag to build and publish (for example v4.2.1)"
         required: true
         type: string
-    secrets:
-      PYPI_TOKEN:
-        required: true
   workflow_dispatch:
     inputs:
       ref:
@@ -250,12 +247,18 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  # PyPI Trusted Publishing (OIDC): no stored upload token. PyPI does not
+  # accept a reusable workflow as a trusted publisher, so this job runs only
+  # when this file is the top-level workflow (manual dispatch). Releases from
+  # release-please.yml upload in that workflow's own pypi-publish job.
   publish:
     needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
+      id-token: write
     environment:
       name: pypi
       url: https://pypi.org/project/skylos/
@@ -267,22 +270,10 @@ jobs:
           name: dist
           path: dist
 
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Install publish tools
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "packaging>=24.2" "twine>=6.1.0"
-
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          python -m twine upload --skip-existing dist/*
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true
 
   container:
     name: container (Python ${{ matrix.python-version }})
