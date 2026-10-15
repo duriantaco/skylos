@@ -1,5 +1,15 @@
 ## Changelog
 
+## [4.49.1](https://github.com/duriantaco/skylos/compare/v4.49.0...v4.49.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **cli:** keep reviews across unrelated commits, catch removed auth decorators ([#1003](https://github.com/duriantaco/skylos/issues/1003)) ([ee3e045](https://github.com/duriantaco/skylos/commit/ee3e0454305aad4df2deb0b1a3f826aeca936f26))
+* **go:** drop the keyword-only hardcoded-secret rule ([#1007](https://github.com/duriantaco/skylos/issues/1007)) ([c03633b](https://github.com/duriantaco/skylos/commit/c03633be751efee0ebe526e67c3388af64519df4))
+* **security:** detect bypassed object ownership checks ([#1005](https://github.com/duriantaco/skylos/issues/1005)) ([377ce4d](https://github.com/duriantaco/skylos/commit/377ce4de9ce40f18a461d4b8dd7b6fe44b7f74ee))
+* **security:** reset module state and remove basename read exemption ([#1002](https://github.com/duriantaco/skylos/issues/1002)) ([ac7b201](https://github.com/duriantaco/skylos/commit/ac7b201a93ed79818ec7fa42c4dd7d6a39e3a450))
+
 ## [4.49.0](https://github.com/duriantaco/skylos/compare/v4.48.0...v4.49.0) (2026-10-14)
 
 
