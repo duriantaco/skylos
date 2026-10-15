@@ -522,6 +522,8 @@ def test_report_scope_prints_and_writes_the_step_summary(tmp_path, monkeypatch):
     summary = tmp_path / "summary.md"
     summary.write_text("")
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    # GitHub runners set RUNNER_TEMP, and summaries outside it are refused.
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     buffer = StringIO()
     receipt = report_scope(
         root / "apps" / "api", "main", console=Console(file=buffer), summary=True
