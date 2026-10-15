@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.50.1](https://github.com/duriantaco/skylos/compare/v4.50.0...v4.50.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **security:** stop scanned repos from running commands through git config ([#1009](https://github.com/duriantaco/skylos/issues/1009)) ([11d12cd](https://github.com/duriantaco/skylos/commit/11d12cd313db8f78b407fdda1d7e9e5a2d8724be))
+
 ## [4.50.0](https://github.com/duriantaco/skylos/compare/v4.49.1...v4.50.0) (2026-10-15)
 
 ### Features
