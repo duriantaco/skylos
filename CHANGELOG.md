@@ -1,5 +1,20 @@
 ## Changelog
 
+## [4.50.0](https://github.com/duriantaco/skylos/compare/v4.49.1...v4.50.0) (2026-10-15)
+
+### Features
+
+* Add `skylos feedback` and explicit agent-run upload consent; `--no-upload` takes precedence and run summaries omit the OS username.
+* Bundle native Go engines in platform wheels and document CLI network requests.
+
+### Scan and workflow improvements
+
+* Improve partial-analysis reporting, framework entry-point recognition, dead-code confidence and dependency configuration handling.
+* Improve security and secret detection, including typed constants and bare `noqa` handling.
+* Reuse PR review summaries, avoid repeated inline comments and support merge queues.
+
+These changes are included from [#1006](https://github.com/duriantaco/skylos/pull/1006). Unused-parameter and experimental Rust findings are hidden by default. Go rule severities change: G203/G260 to MEDIUM and G206 to LOW.
+
 ## [4.49.1](https://github.com/duriantaco/skylos/compare/v4.49.0...v4.49.1) (2026-10-15)
 
 
