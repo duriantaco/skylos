@@ -13,7 +13,7 @@ func TestAnalyzeDirSkipsSymlinkedGoFilesOutsideRoot(t *testing.T) {
 	insideFile := filepath.Join(root, "secret.go")
 	if err := os.WriteFile(insideFile, []byte(`package main
 
-const token = "password marker for local fixture"
+const token = "sk-local-fixture-marker-0001"
 
 func main() { println(token) }
 `), 0o600); err != nil {
@@ -23,7 +23,7 @@ func main() { println(token) }
 	outsideFile := filepath.Join(outside, "secret.go")
 	if err := os.WriteFile(outsideFile, []byte(`package main
 
-const token = "password=supersecretvalue"
+const token = "sk-outside-fixture-marker-0002"
 
 func main() { println(token) }
 `), 0o600); err != nil {
