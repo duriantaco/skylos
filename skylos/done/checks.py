@@ -47,6 +47,8 @@ RULE_SKIPPED_TEST = "SKY-A111"
 RULE_TEST_CONFIG = "SKY-A112"
 RULE_TESTS_PASS = "SKY-A113"
 RULE_GATE_TAMPERING = "SKY-A114"
+# Files that hold only Skylos settings (see skylos.config.CONFIG_FILE_NAMES).
+_SKYLOS_CONFIG_FILES = (".skylos.toml", "skylos.toml")
 RULE_ASSERTION_WEAKENING = "SKY-A101"
 
 
@@ -967,6 +969,27 @@ def check_gate_tampering(ctx: CheckContext) -> CheckResult:
                         "changes Skylos settings ([tool.skylos])",
                     )
                 )
+        config_name = next(
+            (
+                PurePosixPath(p).name
+                for p in (changed.base_path, changed.path)
+                if p and PurePosixPath(p).name in _SKYLOS_CONFIG_FILES
+            ),
+            None,
+        )
+        if config_name and (
+            comparison.base_text(changed.base_path) if changed.base_path else None
+        ) != (comparison.head_text(changed.head_path) if changed.head_path else None):
+            # skylos.toml holds only Skylos settings (and is inherited by
+            # every folder below it): any edit, addition or removal counts.
+            findings.append(
+                Finding(
+                    RULE_GATE_TAMPERING,
+                    changed.path or changed.base_path,
+                    None,
+                    f"changes Skylos settings ({config_name})",
+                )
+            )
         if _is_workflow(changed.base_path or ""):
             base_text = comparison.base_text(changed.base_path) or ""
             if "skylos" in base_text.lower():

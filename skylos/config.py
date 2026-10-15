@@ -6,6 +6,11 @@ from pathlib import Path
 
 CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
 POLICY_BASE_ENV_VAR = "SKYLOS_POLICY_BASE"
+# Read in this order within one directory; only the first one with Skylos
+# settings counts there (like Ruff's .ruff.toml > ruff.toml > pyproject.toml).
+CONFIG_FILE_NAMES = (".skylos.toml", "skylos.toml", "pyproject.toml")
+# `root = true` in a config file stops inheritance from folders above it.
+INHERITANCE_ROOT_SETTING = "root"
 
 
 class ConfigError(ValueError):
@@ -184,21 +189,23 @@ def load_config(start_path, config_file=None) -> dict:
     if policy_base:
         from skylos.cicd.policy import load_base_policy
 
-        user_cfg, synced_cfg = load_base_policy(current, policy_base)
+        user_layers, synced_cfg = load_base_policy(current, policy_base)
         # An explicitly supplied operator file remains supported. Repository
         # discovery and synced policy come exclusively from the selected base.
         if explicit_config is not None:
-            user_cfg = _load_toml_user_config(explicit_config, explicit=True)
+            user_layers = [_load_toml_user_config(explicit_config, explicit=True)]
         final_cfg = _merge_user_config(copy.deepcopy(DEFAULTS), synced_cfg)
-        final_cfg = _merge_user_config(final_cfg, user_cfg)
+        # Root first, nearest last: the nearest file wins per key.
+        for user_cfg in user_layers:
+            user_cfg = dict(user_cfg)
+            user_cfg.pop(INHERITANCE_ROOT_SETTING, None)
+            final_cfg = _merge_user_config(final_cfg, user_cfg)
         return _finalize_loaded_config(
             _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
         )
-    if explicit_config is None:
-        root_config, sync_config = _find_config_paths(current)
-    else:
-        root_config = explicit_config
-        _, sync_config = _find_config_paths(current)
+    layers, sync_config = _find_config_layers(current)
+    if explicit_config is not None:
+        layers = [explicit_config]
 
     final_cfg = copy.deepcopy(DEFAULTS)
     synced_cfg = _load_synced_config(sync_config) if sync_config else {}
@@ -206,20 +213,23 @@ def load_config(start_path, config_file=None) -> dict:
     if synced_cfg:
         final_cfg = _merge_user_config(final_cfg, synced_cfg)
 
-    if not root_config:
+    if not layers:
         return _finalize_loaded_config(final_cfg, synced_cfg)
 
-    try:
-        final_cfg = _merge_user_config(
-            final_cfg,
-            _load_toml_user_config(root_config, explicit=explicit_config is not None),
-        )
-    except ConfigError:
-        raise
-    except Exception:
-        if explicit_config is not None:
-            raise ConfigError(f"Could not load config file: {root_config}")
-        return _finalize_loaded_config(final_cfg, synced_cfg)
+    # Root first, nearest last: the nearest file wins per key.
+    for config_path in reversed(layers):
+        try:
+            user_cfg = _load_toml_user_config(
+                config_path, explicit=explicit_config is not None
+            )
+        except ConfigError:
+            raise
+        except Exception:
+            if explicit_config is not None:
+                raise ConfigError(f"Could not load config file: {config_path}")
+            continue
+        user_cfg.pop(INHERITANCE_ROOT_SETTING, None)
+        final_cfg = _merge_user_config(final_cfg, user_cfg)
     return _finalize_loaded_config(
         _restore_synced_policy_precedence(final_cfg, synced_cfg), synced_cfg
     )
@@ -317,25 +327,104 @@ def _is_safe_config_file(config_path: Path, expected_name: str) -> bool:
 
 
 def _find_config_paths(start_dir: Path) -> tuple[Path | None, Path | None]:
-    current = start_dir
-    root_config = None
-    sync_config = None
+    """The nearest config file and the synced policy file (compatibility)."""
+    layers, sync_config = _find_config_layers(start_dir)
+    return (layers[0] if layers else None), sync_config
 
+
+def _find_config_layers(start_dir: Path) -> tuple[list[Path], Path | None]:
+    """Config files from the nearest folder up to the repository root.
+
+    Nearest first. A folder counts when it has ``.skylos.toml``,
+    ``skylos.toml``, or a ``pyproject.toml`` with a ``[tool.skylos]`` table;
+    a ``pyproject.toml`` without one no longer hides the files above it. The
+    walk stops after the folder that holds ``.git`` (outside a Git repository,
+    at the filesystem root) or after a file that sets ``root = true``.
+    """
+    layers = []
+    sync_config = None
+    for source in describe_config_sources(start_dir):
+        if source["kind"] == "synced":
+            sync_config = source["path"]
+        elif source["used"]:
+            layers.append(source["path"])
+    return layers, sync_config
+
+
+def describe_config_sources(start_dir) -> list[dict]:
+    """Every config file discovery looks at, nearest first, and whether it is used.
+
+    Each entry: ``path``, ``kind`` (a file name or ``"synced"``), ``used``,
+    and ``reason`` when a file is present but not used. ``skylos doctor``
+    prints this as the effective-config receipt.
+    """
+    current = Path(start_dir).resolve()
+    if current.is_file():
+        current = current.parent
+    sources: list[dict] = []
+    synced_seen = False
+    stopped = False
     while True:
         sync_path = current / ".skylos" / "config.yaml"
-        if sync_config is None and sync_path.exists():
-            sync_config = sync_path
+        if not synced_seen and sync_path.exists():
+            synced_seen = True
+            sources.append({"path": sync_path, "kind": "synced", "used": True})
 
-        toml_path = current / "pyproject.toml"
-        if toml_path.exists():
-            root_config = toml_path
-            break
+        chosen = None
+        for name in CONFIG_FILE_NAMES:
+            candidate = current / name
+            if not candidate.exists() and not candidate.is_symlink():
+                continue
+            entry = {"path": candidate, "kind": name, "used": False}
+            if stopped:
+                entry["reason"] = "above a config file that sets root = true"
+            elif chosen is not None:
+                entry["reason"] = (
+                    f"{chosen['kind']} in the same folder takes precedence"
+                )
+            else:
+                state = _discovered_config_state(candidate)
+                if state == "config":
+                    entry["used"] = True
+                    chosen = entry
+                elif state == "none":
+                    continue  # a pyproject.toml without [tool.skylos]
+                else:
+                    entry["reason"] = state
+            sources.append(entry)
+        if chosen is not None and _sets_inheritance_root(chosen["path"]):
+            stopped = True
 
-        if current.parent == current:
+        if (current / ".git").exists() or current.parent == current:
             break
         current = current.parent
+    return sources
 
-    return root_config, sync_config
+
+def _discovered_config_state(path: Path) -> str:
+    """ "config", "none" (a pyproject.toml without Skylos settings), or why
+    the file is not read."""
+    if not _is_safe_config_file(path, path.name):
+        return "not a regular file (symlinks are not followed)"
+    try:
+        data = _load_toml_data(path)
+    except Exception:
+        return "could not be parsed as TOML"
+    if path.name == "pyproject.toml":
+        tool_cfg = data.get("tool")
+        if not isinstance(tool_cfg, dict) or "skylos" not in tool_cfg:
+            return "none"
+    return "config"
+
+
+def _sets_inheritance_root(path: Path) -> bool:
+    try:
+        user_cfg = _select_skylos_toml_config(
+            _load_toml_data(path), explicit=False, file_name=path.name
+        )
+    except Exception:
+        return False
+    return user_cfg.get(INHERITANCE_ROOT_SETTING) is True
 
 
 def _load_toml_data(root_config: Path) -> dict:
@@ -351,7 +440,14 @@ def _load_toml_data(root_config: Path) -> dict:
         return tomllib.load(f)
 
 
-def _select_skylos_toml_config(data: dict, *, explicit: bool) -> dict:
+def is_standalone_config_name(file_name: str) -> bool:
+    """``skylos.toml`` and ``.skylos.toml`` hold Skylos settings at the top level."""
+    return file_name in (".skylos.toml", "skylos.toml")
+
+
+def _select_skylos_toml_config(
+    data: dict, *, explicit: bool, file_name: str = "pyproject.toml"
+) -> dict:
     tool_cfg = data.get("tool")
     if isinstance(tool_cfg, dict) and "skylos" in tool_cfg:
         tool_skylos = tool_cfg.get("skylos")
@@ -359,20 +455,36 @@ def _select_skylos_toml_config(data: dict, *, explicit: bool) -> dict:
             return tool_skylos
 
     top_skylos = data.get("skylos")
-    if explicit and isinstance(top_skylos, dict):
+    if (explicit or is_standalone_config_name(file_name)) and isinstance(
+        top_skylos, dict
+    ):
         return top_skylos
+    if is_standalone_config_name(file_name):
+        # skylos.toml: the same keys as [tool.skylos], at the top level.
+        # Other tools' [tool.*] tables are not Skylos settings.
+        settings = {key: value for key, value in data.items() if key != "tool"}
+        if settings or not explicit:
+            return settings
     if explicit:
-        raise ConfigError("Config file must contain [tool.skylos] or [skylos]")
+        raise ConfigError(
+            "Config file must contain [tool.skylos] or [skylos], or be named "
+            "skylos.toml with settings at the top level"
+        )
 
     return {}
 
 
 def _load_toml_user_config(root_config: Path, *, explicit: bool = False) -> dict:
-    if not explicit and not _is_safe_config_file(root_config, "pyproject.toml"):
+    if not explicit and not (
+        root_config.name in CONFIG_FILE_NAMES
+        and _is_safe_config_file(root_config, root_config.name)
+    ):
         return {}
 
     data = _load_toml_data(root_config)
-    skylos_cfg = _select_skylos_toml_config(data, explicit=explicit)
+    skylos_cfg = _select_skylos_toml_config(
+        data, explicit=explicit, file_name=root_config.name
+    )
     user_cfg = dict(skylos_cfg or {})
     gate_cfg = skylos_cfg.get("gate", {})
     if gate_cfg:
@@ -902,8 +1014,29 @@ def get_skylos_ignore_rules_by_line(source) -> dict[int, set[str]]:
     return rules_by_line
 
 
-def _collect_ignore_lines(source, *, include_code_specific_noqa: bool) -> set[int]:
+class InlineIgnoreLines(set):
+    """Line numbers an inline comment suppresses.
+
+    ``bare_noqa_lines`` are the lines suppressed only by a bare ``# noqa``: a
+    generic linter marker that names no tool and no rule. It keeps hiding
+    dead-code, quality and low/medium findings, but not a HIGH/CRITICAL
+    security finding (``skylos.analysis.finding_filter``); accepting one takes
+    ``# skylos: ignore[SKY-...]`` or another Skylos-specific marker.
+    """
+
+    def __init__(self, lines=(), bare_noqa_lines=()):
+        super().__init__(lines)
+        self.bare_noqa_lines = frozenset(bare_noqa_lines)
+
+    def __reduce__(self):
+        return (type(self), (set(self), self.bare_noqa_lines))
+
+
+def _collect_ignore_lines(
+    source, *, include_code_specific_noqa: bool
+) -> InlineIgnoreLines:
     ignore_lines = set()
+    bare_noqa_lines = set()
     in_ignore_block = False
 
     for i, line in enumerate(source.splitlines(), start=1):
@@ -947,12 +1080,16 @@ def _collect_ignore_lines(source, *, include_code_specific_noqa: bool) -> set[in
         if not match:
             continue
         if include_code_specific_noqa or match.group(1) is None:
-            ignore_lines.add(i)
             stripped = line.strip()
-            if stripped.startswith("@"):
-                ignore_lines.add(i + 1)
+            for target in (i, i + 1) if stripped.startswith("@") else (i,):
+                if match.group(1) is None:
+                    bare_noqa_lines.add(target)
+                else:
+                    ignore_lines.add(target)
 
-    return ignore_lines
+    return InlineIgnoreLines(
+        ignore_lines | bare_noqa_lines, bare_noqa_lines - ignore_lines
+    )
 
 
 def get_all_ignore_lines(source) -> set[int]:

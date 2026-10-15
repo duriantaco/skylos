@@ -306,3 +306,21 @@ def test_legacy_grade_renderer_never_copies_numeric_badge(monkeypatch):
     assert "not a current risk assessment" in output.getvalue()
     assert "Badge" not in output.getvalue()
     copy.assert_not_called()
+
+
+def test_repository_policy_checks_are_not_first_screen_measurements():
+    payload = {
+        "maintainability": {
+            "checks": [
+                {"rule_id": "SKY-R103", "affected_units": 1, "name": "Skylos gate"},
+                {
+                    "rule_id": "SKY-Q301",
+                    "affected_units": 2,
+                    "analyzed_units": 10,
+                    "unit": "function",
+                },
+            ]
+        }
+    }
+    labels = [row[0] for row in maintainability_rows(payload)]
+    assert labels == ["SKY-Q301"]

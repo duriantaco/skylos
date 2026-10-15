@@ -1326,14 +1326,16 @@ _RULES = (
         aliases=("gpu", "tensorrt", "engine", "portability"),
         finding_type="review",
     ),
+    # Go reliability checks follow their Python equivalent (SKY-L008 missing
+    # resource cleanup, MEDIUM); unsafe use follows gosec G103 (LOW).
     RuleCatalogEntry(
-        "SKY-G203", "Go defer in loop", "security", "HIGH", finding_type="review"
+        "SKY-G203", "Go defer in loop", "security", "MEDIUM", finding_type="review"
     ),
     RuleCatalogEntry(
         "SKY-G206",
         "Go unsafe package import",
         "security",
-        "HIGH",
+        "LOW",
         finding_type="review",
     ),
     RuleCatalogEntry(
@@ -1380,7 +1382,7 @@ _RULES = (
         "SKY-G221", "Go insecure cookie", "security", "MEDIUM", finding_type="review"
     ),
     RuleCatalogEntry(
-        "SKY-G260", "Go unclosed resource", "security", "HIGH", finding_type="review"
+        "SKY-G260", "Go unclosed resource", "security", "MEDIUM", finding_type="review"
     ),
     RuleCatalogEntry(
         "SKY-G280", "Go weak TLS version", "security", "HIGH", finding_type="review"

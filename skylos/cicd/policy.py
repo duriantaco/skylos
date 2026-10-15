@@ -73,7 +73,16 @@ def _base_text(context, commit, relative):
 
 
 def load_base_policy(start_path, commit):
+    """Config layers (root first) and synced policy, read from ``commit``.
+
+    The same discovery as ``load_config``: per folder, ``.skylos.toml``, then
+    ``skylos.toml``, then a ``pyproject.toml`` with ``[tool.skylos]``; walk up
+    to the repository root; the nearest file wins per key; a file with
+    ``root = true`` stops the walk. Only files at the base commit count.
+    """
     from skylos.config import (
+        CONFIG_FILE_NAMES,
+        INHERITANCE_ROOT_SETTING,
         ConfigError,
         _normalize_synced_config,
         _select_skylos_toml_config,
@@ -87,19 +96,6 @@ def load_base_policy(start_path, commit):
         current = current.parent
     if not current.is_relative_to(context.root):
         raise ConfigError("PR policy scope must be inside the repository")
-    user_text = synced_text = None
-    while True:
-        relative = current.relative_to(context.root)
-        if synced_text is None:
-            synced_text = _base_text(
-                context, commit, (relative / ".skylos/config.yaml").as_posix()
-            )
-        user_text = _base_text(
-            context, commit, (relative / "pyproject.toml").as_posix()
-        )
-        if user_text is not None or current == context.root:
-            break
-        current = current.parent
     try:
         try:
             import tomllib
@@ -107,16 +103,39 @@ def load_base_policy(start_path, commit):
             import tomli as tomllib
         import yaml
 
-        user = (
-            _select_skylos_toml_config(tomllib.loads(user_text), explicit=False)
-            if user_text is not None
-            else {}
-        )
+        layers = []
+        synced_text = None
+        stopped = False  # root = true ends inheritance, never synced policy
+        while True:
+            relative = current.relative_to(context.root)
+            if synced_text is None:
+                synced_text = _base_text(
+                    context, commit, (relative / ".skylos/config.yaml").as_posix()
+                )
+            for name in () if stopped else CONFIG_FILE_NAMES:
+                text = _base_text(context, commit, (relative / name).as_posix())
+                if text is None:
+                    continue
+                data = tomllib.loads(text)
+                if name == "pyproject.toml" and not (
+                    isinstance(data.get("tool"), dict) and "skylos" in data["tool"]
+                ):
+                    continue
+                layers.append(
+                    _select_skylos_toml_config(data, explicit=False, file_name=name)
+                )
+                stopped = layers[-1].get(INHERITANCE_ROOT_SETTING) is True
+                break
+            if current == context.root:
+                break
+            current = current.parent
         synced = yaml.safe_load(synced_text) if synced_text is not None else {}
         if synced is None:
             synced = {}
         if not isinstance(synced, dict):
             raise ValueError("synced policy must be a mapping")
-        return user, _normalize_synced_config(synced)
+        return list(reversed(layers)), _normalize_synced_config(synced)
+    except ConfigError:
+        raise
     except Exception as exc:
         raise ConfigError("Could not parse base-controlled PR policy") from exc

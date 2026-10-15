@@ -45,7 +45,50 @@ _SAFE_DATABASE_EXEC_OBJECTS: set[str] = {
     "connection",
 }
 
-_CHILD_PROCESS_MODULES = {"child_process", "node:child_process"}
+# Modules whose ``exec`` runs a command: locally (child_process, shelljs), on
+# a remote host over SSH (ssh2, node-ssh) or in a container (dockerode).
+# ``X.exec(...)`` is a command sink only when one is loaded: without it the
+# call is ``RegExp.exec``, a database ``exec`` or another library method (the
+# approach of eslint-plugin-security and Semgrep's detect-child-process).
+_COMMAND_EXEC_MESSAGES = {
+    "child_process": (
+        "child_process.exec() can lead to command injection. Use execFile() instead."
+    ),
+    "shelljs": (
+        "shelljs exec() runs a shell command and can lead to command injection. "
+        "Validate or quote every argument, or use execFile()."
+    ),
+    "ssh": (
+        "SSH exec() runs a shell command on the remote host and can lead to "
+        "command injection. Validate or quote every argument."
+    ),
+    "dockerode": (
+        "dockerode exec() runs a command in the container and can lead to "
+        "command injection. Pass Cmd as an argument array without a shell."
+    ),
+}
+_COMMAND_EXEC_MODULE_KINDS = {
+    "child_process": "child_process",
+    "node:child_process": "child_process",
+    "shelljs": "shelljs",
+    "ssh2": "ssh",
+    "node-ssh": "ssh",
+    "dockerode": "dockerode",
+}
+_CHILD_PROCESS_MODULES = set(_COMMAND_EXEC_MODULE_KINDS)
+# ``conn.exec(...)`` is a database call in a file that loads a database
+# driver, but ssh2's own examples name the SSH connection ``conn``: with an
+# SSH or Docker module loaded and no database module, database-looking
+# receiver names are not exempt.
+_DATABASE_MODULE_LITERAL_RE = re.compile(
+    r"""(['"`])(?:sqlite3|better-sqlite3|bun:sqlite|node:sqlite|sql\.js|pg|postgres"""
+    r"""|mysql2?|mssql|oracledb|duckdb|knex|sequelize|typeorm|@prisma/client"""
+    r"""|@libsql/client|@neondatabase/serverless|@vercel/postgres|mongodb)"""
+    r"""(?:/[^'"`]*)?\1"""
+)
+_COMMAND_MODULE_LITERAL_RE = re.compile(
+    r"""(['"`])((?:node:)?child_process|shelljs|ssh2|node-ssh|dockerode)\1"""
+)
 
 
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
@@ -658,14 +701,18 @@ def _collect_static_string_bindings(root_node, source_bytes: bytes) -> dict[str,
     return bindings
 
 
-def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> set[str]:
+def _child_process_aliases(
+    root_node, lang: Language, source_bytes: bytes
+) -> dict[str, str]:
+    """Lower-cased local names bound to a command-execution module, mapped to
+    the module's kind (``child_process``, ``shelljs``, ``ssh``, ``dockerode``)."""
     query = _get_query(
         lang, "danger_child_process_aliases", _CHILD_PROCESS_ALIAS_PATTERN
     )
     if query is None:
-        return set()
+        return {}
 
-    aliases: set[str] = set()
+    aliases: dict[str, str] = {}
     try:
         matches = QueryCursor(query).matches(root_node)
     except Exception:
@@ -686,7 +733,9 @@ def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> se
 
         module_name = _string_literal_value(module_node, source_bytes)
         if module_name in _CHILD_PROCESS_MODULES:
-            aliases.add(_get_text(source_bytes, alias_node).lower())
+            aliases[_get_text(source_bytes, alias_node).lower()] = (
+                _COMMAND_EXEC_MODULE_KINDS[module_name]
+            )
 
     return aliases
 
@@ -1574,6 +1623,31 @@ def scan_danger(
     complex_captures = _run_batch(root_node, lang, "danger_complex", _COMPLEX_PATTERN)
     child_process_aliases = _child_process_aliases(root_node, lang, source_bytes)
     exec_prop_nodes = complex_captures.get("exec_prop", [])
+    loaded_command_kinds = set(child_process_aliases.values())
+    if exec_prop_nodes:
+        loaded_command_kinds.update(
+            _COMMAND_EXEC_MODULE_KINDS[match.group(2)]
+            for match in _COMMAND_MODULE_LITERAL_RE.finditer(
+                source_bytes.decode("utf-8", errors="ignore")
+            )
+        )
+    command_module_loaded = bool(loaded_command_kinds)
+    database_names_exempt = not (
+        loaded_command_kinds & {"ssh", "dockerode"}
+        and not _DATABASE_MODULE_LITERAL_RE.search(
+            source_bytes.decode("utf-8", errors="ignore")
+        )
+    )
+    # An unknown receiver is reported under the most specific loaded module;
+    # child_process first, as before.
+    default_command_kind = next(
+        (
+            kind
+            for kind in ("child_process", "shelljs", "ssh", "dockerode")
+            if kind in loaded_command_kinds
+        ),
+        "child_process",
+    )
     regexp_exec_receivers = (
         _proven_regexp_exec_receivers(root_node, lang, source_bytes)
         if exec_prop_nodes
@@ -1620,10 +1694,14 @@ def scan_danger(
         obj_name = raw_obj_name.lower()
         if obj_node.id in regexp_exec_receivers:
             continue
+        is_command_module = obj_name in child_process_aliases
         if (
             obj_name in _SAFE_DATABASE_EXEC_OBJECTS
-            and obj_name not in child_process_aliases
+            and not is_command_module
+            and database_names_exempt
         ):
+            continue
+        if not is_command_module and not command_module_loaded:
             continue
         call_expr = member_node.parent
         command = _first_static_call_arg(call_expr, source_bytes)
@@ -1635,11 +1713,12 @@ def scan_danger(
                     prop_node.start_point[0] + 1,
                 )
             )
+        command_kind = child_process_aliases.get(obj_name, default_command_kind)
         findings.append(
             {
                 "rule_id": "SKY-D212",
                 "severity": "HIGH",
-                "message": "child_process.exec() can lead to command injection. Use execFile() instead.",
+                "message": _COMMAND_EXEC_MESSAGES[command_kind],
                 "file": str(file_path),
                 "line": prop_node.start_point[0] + 1,
                 "col": 0,

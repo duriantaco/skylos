@@ -479,7 +479,12 @@ def run_cicd_command(
     p_ci_rev.add_argument("--pr", type=int, help="PR number (auto-detect in CI)")
     p_ci_rev.add_argument("--repo", help="owner/repo (auto-detect in CI)")
     p_ci_rev.add_argument("--summary-only", action="store_true")
-    p_ci_rev.add_argument("--max-comments", type=int, default=25)
+    max_comments_help = (
+        "Most inline comments on the pull request (default 25). Findings that "
+        "already have one count toward it; later pushes comment only on new "
+        "findings and edit the one summary comment"
+    )
+    p_ci_rev.add_argument("--max-comments", type=int, default=25, help=max_comments_help)
     p_ci_rev.add_argument("--diff-base", default="origin/main")
     p_ci_rev.add_argument("--llm-input", help="LLM agent review results JSON file")
     p_ci_rev.add_argument(
@@ -566,6 +571,17 @@ def run_cicd_command(
                         )
                     except Exception:
                         pass
+                if cicd_args.diff_base:
+                    from skylos.cicd.scope_receipt import report_scope
+
+                    # An empty scope still reports: a passing check with a
+                    # receipt, never a skipped or missing one.
+                    report_scope(
+                        cicd_args.path,
+                        cicd_args.diff_base,
+                        console=console,
+                        summary=cicd_args.summary,
+                    )
                 return run_gate_interaction_func(
                     result=results,
                     config=config,

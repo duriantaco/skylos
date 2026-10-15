@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .blade import blade_template_refs
 from .core import PhpCore
 from .danger import scan_danger
 from .laravel import laravel_convention_class_lines
@@ -61,6 +62,11 @@ def scan_php_file(
 
     core = PhpCore(str(path), source)
     core.scan()
+    if path.name.lower().endswith(".blade.php"):
+        core.refs.extend(
+            (name, str(path))
+            for name in blade_template_refs(source.decode("utf-8", errors="replace"))
+        )
 
     visitor = DummyVisitor(
         is_test_file=core.is_test_file,

@@ -96,6 +96,16 @@ def build_analysis_result(
         if isinstance(review_config, dict)
         else load_config(_primary_path(path), config_file=config_file)
     )
+    from skylos.deadcode.confidence import (
+        BELOW_THRESHOLD_SHOW_WITH,
+        calibrate_dead_code_confidence,
+        experimental_hidden_counts,
+    )
+
+    # Before the threshold and the evidence ledger read ``confidence``.
+    calibrate_dead_code_confidence(
+        analyzer.defs, getattr(analyzer, "_ts_demoted_exports", ())
+    )
     ledger, evidence = dead_code_evidence(
         analyzer,
         path,
@@ -149,6 +159,24 @@ def build_analysis_result(
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
     _attach_unused_ts_exports(result, unused_ts_exports)
+    hidden_parameters = _hidden_parameter_count(analyzer, thr, evidence, project_cfg)
+    if hidden_parameters:
+        # Unused parameters are below the default threshold (callback and
+        # override signatures); say how many and how to list them.
+        result["analysis_summary"]["dead_code_below_threshold"] = {
+            "unused_parameters": {
+                "count": hidden_parameters,
+                "show_with": BELOW_THRESHOLD_SHOW_WITH["signature_parameter"],
+            }
+        }
+    hidden = experimental_hidden_counts(analyzer.defs, thr)
+    if hidden:
+        # Never silent: say that experimental-language candidates exist below
+        # the threshold and how to list them.
+        result["analysis_summary"]["dead_code_experimental"] = {
+            language: {"listed": False, "show_with": "--confidence 40"}
+            for language in sorted(hidden)
+        }
 
     attach_circular_and_architecture(
         result,
@@ -201,6 +229,30 @@ def build_analysis_result(
 
 
 
+
+
+def _hidden_parameter_count(analyzer, thr, evidence, project_cfg) -> int:
+    """Unused parameters the threshold hides, counted as the report would list
+    them at the parameter cap (same decisions, same report-scope filtering)."""
+    from skylos.deadcode.confidence import CONFIDENCE_CAPS
+
+    cap = CONFIDENCE_CAPS["signature_parameter"]
+    if cap >= thr or not any(
+        getattr(definition, "type", None) == "parameter"
+        and getattr(definition, "references", 0) == 0
+        and getattr(definition, "confidence", 0) == cap
+        for definition in analyzer.defs.values()
+    ):
+        return 0
+    listed, _rescued, _abstained = dead_code_candidate_decisions(
+        analyzer, cap, evidence, review_config=project_cfg
+    )
+    hidden = [
+        item
+        for item in listed
+        if item.get("type") == "parameter" and item.get("confidence", 100) < thr
+    ]
+    return len(without_report_only_files(hidden, report_only_file_keys(analyzer)))
 
 
 def _attach_effective_review_config_hashes(result, root_config):

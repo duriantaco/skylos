@@ -323,8 +323,10 @@ def _print_connected_result(result, console=None):
         console.print(f"  Plan:         {plan_display_name(result.plan)}")
         if result.repo_subpath:
             console.print(f"  Project root: {result.repo_subpath}")
-        console.print("\n  Scans will auto-upload on every run.")
-        console.print("  Use [bold]--no-upload[/bold] to skip.")
+        console.print(
+            "\n  Nothing is uploaded automatically. Add [bold]--upload[/bold] "
+            "to a scan to send it to this project."
+        )
         console.print(f"\n  [dim]{mcp_hint}[/dim]")
     else:
         print("\nConnected to Skylos Cloud!")
@@ -333,8 +335,10 @@ def _print_connected_result(result, console=None):
         print(f"  Plan:         {plan_display_name(result.plan)}")
         if result.repo_subpath:
             print(f"  Project root: {result.repo_subpath}")
-        print("\n  Scans will auto-upload on every run.")
-        print("  Use --no-upload to skip.")
+        print(
+            "\n  Nothing is uploaded automatically. Add --upload "
+            "to a scan to send it to this project."
+        )
         print(f"\n  {mcp_hint}")
 
 

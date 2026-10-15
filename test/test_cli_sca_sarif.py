@@ -178,7 +178,9 @@ def _run_cli(project, monkeypatch, *extra_args, gate=True):
             *(("--gate",) if gate else ()),
             "--format",
             "json",
-            "--no-upload",
+            # --no-upload overrides --upload, so only a caller's explicit
+            # --upload removes it.
+            *(() if "--upload" in extra_args else ("--no-upload",)),
             "--no-provenance",
             "--no-grep-verify",
             "--output",

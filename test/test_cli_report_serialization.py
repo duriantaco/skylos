@@ -8,8 +8,20 @@ import pytest
 
 import skylos.cli as cli
 from skylos.commands.scan_cmd import _build_ci_json_payload
+from skylos.core.gate_incomplete import analysis_coverage, coverage_record
 from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.reporting.finding_types import annotate_finding_types, summarize_finding_types
+
+
+@pytest.fixture(autouse=True)
+def _placeholder_scan_paths(monkeypatch):
+    """These tests mock the analyzer and pass placeholder paths such as
+    ``test_path``; the missing-path check has its own tests."""
+    import skylos.commands.scan_cmd as scan_cmd
+
+    monkeypatch.setattr(
+        scan_cmd, "_exit_on_missing_scan_paths", lambda args, *, cli_module: None
+    )
 
 
 def _report():
@@ -118,6 +130,9 @@ def test_json_bytes_normalization_and_upload_isolation(
     expected["analysis_summary"]["custom_rules_coverage"] = {
         "status": "complete", "rule_count": 0
     }
+    expected["analysis_summary"]["analysis_coverage"] = coverage_record(
+        analysis_coverage(expected)
+    )
     expected["provenance_status"] = {
         "ran": False,
         "reason": "skipped with --no-provenance",

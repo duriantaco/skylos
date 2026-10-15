@@ -53,14 +53,14 @@ Rule IDs use a stable public prefix:
 | Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
-| Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. |
+| Quality gate | A threshold-based pass/fail decision used locally or in CI. Critical security issues, secrets, and AI-code issues at `block_ai_defect_severities` (default `["CRITICAL"]`) fail it regardless of counts. Every run ends with a verdict line and its reasons: `PASSED`, `FAILED`, or `INCOMPLETE — could not decide (exit 2)` when required analysis did not finish; `--format json` carries it as the top-level `gate` object. Files that were not analysed (a parse error, a missing language engine) are a coverage warning under a PASSED or FAILED verdict, not exit 2, unless `--strict` or `require_complete = true` asks for complete coverage or most of the code was not analysed. |
 | Risk review | `skylos cicd risk-review --base REF`; the GitHub check "Skylos risk review" (`skylos cicd init --risk-review`). Lists the risk classes a pull request contains. With risks, the check fails until a person with write access approves the head commit; approvals from bot accounts and approvals of older commits do not count. Exit 0 pass, 1 needs a human approval, 2 could not decide. Settings: `[tool.skylos.approval]` at the base. See [docs/risk-review.md](./docs/risk-review.md). |
 | Risk class | One of the nine facts the risk review reports, each needing a human approval: `tests_weakened`, `auth_removed`, `dependency_changed`, `ci_weakened`, `checks_silenced`, `secret_added`, `guardrail_config_changed`, `migration_changed`, `large_diff`. Rule findings map to classes by rule ID; findings `skylos done` reports only as advice are listed and need no approval. The names are shared with Skylos Cloud. |
 | Eligible (risk review) | No risk class found and every class checked: an approval from anyone, a review bot included, is enough. An incomplete analysis is never eligible. |
 | Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
 | Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
 | Failure origin | `skylos done` reruns each failing test on the base commit, in a temporary Git worktree, and labels it `preexisting` (the same test ran there and failed the same way), `introduced` (it passes there), `new_test` (it does not exist there; counts as introduced) or `undetermined` (the base run could not tell: a setup or import error, a different kind of failure, a timeout, changed dependencies). Shown on the receipt as `failure_origins` and in the Stop-hook message. |
-| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. |
+| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. Skylos-specific markers (`# skylos: ignore[SKY-D211] reason`, `# skylos: ignore`, `# noqa: skylos`, `# pragma: no skylos`, `ignore-start`/`ignore-end`) suppress any finding on their line. A bare `# noqa` (no codes) is a generic linter marker: it still hides dead-code, quality and LOW/MEDIUM findings, but not a HIGH or CRITICAL security finding (`SKY-D*`, `SKY-S*`), which stays reported with `bare_noqa_ignored: true` and an advice line. `# noqa: <code>` with Ruff/flake8 codes never suppresses a Skylos security, secret or quality finding; F401/F841 only mark the matching unused import/variable. |
 | Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
 | Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
 | TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
@@ -123,9 +123,9 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
 | D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
 | D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
-| D210 | HIGH | TLS verification disabled | Python, Go | A02 |
+| D210 | HIGH | TLS verification disabled (`requests` `verify=False`, `ssl._create_unverified_context()`, TS/JS `rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED=0`, Go `InsecureSkipVerify: true`). Like D346, not reported in test code: Python test modules (`test_*`, `*_test.py`, `conftest.py`, under `tests/` or `test/`), TS/JS test files (`.test.`/`.spec.`, `test`/`tests`/`__tests__` directories), Go `_test.go` files and test-support files (import `testing` and take a `testing.TB`/`*testing.T`) | Python, TS/JS, Go | A02 |
 | D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
-| D212 | CRITICAL | Command injection | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
+| D212 | CRITICAL | Command injection. In TS/JS, `X.exec(...)` is a command sink only when the file loads a command-execution module: `child_process`, `node:child_process`, `shelljs`, or remote/container exec (`ssh2`, `node-ssh`, `dockerode`; there `conn`/`connection` are not treated as database handles unless a database driver is also loaded). Without one it is `RegExp.prototype.exec` or another library method; a proven RegExp receiver is never a command sink | Python, TS/JS, Go, Java, Rust, Dart, Shell, audit | CWE-78 / A03 |
 | D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart, Shell | CWE-22 / A01 |
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
@@ -235,7 +235,16 @@ when every write to that attribute that can reach the instance creates a test
 client and the module never rewrites it through `setattr`, `__dict__`, `vars()`,
 a `client_class` assignment or a `_pre_setup` override; a test-client class name
 the module rebinds is not trusted); parameters of a function
-decorated with `unittest.mock.patch` (it is not a PATCH route); and URLs whose
+decorated with `unittest.mock.patch` (it is not a PATCH route); methods of a
+receiver proven to be an SQLAlchemy/SQLModel session (`session.get(Item, id)`,
+`session.delete(item)`: the parameter is annotated with an ORM `Session`/
+`AsyncSession`, directly, through `Annotated[...]` or a same-module alias, or
+with an annotation another function in the module uses as one; it is bound
+from `Session(engine)`, a `sessionmaker()` factory or Flask-SQLAlchemy's
+`db.session`; or the same receiver also calls `commit`, `add`, `flush`,
+`refresh`, `rollback`, `exec`, `execute`, `scalars` or `query`, which HTTP
+clients do not have; a receiver bound from `requests`/`httpx`/`aiohttp` stays
+an HTTP client); and URLs whose
 host is fixed by a literal or by a module-level setting followed by `/`, `?` or
 `#` (not `//`), written directly or returned by every path of a same-module
 helper that has no decorator other than `functools.cache`/`lru_cache`. A setting
@@ -267,6 +276,8 @@ assignment from another module (`import app; app.BASE = ...`) is not seen, and a
 setting imported from another module is trusted as is. A fixed-host URL that carries request data in its
 query (`f"{RENDERER}/render?url={...}"`) is not reported. `urllib.parse.quote`
 with a `safe=` argument is not a URL sanitizer.
+
+Go D216 and D212 (Go engine) also need untrusted input: an incoming `*http.Request` (URL, form, headers, decoded body; not `r.Context()`), a gin, echo or fiber request context, or network input (`net.Conn`, `Accept()`, `Read`/`Decode`/`Unmarshal` from such a reader), followed through locals, concatenation, `fmt.Sprintf`, calls and same-file helper parameters. Literals, loopback URLs, config structs, flags, `os.Args` and `os.Executable()` are the program's own inputs. D216 also needs the host to be choosable: a leading literal `scheme://host/` fixes it. D212 is CRITICAL for an untrusted program path or shell command string, HIGH for a shell (`sh -c`, `cmd /c`, PowerShell `-Command`) running a non-constant command that is not proven untrusted, and not reported for a constant or own program with argv elements (`exec.Command(os.Args[0], "run")`). Go D215 (file paths in `os.Open`/`ReadFile`/`WriteFile`/`Create`/`Remove`/`MkdirAll`..., `http.ServeFile`) uses the same sources and is not reported after a containment check on the path: `strings.HasPrefix` on a cleaned path (`filepath.Clean`/`Join`/`Abs`/`EvalSymlinks`), `filepath.Rel` with a `..` check, or `filepath.IsLocal`; `filepath.Base` and `securejoin.SecureJoin` sanitise. The Go engine's reliability checks follow their Python equivalent: unclosed resource (SKY-G260) and defer in a loop (SKY-G203) are MEDIUM like SKY-L008, and `unsafe` use (SKY-G206) is LOW like gosec G103; a defer followed by an unconditional `return` (or a `break` in an outermost loop) runs once and is not reported, and a handle that is closed explicitly, returned or stored in a field is not unclosed. Go D230 (open redirect) needs untrusted input that can choose where the redirect goes: data after a literal `?` or `#` cannot, and a same-origin check (`strings.HasPrefix(v, "/")` with a `"//"` check, `url.Parse` with a `.Host`/`IsAbs()` check, or an allowlist lookup) clears it. Go D211 is CRITICAL when request or network input reaches the query text, HIGH when the query is string-built from a non-constant value with no proven source (Python D211 reports that case too), and not reported for placeholders or constants; `QueryContext`/`ExecContext` are checked on their query argument. Go D210 (`InsecureSkipVerify: true`) is not reported in Go test-support code (a file that imports `testing` and takes a `testing.TB`/`*testing.T`/`B`/`F`/`M`), like D346 in Python test modules; `_test.go` files are not scanned by the Go engine. For L012, an external test file (`package pkg_test`) sees the exports of its own directory's internal test files (`package pkg`, the `export_test.go` convention), because `go test` compiles them into the package.
 
 `bleach.linkify` (it only adds links) and `cgi.escape` (it leaves quotes alone)
 are not XSS sanitizers. Path traversal (D215) also accepts a sanitizer imported by name
@@ -406,7 +417,7 @@ that directory.
 |:---|:---|:---|:---|
 | D290 | HIGH | Dangerous trigger (`pull_request_target`, `workflow_run`) | GitHub Actions |
 | D291 | MEDIUM-HIGH | Missing or excessive permissions | GitHub Actions |
-| D292 | MEDIUM | Unpinned action or reusable workflow | GitHub Actions |
+| D292 | HIGH (LOW for GitHub-owned) | Unpinned action or reusable workflow. GitHub-owned `actions/*` and `github/*` at a tag or branch are LOW (GitHub runs the workflow and owns them; zizmor's default policy allows ref-pins for them); every other owner, dynamic `${{ }}` refs and refs with no `@` are HIGH | GitHub Actions |
 | D293 | MEDIUM | Checkout persists credentials | GitHub Actions |
 | D294 | HIGH | Template injection from untrusted context | GitHub Actions |
 | D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
@@ -711,7 +722,13 @@ across different operating-system/CPU platforms.
 under a secret-like name (`key`, `token`, `secret`, `password`, `auth`,
 `credential`, `private`, `api`, `session`, `cookie`, `signature`/`sig`
 before the value on its line, or the user-info, secret-named parameter or
-webhook path of a URL). A generic high-entropy value with no such name is
+webhook path of a URL), including when a type annotation sits between the
+name and the value (`API_TOKEN: &str = "..."` in Rust, `apiToken: string =
+"..."` in TypeScript, `API_TOKEN: str = "..."` in Python,
+`var apiToken string = "..."` and `apiToken := "..."` in Go). The Go engine's
+own `SKY-S101` (HIGH) needs a credential-named variable, struct field or map
+key assigned a literal value; a keyword inside a message, format string, flag
+name, case label or environment-variable name is not a secret. A generic high-entropy value with no such name is
 `HIGH` with `"severity_reason": "no_secret_name"`; the default gate still
 counts it under `max_secrets`. Two other lower-certainty shapes are `HIGH`:
 a password embedded in a connection URL
@@ -739,7 +756,9 @@ secret-named query/fragment parameters (`api_key=`, `access_token=`, `sig=`,
 `X-Amz-Signature=`) and webhook/bot/token paths, file paths (`/srv/x/y`,
 `./a/b`, `C:\\x\\y`, `dir/name.ext`; not `ab/<token>` or a base64 value with
 `+`/`=`), word slugs (`What-is-the-build-volume`, `INTRA-001-amendment-v2`),
-lines of minified `.js` bundles over 1,000 characters, and, under a
+lines of minified `.js` bundles over 1,000 characters, `&anchor`/`!!tag`
+decorated values outside YAML files (`&mut DecompressionMatcherBuilder` in
+Rust is a reference to a type), and, under a
 secret-sounding name, a whole file path, a URL with no credential and no
 random component, whole-value references
 (`${{ secrets.X }}`, `${X}`, `$X`, `%X%`, `{{ .Values.x }}`; not
@@ -748,10 +767,15 @@ random component, whole-value references
 (`ADMIN_PASSWORD: "adminPassword"`), URLs assigned to `*_URL`/`*_URI`/
 `*_ENDPOINT` names (the URL's own parts are still scanned) and Secret Manager
 references (`NAME:latest`). In JS/TS test files (`*.test.*`, `*.spec.*`,
-`__tests__/`, `__mocks__/`) and Go test files (`*_test.go`) only
-provider-shaped tokens are reported, as in Python test directories. A
-private-key header in prose, markup or before a placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`, `\n...\n`) is
-not a key; PKCS#8 (`-----BEGIN PRIVATE KEY-----`), encrypted PKCS#8 and
+`__tests__/`, `__mocks__/`), Go test files (`*_test.go`) and test-fixture
+directories (`testdata/`) only provider-shaped tokens are reported, as in
+Python test directories. Minified and vendored front-end files (a `.min`
+suffix, an average line length above 110 characters, or a library folder
+under `static/` or `public/`) are skipped like other generated files and
+named in the scan's skip line. A private-key header in prose, markup or
+before a placeholder (`<code>-----BEGIN RSA PRIVATE KEY-----</code>`,
+`\n...\n`) is not a key, nor is a key body cut short by an elision line
+(`...`, `…`, `[...]`, `<snip>`); PKCS#8 (`-----BEGIN PRIVATE KEY-----`), encrypted PKCS#8 and
 OpenPGP private keys are reported when key data follows the header.
 Provider-shaped tokens (AWS, GitHub, GitLab, Slack, Stripe, Google,
 SendGrid, Twilio) are never filtered by these shapes.
@@ -835,7 +859,7 @@ use the `SKY-A` prefix.
 | A137 | LOW | New code only tests call (`skylos done`, advice even with `branch_orphans = "block"` unless listed in `branch_orphans_block_rules`): a symbol or JS/TS file the change added whose only callers are test files ("added `foo()` and a test for it, and no production caller"). The message names the test. Test files: `tests/`, `test_*.py` using a test framework, `conftest.py`, `*.test.*`/`*.spec.*`, `__tests__/`, `*_test.go`, `src/test/` | Languages the dead-code engine covers: Python, JS/TS, Java (private and package-private members), Kotlin (private members), Go (unexported, needs the skylos-go engine), PHP, Rust and others; an engine that is not installed is listed as not checked |
 | L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS, Go, Java |
 | L023 | CRITICAL | Phantom decorator | Python |
-| D222 | CRITICAL | Dependency hallucination | Python |
+| D222 | CRITICAL | Dependency hallucination (imports and manifests; Go modules are looked up on the module proxy with its case-encoding, `github.com/!burnt!sushi/toml`) | Python, manifests (`go.mod`, `package.json`, requirements) |
 | D224 | HIGH | API signature hallucination | Python |
 | D225 | HIGH | Dependency version hallucination | Python, npm, Go |
 
@@ -991,12 +1015,12 @@ value is the rest of the target's name in UPPER_SNAKE with two or more words
 | T106 | MEDIUM | Unsafe exported API type | TypeScript |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
 | F102 | MEDIUM/HIGH | Framework route auth guard or defeated ownership check | Python |
-| R101 | MEDIUM | Repository missing Python type-check command | Repo policy |
-| R102 | MEDIUM | Repository missing Python lint command | Repo policy |
-| R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy |
-| R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
+| R101 | MEDIUM | Repository missing Python type-check command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R102 | MEDIUM | Repository missing Python lint command | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
+| R104 | MEDIUM | Repository missing pre-commit config | Repo policy (advice: listed after Defect/Review findings, never in the first-screen measurements, the Risk headline or a concise exit code on its own) |
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
-| CIRC | varies | Circular dependency | Python |
+| CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
 
 SKY-F102 retains its MEDIUM review for mutating routes without an obvious auth
 guard. It also reports a HIGH review when a FastAPI route contains an explicit
@@ -1060,7 +1084,7 @@ findings in any language.
 ### Framework entrypoints
 
 Dead-code findings skip code a framework or tool loads by convention rather
-than by an import. These conventions apply to TS/JS and PHP:
+than by an import. These conventions apply to TS/JS, PHP and Python:
 
 | Convention | Scope | Kept live |
 |:---|:---|:---|
@@ -1069,8 +1093,21 @@ than by an import. These conventions apply to TS/JS and PHP:
 | Next.js Pages Router | `pages/**` | default exports, `getServerSideProps`, `getStaticProps`, `getStaticPaths`, `getInitialProps`, `_app`/`_document`/`_error`/`404`/`500`; `config` and `_app`'s `reportWebVitals` in a Next.js project |
 | Next.js root files | project root or `src/` | `middleware`, `proxy`, `instrumentation`, `instrumentation-client`, `mdx-components` and their hook exports |
 | Tool config files | any directory | `next.config.*`, `postcss.config.*` and `tailwind.config.*` (`.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`), the usual Vite, Vitest, ESLint, Jest, Playwright and tsup config names, and their default export, including `const config = {...}; export default config` |
+| Package tool configs | `<tool>.config.<ext>` (`.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`) next to a `package.json`, and `turbo/generators/config.*` | every export: `metro`, `babel`, `drizzle`, `stylelint`, `openapi-ts`, Expo `app.config`, a `turbo gen` generator, ... |
+| Expo Router | a package whose `dependencies`/`devDependencies` list `expo-router`; router root from `app.json` (`expo-router` plugin `root` / `extra.router.root`), else `src/app` if present, else `app` | every `.js`/`.jsx`/`.ts`/`.tsx` file under the root, its default export, `unstable_settings`, `ErrorBoundary`, `generateStaticParams`, `loader`; HTTP method exports of `+api` files; `redirectSystemPath`/`legacy_subscribe` of `+native-intent` |
+| React Email | a package depending on `react-email`; `./emails` plus any `--dir`/`-d` in an `email dev\|build\|export` script | `.js`/`.jsx`/`.tsx` files with a default export, outside `_`-prefixed and `static` folders, and their default export |
+| Jest manual mocks | any `__mocks__/` directory | the file and all its exports |
+| esbuild entry points | `entryPoints` of a top-level `esbuild.build/context` call in a script a `package.json` script runs (also under an excluded folder such as `dev/build`), including `path.join(import.meta.dirname, ...)` values and objects that later gain new keys | the entry files and all their exports (the bundle's interface) |
 | Laravel Vite plugin | `vite.config.*` | each `input` of `laravel(...)` from `laravel-vite-plugin` |
-| Laravel | a `composer.json` whose `require` lists `laravel/framework` | `Illuminate\Console\Command` subclasses in `app/Console/Commands` (bases resolved through imports and the PSR-4 map); classes in `app/Listeners` with a `handle*`/`__invoke` method whose first parameter has a class type, when event discovery is on (a provider's `shouldDiscoverEvents()` returns true, or the Laravel 11 `Application::configure()` builder without `withEvents(discover: false)`); `*Factory` in `database/factories` when the model in `app/Models` or `app` uses `HasFactory` (directly or through a project parent); `*Policy` in `app/Policies` when the model exists; classes in `app/Livewire`, `app/Http/Livewire`, `app/View/Components`, `database/migrations`; `DatabaseSeeder`; and the public methods of those classes |
+| Laravel | a `composer.json` whose `require` lists `laravel/framework` | `Illuminate\Console\Command` subclasses in `app/Console/Commands` (bases resolved through imports and the PSR-4 map); classes in `app/Listeners` with a `handle*`/`__invoke` method whose first parameter has a class type, when event discovery is on (a provider's `shouldDiscoverEvents()` returns true, or the Laravel 11 `Application::configure()` builder without `withEvents(discover: false)`); `*Factory` in `database/factories` when the model in `app/Models` or `app` uses `HasFactory` (directly or through a project parent); `*Policy` in `app/Policies` when the model exists; classes in `app/Livewire`, `app/Http/Livewire`, `app/View/Components`, `database/migrations`; `DatabaseSeeder` and any other `Illuminate\Database\Seeder` subclass in `database/seeders` (run by `db:seed --class`); and the public methods of those classes |
+| Blade templates | `*.blade.php` | helper functions called in the template, classes named with `new`, `::` or a fully qualified name (`@inject`, `@use`), and methods called as `->name(...)` |
+| PHP class strings | any PHP string literal | fully qualified class names (`'App\Services\Mailer'`, generated-PHP strings in Blade directives) |
+| Flask | modules importing Flask | module-level `create_app`/`make_app` factories (Flask CLI discovery) and what they register; Blueprint `before_app_request`/`app_errorhandler`/... hooks once the blueprint is registered; functions passed to `app.teardown_appcontext(...)`, `before_request`, `register_error_handler`, ...; the parameters Flask passes to callbacks (`close_db(e)`) |
+| Declarative class attributes | class bodies of classes with a base | attributes built by `Relationship`, `relationship`, `mapped_column`, `Column`, `column_property`, `association_proxy`, `backref`, `synonym`, `composite`, `deferred`, `ForeignKey`, `ParentalKey`, `GenericRelation`, `GenericForeignKey`, `TaggableManager`, `ClusterTaggableManager` or any `*Field(...)` constructor (Django model/form fields, Wagtail `RichTextField`/`StreamField`, DRF); `*Filter(...)` on a `*FilterSet`; `*Block(...)` children of a Wagtail `*Block`; every field of a `table=True` SQLModel class |
+| `Meta` classes | any class named `Meta` | the class and its options (Django models/forms, DRF, django-filter, Wagtail blocks, factory_boy) |
+| Wagtail | modules importing `wagtail` | Page attributes (`content_panels`, `promote_panels`, `settings_panels`, `search_fields`, `api_fields`, `template`, `subpage_types`, `parent_page_types`, `max_count`, `preview_modes`, ...), snippet/`ModelViewSet` options (`list_display`, `list_export`, `sort_order_field`, `menu_label`, ...), `Task.task_state_class`, `AccessibilityItem` `axe_*` options; the parameters of Page, preview, workflow-task and block hook methods (`serve`, `serve_preview`, `get_preview_template`, `get_context`, `user_can_access_editor`, `get_actions`, ...) |
+| Django | modules importing `django` | parameters of class-based-view handlers (`get`, `post`, ..., `dispatch`, `setup`), of system checks registered with `register(...)` (`app_configs`, `**kwargs`), and of documented ModelAdmin/Inline, Widget, Field and Form hooks; model classes in an app's `models` module (fields or a model-like base); UPPERCASE names in `locale/<lang>/formats.py` and `FORMAT_MODULE_PATH` format files |
+| Registration decorators | class decorators named `register*` | the class (`@register_setting`, `@register_snippet`, `@admin.register`) |
 
 A project is a Next.js project when a `next.config.*` file or a `package.json`
 that depends on `next` sits in the file's directory or a parent. Only the named
@@ -1082,6 +1119,12 @@ only when the file itself is one Next.js routes, Storybook loads or a tool
 reads as config, not to name-only marks such as `use*` hooks or a `page.tsx`
 outside `app/`. With discovery off, a Laravel listener stays live only through
 its `::class` registration in `$listen` or `Event::listen`.
+
+Generated sources (a leading comment such as `// Code generated ... DO NOT
+EDIT.`, `@generated`, `This file was automatically generated by ...` or `This
+file is auto-generated by ...`) are parsed for references, but their
+dead-code, quality and AI-defect findings are not reported, like Django
+migrations; `--include-generated` reports them.
 
 Known limitations: tool config and Storybook story files are recognised by file
 name, so a stale `scripts/old/vite.config.ts` or an unused `*.stories.tsx`

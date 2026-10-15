@@ -78,10 +78,28 @@ def apply_report_scope(result: dict, analyzer) -> None:
     if capped:
         summary["test_file_severity_capped"] = capped
 
+    bare_noqa = count_bare_noqa_security_findings(result)
+    if bare_noqa:
+        summary["bare_noqa_security_findings"] = bare_noqa
+
     for section in changed_sections:
         count_key = _SUMMARY_COUNT_KEYS.get(section)
         if count_key and (count_key in summary or result.get(section)):
             summary[count_key] = len(result.get(section) or [])
+
+
+_BARE_NOQA_SECTIONS = ("danger", "secrets", "ai_defects", "quality")
+
+
+def count_bare_noqa_security_findings(result: dict) -> int:
+    """HIGH/CRITICAL security findings that sit on a bare ``# noqa``, which
+    no longer hides them (``skylos.analysis.finding_filter``)."""
+    return sum(
+        1
+        for section in _BARE_NOQA_SECTIONS
+        for finding in result.get(section) or []
+        if isinstance(finding, dict) and finding.get("bare_noqa_ignored")
+    )
 
 
 def cap_test_file_severity(result: dict, project_root=None) -> int:

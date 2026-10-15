@@ -180,7 +180,9 @@ class ApprovalConfig:
 
 
 def parse_approval_config(pyproject_text: str | None) -> ApprovalConfig:
-    """``[tool.skylos.approval]`` from a pyproject.toml's text (None: no file)."""
+    """``[tool.skylos.approval]`` from a pyproject.toml's text, or
+    ``[approval]`` from a skylos.toml's (None: no file)."""
+    from skylos.done.config import skylos_settings_table
     from skylos.done.test_config import _toml
 
     if pyproject_text is None:
@@ -190,9 +192,8 @@ def parse_approval_config(pyproject_text: str | None) -> ApprovalConfig:
         return ApprovalConfig(
             problems=("pyproject.toml at the base is not valid TOML",)
         )
-    table = data.get("tool", {})
-    for key in ("skylos", "approval"):
-        table = table.get(key) if isinstance(table, dict) else None
+    table = skylos_settings_table(data)
+    table = table.get("approval") if isinstance(table, dict) else None
     if table is None:
         return ApprovalConfig()
     if not isinstance(table, dict):
@@ -368,14 +369,22 @@ class ApprovalResult:
 # ---------------------------------------------------------------------------
 
 
-def analyze_change(path: str, base_ref: str) -> ApprovalResult:
+def analyze_change(
+    path: str, base_ref: str, *, config_ref: str | None = None
+) -> ApprovalResult:
     """Every risk class in the change from ``base_ref``'s merge base to the
-    working tree. Raises ``DoneError`` when the comparison cannot be set up."""
+    working tree. Raises ``DoneError`` when the comparison cannot be set up.
+
+    ``config_ref`` reads the settings from another commit than ``base_ref``:
+    a merge queue analyses each pull request's part of a group with the
+    queue base commit's settings, never with those of a pull request ahead."""
     from skylos.done.checks import CHECKS, RUN_ORDER, CheckContext, run_check
-    from skylos.done.config import parse_done_config
+    from skylos.done.config import base_config_text, parse_done_config
 
     comparison = open_comparison(path, base_ref)
-    pyproject = comparison.base_text("pyproject.toml", sha=comparison.config_sha)
+    if config_ref is not None:
+        comparison.config_sha = config_ref
+    pyproject = base_config_text(comparison, sha=comparison.config_sha)
     config = parse_approval_config(pyproject)
     enabled = set(config.veto_classes)
     result = ApprovalResult(

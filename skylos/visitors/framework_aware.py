@@ -143,6 +143,7 @@ FRAMEWORK_IMPORTS = {
     "typer",
     "click",
     "sqlalchemy",
+    "wagtail",
 }
 
 ROUTE_METHODS = {

@@ -58,11 +58,19 @@ def add_risk_review_parser(subparsers) -> None:
 
 def run_risk_review(args, *, console: Console | None = None) -> int:
     from skylos.cicd.approval import analyze_change
+    from skylos.cicd.approval_github import GitHubApiError
+    from skylos.cicd.merge_group import merge_group_event
     from skylos.done.base import DoneError
 
     out = console or Console(highlight=False)
     err = Console(stderr=True, highlight=False)
-    base_ref = args.base or _ci_base_ref()
+    try:
+        group = merge_group_event()
+    except GitHubApiError as exc:
+        return _report_error(
+            args.format, err, f"could not read the merge_group event: {exc}"
+        )
+    base_ref = args.base or _ci_base_ref(group)
     if not base_ref:
         return _report_error(
             args.format,
@@ -80,11 +88,28 @@ def run_risk_review(args, *, console: Console | None = None) -> int:
             args.format, err, "the analysis could not complete", base_ref=base_ref
         )
 
+    if group is not None:
+        # The check must describe the commit the queue built, compared with
+        # the queue's own base; anything else is a misconfigured workflow.
+        problem = _merge_group_mismatch(result, group)
+        if problem:
+            return _report_error(args.format, err, problem, base_ref=base_ref)
+
     human = None
     if result.complete and result.vetoes:
-        human = _human_approval(result)
+        human = (
+            _merge_group_approval(args.path, result, group)
+            if group is not None
+            else _human_approval(result)
+        )
     exit_code, verdict = decide(result, human)
-    payload = build_payload(result, human, exit_code=exit_code, verdict=verdict)
+    payload = build_payload(
+        result,
+        human,
+        exit_code=exit_code,
+        verdict=verdict,
+        merge_group=_merge_group_info(group, human),
+    )
 
     if args.format == "json":
         print(json.dumps(payload, indent=2))
@@ -96,13 +121,48 @@ def run_risk_review(args, *, console: Console | None = None) -> int:
     return exit_code
 
 
-def _ci_base_ref() -> str | None:
+def _ci_base_ref(group=None) -> str | None:
     from skylos.core.ci_env import github_or_ci_base_ref
 
+    if group is not None:
+        # A merge group is compared with the commit the queue built it on.
+        return group.base_sha
     base = github_or_ci_base_ref() or _event_base_ref()
     if not base:
         return None
     return base if base.startswith("origin/") else f"origin/{base}"
+
+
+def _merge_group_mismatch(result: ApprovalResult, group) -> str | None:
+    if result.head != group.head_sha or result.head_dirty:
+        return (
+            f"checked commit {result.head[:12]} is not the merge-group commit "
+            f"{group.head_sha[:12]}; check out github.sha on merge_group events"
+        )
+    if result.base != group.base_sha:
+        return (
+            f"compared with {result.base[:12]}, not the merge group's base "
+            f"{group.base_sha[:12]}; pass --base with merge_group.base_sha"
+        )
+    return None
+
+
+def _merge_group_approval(path, result: ApprovalResult, group):
+    from skylos.cicd.merge_group import find_group_approval
+
+    return find_group_approval(
+        path,
+        group,
+        result.vetoes,
+        non_human_logins=result.config.non_human_logins,
+    )
+
+
+def _merge_group_info(group, human) -> dict | None:
+    if group is None:
+        return None
+    info = getattr(human, "merge_group", None)
+    return dict(info) if info else {**group.to_dict(), "pull_requests": []}
 
 
 def _event_base_ref() -> str | None:
@@ -158,12 +218,17 @@ def decide(result: ApprovalResult, human) -> tuple[int, str]:
 
 
 def build_payload(
-    result: ApprovalResult, human, *, exit_code: int, verdict: str
+    result: ApprovalResult,
+    human,
+    *,
+    exit_code: int,
+    verdict: str,
+    merge_group: dict | None = None,
 ) -> dict:
     from skylos import __version__
 
     config = result.config
-    return {
+    payload = {
         "approval": {
             "schema": SCHEMA,
             "check": CHECK_NAME,
@@ -197,6 +262,9 @@ def build_payload(
             "skylos_version": __version__,
         }
     }
+    if merge_group is not None:
+        payload["approval"]["merge_group"] = merge_group
+    return payload
 
 
 def _error_payload(message: str, base_ref: str | None) -> dict:
@@ -324,6 +392,8 @@ def _print_text(console: Console, payload: dict) -> None:
             Text("Approvals that do not count: " + "; ".join(human["ignored"][:10])),
             soft_wrap=True,
         )
+    for line in merge_group_lines(data):
+        console.print(Text(line), soft_wrap=True)
     if data["advisories"]:
         console.print()
         console.print(Text("Advice (needs no approval):", style="bold"))
@@ -348,6 +418,39 @@ def _print_text(console: Console, payload: dict) -> None:
         )
     for problem in data["settings"]["problems"]:
         console.print(Text(f"Setting ignored: {problem}", style="yellow"), soft_wrap=True)
+
+
+def merge_group_lines(data: dict) -> list[str]:
+    """What the merge queue run checked, one line per pull request with risks."""
+    group = data.get("merge_group")
+    if not isinstance(group, dict):
+        return []
+    number = group.get("pull_request")
+    lines = [
+        "Merge queue: compared the merge-group commit "
+        f"{str(group.get('head_sha'))[:12]} with its base "
+        f"{str(group.get('base_sha'))[:12]}"
+        + (f" (queued pull request #{number})" if number else "")
+    ]
+    for entry in group.get("pull_requests") or []:
+        if not entry.get("risk_count"):
+            continue
+        approval = entry.get("approval") or {}
+        status = approval.get("status")
+        if status == "approved":
+            state = f"approved by {approval.get('login')}"
+        elif status == "missing":
+            state = "no person with write access approved its head commit"
+        elif status == "error":
+            state = f"could not check: {approval.get('detail')}"
+        else:
+            state = "not checked"
+        head = entry.get("head_sha")
+        lines.append(
+            f"  #{entry['number']}: {', '.join(entry.get('risks') or [])}; {state}"
+            + (f" (head {str(head)[:12]})" if head else "")
+        )
+    return lines
 
 
 def _risk_line(risk: dict) -> str:
@@ -398,11 +501,22 @@ def render_markdown(payload: dict) -> str:
             + clean("; ".join(human["ignored"][:10]), max_length=1000)
         )
         lines.append("")
+    group_lines = merge_group_lines(data)
+    if group_lines:
+        lines += [clean(line, max_length=500) for line in group_lines]
+        lines.append("")
     if data["vetoes"] and data["verdict"] == "needs_human_approval":
-        lines.append(
-            "A person with write access approving the head commit turns this "
-            "check green; bot approvals and approvals of older commits do not."
-        )
+        if data.get("merge_group"):
+            lines.append(
+                "A person with write access approving the pull request's head "
+                "commit, then queueing it again, turns this check green; bot "
+                "approvals and approvals of older commits do not."
+            )
+        else:
+            lines.append(
+                "A person with write access approving the head commit turns this "
+                "check green; bot approvals and approvals of older commits do not."
+            )
         lines.append("")
     for item in data["classes_incomplete"][:20]:
         lines.append(

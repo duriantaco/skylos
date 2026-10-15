@@ -280,24 +280,20 @@ def estimate_cost(files):
 
 
 def load_addopts(start_path: Path | None = None):
-    current = (start_path or Path.cwd()).resolve()
-    while True:
-        toml_path = current / "pyproject.toml"
-        if toml_path.exists():
-            try:
-                try:
-                    import tomllib
-                except ImportError:
-                    import tomli as tomllib
+    """``addopts`` from the nearest config file that sets it (same discovery
+    as ``load_config``: .skylos.toml, skylos.toml, pyproject.toml)."""
+    from skylos.config import _find_config_layers, _load_toml_user_config
 
-                with open(toml_path, "rb") as f:
-                    data = tomllib.load(f)
-                addopts = data.get("tool", {}).get("skylos", {}).get("addopts", [])
-                return sanitize_addopts(addopts)
-            except Exception:
-                pass
-            break
-        if current.parent == current:
-            break
-        current = current.parent
+    current = (start_path or Path.cwd()).resolve()
+    try:
+        layers, _ = _find_config_layers(current)
+    except (OSError, ValueError):
+        return []
+    for config_path in layers:
+        try:
+            user_cfg = _load_toml_user_config(config_path)
+        except (OSError, ValueError):  # unreadable or invalid TOML
+            continue
+        if "addopts" in user_cfg:
+            return sanitize_addopts(user_cfg.get("addopts", []))
     return []

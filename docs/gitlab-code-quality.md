@@ -100,6 +100,10 @@ use Skylos's existing CI text redaction. The exporter accepts at most 20,000
 input findings and writes at most 10,000 findings, 2,000 characters per
 description, and 16 MiB of compact JSON. Invalid locations or exceeded limits
 retain representable findings but produce diagnostics and exit `2`.
+Any file Skylos could not analyse also makes the GitLab report incomplete and
+exits `2`, even when other output formats treat it as a coverage warning:
+GitLab compares reports between commits, so findings missing from an
+unanalysed file would show as fixed in the merge request.
 
 Fingerprints ignore checkout directories and line movement. Otherwise identical
 occurrences are numbered in source order, so adding or removing one can change

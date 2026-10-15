@@ -11,6 +11,7 @@ except ImportError:
     tsphp = None
 
 from skylos.visitors.base import Definition
+from skylos.visitors.languages.php.blade import php_string_class_refs
 
 try:
     PHP_LANG: Language | None = (
@@ -1149,6 +1150,14 @@ class PhpCore:
         class_bases: list[str],
         aliases: dict[tuple[str, str], str],
     ) -> None:
+        if node.type in {"string", "encapsed_string", "heredoc", "nowdoc"}:
+            # ``'App\Services\Foo'`` container keys, config arrays and
+            # generated-PHP strings name classes without ``::class``. The whole
+            # literal is read: escape sequences split its ``string_content``.
+            for qualified in php_string_class_refs(self._get_text(node)):
+                self._add_ref(qualified, node.start_byte, current_callable=None)
+            return
+
         if node.type == "function_call_expression":
             name_node = node.child_by_field_name("function")
             if name_node is None or name_node.type not in {

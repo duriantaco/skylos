@@ -199,7 +199,17 @@ def inspect_go_package_surface(
     *,
     allowed_files: frozenset[Path] | None = None,
     exclude_folders: Sequence[str] | None = None,
+    include_internal_tests: bool = False,
 ) -> GoPackageSurface:
+    """Exported members of the package in ``directory``.
+
+    With ``include_internal_tests`` the surface also has the members declared
+    in the directory's ``_test.go`` files that belong to the package itself
+    (``package encode``, not ``package encode_test``): ``go test`` compiles
+    them into the package, so the external tests in the same directory see
+    them. That is how the ``export_test.go`` convention works; the rule
+    follows the package clause, not the file name.
+    """
     try:
         if directory.is_symlink():
             raise ValueError
@@ -241,6 +251,22 @@ def inspect_go_package_surface(
     if len(package_names) > 1:
         reasons.add("ambiguous_package_name")
     package_name = next(iter(package_names)) if len(package_names) == 1 else None
+    if include_internal_tests and package_name is not None:
+        test_paths = _internal_test_go_files(
+            resolved_directory, module.scan_root, exclude_folders
+        )
+        if test_paths is None:
+            reasons.add("package_file_limit")
+        for path in test_paths or ():
+            parsed, reason = parse_go_file(path)
+            if parsed is None:
+                reasons.add(reason or "parse_error")
+                continue
+            if parsed.package_name != package_name:
+                continue  # an external test package (package_name + "_test")
+            if parsed.build_conditional:
+                reasons.add("build_conditional_surface")
+            _collect_exported_members(parsed, members, reasons)
     return GoPackageSurface(
         import_path=import_path,
         directory=resolved_directory,
@@ -419,6 +445,32 @@ def _discovered_package_go_files(
 
 def _is_package_go_file(path: Path) -> bool:
     return path.suffix == ".go" and not path.name.endswith("_test.go")
+
+
+def _internal_test_go_files(
+    directory: Path,
+    scan_root: Path,
+    exclude_folders: Sequence[str] | None,
+) -> list[Path] | None:
+    """The directory's ``_test.go`` files (any package clause; the caller
+    keeps those of the package itself)."""
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return []
+    paths: list[Path] = []
+    for path in entries:
+        if path.suffix != ".go" or not path.name.endswith("_test.go"):
+            continue
+        resolved = _safe_contained_file(directory, path)
+        if resolved is None or should_exclude_path(
+            resolved,
+            scan_root,
+            exclude_folders,
+        ):
+            continue
+        paths.append(resolved)
+    return _bounded_package_files(paths)
 
 
 def _bounded_package_files(paths: Iterable[Path]) -> list[Path] | None:

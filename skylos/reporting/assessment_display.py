@@ -80,11 +80,29 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
     ]
 
 
+# Repository-policy advice ("no mypy/Ruff/gate/pre-commit configured") is
+# about the repository's tooling, not a measurement of its code. It stays in
+# the Advice group after the findings and in JSON, but never leads the first
+# screen, sets the Risk headline, or alone fails a concise scan.
+REPOSITORY_POLICY_RULES = frozenset(
+    {"SKY-R101", "SKY-R102", "SKY-R103", "SKY-R104", "SKY-R105"}
+)
+
+
+def is_repository_policy_finding(item) -> bool:
+    if not isinstance(item, Mapping):
+        return False
+    return (
+        item.get("kind") == "repo_policy"
+        or str(item.get("rule_id") or "").upper() in REPOSITORY_POLICY_RULES
+    )
+
+
 def maintainability_rows(assessment) -> list[tuple[str, str, str]]:
     rows = []
     maintenance = _mapping(_mapping(assessment).get("maintainability"))
     for check in maintenance.get("checks", []) or []:
-        if not isinstance(check, Mapping):
+        if not isinstance(check, Mapping) or is_repository_policy_finding(check):
             continue
         affected = check.get("affected_units", 0)
         total = check.get("analyzed_units")
@@ -121,6 +139,19 @@ def assessment_coverage_text(assessment) -> str:
     parts = [f"Coverage: {status}"]
     missing = coverage.get("not_assessed") or []
     incomplete = coverage.get("incomplete_checks") or []
+    unchecked = _count(coverage.get("unchecked_file_count"))
+    unverified = _count(coverage.get("unverified_dead_code_candidates"))
+    if unchecked:
+        total = _count(coverage.get("source_file_count"))
+        of_total = f" of {total}" if total else ""
+        noun = "file" if (total or unchecked) == 1 else "files"
+        parts.append(f"{unchecked}{of_total} {noun} not analysed (listed below)")
+        # Those files are missing from every check; name only checks that
+        # are incomplete for another reason.
+        incomplete = coverage.get("limited_checks") or []
+    if unverified:
+        noun = "candidate" if unverified == 1 else "candidates"
+        parts.append(f"{unverified} dead-code {noun} not verified")
     if missing:
         parts.append("not assessed: " + ", ".join(map(str, missing)))
     if incomplete:
@@ -128,6 +159,10 @@ def assessment_coverage_text(assessment) -> str:
     if status != "complete":
         parts.append("absence of findings does not establish a clean repository")
     return "; ".join(parts)
+
+
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
 def dependency_coverage_lines(analysis_summary) -> list[str]:
@@ -154,11 +189,17 @@ def dependency_coverage_lines(analysis_summary) -> list[str]:
         ("not_checked_lockfile_dependency_count", "lockfile entries not checked"),
         ("parse_error_count", "parse errors"),
         ("unsupported_lockfile_count", "unsupported lockfiles"),
+        ("unsupported_manifest_count", "unsupported manifests"),
     ):
         value = count(key)
         if value is not None:
             facts.append(f"{value} {label}")
     lines = ["Dependency inventory: " + " · ".join(facts)] if facts else []
+    from skylos.core.sca_coverage import skipped_inputs_line, unsupported_inputs_line
+
+    for line in (unsupported_inputs_line(sca), skipped_inputs_line(sca)):
+        if line:
+            lines.append(line)
     skipped = count("non_registry_lockfile_dependency_count")
     if skipped:
         lines.append(
@@ -173,7 +214,10 @@ def dependency_coverage_lines(analysis_summary) -> list[str]:
                 detail += f"; {remaining} more entries (see sca_coverage JSON)"
             lines.append("Dependency sources not checked: " + detail)
     next_steps = []
-    if count("unresolved_dependency_count") or count("supported_lockfile_count") == 0:
+    if count("unresolved_dependency_count") or (
+        count("supported_lockfile_count") == 0
+        and count("supported_manifest_count") != 0
+    ):
         next_steps.append(
             "for unresolved public-package versions, provide a supported lockfile (e.g. uv.lock, poetry.lock or package-lock.json) or exact manifest versions; version ranges are not resolved"
         )

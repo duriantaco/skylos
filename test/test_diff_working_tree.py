@@ -237,3 +237,20 @@ def test_delete_only_edit_that_breaks_parsing_still_blocks(
     assert [e["file"].rsplit("/", 1)[-1] for e in data["analysis_errors"]] == [
         "valid.ts"
     ]
+
+
+def test_changed_file_in_another_encoding_does_not_stop_the_diff(tmp_path):
+    # A Latin-1 text file (or a binary git reads as text) in the change made
+    # `--diff` exit 2 with a UnicodeDecodeError.
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "app.py").write_text(SAFE)
+    (tmp_path / "legacy.properties").write_bytes(b"name=caf\xe9\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    _git(tmp_path, "tag", "base")
+    (tmp_path / "legacy.properties").write_bytes(b"name=caf\xe9s\n")
+    _git(tmp_path, "commit", "-q", "-am", "latin-1 edit")
+
+    ranges = get_changed_line_ranges("base", cwd=tmp_path, raise_on_error=True)
+
+    assert _files(ranges) == {"legacy.properties"}

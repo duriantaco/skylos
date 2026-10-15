@@ -460,3 +460,89 @@ func main() { security.VerifySession("ok") }
         if item["id"] == "go_workspace_api_surface"
     )
     assert "excluded_workspace_paths" in {reason["code"] for reason in check["reasons"]}
+
+
+# Go's internal test files (``package pkg`` in ``pkg/*_test.go``, e.g. the
+# ``export_test.go`` convention) are compiled into the package for ``go test``,
+# so external tests in the same directory see their exports (W3 R3: caddy's
+# ``encode.HasVaryValue`` reported as a phantom reference).
+_EXPORT_TEST = (
+    "package security\n"
+    "func VerifyTokenForTest(value string) bool { return value != \"\" }\n"
+)
+_PACKAGE = "package security\nfunc VerifyToken(value string) bool { return true }\n"
+
+
+def _missing_names(tmp_path, importer_relative, importer_source, extra=()):
+    _write(tmp_path, "go.mod", "module example.com/demo\n\ngo 1.22\n")
+    files = [
+        _write(tmp_path, "security/security.go", _PACKAGE),
+        _write(tmp_path, "security/export_test.go", _EXPORT_TEST),
+        _write(tmp_path, importer_relative, importer_source),
+    ]
+    files.extend(_write(tmp_path, relative, source) for relative, source in extra)
+    findings, _check = scan_go_local_api_hallucinations(tmp_path, files)
+    return [finding["simple_name"] for finding in findings]
+
+
+_EXTERNAL_TEST = """package security_test
+import (
+    "testing"
+    "example.com/demo/security"
+)
+func TestVerify(t *testing.T) { _ = security.{name}("x") }
+"""
+
+
+def test_external_test_sees_internal_test_exports(tmp_path):
+    assert (
+        _missing_names(
+            tmp_path,
+            "security/verify_test.go",
+            _EXTERNAL_TEST.replace("{name}", "VerifyTokenForTest"),
+        )
+        == []
+    )
+
+
+def test_external_test_still_reports_a_name_declared_nowhere(tmp_path):
+    assert _missing_names(
+        tmp_path,
+        "security/verify_test.go",
+        _EXTERNAL_TEST.replace("{name}", "VerifyMissing"),
+    ) == ["VerifyMissing"]
+
+
+def test_production_code_does_not_see_test_only_exports(tmp_path):
+    assert _missing_names(
+        tmp_path,
+        "cmd/app/main.go",
+        'package main\nimport "example.com/demo/security"\n'
+        'func main() { security.VerifyTokenForTest("x") }\n',
+    ) == ["VerifyTokenForTest"]
+
+
+def test_tests_in_another_directory_do_not_see_test_only_exports(tmp_path):
+    assert _missing_names(
+        tmp_path,
+        "other/other_test.go",
+        _EXTERNAL_TEST.replace("security_test", "other").replace(
+            "{name}", "VerifyTokenForTest"
+        ),
+    ) == ["VerifyTokenForTest"]
+
+
+def test_external_test_package_files_do_not_extend_the_package(tmp_path):
+    # Exports of another ``package security_test`` file are not members of
+    # package security.
+    assert _missing_names(
+        tmp_path,
+        "security/verify_test.go",
+        _EXTERNAL_TEST.replace("{name}", "HelperInExternalTest"),
+        extra=[
+            (
+                "security/helpers_test.go",
+                "package security_test\nfunc HelperInExternalTest(v string) bool { return true }\n",
+            )
+        ],
+    ) == ["HelperInExternalTest"]

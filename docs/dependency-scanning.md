@@ -20,6 +20,7 @@ repository SCA does not inspect the built image.
 | `pnpm-lock.yaml` versions 6.0 and 9.0 | Recorded npm packages, including transitives, workspace importers, aliases, and separate peer-dependency snapshots |
 | `poetry.lock` formats 1.0, 1.1, 2.0, 2.1 | Recorded public PyPI packages, including transitives, multiple versions, groups, extras, and environment markers |
 | `yarn.lock` Classic v1; Berry formats 4, 6, 8 | Recorded npm packages, including transitives, aliases, optional/peer declarations and recorded workspaces |
+| `bun.lock` (Bun's text lockfile) `lockfileVersion` 0–3 | Recorded npm packages, including transitives and nested copies (`parent/child` keys); workspace, `file:` and `link:` entries are the project's own code and are not queried; Git, tarball and other-registry entries are not checked |
 | `requirements.txt`, `pyproject.toml`, `package.json`, `go.mod` | Supported direct entries with exact versions; manifest ranges are not resolved. `requirements.txt` includes its `-r` files inside the project (constraint `-c` files install nothing and are not scanned) |
 | `setup.cfg`, `setup.py` | Exact `install_requires` pins, like `[project].dependencies`. `setup.cfg` is read as INI (including `file:` requirement lists inside the project); `setup.py` is parsed, never run, and only literal lists (or module-level names bound to them) are read. A file without static `install_requires` is not a dependency manifest |
 
@@ -206,6 +207,48 @@ dependency descriptor to a lock entry; these are explicit incomplete-graph
 issues even when all package versions are present. No Yarn commands, package
 scripts, or dependency installation are run.
 
+### Files Skylos does not read
+
+Every dependency file Skylos finds but does not read is named in
+`analysis_summary.sca_coverage.unsupported_inputs` (file, ecosystem, reason; up
+to 25 examples) and counted in `unsupported_lockfile_count` and
+`unsupported_manifest_count`. The terminal says which ones, for example:
+
+```
+SCA coverage limited: 41 dependencies queried. Dependency files not read: composer.lock, composer.json (Composer: not supported yet)
+```
+
+| File | Ecosystem | Reason |
+| --- | --- | --- |
+| `composer.json`, `composer.lock` | Composer | not supported yet |
+| `Cargo.toml`, `Cargo.lock` | crates.io | not supported yet |
+| `Gemfile`, `Gemfile.lock` | RubyGems | not supported yet |
+| `pom.xml` | Maven | not supported yet |
+| `build.gradle`, `build.gradle.kts`, `gradle.lockfile` | Gradle | not supported yet |
+| `pubspec.yaml`, `pubspec.lock` | Pub | not supported yet |
+| `packages.lock.json` | NuGet | not supported yet (`.csproj` references are read) |
+| `Package.resolved`, `Podfile.lock`, `mix.lock` | SwiftPM, CocoaPods, Hex | not supported yet |
+| `bun.lockb` | npm | binary lockfile; run `bun install --save-text-lockfile` to write `bun.lock` |
+| `Pipfile` | PyPI | not read; `Pipfile.lock` is |
+| `go.sum` | Go | checksums, not the build list |
+
+When unread files are present and everything Skylos reads was read and
+queried, `sca_coverage.status` is `complete_with_unsupported_inputs`,
+`complete` is `false` and `supported_inputs_complete` is `true`. That is a
+coverage limit, not an operational failure: it does not make a scan exit 2,
+and `skylos baseline --sca` still records the advisories it found. A gate
+with `coverage.required = ["dependencies"]` fails on it, naming the unread
+files. A repository with only unread files keeps the status
+`no_supported_manifests`, and the message names the files.
+
+Some files are listed under `skipped_inputs` instead, because another file
+already holds their versions: `go.sum` next to a `go.mod` that declares Go
+1.17 or later (that go.mod lists every module in the build), `Pipfile` next to
+`Pipfile.lock`, and `bun.lockb` next to `bun.lock`. Before Go 1.17, go.mod
+omits indirect modules, so its `go.sum` is an unread file. Copies under a
+`vendor/` folder are third-party code, not the project's declarations, and
+are not listed.
+
 ## Export an SBOM offline
 
 Create a software bill of materials (a list of recorded dependencies):
@@ -293,6 +336,15 @@ checks in rich and pretty formats. In concise output, use JSON to inspect
 coverage when the finding list is empty.
 
 ### Known vulnerabilities
+
+Terminal output (the default table and `--format pretty`) shows one row per
+installed package: the worst severity, the version to upgrade to, and the
+number of advisories with up to three IDs. "Upgrade to" takes, for each
+advisory, its lowest reported fix above the installed version (so `next`
+14.0.0 with fixes in 15.5.24 and 16.3.3 needs 15.5.24), then the highest of
+those; advisories with no fix above the installed version are counted next to
+it. Check the ranges in JSON before pinning. JSON, SARIF and
+`--format concise` keep one finding per advisory.
 
 Findings use the existing `SKY-SCA-*` rule IDs and
 `dependency_vulnerabilities` result field. Metadata includes package identity,

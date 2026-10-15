@@ -87,6 +87,33 @@ outcome counts are available under
 Unverified same-name attribute matches are retained as contextual evidence;
 they do not rescue a symbol unless a stronger liveness signal confirms the use.
 
+Each reported candidate's confidence is capped by its weakest evidence, so
+findings can be sorted and the top trusted first. The finding lists the
+factor (`Confidence: 60% (default export ...)`) and JSON carries it in
+`confidence_factors`:
+
+| Evidence | Confidence |
+|:---|---:|
+| Unused import, or a private/local symbol with no reference anywhere | 100 |
+| Public Python module-level name (importable from outside the scan) | 90 |
+| Exported, but no file in the repository imports it (also SKY-E004) | 85 |
+| Public method or class attribute (dynamic dispatch, framework-read attributes) | 80 |
+| JS/TS file no file imports (SKY-E003) | 80 |
+| JS/TS file imported only by unused files | 65 |
+| A module's default export that nothing imports (routers, mailers and config loaders consume default exports) | 60 |
+| An unused parameter (callback and override signatures often require it; like Ruff's opt-in `ARG` rules) | 50 |
+| Rust (experimental) | 40 |
+
+The default threshold (60) shows everything except unused parameters and
+Rust; the scan says how many parameters it did not list, and
+`--confidence 50` lists them. `--confidence 80` keeps the strongest findings; `skylos clean`'s non-interactive default (80)
+does not delete default exports or class attributes. SKY-E003/E004 findings
+carry a confidence for sorting and are not filtered by `--confidence`.
+
+Rust dead code is experimental: trait methods, `pub` re-exports, macros and
+`#[bench]` items are not resolved, so its candidates sit below the default
+threshold and a scan says so in one line. Use `--confidence 40` to list them.
+
 When a security finding carries analyzer-recorded evidence, `rich` and
 `pretty` show the observed sources, sink, path and guards. These are static
 observations, not confirmation of runtime exploitability. Partial analysis
@@ -171,17 +198,83 @@ example, comparison setup, and GitLab tier limits, see
 ## Exit Codes And Incomplete Analysis
 
 Skylos reserves exit status `0` for successful command completion, `1` for
-finding or policy failures in modes that enforce them, and `2` when required
-analysis could not complete. An unavailable native language engine is an
-incomplete analysis: Skylos emits a `SKY-ANALYSIS-INCOMPLETE` diagnostic, marks
-coverage incomplete, omits the clean-code claim, and exits with status `2` in
-every output mode. Findings from completed checks remain available.
-The same applies to `.dart` files when the optional Dart parser is not
-installed (`pip install "skylos[dart]"`).
-`--force` and advisory gate settings do not convert incomplete analysis into a
-passing result.
+finding or policy failures in modes that enforce them, and `2` when the scan
+could not produce a usable result. A path that does not exist, or a mistyped
+command (`skylos donee`), exits `2` with a "did you mean" line instead of
+scanning nothing.
 
-Malformed or unreadable GitHub Actions YAML also produces incomplete analysis.
+Code that could not be analysed is reported in one of two ways.
+
+**Incomplete coverage (a warning).** Some files or candidates were not
+analysed, but everything else was:
+
+- a file that does not parse or cannot be read (for example newer Python
+  syntax than the scanning interpreter, or a TypeScript construct the grammar
+  does not support);
+- files of a language whose engine is missing: `.go` files without the
+  `skylos-go` engine, `.dart` files without `pip install "skylos[dart]"`;
+- dead-code candidates that grep verification did not reach before
+  `SKYLOS_GREP_BUDGET` ran out (see below).
+
+Skylos reports every finding it produced, lists each file it did not analyse
+with the reason and the fix (rich output: the **Not Analysed** table), and
+ends with a `Coverage: INCOMPLETE — some code was not analysed` block (on
+stderr for line-oriented formats; JSON on stdout carries it in
+`analysis_summary.analysis_coverage` instead). The exit code and any gate are
+decided on the code that was analysed: a scan with only coverage gaps exits
+`0`, or `1` for findings in modes that enforce them. Each record stays in
+`analysis_errors` as `SKY-ANALYSIS-INCOMPLETE`, the assessment reads
+`Coverage: incomplete` with the number of files not analysed, and the scan is
+never presented as clean.
+
+**Incomplete analysis (exit `2`).** The scan cannot stand for the code:
+
+- `--strict` was given, `strict = true` is set under `[tool.skylos.gate]`
+  (gate runs), or `require_complete = true` is set under
+  `[tool.skylos.gate.coverage]` (gate runs): any coverage gap exits `2`;
+- more than half of the source files in scope could not be analysed, for
+  example a Go repository without the Go engine, or a folder whose only file
+  does not parse;
+- a diff-scoped scan (`--diff`) could not analyse a changed file, so the code
+  under review was not checked (files outside the diff are only warnings);
+- a whole requested check failed: an unavailable or interrupted dependency
+  scan (`--sca`), a custom-rule service the gate requires, the base
+  comparison for removed security controls, or GitHub Actions YAML that could
+  not be read (see below);
+- an analysis error of a kind Skylos does not recognise (it fails closed).
+
+`--force` and advisory gate settings do not convert incomplete analysis into a
+passing result. Interactive removal (`-i`) needs a complete scan and refuses
+to run with any coverage gap, because a file that was not analysed could
+still reference a candidate.
+
+`analysis_summary.analysis_coverage` records the decision for this run:
+
+```json
+"analysis_coverage": {
+  "status": "partial",
+  "exit_blocking": false,
+  "diff_scoped": false,
+  "source_file_count": 160,
+  "unchecked_file_count": 1,
+  "unchecked_files": [
+    {"file": "backend/app/api/deps.py", "line": 36, "kind": "syntax_error",
+     "reason": "multiple exception types must be parenthesized"}
+  ],
+  "unverified_dead_code_candidates": 0,
+  "most_code_unchecked": false,
+  "warnings": [{"message": "Incomplete coverage: 1 of 160 source files could not be analysed", "details": ["..."], "hint": "..."}],
+  "blocking_reasons": []
+}
+```
+
+`status` is `complete`, `partial` (coverage gaps only) or `incomplete` (exit
+`2`). `exit_blocking` reflects this run's flags, so `--strict` turns a
+`partial` result into `incomplete`.
+
+Malformed or unreadable GitHub Actions YAML always produces incomplete
+analysis: GitHub could still run a workflow Skylos cannot read, so its
+security checks are never skipped with a warning.
 When scanning a repository, Skylos recognizes nested Cookiecutter workflow
 templates through a placeholder directory and an adjacent `cookiecutter.json`.
 It statically decodes literal GitHub-expression escapes and accepts simple
@@ -199,6 +292,9 @@ ends with one verdict line, then the reasons:
 - `Quality Gate: PASSED` (exit `0`), with the limits the scan was held to.
 - `Quality Gate: FAILED` (exit `1`, or `0` with `--force`), with each limit
   that failed and the findings counted toward it.
+- Either verdict is followed by `Coverage: INCOMPLETE — some code was not
+  analysed` and its reasons when the scan had coverage gaps: the limits were
+  evaluated on the code that was analysed, and the block names what was not.
 - `Quality Gate: INCOMPLETE — could not decide (exit 2)` when required
   analysis did not finish. Each reason names the check that stopped, how many
   files, lockfile entries, or OSV.dev query batches it could not cover, and
@@ -259,6 +355,9 @@ properties:
 | `headline` | The verdict line printed by human output. |
 | `hint` | For a pass, a note about what the default limits allowed; otherwise `null`. |
 | `reason_details` | One object per entry in `reasons`, same order: `message` (equal to the string), `details` (the literal lines shown under it: at most 10 findings, then `and N more`, then file, line or count details), and `hint` (the next step, or `null`). |
+| `coverage_status` | `complete`, `partial` (the verdict was decided on the code that was analysed; some was not), or `incomplete`. |
+| `coverage_warnings` | One plain string per coverage gap behind a `partial` status; empty otherwise. |
+| `coverage_warning_details` | Same shape as `reason_details`, one object per entry in `coverage_warnings`. |
 
 The object is decided on the full result, before `--severity`, `--category`,
 or `--file-filter` narrow the displayed findings. It appears with `--gate`,
@@ -272,15 +371,23 @@ same reasons.
 
 For a plain `skylos . --upload`, successful Cloud delivery returns `0` even
 when the Cloud quality gate reports advisory violations. Use `--gate` or
-`--strict` to enforce a failing exit. An incomplete scan does not upload, and
-rich output shows the analysis error that blocked it.
+`--strict` to enforce a failing exit. A scan with incomplete analysis (exit
+`2`) does not upload, and rich output shows the analysis error that blocked
+it. A scan with only coverage gaps uploads; its scan-coverage receipt says
+`complete: false` with reason `analysis_incomplete`, so Skylos Cloud never
+treats a missing finding from that scan as fixed.
 
-The same contract applies when grep verification exceeds
-`SKYLOS_GREP_BUDGET` (120 seconds by default). Skylos discards the partial grep
-verdicts, records the affected dead-code candidates as abstentions, emits
-`SKY-ANALYSIS-INCOMPLETE`, and exits with status `2`. JSON consumers can inspect
-`analysis_summary.grep_verify.status` and `incomplete_reason`; increase the
-budget and rerun before treating the dead-code result as complete.
+When grep verification exceeds `SKYLOS_GREP_BUDGET` (120 seconds by default)
+or a search cannot finish safely, Skylos keeps the result of every candidate
+it did verify: candidates with a usage stay rescued, and candidates verified
+as unused are reported. Only the candidates grep did not reach are withheld;
+they are recorded as abstentions (`dead_code_abstentions`, reason "grep
+verification did not complete") and never shown as dead code. The scan reports
+this as a coverage gap (`SKY-ANALYSIS-INCOMPLETE`, kind
+`grep_budget_exhausted` or `grep_verification_incomplete`), not exit `2`. JSON
+consumers can read `analysis_summary.grep_verify.verified_candidate_count`
+and `unverified_candidate_count`; increase the budget (and install ripgrep)
+and rerun to check the rest.
 
 Grep verification uses ripgrep when it is installed. Without ripgrep, Skylos
 searches in-process when secure file reads are available: it reads the
@@ -308,14 +415,23 @@ Circular dependencies (`SKY-CIRC`) are shown in rich, pretty, and concise
 output, and remain available in JSON under `circular_dependencies`. When
 source evidence is available, the finding points to an actual import in the
 cycle. Ordinary package re-exports do not by themselves form a cycle.
+Every cycle is `LOW`: a module-level import cycle is a design finding, and its
+length says nothing about its impact.
 
 `--strict` counts circular dependencies and exits with status `1` when they
 remain in the selected report. Without an explicit `--gate`, concise output
-also exits `1` for cycles, as it does for other findings. Ordinary non-strict
+also exits `1` for cycles, as it does for other findings, except
+repository-policy advice (`SKY-R101`–`SKY-R105`: no type-check, lint, gate or
+pre-commit configuration), which alone does not fail a concise scan and is not
+listed in the first-screen maintainability measurements. Ordinary non-strict
 gates keep their existing thresholds: cycles do not contribute to
 `max_quality`. Their Review findings remain visible in the risk assessment.
 The existing `--force` override can bypass finding
 failures, but incomplete analysis still exits `2`.
+
+Ctrl-C stops a scan within a few seconds: queued files are dropped, worker
+processes are stopped, and Skylos prints `Interrupted (Ctrl-C).` and exits
+`130` without a traceback.
 
 The legacy flags still work:
 
@@ -531,7 +647,7 @@ A first scan should be quiet and believable. Generated and vendored files are
 left out of a scan by default, and the scan says so in one line:
 
 ```text
-Skipped 201 generated/vendored files (190 Django migrations, 11 static/**/lib files); use --include-generated to scan them.
+Skipped 201 generated/vendored files (190 Django migrations, 11 web-root library files); use --include-generated to scan them.
 ```
 
 **Generated and vendored files.** These are skipped by default:
@@ -544,10 +660,14 @@ Skipped 201 generated/vendored files (190 Django migrations, 11 static/**/lib fi
   security (`danger`, `reliability`), secret and custom-rule findings are kept,
   because migrations run at deploy time. Their dead-code, quality and AI-defect
   findings are not reported.
-- Vendored front-end files, removed from the scan like the `vendor` default
-  exclude: JS/CSS under `static/**/lib/**`, `*.min.js`, `*.min.css`, and JS/CSS
-  files whose first comment is a library licence banner (`/*!` or `@license`
-  with a version and a licence or copyright line).
+- Vendored and minified front-end files, removed from the scan like the
+  `vendor` default exclude: JS/CSS in a library folder under a web root
+  (`static/` or `public/`, then `lib/`, `libs/`, `vendor/` or `vendors/`,
+  such as `public/libs/tinymce/**`), `*.min.js`, `*.min.css`, JS/CSS files
+  whose first comment is a library licence banner (`/*!` or `@license` with a
+  version and a licence or copyright line), and other minified JS/CSS: at
+  least 1 KB with an average line length above 110 characters (GitHub
+  Linguist's rule), such as a one-line bundle without a `.min` suffix.
 
 `analysis_summary.generated_files` lists every skipped file by reason
 (`skipped_count`, `by_reason`, `files`); `findings_not_reported` counts the

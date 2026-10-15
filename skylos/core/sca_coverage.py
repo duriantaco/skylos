@@ -4,6 +4,11 @@ import re
 from collections.abc import Mapping
 
 NON_REGISTRY_COVERAGE_STATUS = "complete_with_non_registry_sources"
+# Every supported dependency file was read and queried, but the repository
+# also has dependency files Skylos does not read (composer.lock, Cargo.lock,
+# pom.xml, ...). `complete` is false; `unsupported_inputs` names them. Not an
+# operational failure, so it never makes a scan exit 2 on its own.
+UNSUPPORTED_INPUTS_COVERAGE_STATUS = "complete_with_unsupported_inputs"
 
 
 def _known_uv_source(entry: object) -> bool:
@@ -136,3 +141,78 @@ def valid_non_registry_sca_receipt(coverage: object) -> bool:
         ):
             return False
     return True
+
+
+def _display_dependency_file(path: object) -> str | None:
+    from pathlib import Path
+
+    if not isinstance(path, str) or not path or len(path) > 4096:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return None
+    raw = Path(path)
+    if raw.is_absolute():
+        try:
+            return raw.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except (OSError, ValueError):
+            return raw.name
+    return raw.as_posix()
+
+
+def _grouped_inputs(entries: object, limit: int) -> list[str]:
+    """``files (Ecosystem: reason)`` groups, at most ``limit`` file names."""
+    if not isinstance(entries, list):
+        return []
+    groups: dict[tuple[str, str], list[str]] = {}
+    shown = 0
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        ecosystem, reason = entry.get("ecosystem"), entry.get("reason")
+        label = _display_dependency_file(entry.get("file"))
+        if not (isinstance(ecosystem, str) and isinstance(reason, str) and label):
+            continue
+        files = groups.setdefault((ecosystem, reason), [])
+        if shown < limit:
+            files.append(label)
+            shown += 1
+    return [
+        f"{', '.join(files) or '…'} ({ecosystem}: {reason})"
+        for (ecosystem, reason), files in groups.items()
+    ]
+
+
+def _count(receipt: Mapping, key: str) -> int:
+    value = receipt.get(key, 0)
+    return value if type(value) is int and value > 0 else 0
+
+
+def unsupported_inputs_line(receipt: object, *, limit: int = 6) -> str | None:
+    """One line naming the dependency files present but not read, or None."""
+    if not isinstance(receipt, Mapping):
+        return None
+    total = _count(receipt, "unsupported_lockfile_count") + _count(
+        receipt, "unsupported_manifest_count"
+    )
+    if not total:
+        return None
+    groups = _grouped_inputs(receipt.get("unsupported_inputs"), limit)
+    if not groups:
+        return (
+            f"{total} dependency file(s) not read (see sca_coverage.unsupported_inputs)"
+        )
+    named = min(total, limit)
+    more = (
+        f"; {total - named} more in sca_coverage.unsupported_inputs"
+        if total > named
+        else ""
+    )
+    return "Dependency files not read: " + "; ".join(groups) + more
+
+
+def skipped_inputs_line(receipt: object, *, limit: int = 4) -> str | None:
+    """Dependency files deliberately not read because another file covers them."""
+    if not isinstance(receipt, Mapping) or not _count(receipt, "skipped_input_count"):
+        return None
+    groups = _grouped_inputs(receipt.get("skipped_inputs"), limit)
+    return "Dependency files not needed: " + "; ".join(groups) if groups else None

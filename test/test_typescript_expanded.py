@@ -237,20 +237,22 @@ class TestTSDangerRules:
             ),
             (
                 (
+                    'import cp from "child_process";\n'
                     "delete RegExp.prototype.exec;\n"
                     "const GITHUB_PATTERN = /github\\.com/;\n"
                     "GITHUB_PATTERN.exec(cmd);\n"
                 ),
-                3,
+                4,
             ),
             (
                 (
+                    'import cp from "child_process";\n'
                     "const GITHUB_PATTERN = /github\\.com/;\n"
                     "function run(GITHUB_PATTERN) {\n"
                     "  GITHUB_PATTERN.exec(cmd);\n"
                     "}\n"
                 ),
-                3,
+                4,
             ),
             (
                 (
@@ -317,32 +319,36 @@ class TestTSDangerRules:
             ),
             (
                 (
+                    'import cp from "child_process";\n'
                     "export const GITHUB_PATTERN = /github\\.com/;\n"
-                    "GITHUB_PATTERN.exec(cmd);\n"
-                ),
-                2,
-            ),
-            (
-                (
-                    "const GITHUB_PATTERN = /github\\.com/;\n"
-                    "export { GITHUB_PATTERN };\n"
                     "GITHUB_PATTERN.exec(cmd);\n"
                 ),
                 3,
             ),
             (
                 (
-                    'const pattern = new RegExp("github.com");\n'
-                    "pattern.exec(url);\n"
+                    'import cp from "child_process";\n'
+                    "const GITHUB_PATTERN = /github\\.com/;\n"
+                    "export { GITHUB_PATTERN };\n"
+                    "GITHUB_PATTERN.exec(cmd);\n"
                 ),
-                2,
+                4,
             ),
             (
                 (
+                    'import cp from "child_process";\n'
+                    'const pattern = new RegExp("github.com");\n'
+                    "pattern.exec(url);\n"
+                ),
+                3,
+            ),
+            (
+                (
+                    'import cp from "child_process";\n'
                     "let pattern = /github\\.com/;\n"
                     "pattern.exec(url);\n"
                 ),
-                2,
+                3,
             ),
         ],
         ids=[
@@ -366,6 +372,8 @@ class TestTSDangerRules:
         ],
     )
     def test_regex_lookalikes_remain_flagged(self, tmp_path, code, expected_line):
+        # Every case loads child_process: without a command module in the
+        # file, ``X.exec`` is not a command sink at all (W3: RegExp.exec).
         _, _, _, danger = _scan_ts(tmp_path, code)
         d212_findings = [f for f in danger if f["rule_id"] == "SKY-D212"]
         assert len(d212_findings) == 1

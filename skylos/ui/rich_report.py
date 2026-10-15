@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -250,8 +251,9 @@ def _finding_table_cells(item, category, root_path=None):
         details.append(str(item.get("message") or f"Unused {kind}: {name or '<?>'}"))
         if name and name not in details[0]:
             details.append(name)
-        if item.get("confidence") is not None:
-            details.append(f"Confidence: {item['confidence']}%")
+        confidence = confidence_detail(item)
+        if confidence:
+            details.append(confidence)
         why = compact_dead_code_evidence(item)
         if why:
             details.append(f"Evidence: {why}")
@@ -455,14 +457,28 @@ def _render_analysis_errors(
     )
     affected_label = "file" if affected_file_count == 1 else "files"
     error_label = "error" if error_count == 1 else "errors"
-    console.print(
-        Panel.fit(
-            f"[bad]Analysis incomplete: {affected_file_count} affected "
-            f"{affected_label} across {error_count} analysis {error_label}.[/bad]\n"
-            "[muted]Analysis is incomplete; known findings remain visible. Skylos exits with code 2.[/muted]",
-            border_style="bad",
+    coverage = (result.get("analysis_summary") or {}).get("analysis_coverage")
+    blocking = not isinstance(coverage, dict) or coverage.get("exit_blocking") is not False
+    if blocking:
+        console.print(
+            Panel.fit(
+                f"[bad]Analysis incomplete: {affected_file_count} affected "
+                f"{affected_label} across {error_count} analysis {error_label}.[/bad]\n"
+                "[muted]Analysis is incomplete; known findings remain visible. Skylos exits with code 2.[/muted]",
+                border_style="bad",
+            )
         )
-    )
+        title = "Analysis Errors"
+    else:
+        console.print(
+            Panel.fit(
+                f"[warn]Incomplete coverage: {_coverage_subject(coverage, affected_file_count, affected_label)}.[/warn]\n"
+                "[muted]Everything else was analysed and its findings are shown; the exit "
+                "code is decided on them. --strict exits 2 instead.[/muted]",
+                border_style="warn",
+            )
+        )
+        title = "Not Analysed"
 
     rows = []
     for error in errors:
@@ -477,9 +493,7 @@ def _render_analysis_errors(
                 "message": f"{kind.replace('_', ' ')}: {message}\nAffected: {affected}\nRuntime: {_analysis_error_runtime(error)}",
             }
         )
-    _render_finding_table(
-        console, root_path, limit, "Analysis Errors", rows, "analysis_errors"
-    )
+    _render_finding_table(console, root_path, limit, title, rows, "analysis_errors")
     # e.g. how to install a missing language engine; shown once per distinct fix.
     for suggestion in dict.fromkeys(
         str(error.get("suggestion") or "").strip() for error in errors
@@ -487,6 +501,25 @@ def _render_analysis_errors(
         if suggestion:
             console.print(f"  [bold]How to fix:[/bold] {escape(suggestion)}")
     console.print()
+
+
+def _coverage_subject(coverage, affected_file_count, affected_label):
+    unchecked = coverage.get("unchecked_file_count")
+    total = coverage.get("source_file_count")
+    unverified = coverage.get("unverified_dead_code_candidates")
+    parts = []
+    if isinstance(unchecked, int) and unchecked > 0:
+        has_total = isinstance(total, int) and total > 0
+        noun = "file" if (total if has_total else unchecked) == 1 else "files"
+        verb = "was" if unchecked == 1 else "were"
+        of_total = f" of {total}" if has_total else ""
+        parts.append(f"{unchecked}{of_total} {noun} {verb} not analysed")
+    if isinstance(unverified, int) and unverified > 0:
+        noun = "candidate" if unverified == 1 else "candidates"
+        parts.append(f"{unverified} dead-code {noun} not verified")
+    if not parts:
+        parts.append(f"{affected_file_count} {affected_label} not fully analysed")
+    return "; ".join(parts)
 
 
 def _render_analysis_warnings(console: Console, result, *, root_path=None, limit=None):
@@ -861,15 +894,55 @@ def _render_reliability(console: Console, root_path, limit, items):
     )
 
 
-def _render_sca(console: Console, limit, items):
+def _render_sca(console: Console, limit, items, root_path=None):
+    """Advisories as one row per package; other SCA findings (licences) as rows."""
+    from skylos.reporting.sca_summary import is_advisory
+
+    items = [item for item in (items or []) if isinstance(item, dict)]
+    _render_sca_packages(
+        console, root_path, limit, [item for item in items if is_advisory(item)]
+    )
     _render_finding_table(
         console,
-        None,
+        root_path,
         limit,
         "Dependency Vulnerabilities (SCA)",
-        items,
+        [item for item in items if not is_advisory(item)],
         "dependency_vulnerabilities",
     )
+
+
+def _render_sca_packages(console: Console, root_path, limit, advisories):
+    from skylos.reporting.sca_summary import group_advisories, summary_footer
+
+    groups = group_advisories(advisories)
+    if not groups:
+        return
+    console.rule("[bold]Dependency Vulnerabilities (SCA), by package")
+    show, overflow = _display_cap(groups, limit)
+    table = Table(expand=True)
+    table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Package", overflow="fold")
+    table.add_column("Installed", overflow="fold")
+    table.add_column("Upgrade to", overflow="fold")
+    table.add_column("Advisories", overflow="fold")
+    table.add_column("Location", overflow="fold")
+    for group in show:
+        table.add_row(
+            escape(group.worst_severity),
+            escape(group.name),
+            escape(group.version),
+            escape(group.fix_text()),
+            escape(f"{group.count}: {group.ids_text()}"),
+            escape(f"{_shorten_path(group.file, root_path)}:{group.line}"),
+        )
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more packages (use --limit to adjust)[/muted]"
+        )
+    console.print(f"[muted]{escape(summary_footer(groups))}[/muted]")
+    console.print()
 
 
 def _render_publisher_changes(console: Console, limit, items):
@@ -1012,6 +1085,9 @@ def render_results(
             _render_result_tree(console, view, root_path=root_path)
             continue
         for category, title in _FINDING_TITLES:
+            if category == "dependency_vulnerabilities":
+                _render_sca(console, limit, view.get(category), root_path)
+                continue
             _render_finding_table(
                 console, root_path, limit, title, view.get(category), category
             )

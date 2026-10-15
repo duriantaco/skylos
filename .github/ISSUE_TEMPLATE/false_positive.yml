@@ -1,0 +1,39 @@
+name: Wrong finding (false positive)
+description: Skylos flagged something that is actually used or isn't a problem.
+title: "FP: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share the smallest snippet that triggers the finding. Anyone can read GitHub issues, so leave out company code;
+        for private code, use https://skylos.dev/feedback?src=github instead.
+  - type: input
+    id: rule-id
+    attributes:
+      label: Rule or finding
+      description: The rule ID (for example SKY-D211) or category (dead code, security, quality), and the flagged name.
+      placeholder: SKY-D211 unused function `handle_event`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Skylos version
+      description: Output of `skylos --version`.
+      placeholder: "4.49.0"
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal reproduction
+      description: A small code snippet that triggers the wrong finding. Use any language; the field is highlighted as Python.
+      render: python
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it wrong?
+      description: How the flagged item is actually used (framework callback, dynamic dispatch, re-export, ...).
+    validations:
+      required: true

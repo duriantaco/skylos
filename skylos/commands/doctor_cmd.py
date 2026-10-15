@@ -5,6 +5,7 @@ from pathlib import Path
 
 import skylos
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from skylos.cloud.plan_names import plan_display_name
@@ -61,6 +62,13 @@ def _go_engine_status() -> dict[str, str]:
     return get_go_engine_status()
 
 
+def _agent_hooks_report() -> dict:
+    """Installed agent hooks per client, with a pre-bash self-test."""
+    from skylos.commands.doctor_hooks import check_agent_hooks
+
+    return check_agent_hooks()
+
+
 def _doctor_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skylos doctor", add_help=False)
     parser.add_argument("--format", choices=("text", "json"), default="text")
@@ -71,7 +79,11 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
     rust_available = _rust_available()
     llm_available = _llm_available()
     interactive_available = _interactive_available()
-    degraded = go_status.get("status") != "available"
+    agent_hooks = _agent_hooks_report()
+    degraded = (
+        go_status.get("status") != "available"
+        or agent_hooks.get("status") == "degraded"
+    )
     return {
         "schema_version": 1,
         "tool": "doctor",
@@ -83,7 +95,7 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 "minimum_version": "3.10",
             },
             "skylos": {"status": "ok", "version": str(skylos.__version__)},
-            "go_engine": dict(go_status),
+            "go_engine": _go_engine_json(go_status),
             "rust_acceleration": {
                 "status": "available" if rust_available else "unavailable",
                 "module": "skylos_fast",
@@ -104,8 +116,47 @@ def _doctor_json_report(py_ver: str, py_ok: bool, go_status: dict) -> dict:
                 if _ripgrep_available()
                 else {"status": "unavailable", "install_url": RIPGREP_INSTALL_URL}
             ),
+            "agent_hooks": agent_hooks,
+            "config": _config_sources_report(Path.cwd()),
         },
     }
+
+
+def _config_sources_report(cwd: Path) -> dict:
+    """The config files that apply here (nearest first) and the ones ignored."""
+    from skylos.config import describe_config_sources
+
+    try:
+        sources = describe_config_sources(cwd)
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "sources": []}
+    return {
+        "status": "ok" if any(s["used"] for s in sources) else "defaults",
+        "sources": [
+            {
+                "path": str(s["path"]),
+                "kind": s["kind"],
+                "used": s["used"],
+                **({"reason": s["reason"]} if s.get("reason") else {}),
+            }
+            for s in sources
+        ],
+    }
+
+
+def _go_engine_json(go_status: dict) -> dict:
+    report = dict(go_status)
+    if report.get("status") != "available":
+        from skylos.engines.go_runner import (
+            GO_ENGINE_IMAGE,
+            go_engine_install_hint,
+            go_engine_install_steps,
+        )
+
+        report.setdefault("install", go_engine_install_hint())
+        report["install_steps"] = go_engine_install_steps()
+        report["container_image"] = f"{GO_ENGINE_IMAGE}:{skylos.__version__}"
+    return report
 
 
 def _print_availability(
@@ -131,9 +182,43 @@ def _print_runtime_status(
     _print_availability(
         console,
         go_status.get("status") == "available",
-        "  [green]OK[/green]  Go engine available",
+        "  [green]OK[/green]  Go engine available"
+        + (
+            " [dim](bundled with this install)[/dim]"
+            if go_status.get("configured_by") == "bundled"
+            else ""
+        ),
         "  [yellow]--[/yellow]  Go engine unavailable "
         "[dim](Go dead-code and security checks will be incomplete)[/dim]",
+    )
+    if go_status.get("status") != "available":
+        _print_go_engine_steps(console)
+
+
+def _print_go_engine_steps(console: Console) -> None:
+    from rich.markup import escape
+
+    from skylos.engines.go_runner import (
+        GO_ENGINE_IMAGE,
+        GO_ENGINE_MIN_GO,
+        go_engine_install_steps,
+    )
+
+    version = str(skylos.__version__)
+    console.print(
+        f"      [dim]Get it (needs Go {GO_ENGINE_MIN_GO}+), matching this Skylos:[/dim]"
+    )
+    for step in go_engine_install_steps(version):
+        console.print(f"        {escape(step)}", soft_wrap=True, highlight=False)
+    console.print(
+        "      [dim]Keep $HOME/.local/bin on PATH, or set SKYLOS_GO_BIN to the "
+        "binary (skylos-go.exe on Windows).[/dim]",
+        soft_wrap=True,
+    )
+    console.print(
+        f"      [dim]No Go toolchain? The container image {GO_ENGINE_IMAGE}:{version} "
+        "includes the engine, and the Skylos GitHub Action builds it.[/dim]",
+        soft_wrap=True,
     )
 
 
@@ -194,9 +279,6 @@ def _print_credit_status(console: Console, token: str) -> None:
     plan = balance_data.get("plan", "free")
     balance = balance_data.get("balance", 0)
     plan_name = plan_display_name(plan)
-    if plan == "enterprise":
-        console.print(f"  [green]OK[/green]  Plan: {plan_name} (unlimited credits)")
-        return
     color = "green" if balance > 0 else "red"
     console.print(f"  [{color}]OK[/{color}]  Plan: {plan_name} | Credits: {balance:,}")
 
@@ -214,30 +296,56 @@ def _print_cloud_status(console: Console) -> None:
     _print_credit_status(console, token)
 
 
-def _print_project_config(console: Console, cwd: Path) -> None:
-    pyproject = cwd / "pyproject.toml"
-    if not pyproject.exists():
-        console.print("  [yellow]--[/yellow]  No pyproject.toml in current directory")
-        return
+def _config_label(source: dict, cwd: Path) -> str:
+    path = source["path"]
     try:
-        config = load_config(cwd)
-    except Exception:
+        shown = path.relative_to(cwd).as_posix()
+    except ValueError:
+        shown = str(path)
+    if source["kind"] == "pyproject.toml":
+        return (
+            f"pyproject.toml {escape('[tool.skylos]')} config found ({escape(shown)})"
+        )
+    if source["kind"] == "synced":
+        return f"Synced Cloud policy found ({escape(shown)})"
+    return f"{escape(source['kind'])} config found ({escape(shown)})"
+
+
+def _print_project_config(console: Console, cwd: Path) -> None:
+    """Which config files apply here, nearest first, and which are ignored."""
+    from skylos.config import describe_config_sources
+
+    try:
+        load_config(cwd)
+        sources = describe_config_sources(cwd)
+    except Exception as exc:
         console.print(
-            "  [yellow]--[/yellow]  pyproject.toml exists but could not parse config"
+            f"  [yellow]--[/yellow]  Skylos config could not be read: {escape(str(exc))}"
         )
         return
-    has_skylos_config = bool(
-        config.get("whitelist")
-        or config.get("exclude")
-        or config.get("gate")
-        or config.get("masking")
-    )
-    _print_availability(
-        console,
-        has_skylos_config,
-        "  [green]OK[/green]  pyproject.toml [tool.skylos] config found",
-        "  [yellow]--[/yellow]  pyproject.toml exists but no [tool.skylos] section",
-    )
+    used = [s for s in sources if s["used"] and s["kind"] != "synced"]
+    if not used:
+        console.print(
+            "  [yellow]--[/yellow]  No Skylos config (defaults) [dim](add skylos.toml, "
+            "or \\[tool.skylos] in pyproject.toml)[/dim]"
+        )
+    for index, source in enumerate(used):
+        note = ""
+        if len(used) > 1:
+            note = (
+                " [dim](nearest, wins per key)[/dim]"
+                if index == 0
+                else (" [dim](inherited)[/dim]")
+            )
+        console.print(f"  [green]OK[/green]  {_config_label(source, cwd)}{note}")
+    for source in sources:
+        if source["kind"] == "synced":
+            console.print(f"  [green]OK[/green]  {_config_label(source, cwd)}")
+        elif not source["used"]:
+            console.print(
+                f"  [yellow]--[/yellow]  Not read: {escape(str(source['path']))} "
+                f"[dim]({escape(source.get('reason', ''))})[/dim]"
+            )
 
 
 def _print_workflow_status(console: Console, cwd: Path) -> None:
@@ -271,6 +379,13 @@ def _print_local_status(console: Console) -> None:
     _print_rule_status(console)
 
 
+def _print_agent_hooks(console: Console) -> None:
+    from skylos.commands.doctor_hooks import print_agent_hooks
+
+    console.print()
+    print_agent_hooks(console, _agent_hooks_report())
+
+
 def run_doctor_command(argv: list[str] | None = None) -> int:
     args = _doctor_parser().parse_args(argv or [])
     py_ver = platform.python_version()
@@ -288,5 +403,6 @@ def run_doctor_command(argv: list[str] | None = None) -> int:
     _print_optional_status(console)
     _print_cloud_status(console)
     _print_local_status(console)
+    _print_agent_hooks(console)
     console.print()
     return 0

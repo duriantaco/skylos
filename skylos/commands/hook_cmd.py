@@ -1777,7 +1777,7 @@ def _done_with_blocking_edits(comparison, config, edit_check):
 
 def _handle_done_stop(payload, root, client, deps, record):
     from skylos.done.base import DoneError
-    from skylos.done.config import parse_done_config
+    from skylos.done.config import base_config_text, parse_done_config
     from skylos.done.engine import run
     from skylos.done.receipt import (
         LATEST_NAME,
@@ -1791,9 +1791,7 @@ def _handle_done_stop(payload, root, client, deps, record):
 
     session_id = _session_id(payload)
     comparison = open_session_comparison(root, session_id)
-    config = parse_done_config(
-        comparison.base_text("pyproject.toml", sha=comparison.config_sha)
-    )
+    config = parse_done_config(base_config_text(comparison, sha=comparison.config_sha))
     _, open_findings, checked = _recheck_recorded_edits(
         payload, root, deps, record, comparison=comparison
     )
@@ -1946,7 +1944,7 @@ def _publish_done_error_receipt(root: Path, session_id: str, client: str) -> Non
 def _write_done_error_receipt(root: Path, session_id: str, client: str) -> None:
     """Replace an earlier success with an explicit unfinished check when possible."""
     from skylos.done.base import open_comparison
-    from skylos.done.config import parse_done_config
+    from skylos.done.config import base_config_text, parse_done_config
     from skylos.done.session import open_session_comparison
 
     try:
@@ -1961,9 +1959,7 @@ def _write_done_error_receipt(root: Path, session_id: str, client: str) -> None:
 
             invalidate_latest_receipt(root)
             raise
-    config = parse_done_config(
-        comparison.base_text("pyproject.toml", sha=comparison.config_sha)
-    )
+    config = parse_done_config(base_config_text(comparison, sha=comparison.config_sha))
     _write_done_incomplete_receipt(
         root,
         session_id,

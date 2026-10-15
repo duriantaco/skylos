@@ -659,6 +659,40 @@ def _check_tls_env(source: bytes, root, file_path: str) -> list[dict[str, Any]]:
     return findings
 
 
+_REJECT_UNAUTHORIZED = "rejectUnauthorized"
+
+
+def _check_reject_unauthorized(
+    source: bytes, root, file_path: str
+) -> list[dict[str, Any]]:
+    """``{ rejectUnauthorized: false }`` in an options object (``https.Agent``,
+    ``tls.connect``, ``https.request``, ``pg``'s ``ssl``): certificate
+    verification off for that connection."""
+    findings = []
+    for node in _iter_nodes(root):
+        if node.type != "pair":
+            continue
+        key = node.child_by_field_name("key")
+        value = _unwrap(node.child_by_field_name("value"))
+        if key is None or value is None or value.type != "false":
+            continue
+        name = _string_value(source, key) if key.type == "string" else _text(source, key)
+        if name != _REJECT_UNAUTHORIZED:
+            continue
+        findings.append(
+            _finding(
+                file_path,
+                node,
+                "SKY-D210",
+                "HIGH",
+                "rejectUnauthorized: false disables TLS certificate "
+                "verification for this connection",
+                None,
+            )
+        )
+    return findings
+
+
 def _check_handler(
     source: bytes,
     file_path: str,
@@ -799,8 +833,12 @@ def scan_express_taint_sinks(
     root_node, source: bytes, file_path: str, *, is_test_file: bool = False
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    # TLS verification off is a deployment hazard; like D346 it is not
+    # reported in test files (get_non_library_dir_kind(...) == "test").
     if not is_test_file and _TLS_ENV.encode() in source:
         findings.extend(_check_tls_env(source, root_node, file_path))
+    if not is_test_file and _REJECT_UNAUTHORIZED.encode() in source:
+        findings.extend(_check_reject_unauthorized(source, root_node, file_path))
     if not _SOURCE_HINT_RE.search(source):
         return findings
 

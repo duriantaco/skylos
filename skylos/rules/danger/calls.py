@@ -101,16 +101,20 @@ DANGEROUS_CALLS = {
         "subprocess call with shell=True",
         {"kw_equals": {"shell": True}},
     ),
+    # TLS verification off is a deployment hazard: like D346 (debug mode),
+    # it is not reported in test modules (``production_only``), where it is
+    # how tests reach local servers with self-signed certificates.
     "requests.*": (
         "SKY-D210",
         "HIGH",
         "requests call with verify=False",
-        {"kw_equals": {"verify": False}},
+        {"kw_equals": {"verify": False}, "production_only": True},
     ),
     "ssl._create_unverified_context": (
         "SKY-D210",
         "HIGH",
         "TLS context disables certificate verification",
+        {"production_only": True},
     ),
     "flask.Flask.run": (
         "SKY-D346",
@@ -589,6 +593,13 @@ class DangerousCallsRule(SkylosRule):
             if opts and "kw_equals" in opts:
                 if not _kw_equals(node, opts["kw_equals"]):
                     continue
+
+            if (
+                opts
+                and opts.get("production_only")
+                and _is_test_module(context.get("filename"))
+            ):
+                continue
 
             if opts and opts.get("weak_random"):
                 if not _weak_random_has_security_context(node):

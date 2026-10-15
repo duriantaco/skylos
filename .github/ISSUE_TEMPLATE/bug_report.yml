@@ -1,0 +1,51 @@
+name: Bug report
+description: Something isn't working as expected. Anyone can read GitHub issues, so leave out company code and repository names.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. `skylos feedback --github` opens this form with your versions filled in.
+        If the problem involves private code, use the private form instead: https://skylos.dev/feedback?src=github
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what happened instead? Include the full error output if there is one.
+      placeholder: Skylos reported ... / crashed with ...
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      description: Replace file paths, tokens and repository names.
+      placeholder: skylos . -a --format json
+  - type: input
+    id: version
+    attributes:
+      label: Skylos version
+      description: Output of `skylos --version`.
+      placeholder: "4.49.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 14, Ubuntu 22.04, Windows 11
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of commands (and a tiny example project, if needed) that shows the problem.
+      render: shell

@@ -268,6 +268,7 @@ def _copy_framework_metadata(framework_visitor, visitor) -> None:
         ("enum_classes", set()),
         ("attrs_classes", set()),
         ("orm_model_classes", set()),
+        ("orm_declarative_fields", set()),
         ("type_alias_names", set()),
         ("abc_classes", set()),
         ("abstract_methods", {}),
@@ -412,7 +413,9 @@ def _success_result(
 
 
 def _error_result(file, cfg, error, options: _WorkerOptions) -> tuple:
-    logger.error(f"{file}: {error}")
+    # The structured analysis error below names the file and reason in every
+    # output mode; a raw log line on stderr would only repeat it.
+    logger.debug(f"{file}: {error}")
     if os.getenv("SKYLOS_DEBUG"):
         logger.error(traceback.format_exc())
     test_visitor = options.test_aware_visitor_class(filename=file)

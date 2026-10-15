@@ -127,6 +127,9 @@ def _absolute_from_module(
     return f"{base}.{node.module}" if node.module and base else node.module or base
 
 
+CIRCULAR_DEPENDENCY_SEVERITY = "LOW"
+
+
 @dataclass
 class ModuleDependency:
     from_module: str
@@ -360,9 +363,12 @@ class CircularDependencyAnalyzer:
 
         findings = []
         for cycle in cycles:
-            severity = (
-                "HIGH" if len(cycle) > 3 else "MEDIUM" if len(cycle) > 2 else "LOW"
-            )
+            # A module-level import cycle is a design (maintainability) finding:
+            # Pylint reports ``cyclic-import`` (R0401) in its Refactor class, and
+            # a cycle that breaks at import time fails the first test run. Its
+            # length says nothing about impact (it made django's long, diffuse
+            # cycles 144 x HIGH), so every cycle is LOW.
+            severity = CIRCULAR_DEPENDENCY_SEVERITY
             suggested = self.suggest_break_point(cycle)
 
             findings.append(
@@ -416,7 +422,7 @@ class CircularDependencyAnalyzer:
 class CircularDependencyRule:
     rule_id = "SKY-CIRC"
     name = "Circular Dependencies"
-    severity = "MEDIUM"
+    severity = CIRCULAR_DEPENDENCY_SEVERITY
     category = "architecture"
 
     def __init__(self, max_cycles: int = -1):

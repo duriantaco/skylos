@@ -12,7 +12,11 @@ available.
 
 ## Reporting a Vulnerability
 
-Email security reports to aaron@skylos.dev with the subject `SECURITY`.
+Report vulnerabilities privately through GitHub private vulnerability
+reporting: <https://github.com/duriantaco/skylos/security/advisories/new>.
+Only you and the maintainers can see the report.
+
+If you can't use GitHub, email founder@skylos.dev with the subject `SECURITY`.
 
 Include:
 
@@ -22,8 +26,6 @@ Include:
 - Impact and any known exploitability
 - Affected version, commit, URL, or environment
 - Your preferred contact information
-
-If email is unavailable, open a private security advisory on GitHub where possible.
 
 ## Automated Security Research
 

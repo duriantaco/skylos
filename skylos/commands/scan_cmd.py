@@ -218,6 +218,59 @@ def _report_scope_options(args, config):
     }
 
 
+# Commands dispatched by name before a scan path is read (`skylos done`, ...).
+# Removed commands are left out so a typo is never steered to them.
+_REMOVED_COMMANDS = frozenset({"city", "run"})
+
+
+def _command_names() -> list[str]:
+    from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
+
+    names = set(EARLY_COMMAND_HANDLERS) | {"agent"}
+    return sorted(names - _REMOVED_COMMANDS)
+
+
+def _exit_on_missing_scan_paths(args, *, cli_module) -> None:
+    """A path that does not exist is an error, never an empty passing scan.
+
+    A single missing argument that looks like a mistyped command (``skylos
+    donee``) gets a "did you mean" line. An existing folder is always scanned,
+    whatever its name; ``./done`` scans a folder named ``done``.
+    """
+    import difflib
+    import os
+    import sys
+
+    paths = [str(path) for path in (getattr(args, "path", None) or [])]
+    missing = [path for path in paths if not os.path.exists(path)]
+    if not missing:
+        return
+    lines = []
+    reason = None
+    if len(paths) == 1 and os.sep not in missing[0] and "/" not in missing[0]:
+        word = missing[0]
+        matches = difflib.get_close_matches(word, _command_names(), n=2, cutoff=0.6)
+        if matches:
+            reason = f"'{word}' is not a skylos command or an existing path"
+            lines = [
+                f"skylos: {reason}.",
+                "Did you mean: " + " or ".join(f"skylos {name}" for name in matches),
+            ]
+    if not lines:
+        noun = "path does not exist" if len(missing) == 1 else "paths do not exist"
+        reason = f"{noun}: {', '.join(missing)}"
+        lines = [f"skylos: {reason}"]
+    lines.append(
+        "Pass an existing folder or file to scan (for example `skylos .`), or run "
+        "`skylos commands` to list every command."
+    )
+    sys.stdout.flush()
+    print("\n".join(lines), file=sys.stderr)
+    if cli_module._gate_requested(args):
+        cli_module._announce_gate_stop(None, args, reason, exit_code=2)
+    raise SystemExit(2)
+
+
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     """Keep compared gates and impact scans on one immutable policy."""
     import os
@@ -226,6 +279,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = cli_module._build_main_parser()
     args = cli_module._parse_main_cli_args(parser, argv)
+    _exit_on_missing_scan_paths(args, cli_module=cli_module)
     base = (
         (getattr(args, "diff_base", None) or getattr(args, "diff", None))
         if (
@@ -319,6 +373,9 @@ def _run_scan_command(
 
     if getattr(args, "scan_publisher_changes", False):
         args.sca = True
+    if getattr(args, "no_upload", False):
+        # --no-upload always wins over --upload, with or without --gate.
+        args.upload = False
     if getattr(args, "diff_mode", "lines") == "impact":
         if not getattr(args, "diff", None):
             parser.error("--diff-mode impact requires --diff")
@@ -663,6 +720,10 @@ def _run_scan_command(
         if getattr(args, "diff", None):
             from skylos.analyzer import _split_outside_diff_analysis_errors
 
+            # Every file error left after the split below is in the changed
+            # code under review, so it keeps the scan incomplete (exit 2).
+            result.setdefault("analysis_summary", {})["diff_scoped"] = True
+
             def _diff_scope(ranges):
                 return {
                     str((pathlib.Path(diff_root) / r["file"]).resolve())
@@ -968,6 +1029,7 @@ def _run_scan_command(
                 machine_output=machine_output,
             )
 
+        cli_module._attach_analysis_coverage(result, config, args)
         if isinstance(result.get("assessment"), dict):
             from skylos.reporting.assessment import compute_assessment
 
@@ -1463,6 +1525,16 @@ def _run_scan_command(
                 console.print(f"[muted]{escape(note)}[/muted]")
             for note in dependency_coverage_lines(result.get("analysis_summary")):
                 console.print(f"[muted]{escape(note)}[/muted]")
+            # Files outside the diff that could not be analysed: named, not
+            # blocking (the gate output does not render the result tables).
+            from skylos.ui.rich_report import _render_analysis_warnings
+
+            _render_analysis_warnings(
+                console,
+                result,
+                root_path=project_root,
+                limit=getattr(args, "limit", None),
+            )
 
         exit_code = run_gate_interaction(
             result=result,
@@ -1484,6 +1556,13 @@ def _run_scan_command(
             copy_badge=not getattr(args, "no_clipboard", False),
         )
         cli_module._print_rich_scan_outcome(console, result, args)
+        # Removing code needs every reference: a file that was not analysed
+        # could still call a candidate.
+        console.print(
+            "[bad]Interactive removal needs a complete scan; nothing was "
+            "changed. Fix or exclude the files that were not analysed and "
+            "rerun.[/bad]"
+        )
         raise SystemExit(2)
 
     if args.interactive:
@@ -1700,8 +1779,8 @@ def _run_scan_command(
         # Last lines: the --strict verdict, or why the scan is incomplete.
         cli_module._print_rich_scan_outcome(console, result, args)
         raise SystemExit(strict_exit_code)
-    if args.strict:
-        cli_module._print_rich_scan_outcome(console, result, args)
+    # The --strict verdict, or what this scan did not analyse.
+    cli_module._print_rich_scan_outcome(console, result, args)
 
     if explicit_rich_upload:
         console.print(

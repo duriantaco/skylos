@@ -127,6 +127,55 @@ def test_rich_upload_waits_for_complete_analysis(
 
 
 def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monkeypatch):
+    # --strict: the grep shortfall blocks, so nothing is uploaded.
+    output, logger = _grep_budget_project(tmp_path, monkeypatch, "--strict")
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=logger),
+        patch("skylos.cli.upload_report") as upload,
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+
+    assert exc.value.code == 2
+    upload.assert_not_called()
+    rendered = output.getvalue()
+    assert "Scan incomplete; Cloud upload was not started." in rendered
+    assert "Source analysis complete; preparing Cloud upload." not in rendered
+    assert "grep budget exhausted" in rendered
+    # The Type column can wrap the recovery sentence across table rows.
+    # Its actionable instruction must remain visible alongside the exit code.
+    assert "Increase" in rendered
+    assert "SKYLOS_GREP_BUDGET" in rendered
+    assert "(seconds) and rerun" in rendered
+
+
+def test_rich_upload_reports_grep_budget_gap_and_still_uploads(tmp_path, monkeypatch):
+    # Unverified dead-code candidates are a coverage gap: they are withheld,
+    # the scan says so, and it uploads with a partial scan-coverage receipt.
+    output, logger = _grep_budget_project(tmp_path, monkeypatch)
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=logger),
+        patch("skylos.cli._print_upload_destination", return_value=(True, False)),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli.upload_report", return_value={"success": True}) as upload,
+    ):
+        cli.main()
+
+    upload.assert_called_once()
+    uploaded = upload.call_args.args[0]
+    assert uploaded["analysis_errors"][0]["kind"] == "grep_budget_exhausted"
+    assert uploaded["analysis_summary"]["analysis_coverage"]["status"] == "partial"
+    assert uploaded["unused_functions"] == []
+    rendered = output.getvalue()
+    assert "Source analysis complete; preparing Cloud upload." in rendered
+    assert "Coverage: INCOMPLETE" in rendered
+    assert "grep verification checked 0 of 4 candidates" in rendered
+    assert "Increase SKYLOS_GREP_BUDGET" in rendered
+
+
+def _grep_budget_project(tmp_path, monkeypatch, *extra_args):
     (tmp_path / "app.py").write_text(
         "import os\n\ndef orphan(unused_arg):\n    return 1\n",
         encoding="utf-8",
@@ -149,6 +198,7 @@ def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monk
             "--no-clipboard",
             "--limit",
             "1",
+            *extra_args,
         ],
     )
     output = StringIO()
@@ -160,26 +210,7 @@ def test_rich_upload_shows_grep_budget_failure_without_cloud_call(tmp_path, monk
         theme=cli._skylos_console_theme(),
         width=180,
     )
-
-    with (
-        patch("skylos.cli.setup_logger", return_value=logger),
-        patch("skylos.cli.upload_report") as upload,
-    ):
-        with pytest.raises(SystemExit) as exc:
-            cli.main()
-
-    assert exc.value.code == 2
-    rendered = output.getvalue()
-    assert "Scan incomplete; Cloud upload was not started." in rendered
-    assert "Source analysis complete; preparing Cloud upload." not in rendered
-    assert "Analysis Errors" in rendered
-    assert "grep budget exhausted" in rendered
-    # The Type column can wrap the recovery sentence across table rows.
-    # Its actionable instruction must remain visible alongside the exit code.
-    assert "Increase" in rendered
-    assert "SKYLOS_GREP_BUDGET" in rendered
-    assert "(seconds) and rerun." in rendered
-    upload.assert_not_called()
+    return output, logger
 
 
 @pytest.mark.parametrize("output_format", ["json", "json-ci"])

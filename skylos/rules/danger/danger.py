@@ -25,6 +25,7 @@ from skylos.security.command_guard import (
 )
 from .calls import (
     DANGEROUS_CALLS,
+    _is_test_module,
     _call_severity,
     _matches_rule,
     _declares_non_security_use,
@@ -156,6 +157,11 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     opts
                     and "kw_equals" in opts
                     and not _kw_equals(node, opts["kw_equals"])
+                ):
+                    continue
+
+                if opts and opts.get("production_only") and _is_test_module(
+                    self.file_path
                 ):
                     continue
 

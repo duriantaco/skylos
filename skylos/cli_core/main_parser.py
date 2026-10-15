@@ -46,7 +46,7 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--no-upload",
         action="store_true",
-        help="Skip automatic code-scan upload even if connected to Skylos Cloud",
+        help="Never upload this scan, even if --upload is also given",
     )
     parser.add_argument(
         "--verify",

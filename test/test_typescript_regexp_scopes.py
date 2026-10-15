@@ -313,8 +313,13 @@ def test_arrow_retains_outer_regexp_named_arguments():
     assert _scan_exec_findings(source, [2, 3]) == []
 
 
+# An opaque ``X.exec`` is a command sink only when the file loads a command
+# module; these two keep the RegExp proof scoped when one is loaded.
+_LOADS_CHILD_PROCESS = 'import { spawn } from "node:child_process";\n'
+
+
 def test_opaque_same_named_parameter_does_not_inherit_outer_regexp_proof():
-    source = (
+    source = _LOADS_CHILD_PROCESS + (
         "const codeBlockRegex = /label/g;\n"
         'codeBlockRegex.exec("label");\n'
         "function describe(codeBlockRegex: { exec(text: string): string }) {\n"
@@ -323,11 +328,11 @@ def test_opaque_same_named_parameter_does_not_inherit_outer_regexp_proof():
         'codeBlockRegex.exec("label");\n'
     )
 
-    assert _scan_exec_findings(source, [2, 4, 6]) == [("SKY-D212", "src/labels.ts", 4)]
+    assert _scan_exec_findings(source, [3, 5, 7]) == [("SKY-D212", "src/labels.ts", 5)]
 
 
 def test_unknown_exec_receiver_is_not_exempted_by_nearby_regexp():
-    source = (
+    source = _LOADS_CHILD_PROCESS + (
         "const codeBlockRegex = /label/g;\n"
         'codeBlockRegex.exec("label");\n'
         "declare const receiver: { exec(text: string): string };\n"
@@ -335,4 +340,165 @@ def test_unknown_exec_receiver_is_not_exempted_by_nearby_regexp():
         'codeBlockRegex.exec("label");\n'
     )
 
-    assert _scan_exec_findings(source, [2, 4, 5]) == [("SKY-D212", "src/labels.ts", 4)]
+    assert _scan_exec_findings(source, [3, 5, 6]) == [("SKY-D212", "src/labels.ts", 5)]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "export function find(regex: RegExp, lineText: string) {\n"
+            "  return regex.exec(lineText);\n"
+            "}\n",
+            id="regexp-parameter",
+        ),
+        pytest.param(
+            "export function wrap(lineText: string) {\n"
+            "  let regex = /(\\*+)/g;\n"
+            "  if (lineText.length > 3) { regex = /(_+)/g; }\n"
+            "  return regex.exec(lineText);\n"
+            "}\n",
+            id="reassigned-regexp",
+        ),
+        pytest.param(
+            "declare const receiver: { exec(text: string): string };\n"
+            'receiver.exec("label");\n',
+            id="opaque-receiver",
+        ),
+    ],
+)
+def test_exec_without_a_command_module_is_not_command_injection(source):
+    findings = danger_module.scan_danger(
+        Parser(danger_module.TS_LANG).parse(source.encode()).root_node,
+        "src/labels.ts",
+        lang=danger_module.TS_LANG,
+        source=source.encode(),
+    )
+    assert not [f for f in findings if f["rule_id"] == "SKY-D212"]
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        pytest.param(
+            'import cp from "child_process";\ncp.exec(cmd);\n', 2, id="default-import"
+        ),
+        pytest.param(
+            'import * as cp from "node:child_process";\ncp.exec(cmd);\n',
+            2,
+            id="namespace-import",
+        ),
+        pytest.param(
+            'const childProcess = require("child_process");\nchildProcess.exec(cmd);\n',
+            2,
+            id="require",
+        ),
+        pytest.param(
+            'import shell from "shelljs";\nshell.exec(cmd);\n', 2, id="shelljs"
+        ),
+        pytest.param(
+            'const cp = await import("node:child_process");\ncp.exec(cmd);\n',
+            2,
+            id="dynamic-import",
+        ),
+        pytest.param(
+            'import { spawn } from "child_process";\nrunner.exec(cmd);\n',
+            2,
+            id="opaque-receiver-with-module-loaded",
+        ),
+        pytest.param(
+            'import db from "child_process";\ndb.exec(cmd);\n',
+            2,
+            id="database-named-alias",
+        ),
+    ],
+)
+def test_command_module_exec_stays_command_injection(source, line):
+    findings = danger_module.scan_danger(
+        Parser(danger_module.TS_LANG).parse(source.encode()).root_node,
+        "src/run.ts",
+        lang=danger_module.TS_LANG,
+        source=source.encode(),
+    )
+    assert [f["line"] for f in findings if f["rule_id"] == "SKY-D212"] == [line]
+
+
+# Remote and container exec (coordinator round 2): ssh2, node-ssh and
+# dockerode run commands on another host or in a container.
+@pytest.mark.parametrize(
+    ("source", "line", "message_start"),
+    [
+        pytest.param(
+            'const { Client } = require("ssh2");\n'
+            "const conn = new Client();\n"
+            "conn.exec(cmd, cb);\n",
+            3,
+            "SSH exec()",
+            id="ssh2-conn",
+        ),
+        pytest.param(
+            'import { NodeSSH } from "node-ssh";\n'
+            "const ssh = new NodeSSH();\n"
+            "ssh.exec(cmd, []);\n",
+            3,
+            "SSH exec()",
+            id="node-ssh",
+        ),
+        pytest.param(
+            'import Docker from "dockerode";\n'
+            "const container = new Docker().getContainer(id);\n"
+            'container.exec({ Cmd: ["sh", "-c", cmd] });\n',
+            3,
+            "dockerode exec()",
+            id="dockerode",
+        ),
+        pytest.param(
+            'import cp from "child_process";\ncp.exec(cmd);\n',
+            2,
+            "child_process.exec()",
+            id="child-process-message-unchanged",
+        ),
+    ],
+)
+def test_remote_and_container_exec_is_command_injection(source, line, message_start):
+    findings = danger_module.scan_danger(
+        Parser(danger_module.TS_LANG).parse(source.encode()).root_node,
+        "src/run.ts",
+        lang=danger_module.TS_LANG,
+        source=source.encode(),
+    )
+    d212 = [f for f in findings if f["rule_id"] == "SKY-D212"]
+    assert [f["line"] for f in d212] == [line]
+    assert d212[0]["message"].startswith(message_start)
+
+
+def test_regexp_proof_still_wins_in_a_file_that_loads_ssh2():
+    source = (
+        'const { Client } = require("ssh2");\n'
+        "const re = /a/g;\n"
+        "re.exec(text);\n"
+        "const conn = new Client();\n"
+        "conn.exec(cmd, cb);\n"
+    )
+    findings = danger_module.scan_danger(
+        Parser(danger_module.TS_LANG).parse(source.encode()).root_node,
+        "src/run.ts",
+        lang=danger_module.TS_LANG,
+        source=source.encode(),
+    )
+    assert [f["line"] for f in findings if f["rule_id"] == "SKY-D212"] == [5]
+
+
+def test_database_conn_exec_stays_exempt_when_a_database_driver_is_loaded():
+    source = (
+        'import { Client } from "ssh2";\n'
+        'import sqlite3 from "better-sqlite3";\n'
+        "conn.exec(sql);\n"
+    )
+    findings = danger_module.scan_danger(
+        Parser(danger_module.TS_LANG).parse(source.encode()).root_node,
+        "src/db.ts",
+        lang=danger_module.TS_LANG,
+        source=source.encode(),
+    )
+    assert not [f for f in findings if f["rule_id"] == "SKY-D212"]

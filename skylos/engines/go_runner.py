@@ -16,6 +16,35 @@ class GoEngineError(RuntimeError):
     pass
 
 
+GO_ENGINE_SOURCE_REPO = "https://github.com/duriantaco/skylos.git"
+GO_ENGINE_IMAGE = "ghcr.io/duriantaco/skylos"
+GO_ENGINE_MIN_GO = "1.22"
+
+
+def go_engine_install_steps(version: str | None = None) -> list[str]:
+    """Shell commands that build the engine matching this Skylos onto PATH."""
+    tag = f"v{version or skylos.__version__}"
+    return [
+        f"git clone --depth 1 --branch {tag} {GO_ENGINE_SOURCE_REPO} skylos-src",
+        "cd skylos-src/skylos/engines/go && go build -trimpath "
+        '-o "$HOME/.local/bin/skylos-go" ./cmd/skylos-go',
+    ]
+
+
+def go_engine_install_hint(version: str | None = None) -> str:
+    """One line: every supported way to get Go dead-code and security checks."""
+    version = version or skylos.__version__
+    clone, build = go_engine_install_steps(version)
+    return (
+        f"Build the skylos-go engine for this Skylos (needs Go {GO_ENGINE_MIN_GO}+): "
+        f"{clone} && {build} ; then keep $HOME/.local/bin on PATH or set "
+        "SKYLOS_GO_BIN to the binary (skylos-go.exe on Windows). Or scan with "
+        f"the container image {GO_ENGINE_IMAGE}:{version}, or with the Skylos "
+        "GitHub Action, which builds the engine itself. `skylos doctor` shows "
+        "whether the engine is found."
+    )
+
+
 def get_go_engine_status() -> dict[str, str]:
     try:
         engine_bin = resolve_go_engine_bin()
@@ -25,6 +54,7 @@ def get_go_engine_status() -> dict[str, str]:
             "status": "unavailable",
             "reason": reason,
             "configured_by": "SKYLOS_GO_BIN" if os.getenv("SKYLOS_GO_BIN") else "discovery",
+            "install": go_engine_install_hint(),
         }
 
     path = Path(engine_bin)
@@ -112,9 +142,9 @@ def resolve_go_engine_bin():
 
     raise GoEngineError(
         "Go engine binary not found (skylos-go).\n"
-        "Build it from a Skylos source checkout:\n"
-        "  cd skylos/engines/go && go build -o skylos-go ./cmd/skylos-go\n"
-        "Then set:\n"
+        "Build the engine for this Skylos version and put it on PATH:\n"
+        + "".join(f"  {step}\n" for step in go_engine_install_steps())
+        + "Or set:\n"
         "  export SKYLOS_GO_BIN=/absolute/path/to/skylos-go"
     )
 

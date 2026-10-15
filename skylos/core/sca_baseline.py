@@ -43,6 +43,13 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 def dependency_scan_complete(result: dict) -> bool:
     summary = result.get("analysis_summary")
     receipt = summary.get("sca_coverage") if isinstance(summary, dict) else None
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("status") == "complete_with_unsupported_inputs"
+    ):
+        # Every file Skylos reads was read and queried; the unread ones
+        # (composer.lock, Cargo.lock, ...) have no findings to baseline.
+        return receipt.get("supported_inputs_complete") is True
     return (
         isinstance(receipt, dict)
         and receipt.get("complete") is True

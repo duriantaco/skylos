@@ -285,6 +285,39 @@ def test_fallback_rule_failure_keeps_later_findings_and_marks_incomplete(
 def test_cli_keeps_valid_findings_and_exits_two_after_invalid_file(
     tmp_path, monkeypatch, capsys
 ):
+    # --strict asks for complete coverage: one unparseable file exits 2.
+    cli, invalid, first, second = _run_with_invalid_file(
+        tmp_path, monkeypatch, "--strict"
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+
+    assert exited.value.code == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["analysis_summary"]["analysis_coverage"]["exit_blocking"] is True
+    assert _phantom_keys(result) == _expected([first, second])
+    _assert_incomplete(result, invalid, error_type="SyntaxError", kind="syntax_error")
+
+
+def test_cli_reports_invalid_file_as_a_coverage_gap_without_strict(
+    tmp_path, monkeypatch, capsys
+):
+    # One of three files did not parse: a coverage gap, reported, not exit 2.
+    cli, invalid, first, second = _run_with_invalid_file(tmp_path, monkeypatch)
+
+    cli.main()
+
+    result = json.loads(capsys.readouterr().out)
+    coverage = result["analysis_summary"]["analysis_coverage"]
+    assert coverage["status"] == "partial"
+    assert coverage["exit_blocking"] is False
+    assert coverage["unchecked_file_count"] == 1
+    assert _phantom_keys(result) == _expected([first, second])
+    _assert_incomplete(result, invalid, error_type="SyntaxError", kind="syntax_error")
+
+
+def _run_with_invalid_file(tmp_path, monkeypatch, *extra_args):
     import skylos.cli as cli
 
     _write(
@@ -311,13 +344,7 @@ def test_cli_keeps_valid_findings_and_exits_two_after_invalid_file(
             "--no-upload",
             "--no-provenance",
             "--no-grep-verify",
+            *extra_args,
         ],
     )
-
-    with pytest.raises(SystemExit) as exited:
-        cli.main()
-
-    assert exited.value.code == 2
-    result = json.loads(capsys.readouterr().out)
-    assert _phantom_keys(result) == _expected([first, second])
-    _assert_incomplete(result, invalid, error_type="SyntaxError", kind="syntax_error")
+    return cli, invalid, first, second

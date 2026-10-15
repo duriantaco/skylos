@@ -43,7 +43,7 @@ inputs:
     required: false
     default: "3.11"
   max-comments:
-    description: "Maximum inline PR review comments (default: 15)"
+    description: "Maximum inline PR review comments per pull request (default: 15). Later pushes comment only on new findings and edit the one summary comment"
     required: false
     default: "15"
   upload-sarif:

@@ -14,7 +14,13 @@ python scripts/dead_code_compare_scanners.py
 ```
 
 Use `--confidence` to tune dead-code reporting. Higher confidence reduces
-candidate volume. Lower confidence surfaces riskier candidates.
+candidate volume. Lower confidence surfaces riskier candidates. Confidence is
+capped by the weakest evidence (`skylos/deadcode/confidence.py`, table in
+`docs/cli-output.md`): imports/private symbols 100, public Python names 90,
+exported-but-unimported 85, public methods/class attributes and unimported
+files 80, files imported only by unused files 65, default exports 60,
+unused parameters 50 (hidden by default; `--confidence 50`), Rust
+(experimental) 40, so parameters and Rust are hidden at the default threshold.
 
 ## False-Positive Reduction Ladder
 
@@ -39,8 +45,19 @@ Skylos has framework-aware behavior for patterns such as:
 - SQLAlchemy models and metadata.
 - Next.js and React entrypoints, including metadata routes (`robots`,
   `sitemap`, `opengraph-image`, ...) gated on a detected Next.js project.
-- Tool config files (`next.config.*`, `postcss.config.*`, ...) and their
-  default export.
+- Tool config files (`next.config.*`, `postcss.config.*`, any
+  `<tool>.config.*` next to a `package.json`, `turbo/generators/config.*`) and
+  their exports.
+- Expo Router routes, React Email templates, Jest `__mocks__`, esbuild entry
+  points (including build scripts under excluded folders).
+- Blade template references, FQN class strings in PHP, Laravel seeders.
+- Flask app factories, call-registered callbacks and their signatures;
+  SQLAlchemy/SQLModel declarative fields.
+- Django/Wagtail (`skylos/analysis/documented_conventions.py`): `*Field(...)`
+  and relation attributes, `Meta`, Wagtail Page/viewset/task attributes and
+  hook signatures, CBV/system-check/admin hook signatures, models in `models`
+  modules, `register*` class decorators, format files. Template lookups stay
+  proof-based (`django_template_liveness.py`); do not add name-only matching.
 - Laravel convention classes, each with the evidence Laravel's discovery
   needs (`Command` base, typed listener event, existing model for factories
   and policies), plus Livewire and Blade components, migrations,
@@ -61,7 +78,13 @@ evidence. Do not use trace mode as the default answer for untrusted PR review.
 
 ## Suppression Options
 
-- `# skylos: ignore`: suppress a finding on one line.
+- `# skylos: ignore`: suppress a finding on one line;
+  `# skylos: ignore[SKY-D211] reason` suppresses only that rule.
+- A bare `# noqa` hides dead-code, quality and LOW/MEDIUM findings, but
+  not HIGH/CRITICAL security findings (`SKY-D*`, `SKY-S*`); those stay
+  reported with `bare_noqa_ignored: true`. `# noqa: <ruff code>` never
+  hides Skylos security/quality findings (F401/F841 only mark the
+  matching unused import/variable).
 - `# skylos: ignore-start` / `# skylos: ignore-end`: suppress a block.
 - `ignore = ["SKY-XXX"]` in `[tool.skylos]`: suppress a rule project-wide.
 - `skylos whitelist <pattern>`: manage whitelisted symbols.

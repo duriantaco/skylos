@@ -2,6 +2,7 @@ import ast
 import pytest
 from pathlib import Path
 from skylos.core.linter import LinterVisitor
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.danger.danger import scan_ctx
 from skylos.rules.danger.calls import DangerousCallsRule
 
@@ -1152,3 +1153,32 @@ def test_weak_hash_remains_visible_in_linter_rule():
     )
     assert "SKY-D207" in {f["rule_id"] for f in security}
     assert "SKY-D207" in {f["rule_id"] for f in cache}
+
+
+# TLS verification off (D210) is a deployment hazard: like D346 it is not
+# reported in test modules (calls._is_test_module), and stays HIGH elsewhere.
+_VERIFY_FALSE = "import requests\nrequests.get('https://x', verify=False)\n"
+_UNVERIFIED_SSL = "import ssl\nctx = ssl._create_unverified_context()\n"
+
+
+@pytest.mark.parametrize(
+    ("relative", "code", "expected"),
+    [
+        ("tests/test_x.py", _VERIFY_FALSE, []),
+        ("conftest.py", _VERIFY_FALSE, []),
+        ("tests/fixtures/server.py", _VERIFY_FALSE, []),
+        ("app/test_utils.py", _VERIFY_FALSE, []),
+        ("tests/test_ssl.py", _UNVERIFIED_SSL, []),
+        ("app/client.py", _VERIFY_FALSE, ["HIGH"]),
+        ("fixtures/server.py", _VERIFY_FALSE, ["HIGH"]),
+        ("app/tls.py", _UNVERIFIED_SSL, ["HIGH"]),
+    ],
+)
+def test_tls_verification_off_follows_the_test_module_rule(
+    tmp_path, relative, code, expected
+):
+    path = tmp_path / "repo" / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert write_text_no_symlink(path, code, encoding="utf-8")
+    out = scan_ctx(tmp_path / "repo", [path])
+    assert [f["severity"] for f in out if f["rule_id"] == "SKY-D210"] == expected

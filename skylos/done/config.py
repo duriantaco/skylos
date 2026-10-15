@@ -141,8 +141,36 @@ class DoneConfig:
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def base_config_text(comparison, *, sha: str | None = None) -> str | None:
+    """The repository-root Skylos config at the base commit (or ``sha``).
+
+    The same file ``load_config`` reads at the root: ``.skylos.toml``, else
+    ``skylos.toml``, else ``pyproject.toml``. Never the working tree.
+    """
+    for name in (".skylos.toml", "skylos.toml"):
+        text = comparison.base_text(name, sha=sha)
+        if text is not None:
+            return text
+    return comparison.base_text("pyproject.toml", sha=sha)
+
+
+def skylos_settings_table(data) -> dict | None:
+    """``[tool.skylos]`` of a pyproject.toml, or a skylos.toml's settings
+    (its ``[tool.skylos]`` or ``[skylos]`` table, else its top level; a
+    pyproject.toml has no top-level ``done`` or ``approval`` table)."""
+    if not isinstance(data, dict):
+        return None
+    tool = data.get("tool")
+    if isinstance(tool, dict) and "skylos" in tool:
+        return tool.get("skylos")
+    if isinstance(data.get("skylos"), dict):
+        return data["skylos"]
+    return {key: value for key, value in data.items() if key != "tool"}
+
+
 def parse_done_config(pyproject_text: str | None) -> DoneConfig:
-    """Effective settings from a pyproject.toml's text (None: no file)."""
+    """Effective settings from a pyproject.toml's or skylos.toml's text
+    (None: no file)."""
     if pyproject_text is None:
         return DoneConfig()
     try:
@@ -150,8 +178,7 @@ def parse_done_config(pyproject_text: str | None) -> DoneConfig:
     except (tomllib.TOMLDecodeError, ValueError):
         return DoneConfig(problems=("pyproject.toml at the base is not valid TOML",))
 
-    tool = data.get("tool")
-    skylos = tool.get("skylos") if isinstance(tool, dict) else None
+    skylos = skylos_settings_table(data)
     table = skylos.get("done") if isinstance(skylos, dict) else None
     if table is None:
         return DoneConfig()

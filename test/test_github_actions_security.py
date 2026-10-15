@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from skylos.analyzer import analyze
@@ -934,3 +935,65 @@ def test_pull_request_target_reading_pr_code_with_privileges_is_still_flagged(tm
     }
     for label, text in variants.items():
         assert "SKY-D290" in _pr_target_rule_ids(tmp_path, text), label
+
+
+# Severity calibration (W3: spring-petclinic "Risk: HIGH" from unpinned
+# actions/checkout). GitHub-owned actions at a ref are LOW hygiene; every
+# other owner stays HIGH, privileged workflows included.
+_UNPINNED_USES = """
+name: ci
+on: {trigger}
+permissions:
+  contents: {perm}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+      - uses: actions/setup-python@main
+      - uses: someorg/action@v1
+      - uses: tj-actions/changed-files@v45
+      - uses: actions/checkout@${{{{ inputs.ref }}}}
+      - uses: actions-rs/toolchain@v1
+      - uses: github-actions/foo@v1
+      - uses: actions/setup-node@0b93645e9fea7318ecaed2b359559ac225c90a2b
+  reuse:
+    uses: actions/reusable/.github/workflows/x.yml@v1
+"""
+
+
+def _unpinned_severities(tmp_path, trigger, perm):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    assert write_text_no_symlink(
+        workflows / "ci.yml",
+        _UNPINNED_USES.format(trigger=trigger, perm=perm),
+        encoding="utf-8",
+    )
+    return {
+        finding["value"]: finding["severity"]
+        for finding in scan_github_actions(tmp_path)
+        if finding["rule_id"] == "SKY-D292"
+    }
+
+
+
+@pytest.mark.parametrize(
+    ("trigger", "perm"),
+    [("pull_request", "read"), ("pull_request_target", "write")],
+)
+def test_unpinned_github_owned_actions_are_low_and_third_party_high(
+    tmp_path, trigger, perm
+):
+    assert _unpinned_severities(tmp_path, trigger, perm) == {
+        "actions/checkout@v4": "LOW",
+        "github/codeql-action/init@v3": "LOW",
+        "actions/setup-python@main": "LOW",
+        "actions/reusable/.github/workflows/x.yml@v1": "LOW",
+        "someorg/action@v1": "HIGH",
+        "tj-actions/changed-files@v45": "HIGH",
+        "actions/checkout@${{ inputs.ref }}": "HIGH",
+        "actions-rs/toolchain@v1": "HIGH",
+        "github-actions/foo@v1": "HIGH",
+    }

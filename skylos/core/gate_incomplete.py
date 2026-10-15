@@ -92,8 +92,78 @@ class IncompleteReason:
     hint: str | None = None
 
 
+# Coverage gaps: one file (or one language's files) was not analysed, or grep
+# verification did not reach some dead-code candidates. Everything else was
+# checked, so by default they are warnings, not exit 2. Any other analysis
+# error kind blocks, so an unknown kind fails closed.
+FILE_GAP_ERROR_KINDS = frozenset(
+    {
+        "syntax_error",
+        "processing_error",
+        "source_read_error",
+        "worker_crash",
+        "worker_error",
+        "security_scan_error",
+        "cpp_parse_error",
+        "secret_config_read_error",
+        "secret_config_too_large",
+    }
+)
+LANGUAGE_ENGINE_ERROR_KIND = "language_engine_unavailable"
+GREP_ERROR_KINDS = frozenset({"grep_budget_exhausted", "grep_verification_incomplete"})
+# An Actions workflow Skylos cannot read could still run on GitHub (a parser
+# differential), so its security analysis is never skipped with a warning.
+BLOCKING_ERROR_COMPONENTS = frozenset({"github_actions"})
+
+COVERAGE_COMPLETE = "complete"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_INCOMPLETE = "incomplete"
+
+COVERAGE_STRICT_HINT = (
+    "Findings cover everything else, and the exit code is decided on them. Use "
+    "--strict (or require_complete = true under [tool.skylos.gate.coverage]) "
+    "to fail with exit 2 when coverage is incomplete."
+)
+MOST_CODE_UNCHECKED_HINT = (
+    "Most of the source files in scope could not be analysed, so this result "
+    "cannot stand for the code. Fix the reasons below and rerun."
+)
+GREP_GAP_HINT = (
+    "Unverified candidates are not reported as dead code (JSON lists them under "
+    "dead_code_abstentions). Increase SKYLOS_GREP_BUDGET (seconds) and rerun to "
+    "check them."
+)
+
+
+@dataclass(frozen=True)
+class AnalysisCoverage:
+    """What was not analysed, split into exit-2 blockers and warnings."""
+
+    blocking: tuple[IncompleteReason, ...] = ()
+    gaps: tuple[IncompleteReason, ...] = ()
+    source_file_count: int | None = None
+    unchecked_files: tuple[dict, ...] = ()
+    unchecked_file_count: int = 0
+    unverified_candidate_count: int = 0
+    most_code_unchecked: bool = False
+    diff_scoped: bool = False
+
+    @property
+    def status(self) -> str:
+        if self.blocking:
+            return COVERAGE_INCOMPLETE
+        if self.gaps:
+            return COVERAGE_PARTIAL
+        return COVERAGE_COMPLETE
+
+
 def incomplete_analysis_reasons(results) -> list[IncompleteReason]:
-    """Reasons the gate cannot decide; empty when required analysis finished."""
+    """Every reason the analysis is not complete: blockers and coverage gaps.
+
+    Consumers that need a complete scan (baselines, GitLab completeness) read
+    this. Exit codes and gates read :func:`analysis_coverage`, which keeps
+    coverage gaps apart from failures that block.
+    """
     results = results if isinstance(results, dict) else {}
     summary = results.get("analysis_summary")
     summary = summary if isinstance(summary, dict) else {}
@@ -107,18 +177,283 @@ def incomplete_analysis_reasons(results) -> list[IncompleteReason]:
     if languages:
         reasons.append(_languages_reason(languages, summary.get("language_engines")))
 
-    coverage = summary.get("sca_coverage")
-    # Coverage limitations (including unresolved manifest ranges) are not
-    # operational failures; only an interrupted or unavailable scan is.
-    if isinstance(coverage, dict):
-        status = coverage.get("status")
-        if status in SCA_BLOCKING_STATUSES or (
-            status == NON_REGISTRY_COVERAGE_STATUS
-            and not valid_non_registry_sca_receipt(coverage)
-        ):
-            reasons.append(_sca_reason(coverage))
+    sca_reason = _blocking_sca_reason(summary.get("sca_coverage"))
+    if sca_reason is not None:
+        reasons.append(sca_reason)
 
     return reasons
+
+
+def analysis_coverage(results, *, strict=False, require_complete=False):
+    """Split what was not analysed into blockers (exit 2) and coverage gaps.
+
+    A gap is a file that did not parse or could not be read, the files of a
+    language whose engine is missing, or dead-code candidates that grep
+    verification did not reach. A gap blocks only when ``strict`` or
+    ``require_complete`` asks for complete coverage, when more than half of the
+    source files in scope were not analysed (nothing meaningful ran), or for a
+    diff-scoped scan, where every file error left is in the changed code.
+    """
+    results = results if isinstance(results, dict) else {}
+    summary = results.get("analysis_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    diff_scoped = _is_diff_scoped(results, summary)
+
+    raw_errors = results.get("analysis_errors")
+    errors = (
+        [error for error in raw_errors if isinstance(error, dict)]
+        if isinstance(raw_errors, (list, tuple))
+        else []
+    )
+    malformed = bool(raw_errors) and len(errors) != _safe_len(raw_errors)
+
+    blocking_errors, file_gaps, language_gaps, grep_gaps = [], [], [], []
+    for error in errors:
+        kind = str(error.get("kind") or "")
+        if kind in GREP_ERROR_KINDS:
+            grep_gaps.append(error)
+        elif diff_scoped or error.get("component") in BLOCKING_ERROR_COMPONENTS:
+            blocking_errors.append(error)
+        elif kind == LANGUAGE_ENGINE_ERROR_KIND:
+            language_gaps.append(error)
+        elif kind in FILE_GAP_ERROR_KINDS and error.get("file"):
+            file_gaps.append(error)
+        else:
+            blocking_errors.append(error)
+
+    blocking, gaps = [], []
+    if malformed:
+        blocking.append(_analysis_errors_reason(raw_errors))
+    elif blocking_errors:
+        blocking.append(_analysis_errors_reason(blocking_errors))
+
+    languages = _incomplete_languages(summary.get("incomplete_languages"))
+    language_reason = (
+        _languages_reason(languages, summary.get("language_engines"))
+        if languages
+        else None
+    )
+    if language_reason is not None and (
+        _languages_block_diff(results, errors)
+        if diff_scoped
+        # Without the per-file engine records the gap cannot be measured.
+        else not language_gaps
+    ):
+        blocking.append(language_reason)
+        language_reason = None
+
+    source_count = _non_negative_int(summary.get("total_files"))
+    unchecked_count = _unchecked_file_count(file_gaps, language_gaps)
+    if source_count is not None:
+        unchecked_count = min(unchecked_count, source_count)
+    most_unchecked = bool(unchecked_count) and (
+        not source_count or unchecked_count * 2 > source_count
+    )
+
+    source_gaps = []
+    if file_gaps:
+        source_gaps.append(_unchecked_files_reason(file_gaps, source_count))
+    if language_reason is not None:
+        source_gaps.append(language_reason)
+    if most_unchecked and source_gaps:
+        of_total = f" of {source_count}" if source_count else ""
+        blocking.append(
+            IncompleteReason(
+                f"Analysis incomplete: {unchecked_count}{of_total} source "
+                f"{'file' if (source_count or unchecked_count) == 1 else 'files'} "
+                "could not be analysed",
+                (),
+                MOST_CODE_UNCHECKED_HINT,
+            )
+        )
+        blocking.extend(source_gaps)
+    else:
+        gaps.extend(source_gaps)
+
+    unverified = sum(
+        _positive_int(error.get("unverified_candidate_count")) for error in grep_gaps
+    )
+    if grep_gaps:
+        gaps.append(_grep_reason(grep_gaps))
+
+    sca_reason = _blocking_sca_reason(summary.get("sca_coverage"))
+    if sca_reason is not None:
+        blocking.append(sca_reason)
+
+    if (strict or require_complete) and gaps:
+        blocking.extend(gaps)
+        gaps = []
+
+    return AnalysisCoverage(
+        blocking=tuple(blocking),
+        gaps=tuple(gaps),
+        source_file_count=source_count,
+        unchecked_files=tuple(_unchecked_files(file_gaps, language_gaps)),
+        unchecked_file_count=unchecked_count,
+        unverified_candidate_count=unverified,
+        most_code_unchecked=most_unchecked,
+        diff_scoped=diff_scoped,
+    )
+
+
+def coverage_record(coverage):
+    """The ``analysis_summary.analysis_coverage`` JSON object."""
+    return {
+        "status": coverage.status,
+        "exit_blocking": bool(coverage.blocking),
+        "diff_scoped": coverage.diff_scoped,
+        "source_file_count": coverage.source_file_count,
+        "unchecked_file_count": coverage.unchecked_file_count,
+        "unchecked_files": [dict(item) for item in coverage.unchecked_files],
+        "unverified_dead_code_candidates": coverage.unverified_candidate_count,
+        "most_code_unchecked": coverage.most_code_unchecked,
+        "warnings": [reason_record(reason) for reason in coverage.gaps],
+        "blocking_reasons": [reason_record(reason) for reason in coverage.blocking],
+    }
+
+
+def reason_record(reason):
+    return {
+        "message": reason.text,
+        "details": list(reason.details),
+        "hint": reason.hint,
+    }
+
+
+def _safe_len(value):
+    try:
+        return len(value)
+    except TypeError:
+        return 1
+
+
+def _is_diff_scoped(results, summary):
+    if summary.get("diff_scoped") is True:
+        return True
+    scope = summary.get("comparison_scope")
+    if isinstance(scope, dict) and scope.get("changed_files_only") is True:
+        return True
+    warnings = results.get("analysis_warnings")
+    return isinstance(warnings, list) and any(
+        isinstance(warning, dict) and warning.get("outside_diff") is True
+        for warning in warnings
+    )
+
+
+def _languages_block_diff(results, errors):
+    """A missing engine blocks a diff scan unless no changed file needs it.
+
+    Engine records for files outside the diff were moved to
+    ``analysis_warnings``; one still in ``analysis_errors`` names changed code.
+    """
+    if any(str(e.get("kind") or "") == LANGUAGE_ENGINE_ERROR_KIND for e in errors):
+        return True
+    warnings = results.get("analysis_warnings")
+    return not (
+        isinstance(warnings, list)
+        and any(
+            isinstance(warning, dict)
+            and warning.get("kind") == LANGUAGE_ENGINE_ERROR_KIND
+            and warning.get("outside_diff") is True
+            for warning in warnings
+        )
+    )
+
+
+def _non_negative_int(value):
+    return value if type(value) is int and value >= 0 else None
+
+
+def _unchecked_file_count(file_gaps, language_gaps):
+    count = len({str(error.get("file")) for error in file_gaps})
+    for error in language_gaps:
+        count += max(1, _positive_int(error.get("affected_file_count")))
+    return count
+
+
+def _unchecked_files(file_gaps, language_gaps):
+    items, seen = [], set()
+    for error in [*file_gaps, *language_gaps]:
+        key = (str(error.get("file") or ""), str(error.get("kind") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {
+            "file": _display_path(error.get("file")) if error.get("file") else None,
+            "line": _positive_int(error.get("line")) or 1,
+            "kind": key[1] or "analysis_error",
+            "reason": _clip(error.get("message")) or "not analysed",
+        }
+        if error.get("language"):
+            item["language"] = str(error["language"])
+        affected = _positive_int(error.get("affected_file_count"))
+        if affected > 1:
+            item["affected_file_count"] = affected
+        skipped = error.get("skipped_checks")
+        if isinstance(skipped, list) and skipped:
+            item["skipped_checks"] = [str(check) for check in skipped[:6]]
+        if error.get("suggestion"):
+            item["suggestion"] = _clip(error["suggestion"], 400)
+        items.append(item)
+    return items
+
+
+def _unchecked_files_reason(file_gaps, source_count):
+    file_count = len({str(error.get("file")) for error in file_gaps})
+    noun = "file" if (source_count or file_count) == 1 else "files"
+    of_total = f" of {source_count} source" if source_count else ""
+    details = _bounded_lines(
+        [_analysis_error_line(error) for error in file_gaps], len(file_gaps)
+    )
+    suggestions = dict.fromkeys(
+        _clip(error.get("suggestion"), 400)
+        for error in file_gaps
+        if error.get("suggestion")
+    )
+    return IncompleteReason(
+        f"Incomplete coverage: {file_count}{of_total} {noun} could not be analysed",
+        tuple(details),
+        " ".join([*suggestions, ANALYSIS_ERROR_HINT]),
+    )
+
+
+def _grep_reason(grep_errors):
+    candidates = sum(_positive_int(e.get("candidate_count")) for e in grep_errors)
+    unverified = sum(
+        _positive_int(e.get("unverified_candidate_count")) for e in grep_errors
+    )
+    if candidates and unverified:
+        verified = max(0, candidates - unverified)
+        text = (
+            f"Incomplete dead-code verification: grep verification checked "
+            f"{verified} of {_count_noun(candidates, 'candidate')}; "
+            f"{_count_noun(unverified, 'unverified candidate')} not reported"
+        )
+    else:
+        text = (
+            "Incomplete dead-code verification: grep verification did not "
+            "finish; unverified candidates are not reported"
+        )
+    details = tuple(
+        _clip(error.get("message"), 400)
+        for error in grep_errors[:DETAIL_LINE_LIMIT]
+        if error.get("message")
+    )
+    return IncompleteReason(text, details, GREP_GAP_HINT)
+
+
+def _blocking_sca_reason(coverage):
+    # Coverage limitations (including unresolved manifest ranges) are not
+    # operational failures; only an interrupted or unavailable scan is.
+    if not isinstance(coverage, dict):
+        return None
+    status = coverage.get("status")
+    if status in SCA_BLOCKING_STATUSES or (
+        status == NON_REGISTRY_COVERAGE_STATUS
+        and not valid_non_registry_sca_receipt(coverage)
+    ):
+        return _sca_reason(coverage)
+    return None
 
 
 def _count_noun(count, singular, plural=None):

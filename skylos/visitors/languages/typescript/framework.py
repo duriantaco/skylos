@@ -10,6 +10,13 @@ from .nextjs import (
     is_nextjs_project_entry_file,
     is_nextjs_project_pages_file,
 )
+from .conventions import (
+    convention_reason,
+    expo_router_exports,
+    is_jest_manual_mock,
+    is_package_tool_config,
+    is_react_email_template,
+)
 from .tool_configs import is_tool_config_file
 
 _STORYBOOK_FILE_RE = re.compile(r"\.(?:stories|story)\.(?:[cm]?[jt]sx?)$")
@@ -58,6 +65,7 @@ def is_framework_loaded_file(file_path: str) -> bool:
         or _STORYBOOK_FILE_RE.search(file_path)
         or is_nextjs_project_pages_file(file_path)
         or is_nextjs_project_entry_file(file_path)
+        or convention_reason(file_path)
     )
 
 
@@ -181,6 +189,35 @@ class TSFrameworkVisitor:
             self._file_path
         ):
             self._mark_default_export()
+        # A tool reads every export of its config file (``export const auth``
+        # for the better-auth CLI, ``export default`` for most), and Jest
+        # substitutes every export of a manual mock for the real module's.
+        if is_package_tool_config(self._file_path) or is_jest_manual_mock(
+            self._file_path
+        ):
+            self._mark_default_export()
+            self._mark_named_exports(self._exported_names())
+            return
+        expo_exports = expo_router_exports(self._file_path)
+        if expo_exports:
+            if "default" in expo_exports:
+                self._mark_default_export()
+            self._mark_named_exports(set(expo_exports) - {"default"})
+            return
+        if is_react_email_template(self._file_path):
+            self._mark_default_export()
+
+    def _exported_names(self) -> set[str]:
+        return {
+            self._get_text(node)
+            for key in (
+                "export_func_name",
+                "export_var_name",
+                "export_spec_name",
+                "export_class_name",
+            )
+            for node in self._captures.get(key, [])
+        }
 
     def _scan_storybook_exports(self) -> None:
         """Component Story Format: Storybook's loader imports every named
@@ -222,6 +259,10 @@ class TSFrameworkVisitor:
 
     def _mark_named_exports(self, names: set[str]) -> None:
         for node in self._captures.get("export_func_name", []):
+            if self._get_text(node) in names:
+                self.framework_decorated_lines.add(self._line_of(node))
+
+        for node in self._captures.get("export_class_name", []):
             if self._get_text(node) in names:
                 self.framework_decorated_lines.add(self._line_of(node))
 

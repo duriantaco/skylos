@@ -218,7 +218,8 @@ def test_isolated_api_benchmark_still_reports_its_own_workflow_security(
             workflow,
             "name: CI\non: push\npermissions: {}\njobs:\n"
             "  check:\n    runs-on: ubuntu-latest\n    steps:\n"
-            "      - uses: actions/checkout@v4\n",
+            # Third party: an unpinned GitHub-owned action is only LOW.
+            "      - uses: someorg/setup-tool@v1\n",
         )
         payload = verify_change_path(
             project, project_context=True, include_dependency_hallucinations=False,

@@ -7,7 +7,12 @@ from textwrap import dedent
 import pytest
 
 from skylos.analyzer import analyze
+from skylos.deadcode.confidence import CONFIDENCE_CAPS
 from skylos.visitors.languages.rust import scan_rust_file
+
+# Rust dead code is experimental and capped below the default threshold; these
+# tests exercise the resolver, so they opt in the way users do (--confidence 40).
+RUST_OPT_IN = CONFIDENCE_CAPS["experimental_language"]
 
 
 def _write(path, source):
@@ -51,7 +56,7 @@ def test_concrete_receiver_credits_only_its_owner(tmp_path, owners, grep_verify,
     assert "Active.process" in definitions["main"].calls
     assert "Dormant.process" not in definitions["main"].calls
 
-    result = json.loads(analyze(str(tmp_path), grep_verify=grep_verify))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=grep_verify))
     assert "Active.process" not in _unused(result)
     assert "Dormant.process" in _unused(result)
 
@@ -78,7 +83,7 @@ def test_module_function_calls_same_named_method_without_losing_helpers(
     assert "walk.WorkerState.scan" in definitions["walk.scan"].calls
     assert "walk.WorkerState.build_walker" in definitions["walk.WorkerState.scan"].calls
 
-    result = json.loads(analyze(str(tmp_path), grep_verify=grep_verify))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=grep_verify))
     unused = _unused(result)
     assert "walk.WorkerState.scan" not in unused
     assert "walk.WorkerState.build_walker" not in unused
@@ -152,7 +157,7 @@ def test_unknown_receiver_does_not_pick_first_same_named_method(tmp_path):
     definitions = _definitions(path)
     assert "Dormant.process" not in definitions["main"].calls
     assert "Active.process" not in definitions["main"].calls
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert "Dormant.process" not in _unused(result)
     assert "Active.process" not in _unused(result)
     assert "stale" in _unused(result)
@@ -191,7 +196,7 @@ def test_explicit_external_owner_does_not_rescue_unrelated_local_method(
         }
         """,
     )
-    result = json.loads(analyze(str(tmp_path), grep_verify=grep_verify))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=grep_verify))
     assert "Active.process" in _unused(result)
 
 
@@ -243,7 +248,7 @@ def test_external_generic_wrapper_does_not_claim_a_concrete_receiver(tmp_path):
     assert "Active.process" not in definitions["invoke"].calls
     _, references, *_ = scan_rust_file(str(path), {})
     assert "~.process" in {name for name, _ in references}
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert "Active.process" not in _unused(result)
 
 
@@ -256,7 +261,7 @@ def test_constructor_called_only_by_dead_helper_remains_dead(tmp_path):
         fn build_verifier() { Verifier::new(); }
         """,
     )
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert {"tls.Verifier.new", "tls.build_verifier"} <= _unused(result)
 
 
@@ -279,7 +284,7 @@ def test_simple_local_type_alias_keeps_actual_owner_and_dead_sibling(tmp_path, c
     definitions = _definitions(path)
     assert "Active.process" in definitions["invoke"].calls
     assert "Dormant.process" not in definitions["invoke"].calls
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert "Active.process" not in _unused(result)
     assert "Dormant.process" in _unused(result)
 
@@ -310,7 +315,7 @@ def test_local_generic_deref_wrapper_keeps_dispatch_unresolved(tmp_path, call):
     assert "Active.process" not in definitions["invoke"].calls
     _, refs, *_ = scan_rust_file(str(path), {})
     assert "~.process" in {name for name, _ in refs}
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert "Active.process" not in _unused(result)
     assert "Active.stale" in _unused(result)
 
@@ -337,7 +342,7 @@ def test_ambiguous_import_alias_does_not_guess_a_relative_owner(tmp_path):
     _, refs, *_ = scan_rust_file(str(path), {})
     assert "second.Selected.process" not in {name for name, _ in refs}
     assert "~.process" in {name for name, _ in refs}
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert {"Active.process", "Dormant.process"}.isdisjoint(_unused(result))
     assert "Active.stale" in _unused(result)
 
@@ -361,6 +366,6 @@ def test_scoped_impl_owner_matches_the_referenced_concrete_type(tmp_path, owner)
     definitions = _definitions(path)
     assert "models.Active.process" in definitions
     assert "models.Active.process" in definitions["invoke"].calls
-    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+    result = json.loads(analyze(str(tmp_path), conf=RUST_OPT_IN, grep_verify=False))
     assert "models.Active.process" not in _unused(result)
     assert "models.Active.stale" in _unused(result)

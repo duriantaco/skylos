@@ -59,6 +59,12 @@ def doctor_runtime(monkeypatch):
         doctor_cmd, "_go_engine_status", lambda: {"status": "available"}
     )
     monkeypatch.setattr(doctor_cmd.platform, "python_version", lambda: "3.14.0")
+    # The agent-hook check reads this machine's configs; test/test_doctor_hooks.py covers it.
+    monkeypatch.setattr(
+        doctor_cmd,
+        "_agent_hooks_report",
+        lambda: {"status": "not_installed", "clients": {}},
+    )
 
 
 @pytest.mark.parametrize("available", [False, True])

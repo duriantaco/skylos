@@ -89,6 +89,9 @@ def _coverage(result, scanned_checks):
     summary = result.get("analysis_summary") or {}
     reasons = []
     incomplete_checks = []
+    # Checks incomplete for a reason other than files that were not analysed
+    # (those files affect every check, so listing every check says nothing).
+    limited_checks = []
     if result.get("analysis_errors") or summary.get("incomplete_languages"):
         reasons.append("analysis_incomplete")
         incomplete_checks.extend(scanned_checks)
@@ -121,6 +124,7 @@ def _coverage(result, scanned_checks):
     ):
         reasons.append("dependency_coverage_unavailable")
         incomplete_checks.append("dependencies")
+        limited_checks.append("dependencies")
     grep = summary.get("grep_verify")
     if (
         "dead_code" in scanned_checks
@@ -129,6 +133,7 @@ def _coverage(result, scanned_checks):
     ):
         reasons.append("dead_code_verification_incomplete")
         incomplete_checks.append("dead_code")
+        limited_checks.append("dead_code")
     verification = summary.get("ai_verification")
     if "ai_defects" in scanned_checks and (
         not isinstance(verification, Mapping)
@@ -137,6 +142,7 @@ def _coverage(result, scanned_checks):
     ):
         reasons.append("ai_verification_incomplete")
         incomplete_checks.append("ai_defects")
+        limited_checks.append("ai_defects")
     scope = summary.get("comparison_scope")
     partial = isinstance(scope, Mapping) and (
         scope.get("changed_files_only") is True
@@ -162,7 +168,25 @@ def _coverage(result, scanned_checks):
         "not_assessed": [check for check in CHECKS if check not in scanned_checks],
         "incomplete_checks": list(dict.fromkeys(incomplete_checks)),
         "reasons": list(dict.fromkeys(reasons)),
+        **_analysis_coverage_counts(summary, limited_checks),
     }
+
+
+def _analysis_coverage_counts(summary, limited_checks):
+    """File and candidate counts from ``analysis_summary.analysis_coverage``."""
+    record = summary.get("analysis_coverage")
+    if not isinstance(record, Mapping):
+        return {}
+    counts = {"limited_checks": list(dict.fromkeys(limited_checks))}
+    for key in (
+        "unchecked_file_count",
+        "source_file_count",
+        "unverified_dead_code_candidates",
+    ):
+        value = record.get(key)
+        if type(value) is int and value >= 0:
+            counts[key] = value
+    return counts
 
 
 def _maintainability(result, advice, assessed):

@@ -17,7 +17,16 @@ def run_ingest_command(
     add_trivy_image_parser(ingest_sub)
 
     p_ccs = ingest_sub.add_parser(
-        "claude-security", help="Ingest Claude Code Security JSON"
+        "claude-security",
+        help=(
+            "Normalize Claude Code Security JSON and upload it to Skylos Cloud "
+            "(uploads by default; --no-upload keeps it local)"
+        ),
+        description=(
+            "Normalize Claude Code Security JSON findings. By default the "
+            "result is uploaded to Skylos Cloud with your token; pass "
+            "--no-upload to keep it on this machine."
+        ),
     )
     p_ccs.add_argument(
         "--input",
@@ -34,7 +43,7 @@ def run_ingest_command(
     p_ccs.add_argument(
         "--no-upload",
         action="store_true",
-        help="Normalize only, don't upload to dashboard",
+        help="Normalize only; do not upload to Skylos Cloud",
     )
     p_ccs.add_argument(
         "--json",

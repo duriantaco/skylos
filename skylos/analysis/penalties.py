@@ -50,6 +50,7 @@ from skylos.analysis.known_patterns import (
     SQLALCHEMY_TYPE_BASES,
     base_class_name,
 )
+from skylos.analysis.documented_conventions import documented_convention_reason
 from skylos.visitors.framework_aware import detect_framework_usage
 from pathlib import Path
 
@@ -1292,6 +1293,11 @@ def _check_data_model_fields(def_obj, analyzer, framework):
         if def_obj.name in framework.dataclass_fields:
             return _suppress(def_obj)
 
+    if def_obj.type == "variable" and def_obj.name in getattr(
+        framework, "orm_declarative_fields", ()
+    ):
+        return _suppress(def_obj, "ORM declarative field")
+
     if def_obj.type == "variable" and "." in def_obj.name:
         prefix = def_obj.name.rsplit(".", 1)[0]
         parent_simple = prefix.split(".")[-1]
@@ -1583,6 +1589,11 @@ def apply_penalties(
         return
 
     if _check_settings_config(def_obj) is True:
+        return
+
+    convention = documented_convention_reason(def_obj, analyzer, framework)
+    if convention:
+        _suppress(def_obj, convention)
         return
 
     result = _check_data_model_fields(def_obj, analyzer, framework)

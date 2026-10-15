@@ -391,6 +391,15 @@ class EsbuildStaticOptions:
         unsafe = set()
         neighbors = defaultdict(set)
         for node in self._walk(root):
+            if node.type == "assignment_expression" and self._is_additive_key_write(
+                node.child_by_field_name("left")
+            ):
+                # ``entryPoints['extra'] = ...`` only adds a key the literal
+                # did not have, so every statically known entry still exists.
+                unsafe.update(
+                    self._aliased_references(node.child_by_field_name("right"))
+                )
+                continue
             if node.type in {
                 "assignment_expression",
                 "augmented_assignment_expression",
@@ -459,7 +468,7 @@ class EsbuildStaticOptions:
                         unsafe.add(self._resolve(function, name))
                 arguments = node.child_by_field_name("arguments")
                 if arguments:
-                    unsafe.update(self._references(arguments))
+                    unsafe.update(self._aliased_references(arguments))
         # Undirected dependency propagation also catches shared mutable values
         # hidden inside objects, arrays, or aliases, without conflating shadows
         # or treating a copied primitive as a shared mutable container.
@@ -470,6 +479,82 @@ class EsbuildStaticOptions:
                     unsafe.add(neighbor)
                     pending.append(neighbor)
         self.unsafe = {name for scope, name in unsafe if scope == root}
+
+    def _aliased_references(self, node):
+        """References a value can alias; ``path.join(...)`` returns a fresh
+        string, so its arguments are not shared with the assigned value."""
+        names = set()
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            self.steps += 1
+            if current is None or self.steps > _MAX_STEPS:
+                continue
+            if current.type == "call_expression" and self._helper(
+                current.child_by_field_name("function")
+            ):
+                continue
+            if current.type in {"identifier", "shorthand_property_identifier"}:
+                binding = self._resolve(current, self._text(current))
+                if binding not in self.primitives:
+                    names.add(binding)
+                continue
+            pending.extend(current.named_children)
+        return names
+
+    def _literal_property_key(self, target):
+        if target.type == "member_expression":
+            prop = target.child_by_field_name("property")
+            if prop is not None and prop.type == "property_identifier":
+                return self._text(prop)
+            return None
+        index = target.child_by_field_name("index")
+        if index is not None and index.type == "string":
+            text = self._text(index)[1:-1]
+            return text if "\\" not in text else None
+        return None
+
+    def _is_additive_key_write(self, target):
+        """``obj.key = v`` / ``obj['key'] = v`` adding a key a module-level
+        ``const obj = {...}`` literal does not already define."""
+        target = _unwrap(target)
+        if target is None or target.type not in {
+            "member_expression",
+            "subscript_expression",
+        }:
+            return False
+        obj = target.child_by_field_name("object")
+        if obj is None or obj.type != "identifier":
+            return False
+        name = self._text(obj)
+        if self._resolve(obj, name)[0] != self.root:
+            return False
+        literal = _unwrap(self.constants.get(name))
+        if literal is None or literal.type != "object":
+            return False
+        key = self._literal_property_key(target)
+        if not key or key == "__proto__":
+            return False
+        existing = set()
+        for child in literal.named_children:
+            if child.type == "comment":
+                continue
+            if child.type == "shorthand_property_identifier":
+                existing.add(self._text(child))
+            elif child.type == "pair":
+                pair_key = child.child_by_field_name("key")
+                if pair_key is None:
+                    return False
+                if pair_key.type in {"property_identifier", "identifier"}:
+                    existing.add(self._text(pair_key))
+                elif pair_key.type == "string":
+                    existing.add(self._text(pair_key)[1:-1])
+                else:
+                    return False
+            else:
+                # Spreads and methods hide which keys exist.
+                return False
+        return key not in existing
 
     def evaluate(self, node, *, before=None, local=None, depth=0):
         self.steps += 1
@@ -487,11 +572,29 @@ class EsbuildStaticOptions:
         if node.type == "string":
             text = self._text(node)[1:-1]
             return text if "\\" not in text and len(text) <= _MAX_STRING else UNKNOWN
+        if node.type == "member_expression":
+            # ESM module location (Node 20.11+): ``import.meta.dirname``.
+            text = self._text(node)
+            if text == "import.meta.dirname":
+                return os.path.dirname(self.config_path)
+            if text == "import.meta.filename":
+                return self.config_path
+            return UNKNOWN
         if node.type == "identifier":
             name = self._text(node)
             if name in local:
                 return local[name]
             declaration = self.constants.get(name)
+            if (
+                declaration is None
+                and name in {"__dirname", "__filename"}
+                and name not in self.unsafe
+                and self._resolve(node, name)[0] == self.root
+            ):
+                # CommonJS module-scope globals.
+                if name == "__dirname":
+                    return os.path.dirname(self.config_path)
+                return self.config_path
             if (
                 name in self.unsafe
                 or declaration is None

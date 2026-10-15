@@ -53,6 +53,7 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     _save_version_cache,
     _suspicious_existing_dependency_reason,
     check_dependency_version_status,
+    go_proxy_module_path,
 )
 from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
@@ -403,7 +404,9 @@ def _check_go_module_exists(name: str) -> str:
     parts = name.split("/")
     saw_unknown = False
     for end in range(len(parts), _GO_MIN_MODULE_PARTS - 1, -1):
-        module = "/".join(_go_escape(part) for part in parts[:end])
+        module = go_proxy_module_path("/".join(parts[:end]))
+        if module is None:
+            return STATUS_UNKNOWN
         status = _registry_http_status(
             f"{GO_PROXY_ORIGIN}/{module}/@v/list",
             user_agent="skylos-go-dep-scanner/1.0",
@@ -413,11 +416,6 @@ def _check_go_module_exists(name: str) -> str:
         if status != 404 and status != 410:
             saw_unknown = True
     return STATUS_UNKNOWN if saw_unknown else STATUS_MISSING_PACKAGE
-
-
-def _go_escape(part: str) -> str:
-    # Module proxy case-encoding: uppercase letters become "!" + lowercase.
-    return "".join(f"!{ch.lower()}" if ch.isupper() else ch for ch in part)
 
 
 def _dedupe(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -200,7 +200,10 @@ def test_workflow_uploads_through_oidc_by_default():
         s for s in gate_job["steps"] if s.get("name") == "Run Skylos Analysis"
     )
     assert "--upload" not in analysis_step["run"]
-    assert "env" not in analysis_step
+    # Only the merge queue's base commit reaches the scan; no upload settings.
+    assert analysis_step["env"] == {
+        "MERGE_GROUP_BASE_SHA": "${{ github.event.merge_group.base_sha }}"
+    }
 
     job = parsed["jobs"]["cloud-upload"]
     assert job["if"] == (
@@ -328,12 +331,14 @@ def test_done_job_runs_tests_on_pull_request_head_without_upload_authority():
     parsed = yaml.safe_load(content)
     job = parsed["jobs"]["done"]
     assert job["name"] == "Skylos Done"
-    assert job["if"] == "github.event_name == 'pull_request'"
+    assert job["if"] == (
+        "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+    )
     assert job["permissions"] == {"contents": "read"}
     assert "environment" not in job
     checkout = job["steps"][0]
     assert checkout["with"] == {
-        "ref": "${{ github.event.pull_request.head.sha }}",
+        "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
         "fetch-depth": 0,
         "persist-credentials": False,
     }
@@ -347,10 +352,17 @@ def test_done_job_runs_tests_on_pull_request_head_without_upload_authority():
     ]
     install = job["steps"][3]["run"]
     assert install.splitlines() == ["python -I -m pip install -e . pytest", "npm ci"]
-    done_run = job["steps"][4]["run"]
-    assert done_run == 'skylos done --base "origin/$GITHUB_BASE_REF"'
+    done_step = job["steps"][4]
+    done_run = done_step["run"]
+    assert done_run == (
+        'skylos done --base "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"'
+    )
+    assert done_step["env"] == {
+        "MERGE_GROUP_BASE_SHA": "${{ github.event.merge_group.base_sha }}"
+    }
     args = build_done_parser().parse_args(shlex.split(done_run)[2:])
-    assert args.base == "origin/$GITHUB_BASE_REF" and not args.no_tests
+    assert args.base == "${MERGE_GROUP_BASE_SHA:-origin/$GITHUB_BASE_REF}"
+    assert not args.no_tests
     assert "SKYLOS_TOKEN" not in content and "github.base_ref" not in content
 
 
@@ -380,29 +392,40 @@ def test_risk_review_job_runs_on_pull_requests_and_reviews():
     assert job["name"] == "Skylos risk review"
     # Reviews never run this job under their own event (a second check run with
     # the required name would keep the merge blocked); the re-check job re-runs it.
-    assert job["if"] == "github.event_name == 'pull_request'"
+    # Merge groups run it so the required check reports in a merge queue.
+    assert job["if"] == (
+        "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+    )
     assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
+    # A merge group has no PR number; keying on it would make every merge
+    # group share one group, and GitHub cancels pending runs in a group.
     assert job["concurrency"] == {
-        "group": "skylos-risk-review-${{ github.event.pull_request.number }}",
+        "group": "skylos-risk-review-${{ github.event.pull_request.number "
+        "|| github.event.merge_group.head_sha }}",
         "cancel-in-progress": False,
     }
     assert job["steps"][0]["with"] == {
-        "ref": "${{ github.event.pull_request.head.sha }}",
+        "ref": "${{ github.event.pull_request.head.sha || github.sha }}",
         "fetch-depth": 0,
         "persist-credentials": False,
     }
     step = job["steps"][-1]
-    assert step["run"] == 'skylos cicd risk-review --base "origin/$PR_BASE_REF"'
-    # The base branch reaches the shell through the environment, never inlined.
+    assert step["run"] == (
+        'skylos cicd risk-review --base "${MERGE_GROUP_BASE_SHA:-origin/$PR_BASE_REF}"'
+    )
+    # Event values reach the shell through the environment, never inlined.
     assert step["env"] == {
         "PR_BASE_REF": "${{ github.event.pull_request.base.ref }}",
+        "MERGE_GROUP_BASE_SHA": "${{ github.event.merge_group.base_sha }}",
         "GITHUB_TOKEN": "${{ github.token }}",
     }
     # Other jobs do not rerun on reviews.
     assert parsed["jobs"]["skylos"]["if"] == (
         "github.event_name != 'push' && github.event_name != 'pull_request_review'"
     )
-    assert parsed["jobs"]["done"]["if"] == "github.event_name == 'pull_request'"
+    assert parsed["jobs"]["done"]["if"] == (
+        "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+    )
     assert '"Skylos risk review"' in content.split("\nname:", 1)[0]
     no_upload = yaml.safe_load(generate_workflow(use_risk_review=True, use_upload=False))
     assert no_upload["jobs"]["skylos"]["if"] == "github.event_name != 'pull_request_review'"
@@ -410,7 +433,8 @@ def test_risk_review_job_runs_on_pull_requests_and_reviews():
         generate_workflow(use_risk_review=True, use_claude_security=True)
     )
     assert claude["jobs"]["claude-security"]["if"] == (
-        "github.event_name != 'pull_request_review'"
+        "github.event_name != 'pull_request_review' "
+        "&& github.event_name != 'merge_group'"
     )
 
 
@@ -1013,3 +1037,119 @@ def test_risk_review_recheck_reruns_the_pull_request_job_on_reviews():
 def test_risk_review_recheck_is_absent_without_risk_review():
     assert "risk-review-recheck" not in yaml.safe_load(generate_workflow())["jobs"]
 
+
+
+# ---------------------------------------------------------------------------
+# merge queues (merge_group)
+# ---------------------------------------------------------------------------
+
+
+def _on(parsed):
+    return parsed.get("on") or parsed.get(True)
+
+
+def test_required_checks_also_run_on_merge_group():
+    parsed = yaml.safe_load(generate_workflow(use_risk_review=True))
+    assert _on(parsed)["merge_group"] == {"types": ["checks_requested"]}
+    jobs = parsed["jobs"]
+    # Every required check runs on merge_group under its own name.
+    assert "merge_group" not in jobs["skylos"]["if"]
+    assert "github.event_name == 'merge_group'" in jobs["done"]["if"]
+    assert "github.event_name == 'merge_group'" in jobs["risk-review"]["if"]
+    # Default-branch upload and review re-checks never run on merge groups.
+    assert jobs["cloud-upload"]["if"].startswith("github.event_name == 'push'")
+    assert jobs["risk-review-recheck"]["if"] == (
+        "github.event_name == 'pull_request_review'"
+    )
+    header = generate_workflow().split("\nname:", 1)[0]
+    assert "merge_group" in header
+
+
+def test_merge_group_gate_compares_with_the_queue_base_commit():
+    parsed = yaml.safe_load(generate_workflow())
+    steps = {s.get("name"): s for s in parsed["jobs"]["skylos"]["steps"]}
+    for name in ("Run Skylos Analysis", "Quality Gate"):
+        step = steps[name]
+        assert step["env"] == {
+            "MERGE_GROUP_BASE_SHA": "${{ github.event.merge_group.base_sha }}"
+        }
+        assert '"${{ github.event_name }}" = "merge_group"' in step["run"]
+        # An empty base never silently turns into a full, ungated scan.
+        assert (
+            'pr_base_ref="${MERGE_GROUP_BASE_SHA:?the merge_group event has no base_sha}"'
+            in step["run"]
+        )
+        assert "github.event.merge_group" not in step["run"]
+    analysis = steps["Run Skylos Analysis"]["run"]
+    assert 'export SKYLOS_POLICY_BASE="$(git merge-base "$pr_base_ref" HEAD)"' in (
+        analysis
+    )
+    assert '--diff-base "$pr_base_ref" --diff "$pr_base_ref"' in analysis
+    gate = steps["Quality Gate"]["run"]
+    assert 'skylos cicd gate . --input skylos-results.json --diff-base "$pr_base_ref"' in (
+        gate
+    )
+    # Review comments need a pull request.
+    assert steps["PR Review Comments"]["if"] == (
+        "github.event_name == 'pull_request' && always()"
+    )
+
+
+def test_merge_group_shell_selects_the_right_base(tmp_path):
+    import subprocess
+
+    parsed = yaml.safe_load(generate_workflow())
+    step = next(
+        s for s in parsed["jobs"]["skylos"]["steps"] if s.get("name") == "Quality Gate"
+    )
+    script = step["run"].replace(
+        "skylos cicd gate", 'echo "base=$pr_base_ref"; true skylos cicd gate'
+    )
+
+    def run(event, env):
+        body = script.replace("${{ github.event_name }}", event)
+        return subprocess.run(
+            ["bash", "-c", body],
+            env={"PATH": "/usr/bin:/bin", **env},
+            capture_output=True,
+            text=True,
+        )
+
+    pr = run("pull_request", {"GITHUB_BASE_REF": "main", "MERGE_GROUP_BASE_SHA": ""})
+    assert pr.returncode == 0 and "base=origin/main" in pr.stdout
+    queue = run("merge_group", {"MERGE_GROUP_BASE_SHA": "a" * 40})
+    assert queue.returncode == 0 and f"base={'a' * 40}" in queue.stdout
+    missing = run("merge_group", {"MERGE_GROUP_BASE_SHA": ""})
+    assert missing.returncode != 0 and "no base_sha" in missing.stderr
+    push = run("push", {})
+    assert push.returncode == 0 and push.stdout.strip() == "base="
+
+
+def test_no_merge_group_without_pull_requests():
+    parsed = yaml.safe_load(generate_workflow(triggers=["push"]))
+    assert "merge_group" not in _on(parsed)
+    assert "merge_group" not in generate_workflow(triggers=["schedule"])
+    explicit = yaml.safe_load(
+        generate_workflow(triggers=["pull_request", "merge_group", "push"])
+    )
+    assert _on(explicit)["merge_group"] == {"types": ["checks_requested"]}
+
+
+def test_claude_jobs_stay_off_merge_groups():
+    parsed = yaml.safe_load(generate_workflow(use_claude_security=True))
+    assert parsed["jobs"]["claude-security"]["if"] == (
+        "github.event_name != 'merge_group'"
+    )
+    assert parsed["jobs"]["upload-claude-findings"]["if"] == (
+        "always() && needs.skylos.result != 'skipped' "
+        "&& github.event_name != 'merge_group'"
+    )
+
+
+def test_generated_merge_queue_workflow_passes_skylos_actions_audit(tmp_path):
+    workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
+    _write(
+        workflow,
+        generate_workflow(use_risk_review=True, use_upload=False, use_done=True),
+    )
+    assert scan_github_actions(tmp_path) == []

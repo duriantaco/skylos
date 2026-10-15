@@ -2,9 +2,26 @@
 
 Findings, operational failures, and coverage limits are separate outcomes.
 Finding thresholds determine whether known issues fail a gate. An unavailable
-scanner or an unreadable requested input makes analysis incomplete and exits
-`2`. A policy requiring coverage can reject a completed scan whose supported
+scanner makes analysis incomplete and exits `2`. A source file that does not
+parse, or files of a language whose engine is missing, are coverage gaps: the
+gate is evaluated on the code that was analysed and the gap is reported (see
+[Exit Codes And Incomplete Analysis](./cli-output.md#exit-codes-and-incomplete-analysis)).
+A policy requiring coverage can reject a completed scan whose supported
 inventory does not meet that requirement, exiting `1`.
+
+## Requiring complete source coverage
+
+To keep a gate from passing while any source file was not analysed:
+
+```toml
+[tool.skylos.gate.coverage]
+require_complete = true
+```
+
+With it, `skylos . --gate` and `skylos cicd gate` exit `2` (`Quality Gate:
+INCOMPLETE`) on any coverage gap, as `--strict` does, while keeping your
+configured limits. Without it, the gate passes or fails on the analysed code
+and prints the gap as a warning.
 
 ## Dependency coverage policy
 
@@ -114,8 +131,9 @@ or display filtering.
 ```
 
 An upload failure preserves the local report with `upload.status: "failed"`
-and exits `1`. Incomplete analysis does not upload: it reports
-`{"status": "skipped", "reason": "analysis_incomplete"}` and exits `2`.
+and exits `1`. Incomplete analysis (exit `2`) does not upload: it reports
+`{"status": "skipped", "reason": "analysis_incomplete"}` and exits `2`. A scan
+with only coverage gaps uploads with a partial scan-coverage receipt.
 An unconfirmed managed GitLab comment delivery retains its saved scan ID and
 separate `upload.delivery` outcome, exiting `2`. Completed scans upload their
 findings even when a strict gate rejects them; enforcing the gate happens after

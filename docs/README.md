@@ -10,6 +10,7 @@ This repository keeps lightweight local docs for features that need examples clo
 | Required dependency coverage and Actions input failures | [Required Scan Coverage](./required-scan-coverage.md) |
 | Newly unused definitions outside changed lines | [PR Impact Reporting](./pr-impact.md) |
 | Safe policy pulls and previewing sync changes | [Cloud Sync](./cloud-sync.md) |
+| Every network request the CLI can make, what it sends, and how to turn it off | [What Leaves Your Machine](./privacy-and-network.md) |
 | Optional Jev and LLM dead-code review modes, API keys, and safety limits | [Dead-code Review](./dead-code-review.md) |
 | Optional Ruff Python linting through the Skylos CLI | [Python Linting](./python-linting.md) |
 | Deterministic AI-code verification coverage and language support | [AI Code Verification](./ai-code-verification.md) |

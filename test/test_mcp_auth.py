@@ -226,16 +226,68 @@ class TestDeductCredits:
         assert ok is True
         assert len(get_session()._unauth_calls) == 1
 
-    def test_enterprise_no_deduction(self):
+    # Enterprise spends credits like every plan (founder decision, 14 Oct 2026).
+    def _enterprise_post(self, status_code, payload, credits=5000):
         self._set_session(
             authenticated=True,
             plan="enterprise",
-            api_key="test-key",
+            api_key="ent-key",
+            credits=credits,
             validated_at=time.time(),
         )
-        ok, err = deduct_credits("security_scan")
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        mock_resp.json.return_value = payload
+        mock_req = MagicMock()
+        mock_req.post.return_value = mock_resp
+        return mock_req
+
+    def test_enterprise_is_charged(self):
+        mock_req = self._enterprise_post(200, {"balance_after": 4990, "success": True})
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            ok, err = deduct_credits("remediate")
+
+        assert (ok, err) == (True, "")
+        assert get_session().credits == 4990
+        mock_req.post.assert_called_once()
+        call_args = mock_req.post.call_args
+        assert "credits/deduct" in call_args[0][0]
+        assert call_args[1]["json"]["feature_key"] == "mcp_remediate"
+        assert call_args[1]["headers"]["Authorization"] == "Bearer ent-key"
+
+    def test_enterprise_insufficient_credits_matches_pro(self):
+        answers = {}
+        for plan in ("enterprise", "pro"):
+            mock_req = self._enterprise_post(
+                402, {"required": 10, "available": 3}, credits=3
+            )
+            get_session().plan = plan
+            with patch.dict("sys.modules", {"requests": mock_req}):
+                answers[plan] = deduct_credits("remediate")
+
+        assert answers["enterprise"] == answers["pro"]
+        ok, err = answers["enterprise"]
+        assert ok is False
+        assert "Insufficient credits. Required: 10, available: 3." in err
+        assert "dashboard/billing" in err
+
+    def test_enterprise_free_scan_tool_still_runs(self):
+        mock_req = self._enterprise_post(200, {"balance_after": 5000, "success": True})
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            ok, err = deduct_credits("security_scan")
+
         assert ok is True
-        assert len(get_session()._call_counts.get("_all", [])) == 1
+        mock_req.post.assert_called_once()
+        assert mock_req.post.call_args[1]["json"]["feature_key"] == "mcp_security_scan"
+
+    def test_enterprise_network_failure_blocks_like_pro(self):
+        mock_req = self._enterprise_post(200, {})
+        mock_req.post.side_effect = ConnectionError("network down")
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            ok, err = deduct_credits("remediate")
+
+        assert ok is False
+        assert "Could not verify credit deduction" in err
 
     def test_unknown_tool_no_deduction(self):
         self._set_session(
@@ -636,7 +688,8 @@ class TestGateIntegration:
         error = json.loads(result)
         assert "Could not verify credit deduction" in error["error"]
 
-    def test_gate_enterprise_always_passes(self):
+    def test_gate_enterprise_without_credits_is_blocked(self):
+        # Enterprise no longer skips the credit check (14 Oct 2026).
         from skylos_mcp.server import _gate
 
         self._set_session(
@@ -647,9 +700,18 @@ class TestGateIntegration:
             rate_limit_per_hour=5000,
             validated_at=time.time(),
         )
-        for tool in TOOL_CREDIT_MAP:
-            result = _gate(tool)
-            assert result is None, f"Enterprise should pass gate for {tool}"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 402
+        mock_resp.json.return_value = {"required": 10, "available": 0}
+        mock_req = MagicMock()
+        mock_req.post.return_value = mock_resp
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            result = _gate("remediate")
+
+        assert result is not None
+        error = json.loads(result)
+        assert "Insufficient credits" in error["error"]
+        mock_req.post.assert_called_once()
 
     def test_gate_rate_limited_blocked(self):
         from skylos_mcp.server import _gate

@@ -108,8 +108,15 @@ def test_large_npm_response_flags_missing_version_and_caches(tmp_path, monkeypat
             "https://proxy.golang.org/github.com/stretchr/testify/@v/v999999.0.0.info",
             "https://proxy.golang.org/github.com/stretchr/testify/@v/list",
         ),
+        (
+            ECOSYSTEM_GO,
+            "github.com/BurntSushi/toml",
+            "v1.4.0-RC1",
+            "https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/v1.4.0-!r!c1.info",
+            "https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/list",
+        ),
     ],
-    ids=["npm", "pypi", "go"],
+    ids=["npm", "pypi", "go", "go-case-escaped"],
 )
 def test_registry_checks_use_head_without_reading_response_bodies(
     monkeypatch,
@@ -335,3 +342,99 @@ def test_registry_checks_keep_non_404_failures_unknown(
 
     assert status == STATUS_UNKNOWN
     assert seen_requests == [(url, "HEAD", 5) for url in expected_urls]
+
+
+# Go module proxy case-encoding (``go help goproxy``): the unescaped path of a
+# capitalised module is a 404, which read as a hallucinated dependency (W3 R3:
+# github.com/BurntSushi/toml, Masterminds/sprig... reported as nonexistent).
+
+
+@pytest.mark.parametrize(
+    ("raw", "escaped"),
+    [
+        ("github.com/BurntSushi/toml", "github.com/!burnt!sushi/toml"),
+        ("github.com/Masterminds/semver/v3", "github.com/!masterminds/semver/v3"),
+        ("golang.org/x/mod", "golang.org/x/mod"),
+        ("v1.0.0-RC1", "v1.0.0-!r!c1"),
+        ("v1.2.3", "v1.2.3"),
+    ],
+)
+def test_go_proxy_escape_case_encodes_uppercase(raw, escaped):
+    assert manifest_rule.go_proxy_escape(raw) == escaped
+
+
+def test_go_proxy_escape_rejects_bang():
+    assert manifest_rule.go_proxy_escape("github.com/a!b/c") is None
+    assert manifest_rule.go_proxy_module_path("github.com/a!b/c") is None
+
+
+def test_capitalised_go_module_is_present_not_hallucinated(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "go.mod").write_text(
+        "module example.com/app\n\ngo 1.22\n\n"
+        "require (\n"
+        "\tgithub.com/BurntSushi/toml v1.4.0\n"
+        "\tgithub.com/BurntSushi/no-such-module-zz9 v1.0.0\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    present = {
+        "https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/v1.4.0.info",
+    }
+    seen = []
+
+    def fake_urlopen(request, *, timeout):
+        seen.append(request.full_url)
+        if request.full_url in present:
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.__exit__.return_value = False
+            return response
+        if "/BurntSushi/" in request.full_url:
+            raise AssertionError(f"unescaped proxy URL: {request.full_url}")
+        raise _not_found(request.full_url)
+
+    monkeypatch.setattr(manifest_rule.urllib.request, "urlopen", fake_urlopen)
+    findings = scan_manifest_dependency_hallucinations(repo)
+
+    names = [finding["metadata"]["package_name"] for finding in findings]
+    assert names == ["github.com/BurntSushi/no-such-module-zz9"]
+    assert all("!" in url for url in seen if "burnt" in url.lower())
+
+
+def test_install_hook_go_lookup_uses_the_shared_escape(monkeypatch):
+    from skylos.rules.ai_defect import install_command
+
+    seen = []
+
+    def fake_status(url, *, user_agent):
+        seen.append(url)
+        return 200 if url.endswith("/github.com/!burnt!sushi/toml/@v/list") else 404
+
+    monkeypatch.setattr(install_command, "_registry_http_status", fake_status)
+    assert (
+        install_command.check_install_package_status(
+            ECOSYSTEM_GO, "github.com/BurntSushi/toml", "", {}
+        )
+        == STATUS_PRESENT
+    )
+    assert seen == ["https://proxy.golang.org/github.com/!burnt!sushi/toml/@v/list"]
+
+    seen.clear()
+    assert (
+        install_command.check_install_package_status(
+            ECOSYSTEM_GO, "github.com/BurntSushi/no-such-module-zz9", "", {}
+        )
+        == STATUS_MISSING_PACKAGE
+    )
+    assert seen == [
+        "https://proxy.golang.org/github.com/!burnt!sushi/no-such-module-zz9/@v/list",
+        "https://proxy.golang.org/github.com/!burnt!sushi/@v/list",
+    ]
+    assert (
+        install_command.check_install_package_status(
+            ECOSYSTEM_GO, "github.com/a!b/c", "", {}
+        )
+        == STATUS_UNKNOWN
+    )

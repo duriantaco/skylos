@@ -131,6 +131,14 @@ def add_agent_verify_parser(
         action="store_true",
         help="Create a branch, apply patches, and commit (use with --fix)",
     )
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help=(
+            "Send this run's summary (counts, model, provider, duration, "
+            "commit, branch, actor) to Skylos Cloud. Off by default"
+        ),
+    )
 
 
 def run_agent_verify_command(
@@ -227,7 +235,8 @@ def run_agent_verify_command(
 
     upload_agent_run(
         "verify",
-        {
+        requested=bool(getattr(args, "upload", False)),
+        summary={
             "total_findings": stats["total_findings"],
             "verified_true_positive": stats["verified_true_positive"],
             "verified_false_positive": stats["verified_false_positive"],
