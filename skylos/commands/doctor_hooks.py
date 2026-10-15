@@ -35,6 +35,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
+
 from skylos.commands.install_hooks_cmd import (
     CLAUDE_HOOKS,
     CODEX_HOOKS,
@@ -133,12 +138,15 @@ def _tracked_in(path: str, project: Path) -> bool:
         return False
     try:
         proc = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", relative.as_posix()],
+            read_only_git_command(
+                ["ls-files", "--error-unmatch", "--", relative.as_posix()]
+            ),
             cwd=str(project),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=10,
             check=False,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return True  # cannot tell: treat as repository content

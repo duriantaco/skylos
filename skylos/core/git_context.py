@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from skylos.core.file_discovery import find_git_root
 from skylos.core.git_safety import (
+    content_filter_config_overrides,
+    needs_content_guard,
     read_only_git_command,
     read_only_git_environment,
+    with_diff_guards,
 )
 
 
@@ -21,18 +23,6 @@ _REPOSITORY_ENV = (
     "GIT_PREFIX",
     "GIT_INTERNAL_SUPER_PREFIX",
 )
-_FILTER_CONFIG_KEY_RE = re.compile(
-    r"^filter\.(?P<driver>.+)\.(?:clean|smudge|process|required)$",
-    re.IGNORECASE,
-)
-_DIFF_CONFIG_KEY_RE = re.compile(
-    r"^diff\.(?P<driver>.+)\.(?:command|textconv|cachetextconv|trustExitCode)$",
-    re.IGNORECASE,
-)
-_SAFE_FILTER_DRIVER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-_MAX_FILTER_DRIVERS = 128
-_MAX_FILTER_DRIVER_LENGTH = 128
-_MAX_FILTER_CONFIG_OUTPUT = 128_000
 
 
 def _absolute_env_path(value: str, cwd: Path) -> Path:
@@ -71,81 +61,13 @@ def _filter_config_overrides(
     root: Path,
     env: dict[str, str],
 ) -> tuple[str, ...] | None:
-    """Neutralize clean/process filters selected by repository attributes."""
+    """Neutralize clean/process filters selected by repository attributes.
 
-    try:
-        result = subprocess.run(
-            read_only_git_command(
-                [
-                    "config",
-                    "--includes",
-                    "--null",
-                    "--name-only",
-                    "--get-regexp",
-                    (
-                        r"^(filter\..*\.(clean|smudge|process|required)"
-                        r"|diff\..*\.(command|textconv|cachetextconv|trustExitCode))$"
-                    ),
-                ]
-            ),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=str(root),
-            env=env,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode == 1:
-        return ()
-    if result.returncode != 0:
-        return None
-    if len(result.stdout.encode("utf-8")) > _MAX_FILTER_CONFIG_OUTPUT:
-        return None
+    Delegates to :func:`skylos.core.git_safety.content_filter_config_overrides`
+    so every call site shares one enumeration of configured drivers.
+    """
 
-    filter_drivers: set[str] = set()
-    diff_drivers: set[str] = set()
-    for key in result.stdout.split("\0"):
-        if not key:
-            continue
-        match = _FILTER_CONFIG_KEY_RE.fullmatch(key)
-        drivers = filter_drivers
-        if match is None:
-            match = _DIFF_CONFIG_KEY_RE.fullmatch(key)
-            drivers = diff_drivers
-        if match is None:
-            return None
-        driver = match.group("driver")
-        if (
-            not driver
-            or len(driver) > _MAX_FILTER_DRIVER_LENGTH
-            or _SAFE_FILTER_DRIVER_RE.fullmatch(driver) is None
-        ):
-            return None
-        drivers.add(driver)
-        if len(filter_drivers) + len(diff_drivers) > _MAX_FILTER_DRIVERS:
-            return None
-
-    overrides = []
-    for driver in sorted(filter_drivers):
-        overrides.extend(
-            (
-                f"filter.{driver}.clean=",
-                f"filter.{driver}.smudge=",
-                f"filter.{driver}.process=",
-                f"filter.{driver}.required=false",
-            )
-        )
-    for driver in sorted(diff_drivers):
-        overrides.extend(
-            (
-                f"diff.{driver}.command=",
-                f"diff.{driver}.textconv=",
-                f"diff.{driver}.cachetextconv=false",
-                f"diff.{driver}.trustExitCode=false",
-            )
-        )
-    return tuple(overrides)
+    return content_filter_config_overrides(root, environ=env)
 
 
 @dataclass(frozen=True)
@@ -205,22 +127,21 @@ class GitContext:
         )
 
     def run(self, *args: str) -> subprocess.CompletedProcess[str]:
-        safe_args = list(args)
-        config_overrides: tuple[str, ...] = ()
-        if safe_args and safe_args[0] in {"blame", "diff"}:
-            if self.filter_config_overrides is None:
+        # Every subcommand carries the filter/diff-driver neutralization; only
+        # content-free plumbing may still run when the repository's filters
+        # cannot be inspected (status, diff, add, stash, checkout-index, log,
+        # show, blame and anything unlisted are refused instead).
+        safe_args = with_diff_guards(args)
+        config_overrides = self.filter_config_overrides
+        if config_overrides is None:
+            if needs_content_guard(safe_args):
                 return subprocess.CompletedProcess(
                     args=list(args),
                     returncode=2,
                     stdout="",
                     stderr="Could not safely inspect repository Git filters",
                 )
-            config_overrides = self.filter_config_overrides
-        if safe_args and safe_args[0] == "diff":
-            if "--no-ext-diff" not in safe_args:
-                safe_args.insert(1, "--no-ext-diff")
-            if "--no-textconv" not in safe_args:
-                safe_args.insert(1, "--no-textconv")
+            config_overrides = ()
         return subprocess.run(
             read_only_git_command(
                 safe_args,

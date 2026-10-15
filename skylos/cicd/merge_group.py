@@ -271,12 +271,17 @@ def _segment_vetoes(path: str | Path, segment: Segment, config_sha: str) -> list
     from skylos.cicd.approval import analyze_change
 
     context = GitContext.from_path(path)
+    # ``worktree add`` checks files out through the repository's smudge and
+    # process filters: neutralize every configured driver, or refuse.
+    filter_overrides = context.filter_config_overrides
+    if filter_overrides is None:
+        raise MergeGroupError("could not safely read this repository's Git filters")
     with tempfile.TemporaryDirectory(prefix="skylos-merge-group-") as temporary:
         worktree = Path(temporary) / "segment"
 
         def git(*args: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
-                read_only_git_command(list(args)),
+                read_only_git_command(list(args), config_overrides=filter_overrides),
                 capture_output=True,
                 text=True,
                 timeout=_WORKTREE_TIMEOUT_SECONDS,

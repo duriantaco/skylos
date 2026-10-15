@@ -33,6 +33,11 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.core.git_safety import (
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
+
 CODE_HEALTH_RULES = frozenset(
     {
         "SKY-C303",  # too many arguments
@@ -80,9 +85,17 @@ def _numeric(value: Any) -> float | None:
 
 
 def _git(args: list[str], cwd: Path) -> str | None:
+    command = worktree_safe_git_command(args, cwd)
+    if command is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return None

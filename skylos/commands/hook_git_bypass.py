@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from skylos.commands.hook_shell_commands import SimpleCommand
+from skylos.core.git_safety import read_only_git_environment
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 # Hooks that can stop each operation (the gates), and the subset that
@@ -196,6 +197,10 @@ def git_hooks_dir(cwd: Path) -> Path | None:
 
     None when git cannot tell (not a repository, git missing)."""
     try:
+        # This resolves where Git WOULD run hooks, so core.hooksPath must stay
+        # as the repository configures it (the read-only override would force
+        # /dev/null). ``rev-parse --git-path`` runs no hooks or filters itself;
+        # the ambient-environment attack surface is closed by the env guard.
         proc = subprocess.run(
             ["git", "rev-parse", "--git-path", "hooks"],
             cwd=str(cwd),
@@ -204,6 +209,7 @@ def git_hooks_dir(cwd: Path) -> Path | None:
             text=True,
             timeout=3,
             check=False,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError, ValueError):
         return None

@@ -18,6 +18,23 @@ from skylos.cicd.review import (
 from skylos.cicd.evidence import build_evidence_card
 
 
+@pytest.fixture(autouse=True)
+def _no_repo_filters():
+    """These tests mock the Git diff wholesale and do not exercise content
+    filters. The hardened diff path inspects the repository's filter config via
+    ``content_filter_config_overrides``; several of these tests also patch
+    ``subprocess.run`` (the shared module attribute), which would otherwise feed
+    the diff text into that inspection. Stub it to "no filters configured"; the
+    real inspection and its command-execution guard are covered by
+    ``test_git_repo_config_exec.py``.
+    """
+    with patch(
+        "skylos.core.git_safety.content_filter_config_overrides",
+        return_value=(),
+    ):
+        yield
+
+
 SAMPLE_DIFF = """\
 diff --git a/app.py b/app.py
 index abc1234..def5678 100644

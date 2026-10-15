@@ -49,6 +49,12 @@ from io import StringIO
 import subprocess
 import textwrap
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
+
 from skylos.reporting.github_annotations import (
     _emit_github_annotation as _emit_github_annotation,
     _emit_github_annotations,
@@ -231,11 +237,15 @@ def discover_source_files(*args, **kwargs):
 
 
 def _read_staged_text(project_root: Path, relpath: str) -> str | None:
+    command = worktree_safe_git_command(["show", f":{relpath}"], project_root)
+    if command is None:
+        return None
     result = subprocess.run(
-        ["git", "show", f":{relpath}"],
+        command,
         capture_output=True,
         text=True,
         cwd=project_root,
+        env=read_only_git_environment(),
     )
     if result.returncode == 0:
         return result.stdout
@@ -281,11 +291,20 @@ def _join_phrase(parts: list[str]) -> str:
 def _list_dirty_relevant_paths(
     project_root: Path, is_relevant_path
 ) -> list[str] | None:
+    # ``status`` hashes stat-dirty files through the repository's clean
+    # filters: neutralize every configured filter/diff driver, or report
+    # "cannot tell" (None) so the caller falls back to a staged snapshot.
+    command = worktree_safe_git_command(
+        ["status", "--porcelain", "--untracked-files=all"], project_root
+    )
+    if command is None:
+        return None
     result = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        command,
         capture_output=True,
         text=True,
         cwd=project_root,
+        env=read_only_git_environment(),
     )
     if result.returncode != 0:
         return None
@@ -467,17 +486,26 @@ def _handle_empty_changed_deep_audit(
 def _create_precommit_snapshot(project_root: Path):
     snapshot_dir = tempfile.TemporaryDirectory(prefix="skylos_precommit_")
     snapshot_root = Path(snapshot_dir.name).resolve()
-    result = subprocess.run(
+    # ``checkout-index`` runs the repository's smudge filters while writing the
+    # snapshot: neutralize every configured filter, or skip the snapshot.
+    command = worktree_safe_git_command(
         [
-            "git",
             "checkout-index",
             "--all",
             "--force",
             f"--prefix={str(snapshot_root) + os.sep}",
         ],
+        project_root,
+    )
+    if command is None:
+        snapshot_dir.cleanup()
+        return None, None
+    result = subprocess.run(
+        command,
         capture_output=True,
         text=True,
         cwd=project_root,
+        env=read_only_git_environment(),
     )
     if result.returncode != 0:
         snapshot_dir.cleanup()
@@ -820,14 +848,20 @@ def _finding_is_in_changed_lines(
 def _get_cached_changed_line_ranges(
     project_root: Path, staged_paths: list[str] | None = None
 ) -> list[dict] | None:
-    cmd = ["git", "diff", "--cached", "--unified=0"]
+    args = ["diff", "--cached", "--unified=0"]
     if staged_paths:
-        cmd.extend(["--", *staged_paths])
+        args.extend(["--", *staged_paths])
+    # A rendered diff runs configured textconv and diff drivers: neutralize
+    # them, or report "cannot tell" (None).
+    command = worktree_safe_git_command(args, project_root)
+    if command is None:
+        return None
     result = subprocess.run(
-        cmd,
+        command,
         capture_output=True,
         text=True,
         cwd=project_root,
+        env=read_only_git_environment(),
     )
     if result.returncode != 0:
         return None
@@ -3530,10 +3564,11 @@ def _run_pre_analysis_steps(args, project_root, console):
             # Compare the merge base with the working tree so committed,
             # staged and unstaged edits all count, plus untracked files.
             merge_base_result = subprocess.run(
-                ["git", "merge-base", args.diff_base, "HEAD"],
+                read_only_git_command(["merge-base", args.diff_base, "HEAD"]),
                 cwd=diff_root,
                 capture_output=True,
                 text=True,
+                env=read_only_git_environment(),
             )
             merge_base = (
                 merge_base_result.stdout.strip()
@@ -3541,11 +3576,23 @@ def _run_pre_analysis_steps(args, project_root, console):
                 else ""
             )
             if merge_base:
+                # A worktree diff runs the repository's clean filters: route it
+                # through the filter-neutralizing builder, or refuse.
+                diff_cmd = worktree_safe_git_command(
+                    ["diff", "--name-only", merge_base], diff_root
+                )
+                if diff_cmd is None:
+                    _exit_diff_unavailable(
+                        args,
+                        "the repository configures Git content filters that "
+                        "could not be inspected safely",
+                    )
                 diff_result = subprocess.run(
-                    ["git", "diff", "--name-only", merge_base],
+                    diff_cmd,
                     cwd=diff_root,
                     capture_output=True,
                     text=True,
+                    env=read_only_git_environment(),
                 )
             else:
                 diff_result = merge_base_result
@@ -4579,11 +4626,22 @@ def main() -> None:
                     return path.suffix.lower() in config_exts
 
                 project_root = find_project_root(agent_args.path)
+                staged_command = worktree_safe_git_command(
+                    ["diff", "--cached", "--name-only"], project_root
+                )
+                if staged_command is None:
+                    console.print(
+                        "[bad]Cannot list staged files: the repository "
+                        "configures Git content filters that could not be "
+                        "inspected safely[/bad]"
+                    )
+                    sys.exit(2)
                 staged_result = _sp.run(
-                    ["git", "diff", "--cached", "--name-only"],
+                    staged_command,
                     capture_output=True,
                     text=True,
                     cwd=project_root,
+                    env=read_only_git_environment(),
                 )
                 staged_candidates = [
                     f.strip()

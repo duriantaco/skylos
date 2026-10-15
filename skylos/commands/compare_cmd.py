@@ -7,6 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
 from skylos.core.safe_cache_io import write_text_no_symlink
 
 
@@ -458,24 +463,29 @@ def _git_context(
     repository_path = scan_path if scan_path.is_dir() else scan_path.parent
     try:
         revision = subprocess.check_output(
-            ["git", "-C", str(repository_path), "rev-parse", "--verify", "HEAD"],
+            read_only_git_command(
+                ["-C", str(repository_path), "rev-parse", "--verify", "HEAD"]
+            ),
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=3,
+            env=read_only_git_environment(),
         ).strip()
         repository_root = Path(
             subprocess.check_output(
-                ["git", "-C", str(repository_path), "rev-parse", "--show-toplevel"],
+                read_only_git_command(
+                    ["-C", str(repository_path), "rev-parse", "--show-toplevel"]
+                ),
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=3,
+                env=read_only_git_environment(),
             ).strip()
         )
-        status = subprocess.check_output(
+        # ``git status`` hashes worktree content through the repository's clean
+        # filters; neutralize every configured filter/diff driver, or refuse.
+        status_cmd = worktree_safe_git_command(
             [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
                 "-C",
                 str(repository_path),
                 "status",
@@ -483,17 +493,27 @@ def _git_context(
                 "-z",
                 "--untracked-files=all",
             ],
+            repository_path,
+        )
+        if status_cmd is None:
+            return None, None, None, None
+        status = subprocess.check_output(
+            status_cmd,
             stderr=subprocess.DEVNULL,
             timeout=5,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return None, None, None, None
     try:
         repository_identity = subprocess.check_output(
-            ["git", "-C", str(repository_root), "remote", "get-url", "origin"],
+            read_only_git_command(
+                ["-C", str(repository_root), "remote", "get-url", "origin"]
+            ),
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=3,
+            env=read_only_git_environment(),
         ).strip()
     except (OSError, subprocess.SubprocessError):
         repository_identity = None

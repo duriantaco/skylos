@@ -8,6 +8,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from skylos.core.git_safety import (
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
+
 from skylos.contracts import (
     contract_enables_dependency_hallucinations,
     contract_project_config_overrides,
@@ -403,15 +408,24 @@ def _within(path: Path, scope: Path) -> bool:
 
 
 def _run_git(cwd: Path, args: list[str]) -> str | None:
+    # verify --diff compares against the worktree, which runs the repository's
+    # clean filters; neutralize every configured filter/diff driver (and add
+    # --no-ext-diff/--no-textconv for diffs) or refuse the operation.
+    command = worktree_safe_git_command(
+        args, cwd, extra_overrides=("core.quotePath=false",)
+    )
+    if command is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", "-c", "core.quotepath=false", *args],
+            command,
             cwd=str(cwd),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=60,
             check=False,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
