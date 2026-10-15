@@ -799,15 +799,39 @@ def _progress_ctx():
 
 
 _FAKE_MERGE_BASE = "0123456789abcdef0123456789abcdef01234567"
+_INJECTED_DIFF_GUARDS = ("--no-ext-diff", "--no-textconv")
+
+
+def _git_subcommand(cmd):
+    """Git argv after the ``git_safety`` hardening prefix (global flags, -c)."""
+    i = 1
+    while i < len(cmd):
+        if cmd[i] == "-c":
+            i += 2
+        elif cmd[i].startswith("--"):
+            i += 1
+        else:
+            break
+    return list(cmd[i:])
+
+
+def _plain_git(cmd):
+    """``["git", subcommand, ...]`` without the hardening prefix or guards."""
+    if not cmd or cmd[0] != "git":
+        return list(cmd)
+    return [
+        "git",
+        *(arg for arg in _git_subcommand(cmd) if arg not in _INJECTED_DIFF_GUARDS),
+    ]
 
 
 def _fake_git(diff_stdout="", untracked=(), merge_base=_FAKE_MERGE_BASE):
     """subprocess.run stand-in answering merge-base, diff and ls-files."""
 
     def run(cmd, *args, **kwargs):
-        if cmd[:2] == ["git", "merge-base"]:
+        if _plain_git(cmd)[:2] == ["git", "merge-base"]:
             return Mock(returncode=0, stdout=f"{merge_base}\n", stderr="")
-        if cmd[:2] == ["git", "ls-files"]:
+        if _plain_git(cmd)[:2] == ["git", "ls-files"]:
             return Mock(
                 returncode=0, stdout="".join(f"{p}\0" for p in untracked), stderr=""
             )
@@ -3971,6 +3995,17 @@ def test_render_upload_failure_shows_generic_error_for_other_failures():
 class TestDiffFlag:
     """Tests for --diff line-level filtering."""
 
+    @pytest.fixture(autouse=True)
+    def _no_repo_filters(self):
+        # The git fakes replace subprocess.run wholesale, which would also feed
+        # the hardened helper's filter-config inspection; stub it to "no
+        # filters configured" (covered for real by test_git_repo_config_exec).
+        with patch(
+            "skylos.core.git_safety.content_filter_config_overrides",
+            return_value=(),
+        ):
+            yield
+
     @pytest.mark.parametrize("scope_flag", ["--diff", "--diff-base"])
     def test_diff_scoped_scan_cannot_upload_as_full_scan(
         self, monkeypatch, capsys, scope_flag
@@ -4029,21 +4064,23 @@ class TestDiffFlag:
             base_calls = [
                 c
                 for c in mock_git.call_args_list
-                if c.args[0][:2] == ["git", "merge-base"]
+                if _plain_git(c.args[0])[:2] == ["git", "merge-base"]
             ]
-            assert base_calls[0].args[0][2] == "origin/develop"
+            assert _plain_git(base_calls[0].args[0])[2] == "origin/develop"
             diff_calls = [
-                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+                c
+                for c in mock_git.call_args_list
+                if _plain_git(c.args[0])[:2] == ["git", "diff"]
             ]
             assert len(diff_calls) == 1
-            assert diff_calls[0].args[0] == [
-                "git",
+            assert _git_subcommand(diff_calls[0].args[0]) == [
                 "diff",
-                "--unified=0",
                 "--no-ext-diff",
                 "--no-textconv",
+                "--unified=0",
                 _FAKE_MERGE_BASE,
             ]
+            assert "core.fsmonitor=false" in diff_calls[0].args[0]
 
     def test_diff_flag_without_value_defaults_to_auto(self, monkeypatch):
         """--diff without value uses 'auto' which resolves to origin/main."""
@@ -4080,21 +4117,23 @@ class TestDiffFlag:
             base_calls = [
                 c
                 for c in mock_git.call_args_list
-                if c.args[0][:2] == ["git", "merge-base"]
+                if _plain_git(c.args[0])[:2] == ["git", "merge-base"]
             ]
-            assert base_calls[0].args[0][2] == "origin/main"
+            assert _plain_git(base_calls[0].args[0])[2] == "origin/main"
             diff_calls = [
-                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+                c
+                for c in mock_git.call_args_list
+                if _plain_git(c.args[0])[:2] == ["git", "diff"]
             ]
             assert len(diff_calls) == 1
-            assert diff_calls[0].args[0] == [
-                "git",
+            assert _git_subcommand(diff_calls[0].args[0]) == [
                 "diff",
-                "--unified=0",
                 "--no-ext-diff",
                 "--no-textconv",
+                "--unified=0",
                 _FAKE_MERGE_BASE,
             ]
+            assert "core.fsmonitor=false" in diff_calls[0].args[0]
 
     def test_diff_auto_uses_github_base_ref(self, monkeypatch):
         """--diff auto-detection picks up GITHUB_BASE_REF env var."""
@@ -4131,21 +4170,23 @@ class TestDiffFlag:
             base_calls = [
                 c
                 for c in mock_git.call_args_list
-                if c.args[0][:2] == ["git", "merge-base"]
+                if _plain_git(c.args[0])[:2] == ["git", "merge-base"]
             ]
-            assert base_calls[0].args[0][2] == "origin/develop"
+            assert _plain_git(base_calls[0].args[0])[2] == "origin/develop"
             diff_calls = [
-                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+                c
+                for c in mock_git.call_args_list
+                if _plain_git(c.args[0])[:2] == ["git", "diff"]
             ]
             assert len(diff_calls) == 1
-            assert diff_calls[0].args[0] == [
-                "git",
+            assert _git_subcommand(diff_calls[0].args[0]) == [
                 "diff",
-                "--unified=0",
                 "--no-ext-diff",
                 "--no-textconv",
+                "--unified=0",
                 _FAKE_MERGE_BASE,
             ]
+            assert "core.fsmonitor=false" in diff_calls[0].args[0]
 
     def test_diff_filters_findings_to_changed_lines(self, monkeypatch):
         """--diff filters findings to only those in changed line ranges."""
@@ -4414,7 +4455,7 @@ class TestDiffFlag:
         diff_calls = [
             call
             for call in git_diff.call_args_list
-            if call.args[0][:3] == ["git", "diff", "--unified=0"]
+            if _plain_git(call.args[0])[:3] == ["git", "diff", "--unified=0"]
         ]
         assert len(diff_calls) == 1
         assert diff_calls[0].kwargs["cwd"] == tmp_path
@@ -4598,7 +4639,7 @@ class TestDiffFlag:
         diff_calls = [
             call
             for call in git_diff.call_args_list
-            if call.args[0][:3] == ["git", "diff", "--name-only"]
+            if _plain_git(call.args[0])[:3] == ["git", "diff", "--name-only"]
         ]
         assert len(diff_calls) == 1
         assert diff_calls[0].kwargs["cwd"] == tmp_path

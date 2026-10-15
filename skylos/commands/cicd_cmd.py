@@ -7,6 +7,11 @@ import stat
 import subprocess
 import sys
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
+
 from rich.markup import escape
 
 REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
@@ -97,9 +102,10 @@ def _git_output(*args: str) -> str:
     try:
         return (
             subprocess.check_output(
-                ["git", *args],
+                read_only_git_command(list(args)),
                 stderr=subprocess.DEVNULL,
                 timeout=10,
+                env=read_only_git_environment(),
             )
             .decode()
             .strip()

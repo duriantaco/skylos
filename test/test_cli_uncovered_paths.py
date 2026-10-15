@@ -6,6 +6,35 @@ from rich.panel import Panel
 
 import skylos.cli as cli
 
+_INJECTED_DIFF_GUARDS = ("--no-ext-diff", "--no-textconv")
+
+
+def _plain_git(cmd):
+    """``["git", subcommand, ...]`` without the ``git_safety`` hardening prefix
+    (global flags, ``-c`` overrides) or the injected diff guards."""
+    if not cmd or cmd[0] != "git":
+        return list(cmd)
+    i = 1
+    while i < len(cmd):
+        if cmd[i] == "-c":
+            i += 2
+        elif cmd[i].startswith("--"):
+            i += 1
+        else:
+            break
+    return ["git", *(arg for arg in cmd[i:] if arg not in _INJECTED_DIFF_GUARDS)]
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_filters():
+    # Inspecting the repository's filter config is covered for real by
+    # test_git_repo_config_exec; these fakes stub git wholesale.
+    with patch(
+        "skylos.core.git_safety.content_filter_config_overrides",
+        return_value=(),
+    ):
+        yield
+
 
 def _progress_ctx():
     cm = Mock()
@@ -217,6 +246,7 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     (root / "b.txt").write_text("no", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd[:3] == ["git", "diff", "--name-only"]:
@@ -257,6 +287,7 @@ def test_get_git_changed_files_includes_untracked_supported_files(tmp_path):
     (root / "untracked.txt").write_text("ignored", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd == ["git", "diff", "--name-only", "HEAD"]:
@@ -277,6 +308,7 @@ def test_get_git_changed_files_unions_worktree_and_branch_changes(tmp_path):
         (root / name).write_text("x=1", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd == ["git", "diff", "--name-only", "HEAD"]:
@@ -301,6 +333,7 @@ def test_get_git_changed_files_can_include_deleted_supported_files(tmp_path):
     root = tmp_path
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd[:3] == ["git", "diff", "--name-only"]:
@@ -320,6 +353,7 @@ def test_get_git_changed_files_uses_repo_root_for_subdir_targets(tmp_path):
     (src / "a.py").write_text("x=1", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd[:3] == ["git", "diff", "--name-only"]:
@@ -342,8 +376,11 @@ def test_get_git_changed_files_with_base_ref_uses_pr_diff(tmp_path):
     root = tmp_path
     (root / "changed.py").write_text("x=1", encoding="utf-8")
     seen = []
+    raw = []
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        raw.append(cmd)
+        cmd = _plain_git(cmd)
         seen.append(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
@@ -356,12 +393,17 @@ def test_get_git_changed_files_with_base_ref_uses_pr_diff(tmp_path):
 
     assert files == [root / "changed.py"]
     assert ["git", "diff", "--name-only", "origin/main...HEAD"] in seen
+    # The diff runs with repository-configured commands disabled.
+    diff_cmd = next(cmd for cmd in raw if "origin/main...HEAD" in cmd)
+    assert "core.fsmonitor=false" in diff_cmd
+    assert "--no-ext-diff" in diff_cmd and "--no-textconv" in diff_cmd
 
 
 def test_get_git_changed_files_strict_base_raises_on_invalid_ref(tmp_path):
     root = tmp_path
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        cmd = _plain_git(cmd)
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         raise Exception("bad ref")

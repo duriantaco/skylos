@@ -28,6 +28,11 @@ from skylos.cicd.risk_passport import (
     format_risk_passport_markdown,
 )
 from skylos.core.file_discovery import find_git_root
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -226,12 +231,18 @@ def _resolve_review_provenance(
 _UNTRACKED_WHOLE_FILE_END = 2**31 - 1
 
 
+def _diff_root(cwd: str | os.PathLike[str] | None) -> Path:
+    """Directory used to inspect a repository's filter configuration."""
+    return Path(cwd) if cwd is not None else Path.cwd()
+
+
 def _merge_base(base_ref: str, cwd) -> str | None:
     result = subprocess.run(
-        ["git", "merge-base", base_ref, "HEAD"],
+        read_only_git_command(["merge-base", base_ref, "HEAD"]),
         cwd=cwd,
         capture_output=True,
         text=True,
+        env=read_only_git_environment(),
     )
     if result.returncode != 0:
         return None
@@ -243,10 +254,13 @@ def get_untracked_files(cwd=None) -> list[str]:
     """Repository-relative paths of untracked, non-ignored files."""
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "--full-name", "-z"],
+            read_only_git_command(
+                ["ls-files", "--others", "--exclude-standard", "--full-name", "-z"]
+            ),
             cwd=cwd,
             capture_output=True,
             text=True,
+            env=read_only_git_environment(),
         )
     except FileNotFoundError:
         return []
@@ -281,20 +295,25 @@ def get_changed_line_ranges(
                         "base ref exists in the scanned repository"
                     )
                 return []
-            diff_cmd = [
-                "git",
-                "diff",
-                "--unified=0",
-                "--no-ext-diff",
-                "--no-textconv",
-                merge_base,
-            ]
+            diff_args = ["diff", "--unified=0", merge_base]
         else:
-            diff_cmd = ["git", "diff", "--unified=0", f"{base_ref}...HEAD"]
+            diff_args = ["diff", "--unified=0", f"{base_ref}...HEAD"]
+        # A worktree diff hashes worktree content through the repository's
+        # clean filters, so neutralize every configured filter/diff driver or
+        # refuse the comparison rather than run attacker-defined commands.
+        diff_cmd = worktree_safe_git_command(diff_args, _diff_root(cwd))
+        if diff_cmd is None:
+            if raise_on_error:
+                raise ValueError(
+                    "Cannot compare changes: the repository configures Git "
+                    "content filters that could not be inspected safely"
+                )
+            return []
         result = subprocess.run(
             diff_cmd,
             cwd=cwd,
             capture_output=True,
+            env=read_only_git_environment(),
             # Only file names and hunk headers are read: a changed file in
             # another encoding (or a binary git treats as text) must not
             # stop the scan.
@@ -359,11 +378,22 @@ def _get_per_file_diffs(
 ) -> dict[str, str]:
     """Return a dict mapping file paths to their individual diff text."""
     try:
+        diff_cmd = worktree_safe_git_command(
+            ["diff", "--unified=3", f"{base_ref}...HEAD"], _diff_root(cwd)
+        )
+        if diff_cmd is None:
+            if raise_on_error:
+                raise ValueError(
+                    "Cannot compare changes: the repository configures Git "
+                    "content filters that could not be inspected safely"
+                )
+            return {}
         result = subprocess.run(
-            ["git", "diff", "--unified=3", f"{base_ref}...HEAD"],
+            diff_cmd,
             cwd=cwd,
             capture_output=True,
             text=True,
+            env=read_only_git_environment(),
         )
         if result.returncode != 0:
             if raise_on_error:
@@ -1135,9 +1165,10 @@ def _format_evidence_card_comment(
 def _to_relative_path(filepath: str) -> str:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            read_only_git_command(["rev-parse", "--show-toplevel"]),
             capture_output=True,
             text=True,
+            env=read_only_git_environment(),
         )
         if result.returncode == 0:
             root = result.stdout.strip()

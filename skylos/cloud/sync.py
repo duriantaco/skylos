@@ -88,10 +88,17 @@ def _write_creds(data: dict[str, Any]) -> None:
 
 
 def _find_repo_root() -> Path:
+    from skylos.core.git_safety import (
+        read_only_git_command,
+        read_only_git_environment,
+    )
+
     try:
         out = (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+                read_only_git_command(["rev-parse", "--show-toplevel"]),
+                stderr=subprocess.DEVNULL,
+                env=read_only_git_environment(),
             )
             .decode()
             .strip()

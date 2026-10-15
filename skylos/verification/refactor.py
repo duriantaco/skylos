@@ -13,6 +13,7 @@ import tempfile
 import tokenize
 from typing import Any
 
+from skylos.core.git_safety import worktree_safe_git_command
 from skylos.verification.behavior import compare_python_behavior
 from skylos.verification.comparison import is_environment_file as _environment_file
 
@@ -35,21 +36,22 @@ def _git(
     }
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_NO_LAZY_FETCH"] = "1"
-    command = [
-        "git",
-        "--no-pager",
-        "--no-replace-objects",
-        "-c",
-        "core.fsmonitor=false",
-        "-C",
-        str(root),
-        *args,
-    ]
+    # The scanned repository's own config must not run commands: a worktree
+    # ``diff`` hashes files through its clean filters, so every configured
+    # filter/diff driver is neutralized on top of the read-only overrides (or
+    # the read is refused).
+    command = worktree_safe_git_command(args, root, environ=env)
+    if command is None:
+        raise ValueError(
+            "Cannot read Git snapshot: repository Git filters could not be "
+            "inspected safely"
+        )
     try:
         # A file bounds memory even when a repository produces excessive output.
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
             proc = subprocess.run(
                 command,
+                cwd=str(root),
                 input=data,
                 stdout=output,
                 stderr=errors,

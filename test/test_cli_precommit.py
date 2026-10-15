@@ -8,6 +8,44 @@ import pytest
 import skylos.cli as cli
 
 
+_INJECTED_DIFF_GUARDS = frozenset({"--no-ext-diff", "--no-textconv"})
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_filters():
+    """These fakes replace ``subprocess.run`` wholesale, which would also feed
+    the hardened helper's filter-config inspection. Stub it to "no filters
+    configured"; the real inspection and its command-execution guard are
+    covered by ``test_git_repo_config_exec.py``.
+    """
+    with patch(
+        "skylos.core.git_safety.content_filter_config_overrides",
+        return_value=(),
+    ):
+        yield
+
+
+def _git_args(cmd):
+    """Subcommand + args from a command built by the ``git_safety`` helpers.
+
+    Strips the safety prefix (``git`` plus global flags and ``-c`` overrides)
+    and the injected ``--no-ext-diff``/``--no-textconv`` so these fakes can
+    assert on the Git subcommand without pinning the hardening flags.
+    """
+    if not cmd or cmd[0] != "git":
+        return list(cmd)
+    i = 1
+    while i < len(cmd):
+        if cmd[i] == "-c":
+            i += 2
+            continue
+        if cmd[i].startswith("--"):
+            i += 1
+            continue
+        break
+    return [arg for arg in cmd[i:] if arg not in _INJECTED_DIFF_GUARDS]
+
+
 def test_agent_pre_commit_does_not_block_an_exact_reviewed_finding(
     tmp_path, monkeypatch
 ):
@@ -169,11 +207,11 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -259,11 +297,11 @@ def test_agent_pre_commit_reports_ai_defects(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -315,13 +353,13 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
         return []
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return Mock(stdout="", returncode=0)
-        if cmd == ["git", "show", ":.env"]:
+        if _git_args(cmd) == ["show", ":.env"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -396,15 +434,15 @@ def test_agent_pre_commit_manual_review_context_fails_open_without_staged_snapsh
     seen_review_context = {}
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return dirty_status
-        if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
+        if _git_args(cmd)[:3] == ["checkout-index", "--all", "--force"]:
             return failed_checkout
-        if cmd == ["git", "show", ":.env"]:
+        if _git_args(cmd) == ["show", ":.env"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -489,13 +527,13 @@ def test_agent_pre_commit_static_review_context_fails_open_without_staged_snapsh
     seen_review_context = {}
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return dirty_status
-        if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
+        if _git_args(cmd)[:3] == ["checkout-index", "--all", "--force"]:
             return failed_checkout
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -582,11 +620,11 @@ def test_agent_pre_commit_scans_staged_cross_layer_manifest(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -657,13 +695,13 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
             pass
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return dirty_status
-        if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
+        if _git_args(cmd)[:3] == ["checkout-index", "--all", "--force"]:
             snapshot_root.mkdir()
             (snapshot_root / "app.py").write_text(
                 "print('staged snapshot')\n", encoding="utf-8"
@@ -734,11 +772,11 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -815,13 +853,13 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
         return []
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return Mock(stdout="", returncode=0)
-        if cmd == ["git", "show", ":test/test_rules.py"]:
+        if _git_args(cmd) == ["show", ":test/test_rules.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -883,13 +921,13 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
         return []
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return Mock(stdout="", returncode=0)
-        if cmd == ["git", "show", ":benchmarks/agent_review/fixtures/demo/app.py"]:
+        if _git_args(cmd) == ["show", ":benchmarks/agent_review/fixtures/demo/app.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -974,13 +1012,13 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(
         ]
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
-        if cmd == ["git", "show", ":test/test_rules.py"]:
+        if _git_args(cmd) == ["show", ":test/test_rules.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1063,11 +1101,11 @@ def test_agent_pre_commit_filters_non_regression_findings_to_changed_lines(tmp_p
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1138,11 +1176,11 @@ def test_agent_pre_commit_deletion_only_diffs_drop_whole_file_noise(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1211,11 +1249,11 @@ def test_agent_pre_commit_suppresses_structural_quality_noise_locally(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1285,11 +1323,11 @@ def test_agent_pre_commit_blocks_high_severity_quality_findings(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1354,11 +1392,11 @@ def test_agent_pre_commit_suppresses_advisory_architecture_findings(tmp_path):
     }
 
     def fake_run(cmd, **kwargs):
-        if cmd == ["git", "diff", "--cached", "--name-only"]:
+        if _git_args(cmd) == ["diff", "--cached", "--name-only"]:
             return staged
-        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+        if _git_args(cmd)[:3] == ["diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+        if _git_args(cmd) == ["status", "--porcelain", "--untracked-files=all"]:
             return unstaged
         raise AssertionError(f"Unexpected command: {cmd}")
 

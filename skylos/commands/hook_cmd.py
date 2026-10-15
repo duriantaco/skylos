@@ -913,15 +913,21 @@ def _is_ignored_env_file(path: Path, root: Path) -> bool:
         return False
     import subprocess
 
+    from skylos.core.git_safety import (
+        read_only_git_command,
+        read_only_git_environment,
+    )
+
     try:
         proc = subprocess.run(
-            ["git", "check-ignore", "-q", "--", str(path)],
+            read_only_git_command(["check-ignore", "-q", "--", str(path)]),
             cwd=str(root),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=5,
             check=False,
+            env=read_only_git_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return False

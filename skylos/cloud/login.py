@@ -8,6 +8,11 @@ import time
 import webbrowser
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
+
 import requests
 
 from skylos.cloud.plan_names import plan_display_name
@@ -39,8 +44,9 @@ def _get_repo_name():
     try:
         url = (
             subprocess.check_output(
-                ["git", "remote", "get-url", "origin"],
+                read_only_git_command(["remote", "get-url", "origin"]),
                 stderr=subprocess.DEVNULL,
+                env=read_only_git_environment(),
             )
             .decode()
             .strip()
@@ -57,8 +63,9 @@ def _get_repo_url():
     try:
         url = (
             subprocess.check_output(
-                ["git", "remote", "get-url", "origin"],
+                read_only_git_command(["remote", "get-url", "origin"]),
                 stderr=subprocess.DEVNULL,
+                env=read_only_git_environment(),
             )
             .decode()
             .strip()
@@ -76,8 +83,9 @@ def _get_repo_subpath():
     try:
         git_root = (
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                read_only_git_command(["rev-parse", "--show-toplevel"]),
                 stderr=subprocess.DEVNULL,
+                env=read_only_git_environment(),
             )
             .decode()
             .strip()

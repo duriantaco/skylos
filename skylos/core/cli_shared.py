@@ -7,6 +7,11 @@ import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from skylos.core.ci_env import github_or_ci_base_ref
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+    worktree_safe_git_command,
+)
 
 _SAFE_ADDOPTS_FLAGS = frozenset(
     {
@@ -204,25 +209,41 @@ def get_git_changed_files(
                 seen.add(full_path)
         return files
 
+    def _safe_diff(args, root, timeout):
+        # Worktree diffs run the repository's clean filters; neutralize every
+        # configured filter/diff driver or refuse (a refusal raises so the
+        # strict-base path surfaces it).
+        cmd = worktree_safe_git_command(args, root)
+        if cmd is None:
+            raise ValueError(
+                "the repository configures Git content filters that could "
+                "not be inspected safely"
+            )
+        return subprocess.check_output(
+            cmd,
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            env=read_only_git_environment(),
+        ).decode("utf-8")
+
     try:
         repo_root = pathlib.Path(
             subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+                read_only_git_command(["rev-parse", "--show-toplevel"]),
                 cwd=root_path,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
+                env=read_only_git_environment(),
             )
             .decode("utf-8")
             .strip()
         )
         if base_ref:
             try:
-                output = subprocess.check_output(
-                    ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
-                    cwd=repo_root,
-                    stderr=subprocess.DEVNULL,
-                    timeout=30,
-                ).decode("utf-8")
+                output = _safe_diff(
+                    ["diff", "--name-only", f"{base_ref}...HEAD"], repo_root, 30
+                )
                 return _collect_supported(output, repo_root)
             except Exception as exc:
                 if strict_base:
@@ -230,30 +251,25 @@ def get_git_changed_files(
                     raise ValueError(message) from exc
                 return []
 
-        output = subprocess.check_output(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=repo_root,
-            timeout=30,
-        ).decode("utf-8")
+        output = _safe_diff(["diff", "--name-only", "HEAD"], repo_root, 30)
         try:
             untracked_output = subprocess.check_output(
-                ["git", "ls-files", "--others", "--exclude-standard"],
+                read_only_git_command(["ls-files", "--others", "--exclude-standard"]),
                 cwd=repo_root,
                 stderr=subprocess.DEVNULL,
                 timeout=30,
+                env=read_only_git_environment(),
             ).decode("utf-8")
         except Exception:
             untracked_output = ""
 
         base_ref = github_or_ci_base_ref()
         if base_ref:
-            cmd = ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"]
+            diff_args = ["diff", "--name-only", f"origin/{base_ref}...HEAD"]
         else:
-            cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
+            diff_args = ["diff", "--name-only", "origin/main...HEAD"]
         try:
-            branch_output = subprocess.check_output(
-                cmd, cwd=repo_root, stderr=subprocess.DEVNULL, timeout=30
-            ).decode("utf-8")
+            branch_output = _safe_diff(diff_args, repo_root, 30)
         except Exception:
             branch_output = ""
         return _collect_supported(

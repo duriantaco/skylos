@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from skylos.core.git_safety import (
+    read_only_git_command,
+    read_only_git_environment,
+)
 from skylos.core.safe_cache_io import read_text_no_symlink, write_text_no_symlink
 
 AGENTS = ("claude", "codex", "cursor")
@@ -506,12 +510,13 @@ def _already_ignored(project: Path) -> bool:
     ):
         try:
             proc = subprocess.run(
-                ["git", "check-ignore", "--no-index", "-q", "--", path],
+                read_only_git_command(["check-ignore", "--no-index", "-q", "--", path]),
                 cwd=str(project),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=10,
                 check=False,
+                env=read_only_git_environment(),
             )
         except (OSError, subprocess.SubprocessError):
             return False
