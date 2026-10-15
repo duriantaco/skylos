@@ -344,12 +344,6 @@ func (a *Analyzer) checkHardcodedSecret(lit *ast.BasicLit, path string) {
 			return
 		}
 	}
-
-	if strings.Contains(valLower, "password") || strings.Contains(valLower, "secret") ||
-		strings.Contains(valLower, "apikey") || strings.Contains(valLower, "api_key") {
-		a.addFinding(lit, path, "SKY-S101", "HIGH", "Potential Hardcoded Secret",
-			"String appears to contain sensitive data. Use environment variables instead.")
-	}
 }
 
 func (a *Analyzer) getFuncInfo(expr ast.Expr) (pkg, funcName string) {
