@@ -2479,22 +2479,26 @@ class TestPhantomDecorator:
 
 
 class TestUnfinishedGeneration:
-    def test_pass_body(self):
+    def test_pass_body_without_contract_is_not_evidence(self):
         code = """
         def process_payment(amount):
             pass
         """
         findings = check_code(UnfinishedGenerationRule(), code)
-        assert any(f["rule_id"] == "SKY-L026" for f in findings)
-        assert any(f["value"] == "pass" for f in findings if f["rule_id"] == "SKY-L026")
+        assert not any(f["rule_id"] == "SKY-L026" for f in findings)
 
     def test_ellipsis_body(self):
         code = """
-        def validate_user(token):
+        from fastapi import Security
+
+        def validate_user():
             ...
+
+        control = Security(validate_user, scopes=["admin"])
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert "Security dependency" in findings[0]["evidence"]
 
     def test_concrete_ellipsis_default_is_flagged(self):
         code = """
@@ -2820,7 +2824,7 @@ class TestUnfinishedGeneration:
 
         assert [finding["parameter"] for finding in l026] == ["length"]
 
-    def test_ellipsis_default_and_stub_body_emit_one_finding(self):
+    def test_ellipsis_default_and_stub_body_emit_both_findings(self):
         code = """
         def read(length: int = ...) -> int:
             ...
@@ -2833,18 +2837,20 @@ class TestUnfinishedGeneration:
         )
         l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
 
-        assert len(l026) == 1
+        assert len(l026) == 2
         assert l026[0]["name"] == "read"
         assert "parameter" not in l026[0]
         assert "only `...` in its body" in l026[0]["message"]
+        assert l026[1]["parameter"] == "length"
+        assert "receive Ellipsis at runtime" in l026[1]["message"]
 
-    def test_not_implemented_error(self):
+    def test_not_implemented_error_alone_is_a_valid_interface(self):
         code = """
         def send_notification(user, message):
             raise NotImplementedError
         """
         findings = check_code(UnfinishedGenerationRule(), code)
-        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert not any(f["rule_id"] == "SKY-L026" for f in findings)
 
     def test_not_implemented_error_call(self):
         code = """
@@ -2856,17 +2862,23 @@ class TestUnfinishedGeneration:
 
     def test_docstring_then_pass(self):
         code = """
-        def verify_payment(order):
-            \"\"\"Verify payment for the given order.\"\"\"
+        from application import adapt
+
+        @adapt
+        def verify_payment(order) -> bool:
+            \"\"\"Verify the payment.\"\"\"
             pass
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert findings[0]["verification_status"] == "unverified"
 
     def test_docstring_then_ellipsis_no_deprecation_warning(self):
         code = """
-        def validate_user(token):
-            \"\"\"Validate the given token.\"\"\"
+        from typing import NoReturn
+
+        def validate_user(token) -> NoReturn:
+            \"\"\"Stop processing this token.\"\"\"
             ...
         """
         with warnings.catch_warnings(record=True) as caught:
@@ -3099,11 +3111,17 @@ class TestUnfinishedGeneration:
 
     def test_async_function_flagged(self):
         code = """
-        async def fetch_data(url):
+        async def fetch_data(user):
             pass
+
+        def read_private(user, private_record):
+            if not fetch_data(user):
+                raise PermissionError("access denied")
+            return private_record
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert "unawaited coroutine" in findings[0]["evidence"]
 
     @pytest.mark.parametrize(
         ("body", "marker"),
@@ -3119,6 +3137,7 @@ class TestUnfinishedGeneration:
     def test_placeholder_return_body_flagged(self, body, marker):
         code = f"""
         def build_invoice_payload(order):
+            \"\"\"TODO: implement invoice payload construction.\"\"\"
             {body}
         """
         findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")
