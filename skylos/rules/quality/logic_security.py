@@ -1794,36 +1794,19 @@ class StaleMockRule(SkylosRule):
         except OSError:
             return None
 
-        defined_names = StaleMockRule._parse_cache.get(cache_key)
-        if defined_names is None:
+        bindings = StaleMockRule._parse_cache.get(cache_key)
+        if bindings is None:
             try:
                 source = module_file.read_text(errors="replace")
                 tree = ast.parse(source)
             except (OSError, SyntaxError):
-                StaleMockRule._parse_cache[cache_key] = set()
+                StaleMockRule._parse_cache[cache_key] = (frozenset(), True)
                 return None
-            defined_names = set()
-            for child in ast.walk(tree):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    defined_names.add(child.name)
-                elif isinstance(child, ast.ClassDef):
-                    defined_names.add(child.name)
-                elif isinstance(child, ast.Assign):
-                    for t in child.targets:
-                        if isinstance(t, ast.Name):
-                            defined_names.add(t.id)
-                elif isinstance(child, ast.ImportFrom):
-                    if child.names:
-                        for alias in child.names:
-                            name = alias.asname if alias.asname else alias.name
-                            defined_names.add(name)
-                elif isinstance(child, ast.Import):
-                    for alias in child.names:
-                        name = alias.asname if alias.asname else alias.name
-                        defined_names.add(name.split(".")[0])
-            StaleMockRule._parse_cache[cache_key] = defined_names
+            bindings = _module_patch_bindings(tree)
+            StaleMockRule._parse_cache[cache_key] = bindings
 
-        if attr_name in defined_names:
+        defined_names, dynamic = bindings
+        if attr_name in defined_names or dynamic:
             return None
 
         basename = Path(filename).name
@@ -1839,9 +1822,9 @@ class StaleMockRule(SkylosRule):
                 "threshold": 0,
                 "message": (
                     f"mock.patch('{target_str}') references '{attr_name}' "
-                    f"but it does not exist in '{'.'.join(module_parts)}'. "
-                    f"The function may have been renamed or removed, "
-                    f"making this mock silently ineffective."
+                    f"but no module binding was found in '{'.'.join(module_parts)}'. "
+                    "Check for a renamed or removed target; patch normally raises "
+                    "AttributeError when the target is missing."
                 ),
                 "file": filename,
                 "basename": basename,
@@ -1855,6 +1838,20 @@ class StaleMockRule(SkylosRule):
     @staticmethod
     def _extract_patch_target(call_node):
         func = call_node.func
+        # patch(target, new=DEFAULT, spec=None, create=False, ...)
+        if (
+            len(call_node.args) >= 4
+            and isinstance(call_node.args[3], ast.Constant)
+            and call_node.args[3].value is True
+        ):
+            return None, None
+        if any(
+            kw.arg == "create"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in call_node.keywords
+        ):
+            return None, None
 
         is_patch = False
         if isinstance(func, ast.Attribute) and func.attr == "patch":
@@ -1912,6 +1909,112 @@ class StaleMockRule(SkylosRule):
             return Path(direct)
 
         return None
+
+
+def _module_patch_bindings(tree):
+    """Potential runtime module bindings, without leaking locals into globals.
+
+    An open namespace cannot prove a patch target absent. In particular,
+    module __getattr__, star imports and executable namespace updates need
+    runtime knowledge, so abstain instead of diagnosing a missing attribute.
+    """
+    names = set()
+    dynamic = False
+
+    def bind(target):
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                bind(element)
+        elif isinstance(target, ast.Starred):
+            bind(target.value)
+
+    def visit(node):
+        nonlocal dynamic
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                dynamic |= node.name == "__getattr__"
+                headers = [
+                    *node.decorator_list,
+                    *node.args.defaults,
+                    *(d for d in node.args.kw_defaults if d is not None),
+                ]
+            else:
+                headers = [
+                    *node.decorator_list,
+                    *node.bases,
+                    *(keyword.value for keyword in node.keywords),
+                ]
+            # Definition headers execute in the containing namespace; the
+            # function/class body has its own scope. A walrus in a default
+            # or decorator can therefore create a real module attribute.
+            for header in headers:
+                visit(header)
+            return
+        if isinstance(node, ast.Lambda):
+            return
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target)
+            if any(
+                not isinstance(t, (ast.Name, ast.Tuple, ast.List)) for t in node.targets
+            ):
+                # globals()[name] = ... / module.__dict__[name] = ...
+                dynamic |= any(
+                    isinstance(part, ast.Call)
+                    and isinstance(part.func, ast.Name)
+                    and part.func.id in {"globals", "locals", "vars"}
+                    for target in node.targets
+                    for part in ast.walk(target)
+                )
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            bind(node.target)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.NamedExpr)):
+            bind(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars:
+                    bind(item.optional_vars)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    dynamic = True
+                else:
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Call):
+            dynamic |= isinstance(node.func, ast.Name) and node.func.id == "exec"
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "setattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Subscript)
+                and _qualified_call_name(node.args[0].value) == "sys.modules"
+                and isinstance(node.args[0].slice, ast.Name)
+                and node.args[0].slice.id == "__name__"
+            ):
+                attribute = node.args[1]
+                if isinstance(attribute, ast.Constant) and isinstance(
+                    attribute.value, str
+                ):
+                    names.add(attribute.value)
+                else:
+                    dynamic = True
+            dynamic |= isinstance(node.func, ast.Attribute) and any(
+                isinstance(part, ast.Call)
+                and isinstance(part.func, ast.Name)
+                and part.func.id in {"globals", "locals", "vars"}
+                for part in ast.walk(node.func.value)
+            )
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return frozenset(names), dynamic
 
 
 def _var_name_is_security(name, vibe_dictionary=None):
