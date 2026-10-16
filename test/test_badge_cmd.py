@@ -3,6 +3,7 @@ import json
 import pytest
 
 from skylos.commands.badge_cmd import STATIC_BADGE, choose_badge, github_slug
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 @pytest.mark.parametrize(
@@ -24,14 +25,16 @@ def test_github_slug(url, slug):
 
 
 def _repo(tmp_path, *, workflow=False, link=None):
+    # Pytest's private temp root may have a symlinked system prefix on macOS.
+    tmp_path = tmp_path.resolve()
     (tmp_path / ".git").mkdir()
     if workflow:
         wf = tmp_path / ".github" / "workflows"
         wf.mkdir(parents=True)
-        (wf / "skylos.yml").write_text("name: Skylos\n")
+        assert write_text_no_symlink(wf / "skylos.yml", "name: Skylos\n")
     if link is not None:
         (tmp_path / ".skylos").mkdir()
-        (tmp_path / ".skylos" / "link.json").write_text(json.dumps(link))
+        assert write_text_no_symlink(tmp_path / ".skylos" / "link.json", json.dumps(link))
     return tmp_path
 
 

@@ -11,6 +11,7 @@ from skylos.commands.agent_recap_cmd import (
     run_agent_recap_command,
     summarize,
 )
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _ts(days_ago: float = 0.0) -> str:
@@ -40,12 +41,14 @@ def _fixture_records() -> list[dict]:
 
 
 def _repo(tmp_path, records=None, raw_extra: str = ""):
+    # Pytest's private temp root may have a symlinked system prefix on macOS.
+    tmp_path = tmp_path.resolve()
     (tmp_path / ".git").mkdir()
     if records is not None:
         log_dir = tmp_path / ".skylos"
         log_dir.mkdir()
         body = "".join(json.dumps(r) + "\n" for r in records) + raw_extra
-        (log_dir / "hook.log").write_text(body)
+        assert write_text_no_symlink(log_dir / "hook.log", body)
     return tmp_path
 
 
