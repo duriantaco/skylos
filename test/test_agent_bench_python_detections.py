@@ -1,8 +1,8 @@
 """Regression tests for detections added after the agent-code benchmark.
 
 Covers SKY-D349 (SSTI), SKY-D346 (Flask debug via app factory), SKY-D231
-(wildcard CORS with credentials) and SKY-L014 (real-looking secret literals
-in annotated defaults and env/config fallbacks).
+(wildcard CORS with credentials) and SKY-L014 (credential literals, including
+weak defaults, in annotated defaults and env/config fallbacks).
 """
 
 import ast
@@ -281,6 +281,21 @@ SECRET_POSITIVES = {
         "import os\nkey = os.environ.get('SIGNING_SECRET', 'a91f03c7e2b84d6f9c05e1a7b3d2f468')\n",
         2,
     ),
+    # These nonempty defaults are executable credentials even when their
+    # spelling suggests a placeholder or development value.
+    "placeholder_changethis": ('class S:\n    SECRET_KEY: str = "changethis"\n', 2),
+    "placeholder_hint": (
+        "import os\nAPI_KEY = os.getenv('API_KEY', 'your-api-key-here-123')\n",
+        2,
+    ),
+    "dev_default": (
+        "import os\nSECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-9f8e7d'\n",
+        2,
+    ),
+    "short_word_fallback": (
+        "import os\nDB_PASSWORD = os.getenv('DB_PASSWORD', 'postgres')\n",
+        2,
+    ),
 }
 
 
@@ -294,15 +309,11 @@ def test_secret_fallback_literals(code, line):
 
 
 SECRET_NEGATIVES = {
-    "placeholder_changethis": 'class S:\n    SECRET_KEY: str = "changethis"\n',
-    "placeholder_hint": "import os\nAPI_KEY = os.getenv('API_KEY', 'your-api-key-here-123')\n",
-    "dev_default": "import os\nSECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-9f8e7d'\n",
     "empty_default": "import os\nPASSWORD = os.getenv('PASSWORD', '')\n",
     "non_credential_name": "import os\nREGION = os.getenv('REGION', '4f2b9c1e7d8a4b3f9e6c0a1d2b3c4e5f')\n",
     "annotated_non_secret": 'class S:\n    PROJECT_NAME: str = "Xk29fLq8Wm3Rt7Vb1Nz5"\n',
     "annotated_no_value": "class S:\n    SECRET_KEY: str\n",
     "annotated_computed": "import secrets\nclass S:\n    SECRET_KEY: str = secrets.token_urlsafe(32)\n",
-    "short_word_fallback": "import os\nDB_PASSWORD = os.getenv('DB_PASSWORD', 'postgres')\n",
 }
 
 
