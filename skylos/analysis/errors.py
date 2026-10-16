@@ -5,6 +5,30 @@ from collections.abc import Mapping
 from typing import Any
 
 
+def dedupe_source_analysis_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one diagnostic when both source passes report the same failure.
+
+    Credential analysis runs before file workers and must report its own
+    failures. Its source diagnostic is redundant only after a worker reports
+    the identical read or syntax failure. Resolver failures and failures not
+    independently reported by a worker remain visible.
+    """
+    fields = ("file", "error_type", "message", "line", "column")
+    worker_failures = {
+        tuple(error.get(field) for field in fields)
+        for error in errors
+        if error.get("kind") in {"syntax_error", "source_read_error"}
+    }
+    return [
+        error
+        for error in errors
+        if not (
+            error.get("kind") == "credential_source_analysis"
+            and tuple(error.get(field) for field in fields) in worker_failures
+        )
+    ]
+
+
 def analysis_result_incomplete(result: object) -> bool:
     """Return whether a serialized analyzer result is unsafe to trust as complete."""
     if not isinstance(result, Mapping):
