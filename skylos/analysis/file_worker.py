@@ -51,6 +51,7 @@ class _WorkerOptions:
     enable_quality_rules: bool
     enable_danger_rules: bool
     project_root: str | Path | None
+    credential_source_locations: tuple | list
     visitor_class: type
     test_aware_visitor_class: type
     framework_aware_visitor_class: type
@@ -180,7 +181,14 @@ def _quality_findings(
 ) -> list:
     if not options.full_scan or not options.enable_quality_rules:
         return []
-    findings = scan_python_quality(prepared.tree, prepared.source, file, cfg)
+    credential_kwargs = {}
+    if options.credential_source_locations:
+        credential_kwargs["credential_source_locations"] = (
+            options.credential_source_locations
+        )
+    findings = scan_python_quality(
+        prepared.tree, prepared.source, file, cfg, **credential_kwargs
+    )
     if Path(file).suffix == ".pyi":
         findings = [
             finding
@@ -553,6 +561,7 @@ def process_file(
     config_file: str | Path | None = None,
     *,
     project_root: str | Path | None = None,
+    credential_source_locations: tuple | list = (),
     visitor_class: type = Visitor,
     test_aware_visitor_class: type = TestAwareVisitor,
     framework_aware_visitor_class: type = FrameworkAwareVisitor,
@@ -568,6 +577,7 @@ def process_file(
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
         project_root=project_root,
+        credential_source_locations=credential_source_locations,
         visitor_class=visitor_class,
         test_aware_visitor_class=test_aware_visitor_class,
         framework_aware_visitor_class=framework_aware_visitor_class,

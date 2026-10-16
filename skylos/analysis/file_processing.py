@@ -119,6 +119,7 @@ LINTER_RULE_NODE_TYPES = {
     DisabledSecurityRule: (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign),
     InsecureRandomRule: (ast.Assign,),
     HardcodedCredentialRule: (
+        ast.Module,
         ast.Assign,
         ast.AnnAssign,
         ast.FunctionDef,
@@ -314,13 +315,16 @@ def _extend_community_quality_rules(q_rules: list, file) -> None:
         pass
 
 
-def scan_python_quality(tree: ast.AST, source: str, file, cfg: dict) -> list[dict]:
+def scan_python_quality(
+    tree: ast.AST, source: str, file, cfg: dict, *, credential_source_locations=()
+) -> list[dict]:
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
     _extend_community_quality_rules(q_rules, file)
     set_linter_node_types(q_rules)
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source
+    linter_q.context["credential_source_locations"] = credential_source_locations
     linter_q.visit(tree)
     quality_findings = [
         f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]

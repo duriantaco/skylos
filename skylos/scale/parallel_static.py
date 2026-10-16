@@ -1,6 +1,7 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 import logging
+from pathlib import Path
 import signal
 
 
@@ -94,6 +95,12 @@ def _drain_pool(
     for f in files:
         full_scan = changed_files is None or str(f) in changed_files
         try:
+            credential_kwargs = {}
+            credential_sources = proc_kwargs.get("credential_source_locations")
+            if credential_sources is not None:
+                credential_kwargs["credential_source_locations"] = (
+                    credential_sources.get(str(Path(f).absolute()), ())
+                )
             fut = ex.submit(
                 worker_fn,
                 f,
@@ -107,6 +114,7 @@ def _drain_pool(
                 proc_kwargs["enable_danger_rules"],
                 proc_kwargs["config_file"],
                 proc_kwargs["project_root"],
+                **credential_kwargs,
             )
         except BrokenProcessPool:
             broken.append(f)
@@ -137,11 +145,15 @@ def _retry_in_parent(f, modmap, changed_files, proc_kwargs):
         from skylos.analyzer import proc_file
 
         full_scan = changed_files is None or str(f) in changed_files
-        return proc_file(f, modmap[f], full_scan=full_scan, **proc_kwargs)
+        kwargs = dict(proc_kwargs)
+        credential_sources = kwargs.pop("credential_source_locations", None)
+        if credential_sources is not None:
+            kwargs["credential_source_locations"] = credential_sources.get(
+                str(Path(f).absolute()), ()
+            )
+        return proc_file(f, modmap[f], full_scan=full_scan, **kwargs)
     except Exception:
-        logger.error(
-            "Parent-process static retry failed for %s", str(f), exc_info=True
-        )
+        logger.error("Parent-process static retry failed for %s", str(f), exc_info=True)
         return None
 
 
@@ -157,6 +169,7 @@ def _worker(
     enable_danger_rules=True,
     config_file=None,
     project_root=None,
+    credential_source_locations=(),
 ):
     from skylos.analyzer import proc_file
 
@@ -172,6 +185,7 @@ def _worker(
         enable_danger_rules=enable_danger_rules,
         config_file=config_file,
         project_root=project_root,
+        credential_source_locations=credential_source_locations,
     )
     return str(file_path), out
 
@@ -192,6 +206,7 @@ def run_proc_file_parallel(
     config_file=None,
     project_root=None,
     _worker_fn=None,
+    credential_source_locations=None,
 ):
     import os
 
@@ -217,6 +232,7 @@ def run_proc_file_parallel(
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
             project_root=project_root,
+            credential_source_locations=credential_source_locations,
         )
 
     if any(str(f).endswith(".go") for f in files):
@@ -236,6 +252,7 @@ def run_proc_file_parallel(
             config_file=config_file,
             project_root=project_root,
             _worker_fn=_worker_fn,
+            credential_source_locations=credential_source_locations,
         )
 
     proc_kwargs = {
@@ -247,6 +264,7 @@ def run_proc_file_parallel(
         "enable_danger_rules": enable_danger_rules,
         "config_file": config_file,
         "project_root": project_root,
+        "credential_source_locations": credential_source_locations,
     }
     worker_fn = _worker_fn or _worker
     total = len(files)
@@ -309,6 +327,7 @@ def _run_mixed_files_with_serial_go(
     config_file=None,
     project_root=None,
     _worker_fn=None,
+    credential_source_locations=None,
 ):
     go_files = []
     other_files = []
@@ -345,6 +364,7 @@ def _run_mixed_files_with_serial_go(
             config_file=config_file,
             project_root=project_root,
             _worker_fn=_worker_fn,
+            credential_source_locations=credential_source_locations,
         )
         for f, out in zip(other_files, other_outs):
             results[str(f)] = out
@@ -363,6 +383,7 @@ def _run_mixed_files_with_serial_go(
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
             project_root=project_root,
+            credential_source_locations=credential_source_locations,
         )
         for f, out in zip(go_files, go_outs):
             results[str(f)] = out
@@ -383,6 +404,7 @@ def _run_proc_files_serial(
     enable_danger_rules=True,
     config_file=None,
     project_root=None,
+    credential_source_locations=None,
 ):
     outs = []
     total = len(files)
@@ -393,6 +415,11 @@ def _run_proc_files_serial(
         from skylos.analyzer import proc_file
 
         full_scan = changed_files is None or str(f) in changed_files
+        credential_kwargs = {}
+        if credential_source_locations is not None:
+            credential_kwargs["credential_source_locations"] = (
+                credential_source_locations.get(str(Path(f).absolute()), ())
+            )
         out = proc_file(
             f,
             modmap[f],
@@ -405,6 +432,7 @@ def _run_proc_files_serial(
             enable_danger_rules=enable_danger_rules,
             config_file=config_file,
             project_root=project_root,
+            **credential_kwargs,
         )
         outs.append(out)
 

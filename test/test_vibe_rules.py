@@ -1548,7 +1548,7 @@ class TestHardcodedCredential:
         [
             pytest.param(
                 """
-                password = "admin123"
+                password = getattr(settings, "password", "admin123")
                 """,
                 "test.py",
                 True,
@@ -1603,7 +1603,7 @@ class TestHardcodedCredential:
             ),
             pytest.param(
                 """
-                password = ""
+                password = getattr(settings, "password", "")
                 """,
                 "test.py",
                 False,
@@ -1661,8 +1661,8 @@ class TestHardcodedCredential:
                 DB_PASSWORD = "${DB_PASSWORD}"
                 """,
                 "settings.py",
-                False,
-                None,
+                True,
+                "HIGH",
                 id="reference-value",
             ),
             pytest.param(
@@ -1790,7 +1790,7 @@ class TestHardcodedCredential:
                 def token():
                     return os.getenv(GH_KEY)
                 """,
-                "HIGH",
+                None,
                 id="target-passed-as-getenv-key",
             ),
             pytest.param(
@@ -1831,8 +1831,8 @@ class TestHardcodedCredential:
                 "HIGH",
                 id="secret-used-as-env-fallback",
             ),
-            # ``<X>_KEY = "X"``: the value is the rest of the target's name, in
-            # UPPER_SNAKE with two or more words.
+            # Generic setting names need credential content or an actual
+            # credential use; observability alone does not establish one.
             pytest.param(
                 """
                 APP_URL_KEY = "APP_URL"
@@ -1858,7 +1858,7 @@ class TestHardcodedCredential:
                 """
                 APP_URL_KEY = "app_url"
                 """,
-                "HIGH",
+                None,
                 id="key-suffix-with-lowercase-value",
             ),
             pytest.param(
@@ -1879,30 +1879,30 @@ class TestHardcodedCredential:
                 """
                 settings.APP_URL_KEY = "APP_URL"
                 """,
-                "HIGH",
+                None,
                 id="key-suffix-on-attribute-target",
             ),
-            # References: ``${NAME}`` and ``{{ name }}`` with NAME in UPPER_SNAKE
-            # or a dotted path. ``$X`` and ``%X%`` can be the credential.
+            # Python does not interpolate raw reference-like strings. Under
+            # credential names they remain shipped literal passwords/keys.
             pytest.param(
                 """
                 DB_PASSWORD = "${DB_PASSWORD}"
                 """,
-                None,
+                "HIGH",
                 id="braced-reference-under-password",
             ),
             pytest.param(
                 """
                 app.secret_key = "${FLASK_SECRET_KEY}"
                 """,
-                None,
+                "HIGH",
                 id="braced-reference-under-attribute",
             ),
             pytest.param(
                 """
                 SECRET_KEY = "{{ django.secret_key }}"
                 """,
-                None,
+                "HIGH",
                 id="template-reference-under-secret-key",
             ),
             pytest.param(
