@@ -321,13 +321,12 @@ def f():
 
 class TestSecurityTodo:
     def test_todo_in_string_literal(self, tmp_path):
-        # SecurityTodoRule reads source from file, so we need a real file
+        # Production supplies the parsed source; the filename is only a label.
         src = "# TODO: fix authentication bypass\ndef f():\n    pass\n"
         p = tmp_path / "test_todo.py"
-        p.write_text(src)
         rule = SecurityTodoRule()
         tree = ast.parse(src)
-        context = {"filename": str(p), "mod": "test_module"}
+        context = {"filename": str(p), "mod": "test_module", "source": src}
         findings = []
         for node in ast.walk(tree):
             res = rule.visit_node(node, context)
