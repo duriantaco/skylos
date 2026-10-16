@@ -62,15 +62,19 @@ df = pd.read_csv("large_file.csv", chunksize=1000) # Good
 
     def test_detect_nested_loops(self):
         code = """
-def heavy():
-    for i in range(10):
-        print(i)
-        for j in range(10):
-            print(j)
+def heavy(items):
+    rows = [items if index else items for index in items]
+    for row in rows:
+        print(row)
+        for item in row:
+            print(item)
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["rule_id"], "SKY-P403")
+        self.assertEqual(findings[0]["value"], "repeated_scan")
+        self.assertEqual(findings[0]["evidence"]["outer_iterable"], "rows")
+        self.assertEqual(findings[0]["evidence"]["inner_iterable"], "row")
 
     def test_os_walk_partition_loops_are_not_quadratic(self):
         code = """
@@ -141,10 +145,10 @@ def filtered_queryset():
 
     def test_ignore_list_logic(self):
         code = """
-def ignore_me(f):
+def ignore_me(f, size):
     f.read()
-    for i in range(10):
-        for j in range(10):
+    for i in range(size):
+        for j in range(size):
             pass
 """
         findings = self._analyze(code, ignore_list=[])
