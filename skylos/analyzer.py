@@ -5520,9 +5520,17 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("AI defect diff scan failed", exc_info=True)
 
+        unused_dependency_analysis = None
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency quality scan"))
+            unused_dependency_analysis = {
+                "rule_id": "SKY-U005",
+                "status": "not_run",
+                "complete": False,
+                "reasons": [{"kind": "no_project_python_sources"}],
+                "abstained_count": 0,
+            }
             try:
                 from skylos.rules.quality.unused_deps import scan_unused_dependencies
 
@@ -5547,12 +5555,32 @@ class Skylos:
 
                     if "SKY-U005" not in project_ignore:
                         ud_findings = scan_unused_dependencies(
-                            _ud_root, _ud_py_files, location_root=project_root
+                            _ud_root,
+                            _ud_py_files,
+                            location_root=project_root,
+                            coverage=unused_dependency_analysis,
                         )
                         if ud_findings:
                             all_quality.extend(ud_findings)
 
-            except Exception:
+                elif _file_scoped_scan:
+                    unused_dependency_analysis["reasons"] = [
+                        {"kind": "file_scoped_scan"}
+                    ]
+                if "SKY-U005" in project_ignore:
+                    unused_dependency_analysis["reasons"] = [{"kind": "rule_ignored"}]
+
+            except Exception as error:
+                unused_dependency_analysis.update(
+                    status="incomplete",
+                    complete=False,
+                    reasons=[
+                        {
+                            "kind": "unused_dependency_analysis_failed",
+                            "error_type": type(error).__name__,
+                        }
+                    ],
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
@@ -5883,6 +5911,10 @@ class Skylos:
         result["analysis_summary"]["resolution_scope_limited"] = (
             resolution_scope_limited
         )
+        if unused_dependency_analysis is not None:
+            result["analysis_summary"]["unused_dependency_analysis"] = (
+                unused_dependency_analysis
+            )
 
         return json.dumps(result, indent=2)
 

@@ -664,11 +664,16 @@ class TestUnusedDependencies:
             root, files = self._make_project(
                 tmpdir,
                 "requests\n",
-                "import requests\nrequests.get('http://example.com')\n",
+                'import importlib\nmodule_name = "requests"\n'
+                "importlib.import_module(module_name)\n",
             )
-            findings = scan_unused_dependencies(root, files)
+            coverage = {}
+            findings = scan_unused_dependencies(root, files, coverage=coverage)
             u005 = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert len(u005) == 0
+            assert coverage["complete"] is False
+            assert coverage["abstained_count"] == 1
+            assert coverage["reasons"][0]["kind"] == "unresolved_dynamic_import"
 
     def test_declared_never_imported_flagged(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -678,10 +683,13 @@ class TestUnusedDependencies:
                 "requests\nflask\n",
                 "import requests\nrequests.get('http://example.com')\n",
             )
-            findings = scan_unused_dependencies(root, files)
+            coverage = {}
+            findings = scan_unused_dependencies(root, files, coverage=coverage)
             u005 = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert len(u005) >= 1
             assert any("flask" in f["name"] for f in u005)
+            assert coverage["complete"] is True
+            assert coverage["abstained_count"] == 0
 
     def test_cli_only_package_not_flagged(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -781,12 +789,16 @@ class TestUnusedDependencies:
         # which uploads as "no location".
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            (repo / "requirements.txt").write_text(
+                "requests\npyserial\n", encoding="utf-8"
+            )
             project = repo / "apps" / "web"
             project.mkdir(parents=True)
             py_file = project / "app.py"
             py_file.write_text("import requests\n", encoding="utf-8")
-            findings = scan_unused_dependencies(project, [py_file], location_root=project)
+            findings = scan_unused_dependencies(
+                project, [py_file], location_root=project
+            )
             [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert finding["name"] == "pyserial"
             assert Path(finding["file"]) == project
@@ -796,7 +808,9 @@ class TestUnusedDependencies:
     def test_manifest_inside_the_project_above_the_sources_is_used(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            (project / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            (project / "requirements.txt").write_text(
+                "requests\npyserial\n", encoding="utf-8"
+            )
             src = project / "src"
             src.mkdir()
             py_file = src / "app.py"
