@@ -1,5 +1,6 @@
 import ast
 import math
+import operator
 import re
 from pathlib import Path
 
@@ -34,7 +35,9 @@ def _string_entropy(value: str) -> float:
     for char in value:
         counts[char] = counts.get(char, 0) + 1
     length = len(value)
-    return -sum((count / length) * math.log2(count / length) for count in counts.values())
+    return -sum(
+        (count / length) * math.log2(count / length) for count in counts.values()
+    )
 
 
 def _looks_sensitive_literal(value: str) -> bool:
@@ -240,7 +243,9 @@ def _target_names_are_constant_like(target_names: set[str]) -> bool:
     return any(name.isupper() or name.startswith("_") for name in target_names)
 
 
-def _is_module_level_assignment(parent: ast.AST, parent_map: dict[int, ast.AST]) -> bool:
+def _is_module_level_assignment(
+    parent: ast.AST, parent_map: dict[int, ast.AST]
+) -> bool:
     grandparent = parent_map.get(id(parent))
     return isinstance(grandparent, ast.Module)
 
@@ -320,9 +325,7 @@ def _is_mapping_annotation(node: ast.AST) -> bool:
     if isinstance(node, ast.Subscript):
         return _is_mapping_annotation(node.value)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        return _is_mapping_annotation(node.left) or _is_mapping_annotation(
-            node.right
-        )
+        return _is_mapping_annotation(node.left) or _is_mapping_annotation(node.right)
     if isinstance(node, ast.Name):
         return node.id in {"dict", "Dict", "Mapping", "MutableMapping"}
     return isinstance(node, ast.Attribute) and node.attr in {
@@ -373,7 +376,8 @@ def _mapping_receiver_evidence(
                 else:
                     rebound.update(keys)
         elif isinstance(
-            node, (ast.AugAssign, ast.NamedExpr, ast.For, ast.AsyncFor, ast.comprehension)
+            node,
+            (ast.AugAssign, ast.NamedExpr, ast.For, ast.AsyncFor, ast.comprehension),
         ):
             rebound.update(_bound_receiver_keys(node.target, parent_map))
         elif isinstance(node, ast.ExceptHandler) and node.name:
@@ -383,9 +387,7 @@ def _mapping_receiver_evidence(
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is not None:
-                    rebound.update(
-                        _bound_receiver_keys(item.optional_vars, parent_map)
-                    )
+                    rebound.update(_bound_receiver_keys(item.optional_vars, parent_map))
         elif isinstance(node, ast.Delete):
             for target in node.targets:
                 rebound.update(_bound_receiver_keys(target, parent_map))
@@ -434,7 +436,11 @@ class DuplicateStringLiteralRule(SkylosRule):
 
     def _is_mapping_lookup_key(self, node, parent_map, mapping_receivers):
         parent = parent_map.get(id(node))
-        if not isinstance(parent, ast.Call) or not parent.args or parent.args[0] is not node:
+        if (
+            not isinstance(parent, ast.Call)
+            or not parent.args
+            or parent.args[0] is not node
+        ):
             return False
         func = parent.func
         if not isinstance(func, ast.Attribute) or func.attr not in {
@@ -789,6 +795,305 @@ _PURE_DISCARDED_CALLS = {
     "uuid.uuid5",
 }
 
+_UNKNOWN_EXPRESSION = object()
+_RAISING_EXPRESSION = object()
+_LITERAL_BINARY_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.BitOr: operator.or_,
+    ast.BitAnd: operator.and_,
+    ast.BitXor: operator.xor,
+}
+_LITERAL_COMPARISONS = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.Is: operator.is_,
+    ast.IsNot: operator.is_not,
+    ast.In: lambda left, right: left in right,
+    ast.NotIn: lambda left, right: left not in right,
+}
+
+
+def _bounded_literal(value):
+    if isinstance(value, int):
+        return value.bit_length() <= 256
+    if isinstance(value, (str, bytes, list, tuple, set, dict)):
+        return len(value) <= 256
+    return True
+
+
+def _literal_expression_value(node, budget=None):
+    """Evaluate only small built-in literals, never target objects or calls."""
+    if budget is None:
+        budget = [128]
+    budget[0] -= 1
+    if budget[0] < 0:
+        return _UNKNOWN_EXPRESSION
+    if isinstance(node, ast.Constant):
+        return node.value if _bounded_literal(node.value) else _UNKNOWN_EXPRESSION
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        values = [_literal_expression_value(child, budget) for child in node.elts]
+        if any(value is _RAISING_EXPRESSION for value in values):
+            return _RAISING_EXPRESSION
+        if any(value is _UNKNOWN_EXPRESSION for value in values):
+            return _UNKNOWN_EXPRESSION
+        constructor = {ast.List: list, ast.Tuple: tuple, ast.Set: set}[type(node)]
+        try:
+            return constructor(values)
+        except TypeError:
+            return _RAISING_EXPRESSION
+    if isinstance(node, ast.Dict):
+        if any(key is None for key in node.keys):
+            return _UNKNOWN_EXPRESSION
+        keys = [_literal_expression_value(child, budget) for child in node.keys]
+        values = [_literal_expression_value(child, budget) for child in node.values]
+        if any(value is _RAISING_EXPRESSION for value in [*keys, *values]):
+            return _RAISING_EXPRESSION
+        if any(value is _UNKNOWN_EXPRESSION for value in [*keys, *values]):
+            return _UNKNOWN_EXPRESSION
+        try:
+            return dict(zip(keys, values))
+        except TypeError:
+            return _RAISING_EXPRESSION
+    if isinstance(node, ast.UnaryOp):
+        operand = _literal_expression_value(node.operand, budget)
+        if operand is _UNKNOWN_EXPRESSION or operand is _RAISING_EXPRESSION:
+            return operand
+        operation = {
+            ast.UAdd: operator.pos,
+            ast.USub: operator.neg,
+            ast.Invert: operator.invert,
+            ast.Not: operator.not_,
+        }.get(type(node.op))
+        operands = [operand]
+    elif isinstance(node, ast.BinOp):
+        operands = [
+            _literal_expression_value(node.left, budget),
+            _literal_expression_value(node.right, budget),
+        ]
+        if any(value is _RAISING_EXPRESSION for value in operands):
+            return _RAISING_EXPRESSION
+        if any(value is _UNKNOWN_EXPRESSION for value in operands):
+            return _UNKNOWN_EXPRESSION
+        operation = _LITERAL_BINARY_OPERATORS.get(type(node.op))
+        if isinstance(node.op, ast.Mod) and isinstance(operands[0], (str, bytes)):
+            # A short format string can request an arbitrarily large allocation.
+            return _UNKNOWN_EXPRESSION
+        if isinstance(node.op, ast.Mult):
+            for sequence, count in (operands, operands[::-1]):
+                if isinstance(sequence, (str, bytes, list, tuple)) and isinstance(
+                    count, int
+                ):
+                    if len(sequence) * max(0, count) > 256:
+                        return _UNKNOWN_EXPRESSION
+    elif isinstance(node, ast.Compare):
+        if len(node.ops) != 1:
+            return _UNKNOWN_EXPRESSION
+        operands = [
+            _literal_expression_value(node.left, budget),
+            _literal_expression_value(node.comparators[0], budget),
+        ]
+        if any(value is _RAISING_EXPRESSION for value in operands):
+            return _RAISING_EXPRESSION
+        if any(value is _UNKNOWN_EXPRESSION for value in operands):
+            return _UNKNOWN_EXPRESSION
+        operation = _LITERAL_COMPARISONS.get(type(node.ops[0]))
+    else:
+        return _UNKNOWN_EXPRESSION
+    if operation is None:
+        return _UNKNOWN_EXPRESSION
+    try:
+        result = operation(*operands)
+    except (ArithmeticError, TypeError, ValueError):
+        return _RAISING_EXPRESSION
+    return result if _bounded_literal(result) else _UNKNOWN_EXPRESSION
+
+
+def _scope_import_bindings(scope):
+    bindings = {}
+
+    def record(name, target=None):
+        if name in bindings and bindings[name] != target:
+            bindings[name] = None
+        else:
+            bindings[name] = target
+
+    class Bindings(ast.NodeVisitor):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                record(node.id)
+
+        def visit_Import(self, node):
+            for alias in node.names:
+                record(alias.asname or alias.name.split(".")[0], alias.name)
+
+        def visit_ImportFrom(self, node):
+            for alias in node.names:
+                record(
+                    alias.asname or alias.name,
+                    f"{node.module}.{alias.name}" if not node.level else None,
+                )
+
+        def visit_FunctionDef(self, node):
+            record(node.name)
+            for expression in [
+                *node.decorator_list,
+                *node.args.defaults,
+                *node.args.kw_defaults,
+            ]:
+                if expression is not None:
+                    self.visit(expression)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            record(node.name)
+            for expression in [*node.bases, *node.keywords, *node.decorator_list]:
+                self.visit(expression)
+
+        def visit_Lambda(self, node):
+            for expression in [*node.args.defaults, *node.args.kw_defaults]:
+                if expression is not None:
+                    self.visit(expression)
+
+        def visit_ListComp(self, node):
+            # Targets are comprehension-local; walruses in evaluated expressions
+            # can bind in the containing scope.
+            for generator in node.generators:
+                self.visit(generator.iter)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                record(node.name)
+            self.generic_visit(node)
+
+    visitor = Bindings()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for argument in [
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+            scope.args.vararg,
+            scope.args.kwarg,
+        ]:
+            if argument is not None:
+                record(argument.arg)
+    for statement in scope.body:
+        visitor.visit(statement)
+    return bindings
+
+
+def _exception_probe_expressions(module):
+    parents = {
+        child: parent
+        for parent in ast.walk(module)
+        for child in ast.iter_child_nodes(parent)
+    }
+    bindings = {}
+    global_writes = set()
+    for function in ast.walk(module):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared_globals = set()
+        stack = list(function.body)
+        while stack:
+            child = stack.pop()
+            if isinstance(child, ast.Global):
+                declared_globals.update(child.names)
+            elif not isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                stack.extend(ast.iter_child_nodes(child))
+        global_writes.update(declared_globals & _scope_import_bindings(function).keys())
+
+    def resolve_import(name, node):
+        in_function = False
+        while node is not None:
+            if isinstance(
+                node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                if not (in_function and isinstance(node, ast.ClassDef)):
+                    if isinstance(node, ast.Module) and name in global_writes:
+                        return None
+                    if node not in bindings:
+                        bindings[node] = _scope_import_bindings(node)
+                    scope_bindings = bindings[node]
+                    if "*" in scope_bindings:
+                        return None
+                    if name in scope_bindings:
+                        return scope_bindings[name]
+                in_function |= isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            node = parents.get(node)
+        return None
+
+    helper_overwritten = False
+    for node in ast.walk(module):
+        if not (
+            isinstance(node, ast.Attribute)
+            and node.attr == "raises"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            continue
+        receiver = _qualified_call_name(node.value)
+        if not receiver:
+            continue
+        root, _, suffix = receiver.partition(".")
+        target = resolve_import(root, node)
+        if target and ".".join(filter(None, (target, suffix))) == "pytest":
+            helper_overwritten = True
+            break
+
+    probes = set()
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if not isinstance(call, ast.Call):
+                continue
+            name = _qualified_call_name(call.func)
+            if not name:
+                continue
+            root, _, suffix = name.partition(".")
+            target = resolve_import(root, node)
+            if (
+                helper_overwritten
+                or not target
+                or ".".join(filter(None, (target, suffix))) != "pytest.raises"
+            ):
+                continue
+            stack = list(node.body)
+            while stack:
+                child = stack.pop()
+                if isinstance(
+                    child,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+                ):
+                    continue
+                if isinstance(child, ast.Expr):
+                    probes.add(id(child))
+                stack.extend(ast.iter_child_nodes(child))
+    return probes
+
 
 def _contains_possible_effect(node):
     return any(
@@ -803,7 +1108,13 @@ class NoEffectStatementRule(SkylosRule):
     rule_id = "SKY-L033"
     name = "No-Effect Statement"
 
+    def __init__(self):
+        self._exception_probes = set()
+
     def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            self._exception_probes = _exception_probe_expressions(node)
+            return None
         if not isinstance(node, ast.Expr):
             return None
 
@@ -826,6 +1137,8 @@ class NoEffectStatementRule(SkylosRule):
             call_name = _qualified_call_name(value.func)
             if call_name not in _PURE_DISCARDED_CALLS:
                 return None
+            if id(node) in self._exception_probes:
+                return None
             issue_name = call_name
             issue_value = "discarded_result"
             message = (
@@ -836,6 +1149,20 @@ class NoEffectStatementRule(SkylosRule):
             return None
         elif _contains_possible_effect(value):
             return None
+        else:
+            literal_value = _literal_expression_value(value)
+            if literal_value is _RAISING_EXPRESSION:
+                return None
+            if literal_value is _UNKNOWN_EXPRESSION:
+                if id(node) in self._exception_probes:
+                    return None
+                if not isinstance(value, ast.Compare):
+                    return None
+                issue_value = "discarded_comparison"
+                message = (
+                    "Comparison result is discarded. Check whether an assignment "
+                    "or assertion was intended."
+                )
 
         filename = context.get("filename", "")
         return [

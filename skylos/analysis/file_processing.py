@@ -134,7 +134,7 @@ LINTER_RULE_NODE_TYPES = {
     BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BroadExceptionRule: (ast.ExceptHandler,),
     MissingNetworkTimeoutRule: (ast.Call,),
-    NoEffectStatementRule: (ast.Expr,),
+    NoEffectStatementRule: (ast.Module, ast.Expr),
     GodFileRule: (ast.Module,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
