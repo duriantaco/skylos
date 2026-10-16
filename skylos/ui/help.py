@@ -215,6 +215,15 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
+        "name": "skylos agent recap [PATH] [--days N]",
+        "desc": "Show what the agent hooks blocked here: installs, secret reads, unsafe edits, early \"done\"",
+        "details": [
+            "Reads only the local .skylos/hook.log; nothing is uploaded",
+            "--days 0 counts everything in the log; --format json for scripts",
+        ],
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos mcp [--transport stdio|sse|streamable-http]",
         "desc": "Start the Skylos MCP server for Claude Code, Cursor and other MCP clients",
         "details": [
