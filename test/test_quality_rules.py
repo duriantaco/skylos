@@ -337,10 +337,9 @@ class TestSecurityTodo:
     def test_no_todo(self, tmp_path):
         src = "def f():\n    x = 1\n"
         p = tmp_path / "clean.py"
-        p.write_text(src)
         rule = SecurityTodoRule()
         tree = ast.parse(src)
-        context = {"filename": str(p), "mod": "test_module"}
+        context = {"filename": str(p), "mod": "test_module", "source": src}
         findings = []
         for node in ast.walk(tree):
             res = rule.visit_node(node, context)
