@@ -35,13 +35,53 @@ def _iter_is_statically_empty(node):
     return False
 
 
+def _function_scope_nodes(function):
+    stack = list(reversed(function.body))
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # Defaults and decorators execute in the enclosing scope; bodies do not.
+            children = [*node.args.defaults, *node.args.kw_defaults]
+            children.extend(getattr(node, "decorator_list", ()))
+        elif isinstance(node, ast.ClassDef):
+            children = [*node.bases, *node.keywords, *node.decorator_list]
+        else:
+            children = list(ast.iter_child_nodes(node))
+        stack.extend(reversed([child for child in children if child is not None]))
+
+
 class UnreachableCodeRule(SkylosRule):
     rule_id = "SKY-UC001"
     name = "Unreachable Code"
 
+    def __init__(self):
+        self._generator_markers = set()
+
     def visit_node(self, node, context):
         if not isinstance(node, _BODY_NODE_TYPES):
             return None
+
+        if isinstance(node, ast.Module):
+            self._generator_markers.clear()
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scoped_nodes = list(_function_scope_nodes(node))
+            yields = [
+                child
+                for child in scoped_nodes
+                if isinstance(child, (ast.Yield, ast.YieldFrom))
+            ]
+            if len(yields) == 1 and isinstance(yields[0], ast.Yield):
+                marker = yields[0]
+                if marker.value is None or (
+                    isinstance(marker.value, ast.Constant)
+                    and marker.value.value is None
+                ):
+                    self._generator_markers.update(
+                        id(child)
+                        for child in scoped_nodes
+                        if isinstance(child, ast.Expr) and child.value is marker
+                    )
 
         findings = []
 
@@ -55,7 +95,9 @@ class UnreachableCodeRule(SkylosRule):
             cond = evaluate_static_condition(node.test, file_path=filename)
 
             if cond is False and node.body:
-                first = node.body[0]
+                first = self._first_redundant_statement(node.body)
+                if first is None:
+                    return findings
                 findings.append(
                     self._mk(
                         filename,
@@ -70,7 +112,9 @@ class UnreachableCodeRule(SkylosRule):
                 return findings
 
             if cond is True and node.orelse:
-                first = node.orelse[0]
+                first = self._first_redundant_statement(node.orelse)
+                if first is None:
+                    return findings
                 findings.append(
                     self._mk(
                         filename,
@@ -90,7 +134,9 @@ class UnreachableCodeRule(SkylosRule):
             )
 
             if cond is False and node.body:
-                first = node.body[0]
+                first = self._first_redundant_statement(node.body)
+                if first is None:
+                    return findings
                 findings.append(
                     self._mk(
                         filename,
@@ -106,7 +152,9 @@ class UnreachableCodeRule(SkylosRule):
 
         if isinstance(node, ast.For):
             if _iter_is_statically_empty(node.iter) and node.body:
-                first = node.body[0]
+                first = self._first_redundant_statement(node.body)
+                if first is None:
+                    return findings
                 findings.append(
                     self._mk(
                         filename,
@@ -150,11 +198,18 @@ class UnreachableCodeRule(SkylosRule):
             "col": int(col) if col is not None else 0,
         }
 
+    def _first_redundant_statement(self, stmts):
+        return next(
+            (stmt for stmt in stmts if id(stmt) not in self._generator_markers), None
+        )
+
     def _first_unreachable_in_block(self, stmts, filename, basename):
         terminated_by = None
 
         for stmt in stmts:
             if terminated_by is not None:
+                if id(stmt) in self._generator_markers:
+                    continue
                 return self._mk(
                     filename,
                     basename,
@@ -186,10 +241,7 @@ class UnreachableCodeRule(SkylosRule):
         return False
 
     def _block_terminates(self, stmts):
-        if not stmts:
-            return False
-        last = stmts[-1]
-        return self._stmt_terminates_block(last)
+        return any(self._stmt_terminates_block(stmt) for stmt in stmts)
 
     def _terminator_kind(self, stmt):
         if isinstance(stmt, ast.Return):
