@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.51.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v4.51.0) (2026-10-17)
+
+
+### Features
+
+* **agents:** skylos agent recap, hook activity in doctor, live readme badge ([#1012](https://github.com/duriantaco/skylos/issues/1012)) ([ba7a926](https://github.com/duriantaco/skylos/commit/ba7a92635ceea56bea7d221e0f440c589bdeba1f))
+
+
+### Bug Fixes
+
+* **performance:** correct P401/P403 receiver and control flow analysis ([#1015](https://github.com/duriantaco/skylos/issues/1015)) ([7b5c5a3](https://github.com/duriantaco/skylos/commit/7b5c5a3f776e2be1a0db1f0a8d4015459c88fcd5))
+* **quality:** correct source evidence and control flow analysis in noisy rules ([#1013](https://github.com/duriantaco/skylos/issues/1013)) ([12ea15f](https://github.com/duriantaco/skylos/commit/12ea15f9c321b69e150afef878c66740f5022d50))
+
 ## [4.50.1](https://github.com/duriantaco/skylos/compare/v4.50.0...v4.50.1) (2026-10-15)
 
 
