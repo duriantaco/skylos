@@ -352,7 +352,7 @@ _RULES = (
         "SKY-L035", "Blanket ESLint disable", "quality", "HIGH", finding_type="review"
     ),
     RuleCatalogEntry(
-        "SKY-P401", "Inefficient loop pattern", "quality", finding_type="advice"
+        "SKY-P401", "Potential unbounded read", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-P402", "Repeated expensive operation", "quality", finding_type="advice"
