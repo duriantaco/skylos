@@ -187,7 +187,12 @@ def _quality_findings(
             options.credential_source_locations
         )
     findings = scan_python_quality(
-        prepared.tree, prepared.source, file, cfg, **credential_kwargs
+        prepared.tree,
+        prepared.source,
+        file,
+        cfg,
+        project_root=options.project_root,
+        **credential_kwargs,
     )
     if Path(file).suffix == ".pyi":
         findings = [

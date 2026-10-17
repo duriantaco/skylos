@@ -316,7 +316,15 @@ def _extend_community_quality_rules(q_rules: list, file) -> None:
 
 
 def scan_python_quality(
-    tree: ast.AST, source: str, file, cfg: dict, *, credential_source_locations=()
+    tree: ast.AST,
+    source: str,
+    file,
+    cfg: dict,
+    *,
+    credential_source_locations=(),
+    project_root=None,
+    receiver_source_reader=None,
+    typing_source_reader=None,
 ) -> list[dict]:
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
@@ -324,6 +332,11 @@ def scan_python_quality(
     set_linter_node_types(q_rules)
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source
+    linter_q.context["project_root"] = project_root
+    if receiver_source_reader is not None:
+        linter_q.context["receiver_source_reader"] = receiver_source_reader
+    if typing_source_reader is not None:
+        linter_q.context["typing_source_reader"] = typing_source_reader
     linter_q.context["credential_source_locations"] = credential_source_locations
     linter_q.visit(tree)
     quality_findings = [
