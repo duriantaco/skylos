@@ -70,6 +70,38 @@ def buffered():
             all("entire file" not in finding["message"] for finding in findings)
         )
 
+        # Only a test module inside the scanned project can exempt a read.
+        scoped_code = "def test_read(handle):\n    return handle.read()\n"
+        with TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            project = base / "project"
+            external = base / "external"
+            project.mkdir()
+            external.mkdir()
+            local_test = project / "test_local.py"
+            external_test = external / "test_external.py"
+            local_test.write_text(scoped_code, encoding="utf-8")
+            external_test.write_text(scoped_code, encoding="utf-8")
+            linked = project / "linked"
+            linked.symlink_to(external, target_is_directory=True)
+            cases = (
+                (local_test, 0),
+                (external_test, 1),
+                (linked / external_test.name, 1),
+                (project / ".." / "external" / external_test.name, 1),
+            )
+            for filename, expected in cases:
+                with self.subTest(filename=str(filename)):
+                    rule = PerformanceRule()
+                    context = {"filename": str(filename), "project_root": project}
+                    findings = []
+                    for node in ast.walk(ast.parse(scoped_code)):
+                        findings.extend(rule.visit_node(node, context) or [])
+                    self.assertEqual(
+                        len([f for f in findings if f["rule_id"] == "SKY-P401"]),
+                        expected,
+                    )
+
     def test_chunked_read_is_not_memory_risk(self):
         # agent-pr-bench real-02/real-13: hashing a file in 1 MiB chunks.
         code = """
