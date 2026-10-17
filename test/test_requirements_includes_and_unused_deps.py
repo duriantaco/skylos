@@ -176,6 +176,13 @@ django-stubs
 types-pyyaml
 psycopg2
 mypkg-plugin
+pypydispatcher
+python-consul2
+sphinx-click
+flake8-docstrings
+pytest-rerunfailures
+pytest-subtests
+pytest-click
 """
     root, files = _pontoon_shaped(
         tmp_path,
@@ -186,6 +193,13 @@ mypkg-plugin
                 'MIDDLEWARE = ["csp.middleware.CSPMiddleware"]\n'
                 'CACHES = {"default": {"BACKEND": '
                 '"django_bmemcached.memcached.BMemcached"}}\n'
+                "from pydispatch import dispatcher\n"
+                "import consul\n"
+            ),
+            "tests/test_commands.py": (
+                "def test_command(cli_runner, subtests):\n"
+                "    with subtests.test():\n"
+                "        assert cli_runner is not None\n"
             ),
         },
         {
@@ -195,9 +209,12 @@ mypkg-plugin
                 "RUN zensical build -f documentation/zensical.toml\n"
             ),
             "mypy.ini": "[mypy]\nplugins =\n    mypy_django_plugin.main\n",
+            "docs/conf.py": "extensions = ['sphinx_click']\n",
+            "tox.ini": "[testenv]\ncommands = pytest --reruns 3 tests\n",
             "setup.cfg": (
                 "[options.entry_points]\nconsole_scripts =\n"
                 "    run = mypkg_plugin.cli:main\n"
+                "[flake8]\nextend-ignore = D102, D104\n"
             ),
         },
     )

@@ -176,9 +176,6 @@ class _ClassInfo:
         self.methods: list[str] = []
 
 
-_DUMMY_CLASS = _ClassInfo("", 0, 0)
-
-
 def _get_decorator_name(node: ast.expr) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
@@ -316,22 +313,6 @@ def _compute_metrics(classes, known_classes):
             "protocol_abc": set(),
         }
 
-        for other_name, other_info in classes.items():
-            if other_name == class_name:
-                continue
-            shared_bases = info.bases & other_info.bases
-            shared_protocols = {
-                b
-                for b in shared_bases
-                if any(
-                    classes.get(b, _DUMMY_CLASS).is_protocol
-                    or classes.get(b, _DUMMY_CLASS).is_abc
-                    for _ in [None]
-                )
-            }
-            if shared_protocols:
-                dep_breakdown["protocol_abc"].add(other_name)
-
         coupling_graph[class_name] = dep_breakdown
 
     afferent: dict[str, set[str]] = {name: set() for name in classes}
@@ -386,6 +367,45 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
     return _compute_metrics(classes, known_classes)
 
 
+def _normalize_coupling_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Remove sibling edges produced by older optional native extensions.
+
+    Sharing an abstract base establishes two inheritance edges to that base,
+    not a dependency between its subclasses. Keep the legacy breakdown key
+    for consumers, and retain any sibling independently referenced by a real
+    inheritance, type, call, decorator or attribute edge.
+    """
+    classes = result.get("classes", {})
+    if not any(
+        info.get("breakdown", {}).get("protocol_abc") for info in classes.values()
+    ):
+        return result
+
+    graph = {}
+    afferent = {name: set() for name in classes}
+    for name, info in classes.items():
+        breakdown = info.get("breakdown", {})
+        breakdown["protocol_abc"] = []
+        dependencies = set().union(*(set(values) for values in breakdown.values()))
+        graph[name] = sorted(dependencies)
+        for dependency in dependencies:
+            if dependency in afferent:
+                afferent[dependency].add(name)
+
+    for name, info in classes.items():
+        ce, ca = len(graph[name]), len(afferent[name])
+        info.update(
+            efferent_classes=graph[name],
+            afferent_classes=sorted(afferent[name]),
+            efferent_coupling=ce,
+            afferent_coupling=ca,
+            total_coupling=ce + ca,
+            instability=ce / (ce + ca) if ce + ca else 0.0,
+        )
+    result["coupling_graph"] = graph
+    return result
+
+
 class CBORule(SkylosRule):
     rule_id = "SKY-Q701"
     name = "Coupling Between Objects"
@@ -418,7 +438,9 @@ class CBORule(SkylosRule):
             try:
                 source = Path(filename).read_text(encoding="utf-8", errors="ignore")
                 if _fast_analyze_coupling is not None:
-                    result = _fast_analyze_coupling(source, filename)
+                    result = _normalize_coupling_result(
+                        _fast_analyze_coupling(source, filename)
+                    )
                 else:
                     tree = ast.parse(source)
                     result = analyze_coupling(tree, filename)

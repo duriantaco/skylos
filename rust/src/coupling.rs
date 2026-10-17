@@ -572,17 +572,9 @@ pub fn analyze_coupling(
             info.decorator_deps.iter().cloned().collect());
         breakdown.insert("protocol_abc".to_string(), BTreeSet::new());
 
-        // Protocol/ABC shared base detection
-        for (other_name, other_info) in &classes {
-            if other_name == class_name { continue; }
-            let shared_bases: HashSet<_> = info.bases.intersection(&other_info.bases).cloned().collect();
-            let has_protocol_base = shared_bases.iter().any(|b| {
-                classes.get(b).map_or(false, |ci| ci.is_protocol || ci.is_abc)
-            });
-            if has_protocol_base {
-                breakdown.get_mut("protocol_abc").unwrap().insert(other_name.clone());
-            }
-        }
+        // Subclasses depend on their shared ABC/Protocol through inheritance;
+        // sharing that base does not establish dependencies on each other.
+        // Retain the empty legacy bucket for output compatibility.
 
         coupling_graph.insert(class_name.clone(), breakdown);
     }

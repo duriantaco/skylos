@@ -63,6 +63,7 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
 from skylos.config import load_config
 from skylos.analysis.errors import analysis_error_payload as _analysis_error_payload
+from skylos.analysis.errors import dedupe_source_analysis_errors
 from skylos.analysis.finding_filter import (
     finding_is_inline_ignored as _finding_is_inline_ignored,
 )
@@ -3876,7 +3877,8 @@ class Skylos:
                         if detected.returncode == 0:
                             signals = {
                                 str(context.root / name)
-                                for name in detected.stdout.split("\0") if name
+                                for name in detected.stdout.split("\0")
+                                if name
                             }
                         elif _requires_security_control_history(context, None, ()):
                             # A new Git repository has no HEAD to compare yet.
@@ -3898,28 +3900,37 @@ class Skylos:
                     ):
                         comparison_base = (
                             _working_tree_diff_start(context, diff_base)
-                            or diff_base or "HEAD"
+                            or diff_base
+                            or "HEAD"
                         )
                         result["quality"] = collect_control_regressions(
                             path,
                             (
                                 {**project_cfg, "exclude": exclude_folders}
-                                if exclude_folders is not None else project_cfg
+                                if exclude_folders is not None
+                                else project_cfg
                             ),
                             comparison_base,
                             changed_files=(
                                 _scoped_changed_paths(
                                     root, path, signals, resolve_symlinks=False
                                 )
-                                if signals is not None else None
+                                if signals is not None
+                                else None
                             ),
                         )
-                        result["analysis_summary"]["quality_count"] = len(result["quality"])
+                        result["analysis_summary"]["quality_count"] = len(
+                            result["quality"]
+                        )
                 except Exception as exc:
-                    result["analysis_errors"].append(_analysis_error_payload(
-                        root, exc, kind="security_regression_unavailable"
-                    ))
-                    result["analysis_summary"]["analysis_error_count"] = len(result["analysis_errors"])
+                    result["analysis_errors"].append(
+                        _analysis_error_payload(
+                            root, exc, kind="security_regression_unavailable"
+                        )
+                    )
+                    result["analysis_summary"]["analysis_error_count"] = len(
+                        result["analysis_errors"]
+                    )
             if first_is_symlink and required_config_rules:
                 result["analysis_errors"].append(
                     _analysis_error_payload(
@@ -3945,7 +3956,9 @@ class Skylos:
                             ignore=project_ignore,
                             required_rules=required_config_rules,
                             analysis_errors=result["analysis_errors"],
-                            scan_paths=path if isinstance(path, (list, tuple)) else None,
+                            scan_paths=path
+                            if isinstance(path, (list, tuple))
+                            else None,
                         )
                         result["analysis_summary"]["analysis_error_count"] = len(
                             result["analysis_errors"]
@@ -4219,6 +4232,19 @@ class Skylos:
         all_suppressed = []
         secret_scanned_files = set()
         analysis_errors = list(language_engine_errors)
+        credential_source_locations = None
+        if enable_quality and "SKY-L014" not in project_ignore:
+            from skylos.analysis.credential_sources import (
+                collect_project_credential_sources,
+            )
+
+            credential_source_locations = collect_project_credential_sources(
+                files,
+                modmap,
+                project_root=project_root,
+                config_file=config_file,
+                analysis_errors=analysis_errors,
+            )
         empty_files = []
         file_contexts = []
         all_clone_fragments = []
@@ -4289,6 +4315,7 @@ class Skylos:
                 enable_danger_rules=enable_danger,
                 config_file=config_file,
                 project_root=project_root,
+                credential_source_locations=credential_source_locations,
             )
 
             if os.getenv("SKYLOS_DEBUG"):
@@ -4692,11 +4719,11 @@ class Skylos:
                 diff_base = resolve_diff_base_ref(root)
                 comparison_base = (
                     _working_tree_diff_start(git_context, diff_base)
-                    or diff_base or "HEAD"
+                    or diff_base
+                    or "HEAD"
                 )
                 signaled = {
-                    _lexical_repository_path(root, item)
-                    for item in diff_signal_files
+                    _lexical_repository_path(root, item) for item in diff_signal_files
                 }
                 source_changes = {}
                 if _requires_security_control_history(git_context, diff_base, signaled):
@@ -4716,16 +4743,22 @@ class Skylos:
                         continue
                     try:
                         all_quality.extend(
-                            compare_source_controls(git_context, comparison_base, change)
+                            compare_source_controls(
+                                git_context, comparison_base, change
+                            )
                         )
                     except Exception as exc:
-                        analysis_errors.append(_analysis_error_payload(
-                            cf, exc, kind="security_regression_unavailable"
-                        ))
+                        analysis_errors.append(
+                            _analysis_error_payload(
+                                cf, exc, kind="security_regression_unavailable"
+                            )
+                        )
             except Exception as exc:
-                analysis_errors.append(_analysis_error_payload(
-                    root, exc, kind="security_regression_unavailable"
-                ))
+                analysis_errors.append(
+                    _analysis_error_payload(
+                        root, exc, kind="security_regression_unavailable"
+                    )
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
 
@@ -5015,8 +5048,7 @@ class Skylos:
                                     injection_root
                                 ).parts
                                 if any(
-                                    part.startswith(".")
-                                    for part in relative_parts[:-1]
+                                    part.startswith(".") for part in relative_parts[:-1]
                                 ):
                                     reviewer_high_only.add(str(candidate))
                         if injection_root.is_dir():
@@ -5154,7 +5186,9 @@ class Skylos:
                             getattr(
                                 api_findings,
                                 "check",
-                                failed_python_api_signature_check("coverage_receipt_missing"),
+                                failed_python_api_signature_check(
+                                    "coverage_receipt_missing"
+                                ),
                             ),
                             project_ignore=project_ignore,
                             per_file_ignore_lines=per_file_ignore_lines,
@@ -5503,8 +5537,7 @@ class Skylos:
                 )
 
             if diff_signal_files and (
-                {"SKY-A103", "SKY-A104", "SKY-A122", "SKY-A125"}
-                - set(project_ignore)
+                {"SKY-A103", "SKY-A104", "SKY-A122", "SKY-A125"} - set(project_ignore)
             ):
                 try:
                     _scan_ai_defect_diff_signals(
@@ -5520,9 +5553,17 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("AI defect diff scan failed", exc_info=True)
 
+        unused_dependency_analysis = None
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency quality scan"))
+            unused_dependency_analysis = {
+                "rule_id": "SKY-U005",
+                "status": "not_run",
+                "complete": False,
+                "reasons": [{"kind": "no_project_python_sources"}],
+                "abstained_count": 0,
+            }
             try:
                 from skylos.rules.quality.unused_deps import scan_unused_dependencies
 
@@ -5547,12 +5588,32 @@ class Skylos:
 
                     if "SKY-U005" not in project_ignore:
                         ud_findings = scan_unused_dependencies(
-                            _ud_root, _ud_py_files, location_root=project_root
+                            _ud_root,
+                            _ud_py_files,
+                            location_root=project_root,
+                            coverage=unused_dependency_analysis,
                         )
                         if ud_findings:
                             all_quality.extend(ud_findings)
 
-            except Exception:
+                elif _file_scoped_scan:
+                    unused_dependency_analysis["reasons"] = [
+                        {"kind": "file_scoped_scan"}
+                    ]
+                if "SKY-U005" in project_ignore:
+                    unused_dependency_analysis["reasons"] = [{"kind": "rule_ignored"}]
+
+            except Exception as error:
+                unused_dependency_analysis.update(
+                    status="incomplete",
+                    complete=False,
+                    reasons=[
+                        {
+                            "kind": "unused_dependency_analysis_failed",
+                            "error_type": type(error).__name__,
+                        }
+                    ],
+                )
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
@@ -5840,6 +5901,7 @@ class Skylos:
         ):
             resolution_scope_limited = True
         refresh_review_context(diff_signal_files)
+        analysis_errors = dedupe_source_analysis_errors(analysis_errors)
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )
@@ -5883,6 +5945,10 @@ class Skylos:
         result["analysis_summary"]["resolution_scope_limited"] = (
             resolution_scope_limited
         )
+        if unused_dependency_analysis is not None:
+            result["analysis_summary"]["unused_dependency_analysis"] = (
+                unused_dependency_analysis
+            )
 
         return json.dumps(result, indent=2)
 
@@ -5980,6 +6046,7 @@ def proc_file(
     enable_danger_rules=True,
     config_file=None,
     project_root=None,
+    credential_source_locations=(),
 ) -> tuple | None:
     return process_file(
         file_or_args,
@@ -5993,6 +6060,7 @@ def proc_file(
         enable_danger_rules=enable_danger_rules,
         config_file=config_file,
         project_root=project_root,
+        credential_source_locations=credential_source_locations,
         visitor_class=Visitor,
         test_aware_visitor_class=TestAwareVisitor,
         framework_aware_visitor_class=FrameworkAwareVisitor,

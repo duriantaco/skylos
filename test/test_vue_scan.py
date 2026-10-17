@@ -198,7 +198,9 @@ def test_vue_does_not_hide_a_python_syntax_error(tmp_path):
     assert len(result["analysis_errors"]) == 1
     error = result["analysis_errors"][0]
     assert error["kind"] == "syntax_error"
+    assert error["error_type"] == "SyntaxError"
     assert error["file"] == str(broken)
+    assert result["analysis_summary"]["analysis_error_count"] == 1
     assert "grade" not in result
 
 

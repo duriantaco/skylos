@@ -664,11 +664,16 @@ class TestUnusedDependencies:
             root, files = self._make_project(
                 tmpdir,
                 "requests\n",
-                "import requests\nrequests.get('http://example.com')\n",
+                'import importlib\nmodule_name = "requests"\n'
+                "importlib.import_module(module_name)\n",
             )
-            findings = scan_unused_dependencies(root, files)
+            coverage = {}
+            findings = scan_unused_dependencies(root, files, coverage=coverage)
             u005 = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert len(u005) == 0
+            assert coverage["complete"] is False
+            assert coverage["abstained_count"] == 1
+            assert coverage["reasons"][0]["kind"] == "unresolved_dynamic_import"
 
     def test_declared_never_imported_flagged(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -678,10 +683,13 @@ class TestUnusedDependencies:
                 "requests\nflask\n",
                 "import requests\nrequests.get('http://example.com')\n",
             )
-            findings = scan_unused_dependencies(root, files)
+            coverage = {}
+            findings = scan_unused_dependencies(root, files, coverage=coverage)
             u005 = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert len(u005) >= 1
             assert any("flask" in f["name"] for f in u005)
+            assert coverage["complete"] is True
+            assert coverage["abstained_count"] == 0
 
     def test_cli_only_package_not_flagged(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -781,12 +789,16 @@ class TestUnusedDependencies:
         # which uploads as "no location".
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            (repo / "requirements.txt").write_text(
+                "requests\npyserial\n", encoding="utf-8"
+            )
             project = repo / "apps" / "web"
             project.mkdir(parents=True)
             py_file = project / "app.py"
             py_file.write_text("import requests\n", encoding="utf-8")
-            findings = scan_unused_dependencies(project, [py_file], location_root=project)
+            findings = scan_unused_dependencies(
+                project, [py_file], location_root=project
+            )
             [finding] = [f for f in findings if f["rule_id"] == "SKY-U005"]
             assert finding["name"] == "pyserial"
             assert Path(finding["file"]) == project
@@ -796,7 +808,9 @@ class TestUnusedDependencies:
     def test_manifest_inside_the_project_above_the_sources_is_used(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = Path(tmpdir)
-            (project / "requirements.txt").write_text("requests\npyserial\n", encoding="utf-8")
+            (project / "requirements.txt").write_text(
+                "requests\npyserial\n", encoding="utf-8"
+            )
             src = project / "src"
             src.mkdir()
             py_file = src / "app.py"
@@ -851,7 +865,7 @@ def check_code_with_source(rule, code, filename="test.py"):
     dedented = textwrap.dedent(code)
     tree = ast.parse(dedented)
     findings = []
-    context = {"filename": filename, "mod": "test_module", "_source": dedented}
+    context = {"filename": filename, "mod": "test_module", "source": dedented}
     for node in ast.walk(tree):
         res = rule.visit_node(node, context)
         if res:
@@ -1534,7 +1548,7 @@ class TestHardcodedCredential:
         [
             pytest.param(
                 """
-                password = "admin123"
+                password = getattr(settings, "password", "admin123")
                 """,
                 "test.py",
                 True,
@@ -1589,7 +1603,7 @@ class TestHardcodedCredential:
             ),
             pytest.param(
                 """
-                password = ""
+                password = getattr(settings, "password", "")
                 """,
                 "test.py",
                 False,
@@ -1647,8 +1661,8 @@ class TestHardcodedCredential:
                 DB_PASSWORD = "${DB_PASSWORD}"
                 """,
                 "settings.py",
-                False,
-                None,
+                True,
+                "HIGH",
                 id="reference-value",
             ),
             pytest.param(
@@ -1776,7 +1790,7 @@ class TestHardcodedCredential:
                 def token():
                     return os.getenv(GH_KEY)
                 """,
-                "HIGH",
+                None,
                 id="target-passed-as-getenv-key",
             ),
             pytest.param(
@@ -1817,8 +1831,8 @@ class TestHardcodedCredential:
                 "HIGH",
                 id="secret-used-as-env-fallback",
             ),
-            # ``<X>_KEY = "X"``: the value is the rest of the target's name, in
-            # UPPER_SNAKE with two or more words.
+            # Generic setting names need credential content or an actual
+            # credential use; observability alone does not establish one.
             pytest.param(
                 """
                 APP_URL_KEY = "APP_URL"
@@ -1844,7 +1858,7 @@ class TestHardcodedCredential:
                 """
                 APP_URL_KEY = "app_url"
                 """,
-                "HIGH",
+                None,
                 id="key-suffix-with-lowercase-value",
             ),
             pytest.param(
@@ -1865,30 +1879,30 @@ class TestHardcodedCredential:
                 """
                 settings.APP_URL_KEY = "APP_URL"
                 """,
-                "HIGH",
+                None,
                 id="key-suffix-on-attribute-target",
             ),
-            # References: ``${NAME}`` and ``{{ name }}`` with NAME in UPPER_SNAKE
-            # or a dotted path. ``$X`` and ``%X%`` can be the credential.
+            # Python does not interpolate raw reference-like strings. Under
+            # credential names they remain shipped literal passwords/keys.
             pytest.param(
                 """
                 DB_PASSWORD = "${DB_PASSWORD}"
                 """,
-                None,
+                "HIGH",
                 id="braced-reference-under-password",
             ),
             pytest.param(
                 """
                 app.secret_key = "${FLASK_SECRET_KEY}"
                 """,
-                None,
+                "HIGH",
                 id="braced-reference-under-attribute",
             ),
             pytest.param(
                 """
                 SECRET_KEY = "{{ django.secret_key }}"
                 """,
-                None,
+                "HIGH",
                 id="template-reference-under-secret-key",
             ),
             pytest.param(
@@ -2465,22 +2479,26 @@ class TestPhantomDecorator:
 
 
 class TestUnfinishedGeneration:
-    def test_pass_body(self):
+    def test_pass_body_without_contract_is_not_evidence(self):
         code = """
         def process_payment(amount):
             pass
         """
         findings = check_code(UnfinishedGenerationRule(), code)
-        assert any(f["rule_id"] == "SKY-L026" for f in findings)
-        assert any(f["value"] == "pass" for f in findings if f["rule_id"] == "SKY-L026")
+        assert not any(f["rule_id"] == "SKY-L026" for f in findings)
 
     def test_ellipsis_body(self):
         code = """
-        def validate_user(token):
+        from fastapi import Security
+
+        def validate_user():
             ...
+
+        control = Security(validate_user, scopes=["admin"])
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert "Security dependency" in findings[0]["evidence"]
 
     def test_concrete_ellipsis_default_is_flagged(self):
         code = """
@@ -2806,7 +2824,7 @@ class TestUnfinishedGeneration:
 
         assert [finding["parameter"] for finding in l026] == ["length"]
 
-    def test_ellipsis_default_and_stub_body_emit_one_finding(self):
+    def test_ellipsis_default_and_stub_body_emit_both_findings(self):
         code = """
         def read(length: int = ...) -> int:
             ...
@@ -2819,18 +2837,20 @@ class TestUnfinishedGeneration:
         )
         l026 = [finding for finding in findings if finding["rule_id"] == "SKY-L026"]
 
-        assert len(l026) == 1
+        assert len(l026) == 2
         assert l026[0]["name"] == "read"
         assert "parameter" not in l026[0]
         assert "only `...` in its body" in l026[0]["message"]
+        assert l026[1]["parameter"] == "length"
+        assert "receive Ellipsis at runtime" in l026[1]["message"]
 
-    def test_not_implemented_error(self):
+    def test_not_implemented_error_alone_is_a_valid_interface(self):
         code = """
         def send_notification(user, message):
             raise NotImplementedError
         """
         findings = check_code(UnfinishedGenerationRule(), code)
-        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert not any(f["rule_id"] == "SKY-L026" for f in findings)
 
     def test_not_implemented_error_call(self):
         code = """
@@ -2842,17 +2862,23 @@ class TestUnfinishedGeneration:
 
     def test_docstring_then_pass(self):
         code = """
-        def verify_payment(order):
-            \"\"\"Verify payment for the given order.\"\"\"
+        from application import adapt
+
+        @adapt
+        def verify_payment(order) -> bool:
+            \"\"\"Verify the payment.\"\"\"
             pass
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert findings[0]["verification_status"] == "unverified"
 
     def test_docstring_then_ellipsis_no_deprecation_warning(self):
         code = """
-        def validate_user(token):
-            \"\"\"Validate the given token.\"\"\"
+        from typing import NoReturn
+
+        def validate_user(token) -> NoReturn:
+            \"\"\"Stop processing this token.\"\"\"
             ...
         """
         with warnings.catch_warnings(record=True) as caught:
@@ -3085,11 +3111,17 @@ class TestUnfinishedGeneration:
 
     def test_async_function_flagged(self):
         code = """
-        async def fetch_data(url):
+        async def fetch_data(user):
             pass
+
+        def read_private(user, private_record):
+            if not fetch_data(user):
+                raise PermissionError("access denied")
+            return private_record
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert "unawaited coroutine" in findings[0]["evidence"]
 
     @pytest.mark.parametrize(
         ("body", "marker"),
@@ -3105,6 +3137,7 @@ class TestUnfinishedGeneration:
     def test_placeholder_return_body_flagged(self, body, marker):
         code = f"""
         def build_invoice_payload(order):
+            \"\"\"TODO: implement invoice payload construction.\"\"\"
             {body}
         """
         findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")

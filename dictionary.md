@@ -963,18 +963,52 @@ uses project ignores, not inline comments, consistently across supported files.
 | L035 | HIGH | File-wide blanket ESLint disable | TS/JS |
 
 SKY-L006 accepts an explicit `return None` next to value returns (PEP 8); only a
-bare `return` is inconsistent. SKY-L014 is not reported when the value only
-refers to a setting kept elsewhere: `${NAME}` or `{{ name }}`, where NAME is
-UPPER_SNAKE with two or more words (`${DB_PASSWORD}`) or a dotted lowercase path
-with two or more segments (`{{ django.secret_key }}`); every reference form,
-including `$X` and `%X%`, is accepted only under location names with no
-credential word, such as `DATABASE_URL`, `DSN` or `CONNECTION_STRING`. It is
-also not reported for `<X>_KEY = "X"` on a plain (non-attribute) name, where the
-value is the rest of the target's name in UPPER_SNAKE with two or more words
-(`APP_URL_KEY = "APP_URL"`), unless the name ends in `SECRET_KEY`, `API_KEY`,
-`PRIVATE_KEY`, `ENCRYPTION_KEY`, `SIGNING_KEY`, `MASTER_KEY`, `ACCESS_KEY` or
-`HMAC_KEY`. SKY-L016 is not reported when the read declares a default other than
+bare `return` is inconsistent. SKY-L014 does not treat raw `${NAME}` or
+`{{ name }}` strings under credential names as safe: Python does not expand
+them, and they can become the literal password. Reference forms are accepted
+under location names with no credential word, such as `DATABASE_URL`, `DSN`
+or `CONNECTION_STRING`, unless a credential use establishes otherwise.
+A name such as `APP_URL_KEY` and matching value `"APP_URL"` does not by itself
+establish a credential. A resolved credential use still takes precedence over
+a setting-key use. SKY-L016 is
+not reported when the read declares a default other than
 `None` (`os.getenv("ENABLE_X", "False")`).
+
+SKY-L014 distinguishes credential names from ambiguous names ending in `_key`.
+Credential-use or secret-literal evidence distinguishes known credentials from
+ambiguous keys. Being exported, stored in a field, or used as a default is not
+credential evidence. Static project import and reexport resolution connects
+literal sources to credential consumers across files; a benign routing,
+lookup or statistics use never cancels a credential use of the same source.
+The same evidence checks apply to assignments,
+annotated assignments and argument defaults. Conditional writes retain
+possible credential sources; an uncertain overwrite cannot establish safety.
+Lookup fallbacks follow their actual argument contracts: the attribute name in
+`getattr(obj, "password", "")` is not a password. Anonymous FTP defaults
+remain reviewable: one anonymous consumer cannot prove that every use is
+public, or that a request cannot override only the username.
+
+SKY-L024 checks module bindings without importing the target. Annotated values
+and destructured assignments define valid patch targets, as do bindings in
+evaluated definition headers. Explicit `create=True` allows a missing target.
+Unresolved dynamic module attributes do not establish that a target is missing.
+
+SKY-L026 recognizes resolved abstract/overload declarations and stub files.
+An empty body alone does not establish an unfinished implementation. A body
+finding requires an explicit local unfinished marker, a return-contract
+mismatch, or evidence of an ineffective runtime security contract. Empty
+FastAPI Security dependencies and placeholder results that bypass a denial
+branch remain visible; uncertain wrappers or bindings require verification.
+Optional hooks, null implementations,
+matching empty return values and bare `NotImplementedError` are legitimate.
+Unsafe Ellipsis defaults remain independently reportable. Silence for an
+unknown empty hook does not certify that required side effects are present.
+
+SKY-L033 does not assume that arithmetic, membership or overloaded operators are
+free of effects. Small literal expressions can be checked without executing
+target code; deliberate exception probes remain valid. Discarded comparisons,
+including ordering checks, still merit review for an intended assertion or
+branch; their diagnostic does not claim that overloaded operands are pure.
 
 ## Quality, Structure, Architecture, and Performance
 
@@ -993,7 +1027,7 @@ value is the rest of the target's name in UPPER_SNAKE with two or more words
 | Q407 | HIGH | Discarded result from built-in `Array.map(async ...)` | TS/JS | mapped promises are not consumed |
 | Q501 | MEDIUM | God class | Python | excessive methods or attributes |
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
-| Q701 | MEDIUM | High coupling | Python | CBO-style signal |
+| Q701 | MEDIUM | High coupling | Python | resolved dependency edges; sharing an abstract base does not create sibling dependencies |
 | Q702 | MEDIUM | Low cohesion | Python | LCOM-style signal |
 | Q801 | MEDIUM | High architectural instability | Reserved | no current finding emission |
 | Q802 | ADVISORY by default | Distance from main sequence | Python, TS/JS | included in actionable quality only with `enforce_iad = true` |
@@ -1005,7 +1039,7 @@ value is the rest of the target's name in UPPER_SNAKE with two or more words
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
-| P403 | LOW | Potentially quadratic nested loop | Python / generic | per-directory `os.walk` partition loops are excluded |
+| P403 | LOW | Repeated iterable scans in nested loops | Python / generic | input-dependent repeated scans; fixed iteration counts and partition traversal are excluded |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
@@ -1035,6 +1069,13 @@ Fetching an object without an ownership comparison does not alone trigger
 this additional review. Arbitrary permission helpers, ORM query scoping,
 Django/Flask ownership flows, and unsupported control flow remain outside
 this narrow check; absence of F102 is not proof of authorization.
+
+SKY-P403 excludes proven fixed bounds, shared-iterator consumption, terminal
+cleanup scans and bounded partition traversal only while that proof holds.
+Repeated aliases and mutations that replenish an iterator invalidate it.
+Remaining advice includes
+the outer/inner iterable evidence and calls for review: required Cartesian
+products may be correct, and nesting alone does not prove a performance bug.
 
 SKY-L009 does not assume ordinary `print()` or `pprint()` output is debugging.
 It reports explicit `DEBUG:`/`DBG:` labels, raw `locals()`/`globals()`/`vars()`
@@ -1080,6 +1121,21 @@ findings in any language.
 | E002 | LOW | Empty or docstring-only file | Python |
 | E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
 | E004 | LOW | Unnecessary export | TS/JS |
+
+SKY-UC001 preserves a sole unreachable `yield`/`yield None` that establishes
+generator semantics in its enclosing function. Nested function/class bodies
+do not supply that marker. Redundant markers and later unreachable statements
+remain reportable.
+
+SKY-U005 resolves namespace child imports, canonical distribution providers and
+explicit plugin/tool use in fixtures, markers, commands and configuration.
+Incomplete source/configuration evidence, unresolved dynamic imports and
+ambiguous namespace ownership do not prove non-use. The rule abstains from an
+unused-dependency finding when those limitations leave usage unresolved.
+One `analysis_summary.unused_dependency_analysis` receipt records coverage,
+reasons and abstentions. Candidates absent from a resolved usage inventory
+retain `value = "unused"`. Dependency vulnerability inventory and scanning
+remain independent of this usage decision.
 
 ### Framework entrypoints
 

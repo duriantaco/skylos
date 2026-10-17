@@ -456,14 +456,14 @@ class TestNoEffectStatementRule:
 
     def test_detects_useless_expression_statement(self):
         code = """
-def foo(value):
-    value + 1
-    return value
+def authorize(level, required):
+    level >= required
+    return grant_access()
 """
         results = self._run(code)
         assert len(results) == 1
         assert results[0]["rule_id"] == "SKY-L033"
-        assert results[0]["value"] == "no_effect"
+        assert results[0]["value"] == "discarded_comparison"
         assert results[0]["line"] == 3
 
     def test_detects_discarded_pure_uuid_call(self):

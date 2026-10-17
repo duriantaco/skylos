@@ -96,8 +96,12 @@ CURATED_IMPORT_PATHS = {
     "pyjwt": ("jwt",),
     "pymupdf": ("fitz", "pymupdf"),
     "pyopenssl": ("OpenSSL",),
+    # Canonical package trees: github.com/scrapy/pypydispatcher and
+    # pypi.org/project/python-consul2/ (a drop-in python-consul fork).
+    "pypydispatcher": ("pydispatch",),
     "pytelegrambotapi": ("telebot",),
     "python-dateutil": ("dateutil",),
+    "python-consul2": ("consul",),
     "python-dotenv": ("dotenv",),
     "python-jose": ("jose",),
     "python-ldap": ("ldap", "ldif", "slapdtest"),

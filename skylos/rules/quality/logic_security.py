@@ -1,5 +1,7 @@
 import ast
+import io
 import re
+import tokenize
 from functools import lru_cache
 from pathlib import Path
 
@@ -199,6 +201,7 @@ class DebugLeftoverRule(SkylosRule):
             }
         ]
 
+
 _SECURITY_TODO_RE = re.compile(
     r"#\s*(?:TODO|FIXME|HACK|XXX|TEMP)\b[:\s].*?"
     r"(?:auth|authenticat|authori[sz]|login|permission|credential|password|secret"
@@ -220,14 +223,13 @@ class SecurityTodoRule(SkylosRule):
             return None
 
         filename = context.get("filename", "")
-        src = context.get("_source")
-        if not src:
-            try:
-                src = Path(filename).read_text(  # skylos: ignore[SKY-D215] analyzer reads current scan file
-                    encoding="utf-8", errors="ignore"
-                )
-            except Exception:
-                return None
+        # Inspect the same source snapshot as the AST. The filename is only a
+        # diagnostic label and must never cause an additional filesystem read.
+        src = context.get("source")
+        if not isinstance(src, str):
+            src = context.get("_source")
+        if not isinstance(src, str):
+            return None
 
         findings = []
         for i, line in enumerate(src.splitlines(), start=1):
@@ -418,37 +420,49 @@ class UnfinishedGenerationRule(SkylosRule):
         self._type_checking_function_ids: set[int] = set()
         self._ellipsis_type_names: set[str] = set()
         self._ellipsis_type_modules: set[str] = set()
+        self._declared_contract_ids: set[int] = set()
+        self._parents: dict[int, ast.AST] = {}
+        self._scope_bindings: dict[int, set[str]] = {}
+        self._implementation_comments: list[tuple[int, str]] = []
+        self._runtime_bindings: dict[int, dict] = {}
+        self._runtime_contracts: dict[int, tuple[str, bool]] = {}
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
+            self._parents = {
+                id(child): parent
+                for parent in ast.walk(node)
+                for child in ast.iter_child_nodes(parent)
+            }
+            self._scope_bindings = {}
+            self._runtime_bindings = {}
+            self._implementation_comments = _unfinished_comment_markers(context)
             self._protocol_method_ids = protocol_method_ids(node)
             self._type_checking_function_ids = type_checking_function_ids(node)
+            self._declared_contract_ids = _declared_function_contracts(node)
             (
                 self._ellipsis_type_names,
                 self._ellipsis_type_modules,
             ) = ellipsis_type_bindings(node)
+            self._runtime_contracts = _empty_callable_runtime_contracts(node, self)
             return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
         node_id = id(node)
-        if (
-            node_id in self._protocol_method_ids
-            or node_id in self._type_checking_function_ids
+        if node_id in self._type_checking_function_ids or (
+            node_id not in self._runtime_contracts
+            and (
+                node_id in self._protocol_method_ids
+                or node_id in self._declared_contract_ids
+            )
         ):
             return None
 
         filename = context.get("filename", "")
 
-        for deco in node.decorator_list:
-            deco_name = None
-            if isinstance(deco, ast.Name):
-                deco_name = deco.id
-            elif isinstance(deco, ast.Attribute):
-                deco_name = deco.attr
-            if deco_name in ("abstractmethod", "overload"):
-                return None
-
         basename = Path(filename).name
+        if filename.endswith(".pyi"):
+            return None
         if basename.startswith("test_") or basename.startswith("conftest"):
             return None
 
@@ -460,11 +474,6 @@ class UnfinishedGenerationRule(SkylosRule):
             ellipsis_type_modules=self._ellipsis_type_modules,
         )
 
-        if basename == "__init__.py":
-            return default_findings or None
-        if node.name.startswith("__") and node.name.endswith("__"):
-            return default_findings or None
-
         body = node.body
         if not body:
             return default_findings or None
@@ -473,21 +482,54 @@ class UnfinishedGenerationRule(SkylosRule):
         if isinstance(body[0], ast.Expr) and _string_literal_value(body[0].value):
             stmts = body[1:]
 
-        if not stmts:
+        if len(stmts) > 1:
             return default_findings or None
 
-        if len(stmts) != 1:
-            return default_findings or None
-
-        stmt = stmts[0]
-        marker = _unfinished_generation_marker(stmt)
+        stmt = stmts[0] if stmts else body[0]
+        marker = _unfinished_generation_marker(stmt) if stmts else "implicit None"
         marker_line = stmt.lineno
 
         if not marker:
             return default_findings or None
-        if _is_empty_collection_route_response(marker, node):
+        if (
+            isinstance(stmt, ast.Return)
+            and isinstance(stmt.value, ast.Call)
+            and not self._is_builtin_name(
+                _dotted_name(stmt.value.func), node, include_function_scope=True
+            )
+        ):
+            # A locally defined list()/dict() may do real work. Its spelling
+            # cannot establish that the function returns an empty collection.
             return default_findings or None
 
+        unfinished = _explicit_unfinished_evidence(
+            node, stmt, self._implementation_comments
+        )
+        contradiction = self._return_contract_contradiction(node, marker)
+        runtime_contract, runtime_uncertain = self._runtime_contracts.get(
+            node_id, (None, False)
+        )
+        if not unfinished and not contradiction and not runtime_contract:
+            # Missing implementation is not itself evidence of a defect:
+            # optional hooks, null objects and interface methods use these
+            # exact bodies legitimately, including outside ABC/Protocol.
+            return default_findings or None
+
+        evidence = runtime_contract or contradiction or unfinished
+        uncertain = (
+            runtime_uncertain
+            if runtime_contract
+            else bool(contradiction and not self._decorators_preserve_result(node))
+        )
+        message = (
+            f"Function '{node.name}' has only `{marker}` in its body. "
+            f"{runtime_contract or contradiction}"
+            if runtime_contract or contradiction
+            else (
+                f"Function '{node.name}' is explicitly marked unfinished "
+                f"({unfinished}) and has only `{marker}` in its body."
+            )
+        )
         return [
             {
                 "rule_id": self.rule_id,
@@ -498,19 +540,952 @@ class UnfinishedGenerationRule(SkylosRule):
                 "simple_name": node.name,
                 "value": marker,
                 "threshold": 0,
-                "message": (
-                    f"Function '{node.name}' has only `{marker}` in its body. "
-                    f"AI-generated code often leaves stub implementations that "
-                    f"silently do nothing in production."
+                "message": message,
+                "evidence": evidence,
+                **(
+                    {
+                        "verification_status": "unverified",
+                        "usage_uncertainty": (
+                            "Other dependencies or decorators may supply the runtime "
+                            "behavior; the empty callable does not establish it."
+                        ),
+                    }
+                    if uncertain
+                    else {}
                 ),
                 "file": filename,
                 "basename": basename,
                 "line": marker_line,
                 "col": stmt.col_offset,
                 "vibe_category": "incomplete_generation",
-                "ai_likelihood": "medium",
-            }
+            },
+            *default_findings,
         ]
+
+    def _is_builtin_name(self, name, node, *, include_function_scope=False):
+        if any(
+            getattr(parameter, "name", None) == name
+            for parameter in getattr(node, "type_params", ())
+        ):
+            return False
+        scope = node if include_function_scope else self._parents.get(id(node))
+        while scope is not None:
+            if isinstance(
+                scope,
+                (
+                    ast.Module,
+                    ast.ClassDef,
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.Lambda,
+                ),
+            ):
+                scope_id = id(scope)
+                if scope_id not in self._scope_bindings:
+                    self._scope_bindings[scope_id] = _lexical_binding_names(scope)
+                if (
+                    name in self._scope_bindings[scope_id]
+                    or "*" in self._scope_bindings[scope_id]
+                ):
+                    return False
+            scope = self._parents.get(id(scope))
+        return name in _CONCRETE_RETURN_BUILTINS or name in {
+            "staticmethod",
+            "classmethod",
+            "property",
+        }
+
+    def _decorators_preserve_result(self, node):
+        return all(
+            self._resolved_symbol(
+                decorator.func if isinstance(decorator, ast.Call) else decorator
+            )
+            in {
+                "builtins.staticmethod",
+                "builtins.classmethod",
+                "builtins.property",
+                "functools.cache",
+                "functools.lru_cache",
+                "functools.wraps",
+                "abc.abstractmethod",
+            }
+            for decorator in node.decorator_list
+        )
+
+    def _resolved_symbol(self, expression, seen=None):
+        targets, uncertain = self._possible_symbols(expression, seen)
+        return next(iter(targets)) if len(targets) == 1 and not uncertain else None
+
+    def _possible_symbols(self, expression, seen=None):
+        """Keep bounded may-targets; a conflicting write is not safety proof."""
+        seen = set() if seen is None else seen
+        if expression is None or id(expression) in seen or len(seen) >= 24:
+            return set(), True
+        seen = seen | {id(expression)}
+        if isinstance(expression, ast.Attribute):
+            receivers, uncertain = self._possible_symbols(expression.value, seen)
+            targets = set()
+            for target in receivers:
+                if isinstance(target, str):
+                    targets.add(f"{target}.{expression.attr}")
+                elif isinstance(target, ast.ClassDef):
+                    if id(target) not in self._runtime_bindings:
+                        self._runtime_bindings[id(target)] = _runtime_contract_bindings(
+                            target
+                        )
+                    member = self._runtime_bindings[id(target)].get(expression.attr)
+                    values, partial = self._binding_targets(member, seen)
+                    targets.update(values)
+                    uncertain |= partial
+                else:
+                    uncertain = True
+            return targets, uncertain
+        if not isinstance(expression, ast.Name):
+            return {expression}, False
+
+        child, scope = expression, self._parents.get(id(expression))
+        in_function = False
+        while scope is not None:
+            if isinstance(
+                scope,
+                (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                # Defaults and decorators execute outside their declaration's
+                # body, and a method's free names do not resolve in its class.
+                evaluated_inside = isinstance(scope, ast.Module) or child in scope.body
+                if evaluated_inside and not (
+                    in_function and isinstance(scope, ast.ClassDef)
+                ):
+                    if id(scope) not in self._runtime_bindings:
+                        self._runtime_bindings[id(scope)] = _runtime_contract_bindings(
+                            scope
+                        )
+                    bindings = self._runtime_bindings[id(scope)]
+                    if expression.id in bindings:
+                        targets, partial = self._binding_targets(
+                            bindings[expression.id], seen
+                        )
+                        return targets, partial or "*" in bindings
+                    if "*" in bindings:
+                        return set(), True
+                in_function |= evaluated_inside and isinstance(
+                    scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+                )
+            child, scope = scope, self._parents.get(id(scope))
+        if expression.id in {
+            "PermissionError",
+            "staticmethod",
+            "classmethod",
+            "property",
+        }:
+            return {f"builtins.{expression.id}"}, False
+        return set(), True
+
+    def _binding_targets(self, binding, seen):
+        candidates = binding if isinstance(binding, tuple) else (binding,)
+        targets, uncertain = set(), len(candidates) > 1
+        for target in candidates:
+            if target is None:
+                uncertain = True
+            elif isinstance(target, (ast.Name, ast.Attribute)):
+                values, partial = self._possible_symbols(target, seen)
+                targets.update(values)
+                uncertain |= partial
+            else:
+                targets.add(target)
+        return targets, uncertain
+
+    def _return_contract_contradiction(self, node, marker):
+        annotation = node.returns
+        actual = _STUB_RETURN_TYPES.get(marker)
+        if actual is None:
+            return None
+        if self._resolved_symbol(annotation) in {
+            "typing.NoReturn",
+            "typing.Never",
+            "typing_extensions.NoReturn",
+            "typing_extensions.Never",
+        }:
+            evidence = (
+                "Its declared return contract forbids returning, but this body "
+                f"returns {'None' if actual == 'None' else 'an empty ' + actual}."
+            )
+            if not self._decorators_preserve_result(node):
+                evidence += " Verify whether its decorators enforce that contract."
+            return evidence
+        if isinstance(annotation, ast.Subscript):
+            annotation = annotation.value
+        if (
+            not isinstance(annotation, ast.Name)
+            or annotation.id not in _CONCRETE_RETURN_BUILTINS
+            or not self._is_builtin_name(annotation.id, node)
+        ):
+            return None
+
+        if actual == annotation.id:
+            return None
+        evidence = (
+            f"Its declared return type is `{annotation.id}`, but this body "
+            f"returns {'None' if actual == 'None' else 'an empty ' + actual}."
+        )
+        if not self._decorators_preserve_result(node):
+            evidence += " Verify whether its decorators supply the declared result."
+        return evidence
+
+
+_CONCRETE_RETURN_BUILTINS = {
+    "bool",
+    "int",
+    "float",
+    "complex",
+    "str",
+    "bytes",
+    "bytearray",
+    "list",
+    "tuple",
+    "set",
+    "frozenset",
+    "dict",
+    "range",
+    "memoryview",
+}
+_STUB_RETURN_TYPES = {
+    "pass": "None",
+    "...": "None",
+    "implicit None": "None",
+    "return": "None",
+    "return None": "None",
+    'return ""': "str",
+    "return list": "list",
+    "return dict": "dict",
+    "return set": "set",
+    "return tuple": "tuple",
+}
+_IMPLEMENTATION_TODO_RE = re.compile(
+    r"^\s*(?:#\s*)?(?:TODO|FIXME)(?:\([^\n)]*\))?\s*:?\s*"
+    r"(?:implement\b|(?:finish|complete)\s+(?:(?:the|this)\s+)?"
+    r"(?:implementation|function|method|stub|logic|behavior)\b"
+    r"|replace\s+(?:this\s+)?(?:stub|placeholder)\b)",
+    re.IGNORECASE,
+)
+_TEMPORARILY_UNFINISHED_RE = re.compile(
+    r"^\s*(?:not\s+(?:implemented|done|finished|completed)\s+yet\b"
+    r"|implementation\s+(?:pending|unfinished)\b)",
+    re.IGNORECASE,
+)
+_SUBCLASS_CONTRACT_RE = re.compile(r"\b(?:subclasses?|override)\b", re.IGNORECASE)
+
+
+def _unfinished_comment_markers(context):
+    source = context.get("source", context.get("_source"))
+    if not isinstance(source, str):
+        return []
+    markers = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if (
+                token.type == tokenize.COMMENT
+                and _IMPLEMENTATION_TODO_RE.match(token.string)
+                and not _SUBCLASS_CONTRACT_RE.search(token.string)
+            ):
+                markers.append((token.start[0], token.string.lstrip("# ")))
+    except (IndentationError, tokenize.TokenError):
+        return []
+    return markers
+
+
+def _explicit_unfinished_evidence(node, stmt, comments):
+    docstring = ast.get_docstring(node, clean=True) or ""
+    for line in docstring.splitlines():
+        if (
+            _IMPLEMENTATION_TODO_RE.match(line)
+            or _TEMPORARILY_UNFINISHED_RE.match(line)
+        ) and not _SUBCLASS_CONTRACT_RE.search(line):
+            return line.strip()[:160]
+    for line, comment in comments:
+        if node.lineno <= line <= getattr(node, "end_lineno", node.lineno):
+            return comment[:160]
+    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call):
+        for argument in stmt.exc.args:
+            text = _string_literal_value(argument)
+            if text and (
+                _IMPLEMENTATION_TODO_RE.match(text)
+                or _TEMPORARILY_UNFINISHED_RE.match(text)
+            ):
+                return text.strip()[:160]
+    return None
+
+
+def _runtime_contract_bindings(scope):
+    """Bindings in one runtime scope, invalidating conflicting declarations."""
+    bindings = {}
+
+    def record(name, target=None):
+        if name not in bindings:
+            bindings[name] = target
+            return
+        old = bindings[name]
+        candidates = old if isinstance(old, tuple) else (old,)
+        if not any(value is target or value == target for value in candidates):
+            # Keep a bounded set of possible targets and uncertainty, rather
+            # than treating rebinding as proof that the old no-op disappeared.
+            bindings[name] = (
+                (*candidates[:12], target)
+                if len(candidates) < 13
+                else (*candidates[:12], None)
+            )
+
+    class Bindings(ast.NodeVisitor):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                record(node.id)
+
+        def visit_Assign(self, node):
+            self.visit(node.value)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    record(target.id, node.value)
+                else:
+                    self.visit(target)
+
+        def visit_AnnAssign(self, node):
+            if node.value is not None:
+                self.visit(node.value)
+            if isinstance(node.target, ast.Name):
+                record(node.target.id, node.value)
+            else:
+                self.visit(node.target)
+
+        def visit_Import(self, node):
+            for alias in node.names:
+                record(
+                    alias.asname or alias.name.split(".")[0],
+                    alias.name if alias.asname else alias.name.split(".")[0],
+                )
+
+        def visit_ImportFrom(self, node):
+            for alias in node.names:
+                record(
+                    alias.asname or alias.name,
+                    f"{node.module}.{alias.name}" if not node.level else None,
+                )
+
+        def visit_FunctionDef(self, node):
+            record(node.name, node)
+            for expression in [
+                *node.decorator_list,
+                *node.args.defaults,
+                *node.args.kw_defaults,
+            ]:
+                if expression is not None:
+                    self.visit(expression)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            record(node.name, node)
+            for expression in [*node.decorator_list, *node.bases, *node.keywords]:
+                self.visit(expression)
+
+        def visit_Lambda(self, node):
+            for expression in [*node.args.defaults, *node.args.kw_defaults]:
+                if expression is not None:
+                    self.visit(expression)
+
+        def visit_ListComp(self, node):
+            for generator in node.generators:
+                self.visit(generator.iter)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+    visitor = Bindings()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for argument in [
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+            scope.args.vararg,
+            scope.args.kwarg,
+        ]:
+            if argument is not None:
+                record(argument.arg)
+    for statement in scope.body:
+        visitor.visit(statement)
+    # Include pattern captures, exception bindings, dynamic scope access and
+    # global/nonlocal declarations even when their syntax has no Store Name.
+    for name in _lexical_binding_names(scope):
+        bindings.setdefault(name, None)
+    for nested in ast.walk(scope):
+        if isinstance(nested, (ast.Global, ast.Nonlocal)):
+            for name in nested.names:
+                if name in bindings:
+                    record(name)
+    return bindings
+
+
+_UNKNOWN_STUB_VALUE = object()
+_UNAWAITED_STUB_VALUE = object()
+
+
+def _stub_result(node, rule):
+    # typing.overload replaces the declaration with a callable that raises.
+    if any(
+        rule._resolved_symbol(
+            decorator.func if isinstance(decorator, ast.Call) else decorator
+        )
+        in {"typing.overload", "typing_extensions.overload"}
+        for decorator in node.decorator_list
+    ):
+        return _UNKNOWN_STUB_VALUE
+    body = node.body
+    if body and isinstance(body[0], ast.Expr) and _string_literal_value(body[0].value):
+        body = body[1:]
+    if not body:
+        return None
+    if len(body) != 1:
+        return _UNKNOWN_STUB_VALUE
+    marker = _unfinished_generation_marker(body[0])
+    return {
+        "pass": None,
+        "...": None,
+        "return": None,
+        "return None": None,
+        'return ""': "",
+        "return list": [],
+        "return tuple": (),
+        "return dict": {},
+        "return set": set(),
+    }.get(marker, _UNKNOWN_STUB_VALUE)
+
+
+def _dependency_callback(call):
+    if call.args:
+        return call.args[0]
+    return next(
+        (keyword.value for keyword in call.keywords if keyword.arg == "dependency"),
+        None,
+    )
+
+
+def _denial_exception(statement, rule):
+    if not isinstance(statement, ast.Raise):
+        return False
+    exception = statement.exc
+    constructor = exception.func if isinstance(exception, ast.Call) else exception
+    resolved = rule._resolved_symbol(constructor)
+    if resolved == "builtins.PermissionError":
+        return True
+    if resolved not in {
+        "fastapi.HTTPException",
+        "fastapi.exceptions.HTTPException",
+        "starlette.exceptions.HTTPException",
+    } or not isinstance(exception, ast.Call):
+        return False
+    status = (
+        exception.args[0]
+        if exception.args
+        else next(
+            (
+                keyword.value
+                for keyword in exception.keywords
+                if keyword.arg == "status_code"
+            ),
+            None,
+        )
+    )
+    return isinstance(status, ast.Constant) and status.value in {401, 403}
+
+
+def _branch_denies(statements, rule):
+    # A direct raise is unconditional if no earlier direct exit bypasses it.
+    for statement in statements:
+        if _denial_exception(statement, rule):
+            return True
+        if isinstance(statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+            return False
+        if not isinstance(
+            statement,
+            (
+                ast.Expr,
+                ast.Assign,
+                ast.AnnAssign,
+                ast.AugAssign,
+                ast.Pass,
+                ast.Assert,
+                ast.Import,
+                ast.ImportFrom,
+            ),
+        ) or any(
+            isinstance(child, (ast.Yield, ast.YieldFrom))
+            for child in ast.walk(statement)
+        ):
+            # Earlier branching, loops, contexts and generators can exit
+            # before the raise. Their mere presence cannot prove denial.
+            return False
+    return False
+
+
+def _dependency_always_denies(function, rule, seen=None):
+    seen = set() if seen is None else seen
+    if id(function) in seen or len(seen) >= 12:
+        return False
+    seen = seen | {id(function)}
+    # A decorator may replace the callable or erase its dependency signature.
+    # Original defaults cannot prove enforcement by the replacement.
+    if function.decorator_list:
+        return False
+    if _branch_denies(function.body, rule):
+        return True
+    for default in [*function.args.defaults, *function.args.kw_defaults]:
+        if not isinstance(default, ast.Call) or rule._resolved_symbol(
+            default.func
+        ) not in {
+            "fastapi.Depends",
+            "fastapi.Security",
+        }:
+            continue
+        callback = rule._resolved_symbol(_dependency_callback(default))
+        if isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            _dependency_always_denies(callback, rule, seen)
+        ):
+            return True
+    return False
+
+
+def _stub_predicate_value(
+    expression,
+    function,
+    replacement,
+    rule,
+    seen=None,
+    *,
+    awaited=False,
+    unawaited=None,
+):
+    """Evaluate only builtin literal predicates, replacing this local call."""
+    seen = set() if seen is None else seen
+    if id(expression) in seen or len(seen) >= 48:
+        return _UNKNOWN_STUB_VALUE
+    seen = seen | {id(expression)}
+    if isinstance(expression, ast.Await):
+        return _stub_predicate_value(
+            expression.value,
+            function,
+            replacement,
+            rule,
+            seen,
+            awaited=True,
+            unawaited=unawaited,
+        )
+    if isinstance(expression, ast.Call):
+        targets, _ = rule._possible_symbols(expression.func)
+        if function not in targets:
+            return _UNKNOWN_STUB_VALUE
+        if isinstance(function, ast.AsyncFunctionDef) and not awaited:
+            if unawaited is not None:
+                unawaited.add(id(expression))
+            return _UNAWAITED_STUB_VALUE
+        return replacement
+    if isinstance(expression, ast.Name):
+        targets, _ = rule._possible_symbols(expression)
+        for target in targets:
+            if isinstance(target, ast.AST):
+                value = _stub_predicate_value(
+                    target,
+                    function,
+                    replacement,
+                    rule,
+                    seen,
+                    awaited=awaited,
+                    unawaited=unawaited,
+                )
+                if value is not _UNKNOWN_STUB_VALUE:
+                    return value
+        return _UNKNOWN_STUB_VALUE
+    if isinstance(expression, ast.Constant):
+        if expression.value is None or isinstance(expression.value, (bool, int, str)):
+            return expression.value
+        return _UNKNOWN_STUB_VALUE
+    if isinstance(expression, ast.UnaryOp) and isinstance(expression.op, ast.Not):
+        value = _stub_predicate_value(
+            expression.operand,
+            function,
+            replacement,
+            rule,
+            seen,
+            unawaited=unawaited,
+        )
+        return _UNKNOWN_STUB_VALUE if value is _UNKNOWN_STUB_VALUE else not value
+    if isinstance(expression, ast.BoolOp):
+        unknown = False
+        for operand in expression.values:
+            value = _stub_predicate_value(
+                operand,
+                function,
+                replacement,
+                rule,
+                seen,
+                unawaited=unawaited,
+            )
+            if value is _UNKNOWN_STUB_VALUE:
+                unknown = True
+            elif isinstance(expression.op, ast.And) and not value:
+                return False
+            elif isinstance(expression.op, ast.Or) and value:
+                return True
+        if unknown:
+            return _UNKNOWN_STUB_VALUE
+        return isinstance(expression.op, ast.And)
+    if isinstance(expression, ast.Compare):
+        left = _stub_predicate_value(
+            expression.left,
+            function,
+            replacement,
+            rule,
+            seen,
+            unawaited=unawaited,
+        )
+        if left is _UNKNOWN_STUB_VALUE:
+            return left
+        for operator, right_node in zip(expression.ops, expression.comparators):
+            right = _stub_predicate_value(
+                right_node,
+                function,
+                replacement,
+                rule,
+                seen,
+                unawaited=unawaited,
+            )
+            if right is _UNKNOWN_STUB_VALUE:
+                return right
+            if isinstance(operator, ast.Is):
+                matches = left is right
+            elif isinstance(operator, ast.IsNot):
+                matches = left is not right
+            elif isinstance(operator, ast.Eq):
+                matches = left == right
+            elif isinstance(operator, ast.NotEq):
+                matches = left != right
+            else:
+                return _UNKNOWN_STUB_VALUE
+            if not matches:
+                return False
+            left = right
+        return True
+    return _UNKNOWN_STUB_VALUE
+
+
+def _predicate_local_functions(expression, rule, seen=None):
+    seen = set() if seen is None else seen
+    if id(expression) in seen or len(seen) >= 48:
+        return {}
+    seen = seen | {id(expression)}
+    if isinstance(expression, ast.Name):
+        targets, uncertain = rule._possible_symbols(expression)
+        found = {}
+        for target in targets:
+            if isinstance(target, ast.AST):
+                for callback, partial in _predicate_local_functions(
+                    target, rule, seen
+                ).items():
+                    found[callback] = found.get(callback, False) or uncertain or partial
+        return found
+    if isinstance(expression, ast.Call):
+        targets, uncertain = rule._possible_symbols(expression.func)
+        return {
+            target: uncertain
+            for target in targets
+            if isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+    found = {}
+    for child in ast.iter_child_nodes(expression):
+        for callback, partial in _predicate_local_functions(child, rule, seen).items():
+            found[callback] = found.get(callback, False) or partial
+    return found
+
+
+def _security_dependency_contracts(module, rule):
+    contracts = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        constructors, constructor_uncertain = rule._possible_symbols(node.func)
+        if not constructors & {"fastapi.Security", "fastapi.param_functions.Security"}:
+            continue
+        callbacks, callback_uncertain = rule._possible_symbols(
+            _dependency_callback(node)
+        )
+        for callback in callbacks:
+            if not isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if _stub_result(callback, rule) is _UNKNOWN_STUB_VALUE:
+                continue
+            if _dependency_always_denies(callback, rule):
+                continue
+            scopes = next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "scopes"),
+                None,
+            )
+            required = (
+                [
+                    item.value
+                    for item in scopes.elts
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                ]
+                if isinstance(scopes, (ast.List, ast.Tuple, ast.Set))
+                else []
+            )
+            extra_behavior = (
+                constructor_uncertain
+                or callback_uncertain
+                or callback.decorator_list
+                or any(
+                    isinstance(item, ast.Call)
+                    for item in [*callback.args.defaults, *callback.args.kw_defaults]
+                )
+            )
+            evidence = (
+                (
+                    "It may be registered"
+                    if constructor_uncertain or callback_uncertain
+                    else "It is registered"
+                )
+                + f" as a FastAPI Security dependency at line {node.lineno}"
+                + (f" requiring scopes {required!r}" if required else "")
+                + ". This empty body performs no authentication or scope check"
+                + (
+                    "; verify enforcement by its other dependencies or decorators."
+                    if extra_behavior
+                    else " and cannot reject any caller."
+                )
+            )
+            contracts[id(callback)] = evidence, bool(extra_behavior)
+    return contracts
+
+
+def _empty_callable_runtime_contracts(module, rule):
+    contracts = _security_dependency_contracts(module, rule)
+    for node in ast.walk(module):
+        if not isinstance(node, ast.If):
+            continue
+        denies_when = (
+            True
+            if _branch_denies(node.body, rule)
+            else False
+            if _branch_denies(node.orelse, rule)
+            else None
+        )
+        if denies_when is None:
+            continue
+        for callback, binding_uncertain in _predicate_local_functions(
+            node.test, rule
+        ).items():
+            result = _stub_result(callback, rule)
+            if result is _UNKNOWN_STUB_VALUE:
+                continue
+            unawaited = set()
+            actual = _stub_predicate_value(
+                node.test, callback, result, rule, unawaited=unawaited
+            )
+            if actual is _UNKNOWN_STUB_VALUE or bool(actual) == denies_when:
+                continue
+            # The placeholder must affect this branch. A dead `False and ...`
+            # guard does not provide evidence that the local call is defective.
+            alternatives = [
+                _stub_predicate_value(node.test, callback, value, rule)
+                for value in (True, False)
+            ]
+            if not unawaited and not any(
+                value is not _UNKNOWN_STUB_VALUE and bool(value) == denies_when
+                for value in alternatives
+            ):
+                continue
+            uncertain = binding_uncertain or not rule._decorators_preserve_result(
+                callback
+            )
+            evidence = (
+                "Its unawaited coroutine is truthy and bypasses"
+                if unawaited
+                else "Its placeholder result bypasses"
+            ) + f" the permission-denial branch at line {node.lineno}."
+            if uncertain:
+                evidence += " Verify alternate bindings or decorators that may supply an enforcing result."
+            contracts[id(callback)] = evidence, uncertain
+    return contracts
+
+
+def _lexical_binding_names(scope):
+    """Conservative bindings in one scope; nested bodies do not shadow it."""
+
+    class Bindings(ast.NodeVisitor):
+        def __init__(self):
+            self.names = set()
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.names.add(node.id)
+
+        def visit_FunctionDef(self, node):
+            self.names.add(node.name)
+            for expression in [*node.decorator_list, *node.args.defaults]:
+                self.visit(expression)
+            for expression in node.args.kw_defaults:
+                if expression is not None:
+                    self.visit(expression)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            self.names.add(node.name)
+            for expression in [*node.decorator_list, *node.bases]:
+                self.visit(expression)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+
+        def visit_Lambda(self, node):
+            for expression in [*node.args.defaults, *node.args.kw_defaults]:
+                if expression is not None:
+                    self.visit(expression)
+
+        def visit_Import(self, node):
+            self.names.update(
+                alias.asname or alias.name.split(".")[0] for alias in node.names
+            )
+
+        def visit_ImportFrom(self, node):
+            self.names.update(alias.asname or alias.name for alias in node.names)
+
+        def visit_Call(self, node):
+            if isinstance(node.func, ast.Name) and node.func.id in {
+                "exec",
+                "globals",
+                "locals",
+            }:
+                self.names.add("*")
+            self.generic_visit(node)
+
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                self.names.add(node.name)
+            self.generic_visit(node)
+
+        def visit_MatchAs(self, node):
+            if node.name:
+                self.names.add(node.name)
+            self.generic_visit(node)
+
+        visit_MatchStar = visit_MatchAs
+
+        def visit_MatchMapping(self, node):
+            if node.rest:
+                self.names.add(node.rest)
+            self.generic_visit(node)
+
+        def visit_Global(self, node):
+            self.names.update(node.names)
+
+        visit_Nonlocal = visit_Global
+
+    visitor = Bindings()
+    visitor.names.update(
+        parameter.name for parameter in getattr(scope, "type_params", ())
+    )
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        arguments = scope.args
+        visitor.names.update(
+            argument.arg
+            for argument in [
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+            ]
+        )
+        for argument in (arguments.vararg, arguments.kwarg):
+            if argument is not None:
+                visitor.names.add(argument.arg)
+    body = scope.body if not isinstance(scope, ast.Lambda) else [scope.body]
+    for statement in body:
+        visitor.visit(statement)
+    return visitor.names
+
+
+def _declared_function_contracts(tree):
+    """Resolve typing/ABC declaration decorators, rather than trusting spelling."""
+    imports = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                imports[alias.asname or alias.name] = alias.name
+        elif isinstance(statement, ast.ImportFrom) and statement.level == 0:
+            for alias in statement.names:
+                imports[alias.asname or alias.name] = f"{statement.module}.{alias.name}"
+    rebound = set()
+    for statement in ast.walk(tree):
+        targets = []
+        # A local import binds its name just as a parameter or assignment
+        # does. Conservatively invalidate a module alias if another scope
+        # can bind it to a different import; never borrow the module's ABC
+        # identity for an application-provided decorator.
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                local = alias.asname or alias.name.split(".")[0]
+                imported = alias.name if alias.asname else alias.name.split(".")[0]
+                if local in imports and imports[local] != imported:
+                    rebound.add(local)
+        elif isinstance(statement, ast.ImportFrom):
+            for alias in statement.names:
+                local = alias.asname or alias.name
+                imported = f"{statement.module}.{alias.name}"
+                if statement.level or local in imports and imports[local] != imported:
+                    rebound.add(local)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(statement.name)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            rebound.update(
+                argument.arg
+                for argument in [
+                    *statement.args.posonlyargs,
+                    *statement.args.args,
+                    *statement.args.kwonlyargs,
+                ]
+            )
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, (ast.AnnAssign, ast.NamedExpr)):
+            if statement.value is not None:
+                targets = [statement.target]
+        for target in targets:
+            rebound.update(
+                _dotted_name(part)
+                for part in ast.walk(target)
+                if isinstance(part, (ast.Name, ast.Attribute))
+            )
+    contracts = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            name = _decorator_name(decorator)
+            head, dot, tail = name.partition(".")
+            if head in rebound or name in rebound:
+                continue
+            resolved = imports.get(head, "") + (dot + tail if dot else "")
+            if resolved in {
+                "abc.abstractmethod",
+                "typing.overload",
+                "typing_extensions.overload",
+            }:
+                contracts.add(id(node))
+    return contracts
 
 
 def _ellipsis_default_findings(
@@ -586,51 +1561,6 @@ def _unfinished_generation_marker(stmt):
     return None
 
 
-def _is_empty_collection_route_response(
-    marker: str,
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> bool:
-    if marker not in {"return list", "return dict"}:
-        return False
-    return any(
-        _is_readonly_route_decorator(decorator)
-        and _decorator_has_response_contract(decorator)
-        for decorator in node.decorator_list
-    )
-
-
-def _is_readonly_route_decorator(decorator: ast.AST) -> bool:
-    name = _decorator_name(decorator)
-    method_name = name.rsplit(".", 1)[-1].lower()
-    if method_name == "get":
-        return True
-    if method_name not in {"route", "api_route"}:
-        return False
-    return _decorator_declares_only_get(decorator)
-
-
-def _decorator_declares_only_get(decorator: ast.AST) -> bool:
-    if not isinstance(decorator, ast.Call):
-        return False
-    methods: set[str] = set()
-    for keyword in decorator.keywords:
-        if keyword.arg == "methods":
-            methods.update(value.upper() for value in _string_values(keyword.value))
-    return bool(methods) and methods <= {"GET", "HEAD", "OPTIONS"}
-
-
-def _decorator_has_response_contract(decorator: ast.AST) -> bool:
-    if not isinstance(decorator, ast.Call):
-        return False
-    return any(
-        keyword.arg in {"response_model", "response_class"}
-        and not (
-            isinstance(keyword.value, ast.Constant) and keyword.value.value is None
-        )
-        for keyword in decorator.keywords
-    )
-
-
 def _decorator_name(decorator: ast.AST) -> str:
     if isinstance(decorator, ast.Call):
         return _dotted_name(decorator.func)
@@ -646,19 +1576,6 @@ def _dotted_name(node: ast.AST | None) -> str:
         base = _dotted_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return ""
-
-
-def _string_values(node: ast.AST | None) -> list[str]:
-    if node is None:
-        return []
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return [node.value]
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        values: list[str] = []
-        for elt in node.elts:
-            values.extend(_string_values(elt))
-        return values
-    return []
 
 
 def _placeholder_return_marker(value):
@@ -877,36 +1794,19 @@ class StaleMockRule(SkylosRule):
         except OSError:
             return None
 
-        defined_names = StaleMockRule._parse_cache.get(cache_key)
-        if defined_names is None:
+        bindings = StaleMockRule._parse_cache.get(cache_key)
+        if bindings is None:
             try:
                 source = module_file.read_text(errors="replace")
                 tree = ast.parse(source)
             except (OSError, SyntaxError):
-                StaleMockRule._parse_cache[cache_key] = set()
+                StaleMockRule._parse_cache[cache_key] = (frozenset(), True)
                 return None
-            defined_names = set()
-            for child in ast.walk(tree):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    defined_names.add(child.name)
-                elif isinstance(child, ast.ClassDef):
-                    defined_names.add(child.name)
-                elif isinstance(child, ast.Assign):
-                    for t in child.targets:
-                        if isinstance(t, ast.Name):
-                            defined_names.add(t.id)
-                elif isinstance(child, ast.ImportFrom):
-                    if child.names:
-                        for alias in child.names:
-                            name = alias.asname if alias.asname else alias.name
-                            defined_names.add(name)
-                elif isinstance(child, ast.Import):
-                    for alias in child.names:
-                        name = alias.asname if alias.asname else alias.name
-                        defined_names.add(name.split(".")[0])
-            StaleMockRule._parse_cache[cache_key] = defined_names
+            bindings = _module_patch_bindings(tree)
+            StaleMockRule._parse_cache[cache_key] = bindings
 
-        if attr_name in defined_names:
+        defined_names, dynamic = bindings
+        if attr_name in defined_names or dynamic:
             return None
 
         basename = Path(filename).name
@@ -922,9 +1822,9 @@ class StaleMockRule(SkylosRule):
                 "threshold": 0,
                 "message": (
                     f"mock.patch('{target_str}') references '{attr_name}' "
-                    f"but it does not exist in '{'.'.join(module_parts)}'. "
-                    f"The function may have been renamed or removed, "
-                    f"making this mock silently ineffective."
+                    f"but no module binding was found in '{'.'.join(module_parts)}'. "
+                    "Check for a renamed or removed target; patch normally raises "
+                    "AttributeError when the target is missing."
                 ),
                 "file": filename,
                 "basename": basename,
@@ -938,6 +1838,20 @@ class StaleMockRule(SkylosRule):
     @staticmethod
     def _extract_patch_target(call_node):
         func = call_node.func
+        # patch(target, new=DEFAULT, spec=None, create=False, ...)
+        if (
+            len(call_node.args) >= 4
+            and isinstance(call_node.args[3], ast.Constant)
+            and call_node.args[3].value is True
+        ):
+            return None, None
+        if any(
+            kw.arg == "create"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in call_node.keywords
+        ):
+            return None, None
 
         is_patch = False
         if isinstance(func, ast.Attribute) and func.attr == "patch":
@@ -995,6 +1909,112 @@ class StaleMockRule(SkylosRule):
             return Path(direct)
 
         return None
+
+
+def _module_patch_bindings(tree):
+    """Potential runtime module bindings, without leaking locals into globals.
+
+    An open namespace cannot prove a patch target absent. In particular,
+    module __getattr__, star imports and executable namespace updates need
+    runtime knowledge, so abstain instead of diagnosing a missing attribute.
+    """
+    names = set()
+    dynamic = False
+
+    def bind(target):
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                bind(element)
+        elif isinstance(target, ast.Starred):
+            bind(target.value)
+
+    def visit(node):
+        nonlocal dynamic
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                dynamic |= node.name == "__getattr__"
+                headers = [
+                    *node.decorator_list,
+                    *node.args.defaults,
+                    *(d for d in node.args.kw_defaults if d is not None),
+                ]
+            else:
+                headers = [
+                    *node.decorator_list,
+                    *node.bases,
+                    *(keyword.value for keyword in node.keywords),
+                ]
+            # Definition headers execute in the containing namespace; the
+            # function/class body has its own scope. A walrus in a default
+            # or decorator can therefore create a real module attribute.
+            for header in headers:
+                visit(header)
+            return
+        if isinstance(node, ast.Lambda):
+            return
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target)
+            if any(
+                not isinstance(t, (ast.Name, ast.Tuple, ast.List)) for t in node.targets
+            ):
+                # globals()[name] = ... / module.__dict__[name] = ...
+                dynamic |= any(
+                    isinstance(part, ast.Call)
+                    and isinstance(part.func, ast.Name)
+                    and part.func.id in {"globals", "locals", "vars"}
+                    for target in node.targets
+                    for part in ast.walk(target)
+                )
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            bind(node.target)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.NamedExpr)):
+            bind(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars:
+                    bind(item.optional_vars)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    dynamic = True
+                else:
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Call):
+            dynamic |= isinstance(node.func, ast.Name) and node.func.id == "exec"
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "setattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Subscript)
+                and _qualified_call_name(node.args[0].value) == "sys.modules"
+                and isinstance(node.args[0].slice, ast.Name)
+                and node.args[0].slice.id == "__name__"
+            ):
+                attribute = node.args[1]
+                if isinstance(attribute, ast.Constant) and isinstance(
+                    attribute.value, str
+                ):
+                    names.add(attribute.value)
+                else:
+                    dynamic = True
+            dynamic |= isinstance(node.func, ast.Attribute) and any(
+                isinstance(part, ast.Call)
+                and isinstance(part.func, ast.Name)
+                and part.func.id in {"globals", "locals", "vars"}
+                for part in ast.walk(node.func.value)
+            )
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return frozenset(names), dynamic
 
 
 def _var_name_is_security(name, vibe_dictionary=None):
@@ -1255,35 +2275,6 @@ def _is_env_lookup(node):
     return False
 
 
-_SECRET_PLACEHOLDER_HINTS = (
-    "example",
-    "changeme",
-    "change_me",
-    "change-me",
-    "changethis",
-    "change_this",
-    "placeholder",
-    "your",
-    "replace",
-    "dummy",
-    "sample",
-    "fake",
-    "xxx",
-    "todo",
-    "test",
-    "dev",
-    "local",
-    "insecure",
-    "default",
-    "notsecret",
-    "not-secret",
-    "not_secret",
-    "secret-key",
-    "secret_key",
-    "redacted",
-    "${",
-    "{{",
-)
 _HEX_SECRET_RE = re.compile(r"[0-9a-fA-F]{24,}")
 _TOKEN_SECRET_RE = re.compile(r"[A-Za-z0-9._~+/=-]{20,}")
 _LOOKUP_METHODS = frozenset({"get", "getenv", "environ", "getattr", "get_secret"})
@@ -1314,8 +2305,6 @@ def _looks_like_real_secret(value: str, vibe_dictionary=None) -> bool:
         stripped
     ):
         return False
-    if any(hint in lower for hint in _SECRET_PLACEHOLDER_HINTS):
-        return False
     if len(set(stripped)) <= 4:
         return False
     has_alpha = any(c.isalpha() for c in stripped)
@@ -1343,17 +2332,6 @@ def _looks_like_real_secret(value: str, vibe_dictionary=None) -> bool:
 # ``APP_URL``, ``GITHUB_PAT``: two or more UPPER_SNAKE words, each letters
 # with at most two trailing digits.
 _UPPER_SNAKE_NAME_RE = re.compile(r"[A-Z]+[0-9]{0,2}(?:_[A-Z]+[0-9]{0,2})+")
-# ``django.secret_key``: two or more dotted lowercase segments.
-_DOTTED_NAME_RE = re.compile(
-    r"[a-z]+[0-9]{0,2}(?:_[a-z]+[0-9]{0,2})*"
-    r"(?:\.[a-z]+[0-9]{0,2}(?:_[a-z]+[0-9]{0,2})*)+"
-)
-# ``${NAME}`` and ``{{ name }}``: the reference forms that never hold the
-# credential themselves.
-_STRICT_REFERENCE_RES = (
-    re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\}"),
-    re.compile(r"\{\{\s*(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\s*\}\}"),
-)
 # English words and acronyms stay below this; random runs reach it.
 _NAME_WORD_MAX_ENTROPY = 3.5
 # Any of these in a target name makes it hold a credential...
@@ -1426,28 +2404,6 @@ def _is_location_name(target, var_name: str) -> bool:
     return bool(set(re.split(r"[^a-z0-9]+", lower)) & _LOCATION_NAME_WORDS)
 
 
-def _is_reference_under(target, var_name: str, value: str) -> bool:
-    """A reference to a value kept elsewhere.
-
-    A location name (``DATABASE_URL = "$DATABASE_URL"``) accepts every form
-    ``secret_shapes.is_reference`` does. Under any other target ``$X`` and
-    ``%X%`` can be the credential itself (``APP_KEY = "$ADMIN2024"``), so
-    only ``${NAME}`` and ``{{ name }}`` count, with NAME in UPPER_SNAKE or a
-    dotted lowercase path and nothing random in it.
-    """
-    if _is_location_name(target, var_name):
-        return secret_shapes.is_reference(value)
-    stripped = value.strip()
-    for pattern in _STRICT_REFERENCE_RES:
-        match = pattern.fullmatch(stripped)
-        if match:
-            name = match.group("name")
-            return not _has_random_run(name) and bool(
-                _UPPER_SNAKE_NAME_RE.fullmatch(name) or _DOTTED_NAME_RE.fullmatch(name)
-            )
-    return False
-
-
 def _key_names_its_setting(target, var_name: str, value: str) -> bool:
     """``APP_URL_KEY = "APP_URL"``: a plain name ending in ``_KEY`` whose
     value is the rest of the name in UPPER_SNAKE with two or more words.
@@ -1468,24 +2424,88 @@ def _key_names_its_setting(target, var_name: str, value: str) -> bool:
 def _names_a_setting(target, var_name: str, value: str) -> bool:
     """The literal names a setting rather than holding a credential: a
     reference to one, or ``APP_URL_KEY = "APP_URL"``."""
-    return _is_reference_under(target, var_name, value) or _key_names_its_setting(
-        target, var_name, value
-    )
+    # Python never expands a raw `${PASSWORD}` / `{{ password }}` string.
+    # A location reference contains no credential, but reference-like spelling
+    # under a credential name cannot prove a shipped password is safe.
+    return (
+        _is_location_name(target, var_name) and secret_shapes.is_reference(value)
+    ) or _key_names_its_setting(target, var_name, value)
 
 
-def _lookup_key_name(node) -> str | None:
+def _resolved_builtin_getattr_calls(tree):
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    if any(
+        isinstance(node, ast.Global) and "getattr" in node.names
+        for node in ast.walk(tree)
+    ):
+        return set()
+    scopes = {}
+    resolved = set()
+    for call in ast.walk(tree):
+        if (
+            not isinstance(call, ast.Call)
+            or not isinstance(call.func, ast.Name)
+            or call.func.id != "getattr"
+        ):
+            continue
+        current, in_function = call, False
+        while current in parents:
+            current = parents[current]
+            if isinstance(current, ast.ClassDef) and in_function:
+                continue
+            if isinstance(
+                current,
+                (
+                    ast.Module,
+                    ast.ClassDef,
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.Lambda,
+                ),
+            ):
+                in_function |= isinstance(
+                    current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                )
+                if current not in scopes:
+                    scopes[current] = _lexical_binding_names(current)
+                if {"getattr", "*"} & scopes[current]:
+                    break
+        else:
+            resolved.add(id(call))
+    return resolved
+
+
+def _lookup_key_name(node, builtin_getattr_calls=None) -> str | None:
     """``os.getenv("X")`` / ``config.get("X")`` / ``os.environ["X"]`` -> "X"."""
     if isinstance(node, ast.Call):
         func = node.func
         name = (
             func.attr
             if isinstance(func, ast.Attribute)
-            else func.id if isinstance(func, ast.Name) else ""
+            else func.id
+            if isinstance(func, ast.Name)
+            else ""
         )
         if name not in _LOOKUP_METHODS:
             return None
-        if node.args and isinstance(node.args[0], ast.Constant):
-            key = node.args[0].value
+        if name == "getattr" and (
+            not isinstance(func, ast.Name)
+            or builtin_getattr_calls is not None
+            and id(node) not in builtin_getattr_calls
+            or node.keywords
+            or len(node.args) not in (2, 3)
+            or any(isinstance(arg, ast.Starred) for arg in node.args)
+        ):
+            return None
+        key_index = 1 if name == "getattr" else 0
+        if len(node.args) > key_index and isinstance(
+            node.args[key_index], ast.Constant
+        ):
+            key = node.args[key_index].value
             return key if isinstance(key, str) else None
         return ""
     if isinstance(node, ast.Subscript):
@@ -1496,7 +2516,7 @@ def _lookup_key_name(node) -> str | None:
     return None
 
 
-def _secret_fallback_literals(value):
+def _secret_fallback_literals(value, builtin_getattr_calls=None):
     """Yield (literal_node, lookup_key) for credential literals used as the
     fallback of a config/env lookup:
 
@@ -1504,7 +2524,9 @@ def _secret_fallback_literals(value):
     ``config.get("X", default="<lit>")``.
     """
     if isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
-        lookups = [_lookup_key_name(item) for item in value.values[:-1]]
+        lookups = [
+            _lookup_key_name(item, builtin_getattr_calls) for item in value.values[:-1]
+        ]
         last = value.values[-1]
         if (
             any(key is not None for key in lookups)
@@ -1515,15 +2537,555 @@ def _secret_fallback_literals(value):
             yield last, key
         return
     if isinstance(value, ast.Call):
-        key = _lookup_key_name(value)
+        key = _lookup_key_name(value, builtin_getattr_calls)
         if key is None:
             return
-        default = value.args[1] if len(value.args) >= 2 else None
+        func = value.func
+        method = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else ""
+        )
+        default_index = 2 if method == "getattr" else 1
+        default = value.args[default_index] if len(value.args) > default_index else None
         for kw in value.keywords:
             if kw.arg == "default":
                 default = kw.value
         if isinstance(default, ast.Constant) and isinstance(default.value, str):
             yield default, key
+
+
+def _credential_literal_sources(
+    tree,
+    credential_keyword,
+    builtin_getattr_calls=None,
+    *,
+    imported_sources=None,
+    resolver_callback=None,
+):
+    """Bounded may-reaching provenance for literals passed as credentials.
+
+    Evidence belongs to a literal binding, not every equally spelled name
+    in the module. Follow direct assignment aliases and constructor-owned
+    fields. Conditional or unknown writes cannot refute an earlier literal;
+    a definite overwrite in the same scope can. This adds credential evidence,
+    so uncertain control flow retains possible literal sources.
+
+    Project analysis can register the scan/export closures with
+    ``resolver_callback`` before resolving imports. Each module's lexical
+    tables are then constructed once, including for recursive re-exports.
+    """
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    module_end_lineno = max((getattr(n, "lineno", 0) for n in parents), default=0) + 1
+    scope_types = (
+        ast.Module,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Lambda,
+    )
+
+    def scope(node):
+        while node not in (None, tree):
+            node = parents.get(node)
+            if isinstance(node, scope_types):
+                return node
+        return tree
+
+    def direct_nodes(owner):
+        pending = list(ast.iter_child_nodes(owner))
+        while pending:
+            node = pending.pop()
+            yield node
+            if not isinstance(node, scope_types):
+                pending.extend(ast.iter_child_nodes(node))
+
+    locals_by_scope = {}
+    global_names = {}
+    nonlocal_names = {}
+    for owner in (n for n in ast.walk(tree) if isinstance(n, scope_types)):
+        nodes = list(direct_nodes(owner))
+        names = {
+            n.id
+            for n in nodes
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))
+        }
+        names.update(n.arg for n in nodes if isinstance(n, ast.arg))
+        for n in nodes:
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                names.update(a.asname or a.name.split(".")[0] for a in n.names)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(n.name)
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                names.add(n.name)
+        locals_by_scope[owner] = names
+        global_names[owner] = {
+            name for n in nodes if isinstance(n, ast.Global) for name in n.names
+        }
+        nonlocal_names[owner] = {
+            name for n in nodes if isinstance(n, ast.Nonlocal) for name in n.names
+        }
+
+    def name_key(name, owner):
+        first = owner
+        while owner is not tree:
+            if name in global_names.get(owner, ()):
+                return (tree, name)
+            if (
+                (not isinstance(owner, ast.ClassDef) or owner is first)
+                and name in locals_by_scope.get(owner, ())
+                and name not in nonlocal_names.get(owner, ())
+            ):
+                return (owner, name)
+            owner = scope(owner)
+        return (tree, name)
+
+    def key(node):
+        owner = scope(node)
+        if isinstance(node, ast.Name):
+            return name_key(node.id, owner)
+        if not isinstance(node, ast.Attribute):
+            return None
+        parts = []
+        receiver = node
+        while isinstance(receiver, ast.Attribute):
+            parts.append(receiver.attr)
+            receiver = receiver.value
+        if not isinstance(receiver, ast.Name):
+            return None
+        cls = scope(owner)
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) and isinstance(
+            cls, ast.ClassDef
+        ):
+            positional = [*owner.args.posonlyargs, *owner.args.args]
+            if (
+                positional
+                and receiver.id == positional[0].arg
+                and not any(
+                    _decorator_name(d).rsplit(".", 1)[-1] == "staticmethod"
+                    for d in owner.decorator_list
+                )
+            ):
+                return (cls, ("field", tuple(reversed(parts))))
+        receiver_key = name_key(receiver.id, owner)
+        return (*receiver_key, tuple(reversed(parts)))
+
+    definitions = {}
+    imported_definitions = {}
+
+    def remember(target, value, statement):
+        if isinstance(target, (ast.Tuple, ast.List)):
+            values = (
+                value.elts
+                if isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)
+                else [None] * len(target.elts)
+            )
+            for child, item in zip(target.elts, values):
+                remember(child, item, statement)
+            return
+        binding = key(target)
+        if binding is None:
+            return
+        owner = scope(statement)
+        current = statement
+        conditional = False
+        while (current := parents.get(current)) is not None and current is not owner:
+            conditional |= isinstance(
+                current,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Try,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.Match,
+                ),
+            )
+        definitions.setdefault(binding, []).append(
+            (statement, value, owner, conditional)
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                remember(target, node.value, node)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            if node.value is not None:
+                remember(node.target, node.value, node)
+        elif isinstance(node, ast.AugAssign):
+            remember(node.target, None, node)
+        elif isinstance(node, ast.Delete):
+            for target in node.targets:
+                remember(target, None, node)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            remember(node.target, None, node)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars:
+                    remember(item.optional_vars, None, node)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            target = ast.copy_location(ast.Name(id=node.name, ctx=ast.Store()), node)
+            parents[target] = node
+            remember(target, None, node)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                local_name = alias.asname or alias.name.split(".")[0]
+                target = ast.copy_location(
+                    ast.Name(id=local_name, ctx=ast.Store()),
+                    node,
+                )
+                parents[target] = node
+                remember(target, None, node)
+                if isinstance(node, ast.Import):
+                    origin = alias.name if alias.asname else alias.name.split(".")[0]
+                elif not node.level:
+                    origin = f"{node.module}.{alias.name}"
+                else:
+                    origin = None
+                imported_definitions[(node, local_name)] = origin
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defaults = {arg.arg: value for arg, value in _iter_arg_defaults(node)}
+            for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+                definitions.setdefault((node, arg.arg), []).append(
+                    (arg, defaults.get(arg.arg), node, False)
+                )
+            target = ast.copy_location(ast.Name(id=node.name, ctx=ast.Store()), node)
+            parents[target] = parents.get(node)
+            remember(target, node, node)
+        elif isinstance(node, ast.ClassDef):
+            target = ast.copy_location(ast.Name(id=node.name, ctx=ast.Store()), node)
+            parents[target] = parents.get(node)
+            remember(target, node, node)
+
+    @lru_cache(maxsize=8192)
+    def control_regions(value):
+        owner = scope(value)
+        regions = {}
+        current = value
+        while (parent := parents.get(current)) is not None and parent is not owner:
+            if isinstance(
+                parent,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Try,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.Match,
+                ),
+            ):
+                for field, child in ast.iter_fields(parent):
+                    if isinstance(child, list) and current in child:
+                        # Except handlers and match cases are separate paths.
+                        regions[parent] = (
+                            field,
+                            id(current) if field in {"handlers", "cases"} else None,
+                        )
+                        break
+            current = parent
+        return regions
+
+    @lru_cache(maxsize=8192)
+    def reaching_definitions(value):
+        """Keep every feasible local branch since the last definite write."""
+        binding = key(value)
+        candidates = definitions.get(binding, [])
+        owner = scope(value)
+        local, back_edges = [], []
+        use_regions = control_regions(value)
+        for definition in candidates:
+            statement = definition[0]
+            if definition[2] is not owner:
+                continue
+            # An assignment's RHS observes the preceding binding, not itself.
+            ancestor = value
+            while ancestor is not None and ancestor is not statement:
+                ancestor = parents.get(ancestor)
+            if ancestor is statement:
+                continue
+            if (statement.lineno, statement.col_offset) > (
+                value.lineno,
+                value.col_offset,
+            ):
+                shared_loops = {
+                    loop
+                    for loop, region in control_regions(statement).items()
+                    if isinstance(loop, (ast.For, ast.AsyncFor, ast.While))
+                    and region[0] == "body"
+                    and use_regions.get(loop, (None,))[0] == "body"
+                }
+                if shared_loops:
+                    back_edges.append((definition, shared_loops))
+                continue
+            local.append(definition)
+        if local:
+            local.sort(key=lambda d: (d[0].lineno, d[0].col_offset))
+            definite = [
+                i
+                for i, definition in enumerate(local)
+                if all(
+                    use_regions.get(region) == branch
+                    for region, branch in control_regions(definition[0]).items()
+                )
+            ]
+            selected = local[definite[-1] :] if definite else local[:]
+            if not definite:
+                selected.extend(d for d in candidates if d[2] is not owner)
+            for definition, loops in back_edges:
+                # A refresh before every use in the loop kills a previous
+                # iteration's value. A pre-loop write does not.
+                refreshed = all(
+                    any(
+                        control_regions(local[index][0]).get(loop, (None,))[0] == "body"
+                        for index in definite
+                    )
+                    for loop in loops
+                )
+                if not refreshed:
+                    selected.append(definition)
+            return selected
+        if back_edges:
+            return [d for d in candidates if d[2] is not owner] + [
+                definition for definition, _ in back_edges
+            ]
+        if binding and binding[0] is owner and any(d[2] is owner for d in candidates):
+            # A future local assignment is not visible to an earlier read.
+            return []
+        # Closures and instance fields can be observed before optional writes
+        # in other functions. Their source order does not establish runtime
+        # order; every literal definition remains potentially reachable.
+        return candidates
+
+    def imported_literals(value, suffix=(), depth=0, constructor_sources=None):
+        if depth >= 8:
+            return set()
+        if isinstance(value, ast.Call) and suffix:
+            positional = []
+            for argument in value.args:
+                if isinstance(argument, ast.Starred):
+                    break
+                positional.append(tuple(sorted(resolve(argument, depth + 1))))
+            keywords = tuple(
+                (keyword.arg, tuple(sorted(resolve(keyword.value, depth + 1))))
+                for keyword in value.keywords
+                if keyword.arg is not None
+            )
+            return imported_literals(
+                value.func, suffix, depth + 1, (tuple(positional), keywords)
+            )
+        if isinstance(value, ast.Attribute):
+            return imported_literals(
+                value.value, (value.attr, *suffix), depth + 1, constructor_sources
+            )
+        if not isinstance(value, ast.Name):
+            return set()
+        found = set()
+        for statement, expression, _, _ in reaching_definitions(value):
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                if imported_sources is not None:
+                    found.update(
+                        imported_sources(
+                            statement,
+                            value.id,
+                            suffix,
+                            constructor_sources=constructor_sources,
+                        )
+                    )
+            elif isinstance(expression, ast.ClassDef) and suffix:
+                if constructor_sources is not None:
+                    found.update(
+                        resolve_instance_fields(expression, suffix, constructor_sources)
+                    )
+                else:
+                    found.update(resolve_export(suffix, expression))
+            elif expression is not None and expression is not value:
+                found.update(
+                    imported_literals(
+                        expression, suffix, depth + 1, constructor_sources
+                    )
+                )
+        return found
+
+    @lru_cache(maxsize=8192)
+    def resolve(value, depth=0, parameter_sources=()):
+        if value is None or depth >= 8:
+            return set()
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return {id(value)}
+        if isinstance(value, (ast.Name, ast.Attribute)):
+            result = imported_literals(value, depth=depth)
+            supplied = dict(parameter_sources)
+            for statement, expression, _, _ in reaching_definitions(value):
+                if id(statement) in supplied:
+                    result.update(supplied[id(statement)])
+                else:
+                    result.update(resolve(expression, depth + 1, parameter_sources))
+            return result
+        return {
+            id(literal)
+            for literal, _ in _secret_fallback_literals(value, builtin_getattr_calls)
+        }
+
+    def callable_origin(value, depth=0):
+        if depth >= 8:
+            return None
+        if isinstance(value, ast.Attribute):
+            origin = callable_origin(value.value, depth + 1)
+            return f"{origin}.{value.attr}" if origin else None
+        if not isinstance(value, ast.Name):
+            return None
+        candidates = reaching_definitions(value)
+        if len(candidates) != 1 or candidates[0][3]:
+            return None
+        statement, expression, _, _ = candidates[0]
+        imported = imported_definitions.get((statement, value.id))
+        return imported or callable_origin(expression, depth + 1)
+
+    def ftp_receiver(value, depth=0):
+        if depth >= 8:
+            return False
+        if isinstance(value, ast.Call):
+            return callable_origin(value.func) in {"ftplib.FTP", "ftplib.FTP_TLS"}
+        if isinstance(value, (ast.Name, ast.Attribute)):
+            candidates = reaching_definitions(value)
+            return bool(
+                len(candidates) == 1
+                and not candidates[0][3]
+                and ftp_receiver(candidates[0][1], depth + 1)
+            )
+        return False
+
+    def export_definitions(owner, name):
+        binding = (owner, name)
+        read = ast.Name(id=name, ctx=ast.Load())
+        read.lineno = module_end_lineno
+        read.col_offset = 0
+        parents[read] = owner
+        candidates = reaching_definitions(read)
+        return [
+            *candidates,
+            *(d for d in definitions.get(binding, ()) if d[2] is not owner),
+        ]
+
+    def resolve_instance_fields(cls, path, constructor_sources):
+        positional, keywords = constructor_sources
+        keyword_sources = dict(keywords)
+        result = set()
+        constructors = [
+            expression
+            for _, expression, _, _ in export_definitions(cls, "__init__")
+            if isinstance(expression, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        fields = definitions.get((cls, ("field", tuple(path))), ())
+        for constructor in constructors or [None]:
+            arguments = (
+                [*constructor.args.posonlyargs, *constructor.args.args]
+                if constructor is not None
+                else []
+            )
+            supplied = {}
+            for argument, sources in zip(arguments[1:], positional):
+                supplied[id(argument)] = sources
+            keyword_arguments = (
+                constructor.args.kwonlyargs if constructor is not None else []
+            )
+            for argument in [*arguments[1:], *keyword_arguments]:
+                if argument.arg in keyword_sources:
+                    supplied[id(argument)] = keyword_sources[argument.arg]
+            substitutions = tuple(sorted(supplied.items()))
+            local = sorted(
+                (definition for definition in fields if definition[2] is constructor),
+                key=lambda definition: (
+                    definition[0].lineno,
+                    definition[0].col_offset,
+                ),
+            )
+            definite = [
+                index for index, definition in enumerate(local) if not definition[3]
+            ]
+            selected = local[definite[-1] :] if definite else local
+            selected.extend(
+                definition for definition in fields if definition[2] is not constructor
+            )
+            # Python reads a class attribute when no instance field exists.
+            # A definite constructor write masks it for this instance; optional
+            # writes and possible deletions cannot prove that mask persists.
+            if not definite or any(isinstance(d[0], ast.Delete) for d in selected):
+                result.update(resolve_export(path, cls))
+            for _, expression, _, _ in selected:
+                result.update(resolve(expression, parameter_sources=substitutions))
+        return result
+
+    def resolve_export(path, owner=tree, constructor_sources=None):
+        if not path:
+            return set()
+        name, *suffix = path
+        result = set()
+        # An importing consumer can observe an export after a function writes
+        # it, so source ordering across those scopes cannot prove a kill.
+        for statement, expression, _, _ in export_definitions(owner, name):
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                if imported_sources is not None:
+                    result.update(
+                        imported_sources(
+                            statement,
+                            name,
+                            tuple(suffix),
+                            constructor_sources=constructor_sources,
+                        )
+                    )
+            elif expression is not None:
+                if suffix:
+                    if isinstance(expression, ast.ClassDef):
+                        if constructor_sources is not None:
+                            result.update(
+                                resolve_instance_fields(
+                                    expression, suffix, constructor_sources
+                                )
+                            )
+                        else:
+                            result.update(resolve_export(suffix, expression))
+                    else:
+                        result.update(imported_literals(expression, tuple(suffix)))
+                else:
+                    result.update(resolve(expression))
+        return result
+
+    def scan_credential_uses():
+        evidence = set()
+        for call in ast.walk(tree):
+            if isinstance(call, ast.Call):
+                for keyword in call.keywords:
+                    if credential_keyword(keyword.arg):
+                        evidence.update(resolve(keyword.value))
+                # ftplib.FTP.login(user='', passwd='', acct='') has a documented
+                # password in its second positional argument. Require a resolved
+                # stdlib constructor, rather than guessing from a method spelling.
+                if (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "login"
+                    and len(call.args) >= 2
+                    and not any(isinstance(arg, ast.Starred) for arg in call.args[:2])
+                    and ftp_receiver(call.func.value)
+                ):
+                    evidence.update(resolve(call.args[1]))
+        return evidence
+
+    if resolver_callback is not None:
+        resolver_callback(scan_credential_uses, resolve_export)
+        return set()
+    return scan_credential_uses()
 
 
 class HardcodedCredentialRule(SkylosRule):
@@ -1532,14 +3094,71 @@ class HardcodedCredentialRule(SkylosRule):
 
     def __init__(self, vibe_dictionary=None):
         self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+        self._credential_uses = set()
+        self._builtin_getattr_calls = set()
+
+    def _credential_literal(self, name, value, literal):
+        """Generic mapping/routing keys need evidence beyond the word key.
+
+        Explicit password/token/secret names still report weak literals:
+        entropy is corroboration for ambiguous keys, never a password policy.
+        """
+        if id(literal) in self._credential_uses:
+            return True
+        if not _is_credential_var(name, self.vibe_dictionary):
+            return False
+        lower = name.lower()
+        explicit = lower in self.vibe_dictionary.credential_var_names or any(
+            lower.endswith(suffix)
+            for suffix in self.vibe_dictionary.credential_var_suffixes
+            if suffix != "_key"
+        )
+        explicit |= lower.endswith(_SECRET_KEY_NAME_SUFFIXES)
+        explicit |= bool(
+            set(re.split(r"[^a-z0-9]+", lower))
+            & {
+                "auth",
+                "credential",
+                "secret",
+                "token",
+                "password",
+                "jwt",
+                "session",
+                "cookie",
+            }
+        )
+        return bool(
+            explicit
+            or _looks_like_real_secret(value, self.vibe_dictionary)
+            or _CREDENTIAL_DSN_RE.search(value)
+            # Preserve suspicious password/passphrase shapes even when they
+            # fail the high-entropy token heuristic. Reference handling below
+            # still treats location references separately from passwords.
+            or value.startswith(("$", "%", "{{"))
+            or bool(re.fullmatch(r"[a-z]+(?:-[a-z]+){3,}", value))
+        )
+
+    def _credential_keyword(self, name):
+        return bool(
+            name
+            and (
+                name.lower() == "token"
+                or _is_credential_var(name, self.vibe_dictionary)
+            )
+            and (
+                not name.lower().endswith("_key")
+                or name.lower().endswith(_SECRET_KEY_NAME_SUFFIXES)
+                or name.lower() in self.vibe_dictionary.credential_var_names
+            )
+        )
+
+    def _collect_credential_uses(self, tree):
+        return _credential_literal_sources(
+            tree, self._credential_keyword, self._builtin_getattr_calls
+        )
 
     def _fallback_findings(self, node, filename, basename):
-        """Real-looking secret literals in annotated defaults and env fallbacks.
-
-        These forms were previously skipped; they only report literals that
-        look like real credentials (hex keys, high-entropy tokens, mixed-class
-        passwords), never placeholders like ``changethis``.
-        """
+        """Use the same credential evidence for annotations and env fallbacks."""
         if isinstance(node, ast.AnnAssign):
             target = node.target
         elif isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -1549,7 +3168,9 @@ class HardcodedCredentialRule(SkylosRule):
         var_name = (
             target.id
             if isinstance(target, ast.Name)
-            else target.attr if isinstance(target, ast.Attribute) else None
+            else target.attr
+            if isinstance(target, ast.Attribute)
+            else None
         )
         value = node.value
         if var_name is None or value is None:
@@ -1559,23 +3180,30 @@ class HardcodedCredentialRule(SkylosRule):
             isinstance(node, ast.AnnAssign)
             and isinstance(value, ast.Constant)
             and isinstance(value.value, str)
-            and _is_credential_var(var_name, self.vibe_dictionary)
+            and self._credential_literal(var_name, value.value, value)
         ):
             candidates.append((value, "annotated default"))
-        for literal, key in _secret_fallback_literals(value):
-            if _is_credential_var(var_name, self.vibe_dictionary) or (
-                key and _is_credential_var(key, self.vibe_dictionary)
+        for literal, key in _secret_fallback_literals(
+            value, self._builtin_getattr_calls
+        ):
+            if self._credential_literal(var_name, literal.value, literal) or (
+                key and self._credential_literal(key, literal.value, literal)
             ):
                 candidates.append((literal, "fallback for a config/env lookup"))
         findings = []
         for literal, kind in candidates:
-            if not _looks_like_real_secret(literal.value, self.vibe_dictionary):
+            if not literal.value.strip() or (
+                id(literal) not in self._credential_uses
+                and _names_a_setting(target, var_name, literal.value)
+            ):
                 continue
             findings.append(
                 {
                     "rule_id": self.rule_id,
                     "kind": "logic",
-                    "severity": "HIGH",
+                    "severity": "MEDIUM"
+                    if literal.value.lower() in self.vibe_dictionary.placeholder_values
+                    else "HIGH",
                     "type": "assignment",
                     "name": var_name,
                     "simple_name": var_name,
@@ -1595,6 +3223,21 @@ class HardcodedCredentialRule(SkylosRule):
         return findings
 
     def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            self._builtin_getattr_calls = _resolved_builtin_getattr_calls(node)
+            self._credential_uses = self._collect_credential_uses(node)
+            locations = {
+                tuple(location)
+                for location in context.get("credential_source_locations", ())
+            }
+            self._credential_uses.update(
+                id(literal)
+                for literal in ast.walk(node)
+                if isinstance(literal, ast.Constant)
+                and isinstance(literal.value, str)
+                and (literal.lineno, literal.col_offset) in locations
+            )
+            return None
         if not isinstance(
             node, (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef)
         ):
@@ -1619,13 +3262,20 @@ class HardcodedCredentialRule(SkylosRule):
             elif isinstance(target, ast.Attribute):
                 var_name = target.attr
 
-            if var_name and _is_credential_var(var_name, self.vibe_dictionary):
+            if (
+                var_name
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+                and self._credential_literal(var_name, node.value.value, node.value)
+            ):
                 value = node.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
                     str_val = value.value
                     if not str_val or str_val.strip() == "":
                         return None
-                    if _names_a_setting(target, var_name, str_val):
+                    if id(value) not in self._credential_uses and _names_a_setting(
+                        target, var_name, str_val
+                    ):
                         return findings or None
                     try:
                         if _is_env_lookup(value):
@@ -1688,12 +3338,22 @@ class HardcodedCredentialRule(SkylosRule):
                 else:
                     arg_name = str(arg)
 
-                if _is_credential_var(arg_name, self.vibe_dictionary):
+                if (
+                    isinstance(default, ast.Constant)
+                    and isinstance(default.value, str)
+                    and self._credential_literal(arg_name, default.value, default)
+                ):
                     if isinstance(default, ast.Constant) and isinstance(
                         default.value, str
                     ):
                         str_val = default.value
                         if str_val and str_val.strip():
+                            if id(
+                                default
+                            ) not in self._credential_uses and _names_a_setting(
+                                ast.Name(id=arg_name), arg_name, str_val
+                            ):
+                                continue
                             severity = "HIGH"
                             if (
                                 str_val.lower()
