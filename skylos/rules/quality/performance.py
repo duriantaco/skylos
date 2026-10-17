@@ -2086,6 +2086,386 @@ class PerformanceRule(SkylosRule):
                 return None
             current = parent
         return None
+
+    def _recurring_name_scan(self, outer: ast.For, inner: ast.For) -> bool | None:
+        """Track cardinality provenance across rebindings and loop backedges.
+
+        Inspect recurring states rather than joining the initial collection
+        into every iteration. An unconditional bounded reset can make only the
+        first scan expensive; aliases and sequence copies can retain its size.
+        Unsupported effects leave the existing source checks in charge.
+        """
+        if not isinstance(inner.iter, ast.Name):
+            return None
+        scope = self._parents.get(outer)
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return None
+        source_name = inner.iter.id
+        bindings = _ScopeBindings()
+        for statement in outer.body:
+            bindings.visit(statement)
+        if (
+            source_name not in bindings.names
+            or source_name in self._global_writes
+            or source_name in self._read_nonlocal_writes
+        ):
+            return None
+
+        unknown = frozenset({("unknown", None)})
+        outer_value = frozenset({("outer", None)})
+        names = {node.id for node in ast.walk(scope) if isinstance(node, ast.Name)}
+        outer_targets = _target_names(outer.target)
+        # This closure only detects possible escapes; it never establishes
+        # identity. An alias can be captured before it gets the scan's name.
+        pairs = []
+        for node in ast.walk(scope):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name) and isinstance(
+                        node.value, ast.Name
+                    ):
+                        pairs.append((target.id, node.value.id))
+                    elif (
+                        isinstance(target, (ast.Tuple, ast.List))
+                        and isinstance(node.value, (ast.Tuple, ast.List))
+                        and len(target.elts) == len(node.value.elts)
+                    ):
+                        pairs.extend(
+                            (left.id, right.id)
+                            for left, right in zip(target.elts, node.value.elts)
+                            if isinstance(left, ast.Name)
+                            and isinstance(right, ast.Name)
+                        )
+        aliases = {source_name}
+        while True:
+            expanded = aliases | {
+                right if left in aliases else left
+                for left, right in pairs
+                if left in aliases or right in aliases
+            }
+            if expanded == aliases:
+                break
+            aliases = expanded
+        entry = {name: unknown for name in names}
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            arguments = scope.args
+            for argument in [
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                arguments.vararg,
+                arguments.kwarg,
+            ]:
+                if argument is not None:
+                    entry[argument.arg] = frozenset({("shared", argument.arg)})
+
+        class Unsupported(Exception):
+            pass
+
+        conditions = []
+
+        def control_tests(body):
+            for statement in body:
+                if statement is inner:
+                    continue
+                if isinstance(statement, (ast.Break, ast.Return, ast.Raise)):
+                    raise Unsupported
+                if isinstance(statement, ast.If):
+                    conditions.append(self._load_names(statement.test))
+                    control_tests(statement.body)
+                    control_tests(statement.orelse)
+
+        dependencies = []
+        for node in ast.walk(scope):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                if node.value is None:
+                    continue
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                dependencies.extend(
+                    (name, source)
+                    for target in targets
+                    for name in _target_names(target)
+                    for source in self._load_names(node.value)
+                )
+
+        def condition_dependencies(names):
+            names = set(names)
+            while True:
+                expanded = names | {
+                    right if left in names else left
+                    for left, right in dependencies
+                    if left in names or right in names
+                }
+                if expanded == names:
+                    return names
+                names = expanded
+
+        def merge(states):
+            result = {}
+            for state in states:
+                for name, values in state.items():
+                    result[name] = result.get(name, frozenset()) | values
+            return result
+
+        def invalidate(state, values):
+            for name, current in list(state.items()):
+                if current & values:
+                    state[name] = unknown
+
+        def effects(node, state, *, unpack=False):
+            source_values = {
+                fact
+                for name in aliases
+                for fact in state.get(name, unknown)
+                if fact[0] in {"bounded", "shared"}
+            }
+            for child in ast.walk(node):
+                if isinstance(
+                    child, (ast.NamedExpr, ast.Yield, ast.YieldFrom, ast.Lambda)
+                ):
+                    raise Unsupported
+                if (
+                    isinstance(
+                        child,
+                        (
+                            ast.List,
+                            ast.Tuple,
+                            ast.Set,
+                            ast.Dict,
+                            ast.ListComp,
+                            ast.SetComp,
+                            ast.DictComp,
+                            ast.GeneratorExp,
+                        ),
+                    )
+                    and not (unpack and child is node)
+                    and any(
+                        state.get(reference.id, unknown) & source_values
+                        for reference in ast.walk(child)
+                        if isinstance(reference, ast.Name)
+                    )
+                ):
+                    # A container can carry the source to an opaque callback.
+                    # This analysis deliberately has no heap/closure graph.
+                    raise Unsupported
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.ctx, ast.Load)
+                    and any(
+                        state.get(name, unknown) & source_values
+                        for name in self._load_names(child.value)
+                    )
+                ):
+                    # Bound methods may escape and resize the source later.
+                    raise Unsupported
+            copies = {
+                child
+                for child in ast.walk(node)
+                if isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id in {"list", "tuple"}
+                and self._is_builtin(child, child.func.id)
+                and len(child.args) == 1
+                and not child.keywords
+            }
+            changed = _ScopeBindings(track_mutations=True, ignored_calls=copies)
+            changed.visit(node)
+            for name in changed.mutated_names:
+                invalidate(state, state.get(name, unknown))
+            return changed
+
+        def value(node, state):
+            if isinstance(node, ast.Name):
+                return state.get(node.id, unknown)
+            if isinstance(node, (ast.List, ast.Tuple, ast.Set)) and not any(
+                isinstance(item, ast.Starred) for item in node.elts
+            ):
+                return frozenset({("bounded", id(node))})
+            if isinstance(node, ast.Dict) and all(key is not None for key in node.keys):
+                return frozenset({("bounded", id(node))})
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"list", "tuple"}
+                and self._is_builtin(node, node.func.id)
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                return value(node.args[0], state)
+            if self._constant_iteration_count(node):
+                return frozenset({("bounded", id(node))})
+            return unknown
+
+        def evaluate(node, state, *, unpack=False):
+            if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+                result = evaluate(node.value, state)
+                state[node.target.id] = result
+                return result
+            effects(node, state, unpack=unpack)
+            return value(node, state)
+
+        def bind(target, expression, state, previous, supplied=None):
+            if isinstance(target, ast.Name):
+                state[target.id] = (
+                    value(expression, previous) if supplied is None else supplied
+                )
+            elif (
+                isinstance(target, (ast.Tuple, ast.List))
+                and isinstance(expression, (ast.Tuple, ast.List))
+                and len(target.elts) == len(expression.elts)
+            ):
+                for item, supplied in zip(target.elts, expression.elts):
+                    bind(item, supplied, state, previous)
+            else:
+                # Attribute/subscript stores can mutate the source or expose
+                # it through an object. They need a separate alias proof.
+                raise Unsupported
+
+        def block(body, state, scans):
+            paths = {"normal": state}
+            for statement in body:
+                if "normal" not in paths:
+                    break
+                current = dict(paths.pop("normal"))
+                if statement is inner:
+                    scans.append(current.get(source_name, unknown))
+                    changed = _ScopeBindings(track_mutations=True)
+                    for child in inner.body:
+                        effects(child, dict(current))
+                        changed.visit(child)
+                    # A changing live iterator can grow during its very first
+                    # scan. A later reset cannot establish a bound for that work.
+                    if source_name in changed.names or any(
+                        current.get(name, unknown) & current.get(source_name, unknown)
+                        for name in changed.mutated_names
+                    ):
+                        raise Unsupported
+                    for name in changed.names:
+                        current[name] = unknown
+                    next_paths = {"normal": current}
+                elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    if statement.value is not None:
+                        targets = (
+                            statement.targets
+                            if isinstance(statement, ast.Assign)
+                            else [statement.target]
+                        )
+                        unpack = (
+                            len(targets) == 1
+                            and isinstance(targets[0], (ast.Tuple, ast.List))
+                            and isinstance(statement.value, (ast.Tuple, ast.List))
+                            and len(targets[0].elts) == len(statement.value.elts)
+                        )
+                        supplied = evaluate(statement.value, current, unpack=unpack)
+                        previous = dict(current)
+                        for target in targets:
+                            bind(target, statement.value, current, previous, supplied)
+                    next_paths = {"normal": current}
+                elif isinstance(statement, ast.If):
+                    effects(statement.test, current)
+                    branches = [statement.body, statement.orelse]
+                    if isinstance(statement.test, ast.Constant):
+                        branches = [branches[not bool(statement.test.value)]]
+                    alternatives = [
+                        block(branch, dict(current), scans) for branch in branches
+                    ]
+                    next_paths = {
+                        outcome: merge(
+                            [path[outcome] for path in alternatives if outcome in path]
+                        )
+                        for outcome in {key for path in alternatives for key in path}
+                    }
+                elif isinstance(statement, ast.Continue):
+                    next_paths = {"continue": current}
+                elif isinstance(statement, (ast.Break, ast.Return, ast.Raise)):
+                    next_paths = {}
+                elif isinstance(statement, (ast.Expr, ast.Pass, ast.Assert)):
+                    changed = effects(statement, current)
+                    for name in changed.names - changed.mutated_names:
+                        current[name] = unknown
+                    next_paths = {"normal": current}
+                else:
+                    # Loop/exception/context-manager flow needs a separate
+                    # proof; never infer a bounded reset by skipping it.
+                    raise Unsupported
+                for outcome, state in next_paths.items():
+                    paths[outcome] = (
+                        merge([paths[outcome], state]) if outcome in paths else state
+                    )
+            return paths
+
+        seen = {}
+        scan_states = []
+        try:
+            prefix_body = scope.body[: scope.body.index(outer)]
+            control_tests(prefix_body)
+            control_tests(outer.body)
+            prior_dependencies = set()
+            for condition in conditions:
+                # Independent branch joins cannot model phase flags or
+                # correlations between a source choice and a later exit.
+                if condition & (bindings.names - outer_targets):
+                    raise Unsupported
+                related = condition_dependencies(condition)
+                if related & prior_dependencies:
+                    raise Unsupported
+                prior_dependencies.update(related)
+            # Execute the actual prefix once: saved=catalog must retain its
+            # old object/cardinality when catalog is subsequently replaced.
+            prefix = block(prefix_body, entry, [])
+            if "normal" not in prefix:
+                return False
+            entry = prefix["normal"]
+            if any(condition & outer_targets for condition in conditions) and not (
+                isinstance(outer.iter, ast.Name)
+                and all(
+                    kind == "shared" for kind, _ in entry.get(outer.iter.id, unknown)
+                )
+            ):
+                # Index ranges and derived iterators can select a catalog
+                # only once; their order needs a separate recurrence proof.
+                raise Unsupported
+            # A finite analysis budget is not a finding threshold: unresolved
+            # cycles fall back to the existing checks without an exemption.
+            for _ in range(32):
+                key = frozenset((name, values) for name, values in entry.items())
+                if key in seen:
+                    recurring = [
+                        item for group in scan_states[seen[key] :] for item in group
+                    ]
+                    if not recurring:
+                        return False
+                    if any(
+                        kind == "shared" for group in recurring for kind, _ in group
+                    ):
+                        return True
+                    if all(
+                        kind == "bounded" for group in recurring for kind, _ in group
+                    ):
+                        return False
+                    return None
+                seen[key] = len(scan_states)
+                current = dict(entry)
+                for name in outer_targets:
+                    current[name] = outer_value
+                scans = []
+                paths = block(outer.body, current, scans)
+                scan_states.append(scans)
+                backedges = [
+                    paths[key] for key in ("normal", "continue") if key in paths
+                ]
+                if not backedges:
+                    return False
+                entry = merge(backedges)
+        except Unsupported:
+            return None
+        return None
+
     def _shared_scan_source(
         self, outer: ast.For, inner: ast.For, outer_names: set[str]
     ) -> bool:
@@ -2427,7 +2807,12 @@ class PerformanceRule(SkylosRule):
         outer_names -= inner_names
         # An outer-derived source needs positive shared-source evidence.
         # It is not enough for a comparison in its body to mention both loops.
-        if not self._shared_scan_source(outer, inner, outer_names):
+        recurring_source = self._recurring_name_scan(outer, inner)
+        # The new pass adds positive provenance only. It cannot suppress a
+        # source already recognized by the existing mapping/partition checks.
+        if recurring_source is not True and not self._shared_scan_source(
+            outer, inner, outer_names
+        ):
             return False
         if self._required_pair_outputs(inner):
             return False

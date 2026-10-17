@@ -165,6 +165,19 @@ def heavy(items, others):
         self.assertEqual(findings[0]["evidence"]["inner_iterable"], "others")
         self.assertEqual(findings[1]["evidence"]["inner_iterable"], "buckets[item]")
 
+        # Copying the catalog changes identity, but retains the repeated work.
+        code = """
+def copy_catalog(items, catalog):
+    for item in items:
+        for other in catalog:
+            if other.key == item.key:
+                print(other)
+        catalog = list(catalog)
+"""
+        findings = self._analyze(code)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["rule_id"], "SKY-P403")
+
         code = """
 def visit(items, others, size, index):
     rows = [items if index else items for index in items]
@@ -192,6 +205,13 @@ def visit(items, others, size, index):
                 continue
             row.append(0)
         result.append(row)
+
+def reset_catalog(items, catalog):
+    for item in items:
+        for other in catalog:
+            if other.key == item.key:
+                print(other)
+        catalog = [item]
 """
         self.assertEqual(self._analyze(code), [])
 

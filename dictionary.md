@@ -1088,7 +1088,10 @@ SKY-P403 excludes proven fixed bounds, shared-iterator consumption, terminal
 cleanup scans and bounded partition traversal only while that proof holds.
 Repeated aliases and mutations that replenish an iterator invalidate it.
 An outer-dependent expression can still return the same collection, and
-assigning a collection to itself does not make the scan cheaper. The inner
+assigning a collection to itself does not make the scan cheaper. Direct aliases
+and builtin list/tuple copies retain size provenance across recurring iterations.
+Aliases keep the value captured when assigned; phase flags, correlated exits and
+opaque escapes do not establish new shared-source evidence. The inner
 source must support repeated traversal: an independent iterable or a locally
 resolved shared collection can establish it; an unknown per-item property or
 helper alone cannot. The inner body must search for the outer item; ordinary all-pairs computation and
