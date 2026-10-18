@@ -2640,7 +2640,7 @@ def delete_user(user_id: str, admin=Depends(require_admin)) -> dict:
     return repository.delete(user_id)
 ```
 
-**Context:** The guard implementation and object-level authorization still require review; recognizing a dependency does not prove its security. FastAPI defeated ownership guards are another branch of this rule.
+**Context:** PUT, PATCH and DELETE remain state-changing for this review. Query-like POST routes are checked for body side effects, including supported same-module helpers, writes to shared state and opaque calls; local result construction or logging alone does not establish persistent mutation. Other POST routes retain review. Decorator spelling and recognized auth dependencies are heuristic evidence, not proof that a route is protected. FastAPI defeated ownership guards are a separate HIGH branch.
 
 **Source:** `skylos/rules/quality/practices.py`, `skylos/rules/quality/practices.py`.
 
@@ -2847,7 +2847,7 @@ def refresh():
         raise
 ```
 
-**Context:** Narrow intentional fallbacks are excluded. Broad placeholder returns are generally reported as L030; TS/JS empty catch blocks are also supported.
+**Context:** Handlers doing meaningful work and supported narrow fallback returns are distinguished from silent error disposal. Broad placeholder returns are reported by L030 instead of a duplicate L007. A resolved filesystem deletion inside finally cleanup can be excluded only with the supported callable/path evidence; swallowing BaseException, KeyboardInterrupt, SystemExit or GeneratorExit does not receive that cleanup exemption.
 
 **Source:** `skylos/rules/quality/logic_foundation.py`, `test/test_quality_noise_regressions.py`.
 
@@ -3476,7 +3476,7 @@ def import_file(path):
             consume(line)
 ```
 
-**Context:** Bounded reads are excluded. Standard-library BytesIO/StringIO read(), including synchronous context-manager bindings, is excluded only while receiver and method identity remain supported by the source: aliases, field writes, method replacement and object exposure can invalidate that proof. Buffer readlines() still allocates a new list and is reported unless fixed literal contents and no growth or escape establish a bound. Unknown receivers retain a conditional memory warning.
+**Context:** Bounded reads are excluded. Standard-library BytesIO/StringIO read(), including supported synchronous with bindings, is excluded only while receiver/method identity remains supported; aliases, writes, replacement and escape can invalidate the proof. Buffer readlines() can allocate a list and remains reportable unless literal contents establish a bound. ZipFile.read(name) reads the whole archive member: its name argument is not a byte bound. Unknown receivers retain conditional memory advice.
 
 **Source:** `skylos/rules/quality/performance.py`, `test/test_performance.py`.
 
@@ -3535,7 +3535,7 @@ def attach_users(orders, users):
             attach(order, user)
 ```
 
-**Context:** The suggested index assumes unique, hashable user IDs. Preserve duplicates and ordering when the operation requires them. The inner body must search the collection for the outer item (equality, membership or a predicate taking both). Proven bounded work, partition traversal and required output for every pair are excluded. An outer-dependent helper or index needs local evidence that it returns a shared collection; an unknown per-item property alone does not establish a repeated scan. Source aliases and dominating dictionary-cell writes preserve collection identity. Comparisons stored in Boolean flags still count when they select results. Required-output checks cover normal and continue paths and inspect transparent local writer methods; a class or method name alone supplies no such proof. Nesting alone is not enough.
+**Context:** An index assumes suitable hashable keys and the required duplicate/order behavior. The inner scan must search for the outer item, including supported filter lambdas and single-source generators; nesting alone does not qualify. Proven bounded work, partition traversal and required pair outputs are excluded. Stable reopened paths and finite literal path maps can establish repeated file scans; arbitrary per-item paths cannot. Aliases and supported dominating dictionary-cell writes preserve collection evidence. Conditional Boolean selection and normal/continue paths are considered; unresolved properties or helpers alone do not prove a repeated scan.
 
 **Source:** `skylos/rules/quality/performance.py`, `test/test_performance.py`.
 

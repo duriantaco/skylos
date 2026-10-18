@@ -40,6 +40,10 @@ The [rule dictionary](../dictionary.md) records the detailed scope of the accomp
 
 Security TODO markers come from actual comments and genuine docstrings. Error-disclosure messages distinguish exception text from stack traces and state when client exposure is an assumption. A quality-rule failure produces incomplete-analysis evidence while security and dead-code analysis remain available. Dependency declarations are read within the scanned project's manifest or Git boundary.
 
+Python F102 distinguishes state-changing methods from query-like POST operations using supported body effects; endpoint names or a recognized dependency do not prove access control. L007 separates meaningful recovery and narrow fallbacks from silent errors, and permits only the supported deletion-cleanup exemption in finally blocks. Interrupt-swallowing handlers retain review. P403 includes supported filter/generator searches and stable reopened-file scans, while arbitrary per-item paths and unresolved source properties do not establish repeated work.
+
+Python import checks can also recognize supported plain Pipfile/conda declarations and bounded straight-line install evidence from setup scripts or an unambiguous final Dockerfile stage. A nearer Python manifest sets the environment boundary. Conditional execution, changed install targets, ambiguous stages and lockfile-only transitive dependencies do not establish that an import is declared. These inputs are parsed, never executed.
+
 Impact mode compares base and head dead-code findings and can name newly-unused code on untouched lines. PR summaries also cover introduced findings beyond the inline-comment cap or after failed inline posting. Legacy comments without symbol-specific keys may be repeated once as precise keyed comments. Snapshot omissions and incomplete-analysis behavior are documented in [PR impact](pr-impact.md). These source capabilities do not establish that every generated CI setup enables impact mode.
 
 ## CLI scanning
