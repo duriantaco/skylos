@@ -1017,7 +1017,7 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | Q301 | WARN-HIGH | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
 | Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
 | Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
-| Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
+| Q306 | MEDIUM | Cognitive complexity | Python | Boolean operator sequences and control-flow nesting |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
 | Q402 | LOW | Await in loop | TS/JS | review bounded parallelism only when iterations are independent and ordering/rate limits allow |
 | Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed lock order in nested or compound `with` / `async with` statements; includes non-adjacent pairs |
@@ -1034,15 +1034,15 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | Q803 | ADVISORY by default | Zone of Pain / Zone of Uselessness | Python, TS/JS | grouped with Q802 per module by default |
 | Q804 | MEDIUM | Dependency Inversion Principle violation | Python, TS/JS |
 | Q805 | MEDIUM | Architecture layer policy violation | Python, TS/JS |
-| C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
-| C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; direct test and suite callbacks in TS/JS test files are excluded |
+| C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total; Python compares required positional arguments (keyword-only arguments count toward the total only) and accounts for implicit receivers |
+| C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; Python counts code lines (blank, comment-only and docstring lines excluded); direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Potential unbounded `read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
 | P403 | LOW | Repeated iterable scans in nested loops | Python / generic | an inner collection repeatedly searched for the outer item (equality, membership or a predicate relating both items); exclusions require evidence of bounded work, partition traversal or required output for every pair |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
-| T101 | MEDIUM | Missing public parameter type annotation | Python |
-| T102 | MEDIUM | Missing public return type annotation | Python |
+| T101 | LOW | Missing public parameter type annotation | Python |
+| T102 | LOW | Missing public return type annotation | Python |
 | T103 | MEDIUM | Chained assertion through `any`, `unknown`, `object`, or `{}` | TypeScript |
 | T104 | MEDIUM-HIGH | Effective `@ts-ignore` or file-wide `@ts-nocheck` | TS/JS |
 | T105 | MEDIUM | Unvalidated JSON result asserted as a domain type | TypeScript |
@@ -1056,19 +1056,67 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
 
-SKY-F102 retains its MEDIUM review for mutating routes without an obvious auth
-guard. It also reports a HIGH review when a FastAPI route contains an explicit
-owner or tenant comparison but returns or changes a selected object without
-that check protecting it. This includes identity changes through principal
-aliases, replacing the checked object, and late-bound local presenters.
-Copied authenticated IDs and captured, checked objects retain their proof.
-Conditional assignments keep the identities from each reachable path;
-literal branches that cannot run do not create findings. A checked literal
-dictionary lookup also remains checked when repeated as `get(key, None)`.
-Fetching an object without an ownership comparison does not alone trigger
-this additional review. Arbitrary permission helpers, ORM query scoping,
-Django/Flask ownership flows, and unsupported control flow remain outside
-this narrow check; absence of F102 is not proof of authorization.
+T101/T102 report incomplete public signatures and missing signatures required
+by an applicable declared mypy annotation policy. A typing import, typed sibling,
+private helper or class attribute alone does not require every public function
+in a module to adopt annotations. Valid function and parameter type comments
+count as contracts alongside inline annotations. Supported mypy settings include
+the standard project config precedence, literal file/directory selections,
+structured module overrides and inline options. Package markers and declared
+package bases determine module identity; directory names alone do not. Checked-in
+literal mypy commands can replace a default file selection, with supported
+allow/disallow annotation flags and `--strict` taking precedence over global
+config; output-only flags do not change scope. Command discovery reads tox
+command values (including `{posargs:DEFAULT}` defaults and `{[section]key}`
+references), Make recipes and workflow `run` entries; environment names and
+workflow titles do not establish checker scope. A strict setting with neither a
+`files` selection nor a discovered invocation has unknown scope. An explicit
+`allow_incomplete_defs` without a required-annotation setting is an opt-out.
+Unsupported or unresolved policy falls
+back to advice on the function's own partial contract; it does not establish a
+project-wide annotation requirement. Diff comparisons read policy at the base
+revision rather than applying the current checkout's policy to old source.
+The rules exclude pytest fixtures resolved from imports and test-support
+helpers reached from a non-root conftest suite when no production importer is
+found; modules imported by a non-test package `__init__` are production code.
+Test folders are judged relative to the project root. A directory named `t`
+alone does not establish that role. Shared helpers
+retain advice. This typing-only scope does not filter security findings.
+
+Python C303, Q501 and Q702 resolve implicit receivers and distinguish instance,
+class and static methods. Nested functions have their own bindings; captured
+receivers and local aliases contribute to the owning method. Unknown decorators
+leave receiver binding uncertain. C303 reports only when the minimum number of
+required positional arguments exceeds its threshold; keyword-only parameters
+count toward the total-parameter threshold only. Q501 does not count dunder
+protocol methods toward its method threshold. Q702 checks possible receiver
+connections before reporting disconnected implementation groups and includes
+bounds for uncertain bindings. Methods connect through shared attributes, calls,
+bound-method references (`self.m` passed as a callback or a property read),
+constructor calls (`cls(...)`, `type(self)(...)`) to `__init__`/`__new__`, and
+implicit dunder use (`len(self)`, `self[k]`, `k in self`, iteration, truth
+tests, f-strings). A method that passes bare `self` out or writes attributes
+dynamically has uncertain connections. Empty declarations (`pass`, ellipsis,
+docstrings, or a proved builtin `NotImplementedError` stub) do not form
+implementation groups, and Protocol classes and fully abstract ABCs are not
+measured. A method that touches no receiver state is not a group on its own,
+and a report needs at least two groups that each use attributes the class
+assigns. Raw declared graph components remain available separately as
+`declared_lcom4` in findings. These measurements alone do not prove that a
+class should be split.
+
+Design, size and memory advice (C303, Q501, Q502, Q702, C401, P401, L027 and
+L029) is not reported for test, example, benchmark, documentation-build or
+packaging-script code: files the project-relative test convention identifies,
+`test_*.py`/`*_test.py` modules that define test functions, `examples`/
+`benchmarks` folders, a top-level `docs`/`doc` folder and the root `setup.py`.
+This scope does not filter security, secret or correctness findings. C304 still
+applies to tests. C304, Q502 and C401 count code lines: blank lines,
+comment-only lines and docstrings are excluded. C401 also requires at least
+four statements in each fragment body and names members by project-relative
+path.
+T101 does not prescribe annotations for a possibly implicit method receiver;
+proven static methods and free functions retain their first ordinary parameter.
 
 P401 reports `read()`/`readlines()` calls that request everything: no size,
 `None`, a negative size or `readlines(0)`, including sizes resolved from simple
@@ -1083,6 +1131,76 @@ can allocate a new list and is reported with that explanation, unless the
 contents are a fixed literal with no growth or escape. Other whole reads
 remain LOW advice; the rule cannot know the source's size, and some consumers
 need the whole value.
+
+L029 recommends named Boolean arguments and makes a keyword-only rewrite
+conditional on the public or callback contract permitting it. `@overload`
+stubs, `@override` methods, methods overriding a same-module base method and
+functions used as values (callbacks, registrations, dispatch entries) are not
+reported. Private and nested functions are reported only when a call in the
+module passes a Boolean literal positionally, and the message names that call. A literal Boolean default remains independent signature
+evidence even when an annotation contradicts it; the annotation does not enforce
+runtime values. Definition-level advice does not establish an actual ambiguous
+positional call, and changing an inherited or callback signature needs separate
+compatibility evidence.
+
+L004 evaluates error-catching scopes. Handlerless `try/finally` cleanup, and
+handlers that only clean up and re-raise, catch nothing and are not reported; a
+`finally` that returns, breaks or continues swallows exceptions and is. The
+length check counts code lines. An inner `try` that isolates items inside a
+loop, or that only falls back between imports, is not confusing nesting. A
+`try` that is the function's whole body, or its last statement after only a
+docstring, imports, nested definitions or guard clauses, is an error boundary:
+its length and control flow are left to C304/Q301/Q306, while nested catch
+scopes are still reported.
+
+Q306 scores only the measured function's body; a nested function's decorators,
+defaults and annotations count at the enclosing level and its body one level
+deeper (except the decorator-wrapper shape, which a leading docstring does not
+break). Lambda bodies are one level deeper, and `match` subjects and guards are
+scored. Q302 traverses `match` cases and treats a `with` around a top-level
+`try` like the `try` alone.
+
+Q804 does not report a package `__init__` importing its own submodules (a
+package composing its public surface) or test modules. U005 reads dependency
+declarations from the scanned project and does not climb past a directory that
+has its own `pyproject.toml` or `.git`.
+
+If a quality rule fails on a file, that file's quality findings are replaced by
+a `quality_scan_error` analysis error; its security, secret and dead-code
+results are kept.
+
+F101/F102 do not exempt decorators based only on an import spelling such as
+`unittest.mock.patch`: an attribute, exception binding or another project file
+can replace that callable with a real route decorator. F102 describes matching
+decorators as a conditional route review. Ordinary mock decorators can still
+produce false positives; removing those requires stronger route-identity
+analysis, not a name-based exemption.
+L010 scans actual comments and genuine module, class and function docstrings,
+excluding ordinary string payloads. It recognizes credential components such
+as `access_token` and `certificate_pinning`, and explicit `SQLi`/`SSLContext`
+topics, without treating lexer `token_stream`, `tokenize`, `author`, `certainly`
+or `oracle` as security terms.
+Docstring TODOs remain review markers even when surrounding text calls them
+examples. L017 distinguishes exception text from a formatted stack trace and
+names the call receiving it, without claiming the value was sent to a client.
+It also reports `traceback.format_exc()` passed to an HTTP response constructor
+from an unnamed handler. It does not suppress a response or nested helper
+solely because it appears discarded or unused: indirect calls and constructor
+mutation can still disclose the data.
+
+SKY-F102 retains its MEDIUM review for mutating routes without an obvious auth
+guard. It also reports a HIGH review when a FastAPI route contains an explicit
+owner or tenant comparison but returns or changes a selected object without
+that check protecting it. This includes identity changes through principal
+aliases, replacing the checked object, and late-bound local presenters.
+Copied authenticated IDs and captured, checked objects retain their proof.
+Conditional assignments keep the identities from each reachable path;
+literal branches that cannot run do not create findings. A checked literal
+dictionary lookup also remains checked when repeated as `get(key, None)`.
+Fetching an object without an ownership comparison does not alone trigger
+this additional review. Arbitrary permission helpers, ORM query scoping,
+Django/Flask ownership flows, and unsupported control flow remain outside
+this narrow check; absence of F102 is not proof of authorization.
 
 SKY-P403 excludes proven fixed bounds, shared-iterator consumption, terminal
 cleanup scans and bounded partition traversal only while that proof holds.
