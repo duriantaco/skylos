@@ -38,11 +38,15 @@ def test_default_report_groups_large_advice_and_keeps_every_risk_record(tmp_path
     defects = [_finding("SKY-L001", n, severity="LOW") for n in range(60)]
     reviews = [_finding("SKY-T103", n) for n in range(75)]
     result = {"quality": [*advice, *defects, *reviews]}
+    before = copy.deepcopy(result)
     report = _generate_llm_report(result, tmp_path)
     records = _records(report)
 
     assert len(records) == 135
-    assert records == [*reviews, *defects]
+    assert records == [
+        *({**finding, "finding_type": "review"} for finding in reviews),
+        *({**finding, "finding_type": "defect"} for finding in defects),
+    ]
     assert report.startswith(
         "# Skylos Report\n\n60 defects · 75 review · 1500 advice in 1 group."
     )
@@ -51,7 +55,7 @@ def test_default_report_groups_large_advice_and_keeps_every_risk_record(tmp_path
     assert "message-SKY-Q301-" not in report
     assert "Fix each finding" not in report
     assert "Type: Defect" in report and "Type: Review" in report
-    assert all(finding["finding_type"] == "advice" for finding in advice)
+    assert result == before
     assert records[-1]["severity"] == "LOW"
 
 
@@ -69,7 +73,10 @@ def test_expanded_report_includes_every_advice_record(tmp_path):
     advice = [_finding("SKY-Q301", n) for n in range(120)]
     result = {"quality": advice}
     report = _generate_llm_report(result, tmp_path, expand_advice=True)
-    assert _records(report) == advice
+    assert _records(report) == [
+        {**finding, "finding_type": "advice"} for finding in advice
+    ]
+    assert all("finding_type" not in finding for finding in advice)
     assert "Advice groups" not in report
     assert report.count("Type: Advice") == 120
     assert "0 defects · 0 review · 120 advice in 1 group." in report
@@ -95,8 +102,8 @@ def test_complete_records_include_sca_exports_cycles_custom_and_errors(tmp_path)
     records = _records(report)
     assert len(records) == 5
     assert "Analysis incomplete: 1 error." in report
-    assert custom in records
-    assert custom["finding_type"] == "review"
+    assert {**custom, "finding_type": "review"} in records
+    assert "finding_type" not in custom
     assert any(record.get("rule_id") == "SKY-SCA001" for record in records)
     assert any(record.get("rule_id") == "UNKNOWN-EXPORT" for record in records)
     assert any(
@@ -110,7 +117,9 @@ def test_same_location_evidence_variants_are_not_silently_dropped(tmp_path):
     second = copy.deepcopy(first)
     second["evidence"]["trace"] = ["different source", "sink"]
     result = {"quality": [first, second]}
-    assert _records(_generate_llm_report(result, tmp_path)) == [first, second]
+    assert _records(_generate_llm_report(result, tmp_path)) == [
+        {**finding, "finding_type": "review"} for finding in (first, second)
+    ]
 
 
 def test_secret_full_record_redacts_injected_values_and_avoids_source(tmp_path):

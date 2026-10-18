@@ -1495,6 +1495,7 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
         "unused_files": [],
     }
 
+    original = deepcopy(result)
     report = cli._generate_llm_report(result, tmp_path, expand_advice=True)
 
     assert report.startswith(
@@ -1505,8 +1506,7 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
     assert "## 3. SKY-DC001 | MEDIUM | Dead Code\n" in report
     assert ">>>    3 |     eval(value)" in report
     assert "Unused function 'unused' is never used (no refs)" in report
-    assert result["unused_functions"][0]["rule_id"] == "SKY-DC001"
-    assert result["unused_functions"][0]["severity"] == "MEDIUM"
+    assert result == original
 
 
 def test_generate_llm_report_uses_secret_preview_without_source_context(tmp_path):

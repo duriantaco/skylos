@@ -17,6 +17,7 @@ from skylos.reporting.advice_display import (
     complexity_display,
     group_advice_for_display,
 )
+from skylos.reporting.advice_policy import prepare_advice_view
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -134,7 +135,11 @@ def render_pretty_results(
     root_path=None,
     limit: int | None = None,
     expand_advice: bool = False,
+    all_advice: bool = False,
 ) -> None:
+    result, visibility = prepare_advice_view(
+        result, project_root=root_path, all_advice=all_advice
+    )
     from skylos.reporting.sca_summary import group_advisories, is_advisory
 
     # Advisories print as one row per package; JSON keeps every advisory.
@@ -161,6 +166,8 @@ def render_pretty_results(
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
+    if visibility.message:
+        console.print(Text(_sanitize_terminal_text(visibility.message), style="dim"))
     uncertainty = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
     if uncertainty:
         console.print(Text(_sanitize_terminal_text(uncertainty), style="yellow"))
@@ -171,7 +178,9 @@ def render_pretty_results(
         for detail in dependency_coverage_lines(result.get("analysis_summary")):
             console.print(Text("  " + _sanitize_terminal_text(detail), style="dim"))
     summary = result.get("analysis_summary") or {}
-    if summary.get("assessment_includes_filtered_findings") or summary.get("grade_includes_filtered_findings"):
+    if summary.get("assessment_includes_filtered_findings") or summary.get(
+        "grade_includes_filtered_findings"
+    ):
         label = "Assessment" if result.get("assessment") else "Grade"
         console.print(
             Text(
@@ -239,11 +248,17 @@ def _print_sca_packages(console: Console, groups, *, root_path=None, limit=None)
         console.print(
             Text.assemble(
                 ("  ", ""),
-                (_severity_badge(group.worst_severity), _severity_rail_style(group.worst_severity)),
+                (
+                    _severity_badge(group.worst_severity),
+                    _severity_rail_style(group.worst_severity),
+                ),
                 (" ", ""),
                 (_sanitize_terminal_text(f"{group.name}@{group.version}"), "bold"),
                 (_sanitize_terminal_text(f"  upgrade to {group.fix_text()}"), ""),
-                (_sanitize_terminal_text(f"  {group.count}: {group.ids_text()}"), "dim"),
+                (
+                    _sanitize_terminal_text(f"  {group.count}: {group.ids_text()}"),
+                    "dim",
+                ),
                 (f"  {location}", "dim"),
             )
         )
@@ -259,13 +274,29 @@ def _print_assessment(console: Console, result: dict) -> None:
     assessment = result.get("assessment")
     if not isinstance(assessment, dict) or not assessment:
         return
-    for label, detail in assessment_rows(assessment, gate=result.get("gate") or result.get("quality_gate")):
-        console.print(Text.assemble((f"  {label}: ", "bold"), (_sanitize_terminal_text(detail), "")))
-    console.print(Text("  " + _sanitize_terminal_text(assessment_coverage_text(assessment)), style="dim"))
+    for label, detail in assessment_rows(
+        assessment, gate=result.get("gate") or result.get("quality_gate")
+    ):
+        console.print(
+            Text.assemble(
+                (f"  {label}: ", "bold"), (_sanitize_terminal_text(detail), "")
+            )
+        )
+    console.print(
+        Text(
+            "  " + _sanitize_terminal_text(assessment_coverage_text(assessment)),
+            style="dim",
+        )
+    )
     for detail in dependency_coverage_lines(result.get("analysis_summary")):
         console.print(Text("  " + _sanitize_terminal_text(detail), style="dim"))
     for label, spread, magnitude in maintainability_rows(assessment):
-        console.print(Text("    " + _sanitize_terminal_text(f"{label}: {spread}; {magnitude}"), style="dim"))
+        console.print(
+            Text(
+                "    " + _sanitize_terminal_text(f"{label}: {spread}; {magnitude}"),
+                style="dim",
+            )
+        )
 
 
 def _print_architecture_advisory_status(console: Console, result: dict) -> None:
@@ -287,8 +318,6 @@ def _print_architecture_advisory_status(console: Console, result: dict) -> None:
     )
 
 
-
-
 def _print_publisher_review_status(console: Console, result: dict) -> None:
     receipt = (result.get("analysis_summary") or {}).get("publisher_change_scan")
     if not isinstance(receipt, dict):
@@ -308,8 +337,6 @@ def _print_publisher_review_status(console: Console, result: dict) -> None:
                 style="yellow",
             )
         )
-
-
 
 
 def _finding_count_label(findings: list[PrettyFinding]) -> str:
@@ -345,7 +372,7 @@ def _print_advice_groups(console, result, *, root_path=None, limit=None):
     console.print(Text("  Advice", style="bold"))
     table = Table(box=None, padding=(0, 1), expand=True)
     table.add_column("Type", width=6)
-    table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Advice priority", width=15, overflow="fold")
     table.add_column("Rule", width=20, overflow="fold")
     table.add_column("Count", width=5, justify="right")
     table.add_column("Top files", overflow="fold")
@@ -456,7 +483,7 @@ def _make_pretty_finding(
         complexity.rule_label if complexity is not None else _rule_id(item, category)
     )
     title = _sanitize_terminal_text(
-        f"Function complexity: {item.get('name') or item.get('simple_name')}"
+        f"{complexity.name}: {item.get('name') or item.get('simple_name')}"
         if complexity is not None
         else _title(item, category, fallback_label)
     )
@@ -483,9 +510,7 @@ def _make_pretty_finding(
         fix=fix,
         why=why,
         finding_type=get_finding_type(item, category),
-        details=tuple(
-            _sanitize_terminal_text(detail) for detail in details
-        ),
+        details=tuple(_sanitize_terminal_text(detail) for detail in details),
     )
 
 

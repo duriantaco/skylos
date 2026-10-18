@@ -404,12 +404,21 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         ),
     )
     parser.add_argument(
+        "--all-advice",
+        action="store_true",
+        help=(
+            "Include optional advice about non-production code, Boolean signatures "
+            "without call evidence and file-level architecture metrics in terminal "
+            "and LLM reports. JSON records and gate limits always retain all findings."
+        ),
+    )
+    parser.add_argument(
         "--expand-advice",
         action="store_true",
         help=(
-            "Show every Advice finding instead of grouping them by rule in "
-            "terminal and LLM reports. Defect and Review findings always retain "
-            "individual rows. JSON records, assessments and gate limits are unchanged."
+            "Show locations and messages for the selected Advice view instead of "
+            "rule summaries. Add --all-advice to include optional advice. Related "
+            "function metrics remain grouped; JSON records and gates are unchanged."
         ),
     )
     parser.add_argument(

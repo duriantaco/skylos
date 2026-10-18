@@ -1,6 +1,7 @@
 import logging
 import pathlib
 import json
+from copy import deepcopy
 
 from skylos.audit.redaction import SECRET_KEYWORDS, sanitize_for_audit
 from skylos.reporting.advice_display import (
@@ -9,6 +10,7 @@ from skylos.reporting.advice_display import (
     complexity_display,
     group_advice_for_display,
 )
+from skylos.reporting.advice_policy import prepare_advice_view
 from skylos.reporting.finding_types import (
     annotate_finding_types,
     get_finding_type,
@@ -162,6 +164,7 @@ def _format_llm_report_section(finding_num, finding, label, code_block):
         else _llm_finding_type(finding, label).title()
     )
     original_findings = complexity.findings if complexity else (finding,)
+    check = f"Check: {complexity.name}\n" if complexity else ""
     records = "\n".join(
         "Record:\n```json\n"
         + json.dumps(original, ensure_ascii=False, indent=2, default=str)
@@ -174,6 +177,7 @@ def _format_llm_report_section(finding_num, finding, label, code_block):
         f"Type: {finding_type}\n"
         f"File: {file_path}:{line}\n"
         f"Name: {name}\n"
+        f"{check}"
         f"{code_block}\n"
         f"Problem: {message}\n"
         f"{records}"
@@ -182,12 +186,23 @@ def _format_llm_report_section(finding_num, finding, label, code_block):
 
 
 def _generate_llm_report(
-    result: dict, project_root: pathlib.Path, *, expand_advice: bool = False
+    result: dict,
+    project_root: pathlib.Path,
+    *,
+    expand_advice: bool = False,
+    all_advice: bool = False,
 ) -> str:
+    result, visibility = prepare_advice_view(
+        result, project_root=project_root, all_advice=all_advice
+    )
+    # The collector supplies display defaults in place; keep those off raw data.
+    result = deepcopy(result)
     all_findings = _collect_llm_report_findings(result)
     from skylos.reporting.assessment_display import dependency_coverage_lines
 
-    dependency_text = "\n".join(dependency_coverage_lines(result.get("analysis_summary")))
+    dependency_text = "\n".join(
+        dependency_coverage_lines(result.get("analysis_summary"))
+    )
     if dependency_text:
         dependency_text += "\n\n"
     assessment_text = ""
@@ -206,8 +221,24 @@ def _generate_llm_report(
         assessment_text += (
             "\n\n" + assessment_coverage_text(result["assessment"]) + "\n\n"
         )
+    summary = result.get("analysis_summary") or {}
+    if summary.get("assessment_includes_filtered_findings") or summary.get(
+        "grade_includes_filtered_findings"
+    ):
+        label = "Assessment" if result.get("assessment") else "Grade"
+        assessment_text += f"{label} includes all analyzed findings, including those outside this display.\n\n"
+    visibility_text = visibility.message + "\n\n" if visibility.message else ""
     if not all_findings:
-        return "# Skylos Report\n\n" + assessment_text + dependency_text + "No findings.\n"
+        empty_text = (
+            "No findings to display.\n" if visibility.message else "No findings.\n"
+        )
+        return (
+            "# Skylos Report\n\n"
+            + assessment_text
+            + dependency_text
+            + visibility_text
+            + empty_text
+        )
 
     counts = advice_display_counts(result)
     category_for_label = {
@@ -233,9 +264,10 @@ def _generate_llm_report(
         if counts["raw_advice"] != counts["advice"]
         else f"{counts['advice']} advice"
     )
+    defect_label = "defect" if counts["defect"] == 1 else "defects"
     sections = [
         "# Skylos Report\n\n"
-        f"{counts['defect']} defects · {counts['review']} review · "
+        f"{counts['defect']} {defect_label} · {counts['review']} review · "
         f"{advice_count} in {groups} {'group' if groups == 1 else 'groups'}.\n\n"
         "Severity is separate from finding type.\n"
         "Review the evidence before changing code.\n\n---\n"
@@ -244,6 +276,8 @@ def _generate_llm_report(
         sections.insert(1, assessment_text)
     if dependency_text:
         sections.insert(1, dependency_text)
+    if visibility_text:
+        sections.insert(1, visibility_text)
     incomplete = sum(label == "Analysis Incomplete" for _finding, label in all_findings)
     if incomplete:
         sections.insert(
@@ -273,16 +307,25 @@ def _format_advice_groups(result: dict) -> str:
     lines = [
         "\n## Advice groups\n\n",
         "Advice is grouped below. All Defect and Review records are included. "
-        "Add --expand-advice to show every Advice entry, including both original "
-        "records for paired complexity checks; JSON output retains the complete "
+        "Add --expand-advice to show every visible Advice entry, including each original "
+        "record for grouped metric checks; JSON output retains the complete "
         "findings.\n\n",
     ]
     for group in group_advice_for_display(result):
         count = group["count"]
         files = len(group["files"])
+        priority = ", ".join(
+            sorted(
+                {
+                    str(finding.get("severity") or "MEDIUM").upper()
+                    for finding in group["findings"]
+                }
+            )
+        )
         lines.append(
             f"- {group['rule_id']}: {count} {'finding' if count == 1 else 'findings'} "
-            f"in {files} {'file' if files == 1 else 'files'} — {group['name']}\n"
+            f"in {files} {'file' if files == 1 else 'files'} — {group['name']}; "
+            f"Advice priority: {priority}\n"
         )
     return "".join(lines)
 

@@ -2076,6 +2076,7 @@ def render_pretty_results(
     root_path=None,
     limit=None,
     expand_advice=False,
+    all_advice=False,
 ):
     from skylos.ui.terminal_report import render_pretty_results as render_impl
 
@@ -2085,6 +2086,7 @@ def render_pretty_results(
         root_path=root_path,
         limit=limit,
         **({"expand_advice": True} if expand_advice else {}),
+        **({"all_advice": True} if all_advice else {}),
     )
 
 
@@ -2096,6 +2098,7 @@ def _write_rich_report_output(
     root_path=None,
     limit=None,
     expand_advice=False,
+    all_advice=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2111,6 +2114,7 @@ def _write_rich_report_output(
         limit=limit,
         copy_badge=False,
         **({"expand_advice": True} if expand_advice else {}),
+        **({"all_advice": True} if all_advice else {}),
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")
@@ -2123,6 +2127,7 @@ def _write_pretty_report_output(
     root_path=None,
     limit=None,
     expand_advice=False,
+    all_advice=False,
 ):
     buffer = StringIO()
     file_console = Console(
@@ -2136,6 +2141,7 @@ def _write_pretty_report_output(
         root_path=root_path,
         limit=limit,
         **({"expand_advice": True} if expand_advice else {}),
+        **({"all_advice": True} if all_advice else {}),
     )
     if not write_text_no_symlink(output_file, buffer.getvalue(), encoding="utf-8"):
         raise OSError(f"could not safely write output file: {output_file}")

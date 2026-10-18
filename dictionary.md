@@ -1133,6 +1133,15 @@ alone does not establish test code. Configuration is selected by pytest's
 precedence without merging, and invalid or symlinked files add no exemptions.
 Fixture-only files, collection opt-outs and unresolved class inheritance add no
 new exemptions. Existing convention-based scope remains available independently.
+Typing advice (T101/T102) uses the same guarded configured-test evidence, so
+custom collected filenames are not treated as public library APIs. Unknown
+function decorators, rebound or shadowed pytest aliases and patched marker
+names cannot establish configured collection evidence. This quality-only
+classification does not change security or dead-code scope.
+When `testpaths` is configured, a broad `python_files` pattern alone cannot
+exempt production files outside those root-discovery selections. Unknown or
+escaping selections add no test-only evidence; conventional test rules remain
+independent.
 Import-proven `typing.overload` signatures with a concrete implementation in
 the same class do not add runtime methods; property accessor counting is
 unchanged. Ordinary helpers and uncertain decorator bindings remain measured.
@@ -1337,6 +1346,14 @@ module and its name appears in
 `architecture_metrics.abstractness_unavailable_modules`. Q804 and Q805 can
 still use its resolved imports. Q801 is cataloged but does not currently emit
 findings in any language.
+
+For Python modules with both `.py` and `.pyi` files, architecture measurements
+come from the runtime file represented by the dependency graph. A stub cannot
+overwrite its abstractness, line count or main-guard evidence. This can remove
+an incorrect threshold warning or restore a previously missed one. Stub-only
+typing analysis remains available. Focused human reports make advisory
+file-level I/A/D optional with `--all-advice`; explicit enforcement and raw
+report/gate policy remain unchanged.
 
 ## Dead Code and Reachability
 

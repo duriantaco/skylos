@@ -82,8 +82,6 @@ def test_singletons_and_other_rules_retain_identity(rule):
         {"file": "other.py"},
         {"line": 13},
         {"name": "app.other"},
-        {"col": 0},
-        {"language": "Python"},
         {"type": "class"},
     ],
 )
@@ -167,7 +165,7 @@ def test_duplicate_checks_and_evidence_variants_are_not_paired(variant):
 
 
 def test_unpaired_records_keep_order_and_identity_around_a_pair():
-    first = _finding("SKY-C304")
+    first = _finding("SKY-C304", line=5)
     second = _finding("SKY-Q306")
     third = _finding("SKY-L001")
     fourth = _finding("SKY-Q301")
@@ -231,15 +229,15 @@ def test_display_counts_and_family_groups_do_not_change_raw_contracts():
     assert advice_display_counts(result) == {
         "defect": 1,
         "review": 1,
-        "advice": 3,
-        "advice_groups": 2,
+        "advice": 2,
+        "advice_groups": 1,
         "raw_advice": 4,
     }
     groups = group_advice_for_display(result)
     complexity = next(
-        group for group in groups if group["name"] == "Function complexity"
+        group for group in groups if group["name"] == "Function maintainability"
     )
-    assert complexity["rule_id"] == "SKY-Q301 + SKY-Q306"
+    assert complexity["rule_id"] == "SKY-Q301 + SKY-Q306 + SKY-C304"
     assert complexity["count"] == 2
     assert complexity["files"] == ["app.py", "other.py"]
     assert len(complexity["findings"]) == 2

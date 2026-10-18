@@ -16,6 +16,7 @@ from skylos.reporting.advice_display import (
     complexity_display,
     group_advice_for_display,
 )
+from skylos.reporting.advice_policy import prepare_advice_view
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -400,7 +401,7 @@ def _render_advice_groups(console, result, *, root_path=None, limit=None):
     console.rule("[bold]Advice")
     table = Table(expand=True)
     table.add_column("Type", width=6)
-    table.add_column("Severity", width=9, overflow="fold")
+    table.add_column("Advice priority", width=15, overflow="fold")
     table.add_column("Rule", width=20, overflow="fold")
     table.add_column("Count", width=5, justify="right")
     table.add_column("Top files", overflow="fold")
@@ -478,7 +479,9 @@ def _render_analysis_errors(
     affected_label = "file" if affected_file_count == 1 else "files"
     error_label = "error" if error_count == 1 else "errors"
     coverage = (result.get("analysis_summary") or {}).get("analysis_coverage")
-    blocking = not isinstance(coverage, dict) or coverage.get("exit_blocking") is not False
+    blocking = (
+        not isinstance(coverage, dict) or coverage.get("exit_blocking") is not False
+    )
     if blocking:
         console.print(
             Panel.fit(
@@ -645,11 +648,15 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
         grade_table.add_row(display_name, s_str, l_str, w_pct, escape(issue))
 
     console.print(grade_table)
-    console.print("[muted]Historical result; this score is not a current risk assessment.[/muted]")
+    console.print(
+        "[muted]Historical result; this score is not a current risk assessment.[/muted]"
+    )
     console.print()
 
 
-def _render_assessment(console: Console, assessment, *, gate=None, analysis_summary=None):
+def _render_assessment(
+    console: Console, assessment, *, gate=None, analysis_summary=None
+):
     table = Table(title="Scan assessment", expand=True)
     table.add_column("Area", style="bold", width=16)
     table.add_column("Result", overflow="fold")
@@ -668,7 +675,9 @@ def _render_assessment(console: Console, assessment, *, gate=None, analysis_summ
         for row in checks:
             maintenance.add_row(*(escape(value) for value in row))
         console.print(maintenance)
-    console.print("[muted]Risk includes Defect and Review findings; review evidence before acting.[/muted]")
+    console.print(
+        "[muted]Risk includes Defect and Review findings; review evidence before acting.[/muted]"
+    )
     console.print()
 
 
@@ -741,7 +750,7 @@ def _quality_detail(quality):
     complexity = complexity_display(quality)
     if complexity is not None:
         return (
-            "Complexity",
+            complexity.name,
             quality.get("name") or quality.get("simple_name") or "<?>",
             complexity.message,
         )
@@ -997,7 +1006,11 @@ def render_results(
     *,
     copy_badge: bool = True,
     expand_advice: bool = False,
+    all_advice: bool = False,
 ):
+    result, visibility = prepare_advice_view(
+        result, project_root=root_path, all_advice=all_advice
+    )
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
@@ -1069,6 +1082,8 @@ def render_results(
             )
             + "[/muted]"
         )
+    if visibility.message:
+        console.print(escape(visibility.message), style="muted")
     for note in scope_note_lines(result):
         console.print(f"[muted]{escape(note)}[/muted]")
     console.print()
@@ -1091,7 +1106,9 @@ def render_results(
         )
     elif grade_data:
         _render_grade(console, grade_data, copy_badge=copy_badge)
-    if summ.get("assessment_includes_filtered_findings") or summ.get("grade_includes_filtered_findings"):
+    if summ.get("assessment_includes_filtered_findings") or summ.get(
+        "grade_includes_filtered_findings"
+    ):
         label = "Assessment" if assessment else "Grade"
         console.print(
             f"[muted]{label} includes all analyzed findings, including those outside this display.[/muted]"

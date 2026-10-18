@@ -1529,9 +1529,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
             return None
 
         filename = context.get("filename")
-        if is_typing_test_path(filename, context.get("project_root")):
-            return None
         source = context.get("source", context.get("_source"))
+        if is_typing_test_path(filename, context.get("project_root"), source=source):
+            return None
         lines = source.splitlines(keepends=True) if isinstance(source, str) else []
         from skylos.analysis.typing_policy import annotation_requirement
 

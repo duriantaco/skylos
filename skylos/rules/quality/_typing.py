@@ -8,6 +8,7 @@ import tokenize
 from pathlib import PurePosixPath
 
 from skylos.core.test_paths import is_test_code_path
+from skylos.rules.quality._pytest_collection import is_collected_pytest_file
 
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -153,19 +154,23 @@ def comment_contract(function, source_lines, receiver=None):
     return {arg.arg for arg, _ in shapes}, True
 
 
-def is_typing_test_path(filename, project_root=None):
-    """Test modules by name; test-suite folders by the project-wide rule.
+def is_typing_test_path(filename, project_root=None, *, source=None):
+    """Test modules by convention or guarded configured collection evidence.
 
     Folders follow ``is_test_code_path`` relative to the project root: a
     top-level ``test``/``tests``, ``<pkg>/tests`` or ``src/<pkg>/tests``. A
     deeper ``test`` package (``django/test/client.py``) is shipped API, and
     without a root an absolute path's ancestors are not evidence.
+    Custom pytest file patterns additionally require statically collectable
+    items; a configured testpaths directory alone does not exempt its helpers.
     """
     text = str(filename or "").replace("\\", "/")
     name = PurePosixPath(text).name.lower()
     if name == "conftest.py" or name.startswith("test_") or name.endswith("_test.py"):
         return True
-    return is_test_code_path(filename, project_root)
+    return is_test_code_path(filename, project_root) or is_collected_pytest_file(
+        filename, project_root, source=source
+    )
 
 
 def pytest_fixture_ids(module):
