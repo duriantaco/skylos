@@ -654,6 +654,9 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
     assert "python -m skylos.cli" not in scan_step["run"]
     assert ".venv/bin/skylos" in scan_step["run"]
+    full_scan = scan_step["run"].split("\nelse\n", 1)[1].split("\nfi", 1)[0]
+    assert "--baseline" not in full_scan
+    assert "--diff" not in full_scan
 
     advisory_step = next(
         s for s in steps if s.get("name") == "Report findings (advisory)"
@@ -661,7 +664,7 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert "--advisory" in advisory_step["run"]
 
     blocker_step = next(
-        s for s in steps if s.get("name") == "Block new high-risk security findings"
+        s for s in steps if s.get("name") == "Block high-risk security findings"
     )
     assert blocker_step["if"] == "always() && steps.scan.outcome == 'success'"
     assert "HIGH" in blocker_step["run"]
@@ -724,7 +727,7 @@ def test_skylos_workflow_reports_incomplete_scan_before_preserving_exit_code():
     preserve_index = steps.index(preserve_step)
     report_steps = {
         "Report findings (advisory)",
-        "Block new high-risk security findings",
+        "Block high-risk security findings",
         "GitHub annotations",
         "Upload report artifact",
     }
@@ -749,7 +752,6 @@ def test_skylos_workflow_routes_github_context_through_environment():
         "EVENT_NAME": "${{ github.event_name }}",
         "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
         "BEFORE_SHA": "${{ github.event.before }}",
-        "REF_NAME": "${{ github.ref_name || 'main' }}",
     }
     assert "${{" not in diff_step["run"]
     assert '[[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in diff_step["run"]
@@ -757,7 +759,10 @@ def test_skylos_workflow_routes_github_context_through_environment():
     assert 'echo "base=$PR_BASE_SHA"' in diff_step["run"]
     assert '[[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]]' in diff_step["run"]
     assert 'git cat-file -e "$BEFORE_SHA^{commit}"' in diff_step["run"]
-    assert 'git check-ref-format --branch "$REF_NAME"' in diff_step["run"]
+    assert 'git merge-base --is-ancestor "$BEFORE_SHA" HEAD' in diff_step["run"]
+    assert 'echo "base=" >> "$GITHUB_OUTPUT"' in diff_step["run"]
+    assert "git fetch" not in diff_step["run"]
+    assert "origin/" not in diff_step["run"]
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():
