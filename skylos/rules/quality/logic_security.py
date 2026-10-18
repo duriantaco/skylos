@@ -202,14 +202,20 @@ class DebugLeftoverRule(SkylosRule):
         ]
 
 
+# Identifier components can name security controls and credentials. Keep the
+# generic token word separate: token_stream may describe an ordinary lexer.
 _SECURITY_TODO_RE = re.compile(
-    r"#\s*(?:TODO|FIXME|HACK|XXX|TEMP)\b[:\s].*?"
-    r"(?:auth|authenticat|authori[sz]|login|permission|credential|password|secret"
-    r"|token|csrf|xss|inject|sanitiz|validat|escap|encrypt|decrypt|ssl|tls"
-    r"|verify|cert|cors|session|cookie|jwt|oauth|api.?key|firewall"
-    r"|rate.?limit|brute.?force|acl|rbac|security|vulnerable|exploit"
-    r"|unsafe|insecure|disable|bypass|hack|workaround|temporary|fixme"
-    r"|hardcod)",
+    r"#\s*(?:TODO|FIXME|HACK|XXX|TEMP)\b[:\s].*?(?:\b|(?<=_))"
+    r"(?:authenticat\w*|authori[sz]\w*|permission\w*|credential\w*|sanitiz\w*"
+    r"|validat\w*|escap\w*|encrypt\w*|decrypt\w*|inject\w*|oauth\w*|firewall\w*"
+    r"|rate.?limit\w*|brute.?forc\w*|vulnerab\w*|exploit\w*|insecure\w*"
+    r"|disabl\w*|bypass\w*|hardcod\w*|csrf\w*|hack\w*|workaround\w*"
+    r"|auth(?:n|z|s)?|logins?|passwords?|secrets?|(?<!\w)tokens?(?!\w)"
+    r"|(?:access|refresh|bearer|auth|id|session)[_-]tokens?"
+    r"|xss(?:filter|protection)\w*|xss"
+    r"|ssl(?:context)?|sqli|tls|verif(?:y|ies|ied|ying|ication)|cert(?:s|ificates?)?"
+    r"|cors|sessions?|cookies?|jwts?|api.?keys?|acls?|rbac"
+    r"|security|unsafe|temporary|fixme)(?=\W|_|$)",
     re.IGNORECASE,
 )
 
@@ -231,10 +237,46 @@ class SecurityTodoRule(SkylosRule):
         if not isinstance(src, str):
             return None
 
+        fragments = [
+            (token.start[0], token.start[1], token.string)
+            for token in tokenize.generate_tokens(io.StringIO(src).readline)
+            if token.type == tokenize.COMMENT
+        ]
+        # Genuine docstrings can record unfinished security work too. Keep
+        # those markers visible without scanning unrelated runtime strings.
+        source_lines = src.split("\n")
+        for scope in ast.walk(node):
+            if not isinstance(
+                scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ) or not scope.body:
+                continue
+            first = scope.body[0]
+            if not (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                continue
+            docstring = first.value
+            text = ast.get_source_segment(src, docstring)
+            if text is None:
+                # Without positioned source, preserve the older conservative
+                # text scan rather than silently dropping docstring markers.
+                fragments.extend((i, 0, line) for i, line in enumerate(source_lines, 1))
+                break
+            prefix = source_lines[docstring.lineno - 1].encode("utf-8")
+            column = len(prefix[: docstring.col_offset].decode("utf-8"))
+            fragments.extend(
+                (docstring.lineno + offset, column if offset == 0 else 0, line)
+                for offset, line in enumerate(text.split("\n"))
+            )
+
         findings = []
-        for i, line in enumerate(src.splitlines(), start=1):
+        reported_lines = set()
+        for i, column, line in sorted(fragments):
             m = _SECURITY_TODO_RE.search(line)
-            if m:
+            if m and i not in reported_lines:
+                reported_lines.add(i)
                 comment = m.group(0).strip()
                 if len(comment) > 120:
                     comment = comment[:117] + "..."
@@ -252,7 +294,7 @@ class SecurityTodoRule(SkylosRule):
                         "file": filename,
                         "basename": Path(filename).name,
                         "line": i,
-                        "col": m.start(),
+                        "col": column + m.start(),
                     }
                 )
 
@@ -3516,15 +3558,16 @@ class ErrorDisclosureRule(SkylosRule):
         if _is_test_file(filename):
             return None
 
+        # An unnamed handler can still return ``traceback.format_exc()``.
         exc_var = node.name
-        if not exc_var:
-            return None
 
         findings = []
         basename = Path(filename).name
 
         for child in ast.walk(node):
-            if isinstance(child, ast.Return) and child.value:
+            # A returned value reaches a client only by assumption; keep that
+            # assumption to handlers that bind the exception, as before.
+            if isinstance(child, ast.Return) and child.value and exc_var:
                 self._check_disclosure(
                     child.value, exc_var, child, filename, basename, findings
                 )
@@ -3551,9 +3594,10 @@ class ErrorDisclosureRule(SkylosRule):
     def _check_disclosure(
         self, value_node, exc_var, report_node, filename, basename, findings
     ):
-        if self._is_exc_stringification(value_node, exc_var):
+        disclosed = self._disclosure_kind(value_node, exc_var)
+        if disclosed:
             findings.append(
-                self._make_finding(report_node, filename, basename, exc_var)
+                self._make_finding(report_node, filename, basename, exc_var, disclosed)
             )
             return
 
@@ -3561,10 +3605,11 @@ class ErrorDisclosureRule(SkylosRule):
             for k, v in zip(value_node.keys, value_node.values):
                 if k and isinstance(k, ast.Constant) and isinstance(k.value, str):
                     if k.value.lower() in _HTTP_RETURN_KEYS:
-                        if self._is_exc_stringification(v, exc_var):
+                        disclosed = self._disclosure_kind(v, exc_var)
+                        if disclosed:
                             findings.append(
                                 self._make_finding(
-                                    report_node, filename, basename, exc_var
+                                    report_node, filename, basename, exc_var, disclosed
                                 )
                             )
                             return
@@ -3572,34 +3617,51 @@ class ErrorDisclosureRule(SkylosRule):
         if isinstance(value_node, ast.JoinedStr):
             for val in value_node.values:
                 if isinstance(val, ast.FormattedValue):
-                    if self._is_exc_stringification(val.value, exc_var):
+                    disclosed = self._disclosure_kind(val.value, exc_var)
+                    if disclosed:
                         findings.append(
-                            self._make_finding(report_node, filename, basename, exc_var)
-                        )
-                        return
-                    if isinstance(val.value, ast.Name) and val.value.id == exc_var:
-                        findings.append(
-                            self._make_finding(report_node, filename, basename, exc_var)
+                            self._make_finding(
+                                report_node, filename, basename, exc_var, disclosed
+                            )
                         )
                         return
 
-    def _is_exc_stringification(self, node, exc_var):
+    def _disclosure_kind(self, node, exc_var):
+        """``"traceback"`` for a formatted stack trace, ``"message"`` for exception text."""
         if isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Name) and func.id in ("str", "repr"):
-                if node.args and isinstance(node.args[0], ast.Name):
-                    if node.args[0].id == exc_var:
-                        return True
-
             if isinstance(func, ast.Attribute) and func.attr == "format_exc":
                 if isinstance(func.value, ast.Name) and func.value.id == "traceback":
-                    return True
+                    return "traceback"
+            if exc_var and isinstance(func, ast.Name) and func.id in ("str", "repr"):
+                if node.args and isinstance(node.args[0], ast.Name):
+                    if node.args[0].id == exc_var:
+                        return "message"
 
-        if isinstance(node, ast.Name) and node.id == exc_var:
-            return True
-        return False
+        if exc_var and isinstance(node, ast.Name) and node.id == exc_var:
+            return "message"
+        return None
 
-    def _make_finding(self, node, filename, basename, exc_var):
+    def _make_finding(self, node, filename, basename, exc_var, disclosed="message"):
+        destination = (
+            f"passed to '{_dotted_name(node.func) or 'Response'}()'"
+            if isinstance(node, ast.Call)
+            else "returned from an exception handler"
+        )
+        if disclosed == "traceback":
+            message = (
+                f"A formatted stack trace is {destination}. If sent to a client, "
+                "it can expose internal paths and code. Log it and send a generic "
+                "error message instead."
+            )
+        else:
+            message = (
+                f"Exception text ('{exc_var}') is {destination}. "
+                "Exception messages can include internal details such as paths, "
+                "queries or configuration if sent to a client. Send a generic "
+                "message unless this "
+                "exception's text is written for the client."
+            )
         return {
             "rule_id": self.rule_id,
             "kind": "logic",
@@ -3607,12 +3669,9 @@ class ErrorDisclosureRule(SkylosRule):
             "type": "block",
             "name": "error_disclosure",
             "simple_name": "error_disclosure",
-            "value": "exception_leaked",
+            "value": "traceback_leaked" if disclosed == "traceback" else "exception_leaked",
             "threshold": 0,
-            "message": (
-                f"Exception details ('{exc_var}') returned in HTTP response. "
-                f"This exposes internal stack traces to attackers. Return a generic error message instead."
-            ),
+            "message": message,
             "file": filename,
             "basename": basename,
             "line": node.lineno,
