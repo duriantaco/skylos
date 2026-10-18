@@ -74,7 +74,10 @@ class TestTSDangerRules:
         assert "SKY-D226" in ids
 
     def test_innerhtml_sanitizer_is_not_flagged(self, tmp_path):
-        code = "el.innerHTML = DOMPurify.sanitize(userHtml);"
+        code = (
+            "import DOMPurify from 'dompurify';\n"
+            "el.innerHTML = DOMPurify.sanitize(userHtml);"
+        )
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D226" not in ids

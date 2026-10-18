@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from html.parser import HTMLParser
 from tree_sitter import Language, Node, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
@@ -319,18 +320,12 @@ _ERROR_DISCLOSURE_PROPS = {"stack", "sql", "sqlMessage", "sqlState"}
 
 _RESPONSE_METHODS = {"json", "send", "write", "end"}
 
-_HTML_EXECUTABLE_RE = re.compile(
-    r"<\s*(?:script|iframe|object|embed)\b|"
-    r"\bon[a-z0-9_-]+\s*=|"
-    r"javascript\s*:",
-    re.IGNORECASE,
-)
-
-_SAFE_HTML_SANITIZER_CALLEES = {
-    "DOMPurify.sanitize",
-    "sanitizeHtml",
-    "sanitizeHTML",
-}
+# Sanitizers are trusted by where they come from, never by their spelling.
+_DOMPURIFY_PACKAGES = frozenset({"dompurify", "isomorphic-dompurify"})
+_SANITIZE_HTML_PACKAGES = frozenset({"sanitize-html"})
+_MAX_HTML_VALUES = 32
+_MAX_HTML_ALIAS_DEPTH = 16
+_MAX_HTML_VALUE_BYTES = 1_000_000
 
 _RANDOM_SECURITY_TERMS = (
     "token",
@@ -575,29 +570,541 @@ def _callee_name(call_node, source_bytes: bytes) -> str | None:
     return f"{object_name}.{property_name}"
 
 
-def _is_safe_html_sanitizer_call(node, source_bytes: bytes) -> bool:
-    unwrapped = _unwrap_ts_expression(node)
-    if unwrapped.type != "call_expression":
-        return False
+class _JsBindings:
+    """How each name in one file is bound (declarations, parameters, imports)
+    and whether it is ever assigned. A name bound more than once anywhere in
+    the file is never resolved, so shadowing cannot hide a value."""
 
-    callee = _callee_name(unwrapped, source_bytes)
-    return callee in _SAFE_HTML_SANITIZER_CALLEES
+    def __init__(self, root_node, source_bytes: bytes):
+        self.source_bytes = source_bytes
+        self.bindings: dict[str, list[tuple]] = {}
+        self.declaration_nodes: dict[str, list] = {}
+        self.assigned: set[str] = set()
+        self.nodes = []
+        self.dynamic_scope = False
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
+            self.nodes.append(node)
+            if node.type == "with_statement":
+                self.dynamic_scope = True
+            elif node.type == "call_expression":
+                function = node.child_by_field_name("function")
+                if (
+                    function is not None
+                    and function.type == "identifier"
+                    and (_get_text(source_bytes, function) == "eval")
+                ):
+                    self.dynamic_scope = True
+            self._record(node)
+            stack.extend(node.children)
+
+    def _bind(self, name_node, kind: str, value=None, source=None, imported=None):
+        if name_node is None:
+            return
+        for name in self._names(name_node):
+            self.bindings.setdefault(name, []).append((kind, value, source, imported))
+            self.declaration_nodes.setdefault(name, []).append(name_node)
+
+    def _names(self, node) -> list[str]:
+        if node.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            return [_get_text(self.source_bytes, node)]
+        names = []
+        stack = list(node.children)
+        while stack:
+            child = stack.pop()
+            if child.type in {"identifier", "shorthand_property_identifier_pattern"}:
+                names.append(_get_text(self.source_bytes, child))
+            else:
+                stack.extend(child.children)
+        return names
+
+    def _record(self, node) -> None:
+        kind = node.type
+        if kind == "variable_declarator":
+            parent = node.parent
+            declared = "var"
+            if parent is not None and parent.type == "lexical_declaration":
+                kind_node = parent.child_by_field_name("kind")
+                declared = (
+                    _get_text(self.source_bytes, kind_node) if kind_node else "let"
+                )
+            name = node.child_by_field_name("name")
+            single = name is not None and name.type == "identifier"
+            self._bind(
+                name, declared, node.child_by_field_name("value") if single else None
+            )
+        elif kind == "formal_parameters":
+            self._bind(node, "parameter")
+        elif kind == "arrow_function":
+            self._bind(node.child_by_field_name("parameter"), "parameter")
+        elif kind in {
+            "function_declaration",
+            "generator_function_declaration",
+            "function_expression",
+            "function",
+            "class_declaration",
+            "class",
+            "enum_declaration",
+            "internal_module",
+            "module",
+        }:
+            self._bind(node.child_by_field_name("name"), "declaration")
+        elif kind == "catch_clause":
+            self._bind(node.child_by_field_name("parameter"), "catch")
+        elif kind == "for_in_statement":
+            self._bind(node.child_by_field_name("left"), "loop")
+        elif kind == "import_statement":
+            source_node = node.child_by_field_name("source")
+            source = (
+                _string_literal_value(source_node, self.source_bytes)
+                if source_node
+                else ""
+            )
+            self._record_import(node, source)
+        elif kind == "import_require_clause":
+            source_node = node.child_by_field_name("source")
+            source = (
+                _string_literal_value(source_node, self.source_bytes)
+                if source_node
+                else ""
+            )
+            for child in node.children:
+                if child.type == "identifier":
+                    self._bind(child, "import", source=source, imported="default")
+        elif kind in {"assignment_expression", "augmented_assignment_expression"}:
+            for name in self._names(node.child_by_field_name("left") or node):
+                self.assigned.add(name)
+        elif kind == "update_expression":
+            argument = node.child_by_field_name("argument")
+            if argument is not None:
+                self.assigned.update(self._names(argument))
+
+    def _record_import(self, node, source: str) -> None:
+        for clause in node.children:
+            if clause.type != "import_clause":
+                continue
+            for child in clause.children:
+                if child.type == "identifier":
+                    self._bind(child, "import", source=source, imported="default")
+                elif child.type == "namespace_import":
+                    self._bind(child, "import", source=source, imported="*")
+                elif child.type == "named_imports":
+                    for spec in child.children:
+                        if spec.type != "import_specifier":
+                            continue
+                        imported = spec.child_by_field_name("name")
+                        local = spec.child_by_field_name("alias") or imported
+                        self._bind(
+                            local,
+                            "import",
+                            source=source,
+                            imported=_get_text(self.source_bytes, imported)
+                            if imported
+                            else None,
+                        )
+
+    def only_binding(self, name: str, use_node=None):
+        """(kind, value, source, imported) when ``name`` is bound exactly once
+        and never assigned, else None."""
+        entries = self.bindings.get(name, [])
+        if self.dynamic_scope or len(entries) != 1 or name in self.assigned:
+            return None
+        if use_node is not None:
+            declared = self.declaration_nodes[name][0]
+            scope = declared.parent
+            while scope is not None and scope.type not in {
+                "program",
+                "statement_block",
+                "switch_body",
+                "for_statement",
+                "for_in_statement",
+                "class_static_block",
+            }:
+                scope = scope.parent
+            if scope is None or not (
+                scope.start_byte <= use_node.start_byte
+                and use_node.end_byte <= scope.end_byte
+            ):
+                return None
+        return entries[0]
+
+    def unbound(self, name: str) -> bool:
+        return name not in self.bindings and name not in self.assigned
+
+
+def _decode_html_js_piece(text: str) -> str | None:
+    """Decode cooked JS string contents before inspecting the resulting HTML.
+
+    Unknown, malformed and legacy octal escapes do not establish inertness.
+    This is deliberately separate from helpers that inspect raw source text.
+    """
+    if len(text) > _MAX_HTML_VALUE_BYTES:
+        return None
+    result = []
+    position = 0
+    escapes = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+    while position < len(text):
+        char = text[position]
+        position += 1
+        if char != "\\":
+            result.append(char)
+            continue
+        if position >= len(text):
+            return None
+        char = text[position]
+        position += 1
+        if char in {"\n", "\r", "\u2028", "\u2029"}:
+            if char == "\r" and text[position : position + 1] == "\n":
+                position += 1
+            continue
+        if char in escapes:
+            result.append(escapes[char])
+        elif char == "0" and not text[position : position + 1].isdigit():
+            result.append("\0")
+        elif char.isdigit():
+            return None
+        elif char in {"x", "u"}:
+            if char == "u" and text[position : position + 1] == "{":
+                end = text.find("}", position + 1)
+                digits = text[position + 1 : end] if end >= 0 else ""
+                position = end + 1
+                if not 1 <= len(digits) <= 6:
+                    return None
+            else:
+                count = 2 if char == "x" else 4
+                digits = text[position : position + count]
+                position += count
+                if len(digits) != count:
+                    return None
+            if not re.fullmatch(r"[0-9a-fA-F]+", digits):
+                return None
+            codepoint = int(digits, 16)
+            if codepoint > 0x10FFFF:
+                return None
+            result.append(chr(codepoint))
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def _html_static_values(
+    node, source_bytes: bytes, bindings: _JsBindings, depth: int = 0
+):
+    """Every string ``node`` can evaluate to, when all of them are written in
+    the file: literals, templates and ``+`` of them, each branch of a ternary,
+    and ``const`` names bound once in the file. None when any part is not."""
+    node = _unwrap_ts_expression(node)
+    if node is None or depth > _MAX_HTML_ALIAS_DEPTH:
+        return None
+    if node.type == "string":
+        value = _decode_html_js_piece(_string_literal_value(node, source_bytes))
+        return [value] if value is not None else None
+    if node.type == "template_string":
+        values = [""]
+        for child in node.children:
+            if child.type == "`":
+                continue
+            if child.type == "template_substitution":
+                inner = next((c for c in child.named_children), None)
+                parts = _html_static_values(inner, source_bytes, bindings, depth + 1)
+            else:
+                value = _decode_html_js_piece(_get_text(source_bytes, child))
+                parts = [value] if value is not None else None
+            values = _combine_html_values(values, parts)
+            if values is None:
+                return None
+        return values
+    if node.type == "binary_expression":
+        operator = node.child_by_field_name("operator")
+        if operator is None or _get_text(source_bytes, operator) != "+":
+            return None
+        left = _html_static_values(
+            node.child_by_field_name("left"), source_bytes, bindings, depth + 1
+        )
+        right = _html_static_values(
+            node.child_by_field_name("right"), source_bytes, bindings, depth + 1
+        )
+        return _combine_html_values(left, right)
+    if node.type == "ternary_expression":
+        branches = [
+            _html_static_values(
+                node.child_by_field_name(field), source_bytes, bindings, depth + 1
+            )
+            for field in ("consequence", "alternative")
+        ]
+        if any(branch is None for branch in branches):
+            return None
+        values = branches[0] + branches[1]
+        return values if len(values) <= _MAX_HTML_VALUES else None
+    if node.type == "identifier":
+        binding = bindings.only_binding(_get_text(source_bytes, node), node)
+        if binding is None or binding[0] != "const" or binding[1] is None:
+            return None
+        return _html_static_values(binding[1], source_bytes, bindings, depth + 1)
+    return None
+
+
+def _combine_html_values(left, right):
+    if left is None or right is None or len(left) * len(right) > _MAX_HTML_VALUES:
+        return None
+    if any(len(a) + len(b) > _MAX_HTML_VALUE_BYTES for a in left for b in right):
+        return None
+    return [a + b for a in left for b in right]
+
+
+def _html_call_arguments(node):
+    arguments = node.child_by_field_name("arguments")
+    return (
+        [child for child in arguments.named_children if child.type != "comment"]
+        if arguments
+        else []
+    )
+
+
+def _sanitizer_binding_intact(name: str, bindings: _JsBindings) -> bool:
+    """No alias, mutation, hook, configuration or escape invalidates defaults.
+
+    A package import establishes the API origin, not immutability of the
+    imported object. Only direct calls stay within this proof.
+    """
+    declarations = {node.id for node in bindings.declaration_nodes.get(name, [])}
+    for node in bindings.nodes:
+        if node.type not in {"identifier", "shorthand_property_identifier"} or (
+            _get_text(bindings.source_bytes, node) != name
+        ):
+            continue
+        if node.id in declarations:
+            continue
+        parent = node.parent
+        current = parent
+        while current is not None and current.type not in {
+            "program",
+            "import_statement",
+        }:
+            current = current.parent
+        if current is not None and current.type == "import_statement":
+            continue
+        callee = node
+        if parent is not None and parent.type == "member_expression":
+            owner = parent.child_by_field_name("object")
+            prop = parent.child_by_field_name("property")
+            if owner is None or owner.id != node.id or prop is None:
+                return False
+            if _get_text(bindings.source_bytes, prop) != "sanitize":
+                return False
+            callee = parent
+            parent = parent.parent
+        if parent is None or parent.type != "call_expression":
+            return False
+        function = parent.child_by_field_name("function")
+        arguments = _html_call_arguments(parent)
+        if function is None or function.id != callee.id or len(arguments) != 1:
+            return False
+        if arguments[0].type == "spread_element":
+            return False
+    return True
+
+
+def _required_package(node, bindings: _JsBindings, depth: int = 0) -> str | None:
+    """A literal require, or an actual DOMPurify factory called with window."""
+    node = _unwrap_ts_expression(node)
+    if node is None or node.type != "call_expression" or depth > 4:
+        return None
+    function = _unwrap_ts_expression(node.child_by_field_name("function"))
+    arguments = _html_call_arguments(node)
+    if function is None or len(arguments) != 1 or arguments[0].type == "spread_element":
+        return None
+    source_bytes = bindings.source_bytes
+    if function.type == "identifier":
+        name = _get_text(source_bytes, function)
+        if name == "require" and bindings.unbound("require"):
+            package = _first_static_call_arg(node, source_bytes)
+            return (
+                package
+                if package in _DOMPURIFY_PACKAGES | _SANITIZE_HTML_PACKAGES
+                else None
+            )
+        binding = bindings.only_binding(name, function)
+        package = (
+            binding[2]
+            if binding is not None
+            and binding[0] == "import"
+            and binding[3] == "default"
+            and _sanitizer_binding_intact(name, bindings)
+            else None
+        )
+    else:
+        package = _required_package(function, bindings, depth + 1)
+    window = _unwrap_ts_expression(arguments[0])
+    if (
+        package not in _DOMPURIFY_PACKAGES
+        or window is None
+        or window.type != "identifier"
+        or _get_text(source_bytes, window) != "window"
+        or not bindings.unbound("window")
+    ):
+        return None
+    return package
+
+
+def _bound_to_package(
+    name: str, packages, bindings: _JsBindings, use_node, *, named=None
+) -> bool:
+    binding = bindings.only_binding(name, use_node)
+    if binding is None or not _sanitizer_binding_intact(name, bindings):
+        return False
+    kind, value, source, imported_name = binding
+    if kind == "import":
+        return source in packages and imported_name in (
+            {named} if named is not None else {"default", "*"}
+        )
+    if kind == "const" and value is not None and named is None:
+        return _required_package(value, bindings) in packages
+    return False
+
+
+def _is_safe_html_sanitizer_call(
+    node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
+    """An intact imported sanitizer called with its default configuration."""
+    unwrapped = _unwrap_ts_expression(node)
+    if unwrapped is None or unwrapped.type != "call_expression":
+        return False
+    arguments = _html_call_arguments(unwrapped)
+    if len(arguments) != 1 or arguments[0].type == "spread_element":
+        return False
+    function = _unwrap_ts_expression(unwrapped.child_by_field_name("function"))
+    if function is None:
+        return False
+    if function.type == "member_expression":
+        owner = function.child_by_field_name("object")
+        prop = function.child_by_field_name("property")
+        if owner is None or owner.type != "identifier" or prop is None:
+            return False
+        if _get_text(source_bytes, prop) != "sanitize":
+            return False
+        name = _get_text(source_bytes, owner)
+        return _bound_to_package(name, _DOMPURIFY_PACKAGES, bindings, owner)
+    if function.type == "identifier":
+        name = _get_text(source_bytes, function)
+        return _bound_to_package(name, _SANITIZE_HTML_PACKAGES, bindings, function) or (
+            _bound_to_package(
+                name, _DOMPURIFY_PACKAGES, bindings, function, named="sanitize"
+            )
+        )
+    return False
+
+
+class _LiteralHtml(HTMLParser):
+    """Prove supported fixed markup inert using actual tags and attributes.
+
+    Unknown declarations and unfinished tokens remain findings. In particular,
+    text that merely contains ``onload=`` is not an event attribute, and only
+    the first actual ``type`` attribute determines a script's type.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.executable = False
+
+    def handle_starttag(self, tag, attrs):
+        attributes = {}
+        for name, value in attrs:
+            attributes.setdefault(name, value)
+            if name.startswith("on"):
+                self.executable = True
+            if value is not None and name in {
+                "href",
+                "src",
+                "action",
+                "formaction",
+                "xlink:href",
+                "data",
+                "background",
+                "dynsrc",
+                "lowsrc",
+                "style",
+            }:
+                scheme = re.sub(r"[\x00-\x20\x7f]", "", value).lower()
+                if "javascript:" in scheme or "vbscript:" in scheme:
+                    self.executable = True
+        if tag in {
+            "iframe",
+            "object",
+            "embed",
+            "style",
+            "svg",
+            "math",
+            "textarea",
+            "title",
+            "xmp",
+            "noscript",
+            "noembed",
+            "noframes",
+            "plaintext",
+            "animate",
+            "set",
+            "animatemotion",
+            "animatetransform",
+            "foreignobject",
+        }:
+            # Foreign-content, CSS and browser raw-text/RCDATA states need
+            # models HTMLParser does not supply. Do not infer inertness from
+            # its treatment of apparent tags inside those elements.
+            self.executable = True
+        if tag == "script":
+            script_type = attributes.get("type")
+            if not isinstance(script_type, str) or script_type.strip().lower() not in {
+                "application/json",
+                "application/ld+json",
+            }:
+                self.executable = True
+
+    def unknown_decl(self, data):
+        self.executable = True
+
+    def handle_pi(self, data):
+        self.executable = True
 
 
 def _html_literal_can_execute(value: str) -> bool:
-    return bool(_HTML_EXECUTABLE_RE.search(value))
+    # HTMLParser is not an HTML5 tree builder. Do not establish safety for
+    # abrupt/nested comments on which its tokenization differs from browsers.
+    cursor = 0
+    while (start := value.find("<!--", cursor)) >= 0:
+        end = value.find("-->", start + 4)
+        if end < 0 or value[start + 4 : start + 5] in {">", "-"}:
+            return True
+        if "<!--" in value[start + 4 : end]:
+            return True
+        cursor = end + 3
+    if "\0" in value or len(value) > _MAX_HTML_VALUE_BYTES:
+        return True
+    parser = _LiteralHtml()
+    try:
+        parser.feed(value)
+        # close() turns unfinished comments/tags into data. Inspect the pending
+        # buffer first so an unsupported token cannot become a safety proof.
+        if parser.rawdata:
+            return True
+        parser.close()
+    except (AssertionError, ValueError, RecursionError):
+        return True
+    return parser.executable
 
 
-def _html_assignment_rhs_requires_finding(rhs_node, source_bytes: bytes) -> bool:
+def _html_assignment_rhs_requires_finding(
+    rhs_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
     if rhs_node is None:
         return True
 
-    unwrapped = _unwrap_ts_expression(rhs_node)
-    literal_value = _static_string_value(unwrapped, source_bytes)
-    if literal_value is not None:
-        return _html_literal_can_execute(literal_value)
+    values = _html_static_values(rhs_node, source_bytes, bindings)
+    if values is not None:
+        return any(_html_literal_can_execute(value) for value in values)
 
-    if _is_safe_html_sanitizer_call(unwrapped, source_bytes):
+    if _is_safe_html_sanitizer_call(rhs_node, source_bytes, bindings):
         return False
 
     return True
@@ -620,12 +1127,16 @@ def _assignment_rhs_for_property_capture(prop_node):
     return None
 
 
-def _html_property_capture_requires_finding(prop_node, source_bytes: bytes) -> bool:
+def _html_property_capture_requires_finding(
+    prop_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
     rhs_node = _assignment_rhs_for_property_capture(prop_node)
-    return _html_assignment_rhs_requires_finding(rhs_node, source_bytes)
+    return _html_assignment_rhs_requires_finding(rhs_node, source_bytes, bindings)
 
 
-def _document_write_requires_finding(prop_node, source_bytes: bytes) -> bool:
+def _document_write_requires_finding(
+    prop_node, source_bytes: bytes, bindings: _JsBindings
+) -> bool:
     member_node = prop_node.parent
     call_node = member_node.parent if member_node is not None else None
     if call_node is None or call_node.type != "call_expression":
@@ -633,7 +1144,7 @@ def _document_write_requires_finding(prop_node, source_bytes: bytes) -> bool:
 
     args_node = call_node.child_by_field_name("arguments")
     first_arg = _first_real_arg(args_node) if args_node is not None else None
-    return _html_assignment_rhs_requires_finding(first_arg, source_bytes)
+    return _html_assignment_rhs_requires_finding(first_arg, source_bytes, bindings)
 
 
 def _nearest_statement_text(node, source_bytes: bytes) -> str:
@@ -1658,14 +2169,17 @@ def scan_danger(
     for k, v in jsx_captures.items():
         simple_captures.setdefault(k, []).extend(v)
 
+    html_bindings = None
     for cap_name, (rule_id, severity, message) in _SIMPLE_MAP.items():
         for node in simple_captures.get(cap_name, []):
+            if cap_name in {"innerHTML", "outerHTML", "doc_write"} and html_bindings is None:
+                html_bindings = _JsBindings(root_node, source_bytes)
             if cap_name in {"innerHTML", "outerHTML"} and not (
-                _html_property_capture_requires_finding(node, source_bytes)
+                _html_property_capture_requires_finding(node, source_bytes, html_bindings)
             ):
                 continue
             if cap_name == "doc_write" and not _document_write_requires_finding(
-                node, source_bytes
+                node, source_bytes, html_bindings
             ):
                 continue
             if cap_name == "math_random" and not _math_random_requires_finding(
