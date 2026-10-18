@@ -53,6 +53,13 @@ def _looks_sensitive_literal(value: str) -> bool:
     if any(keyword in lowered for keyword in _SENSITIVE_LITERAL_KEYWORDS):
         return True
 
+    # Entropy over a whole sentence mistakes ordinary prose for a credential.
+    # Keep the format and keyword checks above for whitespace-bearing secrets,
+    # and still mask opaque credentials surrounded by or embedded in whitespace.
+    return any(_is_opaque_sensitive_token(part) for part in value.split())
+
+
+def _is_opaque_sensitive_token(value: str) -> bool:
     if len(value) < 24:
         return False
 
@@ -70,6 +77,115 @@ def _duplicate_string_display(value: str) -> str:
     if _looks_sensitive_literal(value):
         return REDACTION
     return value if len(value) <= 40 else value[:37] + "..."
+
+
+def _duplicate_string_function_scopes(module: ast.Module) -> dict[int, int | None]:
+    """Identify function *body* scopes without names or source in the evidence.
+
+    Defaults and decorators run in the enclosing scope. Class bodies have their
+    own namespace, even when the class is nested in a function. AST identity
+    distinguishes methods with the same name and nested or async functions.
+    """
+    scopes: dict[int, int | None] = {}
+    stack: list[tuple[ast.AST, int | None]] = [(module, None)]
+    while stack:
+        current, function_scope = stack.pop()
+        scopes[id(current)] = function_scope
+        for field, value in ast.iter_fields(current):
+            child_scope = function_scope
+            if field == "body":
+                if isinstance(
+                    current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+                ):
+                    child_scope = id(current)
+                elif isinstance(current, ast.ClassDef):
+                    child_scope = None
+            if isinstance(value, ast.AST):
+                stack.append((value, child_scope))
+            elif isinstance(value, list):
+                stack.extend(
+                    (child, child_scope)
+                    for child in value
+                    if isinstance(child, ast.AST)
+                )
+    return scopes
+
+
+def _duplicate_string_occurrence_role(
+    node: ast.Constant,
+    parent_map: dict[int, ast.AST],
+    membership_cache: dict[int, tuple[set[int], ...]],
+) -> str:
+    parent = parent_map.get(id(node))
+    if isinstance(parent, ast.Call):
+        members = membership_cache.get(id(parent))
+        if members is None:
+            members = ({id(argument) for argument in parent.args},)
+            membership_cache[id(parent)] = members
+        if id(node) in members[0]:
+            return "call_argument"
+    if isinstance(parent, ast.keyword) and parent.value is node:
+        if isinstance(parent_map.get(id(parent)), ast.Call):
+            return "call_keyword"
+    if isinstance(parent, ast.Dict):
+        members = membership_cache.get(id(parent))
+        if members is None:
+            members = (
+                {id(key) for key in parent.keys},
+                {id(value) for value in parent.values},
+            )
+            membership_cache[id(parent)] = members
+        if id(node) in members[0]:
+            return "dict_key"
+        if id(node) in members[1]:
+            return "dict_value"
+    if isinstance(parent, ast.Subscript) and parent.slice is node:
+        return "subscript_key"
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+        return "assignment_value"
+    if isinstance(parent, ast.Return) and parent.value is node:
+        return "return_value"
+    if isinstance(parent, ast.Compare):
+        return "comparison"
+    return "other"
+
+
+def _duplicate_string_context(
+    value: str,
+    nodes: list[ast.Constant],
+    parent_map: dict[int, ast.AST],
+    function_scopes: dict[int, int | None],
+    membership_cache: dict[int, tuple[set[int], ...]],
+) -> dict:
+    """Bounded presentation evidence; never serialize a literal or a symbol."""
+    roles: dict[str, int] = {}
+    scopes = set()
+    outside_functions = 0
+    complete = True
+    for node in nodes:
+        role = _duplicate_string_occurrence_role(node, parent_map, membership_cache)
+        roles[role] = roles.get(role, 0) + 1
+        if id(node) not in function_scopes:
+            complete = False
+        scope = function_scopes.get(id(node))
+        if scope is None:
+            outside_functions += 1
+        else:
+            scopes.add(scope)
+    identifier_like = value.isidentifier()
+    return {
+        "version": 1,
+        "scope_complete": complete,
+        "occurrence_count": len(nodes),
+        "distinct_function_count": len(scopes),
+        "non_function_occurrences": outside_functions,
+        "identifier_like": identifier_like,
+        # This describes syntax, not a proof that an arbitrary called API
+        # requires the value. Consumers can keep mixed and unknown roles visible.
+        "all_occurrences_contract_tokens": identifier_like
+        and set(roles) <= {"call_argument", "call_keyword", "dict_key", "subscript_key"},
+        "role_counts": roles,
+    }
 
 
 _DUPLICATE_STRING_PATH_PREFIXES = (
@@ -762,6 +878,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 string_occurrences[key].append(child)
 
         findings = []
+        function_scopes = None
+        membership_cache = {}
         for value, nodes in string_occurrences.items():
             count = len(nodes)
             if count < self.threshold:
@@ -770,6 +888,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 continue
             severity = "MEDIUM" if count >= 6 else "LOW"
             display = _duplicate_string_display(value)
+            if function_scopes is None:
+                function_scopes = _duplicate_string_function_scopes(node)
             findings.append(
                 {
                     "rule_id": self.rule_id,
@@ -785,6 +905,9 @@ class DuplicateStringLiteralRule(SkylosRule):
                     "basename": basename,
                     "line": nodes[0].lineno,
                     "col": nodes[0].col_offset,
+                    "literal_context": _duplicate_string_context(
+                        value, nodes, parent_map, function_scopes, membership_cache
+                    ),
                 }
             )
 
