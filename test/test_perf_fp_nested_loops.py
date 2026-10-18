@@ -1,12 +1,8 @@
-"""SKY-P403 must report only input-dependent work repeated for every outer item.
+"""P403 distinguishes repeated selection from required nested work.
 
-Each negative case iterates data that provably belongs to the current outer
-item: the item itself, a constant-key view of it (``item["k"]``,
-``item.get("k")``, ``.items()``), a ``zip`` or list display of those, or
-``os.walk``'s per-directory lists. Each positive case re-scans a collection
-that is, or may be, shared by all outer items. The result of a call is never
-proof (``fetch(item)``, ``open(path)``, ``line.split()`` can return shared
-data), so those keep being reported.
+Equality joins, predicate filters and shared-file searches
+remain positive. Cartesian outputs, sorting, traversal and opaque helper results
+do not prove an avoidable lookup merely by containing a nested loop.
 """
 
 import ast
@@ -187,7 +183,7 @@ def test_per_item_inner_iteration_is_not_reported(source):
     assert _p403_lines(source) == []
 
 
-# --- shared collections: still repeated scans -------------------------------
+# --- shared sources: selection versus required output -------------------------------
 
 ALL_PAIRS = """
 def match(users, orders):
@@ -448,50 +444,50 @@ def scan(users, path):
 
 
 @pytest.mark.parametrize(
-    ("source", "line"),
+    ("source", "lines"),
     [
-        pytest.param(ALL_PAIRS, 4, id="all-pairs"),
-        pytest.param(MODULE_GLOBAL, 6, id="module-global"),
-        pytest.param(SHARED_SELF_ATTRIBUTE, 5, id="shared-self-attribute"),
-        pytest.param(SORTED_SHARED_BY_ITEM, 4, id="sorted-shared-keyed-by-item"),
-        pytest.param(BOUND_SORTED_SHARED_BY_ITEM, 5, id="bound-sorted-shared"),
-        pytest.param(FILTERED_SHARED_BY_ITEM, 4, id="filtered-shared"),
-        pytest.param(TRIANGLE_SLICE, 4, id="triangle-slice"),
-        pytest.param(LOOP_INVARIANT_CALL, 5, id="loop-invariant-call"),
-        pytest.param(SHARED_MAPPING_LOOKUP_BY_ITEM, 5, id="shared-mapping-get"),
+        pytest.param(ALL_PAIRS, [4], id="all-pairs"),
+        pytest.param(MODULE_GLOBAL, [6], id="module-global"),
+        pytest.param(SHARED_SELF_ATTRIBUTE, [5], id="shared-self-attribute"),
+        pytest.param(SORTED_SHARED_BY_ITEM, [], id="sorted-shared-keyed-by-item"),
+        pytest.param(BOUND_SORTED_SHARED_BY_ITEM, [], id="bound-sorted-shared"),
+        pytest.param(FILTERED_SHARED_BY_ITEM, [4], id="filtered-shared"),
+        pytest.param(TRIANGLE_SLICE, [], id="triangle-slice"),
+        pytest.param(LOOP_INVARIANT_CALL, [], id="loop-invariant-call"),
+        pytest.param(SHARED_MAPPING_LOOKUP_BY_ITEM, [], id="shared-mapping-get"),
         pytest.param(
-            SHARED_MAPPING_SUBSCRIPT_BY_ITEM, 4, id="shared-mapping-subscript"
+            SHARED_MAPPING_SUBSCRIPT_BY_ITEM, [], id="shared-mapping-subscript"
         ),
-        pytest.param(ATTRIBUTE_CHAIN_TO_SHARED, 4, id="attribute-chain"),
-        pytest.param(STARRED_SHARED_IN_LITERAL, 4, id="starred-shared"),
-        pytest.param(FALLBACK_TO_SHARED, 5, id="fallback-to-shared"),
-        pytest.param(FRESH_RESULT_GROWN_FROM_SHARED, 6, id="fresh-result-grown"),
-        pytest.param(CONDITIONAL_FRESH_RESULT, 7, id="conditional-fresh-result"),
-        pytest.param(ZIP_WITH_SHARED_ROWS, 4, id="zip-with-shared-rows"),
-        pytest.param(OS_WALK_REPLACED_FROM_SHARED, 7, id="os-walk-replaced"),
-        pytest.param(OS_WALK_EXTENDED, 7, id="os-walk-extended"),
-        pytest.param(SCALAR_SIZED_RANGE, 4, id="range-of-outer-index"),
-        pytest.param(ITERTOOLS_PREFIX_OF_SHARED, 6, id="itertools-prefix"),
-        pytest.param(COPY_OF_SHARED, 4, id="copy-of-shared"),
-        pytest.param(SHARED_ITERABLE_WITH_ITEM_LABEL, 4, id="wrapper-label-only"),
-        pytest.param(SHARED_TOP_K_KEYED_BY_ITEM, 6, id="top-k-of-shared"),
-        pytest.param(BATCH_RESULT_RECOMPUTED_PER_ITEM, 9, id="batch-search-result"),
-        pytest.param(CALL_RESULT_FROM_OUTER_ITEM, 5, id="call-result-from-item"),
-        pytest.param(NAMED_CALL_RESULT_FROM_OUTER_ITEM, 6, id="named-call-result"),
-        pytest.param(PARSED_LOOKUP_RESULT, 8, id="parsed-lookup-result"),
-        pytest.param(CLOSE_MATCHES_OF_SHARED, 6, id="close-matches-of-shared"),
-        pytest.param(HELPER_GIVEN_ITEM_AND_SHARED, 4, id="helper-item-and-shared"),
-        pytest.param(SELF_METHOD_GIVEN_ITEM, 5, id="self-method-given-item"),
-        pytest.param(HELPER_RETURNING_GLOBAL, 9, id="helper-returning-global"),
-        pytest.param(CALLEE_IS_THE_ITEM, 4, id="callee-is-the-item"),
-        pytest.param(METHOD_ON_ITEM_ATTRIBUTE, 4, id="method-on-item-attribute"),
-        pytest.param(SPLIT_OF_CALL_RESULT, 5, id="split-of-call-result"),
-        pytest.param(SHARED_FILE_REREAD, 5, id="shared-file-reread"),
+        pytest.param(ATTRIBUTE_CHAIN_TO_SHARED, [], id="attribute-chain"),
+        pytest.param(STARRED_SHARED_IN_LITERAL, [], id="starred-shared"),
+        pytest.param(FALLBACK_TO_SHARED, [], id="fallback-to-shared"),
+        pytest.param(FRESH_RESULT_GROWN_FROM_SHARED, [], id="fresh-result-grown"),
+        pytest.param(CONDITIONAL_FRESH_RESULT, [], id="conditional-fresh-result"),
+        pytest.param(ZIP_WITH_SHARED_ROWS, [], id="zip-with-shared-rows"),
+        pytest.param(OS_WALK_REPLACED_FROM_SHARED, [], id="os-walk-replaced"),
+        pytest.param(OS_WALK_EXTENDED, [], id="os-walk-extended"),
+        pytest.param(SCALAR_SIZED_RANGE, [], id="range-of-outer-index"),
+        pytest.param(ITERTOOLS_PREFIX_OF_SHARED, [], id="itertools-prefix"),
+        pytest.param(COPY_OF_SHARED, [], id="copy-of-shared"),
+        pytest.param(SHARED_ITERABLE_WITH_ITEM_LABEL, [], id="wrapper-label-only"),
+        pytest.param(SHARED_TOP_K_KEYED_BY_ITEM, [], id="top-k-of-shared"),
+        pytest.param(BATCH_RESULT_RECOMPUTED_PER_ITEM, [], id="batch-search-result"),
+        pytest.param(CALL_RESULT_FROM_OUTER_ITEM, [], id="call-result-from-item"),
+        pytest.param(NAMED_CALL_RESULT_FROM_OUTER_ITEM, [], id="named-call-result"),
+        pytest.param(PARSED_LOOKUP_RESULT, [], id="parsed-lookup-result"),
+        pytest.param(CLOSE_MATCHES_OF_SHARED, [], id="close-matches-of-shared"),
+        pytest.param(HELPER_GIVEN_ITEM_AND_SHARED, [], id="helper-item-and-shared"),
+        pytest.param(SELF_METHOD_GIVEN_ITEM, [], id="self-method-given-item"),
+        pytest.param(HELPER_RETURNING_GLOBAL, [], id="helper-returning-global"),
+        pytest.param(CALLEE_IS_THE_ITEM, [], id="callee-is-the-item"),
+        pytest.param(METHOD_ON_ITEM_ATTRIBUTE, [], id="method-on-item-attribute"),
+        pytest.param(SPLIT_OF_CALL_RESULT, [], id="split-of-call-result"),
+        pytest.param(SHARED_FILE_REREAD, [5], id="shared-file-reread"),
         # Calls are not proof of per-item data, even on the item.
-        pytest.param(FILE_OPENED_PER_ITEM, 5, id="file-opened-per-item"),
-        pytest.param(FILE_OPENED_FROM_DERIVED_PATH, 7, id="file-opened-derived-path"),
-        pytest.param(SPLIT_OF_OUTER_ITEM, 5, id="split-of-outer-item"),
+        pytest.param(FILE_OPENED_PER_ITEM, [], id="file-opened-per-item"),
+        pytest.param(FILE_OPENED_FROM_DERIVED_PATH, [], id="file-opened-derived-path"),
+        pytest.param(SPLIT_OF_OUTER_ITEM, [], id="split-of-outer-item"),
     ],
 )
-def test_shared_inner_iteration_is_still_reported(source, line):
-    assert _p403_lines(source) == [line]
+def test_shared_inner_iteration_is_still_reported(source, lines):
+    assert _p403_lines(source) == lines

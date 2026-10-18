@@ -519,3 +519,36 @@ def print_agent_hooks(console, report: dict[str, Any]) -> None:
                 )
             for note in item.get("notes", []):
                 console.print(f"      [dim]{escape(note)}[/dim]")
+    if any(client["status"] != "not_installed" for client in report["clients"].values()):
+        line = hook_activity_line(project)
+        if line:
+            console.print(f"      [dim]{escape(line)}[/dim]", soft_wrap=True)
+
+
+def hook_activity_line(project: Path) -> str | None:
+    """One line on when the hooks last ran here and what they blocked this week.
+
+    Hooks fail open, so a hook that stopped firing (a deleted venv, a moved
+    binary) is otherwise invisible. Reads only the local hook log.
+    """
+    try:
+        from skylos.commands.agent_recap_cmd import log_files, read_records, summarize
+
+        files = log_files(project)
+        if not files:
+            return "No hook runs recorded in this repository yet."
+        records = read_records(files)
+        everything = summarize(records, days=0)
+        if not everything["last_activity"]:
+            return "No hook runs recorded in this repository yet."
+        week = summarize(records, days=7)
+        stopped = week["blocked_total"] + week["sent_back_total"] + week["asked_total"]
+        last = everything["last_activity"].replace("T", " ")[:16]
+        tail = (
+            f"{stopped} blocked or sent back in the last 7 days (skylos agent recap)"
+            if stopped
+            else "nothing blocked in the last 7 days"
+        )
+        return f"Last hook run here: {last} · {tail}"
+    except Exception:
+        return None

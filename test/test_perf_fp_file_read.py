@@ -1,17 +1,14 @@
-"""SKY-P401 reports a size-less ``read()`` unless the receiver is proven not
-to be a file.
+"""P401 reports reads whose source size is not bounded.
 
-Files, uploads, archive members, sockets and pipes all share the method, so
-the absence of an ``open(...)`` call is not evidence. A receiver is proven
-not to be a file only when it is the exception of the enclosing handler (an
-HTTP error body) or an in-memory buffer (``io.BytesIO(...)`` itself, or a
-function local bound only to one that no ``global``/``nonlocal`` reaches).
-A receiver bound only to a file opener is reported whatever its name; other
-receivers keep the receiver-name heuristic.
+HTTP responses, HTTPError bodies, uploads, archive members and opaque streams
+can all allocate input-sized data. A receiver name or shadowed opener cannot
+prove safety. Proven in-memory buffer read() remains quiet.
 """
 
 import ast
 import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -22,10 +19,15 @@ def _p401_lines(source):
     tree = ast.parse(source)
     rule = PerformanceRule()
     lines = []
-    for node in ast.walk(tree):
-        for finding in rule.visit_node(node, {"filename": "sample.py"}) or []:
-            if finding["rule_id"] == "SKY-P401":
-                lines.append(finding["line"])
+    with TemporaryDirectory() as directory:
+        context = {
+            "filename": str(Path(directory) / "sample.py"),
+            "project_root": directory,
+        }
+        for node in ast.walk(tree):
+            for finding in rule.visit_node(node, context) or []:
+                if finding["rule_id"] == "SKY-P401":
+                    lines.append(finding["line"])
     return sorted(lines)
 
 
@@ -71,7 +73,6 @@ def copy(data, text):
 @pytest.mark.parametrize(
     "source",
     [
-        pytest.param(HTTP_ERROR_BODY, id="http-error-and-response"),
         pytest.param(LOCAL_IN_MEMORY_BUFFERS, id="local-in-memory-buffers"),
     ],
 )
@@ -160,6 +161,7 @@ def load(path):
 @pytest.mark.parametrize(
     ("source", "lines"),
     [
+        pytest.param(HTTP_ERROR_BODY, [7, 9], id="http-error-and-response"),
         pytest.param(
             UPLOADS_ARCHIVES_AND_HELPERS, [5, 7, 8, 13, 22], id="uploads-archives"
         ),
@@ -307,7 +309,7 @@ def run(url):
     resp = open(url)
     return resp.read()
 """
-    assert _p401_lines(source) == []
+    assert _p401_lines(source) == [7]
 
 
 def test_many_reads_in_one_scope_stay_fast():

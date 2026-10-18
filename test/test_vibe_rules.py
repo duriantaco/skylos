@@ -865,7 +865,7 @@ def check_code_with_source(rule, code, filename="test.py"):
     dedented = textwrap.dedent(code)
     tree = ast.parse(dedented)
     findings = []
-    context = {"filename": filename, "mod": "test_module", "_source": dedented}
+    context = {"filename": filename, "mod": "test_module", "source": dedented}
     for node in ast.walk(tree):
         res = rule.visit_node(node, context)
         if res:

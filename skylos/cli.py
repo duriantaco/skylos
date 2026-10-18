@@ -2378,10 +2378,10 @@ def _run_sbom_command(argv):
     return run_sbom_command(argv)
 
 
-def _run_badge_command(_argv):
+def _run_badge_command(argv):
     from skylos.commands.badge_cmd import run_badge_command
 
-    return run_badge_command()
+    return run_badge_command(argv)
 
 
 def _run_whitelist_command(argv):
@@ -4210,6 +4210,10 @@ def _build_agent_parser():
 
     add_agent_replay_parser(agent_sub)
 
+    from skylos.commands.agent_recap_cmd import add_agent_recap_parser
+
+    add_agent_recap_parser(agent_sub)
+
     from skylos.commands.install_hooks_cmd import add_install_hooks_parser
 
     add_install_hooks_parser(agent_sub)
@@ -4481,6 +4485,11 @@ def main() -> None:
             from skylos.commands.warm_cache_cmd import run_warm_cache_command
 
             sys.exit(run_warm_cache_command(agent_args))
+
+        if cmd == "recap":
+            from skylos.commands.agent_recap_cmd import run_agent_recap_command
+
+            sys.exit(run_agent_recap_command(agent_args))
 
         if cmd == "replay":
             from skylos.commands.agent_replay_cmd import run_agent_replay_command

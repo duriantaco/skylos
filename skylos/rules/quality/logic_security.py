@@ -223,16 +223,13 @@ class SecurityTodoRule(SkylosRule):
             return None
 
         filename = context.get("filename", "")
-        src = context.get("_source")
-        if not src:
-            try:
-                src = Path(
-                    filename
-                ).read_text(  # skylos: ignore[SKY-D215] analyzer reads current scan file
-                    encoding="utf-8", errors="ignore"
-                )
-            except Exception:
-                return None
+        # Inspect the same source snapshot as the AST. The filename is only a
+        # diagnostic label and must never cause an additional filesystem read.
+        src = context.get("source")
+        if not isinstance(src, str):
+            src = context.get("_source")
+        if not isinstance(src, str):
+            return None
 
         findings = []
         for i, line in enumerate(src.splitlines(), start=1):

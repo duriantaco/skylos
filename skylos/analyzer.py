@@ -63,6 +63,7 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
 from skylos.config import load_config
 from skylos.analysis.errors import analysis_error_payload as _analysis_error_payload
+from skylos.analysis.errors import dedupe_source_analysis_errors
 from skylos.analysis.finding_filter import (
     finding_is_inline_ignored as _finding_is_inline_ignored,
 )
@@ -5913,6 +5914,7 @@ class Skylos:
         ):
             resolution_scope_limited = True
         refresh_review_context(diff_signal_files)
+        analysis_errors = dedupe_source_analysis_errors(analysis_errors)
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )

@@ -1037,9 +1037,9 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
 | C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
-| P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
+| P401 | LOW | Potential unbounded `read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
-| P403 | LOW | Repeated iterable scans in nested loops | Python / generic | input-dependent repeated scans; fixed iteration counts and partition traversal are excluded |
+| P403 | LOW | Repeated iterable scans in nested loops | Python / generic | an inner collection repeatedly searched for the outer item (equality, membership or a predicate relating both items); exclusions require evidence of bounded work, partition traversal or required output for every pair |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
@@ -1070,12 +1070,46 @@ this additional review. Arbitrary permission helpers, ORM query scoping,
 Django/Flask ownership flows, and unsupported control flow remain outside
 this narrow check; absence of F102 is not proof of authorization.
 
+P401 reports `read()`/`readlines()` calls that request everything: no size,
+`None`, a negative size or `readlines(0)`, including sizes resolved from simple
+local constants. A caller-chosen size is a bound by construction, so chunked
+reads are not reported. Resolved `open(...)` receivers get file-specific advice.
+For a proven `ZipFile` receiver, `read(name)` loads an archive member; its name
+argument does not establish a byte bound.
+`read()` on a proven standard-library `io.BytesIO`/`io.StringIO` receiver is
+not reported, including synchronous `with` bindings to that same buffer.
+The proof checks imports, aliases, method replacement and
+visible field writes or object exposure; an earlier buffer assignment alone
+does not establish the receiver's current type. Unbounded buffer `readlines()`
+can allocate a new list and is reported with that explanation, unless the
+contents are a fixed literal with no growth or escape. Other whole reads
+remain LOW advice; the rule cannot know the source's size, and some consumers
+need the whole value.
+
 SKY-P403 excludes proven fixed bounds, shared-iterator consumption, terminal
 cleanup scans and bounded partition traversal only while that proof holds.
 Repeated aliases and mutations that replenish an iterator invalidate it.
-Remaining advice includes
-the outer/inner iterable evidence and calls for review: required Cartesian
-products may be correct, and nesting alone does not prove a performance bug.
+An outer-dependent expression can still return the same collection, and
+assigning a collection to itself does not make the scan cheaper. Direct aliases
+and builtin list/tuple copies retain size provenance across recurring iterations.
+Aliases keep the value captured when assigned; phase flags, correlated exits and
+opaque escapes do not establish new shared-source evidence. The inner
+source must support repeated traversal: an independent iterable or a locally
+resolved shared collection can establish it; an unknown per-item property or
+helper alone cannot. Reopening a stable path or a finite literal path map also
+establishes repeated file-search work; arbitrary per-item paths do not. Selection
+inside a builtin `filter` lambda or single-source generator is checked as well
+as the loop body. The inner scan must search for the outer item; ordinary all-pairs computation and
+proven required output for every pair are excluded. A conditional value
+that later gates a lookup still counts as a search, including comparisons
+assigned to Boolean variables. Source aliases and dominating dictionary-cell
+writes retain collection identity. Required-output checks summarize normal
+and `continue` paths; transparent local writer methods require resolved
+constructor bindings and an unconditional write to a fresh builtin list.
+Findings include the
+outer/inner iterable evidence and call for review: nesting alone does not
+prove a performance bug. An index is appropriate only when the keys and
+required duplicate or ordering behavior permit it.
 
 SKY-L009 does not assume ordinary `print()` or `pprint()` output is debugging.
 It reports explicit `DEBUG:`/`DBG:` labels, raw `locals()`/`globals()`/`vars()`
