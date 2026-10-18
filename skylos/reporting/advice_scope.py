@@ -197,6 +197,37 @@ def _sample_path(parts):
     return None
 
 
+def _explicit_project_sample_path(scan_root, context_root, path, relative):
+    """An explicitly scanned nested app owns its sample-folder conventions.
+
+    Keep the checkout anchor for test, pytest and vendor evidence. Only sample
+    ancestor names can be overridden, and only by a bounded, parsed project
+    identity between the requested scan root and its checkout boundary.
+    """
+    current = scan_root
+    for _ in range(_MAX_DEPTH):
+        if current == context_root or not current.is_relative_to(context_root):
+            break
+        source = _text(context_root, current / "pyproject.toml")
+        if source is not None:
+            try:
+                document = tomllib.loads(source)
+                project = document.get("project", {})
+                name = project.get("name") if isinstance(project, dict) else None
+                if name is None:
+                    tool = document.get("tool", {})
+                    poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
+                    name = poetry.get("name") if isinstance(poetry, dict) else None
+                if isinstance(name, str) and re.fullmatch(
+                    r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", name
+                ):
+                    return path.relative_to(current)
+            except (TypeError, ValueError, RecursionError):
+                pass
+        current = current.parent
+    return relative
+
+
 def _declared_vendor(root, path):
     # A root README describes the project itself, not a vendored subtree.
     for directory in list(path.parents)[:8]:
@@ -370,6 +401,7 @@ def _file_context(filename, project_root):
     if guarded is None:
         return None
     root, path, relative, info = guarded
+    scan_root = root
     context_root = _context_root(root)
     if context_root is None:
         return None
@@ -389,6 +421,9 @@ def _file_context(filename, project_root):
         if tree is not None and _uses_test_framework(tree):
             return "test"
     sample = _sample_path(relative.parts)
+    if sample is not None:
+        sample_relative = _explicit_project_sample_path(scan_root, root, path, relative)
+        sample = _sample_path(sample_relative.parts)
     if sample is not None:
         return sample
     if _declared_vendor(root, path):
