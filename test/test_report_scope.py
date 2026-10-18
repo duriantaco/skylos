@@ -12,7 +12,10 @@ from skylos.analyzer import analyze
 from skylos.cli import _skylos_console_theme
 from skylos.commands.scan_cmd import _report_scope_options
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
-from skylos.reporting.report_scope import cap_test_file_severity
+from skylos.reporting.report_scope import (
+    cap_test_file_severity,
+    drop_test_code_not_applicable,
+)
 from skylos.ui.rich_report import render_results
 from skylos.ui.scope_notes import scope_note_lines
 from skylos.ui.terminal_report import render_pretty_results
@@ -181,3 +184,32 @@ def test_generated_skip_overrides():
         _scope_args(include_folders=["shop/migrations"]), {}
     )
     assert options["generated_keep_paths"] == ["shop/migrations"]
+
+
+def test_performance_advice_is_dropped_in_test_code_but_security_is_not(tmp_path):
+    result = {
+        "quality": [
+            _finding(str(tmp_path / "web/src/fetch.test.ts"), "LOW", "SKY-Q402"),
+            _finding(str(tmp_path / "tests/test_load.py"), "LOW", "SKY-P401"),
+            _finding(str(tmp_path / "web/src/fetch.ts"), "LOW", "SKY-Q402"),
+        ],
+        "danger": [
+            # Shipped code can import a module under tests/ or a .test.ts
+            # file: a path never proves code is not served.
+            _finding(str(tmp_path / "tests/web_fixtures.py"), "CRITICAL", "SKY-D226"),
+            _finding(str(tmp_path / "web/src/render.test.ts"), "HIGH", "SKY-D226"),
+            _finding(str(tmp_path / "tests/test_views.py"), "HIGH", "SKY-D228"),
+        ],
+    }
+
+    dropped = drop_test_code_not_applicable(result, tmp_path)
+
+    assert dropped == {"quality": 2}
+    assert [item["file"] for item in result["quality"]] == [
+        str(tmp_path / "web/src/fetch.ts")
+    ]
+    assert [item["rule_id"] for item in result["danger"]] == [
+        "SKY-D226",
+        "SKY-D226",
+        "SKY-D228",
+    ]

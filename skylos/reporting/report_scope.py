@@ -1,11 +1,15 @@
-"""What a scan reports, after analysis: generated files and severity.
+"""What a scan reports, after analysis: generated files, test code, severity.
 
-Two adjustments run before the grade and directory rollups are computed, so
+These adjustments run before the grade and directory rollups are computed, so
 counts, grades and gates describe exactly what is reported:
 
 * findings located in files the scan treats as generated (Django migrations)
   are not reported, except security, reliability, secret and custom-rule
   findings (see ``skylos.core.generated_files``);
+* performance advice is not reported in test code: the cost it describes is
+  paid in production. Test code is judged by its path, which is enough for
+  advice but never proves code is not shipped (production can import a module
+  under ``tests/``), so every security rule still applies in test code;
 * CRITICAL is reserved for issues in shipped code: a CRITICAL finding in a
   test file is reported as HIGH, except secrets, which leak wherever they are
   committed.
@@ -20,6 +24,7 @@ from skylos.core.generated_files import (
     REPORT_ONLY_DROPPED_SECTIONS,
     finding_in_files,
 )
+from skylos.core.test_paths import is_test_code_path
 
 _SUMMARY_COUNT_KEYS = {
     "quality": "quality_count",
@@ -38,6 +43,10 @@ TEST_FILE_CAPPED_SECTIONS = (
     "custom_rules",
 )
 TEST_FILE_SEVERITY_CAP = "HIGH"
+TEST_CODE_NOT_APPLICABLE_RULES = frozenset(
+    {"SKY-P401", "SKY-P402", "SKY-P403", "SKY-P404", "SKY-Q402"}
+)
+_TEST_CODE_RULE_SECTIONS = ("quality",)
 
 
 def report_only_file_keys(analyzer) -> frozenset[str]:
@@ -74,7 +83,13 @@ def apply_report_scope(result: dict, analyzer) -> None:
         generated_summary["findings_not_reported"] = not_reported
         summary["generated_files"] = generated_summary
 
-    capped = cap_test_file_severity(result, getattr(analyzer, "_project_root", None))
+    project_root = getattr(analyzer, "_project_root", None)
+    not_applicable = drop_test_code_not_applicable(result, project_root)
+    if not_applicable:
+        summary["test_code_not_applicable"] = sum(not_applicable.values())
+        changed_sections.update(not_applicable)
+
+    capped = cap_test_file_severity(result, project_root)
     if capped:
         summary["test_file_severity_capped"] = capped
 
@@ -100,6 +115,36 @@ def count_bare_noqa_security_findings(result: dict) -> int:
         for finding in result.get(section) or []
         if isinstance(finding, dict) and finding.get("bare_noqa_ignored")
     )
+
+
+def drop_test_code_not_applicable(result: dict, project_root=None) -> dict[str, int]:
+    """Remove TEST_CODE_NOT_APPLICABLE_RULES findings located in test code;
+    return how many per section.
+
+    Test code is judged relative to the project root by language convention
+    (``is_test_code_path``); repository config cannot relabel shipped code.
+    Without a root, an absolute path is never treated as test code.
+    """
+    dropped: dict[str, int] = {}
+    for section in _TEST_CODE_RULE_SECTIONS:
+        items = result.get(section)
+        if not isinstance(items, list) or not items:
+            continue
+        kept = []
+        for finding in items:
+            if (
+                isinstance(finding, dict)
+                and finding.get("rule_id") in TEST_CODE_NOT_APPLICABLE_RULES
+                and is_test_code_path(
+                    finding.get("file") or finding.get("file_path"), project_root
+                )
+            ):
+                continue
+            kept.append(finding)
+        if len(kept) != len(items):
+            dropped[section] = len(items) - len(kept)
+            result[section] = kept
+    return dropped
 
 
 def cap_test_file_severity(result: dict, project_root=None) -> int:

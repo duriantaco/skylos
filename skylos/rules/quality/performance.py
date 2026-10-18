@@ -18,7 +18,12 @@ class _ScopeBindings(ast.NodeVisitor):
     """Bindings in one lexical scope, optionally before a source location."""
 
     def __init__(
-        self, before_line: int | None = None, *, track_mutations=False, ignored_calls=()
+        self,
+        before_line: int | None = None,
+        *,
+        track_mutations=False,
+        ignored_calls=(),
+        ignored_stores=(),
     ):
         self.names: set[str] = set()
         self.mutated_names: set[str] = set()
@@ -26,6 +31,7 @@ class _ScopeBindings(ast.NodeVisitor):
         self.before_line = before_line
         self.track_mutations = track_mutations
         self.ignored_calls = ignored_calls
+        self.ignored_stores = ignored_stores
 
     def _add(self, node: ast.AST, name: str):
         if self.before_line is None or getattr(node, "lineno", 0) < self.before_line:
@@ -57,7 +63,11 @@ class _ScopeBindings(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
-        if self.track_mutations and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if (
+            self.track_mutations
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node not in self.ignored_stores
+        ):
             self._mutated_receiver(node.value)
         self.generic_visit(node)
 
@@ -119,6 +129,274 @@ class _ScopeBindings(ast.NodeVisitor):
         if node.name:
             self._add(node, node.name)
         self.generic_visit(node)
+
+
+# Strict per-item views of a name ``T``: ``T[CONST]``, ``T.get(CONST)``,
+# ``T.get(CONST, LITERAL)``, and ``.items()``/``.keys()``/``.values()`` of
+# ``T`` or of those. A view reads data stored in the item; shared children
+# built elsewhere (``{"child": shared}`` for every item) are not detected.
+_VIEW_METHODS = frozenset({"items", "keys", "values"})
+# Methods that change a collection in place.
+_MUTATING_METHODS = frozenset(
+    {"append", "appendleft", "extend", "extendleft", "insert", "update",
+     "setdefault", "pop", "popitem", "popleft", "clear", "remove", "discard",
+     "add", "sort", "reverse", "__setitem__", "__delitem__", "__iadd__"}
+)  # fmt: skip
+# ``os.walk`` yields real lists; these only reorder or shrink them.
+_LIST_SHRINKING_METHODS = frozenset({"sort", "reverse", "remove", "pop", "clear"})
+# Constructors whose result is a file object.
+_FILE_OPENERS = (
+    ("io", "open"),
+    ("codecs", "open"),
+    ("gzip", "open"),
+    ("bz2", "open"),
+    ("lzma", "open"),
+    ("tarfile", "open"),
+    ("zipfile", "ZipFile"),
+)
+_IN_MEMORY_BUFFERS = (("io", "StringIO"), ("io", "BytesIO"))
+_IO_ANNOTATIONS = frozenset(
+    {"IO", "TextIO", "BinaryIO", "IOBase", "RawIOBase", "BufferedIOBase",
+     "TextIOBase", "FileIO", "BufferedReader", "BufferedRandom", "TextIOWrapper"}
+)  # fmt: skip
+_FILE = "file"
+_NOT_FILE = "not_file"
+_UNKNOWN = "unknown"
+_SCOPES = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _is_literal(node: ast.AST) -> bool:
+    """A constant, or a display of constants (``[]``, ``{}``, ``("a", 1)``)."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_literal(element) for element in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(
+            key is not None and _is_literal(key) and _is_literal(value)
+            for key, value in zip(node.keys, node.values)
+        )
+    return False
+
+
+def _item_view_root(node: ast.AST) -> str | None:
+    """``T`` for ``T[CONST]``, ``T.get(CONST)`` or ``T.get(CONST, LITERAL)``."""
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and isinstance(node.slice, ast.Constant)
+    ):
+        return node.value.id
+    if (
+        isinstance(node, ast.Call)
+        and not node.keywords
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and 1 <= len(node.args) <= 2
+        and isinstance(node.args[0], ast.Constant)
+        and all(_is_literal(arg) for arg in node.args[1:])
+    ):
+        return node.func.value.id
+    return None
+
+
+def _view_root(node: ast.AST) -> str | None:
+    """The name a strict per-item view reads from, or None."""
+    if (
+        isinstance(node, ast.BoolOp)
+        and isinstance(node.op, ast.Or)
+        and len(node.values) == 2
+        and _is_literal(node.values[1])
+    ):
+        # ``item.get("words") or []``: the fallback is a fixed literal.
+        return _view_root(node.values[0])
+    if (
+        isinstance(node, ast.Call)
+        and not node.args
+        and not node.keywords
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _VIEW_METHODS
+    ):
+        receiver = node.func.value
+        if isinstance(receiver, ast.Name):
+            return receiver.id
+        return _item_view_root(receiver)
+    return _item_view_root(node)
+
+
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Starred)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _parameters(args: ast.arguments) -> list[ast.arg]:
+    parameters = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    if args.vararg:
+        parameters.append(args.vararg)
+    if args.kwarg:
+        parameters.append(args.kwarg)
+    return parameters
+
+
+def _annotation_identifiers(annotation: ast.AST) -> set[str]:
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval")
+        except SyntaxError:
+            return set()
+    identifiers = set()
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Name):
+            identifiers.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            identifiers.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            identifiers |= _annotation_identifiers(node)
+    return identifiers
+
+
+# Builtins that build a new object from their arguments.
+_COPYING_BUILTINS = frozenset(
+    {"list", "tuple", "set", "frozenset", "dict", "sorted", "len", "str", "int",
+     "float", "bool", "bytes", "repr", "min", "max", "sum", "any", "all"}
+)  # fmt: skip
+
+
+def _carried_names(node: ast.AST) -> set[str]:
+    """Names whose object (or a part of it) ``node`` may evaluate to:
+    ``row``, ``row[k]``, ``row.attr``, ``(row, x)``, ``row or x``,
+    ``row.get(k)``, ``helper(row)``. A builtin copy carries nothing."""
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, (ast.Subscript, ast.Attribute, ast.Starred)):
+        return _carried_names(node.value)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return set().union(*(_carried_names(item) for item in node.elts))
+    if isinstance(node, ast.BoolOp):
+        return set().union(*(_carried_names(value) for value in node.values))
+    if isinstance(node, ast.IfExp):
+        return _carried_names(node.body) | _carried_names(node.orelse)
+    if isinstance(node, ast.NamedExpr):
+        return _carried_names(node.value)
+    if isinstance(node, ast.Await):
+        return _carried_names(node.value)
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in _COPYING_BUILTINS:
+            return set()
+        carried = set().union(
+            *(_carried_names(arg) for arg in node.args),
+            *(_carried_names(keyword.value) for keyword in node.keywords),
+        )
+        if isinstance(node.func, ast.Attribute):
+            carried |= _carried_names(node.func.value)
+        return carried
+    return set()
+
+
+class _ScopeSummary:
+    """Every binding, store and in-place call of one function (or module),
+    nested scopes included: a strict proof must hold for all of them."""
+
+    def __init__(self, scope: ast.AST):
+        # name -> binding nodes (the Name, arg, alias or statement that binds)
+        self.bindings: dict[str, list[ast.AST]] = {}
+        # name -> Subscript/Attribute stores, AugAssigns and dels rooted at it
+        self.stores: dict[str, list[ast.AST]] = {}
+        # name -> in-place method calls on a receiver rooted at it
+        self.mutating_calls: dict[str, list[ast.Call]] = {}
+        # names declared global or nonlocal anywhere inside the scope
+        self.escaped: set[str] = set()
+        # names the scope itself binds (not only a nested function or class)
+        self.own_names: set[str] = set()
+        comprehension_targets = set()
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            for parameter in _parameters(scope.args):
+                self.bindings.setdefault(parameter.arg, []).append(parameter)
+                self.own_names.add(parameter.arg)
+        body = scope.body if isinstance(scope.body, list) else [scope.body]
+        nodes = [node for statement in body for node in ast.walk(statement)]
+        nested = set()
+        for node in nodes:
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+            ):
+                nested.update(child for child in ast.walk(node) if child is not node)
+        for node in nodes:
+            if isinstance(node, _COMPREHENSIONS):
+                for generator in node.generators:
+                    comprehension_targets.update(
+                        child
+                        for child in ast.walk(generator.target)
+                        if isinstance(child, ast.Name)
+                    )
+        for node in nodes:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                if node not in comprehension_targets:
+                    self.bindings.setdefault(node.id, []).append(node)
+            elif isinstance(node, ast.arg):
+                self.bindings.setdefault(node.arg, []).append(node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self.bindings.setdefault(node.name, []).append(node)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                self.bindings.setdefault(node.name, []).append(node)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    name = alias.asname or alias.name.split(".")[0]
+                    self.bindings.setdefault(name, []).append(node)
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                self.escaped.update(node.names)
+        for name, binding_nodes in self.bindings.items():
+            if any(node not in nested for node in binding_nodes):
+                self.own_names.add(name)
+        for node in nodes:
+            if isinstance(node, (ast.Subscript, ast.Attribute)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                root = _root_name(node.value)
+                if root is not None:
+                    self.stores.setdefault(root, []).append(node)
+            elif isinstance(node, ast.AugAssign):
+                root = _root_name(node.target)
+                if root is not None:
+                    self.stores.setdefault(root, []).append(node)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _MUTATING_METHODS
+            ):
+                root = _root_name(node.func.value)
+                if root is not None:
+                    self.mutating_calls.setdefault(root, []).append(node)
+        # name -> Load uses (to prove a name is only ever iterated)
+        self.loads: dict[str, list[ast.Name]] = {}
+        for node in nodes:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                self.loads.setdefault(node.id, []).append(node)
+        # (bound names, names the bound value may carry) per assignment
+        self.assign_carriers: list[tuple[set[str], set[str]]] = []
+        for node in nodes:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                bound = set().union(*(_target_names(target) for target in targets))
+            elif isinstance(node, ast.NamedExpr):
+                bound = _target_names(node.target)
+            else:
+                continue
+            carried = _carried_names(node.value)
+            if bound and carried:
+                self.assign_carriers.append((bound, carried))
+        # Locals bound only from strict views: name -> the names they read.
+        self.view_sources: dict[str, set[str]] = {}
+        for node in nodes:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                root = _view_root(node.value)
+                for target in targets:
+                    if isinstance(target, ast.Name) and root is not None:
+                        self.view_sources.setdefault(target.id, set()).add(root)
 
 
 def _os_walk_partition_names(outer: ast.For) -> set[str]:
@@ -252,6 +530,68 @@ class PerformanceRule(SkylosRule):
         self.ignore_list = ignore_list or []
         self._parents: dict[ast.AST, ast.AST] = {}
         self._global_writes: set[str] = set()
+        self._reset_scope_caches()
+
+    def _reset_scope_caches(self) -> None:
+        # Keyed by node identity; valid for the module being visited.
+        self._scope_names_cache: dict[ast.AST, frozenset[str]] = {}
+        self._scope_imports_cache: dict[
+            ast.AST, tuple[dict[str, list[str]], frozenset[str]]
+        ] = {}
+        self._scope_summary_cache: dict[ast.AST, _ScopeSummary] = {}
+        self._binding_kinds_cache: dict[ast.AST, dict[str, str]] = {}
+        self._walk_preserving_cache: dict[ast.AST, tuple[set, set]] = {}
+
+    def _scope_names(self, scope: ast.AST) -> frozenset[str]:
+        """Names bound by the statements of ``scope`` (see ``_ScopeBindings``)."""
+        cached = self._scope_names_cache.get(scope)
+        if cached is None:
+            bindings = _ScopeBindings()
+            for statement in scope.body:
+                bindings.visit(statement)
+            cached = self._scope_names_cache[scope] = frozenset(bindings.names)
+        return cached
+
+    def _scope_imports(
+        self, scope: ast.AST
+    ) -> tuple[dict[str, list[str]], frozenset[str]]:
+        """Top-level absolute imports of ``scope`` by bound name, one entry per
+        statement, and the names its other statements bind."""
+        cached = self._scope_imports_cache.get(scope)
+        if cached is not None:
+            return cached
+        matches: dict[str, list[str]] = {}
+        other = _ScopeBindings()
+        for statement in scope.body:
+            resolved: dict[str, str] = {}
+            if isinstance(statement, ast.ImportFrom) and not statement.level:
+                for alias in statement.names:
+                    resolved[alias.asname or alias.name] = (
+                        f"{statement.module}.{alias.name}"
+                    )
+            elif isinstance(statement, ast.Import):
+                for alias in statement.names:
+                    resolved[alias.asname or alias.name.split(".")[0]] = alias.name
+            else:
+                other.visit(statement)
+            for name, target in resolved.items():
+                matches.setdefault(name, []).append(target)
+        cached = self._scope_imports_cache[scope] = (matches, frozenset(other.names))
+        return cached
+
+    def _enclosing_scope(self, node: ast.AST) -> ast.AST:
+        current = node
+        while current in self._parents:
+            current = self._parents[current]
+            if isinstance(current, _SCOPES):
+                return current
+        return current
+
+    def _scope_summary(self, scope: ast.AST) -> _ScopeSummary:
+        cached = self._scope_summary_cache.get(scope)
+        if cached is None:
+            cached = self._scope_summary_cache[scope] = _ScopeSummary(scope)
+        return cached
 
     def _is_builtin(self, node: ast.AST, name: str) -> bool:
         if name in self._global_writes:
@@ -276,10 +616,8 @@ class PerformanceRule(SkylosRule):
                 current,
                 (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
             ):
-                bindings = _ScopeBindings()
-                for stmt in current.body:
-                    bindings.visit(stmt)
-                if name in bindings.names or "*" in bindings.names:
+                names = self._scope_names(current)
+                if name in names or "*" in names:
                     return False
         return True
 
@@ -510,9 +848,16 @@ class PerformanceRule(SkylosRule):
             else:
                 break
         # Properties, subscriptions and arbitrary methods may expose a shared
-        # global collection. Only the yielded binding itself is evidence here.
+        # global collection. Only the yielded binding itself is evidence here,
+        # plus the strict views below.
         if isinstance(iterator, ast.Name) and iterator.id in names:
-            return not self._iteration_sources_mutated(outer, {iterator.id})
+            roots = self._view_closure(outer, {iterator.id})
+            if roots == {iterator.id}:
+                return not self._iteration_sources_mutated(outer, {iterator.id})
+            return self._strict_per_item(outer, roots)
+        used = self._strict_inner_names(iterator, names)
+        if used is not None:
+            return self._strict_per_item(outer, self._view_closure(outer, used))
         if (
             isinstance(iterator, ast.Call)
             and self._is_stdlib_callable(iterator.func, "itertools", "chain")
@@ -528,6 +873,170 @@ class PerformanceRule(SkylosRule):
         # An arbitrary mapping protocol can yield the same backing collection
         # for every key. Forwarding __iter__/__getitem__ alone proves no bound.
         return False
+
+    def _fixed_display_name(self, node: ast.AST) -> bool:
+        """A name bound only to list/tuple/set displays without ``*`` and only
+        ever used as a loop's iterable: nothing can alias, grow or pass it
+        on, so each loop over it runs a fixed number of times. Reassigning it
+        inside the outer loop (``patterns = [r"a", r"b"]``) keeps the count."""
+        if not isinstance(node, ast.Name):
+            return False
+        summary = self._scope_summary(self._enclosing_scope(node))
+        name = node.id
+        bindings = summary.bindings.get(name)
+        if not bindings or name in summary.escaped or name not in summary.own_names:
+            return False
+        for binding in bindings:
+            parent = self._parents.get(binding)
+            if not (
+                isinstance(binding, ast.Name)
+                and isinstance(parent, (ast.Assign, ast.AnnAssign))
+                and (
+                    parent.targets == [binding]
+                    if isinstance(parent, ast.Assign)
+                    else parent.target is binding
+                )
+                and isinstance(parent.value, (ast.List, ast.Tuple, ast.Set))
+                and not any(isinstance(item, ast.Starred) for item in parent.value.elts)
+            ):
+                return False
+        for load in summary.loads.get(name, ()):
+            parent = self._parents.get(load)
+            if not (
+                isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension))
+                and parent.iter is load
+            ):
+                return False
+        return True
+
+    def _strict_inner_names(self, iterator: ast.AST, names: set[str]) -> set | None:
+        """Names an inner iterable reads when it is a strict per-item form:
+        a view of an item name, ``zip`` of item names or views, or a list or
+        tuple display of them (``[segment, *words]``). None otherwise."""
+        root = _view_root(iterator)
+        if root is not None:
+            return {root} if root in names else None
+        if isinstance(iterator, (ast.List, ast.Tuple)) and iterator.elts:
+            parts = [
+                element.value if isinstance(element, ast.Starred) else element
+                for element in iterator.elts
+            ]
+        elif (
+            isinstance(iterator, ast.Call)
+            and isinstance(iterator.func, ast.Name)
+            and iterator.func.id == "zip"
+            and self._is_builtin(iterator, "zip")
+            and iterator.args
+            and all(keyword.arg == "strict" for keyword in iterator.keywords)
+            and not any(isinstance(arg, ast.Starred) for arg in iterator.args)
+        ):
+            parts = iterator.args
+        else:
+            return None
+        used = set()
+        for part in parts:
+            if isinstance(part, ast.Name) and part.id in names:
+                used.add(part.id)
+                continue
+            root = _view_root(part)
+            if root is None or root not in names:
+                return None
+            used.add(root)
+        return used
+
+    def _view_closure(self, outer: ast.For, names: set[str]) -> set[str]:
+        """``names`` plus every name they were read from through strict views
+        (``words = segment.get("words") or []`` adds ``segment``)."""
+        summary = self._scope_summary(self._enclosing_scope(outer))
+        closure = set(names)
+        pending = list(names)
+        while pending:
+            for source in summary.view_sources.get(pending.pop(), ()):
+                if source not in closure:
+                    closure.add(source)
+                    pending.append(source)
+        return closure
+
+    def _outer_sources_repeat(self, outer: ast.For) -> bool:
+        """Whether an outer ``zip``/``enumerate`` argument repeats one shared
+        object (``zip(keys, [shared] * n)``); base already checks the plain
+        outer iterable."""
+        iterator = outer.iter
+        if (
+            isinstance(iterator, ast.Call)
+            and isinstance(iterator.func, ast.Name)
+            and iterator.func.id in {"zip", "enumerate"}
+            and self._is_builtin(iterator, iterator.func.id)
+        ):
+            return any(
+                isinstance(arg, ast.Starred) or self._repeats_shared_elements(arg)
+                for arg in iterator.args
+            )
+        return False
+
+    def _strict_per_item(self, outer: ast.For, roots: set[str]) -> bool:
+        """Every name in ``roots`` holds this outer item's own data.
+
+        Across the whole function: an outer target is bound only by the outer
+        ``for``; a local read from a view is bound only from views of
+        ``roots``; nothing stores into, deletes from or calls an in-place
+        method on any of them (other than ``os.walk``'s list pruning); the
+        outer iterable repeats no shared object; and the loop body does not
+        pass them to unknown callees.
+        """
+        if self._outer_sources_repeat(outer):
+            return False
+        scope = self._enclosing_scope(outer)
+        summary = self._scope_summary(scope)
+        targets = _target_names(outer.target)
+        target_nodes = {
+            node for node in ast.walk(outer.target) if isinstance(node, ast.Name)
+        }
+        walk_calls, walk_stores = self._walk_list_preserving(outer)
+        for name in roots:
+            if name in summary.escaped:
+                return False
+            for binding in summary.bindings.get(name, ()):
+                if name in targets:
+                    if binding not in target_nodes:
+                        return False
+                    continue
+                parent = self._parents.get(binding)
+                if not (
+                    isinstance(parent, (ast.Assign, ast.AnnAssign))
+                    and parent.value is not None
+                    and _view_root(parent.value) in roots
+                ):
+                    return False
+            if name not in targets and not summary.bindings.get(name):
+                return False
+            if any(store not in walk_stores for store in summary.stores.get(name, ())):
+                return False
+            if any(
+                call not in walk_calls for call in summary.mutating_calls.get(name, ())
+            ):
+                return False
+        # Locals that may hold the item or a part of it (``alias = row``,
+        # ``child = row[key]``): changing them changes the item.
+        aliases = set(roots)
+        changed = True
+        while changed:
+            changed = False
+            for bound, carried in summary.assign_carriers:
+                if carried & aliases and not bound <= aliases:
+                    aliases |= bound
+                    changed = True
+        for name in aliases - roots:
+            if (
+                name in summary.escaped
+                or any(store not in walk_stores for store in summary.stores.get(name, ()))
+                or any(
+                    call not in walk_calls
+                    for call in summary.mutating_calls.get(name, ())
+                )
+            ):
+                return False
+        return not self._iteration_sources_mutated(outer, roots)
 
     def _iteration_sources_mutated(self, outer, names: set[str]) -> bool:
         """Reject consumption proofs when a source escapes or is replenished.
@@ -582,6 +1091,7 @@ class PerformanceRule(SkylosRule):
             if expanded == names:
                 break
             names = expanded
+        walk_calls, walk_stores = self._walk_list_preserving(outer)
         pure_calls = {
             node
             for node in nodes
@@ -590,8 +1100,10 @@ class PerformanceRule(SkylosRule):
                 self._is_partition_expression(node, names)
                 or self._is_builtin_type_check(node)
             )
-        }
-        effects = _ScopeBindings(track_mutations=True, ignored_calls=pure_calls)
+        } | walk_calls
+        effects = _ScopeBindings(
+            track_mutations=True, ignored_calls=pure_calls, ignored_stores=walk_stores
+        )
         for statement in body:
             effects.visit(statement)
         # Comprehension targets are local, but evaluated calls can still
@@ -604,6 +1116,23 @@ class PerformanceRule(SkylosRule):
     def _is_partition_expression(self, node: ast.AST, names: set[str]) -> bool:
         if isinstance(node, ast.Name):
             return node.id in names
+        root = _view_root(node)
+        if root is not None:
+            return root in names
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "zip"
+            and self._is_builtin(node, "zip")
+            and node.args
+            and all(keyword.arg == "strict" for keyword in node.keywords)
+        ):
+            # Pairing partitions yields at most the shortest one's items.
+            return all(
+                not isinstance(arg, ast.Starred)
+                and self._is_partition_expression(arg, names)
+                for arg in node.args
+            )
         if isinstance(
             node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
         ):
@@ -634,10 +1163,13 @@ class PerformanceRule(SkylosRule):
             and all(self._is_partition_expression(arg, names) for arg in node.args)
         )
 
-    def _partition_effects(self, node: ast.AST, names: set[str]) -> set[str]:
+    def _partition_effects(
+        self, node: ast.AST, names: set[str], walk_preserving=(set(), set())
+    ) -> set[str]:
         # Proven wrappers read their source rather than extending it. Other
         # calls may mutate passed collections, including a callback supplied
         # by the caller; an escaped mutable alias loses its partition proof.
+        walk_calls, walk_stores = walk_preserving
         pure_calls = {
             child
             for child in ast.walk(node)
@@ -646,8 +1178,10 @@ class PerformanceRule(SkylosRule):
                 self._is_partition_expression(child, names)
                 or self._is_builtin_type_check(child)
             )
-        }
-        bindings = _ScopeBindings(track_mutations=True, ignored_calls=pure_calls)
+        } | walk_calls
+        bindings = _ScopeBindings(
+            track_mutations=True, ignored_calls=pure_calls, ignored_stores=walk_stores
+        )
         bindings.visit(node)
         # _ScopeBindings omits comprehension-local bindings. Calls in their
         # evaluated expressions still matter to the enclosing collections.
@@ -733,8 +1267,12 @@ class PerformanceRule(SkylosRule):
                     if isinstance(source, ast.Name)
                 )
 
+        walk_preserving = self._walk_list_preserving(outer)
+
         def effects(expression, names):
-            changed = names - self._partition_effects(expression, names)
+            changed = names - self._partition_effects(
+                expression, names, walk_preserving
+            )
             while True:
                 expanded = changed | {
                     right if left in changed else left
@@ -800,8 +1338,75 @@ class PerformanceRule(SkylosRule):
             return names
 
         return transfer(
-            outer.body, _os_walk_partition_names(outer) or _target_names(outer.target)
+            outer.body, self._os_walk_names(outer) or _target_names(outer.target)
         )
+
+    def _os_walk_names(self, outer: ast.For) -> set[str]:
+        """``dirnames``/``filenames`` of ``for top, dirnames, filenames in os.walk(...)``."""
+        names = _os_walk_partition_names(outer)
+        if names:
+            return names
+        iterator, target = outer.iter, outer.target
+        if (
+            isinstance(iterator, ast.Call)
+            and self._is_stdlib_callable(iterator.func, "os", "walk")
+            and isinstance(target, (ast.Tuple, ast.List))
+            and len(target.elts) == 3
+        ):
+            return {
+                element.id
+                for element in target.elts[1:]
+                if isinstance(element, ast.Name)
+            }
+        return set()
+
+    def _walk_list_preserving(self, outer: ast.For) -> tuple[set, set]:
+        """Calls and stores that only reorder or shrink ``os.walk``'s lists:
+        ``dirnames.sort()``, ``.remove(x)``, ``del dirnames[i]`` and
+        ``dirnames[:] = <filter of dirnames>``."""
+        cached = self._walk_preserving_cache.get(outer)
+        if cached is not None:
+            return cached
+        walk_names = self._os_walk_names(outer)
+        calls, stores = set(), set()
+        self._walk_preserving_cache[outer] = (calls, stores)
+        if not walk_names:
+            return calls, stores
+        for node in ast.walk(outer):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LIST_SHRINKING_METHODS
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in walk_names
+            ):
+                calls.add(node)
+            elif (
+                isinstance(node, ast.Delete)
+            ):
+                stores.update(
+                    target
+                    for target in node.targets
+                    if isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id in walk_names
+                )
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Subscript)
+                and isinstance(node.targets[0].value, ast.Name)
+                and node.targets[0].value.id in walk_names
+                and isinstance(node.targets[0].slice, ast.Slice)
+                and node.targets[0].slice.lower is None
+                and node.targets[0].slice.upper is None
+                and node.targets[0].slice.step is None
+                and self._is_partition_expression(
+                    node.value, {node.targets[0].value.id}
+                )
+            ):
+                stores.add(node.targets[0])
+        return calls, stores
 
     def _is_stdlib_callable(self, node: ast.AST, module: str, symbol: str) -> bool:
         """Resolve an explicit import, rejecting shadowing and unknown bindings."""
@@ -839,24 +1444,10 @@ class PerformanceRule(SkylosRule):
                 (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
             ):
                 continue
-            matches = []
-            other = _ScopeBindings()
-            for statement in current.body:
-                resolved = None
-                if isinstance(statement, ast.ImportFrom) and not statement.level:
-                    for alias in statement.names:
-                        if (alias.asname or alias.name) == name:
-                            resolved = f"{statement.module}.{alias.name}"
-                elif isinstance(statement, ast.Import):
-                    for alias in statement.names:
-                        if (alias.asname or alias.name.split(".")[0]) == name:
-                            resolved = alias.name
-                if resolved is not None:
-                    matches.append(resolved)
-                else:
-                    other.visit(statement)
-            if name in other.names or "*" in other.names:
+            imports, other_names = self._scope_imports(current)
+            if name in other_names or "*" in other_names:
                 return False
+            matches = imports.get(name)
             if matches:
                 return matches == [expected]
         return False
@@ -1024,11 +1615,144 @@ class PerformanceRule(SkylosRule):
         return not (
             self._constant_iteration_count(outer.iter)
             or self._constant_iteration_count(inner.iter)
+            or self._fixed_display_name(inner.iter)
             or self._walks_outer_partition(outer, inner)
             or self._consumes_shared_iterator(outer, inner)
             or self._leaves_outer_after_scan(outer, inner)
             or self._block_outcomes(inner.body, inner) <= {"break", "return"}
         )
+
+    def _is_file_opener(self, node: ast.AST) -> bool:
+        """``open(...)``, a stdlib file constructor, or ``Path(...).open()``."""
+        if isinstance(node, ast.Await):
+            node = node.value
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "open":
+            return self._is_builtin(func, "open")
+        if any(
+            self._is_stdlib_callable(func, module, symbol)
+            for module, symbol in _FILE_OPENERS
+        ):
+            return True
+        return (
+            isinstance(func, ast.Attribute)
+            and func.attr == "open"
+            and isinstance(func.value, ast.Call)
+            and self._is_stdlib_callable(func.value.func, "pathlib", "Path")
+        )
+
+    def _is_in_memory_buffer(self, node: ast.AST) -> bool:
+        return isinstance(node, ast.Call) and any(
+            self._is_stdlib_callable(node.func, module, symbol)
+            for module, symbol in _IN_MEMORY_BUFFERS
+        )
+
+    def _value_kind(self, value: ast.AST) -> str:
+        if self._is_file_opener(value):
+            return _FILE
+        if self._is_in_memory_buffer(value):
+            return _NOT_FILE
+        return _UNKNOWN
+
+    def _binding_kinds(self, scope: ast.AST) -> dict[str, str]:
+        """What each name of ``scope`` holds when every binding agrees: a
+        file, an in-memory buffer, or unknown. Cached per scope."""
+        cached = self._binding_kinds_cache.get(scope)
+        if cached is not None:
+            return cached
+        summary = self._scope_summary(scope)
+        kinds: dict[str, str] = {}
+        for name, bindings in summary.bindings.items():
+            found = set()
+            for binding in bindings:
+                parent = self._parents.get(binding)
+                if isinstance(binding, ast.arg):
+                    found.add(
+                        _FILE
+                        if binding.annotation is not None
+                        and _annotation_identifiers(binding.annotation) & _IO_ANNOTATIONS
+                        else _UNKNOWN
+                    )
+                elif (
+                    isinstance(binding, ast.Name)
+                    and isinstance(parent, (ast.Assign, ast.AnnAssign))
+                    and parent.value is not None
+                    and (
+                        parent.targets == [binding]
+                        if isinstance(parent, ast.Assign)
+                        else parent.target is binding
+                    )
+                ):
+                    found.add(self._value_kind(parent.value))
+                elif isinstance(binding, ast.Name) and isinstance(parent, ast.withitem):
+                    found.add(self._value_kind(parent.context_expr))
+                else:
+                    found.add(_UNKNOWN)
+            kinds[name] = found.pop() if len(found) == 1 else _UNKNOWN
+        self._binding_kinds_cache[scope] = kinds
+        return kinds
+
+    def _receiver_kind(self, receiver: ast.Name) -> str:
+        """A local's kind in its own scope. A buffer must be a function local
+        no ``global``/``nonlocal`` statement reaches; a name the scope does not
+        bind (a closure or module variable) is unknown."""
+        scope = self._enclosing_scope(receiver)
+        summary = self._scope_summary(scope)
+        if receiver.id not in summary.own_names:
+            return _UNKNOWN
+        kind = self._binding_kinds(scope).get(receiver.id, _UNKNOWN)
+        if kind == _NOT_FILE and (
+            receiver.id in summary.escaped
+            or not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+        ):
+            return _UNKNOWN
+        if kind == _FILE and receiver.id in summary.escaped:
+            return _UNKNOWN
+        return kind
+
+    def _is_handler_exception(self, receiver: ast.Name) -> bool:
+        """``except HTTPError as e: e.read()``: an HTTP error body, read inside
+        the handler that bound ``e``, with no other binding of ``e`` there."""
+        current = receiver
+        while current in self._parents:
+            current = self._parents[current]
+            if isinstance(current, ast.ExceptHandler) and current.name == receiver.id:
+                return not any(
+                    isinstance(node, ast.Name)
+                    and node.id == receiver.id
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                    for statement in current.body
+                    for node in ast.walk(statement)
+                )
+            if isinstance(current, (*_SCOPES, ast.ClassDef)):
+                return False
+        return False
+
+    def _reads_whole_file(self, node: ast.Call) -> bool:
+        """A size-less ``read()``/``readlines()`` that may load a whole file.
+
+        Not reported only on proof that the receiver is not a file: the
+        exception bound by the enclosing handler, or an in-memory buffer
+        (``io.BytesIO(...)`` itself or a local bound only to one). A receiver
+        bound only to a file opener is reported whatever its name; anything
+        else keeps the receiver-name heuristic.
+        """
+        if _is_bounded_read(node):
+            return False
+        receiver = node.func.value
+        if self._is_in_memory_buffer(receiver):
+            return False
+        if isinstance(receiver, ast.Name):
+            if self._is_handler_exception(receiver):
+                return False
+            kind = self._receiver_kind(receiver)
+            if kind == _NOT_FILE:
+                return False
+            if kind == _FILE:
+                return True
+        return _is_file_read_context(node)
 
     def _is_pandas_read(self, node):
         if isinstance(node.func, ast.Attribute) and node.func.attr == "read_csv":
@@ -1075,6 +1799,7 @@ class PerformanceRule(SkylosRule):
                 for child in ast.iter_child_nodes(parent)
             }
             self._global_writes = set()
+            self._reset_scope_caches()
             for scope in ast.walk(node):
                 if isinstance(
                     scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -1091,7 +1816,7 @@ class PerformanceRule(SkylosRule):
                 "readlines",
             ):
                 if "SKY-P401" not in self.ignore_list:
-                    if _is_file_read_context(node) and not _is_bounded_read(node):
+                    if self._reads_whole_file(node):
                         findings.append(
                             {
                                 "rule_id": "SKY-P401",
