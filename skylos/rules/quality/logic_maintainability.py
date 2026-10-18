@@ -461,6 +461,158 @@ def _mapping_receiver_evidence(
     return receivers - rebound
 
 
+_TYPING_NAMED_DECLARATIONS = frozenset(
+    {"TypeVar", "ParamSpec", "TypeVarTuple", "NewType"}
+)
+
+
+class _TypingLiteralCalls:
+    """Recognize imported typing operations without trusting their spelling."""
+
+    def __init__(self, tree):
+        self.scopes = _ModuleCallables(tree)
+        self.bindings = defaultdict(set)
+        self.changed_modules = set()
+        self.dynamic_namespace = False
+        for node in ast.walk(tree):
+            scope = self.scopes.scope_of.get(node, tree)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    value = (
+                        (alias.name, None) if alias.name in _TYPING_MODULES else None
+                    )
+                    self._bind(alias.asname or alias.name.split(".")[0], scope, value)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":
+                        self.dynamic_namespace = True
+                    value = (
+                        (node.module, alias.name)
+                        if not node.level and node.module in _TYPING_MODULES
+                        else None
+                    )
+                    self._bind(alias.asname or alias.name, scope, value)
+            elif isinstance(node, ast.Name) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                self._bind(node.id, scope, None)
+            elif isinstance(node, (*_FUNCTION_NODES, ast.ClassDef)):
+                self._bind(node.name, scope, None)
+                if isinstance(node, _FUNCTION_NODES):
+                    self._bind_parameters(node)
+            elif isinstance(node, ast.Lambda):
+                self._bind_parameters(node)
+            elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+                if node.name:
+                    self._bind(node.name, scope, None)
+            elif isinstance(node, ast.MatchMapping) and node.rest:
+                self._bind(node.rest, scope, None)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in {"exec", "eval", "globals", "locals"}:
+                    self.dynamic_namespace = True
+
+        # A module alias passed around or assigned through can be monkeypatched.
+        # Do not use it as identity proof, including through another import alias.
+        for node in ast.walk(tree):
+            expressions = []
+            if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+                expression = node.value
+                while isinstance(expression, (ast.Attribute, ast.Subscript)):
+                    expression = expression.value
+                expressions.append(expression)
+            elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                expression = node.value
+                while isinstance(expression, (ast.Attribute, ast.Subscript)):
+                    expression = expression.value
+                expressions.append(expression)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                expressions.append(node.value)
+            elif isinstance(node, ast.Call):
+                expressions.extend([*node.args, *(kw.value for kw in node.keywords)])
+            for expression in expressions:
+                if isinstance(expression, ast.Name):
+                    values = self._values(expression)
+                    self.changed_modules.update(
+                        value[0] for value in values if value and value[1] is None
+                    )
+
+    def _bind(self, name, scope, value):
+        target = self.scopes.resolve(name, scope)
+        self.bindings[(target, name)].add(value)
+
+    def _bind_parameters(self, node):
+        args = node.args
+        for arg in [
+            *args.posonlyargs,
+            *args.args,
+            *args.kwonlyargs,
+            args.vararg,
+            args.kwarg,
+        ]:
+            if arg is not None:
+                self._bind(arg.arg, node, None)
+
+    def _values(self, node):
+        scope = self.scopes.scope_of.get(node)
+        target = self.scopes.resolve(node.id, scope)
+        return self.bindings.get((target, node.id), ())
+
+    def member(self, expression):
+        if self.dynamic_namespace:
+            return None
+        if isinstance(expression, ast.Name):
+            root, attribute = expression, None
+        elif isinstance(expression, ast.Attribute) and isinstance(
+            expression.value, ast.Name
+        ):
+            root, attribute = expression.value, expression.attr
+        else:
+            return None
+        values = self._values(root)
+        if not values or None in values:
+            return None
+        members = set()
+        for module, imported in values:
+            if module in self.changed_modules:
+                return None
+            if attribute is not None:
+                if imported is not None:
+                    return None
+                members.add(attribute)
+            else:
+                members.add(imported)
+        return next(iter(members)) if len(members) == 1 else None
+
+    def is_type_literal(self, node, parent_map):
+        call = parent_map.get(id(node))
+        if not isinstance(call, ast.Call) or not call.args or call.args[0] is not node:
+            return False
+        member = self.member(call.func)
+        if member == "cast":
+            try:
+                ast.parse(node.value, mode="eval")
+            except (SyntaxError, ValueError):
+                return False
+            return True
+        if member in _TYPING_NAMED_DECLARATIONS:
+            assignment = parent_map.get(id(call))
+            if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
+                return False
+            targets = (
+                assignment.targets
+                if isinstance(assignment, ast.Assign)
+                else [assignment.target]
+            )
+            return (
+                len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and targets[0].id == node.value
+            )
+        return False
+
+
 class DuplicateStringLiteralRule(SkylosRule):
     rule_id = "SKY-L027"
     name = "Duplicate String Literal"
@@ -571,6 +723,7 @@ class DuplicateStringLiteralRule(SkylosRule):
             for child in ast.iter_child_nodes(parent):
                 parent_map[id(child)] = parent
         mapping_receivers = _mapping_receiver_evidence(node, parent_map)
+        typing_calls = None
 
         string_occurrences = {}
         for child in ast.walk(node):
@@ -589,6 +742,16 @@ class DuplicateStringLiteralRule(SkylosRule):
                     continue
                 if _is_literal_type_member(child, parent_map):
                     continue
+                parent = parent_map.get(id(child))
+                if (
+                    isinstance(parent, ast.Call)
+                    and parent.args
+                    and parent.args[0] is child
+                ):
+                    if typing_calls is None:
+                        typing_calls = _TypingLiteralCalls(node)
+                    if typing_calls.is_type_literal(child, parent_map):
+                        continue
                 if self._is_declarative_table_literal(child, parent_map):
                     continue
                 if _is_duplicate_string_noise(child.value):
@@ -847,9 +1010,17 @@ class _ModuleCallables:
         self.name_calls = defaultdict(list)
         self.attribute_calls = defaultdict(list)
         self.attribute_refs = defaultdict(list)
+        self._receiver_binding_events = []
         self._bases = {}
         self._subclasses = defaultdict(list)
         name_loads, attribute_loads = self._index(tree)
+        self.receiver_writes = set()
+        self.receiver_unknown_bindings = set()
+        for scope, name, unknown in self._receiver_binding_events:
+            key = (self.resolve(name, scope), name)
+            self.receiver_writes.add(key)
+            if unknown:
+                self.receiver_unknown_bindings.add(key)
         self._collect_references(name_loads, attribute_loads)
         self._link_classes()
 
@@ -867,7 +1038,20 @@ class _ModuleCallables:
                 if type(node.ctx) is ast.Load:
                     name_loads.append(node)
                 else:
+                    # A comprehension's walrus target binds in its enclosing
+                    # scope, unlike an ordinary iteration target.
+                    if isinstance(parent, ast.NamedExpr):
+                        while isinstance(scope, _COMPREHENSION_NODES):
+                            scope = scope_of.get(scope, tree)
+                        scope_of[node] = scope
                     bound[scope].add(node.id)
+                    self._receiver_binding_events.append(
+                        (
+                            scope,
+                            node.id,
+                            not isinstance(parent, (ast.Assign, ast.AnnAssign)),
+                        )
+                    )
                 continue
             if kind is ast.Constant:
                 continue
@@ -880,6 +1064,7 @@ class _ModuleCallables:
             # enclosing scope; only the body runs in the def's own scope.
             if kind in _FUNCTION_NODES:
                 bound[scope].add(node.name)
+                self._receiver_binding_events.append((scope, node.name, True))
                 self._bind_parameters(node)
                 outer = [*node.decorator_list, node.args]
                 if node.returns is not None:
@@ -935,7 +1120,9 @@ class _ModuleCallables:
                         self.assigned[(scope, target.id)].append(node.value)
         elif kind is ast.Import:
             for alias in node.names:
-                self.bound[scope].add(alias.asname or alias.name.split(".")[0])
+                name = alias.asname or alias.name.split(".")[0]
+                self.bound[scope].add(name)
+                self._receiver_binding_events.append((scope, name, True))
                 if alias.name in _TYPING_MODULES:
                     self.typing_modules.add(alias.asname or alias.name)
         elif kind is ast.ImportFrom:
@@ -943,6 +1130,9 @@ class _ModuleCallables:
                 if alias.name == "*":
                     continue
                 self.bound[scope].add(alias.asname or alias.name)
+                self._receiver_binding_events.append(
+                    (scope, alias.asname or alias.name, True)
+                )
                 if (
                     not node.level
                     and node.module in _TYPING_MODULES
@@ -952,6 +1142,7 @@ class _ModuleCallables:
         elif kind is ast.ExceptHandler:
             if node.name:
                 self.bound[scope].add(node.name)
+                self._receiver_binding_events.append((scope, node.name, True))
         elif kind is ast.Global:
             self.global_names[scope].update(node.names)
         elif kind is ast.Nonlocal:
@@ -959,9 +1150,11 @@ class _ModuleCallables:
         elif kind is ast.MatchAs or kind is ast.MatchStar:
             if node.name:
                 self.bound[scope].add(node.name)
+                self._receiver_binding_events.append((scope, node.name, True))
         elif kind is ast.MatchMapping:
             if node.rest:
                 self.bound[scope].add(node.rest)
+                self._receiver_binding_events.append((scope, node.rest, True))
 
     def resolve(self, name, scope):
         """The scope whose binding ``name`` refers to, or None (builtin)."""
@@ -1064,55 +1257,73 @@ class _ModuleCallables:
         )
         return result
 
-    def _class_named(self, name, scope):
+    def _class_named(self, name, scope, *, strict=False):
         target = self.resolve(name, scope)
-        return tuple(self.classes.get((target, name), ())) if target else ()
+        definitions = tuple(self.classes.get((target, name), ())) if target else ()
+        if strict and (len(definitions) != 1 or (target, name) in self.receiver_writes):
+            return ()
+        return definitions
 
-    def _receiver(self, expr, seen=frozenset()):
+    def _receiver(self, expr, seen=frozenset(), *, strict=False):
         """(classes, is_class) for a receiver this module can type, else ((), False)."""
+        # Call evidence needs a positive identity. Keep the older, broader
+        # value-reference lookup for functions whose signatures escape to users.
+        if strict and isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+            classes, is_class = self._receiver(expr.func, seen, strict=True)
+            return (classes, False) if is_class else ((), False)
         if not isinstance(expr, ast.Name) or expr.id in seen:
             return (), False
         scope = self.scope_of.get(expr)
         target = self.resolve(expr.id, scope) if scope is not None else None
         if target is None:
             return (), False
-        named = tuple(self.classes.get((target, expr.id), ()))
-        if named:
-            return named, True
-        if not isinstance(target, _FUNCTION_NODES):
+        if (target, expr.id) in self.classes:
+            return self._class_named(expr.id, scope, strict=strict), True
+        if not strict and not isinstance(target, _FUNCTION_NODES):
             return (), False
-        args = target.args
-        positional = [*args.posonlyargs, *args.args]
-        owner = self.scope_of.get(target)
-        if (
-            positional
-            and positional[0].arg == expr.id
-            and isinstance(owner, ast.ClassDef)
-            and not _has_name_decorator(target, "staticmethod")
-        ):
-            return (owner,), _has_name_decorator(target, "classmethod")
-        parameter = next(
-            (arg for arg in [*positional, *args.kwonlyargs] if arg.arg == expr.id),
-            None,
-        )
-        if parameter is not None:
-            annotation = parameter.annotation
-            if isinstance(annotation, ast.Constant) and isinstance(
-                annotation.value, str
+        if isinstance(target, _FUNCTION_NODES):
+            args = target.args
+            positional = [*args.posonlyargs, *args.args]
+            owner = self.scope_of.get(target)
+            parameters = [*positional, *args.kwonlyargs]
+            if strict and (
+                any(arg.arg == expr.id for arg in parameters)
+                and (target, expr.id) in self.receiver_writes
             ):
-                name = annotation.value.strip()
-            elif isinstance(annotation, ast.Name):
-                name = annotation.id
-            else:
                 return (), False
-            return self._class_named(name, owner), False
+            if (
+                positional
+                and positional[0].arg == expr.id
+                and isinstance(owner, ast.ClassDef)
+                and not _has_name_decorator(target, "staticmethod")
+            ):
+                return (owner,), _has_name_decorator(target, "classmethod")
+            parameter = next(
+                (arg for arg in parameters if arg.arg == expr.id),
+                None,
+            )
+            if parameter is not None:
+                annotation = parameter.annotation
+                if isinstance(annotation, ast.Constant) and isinstance(
+                    annotation.value, str
+                ):
+                    name = annotation.value.strip()
+                elif isinstance(annotation, ast.Name):
+                    name = annotation.id
+                else:
+                    return (), False
+                return self._class_named(name, owner, strict=strict), False
         found = []
+        if strict and (target, expr.id) in self.receiver_unknown_bindings:
+            return (), False
         for value in self.assigned.get((target, expr.id), ()):
             # ``o = cls(...)`` / ``o = Plugin(...)`` constructs an instance.
             if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)):
                 return (), False
-            classes, _ = self._receiver(value.func, seen | {expr.id})
-            if not classes:
+            classes, is_class = self._receiver(
+                value.func, seen | {expr.id}, strict=strict
+            )
+            if not classes or strict and not is_class:
                 return (), False
             found.extend(classes)
         return tuple(found), False
@@ -1184,8 +1395,8 @@ class _ModuleCallables:
             classmethod_ = _has_name_decorator(func, "classmethod")
             for name in names:
                 for call, node in self.attribute_calls.get(name, ()):
-                    classes, is_class = self._receiver(node.value)
-                    if classes and not any(
+                    classes, is_class = self._receiver(node.value, strict=True)
+                    if not classes or not all(
                         scope in self._dispatch_classes(cls, name) for cls in classes
                     ):
                         continue
@@ -1290,7 +1501,8 @@ class BooleanTrapRule(SkylosRule):
                 if root_name(node.func) == name:
                     return True
                 if any(
-                    isinstance(arg, ast.Name) and arg.id == name
+                    isinstance(arg, ast.Name)
+                    and arg.id == name
                     or root_name(arg) == name
                     and any(
                         isinstance(child, ast.Attribute) and child.attr == "__dict__"
@@ -1382,7 +1594,9 @@ class BooleanTrapRule(SkylosRule):
                 current = parent
                 continue
             scope_bindings = None
-            if isinstance(parent, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(
+                parent, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
                 scope_bindings = _BooleanTypeBindings()
                 for statement in parent.body:
                     scope_bindings.visit(statement)
@@ -1566,7 +1780,10 @@ class BooleanTrapRule(SkylosRule):
 
         for i, arg in candidates:
             arg_name = arg.arg
+            positional_only = i < len(args.posonlyargs)
             message = f"Boolean parameter '{arg_name}' permits positional calls, which can obscure their meaning. Prefer named calls; consider keyword-only arguments when the public or callback contract permits it."
+            if positional_only:
+                message = f"Boolean parameter '{arg_name}' is positional-only, so calls cannot name it. Consider a descriptive enum or a separate named operation when the public or callback contract permits it."
             if needs_evidence:
                 evidence = callables.positional_bool_calls(node, i)
                 if not evidence:
@@ -1577,6 +1794,8 @@ class BooleanTrapRule(SkylosRule):
                 if len(evidence) > 3:
                     sites += f" (+{len(evidence) - 3} more)"
                 message = f"Boolean parameter '{arg_name}' is called positionally with {sites}; the bare literal does not say what it controls. Pass it by keyword, or make the parameter keyword-only."
+                if positional_only:
+                    message = f"Boolean parameter '{arg_name}' is called positionally with {sites}; the bare literal does not say what it controls. This parameter is positional-only; consider a descriptive enum or a separate named operation when the contract permits it."
             findings.append(
                 {
                     "rule_id": self.rule_id,

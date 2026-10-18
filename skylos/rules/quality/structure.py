@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._code_lines import code_lines
+from skylos.rules.quality._overload_groups import overload_groups
 from skylos.rules.quality._receivers import (
     context_method_kinds,
     method_receiver,
@@ -39,6 +40,7 @@ class ArgCountRule(SkylosRule):
         self.max_total = max_total
         self._methods = {}
         self._skip_file = False
+        self._overloads = {}
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
@@ -47,6 +49,17 @@ class ArgCountRule(SkylosRule):
             )
             self._methods = (
                 {} if self._skip_file else context_method_kinds(node, context)
+            )
+            self._overloads = (
+                {
+                    member: group
+                    for group in overload_groups(
+                        node, filename=context.get("filename", "")
+                    )
+                    for member in group.members
+                }
+                if not self._skip_file
+                else {}
             )
             return None
         if self._skip_file:
@@ -62,12 +75,89 @@ class ArgCountRule(SkylosRule):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
 
+        group = self._overloads.get(node)
+        if group is not None:
+            return self._overload_finding(group, node, context)
+
         arity = self._arity(node)
         if arity.required > self.max_required:
             return [self._required_finding(node, context, arity)]
         if arity.total > self.max_total:
             return [self._total_finding(node, context, arity)]
         return None
+
+    def _overload_finding(self, group, node, context):
+        if node is not group.anchor:
+            return None
+        arities = [(member, self._arity(member)) for member in group.members]
+        required = [item for item in arities if item[1].required > self.max_required]
+        total = [item for item in arities if item[1].total > self.max_total]
+        if required:
+            member, arity = max(
+                required, key=lambda item: (item[1].required, item[1].total)
+            )
+            finding = self._required_finding(node, context, arity)
+        elif total:
+            member, arity = max(
+                total, key=lambda item: (item[1].total, item[1].required)
+            )
+            finding = self._total_finding(node, context, arity)
+        else:
+            return None
+        if member is not group.implementation:
+            finding["message"] = finding["message"].replace(
+                "Function has", "Callable has an overload signature with", 1
+            )
+        finding["overload_metric_source_line"] = member.lineno
+        finding["overload_signatures"] = [
+            {
+                "line": signature.lineno,
+                "kind": "implementation"
+                if signature is group.implementation
+                else "overload",
+                "required_positional": signature_arity.required,
+                "total_parameters": signature_arity.total,
+                "optional_positional": signature_arity.optional_positional,
+                "positional_only": len(signature.args.posonlyargs),
+                "positional_parameters": [
+                    arg.arg
+                    for arg in (*signature.args.posonlyargs, *signature.args.args)
+                ],
+                "keyword_only_parameters": [
+                    arg.arg for arg in signature.args.kwonlyargs
+                ],
+                "required_keyword_only": [
+                    arg.arg
+                    for arg, default in zip(
+                        signature.args.kwonlyargs, signature.args.kw_defaults
+                    )
+                    if default is None
+                ],
+                "variadic_positional": signature.args.vararg.arg
+                if signature.args.vararg
+                else None,
+                "variadic_keyword": signature.args.kwarg.arg
+                if signature.args.kwarg
+                else None,
+                **(
+                    {
+                        "required_argument_range": [
+                            signature_arity.required,
+                            signature_arity.max_required,
+                        ],
+                        "total_parameter_range": [
+                            signature_arity.total,
+                            signature_arity.max_total,
+                        ],
+                        "receiver_binding": "unknown",
+                    }
+                    if signature_arity.uncertain
+                    else {}
+                ),
+            }
+            for signature, signature_arity in arities
+        ]
+        return [finding]
 
     def _arity(self, node) -> _Arity:
         args = node.args

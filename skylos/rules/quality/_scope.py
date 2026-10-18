@@ -10,6 +10,7 @@ from skylos.core.safe_cache_io import (
     read_text_no_symlink,
 )
 from skylos.core.test_paths import is_test_code_path
+from skylos.rules.quality._pytest_collection import is_collected_pytest_file
 
 _MAX_SCOPE_SOURCE_BYTES = 2_000_000
 
@@ -67,9 +68,7 @@ def _is_pytest_module(path: Path, project_root=None) -> bool:
         return False
     if stat.st_size > _MAX_SCOPE_SOURCE_BYTES:
         return False
-    root_text = (
-        str(Path(project_root).absolute()) if project_root is not None else None
-    )
+    root_text = str(Path(project_root).absolute()) if project_root is not None else None
     return _defines_pytest_items(str(path), stat.st_size, stat.st_mtime_ns, root_text)
 
 
@@ -90,6 +89,8 @@ def is_non_production_python(filename, project_root=None) -> bool:
         path = Path(str(project_root)) / path
     if _is_pytest_module(path, project_root):
         return True
+    if is_collected_pytest_file(path, project_root):
+        return True
     return is_sample_or_build_python(filename, project_root)
 
 
@@ -108,9 +109,11 @@ def is_sample_or_build_python(filename, project_root=None) -> bool:
         return True
     # Documentation builds and the packaging script run only at build time.
     try:
-        relative = Path(str(filename)).resolve().relative_to(
-            Path(str(project_root)).resolve()
-        ) if project_root is not None else Path(str(filename))
+        relative = (
+            Path(str(filename)).resolve().relative_to(Path(str(project_root)).resolve())
+            if project_root is not None
+            else Path(str(filename))
+        )
     except (OSError, ValueError):
         return False
     parts = [part.lower() for part in relative.parts]
