@@ -608,6 +608,22 @@ _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
 _KOTLIN_SOURCE_EXTS = (".kt", ".kts")
 _SHELL_SOURCE_EXTS = SHELL_SOURCE_EXTS
+# Every suffix a directory scan parses as source.
+ANALYZED_SOURCE_SUFFIXES = frozenset(
+    {
+        *PYTHON_SIGNATURE_SUFFIXES,
+        ".go",
+        *_TS_JS_SOURCE_EXTS,
+        ".java",
+        *_PHP_SOURCE_EXTS,
+        *_RUST_SOURCE_EXTS,
+        *_CPP_SOURCE_EXTS,
+        *_DART_SOURCE_EXTS,
+        *_CSHARP_SOURCE_EXTS,
+        *_KOTLIN_SOURCE_EXTS,
+        *_SHELL_SOURCE_EXTS,
+    }
+)
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
 _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(PYTHON_SIGNATURE_SUFFIXES, "python"),
@@ -1866,19 +1882,7 @@ class Skylos:
             return [], Path(os.path.abspath(raw_path)).parent.resolve()
         p = raw_path.resolve()
 
-        exts = {
-            *PYTHON_SIGNATURE_SUFFIXES,
-            ".go",
-            *(_TS_JS_SOURCE_EXTS),
-            ".java",
-            *(_PHP_SOURCE_EXTS),
-            *(_RUST_SOURCE_EXTS),
-            *(_CPP_SOURCE_EXTS),
-            *(_DART_SOURCE_EXTS),
-            *(_CSHARP_SOURCE_EXTS),
-            *(_KOTLIN_SOURCE_EXTS),
-            *(_SHELL_SOURCE_EXTS),
-        }
+        exts = set(ANALYZED_SOURCE_SUFFIXES)
         if p.is_file():
             # Explicit paths need the same source filter as directory scans.
             # Config files also have a worker adapter for the later repo checks.
