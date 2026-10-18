@@ -18,9 +18,9 @@ SOURCE = """def test_connection(value, enabled: bool) -> str:
     return str(value)
 
 class TestCases:
-    def test_a(self): pass
-    def test_b(self): pass
-    def test_c(self): pass
+    def test_a(self): return self.value
+    def test_b(self): return self.value + 1
+    def test_c(self): return self.value * 2
 """
 
 
@@ -61,12 +61,42 @@ def test_broad_file_pattern_does_not_relabel_production_outside_testpaths(tmp_pa
     context = {"filename": str(path), "source": SOURCE, "project_root": tmp_path}
     findings = TypeAnnotationPracticeRule().visit_node(ast.parse(SOURCE), context)
     assert any(row["rule_id"] == "SKY-T101" for row in findings)
-    # Class and file size advice remain visible for this production module.
-    assert GodFileRule(max_definitions=2).visit_node(ast.parse(SOURCE), context)
+    # These methods contain behavior: declaration-only stubs are intentionally
+    # exempt, but this production implementation must still receive advice.
+    file_findings = GodFileRule(max_definitions=2).visit_node(ast.parse(SOURCE), context)
+    assert len(file_findings) == 1
+    assert file_findings[0]["rule_id"] == "SKY-Q502"
+    assert file_findings[0]["total_definitions"] == 5
     class_rule = GodClassRule(max_methods=2)
     tree = ast.parse(SOURCE)
     class_rule.visit_node(tree, context)
-    assert class_rule.visit_node(tree.body[1], context)
+    class_findings = class_rule.visit_node(tree.body[1], context)
+    assert len(class_findings) == 1
+    assert class_findings[0]["rule_id"] == "SKY-Q501"
+    assert class_findings[0]["value"] == 3
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_production_declarations_are_exempt_without_becoming_pytest_files(
+    tmp_path, legacy
+):
+    _config(tmp_path, ["tests"], legacy=legacy)
+    source = """class TestCases:
+    def test_a(self): pass
+    def test_b(self): pass
+    def test_c(self): pass
+"""
+    path = _write(tmp_path, "app/health.py", source)
+    assert not is_collected_pytest_file(path, tmp_path, source)
+    assert advice_source_context({"rule_id": "SKY-Q301", "file": str(path)}, tmp_path) is None
+    context = {"filename": str(path), "source": source, "project_root": tmp_path}
+    tree = ast.parse(source)
+    # An interface made only of stubs has no implementation to split. This
+    # exemption is separate from pytest collection and applies in production.
+    assert not GodFileRule(max_definitions=2).visit_node(tree, context)
+    class_rule = GodClassRule(max_methods=2)
+    class_rule.visit_node(tree, context)
+    assert not class_rule.visit_node(tree.body[0], context)
 
 
 @pytest.mark.parametrize(
