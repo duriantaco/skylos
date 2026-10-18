@@ -156,7 +156,9 @@ def test_file_pattern_without_directory_matches_basename(tmp_path):
     _write(
         tmp_path,
         "pyproject.toml",
-        NATIVE.replace('"checks/*.py"', '"*_checks.py"'),
+        NATIVE.replace('"checks/*.py"', '"*_checks.py"').replace(
+            'testpaths = ["checks"]\n', ""
+        ),
     )
     assert _metrics(tmp_path, _class(), "other/worker_checks.py") == []
     assert _ids(_metrics(tmp_path, _class(), "checks/worker.py")) == {

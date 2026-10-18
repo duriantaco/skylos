@@ -466,8 +466,9 @@ Advice describes measurements and design or policy suggestions. An accurate
 measurement does not establish that applying its suggested change would help:
 public API compatibility, test matrices and formatter fixtures can make a
 suggestion inappropriate. Review that context before changing code. Default
-grouping keeps these signals visible without presenting every location as a
-separate defect; `--expand-advice` exposes the individual records.
+grouping keeps related measurements together. The focused default view explains
+how many optional checks are available with `--all-advice`; `--expand-advice`
+exposes locations and messages within the selected view.
 
 Each built-in rule declares `finding_type` in the rule catalog. Reports show
 this as **Type**, separately from severity:
@@ -478,36 +479,72 @@ this as **Type**, separately from severity:
 | Review | A potential risk requiring context | Possible SSRF, dead code, unbounded ORM queries, unsafe type assertions |
 | Advice | Maintainability or tooling conventions | Function length, complexity, duplicate literals, missing annotations |
 
-When quality checks are enabled (`--quality` or `-a`), Advice is retained in
-the report. Terminal output leads with counts by type, lists Defect and Review
-individually, then shows one Advice row per rule with its count and top files.
-Cyclomatic (`SKY-Q301`) and cognitive (`SKY-Q306`) complexity share a Function
-complexity group. When both checks flag the same function, that function counts
-as one displayed entry. `--expand-advice` shows one entry with both scores,
-thresholds, rule IDs and messages; either check can still trigger independently.
-The headline distinguishes displayed entries from underlying checks when they
-differ. Missing or ambiguous function identities retain separate entries.
-Use `--expand-advice` for every Advice location and message:
+When quality checks are enabled (`--quality` or `-a`), all detected Advice stays
+in the raw report. Rich, pretty, tree and LLM views default to focused advice.
+They list Defect and Review individually, then summarize the selected Advice
+by rule family with counts and top files. Optional advice includes known
+Boolean-signature suggestions without observed positional-call evidence,
+advisory file-level architecture metrics, and advice on positively identified
+tests, examples, profiling inputs and vendored code. A notice gives the count,
+reasons and `--all-advice` recovery option. Unknown source contexts remain
+visible. Explicitly enforced architecture policy remains visible too.
+
+Non-production context is project-relative and read without executing the
+target. Conventional test, example and benchmark paths are checked relative to
+the checkout root, even when the scan targets a package or a single file. A
+bounded, static lookup uses the Git boundary or an enclosing project manifest;
+the requested scan path still bounds which findings can be classified. Other
+profiling inputs require packaging exclusion and sample-data
+evidence; vendored trees require whole-directory upstream provenance and a
+license. A vendor-looking directory name or mention of one copied file is
+insufficient. Clone groups
+are optional only when every reported member has the same proven context;
+truncated or mixed groups remain visible. This presentation policy never filters
+Defect, Review, security, secrets, dead code or custom findings.
+
+Cyclomatic (`SKY-Q301`), cognitive (`SKY-Q306`), length (`SKY-C304`), nesting
+(`SKY-Q302`) and return-count (`SKY-L028`) advice share one entry when their
+function identity is unambiguous. Every triggered rule keeps its own score,
+threshold, message and evidence. Duplicate rule variants or conflicting
+identities remain separate. The two architecture metrics (`SKY-Q802`/`SKY-Q803`)
+likewise share one module entry in the all-advice view. The headline distinguishes
+displayed entries from underlying checks. Grouped advice tables label severity as
+**Advice priority**, retaining the original values; it is not defect confidence.
+
+Use `--expand-advice` for focused locations, or combine it with `--all-advice`
+to include optional advice. An explicit `--select` keeps the requested rules
+visible regardless of their advice context:
 
 ```bash
 skylos . -a
 skylos . -a --expand-advice
+skylos . -a --all-advice --expand-advice
+skylos . --select SKY-L029 --expand-advice
 skylos . -a --format json -o report.json
 ```
 
 JSON and JSON-CI retain each finding record for the chosen scan scope,
 including Advice and its evidence. Findings carry `finding_type`;
 `analysis_summary.finding_type_counts` contains `defect`, `review`, `advice`
-and `advice_groups`. Grouping and expansion never alter these records or gate
-inputs. Finding Type does not suppress findings or change analyzer thresholds.
+and `advice_groups`. Focus, grouping and expansion never alter these records,
+SARIF, assessments or gate inputs. Optional advice still counts toward configured
+quality limits where applicable. Machine formats, concise output and MCP scan
+resources retain their existing complete records and policies. Analyzer
+thresholds are unchanged.
 
-Deterministic LLM reports and MCP scan replies list Defect and Review in full
-and summarize Advice by rule by default. `--expand-advice` expands Advice in
-LLM reports, with both original records retained under a combined complexity
-entry. MCP callers can request `expand_advice` or read the complete scan
-resource URI returned with the reply; the stored report retains all Advice.
+Deterministic LLM reports apply the same focused/all selection as terminal
+reports. Expanded grouped entries retain every original record. MCP replies
+continue to summarize all Advice by rule; MCP callers can request `expand_advice`
+or read the complete scan resource URI returned with the reply.
 An advice-only report says how much Advice exists rather than claiming there
 are no findings.
+
+To check a saved JSON report for lossless grouping, unchanged risk records,
+unchanged raw JSON and stable raw gate outcomes without rescanning the target:
+
+```bash
+python scripts/check_advice_output.py report.json --project-root .
+```
 
 The assessment is computed before display grouping and filtering. A
 severity/category/file display filter retains the assessment and discloses

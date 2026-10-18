@@ -4257,6 +4257,11 @@ class Skylos:
         architecture_abstractness = {}
         architecture_loc = {}
         architecture_main_guard_modules = set()
+        from skylos.reporting.architecture_result import _architecture_metric_sources
+
+        architecture_metric_sources = (
+            _architecture_metric_sources(files, modmap) if enable_quality else {}
+        )
 
         per_file_ignore_lines = {}
         per_file_ignore_rules = {}
@@ -4455,15 +4460,16 @@ class Skylos:
                         self._maintainability_inventory.append(
                             {"file": str(file), **measured_units}
                         )
-                    abstractness = file_architecture_metrics.get("abstractness")
-                    loc = file_architecture_metrics.get("loc")
-                    has_main_guard = file_architecture_metrics.get("has_main_guard")
-                    if abstractness is not None:
-                        architecture_abstractness[mod] = abstractness
-                    if loc is not None:
-                        architecture_loc[mod] = loc
-                    if has_main_guard:
-                        architecture_main_guard_modules.add(mod)
+                    if architecture_metric_sources.get(mod) == Path(file):
+                        abstractness = file_architecture_metrics.get("abstractness")
+                        loc = file_architecture_metrics.get("loc")
+                        has_main_guard = file_architecture_metrics.get("has_main_guard")
+                        if abstractness is not None:
+                            architecture_abstractness[mod] = abstractness
+                        if loc is not None:
+                            architecture_loc[mod] = loc
+                        if has_main_guard:
+                            architecture_main_guard_modules.add(mod)
                 for callee, method_refs in file_param_method_refs.items():
                     all_param_method_refs[callee].extend(method_refs)
                 for callee, arg_refs in file_call_arg_types.items():

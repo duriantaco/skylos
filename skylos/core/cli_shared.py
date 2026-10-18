@@ -27,6 +27,7 @@ _SAFE_ADDOPTS_FLAGS = frozenset(
         "--secrets",
         "--danger",
         "--quality",
+        "--all-advice",
         "--expand-advice",
         "--ai-defects",
         "--sca",

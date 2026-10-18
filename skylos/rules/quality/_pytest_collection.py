@@ -32,12 +32,18 @@ _CONFIGS = (
     ("tox.ini", "pytest"),
     ("setup.cfg", "tool:pytest"),
 )
+_DEFAULT_NORECURSEDIRS = (
+    "*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}"
+)
 _DEFAULTS = {
     "python_files": ("test_*.py", "*_test.py"),
     "python_classes": ("Test",),
     "python_functions": ("test",),
     "testpaths": (),
+    "norecursedirs": _DEFAULT_NORECURSEDIRS,
 }
+_MAX_TESTPATHS = 128
+_MAX_PATH_PARTS = 64
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,7 @@ class PytestCollection:
     python_classes: tuple[str, ...]
     python_functions: tuple[str, ...]
     testpaths: tuple[str, ...]
+    norecursedirs: tuple[str, ...] = _DEFAULT_NORECURSEDIRS
 
 
 def _options(source, name, mode):
@@ -148,6 +155,90 @@ def _matches_name(name, patterns):
     )
 
 
+@lru_cache(maxsize=4096)
+def _testpaths_select_file(relative, root, testpaths, norecursedirs):
+    """Require a local root-discovery selection, without expanding its tree.
+
+    pytest uses recursive glob expansion for testpaths when run at the root
+    without explicit arguments. Matching a directory selects descendants;
+    wildcard components themselves never consume a slash. Unknown explicit
+    invocation paths or imported tests cannot establish test-only evidence.
+    """
+    if len(testpaths) > _MAX_TESTPATHS or len(norecursedirs) > _MAX_TESTPATHS:
+        return False
+    if any(
+        not value.strip() or len(value) > 4096 or "\\" in value or "\x00" in value
+        for value in norecursedirs
+    ):
+        return False
+
+    def descendants_allowed(start):
+        for index in range(start, len(relative.parts) - 1):
+            part = relative.parts[index]
+            if part == "__pycache__":
+                return False
+            for pattern in norecursedirs:
+                if "/" in pattern:
+                    text = str(root.joinpath(*relative.parts[: index + 1]))
+                    if not Path(pattern).is_absolute():
+                        pattern = "*/" + pattern
+                else:
+                    text = part
+                if fnmatchcase(text, pattern):
+                    return False
+        return True
+
+    if not testpaths:
+        return descendants_allowed(0)
+    patterns = []
+    for value in testpaths:
+        if (
+            not value.strip()
+            or len(value) > 4096
+            or "\\" in value
+            or "\x00" in value
+            or "::" in value
+        ):
+            return False
+        pattern = Path(value)
+        if ".." in pattern.parts:
+            return False
+        if pattern.is_absolute():
+            try:
+                pattern = pattern.relative_to(root)
+            except ValueError:
+                return False
+        if len(pattern.parts) > _MAX_PATH_PARTS:
+            return False
+        patterns.append(pattern.parts)
+
+    def selected(pattern):
+        @lru_cache(maxsize=None)
+        def matches(pattern_index, path_index):
+            if pattern_index == len(pattern):
+                # A standalone ** glob does not select the root itself.
+                return (path_index > 0 or not pattern) and descendants_allowed(path_index)
+            component = pattern[pattern_index]
+            if component == "**":
+                return matches(pattern_index + 1, path_index) or (
+                    path_index < len(relative.parts)
+                    and not relative.parts[path_index].startswith(".")
+                    and matches(pattern_index, path_index + 1)
+                )
+            if path_index == len(relative.parts):
+                return False
+            part = relative.parts[path_index]
+            if part.startswith(".") and not component.startswith("."):
+                return False
+            return fnmatchcase(part, component) and matches(
+                pattern_index + 1, path_index + 1
+            )
+
+        return matches(0, 0)
+
+    return any(selected(pattern) for pattern in patterns)
+
+
 def _opted_out(node):
     for statement in node.body:
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
@@ -172,7 +263,7 @@ def _false_literal(value):
         return False
 
 
-def _collectable_function(node, body, config, bindings=None):
+def _collectable_function(node, body, config, bindings=None, pytest_aliases=None):
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
     if not _matches_name(node.name, config.python_functions):
@@ -191,6 +282,11 @@ def _collectable_function(node, body, config, bindings=None):
             else None
         )
         if name in {"fixture", "yield_fixture", "property", "cached_property"}:
+            return False
+        # An arbitrary wrapper can replace the function with a non-callable.
+        # Import-proven pytest marks preserve the collected callable; unknown
+        # decorators cannot establish new configured test-only evidence.
+        if not _pytest_mark_decorator(decorator, pytest_aliases or {}):
             return False
     for statement in body:
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
@@ -319,13 +415,20 @@ def is_collected_pytest_class(
     ):
         return True
     bindings = _scope_bindings(node)
+    method_pytest_aliases = {
+        name: evidence
+        for name, evidence in (pytest_aliases or {}).items()
+        if name not in bindings.names
+    }
     return (
         _matches_name(node.name, config.python_classes)
         and not _class_collection_barrier(
             node, classes or {}, pytest_aliases=pytest_aliases
         )
         and any(
-            _collectable_function(method, node.body, config, bindings)
+            _collectable_function(
+                method, node.body, config, bindings, method_pytest_aliases
+            )
             for method in methods
         )
     )
@@ -387,8 +490,10 @@ def _has_collected_items(source, config):
     if _opted_out(tree):
         return False
     bindings = _scope_bindings(tree)
+    pytest_aliases = _pytest_aliases(tree, bindings)
     return bool(collected_pytest_classes(tree, config)) or any(
-        _collectable_function(node, tree.body, config, bindings) for node in tree.body
+        _collectable_function(node, tree.body, config, bindings, pytest_aliases)
+        for node in tree.body
     )
 
 
@@ -411,7 +516,19 @@ def is_collected_pytest_file(filename, project_root=None, source=None) -> bool:
             path = root / path
         if path.is_symlink():
             return False
-        relative = path.resolve().relative_to(root.resolve()).as_posix()
+        relative_path = path.relative_to(root)
+        if ".." in relative_path.parts or len(relative_path.parts) > _MAX_PATH_PARTS:
+            return False
+        resolved_relative = path.resolve().relative_to(root.resolve())
+        if relative_path != resolved_relative:
+            return False
+        if config.testpaths and not path.is_file():
+            return False
+        if not _testpaths_select_file(
+            relative_path, root, config.testpaths, config.norecursedirs
+        ):
+            return False
+        relative = relative_path.as_posix()
         if not any(
             fnmatchcase(relative if "/" in pattern else path.name, pattern)
             for pattern in config.python_files

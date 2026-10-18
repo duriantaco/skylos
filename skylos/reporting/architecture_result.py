@@ -64,6 +64,27 @@ def attach_circular_and_architecture(
         )
 
 
+def _architecture_metric_sources(files, modmap):
+    """Match Python metrics to the runtime file represented by the graph.
+
+    The circular graph keeps the last .py file for a module name. Stub worker
+    results must not replace that file's measurements. Retain a stub's metadata
+    when no runtime file exists; it remains available to stub-only analysis.
+    Unrelated language workers have their own architecture source identities.
+    """
+    sources = {}
+    for file in files:
+        path = Path(file)
+        module = modmap.get(file, "")
+        if path.suffix == ".py":
+            sources[module] = path
+        elif path.suffix == ".pyi" and (
+            module not in sources or sources[module].suffix == ".pyi"
+        ):
+            sources[module] = path
+    return sources
+
+
 def _build_circular_rule(files, modmap, all_raw_imports):
     circular_rule = CircularDependencyRule()
     for file in files:

@@ -1402,6 +1402,12 @@ def _run_scan_command(
                 output_result,
                 project_root,
                 expand_advice=bool(getattr(args, "expand_advice", False)),
+                **(
+                    {"all_advice": True}
+                    if getattr(args, "all_advice", False)
+                    or getattr(args, "select", None)
+                    else {}
+                ),
             )
             if args.output:
                 _write_scan_output(args.output, llm_report)
@@ -1650,9 +1656,11 @@ def _run_scan_command(
     elif not args.upload:
         display_result = output_result
         _cli_limit = getattr(args, "limit", None)
-        advice_options = (
-            {"expand_advice": True} if getattr(args, "expand_advice", False) else {}
-        )
+        advice_options = {}
+        if getattr(args, "expand_advice", False):
+            advice_options["expand_advice"] = True
+        if getattr(args, "all_advice", False) or getattr(args, "select", None):
+            advice_options["all_advice"] = True
         if getattr(args, "format", "rich") == "pretty":
             render_pretty_results(
                 console,

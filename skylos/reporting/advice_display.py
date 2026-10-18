@@ -14,9 +14,16 @@ from skylos.rules.catalog import get_rule_name
 
 
 _COMPLEXITY_RULES = ("SKY-Q301", "SKY-Q306")
+_FUNCTION_RULES = (*_COMPLEXITY_RULES, "SKY-C304", "SKY-Q302", "SKY-L028")
+_ARCHITECTURE_RULES = ("SKY-Q802", "SKY-Q803")
 _METRIC_NAMES = {
     "SKY-Q301": "Cyclomatic complexity",
     "SKY-Q306": "Cognitive complexity",
+    "SKY-C304": "Code lines",
+    "SKY-Q302": "Maximum nesting",
+    "SKY-L028": "Return statements",
+    "SKY-Q802": "Distance from main sequence",
+    "SKY-Q803": "Architecture zone",
 }
 _SEVERITY_RANK = {
     "CRITICAL": 0,
@@ -27,17 +34,22 @@ _SEVERITY_RANK = {
     "LOW": 3,
     "INFO": 4,
 }
+_UNKNOWN_NAMES = {"<?>", "<module>", "anonymous", "<anonymous>"}
 
 
 @dataclass(frozen=True)
 class ComplexityDisplay:
-    """Two original checks represented by one human-facing function entry."""
+    """Original advice signals represented by one human-facing entry.
 
-    findings: tuple[dict, dict]
+    The historical class name remains available to existing renderers. Every
+    original record, including its evidence and extra metrics, is retained.
+    """
+
+    findings: tuple[dict, ...]
 
     @property
-    def rule_ids(self) -> tuple[str, str]:
-        return _COMPLEXITY_RULES
+    def rule_ids(self) -> tuple[str, ...]:
+        return tuple(_rule_id(finding) for finding in self.findings)
 
     @property
     def rule_label(self) -> str:
@@ -45,10 +57,10 @@ class ComplexityDisplay:
 
     @property
     def name(self) -> str:
-        return "Function complexity"
+        return _family_name(self.rule_ids)
 
     @property
-    def metric_lines(self) -> tuple[str, str]:
+    def metric_lines(self) -> tuple[str, ...]:
         return tuple(_metric_line(finding) for finding in self.findings)
 
     @property
@@ -64,6 +76,14 @@ class ComplexityDisplay:
 
 def _rule_id(finding: Mapping) -> str:
     return str(finding.get("rule_id") or finding.get("id") or "").upper()
+
+
+def _family_name(rule_ids) -> str:
+    if set(rule_ids).issubset(_ARCHITECTURE_RULES):
+        return "Module architecture"
+    if tuple(rule_ids) == _COMPLEXITY_RULES:
+        return "Function complexity"
+    return "Function maintainability"
 
 
 def _metric_line(finding: dict) -> str:
@@ -89,75 +109,119 @@ def complexity_display(item) -> ComplexityDisplay | None:
     return None
 
 
-def _complexity_identity(category, finding):
-    if (
-        category != "quality"
-        or _rule_id(finding) not in _COMPLEXITY_RULES
-        or get_finding_type(finding, category) != "advice"
-        or complexity_display(finding) is not None
-        or finding.get("type") not in (None, "function")
-    ):
-        return None
-    file = finding.get("file") or finding.get("file_path")
-    line = finding.get("line")
-    name = next(
-        (
-            finding[field]
-            for field in ("full_name", "symbol", "name", "simple_name")
-            if finding.get(field)
-        ),
-        None,
+def _compatible_names(names) -> bool:
+    """Permit a bare name alongside its qualification, never conflicting names."""
+    return all(
+        left == right or left.endswith(f".{right}") or right.endswith(f".{left}")
+        for left in names
+        for right in names
+    )
+
+
+def _advice_identity(category, finding):
+    rule_id = _rule_id(finding)
+    family = (
+        _FUNCTION_RULES
+        if rule_id in _FUNCTION_RULES
+        else _ARCHITECTURE_RULES
+        if rule_id in _ARCHITECTURE_RULES
+        else None
     )
     if (
-        not isinstance(file, str)
-        or not file.strip()
+        category != "quality"
+        or family is None
+        or get_finding_type(finding, category) != "advice"
+        or complexity_display(finding) is not None
+        or finding.get("type")
+        not in (None, "function" if family == _FUNCTION_RULES else "module")
+    ):
+        return None
+    files = [finding[field] for field in ("file", "file_path") if finding.get(field)]
+    line = finding.get("line")
+    names = [
+        finding[field]
+        for field in ("full_name", "symbol", "name", "simple_name")
+        if finding.get(field)
+    ]
+    if (
+        not files
+        or any(not isinstance(file, str) or not file.strip() for file in files)
+        or len(set(files)) != 1
         or not isinstance(line, int)
         or isinstance(line, bool)
         or line <= 0
-        or not isinstance(name, str)
-        or not name.strip()
-        or name in {"<?>", "<module>", "anonymous", "<anonymous>"}
+        or not names
+        or any(
+            not isinstance(name, str) or not name.strip() or name in _UNKNOWN_NAMES
+            for name in names
+        )
+        or not _compatible_names(names)
     ):
         return None
-    column = finding.get("col", finding.get("column"))
-    if column is not None and (
-        not isinstance(column, int) or isinstance(column, bool) or column < 0
+    columns = [
+        finding[field] for field in ("col", "column") if finding.get(field) is not None
+    ]
+    if (
+        any(
+            not isinstance(column, int) or isinstance(column, bool) or column < 0
+            for column in columns
+        )
+        or len(set(columns)) > 1
     ):
         return None
     language = finding.get("language")
     if language is not None and not isinstance(language, str):
         return None
-    return file, line, name, column, language
+    return (family, files[0], line), (names, columns, language)
 
 
 def combine_complexity_advice(
     rows: Iterable[tuple[str, dict]],
 ) -> list[tuple[str, dict]]:
-    """Pair unambiguous built-in complexity checks without changing raw records.
+    """Combine unambiguous function or module advice for human display only.
 
-    Missing or conflicting identities, duplicate checks, and evidence variants
-    remain individual entries. Both originals stay available on the display
-    metadata, including when input order places the cognitive check first.
+    A missing optional column/language can join agreeing known values. Conflicts
+    anywhere at the same location, duplicate checks, and evidence variants leave
+    the entire candidate group separate. Originals remain on display metadata.
     """
     rows = list(rows)
     candidates = {}
     for index, (category, finding) in enumerate(rows):
-        identity = _complexity_identity(category, finding)
+        identity = _advice_identity(category, finding)
         if identity is not None:
-            candidates.setdefault(identity, []).append(index)
+            location, details = identity
+            candidates.setdefault(location, []).append((index, details))
 
     replacements = {}
     consumed = set()
-    for indices in candidates.values():
-        if len(indices) != 2:
+    for (family, _file, _line), candidates_at_location in candidates.items():
+        indices = [index for index, _details in candidates_at_location]
+        if len(indices) < 2:
             continue
         by_rule = {_rule_id(rows[index][1]): index for index in indices}
-        if len(by_rule) != 2:
+        if len(by_rule) != len(indices):
             continue
-        originals = tuple(rows[by_rule[rule]][1] for rule in _COMPLEXITY_RULES)
+        names = [
+            name
+            for _index, (names, _columns, _language) in candidates_at_location
+            for name in names
+        ]
+        columns = {
+            column
+            for _index, (_names, columns, _language) in candidates_at_location
+            for column in columns
+        }
+        languages = {
+            language
+            for _index, (_names, _columns, language) in candidates_at_location
+            if language is not None
+        }
+        if not _compatible_names(names) or len(columns) > 1 or len(languages) > 1:
+            continue
+        originals = tuple(rows[by_rule[rule]][1] for rule in family if rule in by_rule)
         metadata = ComplexityDisplay(originals)
         view = dict(originals[0])
-        view["rule_id"] = _COMPLEXITY_RULES[0]
+        view["rule_id"] = metadata.rule_ids[0]
         view["_complexity_display"] = metadata
         view["message"] = metadata.message
         view["severity"] = min(
@@ -174,14 +238,20 @@ def combine_complexity_advice(
     ]
 
 
+# Generic spellings for new callers; historical imports remain compatible.
+AdviceDisplay = ComplexityDisplay
+advice_display = complexity_display
+combine_advice = combine_complexity_advice
+
+
 def group_advice_for_display(result) -> list[dict]:
-    """Group human-facing entries, sharing one family for both complexity IDs."""
+    """Group human entries by advice family while retaining every original."""
     rows = [
         finding
         for category, finding in combine_complexity_advice(iter_result_findings(result))
         if get_finding_type(finding, category) == "advice"
     ]
-    complexity_rules = {
+    present_rules = {
         rule
         for finding in rows
         for rule in (
@@ -189,19 +259,22 @@ def group_advice_for_display(result) -> list[dict]:
             if complexity_display(finding)
             else (_rule_id(finding),)
         )
-        if rule in _COMPLEXITY_RULES
     }
-    share_complexity_family = complexity_rules == set(_COMPLEXITY_RULES)
+    families = [
+        tuple(rule for rule in family if rule in present_rules)
+        for family in (_FUNCTION_RULES, _ARCHITECTURE_RULES)
+    ]
+    shared = {rule: family for family in families if len(family) > 1 for rule in family}
     grouped = {}
     for finding in rows:
         rule = _rule_id(finding)
-        family = share_complexity_family and rule in _COMPLEXITY_RULES
-        key = _COMPLEXITY_RULES[0] if family else rule
+        family = shared.get(rule)
+        key = family[0] if family else rule
         group = grouped.setdefault(
             key,
             {
-                "rule_id": " + ".join(_COMPLEXITY_RULES) if family else rule,
-                "name": "Function complexity"
+                "rule_id": " + ".join(family) if family else rule,
+                "name": _family_name(family)
                 if family
                 else get_rule_name(rule, "Maintainability advice"),
                 "count": 0,

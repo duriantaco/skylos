@@ -53,7 +53,7 @@ def test_default_report_counts_functions_and_discloses_original_checks(tmp_path)
 
     assert "0 defects · 0 review · 2 advice entries (3 checks) in 1 group." in report
     assert "SKY-Q301 + SKY-Q306: 2 findings in 1 file — Function complexity" in report
-    assert "both original records for paired complexity checks" in report
+    assert "each original record for grouped metric checks" in report
     assert _records(report) == []
 
 
@@ -73,22 +73,21 @@ def test_expanded_report_has_one_heading_both_scores_and_both_original_records(
     assert "SKY-Q301: Cyclomatic complexity: 14 (threshold: 10)" in report
     assert "SKY-Q306: Cognitive complexity: 22 (threshold: 15)" in report
     assert "Split branches." in report and "Simplify nested logic." in report
-    assert _records(report) == [cyclomatic, cognitive]
+    assert _records(report) == [
+        {**finding, "finding_type": "advice"} for finding in (cyclomatic, cognitive)
+    ]
     assert "_complexity_display" not in report
     assert "Advice groups" not in report
 
 
 @pytest.mark.parametrize("expand_advice", [False, True])
-def test_render_keeps_raw_findings_grades_and_gates_unchanged(
-    tmp_path, expand_advice
-):
+def test_render_keeps_raw_findings_grades_and_gates_unchanged(tmp_path, expand_advice):
     result = {
         "quality": [_finding("SKY-Q301"), _finding("SKY-Q306")],
         "grade": {"overall": "B", "complexity": 71},
         "gate": {"failed": True, "blocking_count": 2, "reasons": ["quality"]},
     }
-    # Existing report behavior annotates canonical records in place. Once that
-    # annotation is present, the new presentation must introduce no mutations.
+    # Already classified CLI results must remain unchanged too.
     annotate_finding_types(result)
     expected = copy.deepcopy(result)
 
@@ -110,7 +109,7 @@ def test_unpaired_complexity_report_keeps_original_rule_and_record(tmp_path, rul
     assert f"{rule}: 1 finding in 1 file" in compact
     assert f"## 1. {rule} | MEDIUM | Quality\n" in expanded
     assert " + " not in expanded
-    assert _records(expanded) == [finding]
+    assert _records(expanded) == [{**finding, "finding_type": "advice"}]
 
 
 def test_custom_checks_reusing_complexity_ids_stay_individual_review_records(
@@ -124,7 +123,9 @@ def test_custom_checks_reusing_complexity_ids_stay_individual_review_records(
     assert "0 defects · 2 review · 0 advice in 0 groups." in report
     assert report.count("Type: Review") == 2
     assert "SKY-Q301 + SKY-Q306" not in report
-    assert _records(report) == findings
+    assert _records(report) == [
+        {**finding, "finding_type": "review"} for finding in findings
+    ]
 
 
 def test_evidence_variants_are_not_dropped_by_expanded_report(tmp_path):
@@ -138,7 +139,9 @@ def test_evidence_variants_are_not_dropped_by_expanded_report(tmp_path):
 
     assert report.count("Type: Advice") == 3
     assert "3 advice in 1 group." in report
-    assert _records(report) == [first, variant, cognitive]
+    assert _records(report) == [
+        {**finding, "finding_type": "advice"} for finding in (first, variant, cognitive)
+    ]
 
 
 def test_raw_llm_collector_keeps_both_checks_and_original_objects():
