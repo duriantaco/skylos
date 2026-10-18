@@ -103,7 +103,9 @@ index 1111111..2222222 100644
     assert detect_assertion_weakening(diff, "tests/test_auth.py") == []
 
 
-def test_detects_negative_test_replaced_with_unrelated_negative_case():
+def test_allows_negative_test_renamed_with_unchanged_body():
+    # Only the name changed; the guest-rejection body still runs, so no
+    # negative case was removed (agent-pr-bench real-29 shape).
     diff = """\
 diff --git a/tests/test_auth.py b/tests/test_auth.py
 index 1111111..2222222 100644
@@ -118,10 +120,46 @@ index 1111111..2222222 100644
      assert can_delete(guest) is False
 """
 
+    assert detect_assertion_weakening(diff, "tests/test_auth.py") == []
+
+
+def test_detects_negative_test_renamed_and_its_assertion_removed():
+    diff = """\
+diff --git a/tests/test_auth.py b/tests/test_auth.py
+index 1111111..2222222 100644
+--- a/tests/test_auth.py
++++ b/tests/test_auth.py
+@@ -4,7 +4,6 @@ def test_allows_admin():
+     assert can_delete(admin) is True
+ 
+-def test_rejects_guest_delete():
++def test_guest_delete():
+     guest = User(role="guest")
+-    assert can_delete(guest) is False
+"""
+
     findings = detect_assertion_weakening(diff, "tests/test_auth.py")
 
-    assert len(findings) == 1
-    assert findings[0]["metadata"]["weakening_type"] == "negative_test_removed"
+    assert [f["metadata"]["weakening_type"] for f in findings] == ["negative_test_removed"]
+
+
+def test_allows_js_negative_test_renamed_with_unchanged_body():
+    diff = """\
+diff --git a/src/__tests__/hydration.test.tsx b/src/__tests__/hydration.test.tsx
+--- a/src/__tests__/hydration.test.tsx
++++ b/src/__tests__/hydration.test.tsx
+@@ -1266,7 +1331,7 @@ describe('dehydration and rehydration', () => {
+     await promise
+   })
+ 
+-  it('should handle errors in promises for pending queries', async () => {
++  it('should redact errors by default when shouldRedactErrors is not set', async () => {
+     const key = queryKey()
+     const consoleMock = vi.spyOn(console, 'error')
+     consoleMock.mockImplementation(() => undefined)
+"""
+
+    assert detect_assertion_weakening(diff, "src/__tests__/hydration.test.tsx") == []
 
 
 def test_detects_broadened_mock_assertion():
@@ -522,3 +560,152 @@ def test_specific_or_stricter_exception_assertions_are_not_loosened(
         )
         == []
     )
+
+
+_AUTH_HEADER = """\
+diff --git a/tests/test_auth.py b/tests/test_auth.py
+--- a/tests/test_auth.py
++++ b/tests/test_auth.py
+"""
+
+
+def test_detects_rename_when_a_later_hunk_changes_the_renamed_test():
+    # The renamed test's body runs past the first hunk; the next hunk changes
+    # it before the body ends, so the rename does not prove the test intact.
+    diff = _AUTH_HEADER + """\
+@@ -10,4 +10,4 @@ def client():
+ 
+ 
+-def test_rejects_expired_token(client):
++def test_expired_token(client):
+     token = make_token(expired=True)
+     headers = {"Authorization": f"Bearer {token}"}
+@@ -20,4 +20,4 @@ def test_rejects_expired_token(client):
+     audit = client.get("/audit").json()
+     assert audit["events"]
+     resp = client.get("/api/me", headers=headers)
+-    assert resp.status_code == 401
++    assert resp.status_code != 500
+"""
+
+    findings = detect_assertion_weakening(diff, "tests/test_auth.py")
+
+    assert [f["metadata"]["weakening_type"] for f in findings] == ["negative_test_removed"]
+
+
+def test_detects_rename_with_a_line_added_to_the_body():
+    diff = _AUTH_HEADER + """\
+@@ -10,7 +10,8 @@ def client():
+ 
+ 
+-def test_rejects_expired_token(client):
++def test_expired_token_flow(client):
+     token = make_token(expired=True)
+     resp = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
++    return
+     assert resp.status_code == 401
+ 
+ 
+"""
+
+    findings = detect_assertion_weakening(diff, "tests/test_auth.py")
+
+    assert [f["metadata"]["weakening_type"] for f in findings] == ["negative_test_removed"]
+
+
+def test_allows_rename_when_the_next_hunk_changes_another_test():
+    # The next hunk's context shows the renamed body ending (a new test at the
+    # same indentation) before its change.
+    diff = _AUTH_HEADER + """\
+@@ -10,4 +10,4 @@ def client():
+ 
+ 
+-def test_rejects_expired_token(client):
++def test_rejects_expired_bearer_token(client):
+     token = make_token(expired=True)
+     headers = {"Authorization": f"Bearer {token}"}
+@@ -20,6 +20,6 @@ def test_rejects_expired_token(client):
+     assert resp.status_code == 401
+ 
+ 
+ def test_health(client):
+-    resp = client.get("/health")
++    resp = client.get("/healthz")
+"""
+
+    assert detect_assertion_weakening(diff, "tests/test_auth.py") == []
+
+
+def test_allows_js_rename_when_the_next_hunk_changes_another_test():
+    diff = """\
+diff --git a/src/auth.test.ts b/src/auth.test.ts
+--- a/src/auth.test.ts
++++ b/src/auth.test.ts
+@@ -10,4 +10,4 @@ describe('auth', () => {
+-  it('rejects an expired token', async () => {
++  it('rejects an expired bearer token', async () => {
+     const token = makeToken({ expired: true })
+     const res = await get('/api/me', token)
+@@ -20,6 +20,6 @@ describe('auth', () => {
+     expect(res.status).toBe(401)
+   })
+ 
+   it('serves health', async () => {
+-    const res = await get('/health')
++    const res = await get('/healthz')
+"""
+
+    assert detect_assertion_weakening(diff, "src/auth.test.ts") == []
+
+
+# A rename counts only when the declaration lines match apart from the name,
+# the new name is not declared again, and the body (to its closing bracket or
+# dedent, string contents aside) is unchanged. Each case is a removed
+# negative test that base reported (round-5 review).
+NOT_RENAMES = [
+    pytest.param(
+        'tests/test_auth.py',
+        'diff --git a/tests/test_auth.py b/tests/test_auth.py\n--- a/tests/test_auth.py\n+++ b/tests/test_auth.py\n@@ -10,7 +10,7 @@ def client():\n\n\n-def test_rejects_expired_token(\n+def test_expired_token(\n     client,\n     make_token,\n ):\n@@ -22,4 +22,4 @@ def test_rejects_expired_token(\n     resp = client.get("/api/me", headers=headers)\n     audit = client.get("/audit").json()\n     assert audit["events"]\n-    assert resp.status_code == 401\n+    assert resp.status_code == 200\n',
+        12,
+        id='multi-line signature renamed, assert flipped in a later hunk',
+    ),
+    pytest.param(
+        'src/__tests__/validate.test.ts',
+        'diff --git a/src/__tests__/validate.test.ts b/src/__tests__/validate.test.ts\n--- a/src/__tests__/validate.test.ts\n+++ b/src/__tests__/validate.test.ts\n@@ -4,7 +4,7 @@ import { validateEmail } from "../validate";\n describe("validateEmail", () => {\n   it("accepts a normal address", () => expect(validateEmail("a@b.co")).toBe(true));\n-  it("rejects an empty address", () => expect(validateEmail("")).toBe(false));\n+  it("handles an empty address", () => expect(validateEmail("")).toBe(true));\n   it("accepts plus addressing", () => expect(validateEmail("a+x@b.co")).toBe(true));\n });\n',
+        6,
+        id='one-line JS test renamed and flipped on the same line',
+    ),
+    pytest.param(
+        'e2e/session.spec.ts',
+        'diff --git a/e2e/session.spec.ts b/e2e/session.spec.ts\n--- a/e2e/session.spec.ts\n+++ b/e2e/session.spec.ts\n@@ -12,7 +12,7 @@ test.describe("session", () => {\n     await expect(page).toHaveURL("/dashboard");\n   });\n\n-  test("rejects an expired session cookie", async ({ page, context }) => {\n+  test.fixme("rejects an expired session cookie", async ({ page, context }) => {\n     await context.addCookies([expiredCookie]);\n     await page.goto("/dashboard");\n     await expect(page).toHaveURL(/login/);\n',
+        15,
+        id='Playwright test changed to test.fixme',
+    ),
+    pytest.param(
+        'src/__tests__/billing.test.js',
+        'diff --git a/src/__tests__/billing.test.js b/src/__tests__/billing.test.js\n--- a/src/__tests__/billing.test.js\n+++ b/src/__tests__/billing.test.js\n@@ -20,7 +20,7 @@ describe("charge", () => {\n   });\n\n-  test("throws on a negative amount", () => {\n+  test.failing("throws on a negative amount", () => {\n     expect(() => charge(-5)).toThrow(RangeError);\n   });\n\n',
+        22,
+        id='Jest test changed to test.failing',
+    ),
+    pytest.param(
+        'tests/test_config.py',
+        'diff --git a/tests/test_config.py b/tests/test_config.py\n--- a/tests/test_config.py\n+++ b/tests/test_config.py\n@@ -40,12 +40,12 @@ def test_loads_minimal(tmp_path):\n\n\n-def test_rejects_unclosed_list(tmp_path):\n+def test_unclosed_list(tmp_path):\n     path = tmp_path / "svc.yaml"\n     path.write_text("""\n name: svc\n replicas: [\n """)\n     result = load_config(path)\n-    assert result.errors == ["replicas: unclosed list"]\n+    assert result.errors == []\n\n\n',
+        42,
+        id='string at column 0 inside the renamed test body',
+    ),
+    pytest.param(
+        'tests/test_auth.py',
+        'diff --git a/tests/test_auth.py b/tests/test_auth.py\n--- a/tests/test_auth.py\n+++ b/tests/test_auth.py\n@@ -10,11 +10,11 @@ def client():\n\n\n-def test_rejects_expired_token(client):\n+def test_token_flow(client):\n     resp = client.get("/api/me", headers=auth(EXPIRED))\n     assert resp.status_code == 401\n\n\n def test_token_flow(client):\n     resp = client.get("/api/me", headers=auth(VALID))\n     assert resp.status_code == 200\n',
+        12,
+        id='renamed to the name of a later test',
+    ),
+]
+
+
+@pytest.mark.parametrize(("path", "diff", "line"), NOT_RENAMES)
+def test_reports_negative_test_changes_that_are_not_renames(path, diff, line):
+    findings = detect_assertion_weakening(diff, path)
+
+    assert [(f["line"], f["metadata"]["weakening_type"]) for f in findings] == [
+        (line, "negative_test_removed")
+    ]
