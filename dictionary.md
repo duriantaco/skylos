@@ -1126,9 +1126,22 @@ class should be split.
 
 Q501 reads pytest's configured `python_classes` patterns without executing the
 project, and recognizes collected classes only in evidenced test modules.
+Quality scope also reads root pytest TOML/INI settings for `python_files` and
+`python_functions`, including native `[tool.pytest]`. Custom paths require a
+matching file pattern and actual collected functions or classes; `testpaths`
+alone does not establish test code. Configuration is selected by pytest's
+precedence without merging, and invalid or symlinked files add no exemptions.
+Fixture-only files, collection opt-outs and unresolved class inheritance add no
+new exemptions. Existing convention-based scope remains available independently.
 Import-proven `typing.overload` signatures with a concrete implementation in
 the same class do not add runtime methods; property accessor counting is
 unchanged. Ordinary helpers and uncertain decorator bindings remain measured.
+Q502 counts consecutive, import-proven overload declarations and their runtime
+implementation as one callable; `.pyi` overload groups need no implementation.
+Code-line counts remain unchanged. C303 reports one warning per such group,
+preserving the strongest violation and each signature's parameter layout in
+`overload_signatures`. Custom decorators and incomplete runtime groups retain
+their separate measurements.
 
 Design, size and memory advice (C303, Q501, Q502, Q702, C401, P401, L027 and
 L029) is not reported for test, example, benchmark, documentation-build or
@@ -1172,6 +1185,14 @@ evidence even when an annotation contradicts it; the annotation does not enforce
 runtime values. Definition-level advice does not establish an actual ambiguous
 positional call, and changing an inherited or callback signature needs separate
 compatibility evidence.
+Positional-only Boolean parameters receive advice that does not suggest an
+impossible named call. A private-method call requires a resolved receiver;
+an unrelated object's same-named attribute is not evidence for that method.
+
+L027 excludes import-proven `typing`/`typing_extensions` `cast` type strings and
+matching declaration names in `TypeVar`, `ParamSpec`, `TypeVarTuple` and `NewType`.
+Runtime string occurrences still count. Shadowed, rebound or visibly mutated
+typing operations retain the ordinary literal checks.
 
 L004 evaluates error-catching scopes. Handlerless `try/finally` cleanup, and
 handlers that only clean up and re-raise, catch nothing and are not reported; a

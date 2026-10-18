@@ -9,8 +9,13 @@ from skylos.rules.base import SkylosRule
 from skylos.rules.quality._test_code import (
     is_collected_test_class,
     is_python_test_file,
-    pytest_class_patterns,
 )
+from skylos.rules.quality._pytest_collection import (
+    collected_pytest_classes,
+    is_collected_pytest_file,
+    pytest_collection_config,
+)
+from skylos.rules.quality._overload_groups import redundant_overload_definitions
 from skylos.rules.quality._code_lines import code_lines
 from skylos.rules.quality._receivers import (
     _scope_bindings,
@@ -43,7 +48,7 @@ def _read_source(filename: str, project_root=None) -> str | None:
         return None
 
 
-def _module_definitions(module: ast.Module) -> tuple[int, int]:
+def _module_definitions(module: ast.Module, redundant=frozenset()) -> tuple[int, int]:
     """Classes, and functions or methods, defined outside any function body.
 
     A function's nested helpers and local classes belong to that function,
@@ -54,7 +59,7 @@ def _module_definitions(module: ast.Module) -> tuple[int, int]:
     while pending:
         child = pending.pop()
         if isinstance(child, _FUNCTIONS):
-            functions += 1
+            functions += child not in redundant
         elif isinstance(child, ast.ClassDef):
             classes += 1
             pending.extend(child.body)
@@ -234,12 +239,14 @@ class GodFileRule(SkylosRule):
             source = _read_source(filename, context.get("project_root"))
         code_line_count = len(code_lines(node, source))
 
+        redundant = redundant_overload_definitions(node, filename=filename)
         top_level_definitions = sum(
             1
             for item in node.body
             if isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and item not in redundant
         )
-        class_count, function_count = _module_definitions(node)
+        class_count, function_count = _module_definitions(node, redundant)
         total_definitions = class_count + function_count
 
         metrics = [
@@ -327,12 +334,24 @@ class GodClassRule(SkylosRule):
         self.max_attributes = max_attributes
         self._method_kinds = {}
         self._skip_file = False
-        self._class_patterns = ("Test",)
+        self._pytest_config = None
+        self._collected_file = False
+        self._collected_classes = set()
         self._overload_stubs = set()
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
-            self._class_patterns = pytest_class_patterns(context.get("project_root"))
+            self._pytest_config = pytest_collection_config(context.get("project_root"))
+            self._collected_file = is_collected_pytest_file(
+                context.get("filename", ""),
+                context.get("project_root"),
+                context.get("source"),
+            )
+            self._collected_classes = (
+                collected_pytest_classes(node, self._pytest_config)
+                if self._pytest_config is not None
+                else set()
+            )
             self._overload_stubs = _overload_stubs(node)
             self._skip_file = is_sample_or_build_python(
                 context.get("filename"), context.get("project_root")
@@ -346,7 +365,15 @@ class GodClassRule(SkylosRule):
 
         # A test class groups many cases (and their fixtures) by design;
         # its size is not a design defect.
-        if _is_test_class(node, self._class_patterns) and is_python_test_file(
+        if self._collected_file and node in self._collected_classes:
+            return None
+        # Keep the existing convention-based branch alongside configured scope.
+        class_patterns = (
+            self._pytest_config.python_classes
+            if self._pytest_config is not None
+            else ("Test",)
+        )
+        if _is_test_class(node, class_patterns) and is_python_test_file(
             context.get("filename", ""),
             context.get("project_root"),
             context.get("source"),
