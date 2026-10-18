@@ -467,7 +467,7 @@ measurement does not establish that applying its suggested change would help:
 public API compatibility, test matrices and formatter fixtures can make a
 suggestion inappropriate. Review that context before changing code. Default
 grouping keeps related measurements together. The focused default view explains
-how many optional checks are available with `--all-advice`; `--expand-advice`
+how many optional findings are available with `--all-advice`; `--expand-advice`
 exposes locations and messages within the selected view.
 
 Each built-in rule declares `finding_type` in the rule catalog. Reports show
@@ -494,10 +494,16 @@ target. Conventional test, example and benchmark paths are checked relative to
 the checkout root, even when the scan targets a package or a single file. A
 bounded, static lookup uses the Git boundary or an enclosing project manifest;
 the requested scan path still bounds which findings can be classified. Other
-profiling inputs require packaging exclusion and sample-data
-evidence; vendored trees require whole-directory upstream provenance and a
-license. A vendor-looking directory name or mention of one copied file is
-insufficient. Clone groups
+profiling inputs require sample-data evidence and explicit exclusion from both
+source and wheel distributions, using supported Hatch, Poetry or setuptools
+metadata. Shipped packages retain advice even when named `example` or `bench`.
+Vendored trees require whole-directory upstream provenance and a license, or a
+declared vendoring inventory with pinned dependencies and matching licenses.
+Standard vendor folders can also use wheel metadata with upstream provenance,
+a license and a RECORD digest matching the current file. Unlisted wrappers,
+modified wheel copies and declared local rewrites remain visible. A
+vendor-looking directory name or mention of one copied file is insufficient.
+Clone groups
 are optional only when every reported member has the same proven context;
 truncated or mixed groups remain visible. This presentation policy never filters
 Defect, Review, security, secrets, dead code or custom findings.
@@ -508,8 +514,14 @@ function identity is unambiguous. Every triggered rule keeps its own score,
 threshold, message and evidence. Duplicate rule variants or conflicting
 identities remain separate. The two architecture metrics (`SKY-Q802`/`SKY-Q803`)
 likewise share one module entry in the all-advice view. The headline distinguishes
-displayed entries from underlying checks. Grouped advice tables label severity as
+displayed entries from underlying findings. Grouped advice tables label severity as
 **Advice priority**, retaining the original values; it is not defect confidence.
+
+Headlines count visible advice entries and, when metrics are combined, their
+underlying findings. The assessment labels its complete count as **total advice
+findings** and its distinct checks as **rules**. Optional advice counts also
+refer to findings. These labels distinguish the selected view from the complete
+assessment without changing either count.
 
 Use `--expand-advice` for focused locations, or combine it with `--all-advice`
 to include optional advice. An explicit `--select` keeps the requested rules

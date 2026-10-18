@@ -358,7 +358,7 @@ def _finding_type_headline(result):
     advice = f"{counts['advice']} advice"
     if counts["raw_advice"] != counts["advice"]:
         entry_label = "entry" if counts["advice"] == 1 else "entries"
-        advice += f" {entry_label} ({counts['raw_advice']} checks)"
+        advice += f" {entry_label} ({counts['raw_advice']} findings)"
     return (
         f"{counts['defect']} {defect_label} · {counts['review']} review · "
         f"{advice} in {counts['advice_groups']} {group_label}"

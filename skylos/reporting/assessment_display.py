@@ -35,11 +35,13 @@ def assessment_rows(assessment, *, gate=None) -> list[tuple[str, str]]:
     if maintenance.get("status") == "measured":
         rule_count = maintenance.get("rule_count", 0)
         affected_files = maintenance.get("affected_files", 0)
-        check_noun = "check" if rule_count == 1 else "checks"
+        rule_noun = "rule" if rule_count == 1 else "rules"
+        advice_count = maintenance.get("advice_count", 0)
+        finding_noun = "finding" if advice_count == 1 else "findings"
         file_noun = "file" if affected_files == 1 else "files"
         maintenance_text = (
-            f"{maintenance.get('advice_count', 0)} advice · "
-            f"{rule_count} {check_noun} · "
+            f"{advice_count} total advice {finding_noun} · "
+            f"{rule_count} {rule_noun} · "
             f"{affected_files} affected {file_noun}"
         )
     else:

@@ -32,7 +32,8 @@ class AdviceVisibility:
             f"{count} {labels[reason]}" for reason, count in self.reasons
         )
         return (
-            f"{self.omitted_checks} optional advice checks ({detail}) available "
+            f"{self.omitted_checks} optional advice "
+            f"{'finding' if self.omitted_checks == 1 else 'findings'} ({detail}) available "
             "with --all-advice. JSON and gates retain all findings."
         )
 
@@ -44,6 +45,10 @@ def _signature_only_boolean(finding: Mapping, rule_id: str) -> bool:
     messages and stay in the focused view; the raw rule is never disabled.
     """
     if rule_id != "SKY-L029":
+        return False
+    # Positive or unknown evidence must remain available for review, even
+    # when an older producer retained the signature-only wording.
+    if "call_evidence" in finding and finding["call_evidence"] not in (None, []):
         return False
     parameter = finding.get("value")
     if not isinstance(parameter, str) or not parameter:

@@ -201,7 +201,7 @@ def _finding_type_headline(result):
     advice = f"{counts['advice']} advice"
     if counts["raw_advice"] != counts["advice"]:
         entry_label = "entry" if counts["advice"] == 1 else "entries"
-        advice += f" {entry_label} ({counts['raw_advice']} checks)"
+        advice += f" {entry_label} ({counts['raw_advice']} findings)"
     return (
         f"{counts['defect']} {defect_label} · {counts['review']} review · "
         f"{advice} in {counts['advice_groups']} {group_label}"
@@ -669,7 +669,7 @@ def _render_assessment(
     checks = maintainability_rows(assessment)
     if checks:
         maintenance = Table(title="Maintainability measurements", expand=True)
-        maintenance.add_column("Check", width=12)
+        maintenance.add_column("Rule", width=12)
         maintenance.add_column("Spread", overflow="fold")
         maintenance.add_column("Magnitude", overflow="fold")
         for row in checks:

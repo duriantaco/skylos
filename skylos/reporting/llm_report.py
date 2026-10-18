@@ -260,7 +260,7 @@ def _generate_llm_report(
     groups = counts["advice_groups"]
     entry_label = "entry" if counts["advice"] == 1 else "entries"
     advice_count = (
-        f"{counts['advice']} advice {entry_label} ({counts['raw_advice']} checks)"
+        f"{counts['advice']} advice {entry_label} ({counts['raw_advice']} findings)"
         if counts["raw_advice"] != counts["advice"]
         else f"{counts['advice']} advice"
     )
@@ -323,7 +323,7 @@ def _format_advice_groups(result: dict) -> str:
             )
         )
         lines.append(
-            f"- {group['rule_id']}: {count} {'finding' if count == 1 else 'findings'} "
+            f"- {group['rule_id']}: {count} advice {'entry' if count == 1 else 'entries'} "
             f"in {files} {'file' if files == 1 else 'files'} — {group['name']}; "
             f"Advice priority: {priority}\n"
         )

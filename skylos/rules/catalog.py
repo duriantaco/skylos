@@ -243,7 +243,7 @@ _RULES = (
         finding_type="defect",
     ),
     RuleCatalogEntry("SKY-Q501", "God class", "quality", finding_type="advice"),
-    RuleCatalogEntry("SKY-Q502", "Class too large", "quality", finding_type="advice"),
+    RuleCatalogEntry("SKY-Q502", "File too large", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q701", "High coupling", "quality", finding_type="advice"),
     RuleCatalogEntry("SKY-Q702", "Low cohesion", "quality", finding_type="advice"),
     RuleCatalogEntry(
