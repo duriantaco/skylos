@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 from skylos.core.file_discovery import discover_source_files
 from skylos.core.python_distributions import (
+    NAMESPACE_ROOTS,
     distribution_import_paths,
     path_is_provided,
     shared_namespace_roots,
@@ -45,6 +46,12 @@ from skylos.core.safe_cache_io import (
     save_project_json_cache,
 )
 from skylos.rules.ai_defect import pypi_wheel_modules
+from skylos.rules.ai_defect.environment_dependencies import (
+    DirectoryEnvironment,
+    directory_environment,
+    environment_import_paths,
+    image_distributions,
+)
 from skylos.rules.ai_defect.installed_modules_cache import (
     installed_module_mapping,
     virtual_env_site_packages,
@@ -2159,6 +2166,60 @@ def _provider_scope_for_file(repo_root, file_path, cache):
     return cache[directory]
 
 
+def _environment_directory(root, relative, cache):
+    """Environment definitions of one contained directory."""
+    key = ("directory", relative)
+    if key not in cache:
+        environment = DirectoryEnvironment()
+        if not relative.parts or _contained_directory(root, relative) is not None:
+            environment = directory_environment(root, root / relative)
+        cache[key] = environment
+    return cache[key]
+
+
+def _environment_scope_for_file(repo_root, file_path, cache, *, diff_path=False):
+    """Distributions the importing file's environment definitions provide.
+
+    From the file's directory and every parent up to the root
+    (environment_dependencies says which shapes count):
+
+    * Pipfile ``[packages]``;
+    * ``environment.yml`` and setup scripts, but only where no other manifest
+      sits in their directory or between it and the file: that manifest
+      declares the code's environment, and a script or conda file beside or
+      above it (CI, lint, docs, a monorepo's dev env) installs tools;
+    * the one Dockerfile stage that copies the file's directory.
+    """
+    root = Path(os.path.abspath(repo_root))
+    importer = _contained_importer_path(root, file_path, diff_path=diff_path)
+    relative = Path() if importer is None else importer.parent
+    if len(relative.parts) > MAX_DEPENDENCY_SCOPE_COMPONENTS:
+        relative = Path()
+    key = ("scope", relative)
+    if key in cache:
+        return cache[key]
+    names = set()
+    manifest_nearer = False
+    dockerfiles = []
+    root_dockerignore = False
+    for depth in range(len(relative.parts), -1, -1):
+        environment = _environment_directory(root, Path(*relative.parts[:depth]), cache)
+        names |= environment.declared
+        if not manifest_nearer:
+            if not environment.manifests - environment.conda_files:
+                names |= environment.conda
+            if not environment.manifests:
+                names |= environment.script_installs
+        manifest_nearer = manifest_nearer or bool(environment.manifests)
+        below = Path(*relative.parts[depth:])
+        dockerfiles.extend((dockerfile, below) for dockerfile in environment.dockerfiles)
+        if depth == 0:
+            root_dockerignore = environment.dockerignore
+    names |= image_distributions(dockerfiles, root_dockerignore=root_dockerignore)
+    cache[key] = frozenset(names)
+    return cache[key]
+
+
 def _nested_pyproject_metadata(repo_root, directory, project_names=None):
     deps = set()
     has_manifest = False
@@ -2582,6 +2643,8 @@ def _build_dependency_context(repo_root, py_files=None):
         "project_names": project_names,
         "declared_specs": declared_specs,
         "provider_unknown": provider_unknown,
+        # Environment files/install commands in scope (per file).
+        "environment_deps": frozenset(),
         "ros_package_deps": _collect_ros_package_dependencies(repo_root, py_files),
         "manifest_context": bool(declared_deps)
         or _has_dependency_manifest_context(repo_root),
@@ -3184,6 +3247,15 @@ def _classify_import(
         # ImportError is handled, but the fallback cannot be proven safe.
         _record_unverified(ctx, mod, "guarded_import_fallback_unproven")
         return None
+    # Environment evidence only explains a missing declaration of a package
+    # known to exist; it never clears a (possible) hallucination, which an
+    # install line of the same name does not make real.
+    if (
+        template["rule_id"] == RULE_ID_UNDECLARED
+        and _package_known_to_exist(mod, ctx)
+        and _environment_provides(mod, required_paths, from_imports, ctx)
+    ):
+        return None
     return _check_declared_providers(
         mod, template, ctx, required_paths=required_paths, from_imports=from_imports
     )
@@ -3286,10 +3358,7 @@ def _declared_import_paths(ctx):
     if declared in cache:
         return cache[declared]
     installed = ctx["installed_mapping"]
-    shared = ctx.get("shared_namespace_roots")
-    if shared is None:
-        shared = shared_namespace_roots(installed)
-        ctx["shared_namespace_roots"] = shared
+    shared = _shared_namespace_roots(ctx)
     paths = set()
     for dist in declared:
         paths |= distribution_import_paths(
@@ -3300,6 +3369,53 @@ def _declared_import_paths(ctx):
         )
     cache[declared] = frozenset(paths)
     return cache[declared]
+
+
+def _shared_namespace_roots(ctx):
+    shared = ctx.get("shared_namespace_roots")
+    if shared is None:
+        shared = shared_namespace_roots(ctx["installed_mapping"])
+        ctx["shared_namespace_roots"] = shared
+    return shared
+
+
+def _package_known_to_exist(mod, ctx):
+    """The import is installed, or PyPI has its (mapped) project."""
+    if mod in ctx["installed_mapping"]:
+        return True
+    mapped = ctx["import_to_dist"].get(mod)
+    if mapped and _tracked_pypi_status(mapped, ctx) == "exists":
+        return True
+    return _tracked_pypi_status(mod, ctx) == "exists"
+
+
+def _environment_provides(mod, required_paths, from_imports, ctx):
+    """An environment file or install command in scope installs a
+    distribution that provides every path the import needs (SKY-D223 only).
+
+    The same name mapping as for manifests decides; a distribution that
+    merely shares a name token (``docker-pycreds`` vs ``docker``) does not.
+    """
+    dists = ctx.get("environment_deps")
+    if not dists:
+        return False
+    cache = ctx.setdefault("environment_import_paths_cache", {})
+    if dists not in cache:
+        cache[dists] = environment_import_paths(
+            dists,
+            installed_modules=ctx["installed_mapping"],
+            import_to_dist=ctx["import_to_dist"],
+            namespace_roots=_shared_namespace_roots(ctx),
+        )
+    provided = cache[dists]
+    paths = set(required_paths or (mod,)) | {base for base, _names in from_imports}
+    # A namespace parent is "provided" by any portion below it; the names
+    # taken from it must be provided themselves (google-cloud-storage does
+    # not provide ``from google.cloud import bigquery``).
+    for base, names in from_imports:
+        if base.split(".", 1)[0] in NAMESPACE_ROOTS | _shared_namespace_roots(ctx):
+            paths |= {f"{base}.{name}" for name in names if name != "*"}
+    return bool(provided) and all(path_is_provided(path, provided) for path in paths)
 
 
 def _declared_by_name_mapping(mod, required_paths, from_imports, ctx):
@@ -3471,10 +3587,14 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     provider_scope_cache = {
         root: (ctx["declared_specs"], ctx["project_names"], ctx["provider_unknown"])
     }
+    environment_scope_cache = {}
 
     for file_path in py_files:
         declared_deps, manifest_context = _dependency_scope_for_file(
             root, file_path, scope_cache
+        )
+        ctx["environment_deps"] = _environment_scope_for_file(
+            root, file_path, environment_scope_cache
         )
         specs, own_names, unknown = _provider_scope_for_file(
             root, file_path, provider_scope_cache
@@ -3573,6 +3693,7 @@ def scan_diff_added_imports(
         root: (ctx["declared_specs"], ctx["project_names"], ctx["provider_unknown"])
     }
 
+    environment_scope_cache = {}
     seen = set()
     direct_script_cache = {}
     local_fallback_cache = {}
@@ -3593,6 +3714,9 @@ def scan_diff_added_imports(
         )
         specs, own_names, unknown = _provider_scope_for_file(
             root, file_label, provider_scope_cache
+        )
+        ctx["environment_deps"] = _environment_scope_for_file(
+            root, file_label, environment_scope_cache, diff_path=True
         )
         ctx["declared_specs"] = specs
         ctx["project_names"] = own_names
