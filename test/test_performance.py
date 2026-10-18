@@ -178,6 +178,7 @@ def copy_catalog(items, catalog):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["rule_id"], "SKY-P403")
 
+    def test_nested_loops_without_a_search_are_not_repeated_scans(self):
         code = """
 def visit(items, others, size, index):
     rows = [items if index else items for index in items]
@@ -214,8 +215,6 @@ def reset_catalog(items, catalog):
         catalog = [item]
 """
         self.assertEqual(self._analyze(code), [])
-
-
 
     def test_os_walk_partition_loops_are_not_quadratic(self):
         code = """
