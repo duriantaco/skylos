@@ -17,6 +17,7 @@ from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.concurrency import LockOrderRule, ThreadSharedStateRule
 from skylos.rules.quality.complexity import ComplexityRule, CognitiveComplexityRule
 from skylos.rules.quality.coupling import CBORule
+from skylos.rules.quality.logic_foundation import TRY_NODE_TYPES
 from skylos.rules.quality.logic import (
     BareExceptRule,
     BooleanTrapRule,
@@ -112,7 +113,7 @@ LINTER_RULE_NODE_TYPES = {
     TryBlockPatternsRule: (ast.Try,),
     UnusedExceptVarRule: (ast.ExceptHandler,),
     ReturnConsistencyRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    EmptyErrorHandlerRule: (ast.ExceptHandler, ast.With),
+    EmptyErrorHandlerRule: (ast.Module, *TRY_NODE_TYPES, ast.ExceptHandler, ast.With),
     MissingResourceCleanupRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     DebugLeftoverRule: (ast.Call,),
     SecurityTodoRule: (ast.Module,),
@@ -316,7 +317,13 @@ def _extend_community_quality_rules(q_rules: list, file) -> None:
 
 
 def scan_python_quality(
-    tree: ast.AST, source: str, file, cfg: dict, *, credential_source_locations=()
+    tree: ast.AST,
+    source: str,
+    file,
+    cfg: dict,
+    *,
+    credential_source_locations=(),
+    project_root=None,
 ) -> list[dict]:
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
@@ -325,6 +332,7 @@ def scan_python_quality(
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source
     linter_q.context["credential_source_locations"] = credential_source_locations
+    linter_q.context["project_root"] = project_root
     linter_q.visit(tree)
     quality_findings = [
         f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]

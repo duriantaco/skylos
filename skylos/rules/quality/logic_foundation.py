@@ -1,5 +1,6 @@
 import ast
 import operator
+from dataclasses import dataclass
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
@@ -1717,12 +1718,311 @@ def _handler_is_narrow_trivial_fallback(node):
     return _handler_body_is_trivial(node.body)
 
 
+# ``try``/``except*`` statements; ``ast.TryStar`` exists on Python 3.11+.
+TRY_NODE_TYPES = (ast.Try,) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+# Deletion functions by module; bare names count only when imported from it.
+_DELETION_FUNCTIONS = {
+    "os": frozenset({"remove", "unlink", "rmdir", "removedirs"}),
+    "shutil": frozenset({"rmtree"}),
+}
+# pathlib.Path methods that delete; the receiver must be shown to be a path.
+_PATH_DELETION_METHODS = frozenset({"unlink", "rmdir"})
+_PATH_CLASSES = frozenset({"Path", "PosixPath", "WindowsPath"})
+_PATH_RETURNING_METHODS = frozenset(
+    {"absolute", "expanduser", "joinpath", "resolve", "with_name", "with_stem",
+     "with_suffix"}
+)  # fmt: skip
+_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+
+@dataclass(frozen=True)
+class _DeletionNames:
+    """What names a module binds to deletion functions and path types."""
+
+    modules: dict  # local name -> "os" / "shutil" / "pathlib"
+    functions: frozenset  # bare deletion functions (``from shutil import rmtree``)
+    path_classes: frozenset  # ``from pathlib import Path``
+
+
+def _deletion_names(module):
+    """Names imported from os/shutil/pathlib that nothing else in the module
+    binds (a local ``def remove`` or a parameter ``os`` is something else)."""
+    modules, functions, path_classes = {}, set(), set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in ("os", "shutil", "pathlib"):
+                    modules[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if alias.name in _DELETION_FUNCTIONS.get(node.module, ()):
+                    functions.add(local)
+                elif node.module == "pathlib" and alias.name in _PATH_CLASSES:
+                    path_classes.add(local)
+    rebound = _names_bound_other_than_by_import(module)
+    return _DeletionNames(
+        {name: kind for name, kind in modules.items() if name not in rebound},
+        frozenset(functions - rebound),
+        frozenset(path_classes - rebound),
+    )
+
+
+def _names_bound_other_than_by_import(module):
+    names = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+    return names
+
+
+def _scope_statements(scope):
+    """Nodes of ``scope`` outside nested function, class and lambda bodies."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, _SCOPE_TYPES):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _is_path_annotation(annotation, names):
+    if isinstance(annotation, ast.Name):
+        return annotation.id in names.path_classes
+    return (
+        isinstance(annotation, ast.Attribute)
+        and annotation.attr in _PATH_CLASSES
+        and isinstance(annotation.value, ast.Name)
+        and names.modules.get(annotation.value.id) == "pathlib"
+    )
+
+
+def _is_path_expr(expr, names, path_vars):
+    """``expr`` evaluates to a pathlib path."""
+    if isinstance(expr, ast.Name):
+        return expr.id in path_vars
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
+        return _is_path_expr(expr.left, names, path_vars)
+    if isinstance(expr, ast.Attribute) and expr.attr == "parent":
+        return _is_path_expr(expr.value, names, path_vars)
+    if not isinstance(expr, ast.Call):
+        return False
+    func = expr.func
+    if _is_path_annotation(func, names):
+        return True
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr in _PATH_RETURNING_METHODS
+        and _is_path_expr(func.value, names, path_vars)
+    )
+
+
+def _path_variables(scope, names, inherited=frozenset()):
+    """Names that hold a path in ``scope``: every binding of the name is a
+    path (a ``Path``-annotated parameter or an assignment of a path), and
+    names of enclosing scopes the scope does not rebind."""
+    bindings = {}
+    args = getattr(scope, "args", None)
+    if isinstance(args, ast.arguments):
+        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg):
+            if arg is not None:
+                bindings.setdefault(arg.arg, []).append(("annotation", arg.annotation))
+    for node in _scope_statements(scope):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings.setdefault(target.id, []).append(("value", node.value))
+                else:
+                    for name in ast.walk(target):
+                        if isinstance(name, ast.Name):
+                            bindings.setdefault(name.id, []).append(("other", None))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            kind = "annotation" if node.value is None else "value"
+            value = node.annotation if node.value is None else node.value
+            bindings.setdefault(node.target.id, []).append((kind, value))
+        elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor, ast.withitem, ast.NamedExpr)):
+            target = getattr(node, "target", None) or getattr(node, "optional_vars", None)
+            for name in ast.walk(target) if target is not None else ():
+                if isinstance(name, ast.Name):
+                    bindings.setdefault(name.id, []).append(("other", None))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings.setdefault(node.name, []).append(("other", None))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bindings.setdefault(node.name, []).append(("other", None))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bindings.setdefault((alias.asname or alias.name).split(".")[0], []).append(("other", None))
+
+    path_vars = {name for name in inherited if name not in bindings}
+    changed = True
+    while changed:
+        changed = False
+        for name, items in bindings.items():
+            if name in path_vars:
+                continue
+            if all(
+                (kind == "annotation" and _is_path_annotation(value, names))
+                or (kind == "value" and _is_path_expr(value, names, path_vars))
+                for kind, value in items
+            ):
+                path_vars.add(name)
+                changed = True
+    return frozenset(path_vars)
+
+
+def _try_path_variables(module, names):
+    """Each ``try`` statement mapped to the path variables of its scope."""
+    result = {}
+    pending = [(module, frozenset())]
+    while pending:
+        scope, inherited = pending.pop()
+        path_vars = _path_variables(scope, names, inherited)
+        for node in _scope_statements(scope):
+            if isinstance(node, TRY_NODE_TYPES):
+                result[id(node)] = (node, path_vars)
+        for node in _scope_statements(scope):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                pending.append((node, path_vars))
+            elif isinstance(node, ast.ClassDef):
+                # Class bodies do not enclose their methods' names.
+                for item in ast.iter_child_nodes(node):
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        pending.append((item, path_vars))
+    return result
+
+
+def _is_path_argument(expr, names):
+    """A path expression without side effects: names, attributes, constants,
+    f-strings, ``/`` and ``+`` joins, and ``os.path.*``/``str``/``Path`` calls
+    on such values (``self.pending.pop()`` is not one)."""
+    for node in ast.walk(expr):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "str":
+            continue
+        if _is_path_annotation(func, names):
+            continue
+        dotted = []
+        while isinstance(func, ast.Attribute):
+            dotted.append(func.attr)
+            func = func.value
+        if (
+            isinstance(func, ast.Name)
+            and names.modules.get(func.id) == "os"
+            and dotted
+            and (dotted[-1] == "path" or dotted == ["fspath"])
+        ):
+            continue
+        return False
+    return True
+
+
+def _is_deletion_statement(stmt, names, path_vars):
+    if isinstance(stmt, ast.Pass):
+        return True
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return False
+    call = stmt.value
+    if not all(_is_path_argument(arg, names) for arg in call.args) or not all(
+        _is_path_argument(keyword.value, names) for keyword in call.keywords
+    ):
+        return False
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id in names.functions
+    if not isinstance(func, ast.Attribute):
+        return False
+    receiver = func.value
+    if isinstance(receiver, ast.Name) and receiver.id in names.modules:
+        return func.attr in _DELETION_FUNCTIONS.get(names.modules[receiver.id], ())
+    return func.attr in _PATH_DELETION_METHODS and _is_path_expr(receiver, names, path_vars)
+
+
+_INTERRUPT_EXCEPTIONS = frozenset(
+    {"BaseException", "KeyboardInterrupt", "SystemExit", "GeneratorExit"}
+)
+
+
+def _swallows_base_exceptions(handler):
+    """A bare ``except:``, or one naming ``BaseException``,
+    ``KeyboardInterrupt``, ``SystemExit`` or ``GeneratorExit``: it swallows
+    a stop request, not a failed deletion."""
+    return handler.type is None or bool(
+        _INTERRUPT_EXCEPTIONS & set(_exception_type_names(handler.type))
+    )
+
+
+def _finally_statements(try_node):
+    """Statements inside a ``finally`` block, without nested scopes."""
+    pending = list(try_node.finalbody)
+    while pending:
+        stmt = pending.pop()
+        yield stmt
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for field in ("body", "orelse", "finalbody"):
+            pending.extend(getattr(stmt, field, None) or [])
+        for handler in getattr(stmt, "handlers", None) or []:
+            pending.extend(handler.body)
+
+
 class EmptyErrorHandlerRule(SkylosRule):
     rule_id = "SKY-L007"
     name = "Empty Error Handler"
 
+    def __init__(self):
+        # Error handlers that only give up on deleting a path inside a
+        # ``finally`` block. Nodes are kept (not just ids) so an id cannot be
+        # reused by another node; the maps are reset for every module.
+        self._finally_cleanup = {}
+        self._deletion_names = _DeletionNames({}, frozenset(), frozenset())
+        self._try_paths = {}
+
+    def _record_finally_cleanup(self, try_node):
+        scope = self._try_paths.get(id(try_node))
+        path_vars = scope[1] if scope and scope[0] is try_node else frozenset()
+        for stmt in _finally_statements(try_node):
+            body = getattr(stmt, "body", None)
+            if not body or not all(
+                _is_deletion_statement(item, self._deletion_names, path_vars)
+                for item in body
+            ):
+                continue
+            if isinstance(stmt, ast.With):
+                if not any(
+                    arg == "BaseException"
+                    for item in stmt.items
+                    if isinstance(item.context_expr, ast.Call)
+                    for arg in self._iter_broad_suppress_args(item.context_expr)
+                ):
+                    self._finally_cleanup[id(stmt)] = stmt
+            elif isinstance(stmt, TRY_NODE_TYPES):
+                for handler in stmt.handlers:
+                    if not _swallows_base_exceptions(handler):
+                        self._finally_cleanup[id(handler)] = handler
+
     def visit_node(self, node, context):
         findings = []
+
+        if isinstance(node, ast.Module):
+            self._finally_cleanup = {}
+            self._deletion_names = _deletion_names(node)
+            self._try_paths = _try_path_variables(node, self._deletion_names)
+            return None
+        if isinstance(node, TRY_NODE_TYPES):
+            self._record_finally_cleanup(node)
+            return None
+        if self._finally_cleanup.get(id(node)) is node:
+            return None
 
         if isinstance(node, ast.ExceptHandler):
             except_finding = self._check_except_handler(node, context)
