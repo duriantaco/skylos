@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._object_auth import defeated_owner_guard
+from skylos.rules.quality._receivers import (
+    class_method_nodes,
+    context_method_kinds,
+    possible_method_receiver,
+)
+from skylos.rules.quality._typing import (
+    comment_contract,
+    is_typing_test_path,
+    parameters,
+    pytest_fixture_ids,
+)
 
 
 AUTH_MARKERS = (
@@ -310,42 +323,29 @@ def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
-def _iter_public_functions(module: ast.Module):
+def _iter_public_functions(module: ast.Module, receivers):
     for stmt in module.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if _is_public_function(stmt):
-                yield stmt, stmt.name
+                yield stmt, stmt.name, None
         elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_"):
-            for item in stmt.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if _is_public_function(item):
-                        yield item, f"{stmt.name}.{item.name}"
+            for item in sorted(
+                class_method_nodes(stmt), key=lambda method: method.lineno
+            ):
+                if _is_public_function(item):
+                    yield item, f"{stmt.name}.{item.name}", receivers.get(id(item))
 
 
-def _module_has_typing_signal(module: ast.Module) -> bool:
-    for node in ast.walk(module):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.returns is not None:
-                return True
-            args = [
-                *node.args.args,
-                *node.args.posonlyargs,
-                *node.args.kwonlyargs,
-            ]
-            if node.args.vararg:
-                args.append(node.args.vararg)
-            if node.args.kwarg:
-                args.append(node.args.kwarg)
-            if any(arg.annotation is not None for arg in args):
-                return True
-        if isinstance(node, ast.AnnAssign):
-            return True
-        if isinstance(node, ast.ImportFrom) and node.module == "typing":
-            return True
-        if isinstance(node, ast.Import):
-            if any(alias.name == "typing" for alias in node.names):
-                return True
-    return False
+def _has_signature_typing_intent(function, args, comment_lines):
+    if function.returns is not None or any(arg.annotation is not None for arg in args):
+        return True
+    if getattr(function, "type_comment", None) or any(
+        getattr(arg, "type_comment", None) for arg in args
+    ):
+        return True
+    return bool(function.body) and any(
+        function.lineno <= line < function.body[0].lineno for line in comment_lines
+    )
 
 
 def _route_object_inputs(function):
@@ -448,25 +448,60 @@ class TypeAnnotationPracticeRule(SkylosRule):
             return None
 
         filename = context.get("filename")
-        if _is_non_production_path(filename) or not _module_has_typing_signal(node):
+        if is_typing_test_path(filename, context.get("project_root")):
             return None
+        source = context.get("source", context.get("_source"))
+        lines = source.splitlines(keepends=True) if isinstance(source, str) else []
+        from skylos.analysis.typing_policy import annotation_requirement
 
+        requirement = annotation_requirement(
+            filename,
+            context.get("project_root"),
+            source if isinstance(source, str) else "",
+            reader=context.get("typing_source_reader", context.get("receiver_source_reader")),
+        )
+        if requirement is False:
+            return None
+        kinds = context_method_kinds(node, context)
+        receivers = {
+            # Do not prescribe annotation of a possible implicit receiver.
+            # Proven static methods and free functions keep their first arg.
+            id(method): possible_method_receiver(method, kinds=kinds)
+            for cls in ast.walk(node)
+            if isinstance(cls, ast.ClassDef)
+            for method in class_method_nodes(cls)
+        }
+        functions = list(_iter_public_functions(node, receivers))
+        # A multiline default can contain text resembling a type comment.
+        # Only real comment tokens establish a source signature contract.
+        comment_lines = {
+            token.start[0]
+            for token in tokenize.generate_tokens(io.StringIO("".join(lines)).readline)
+            if token.type == tokenize.COMMENT
+            and re.match(r"#\s*type:\s*(?!ignore\b)\S", token.string)
+        }
+        comments = {
+            id(function): comment_contract(function, lines, receivers.get(id(function)))
+            for function in ast.walk(node)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        fixtures = pytest_fixture_ids(node)
         findings = []
-        for function, display_name in _iter_public_functions(node):
-            args = [
-                *function.args.posonlyargs,
-                *function.args.args,
-                *function.args.kwonlyargs,
-            ]
-            if function.args.vararg:
-                args.append(function.args.vararg)
-            if function.args.kwarg:
-                args.append(function.args.kwarg)
-
+        for function, display_name, receiver in functions:
+            if id(function) in fixtures:
+                continue
+            args = parameters(function)
+            typed_comments, return_comment = comments[id(function)]
+            if requirement is not True and not _has_signature_typing_intent(
+                function, args, comment_lines
+            ):
+                continue
             missing_params = [
                 arg.arg
                 for arg in args
-                if arg.arg not in {"self", "cls"} and arg.annotation is None
+                if arg.arg != receiver
+                and arg.annotation is None
+                and arg.arg not in typed_comments
             ]
             if missing_params:
                 findings.append(
@@ -490,7 +525,7 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
-            if function.returns is None:
+            if function.returns is None and not return_comment:
                 findings.append(
                     {
                         "rule_id": "SKY-T102",
@@ -586,8 +621,10 @@ class FrameworkPracticeRule(SkylosRule):
                         "value": ",".join(sorted(methods & MUTATING_HTTP_METHODS)),
                         "threshold": 0,
                         "message": (
-                            f"Mutating route '{function.name}' has no obvious auth, "
-                            "permission, security, or dependency guard."
+                            f"Function '{function.name}' uses a decorator matching a "
+                            "mutating HTTP method, with no obvious auth, permission, "
+                            "security, or dependency guard. Review whether it registers "
+                            "a route and whether access is protected."
                         ),
                         "file": filename,
                         "basename": _basename(filename),
