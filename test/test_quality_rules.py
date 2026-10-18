@@ -7,6 +7,7 @@ Rules already covered in test_logic.py: L001, L002, L003.
 import ast
 from difflib import SequenceMatcher
 
+from skylos.core.linter import LinterVisitor
 from skylos.rules.quality import clones as clones_mod
 from skylos.rules.ai_defect import PhantomCallRule
 from skylos.rules.quality.logic import (
@@ -33,13 +34,10 @@ from skylos.rules.quality.performance import PerformanceRule
 
 def check_code(rule, code, filename="test.py"):
     tree = ast.parse(code)
-    findings = []
-    context = {"filename": filename, "mod": "test_module"}
-    for node in ast.walk(tree):
-        res = rule.visit_node(node, context)
-        if res:
-            findings.extend(res)
-    return findings
+    visitor = LinterVisitor([rule], filename)
+    visitor.context.update({"mod": "test_module", "source": code})
+    visitor.visit(tree)
+    return visitor.findings
 
 
 def test_clone_similarity_threshold_keeps_possible_matches(monkeypatch):
@@ -122,25 +120,177 @@ def test_group_pairs_uses_canonical_type_for_tied_edges():
 
 class TestTryBlockPatterns:
     def test_oversized_try_block(self):
-        lines = ["try:"]
+        # A try inside a conditional is not the whole-function exemption.
+        lines = ["def f():", "    if ready:", "        try:"]
         for i in range(20):
-            lines.append(f"    x{i} = {i}")
-        lines.append("except Exception:\n    pass")
+            lines.append(f"            x{i} = {i}")
+        lines.extend(
+            [
+                "            try:",
+                "                work()",
+                "            except ValueError:",
+                "                recover()",
+                "        except Exception:",
+                "            pass",
+            ]
+        )
+        code = "\n".join(lines)
+        from skylos.analysis.file_processing import TRY_NODE_TYPES
+
+        assert len(TRY_NODE_TYPES) == len(set(TRY_NODE_TYPES))
+        rule = TryBlockPatternsRule(max_lines=15)
+        rule.node_types = TRY_NODE_TYPES
+        findings = check_code(rule, code)
+        assert any(f["value"] == 24 for f in findings)
+        assert any(f["value"] == "nested" for f in findings)
+
+    def test_small_try_block_ok(self):
+        # Cleanup scope must include all protected work. It catches no errors,
+        # even when the body is large, branches, or contains an actual catch.
+        lines = ["async def f():", '    "doc"', "    try:"]
+        lines.extend(f"        x{i} = {i}" for i in range(16))
+        lines.extend(f"        if condition{i}: pass" for i in range(4))
+        lines.extend(
+            [
+                "        try:",
+                "            work()",
+                "        except ValueError:",
+                "            recover()",
+                "    finally:",
+                "        cleanup()",
+            ]
+        )
         code = "\n".join(lines)
         rule = TryBlockPatternsRule(max_lines=15)
         findings = check_code(rule, code)
-        assert any(f["rule_id"] == "SKY-L004" for f in findings)
-
-    def test_small_try_block_ok(self):
-        code = """
-try:
-    x = 1
-except Exception:
-    pass
-"""
-        rule = TryBlockPatternsRule(max_lines=15)
-        findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L004" for f in findings)
+
+    # 18 code lines, 4 ifs and a direct inner try: trips all three checks.
+    BIG_BODY = [
+        "a1 = f(1)",
+        *[f"if a{i}:\n    a{i + 1} = f({i + 1})" for i in range(1, 5)],
+        "try:\n    a6 = f(6)\nexcept KeyError:\n    a6 = None",
+        *[f"a{i} = f({i})" for i in range(7, 12)],
+    ]
+
+    @classmethod
+    def _wrapped(cls, handlers, prefix=("total = 0",), header="def run(items):"):
+        lines = [header, *[f"    {line}" for line in prefix], "    try:"]
+        for stmt in cls.BIG_BODY:
+            lines.extend(f"        {line}" for line in stmt.split("\n"))
+        lines.extend(f"    {line}" for line in handlers)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _l004_values(code):
+        findings = check_code(TryBlockPatternsRule(max_lines=15), code)
+        return sorted(str(f["value"]) for f in findings if f["rule_id"] == "SKY-L004")
+
+    def test_reraising_handlers_catch_nothing(self):
+        bare = ["except Exception:", "    cleanup()", "    raise"]
+        as_name = ["except ValueError as err:", "    raise err"]
+        assert self._l004_values(self._wrapped(bare)) == []
+        assert self._l004_values(self._wrapped(as_name)) == []
+
+        translated = ["except ValueError as err:", "    raise RuntimeError() from err"]
+        conditional = [
+            "except ValueError:",
+            "    if items:",
+            "        return None",
+            "    raise",
+        ]
+        assert self._l004_values(self._wrapped(translated)) == ["18", "4", "nested"]
+        assert self._l004_values(self._wrapped(conditional)) == ["18", "4", "nested"]
+
+    def test_finally_that_discards_the_exception_is_checked(self):
+        cleanup = ["finally:", "    cleanup()"]
+        returns = ["finally:", "    return total"]
+        assert self._l004_values(self._wrapped(cleanup)) == []
+        assert self._l004_values(self._wrapped(returns)) == ["18", "4", "nested"]
+
+    def test_length_counts_code_lines_only(self):
+        def body(code_lines):
+            lines = ["def run():", "    total = 0", "    try:"]
+            for i in range(code_lines):
+                lines.append(f"        x{i} = {i}  # inline comment")
+                lines.extend(["", "        # comment-only line"])
+            lines.extend(
+                ['        """String statement', '        used as a comment."""']
+            )
+            lines.extend(["    except ValueError:", "        return None"])
+            return "\n".join(lines)
+
+        assert self._l004_values(body(15)) == []
+        assert self._l004_values(body(16)) == ["16"]
+
+    def test_per_item_and_import_fallback_inner_tries_are_not_nested(self):
+        per_item = """
+def run(items):
+    total = 0
+    try:
+        for item in items:
+            try:
+                use(item)
+            except ValueError:
+                skip(item)
+    except OSError:
+        return None
+"""
+        import_fallback = """
+try:
+    try:
+        import json5 as jsonlib
+    except (ImportError, ModuleNotFoundError):
+        import json as jsonlib
+except ImportError:
+    jsonlib = None
+"""
+        direct = """
+def run(items):
+    total = 0
+    try:
+        if items:
+            try:
+                use(items)
+            except ValueError:
+                skip(items)
+    except OSError:
+        return None
+"""
+        assert self._l004_values(per_item) == []
+        assert self._l004_values(import_fallback) == []
+        assert self._l004_values(direct) == ["nested"]
+
+    def test_function_level_boundary_skips_size_and_branching(self):
+        # Size and branching of a whole-function try are the function's own
+        # metrics; its nested catch scopes are still reported.
+        prefix = (
+            '"""Doc."""',
+            "import os",
+            "def helper(value):",
+            "    return value",
+            "if not items:",
+            "    return []",
+            "if items is None:",
+            "    raise ValueError('items')",
+        )
+        handlers = ["except ValueError:", "    return None"]
+        boundary = self._wrapped(handlers, prefix=prefix)
+        assert self._l004_values(boundary) == ["nested"]
+        assert self._l004_values(self._wrapped(handlers, prefix=())) == ["nested"]
+        # 18 code lines and 9 ifs, no inner try.
+        flat = ["def run(items):", "    try:"]
+        flat += [f"        if items > {i}:\n            x{i} = {i}" for i in range(9)]
+        flat += ["    except ValueError:", "        return None"]
+        assert self._l004_values("\n".join(flat)) == []
+
+        all_checks = ["18", "4", "nested"]
+        guard_with_else = ("if not items:", "    return []", "else:", "    use(items)")
+        assert (
+            self._l004_values(self._wrapped(handlers, prefix=guard_with_else))
+            == all_checks
+        )
+        assert self._l004_values(self._wrapped(handlers)) == all_checks
 
 
 # --- SKY-L005: Unused Exception Variable ---
@@ -322,7 +472,7 @@ def f():
 class TestSecurityTodo:
     def test_todo_in_string_literal(self, tmp_path):
         # Production supplies the parsed source; the filename is only a label.
-        src = "# TODO: fix authentication bypass\ndef f():\n    pass\n"
+        src = 'def f():\n    """# TODO: fix authentication bypass"""\n    pass\n'
         p = tmp_path / "test_todo.py"
         rule = SecurityTodoRule()
         tree = ast.parse(src)
@@ -335,7 +485,7 @@ class TestSecurityTodo:
         assert any(f["rule_id"] == "SKY-L010" for f in findings)
 
     def test_no_todo(self, tmp_path):
-        src = "def f():\n    x = 1\n"
+        src = 'def f():\n    x = "# TODO: rotate access_token; auth"\n'
         p = tmp_path / "clean.py"
         rule = SecurityTodoRule()
         tree = ast.parse(src)
@@ -346,6 +496,22 @@ class TestSecurityTodo:
             if res:
                 findings.extend(res)
         assert not any(f["rule_id"] == "SKY-L010" for f in findings)
+
+    def test_security_terms_match_whole_words(self, tmp_path):
+        lines = [
+            "# XXX Move the prefix computation into a wrapper around tokenize.",
+            "# TODO: ask the author about this branch",
+            "# TODO: certainly slow, profile later",
+            "# TODO: oracle connection pooling",
+            "# TODO: configure SSLContext",
+            "# TODO: prevent SQLi",
+            "# HACK: verify=False until certs are rotated",
+        ]
+        src = "\n".join(lines) + "\n"
+        rule = SecurityTodoRule()
+        context = {"filename": str(tmp_path / "notes.py"), "source": src}
+        findings = rule.visit_node(ast.parse(src), context) or []
+        assert [f["line"] for f in findings] == [5, 6, 7]
 
 
 # --- SKY-L011: Disabled Security ---
@@ -914,6 +1080,48 @@ def handler():
         rule = ErrorDisclosureRule()
         findings = check_code(rule, code)
         assert any(f["rule_id"] == "SKY-L017" for f in findings)
+        assert "returned from an exception handler" in findings[0]["message"]
+        assert "If sent to a client" in findings[0]["message"]
+
+    def test_unnamed_handler_traceback_in_response(self):
+        code = """
+import traceback
+from aiohttp import web
+async def handler():
+    try:
+        pass
+    except Exception:
+        return web.Response(status=500, text=traceback.format_exc())
+"""
+        findings = check_code(ErrorDisclosureRule(), code)
+        assert [f["value"] for f in findings] == ["traceback_leaked"]
+        assert "stack trace" in findings[0]["message"]
+        assert "passed to 'web.Response()'" in findings[0]["message"]
+
+    def test_exception_text_is_not_called_a_stack_trace(self):
+        code = """
+from aiohttp import web
+async def handler():
+    try:
+        pass
+    except ValueError as e:
+        return web.Response(status=400, text=str(e))
+"""
+        findings = check_code(ErrorDisclosureRule(), code)
+        assert [f["value"] for f in findings] == ["exception_leaked"]
+        assert "stack trace" not in findings[0]["message"]
+        assert "passed to 'web.Response()'" in findings[0]["message"]
+
+    def test_unnamed_handler_returning_traceback_from_helper_is_not_reported(self):
+        code = """
+import traceback
+def compile_source(src):
+    try:
+        return compile(src, "<x>", "exec")
+    except SyntaxError:
+        return traceback.format_exc()
+"""
+        assert check_code(ErrorDisclosureRule(), code) == []
 
     def test_logged_exception_ok(self):
         code = """

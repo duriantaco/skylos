@@ -1,17 +1,22 @@
 import ast
+import codecs
 import math
 import operator
 import re
+import urllib.parse
+from collections import defaultdict
 from pathlib import Path
 
 from skylos.audit.redaction import REDACTION, redact_text
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._scope import is_non_production_python
 from skylos.rules.quality.logic_foundation import (
     _exception_type_names,
     _handler_body_is_trivial,
     _handler_has_real_work,
 )
 from skylos.rules.quality.logic_security import _qualified_call_name
+from skylos.rules.quality._ast_visit import IterativeNodeVisitor
 
 
 _SENSITIVE_LITERAL_KEYWORDS = (
@@ -202,6 +207,52 @@ def _is_duplicate_string_noise(value: str) -> bool:
     return _looks_like_markup_fragment(value)
 
 
+_REGISTRY_TOKEN_RE = re.compile(r"[A-Za-z0-9_.+-]+")
+
+
+def _is_python_registry_name(value: str) -> bool:
+    """Python's own registries define this exact token as a standard name.
+
+    Codec names, codec error handlers and URL schemes are fixed by standards
+    and the runtime; a named constant for "utf-8" or "https" only adds
+    indirection. The live registries are asked, so codecs or schemes that
+    the running Python knows are included and nothing is hard-coded.
+    """
+    if not _REGISTRY_TOKEN_RE.fullmatch(value):
+        return False
+    if value in urllib.parse.uses_netloc or value in urllib.parse.uses_relative:
+        return True
+    for lookup in (codecs.lookup, codecs.lookup_error):
+        try:
+            lookup(value)
+        except (LookupError, ValueError):
+            continue
+        return True
+    return False
+
+
+def _is_fstring_fragment(node: ast.AST, parent_map: dict[int, ast.AST]) -> bool:
+    # The constant pieces of an f-string, its format specs included, are
+    # not literals a constant could replace; the f-string is one expression.
+    return isinstance(parent_map.get(id(node)), ast.JoinedStr)
+
+
+def _is_literal_type_member(node: ast.AST, parent_map: dict[int, ast.AST]) -> bool:
+    """``Literal[...]`` members are type-checked values, not magic strings."""
+    current = node
+    while True:
+        parent = parent_map.get(id(current))
+        if parent is None or isinstance(parent, ast.stmt):
+            return False
+        if (
+            isinstance(parent, ast.Subscript)
+            and parent.value is not current
+            and _call_name(parent.value).rsplit(".", 1)[-1] == "Literal"
+        ):
+            return True
+        current = parent
+
+
 def _target_names(target: ast.AST) -> set[str]:
     if isinstance(target, ast.Name):
         return {target.id}
@@ -243,11 +294,13 @@ def _target_names_are_constant_like(target_names: set[str]) -> bool:
     return any(name.isupper() or name.startswith("_") for name in target_names)
 
 
-def _is_module_level_assignment(
+def _is_declaration_level_assignment(
     parent: ast.AST, parent_map: dict[int, ast.AST]
 ) -> bool:
+    # Module and class bodies both declare tables once; a class-level
+    # lookup table is the same single declaration as a module-level one.
     grandparent = parent_map.get(id(parent))
-    return isinstance(grandparent, ast.Module)
+    return isinstance(grandparent, (ast.Module, ast.ClassDef))
 
 
 def _assignment_targets(parent: ast.Assign | ast.AnnAssign) -> set[str]:
@@ -365,8 +418,12 @@ def _mapping_receiver_evidence(
                 candidate = node.target
             if node.value is not None and not isinstance(node.value, ast.Dict):
                 rebound.update(_bound_receiver_keys(node.target, parent_map))
-        elif isinstance(node, ast.arg) and node.annotation is not None:
-            if _is_mapping_annotation(node.annotation):
+        elif isinstance(node, ast.arg):
+            # ``**kwargs`` is always a dict; an annotation can prove others.
+            arguments = parent_map.get(id(node))
+            if (isinstance(arguments, ast.arguments) and arguments.kwarg is node) or (
+                node.annotation is not None and _is_mapping_annotation(node.annotation)
+            ):
                 candidate = node
         elif isinstance(node, ast.Assign):
             for target in node.targets:
@@ -479,7 +536,7 @@ class DuplicateStringLiteralRule(SkylosRule):
 
             current = parent
 
-    def _is_module_level_declarative_literal(self, node, parent_map):
+    def _is_declarative_table_literal(self, node, parent_map):
         current = node
 
         while True:
@@ -491,7 +548,7 @@ class DuplicateStringLiteralRule(SkylosRule):
                 return False
 
             if isinstance(parent, (ast.Assign, ast.AnnAssign)):
-                if not _is_module_level_assignment(parent, parent_map):
+                if not _is_declaration_level_assignment(parent, parent_map):
                     return False
                 return _is_declarative_assignment(parent)
 
@@ -504,7 +561,9 @@ class DuplicateStringLiteralRule(SkylosRule):
         filename = context.get("filename", "")
         basename = Path(filename).name
 
-        if basename.startswith("test_") or basename.endswith("_test.py"):
+        # Test inputs and expectations repeat by design; examples and
+        # benchmarks are not maintained as shipped code.
+        if is_non_production_python(filename, context.get("project_root")):
             return None
 
         parent_map = {}
@@ -520,13 +579,17 @@ class DuplicateStringLiteralRule(SkylosRule):
                     continue
                 if self._is_docstring(child, parent_map):
                     continue
+                if _is_fstring_fragment(child, parent_map):
+                    continue
                 if self._is_structural_key_literal(child, parent_map):
                     continue
                 if self._is_mapping_lookup_key(child, parent_map, mapping_receivers):
                     continue
                 if self._is_annotation_literal(child, parent_map):
                     continue
-                if self._is_module_level_declarative_literal(child, parent_map):
+                if _is_literal_type_member(child, parent_map):
+                    continue
+                if self._is_declarative_table_literal(child, parent_map):
                     continue
                 if _is_duplicate_string_noise(child.value):
                     continue
@@ -539,6 +602,8 @@ class DuplicateStringLiteralRule(SkylosRule):
         for value, nodes in string_occurrences.items():
             count = len(nodes)
             if count < self.threshold:
+                continue
+            if _is_python_registry_name(value):
                 continue
             severity = "MEDIUM" if count >= 6 else "LOW"
             display = _duplicate_string_display(value)
@@ -653,12 +718,789 @@ def _property_setter_value_arg(
     return positional_args[1]
 
 
+class _BooleanTypeBindings(IterativeNodeVisitor):
+    """Names bound in one scope; nested function bodies have their own scope."""
+
+    def __init__(self):
+        self.names = set()
+        self.global_names = set()
+
+    def visit_Global(self, node):
+        self.global_names.update(node.names)
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.names.add(node.id)
+
+    def visit_FunctionDef(self, node):
+        self.names.add(node.name)
+        for expression in [
+            *node.decorator_list,
+            *node.args.defaults,
+            *node.args.kw_defaults,
+        ]:
+            if expression is not None:
+                self.visit(expression)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        self.names.add(node.name)
+        for expression in [*node.bases, *node.decorator_list]:
+            self.visit(expression)
+
+    def visit_Lambda(self, node):
+        return None
+
+    def visit_Import(self, node):
+        self.names.update(
+            alias.asname or alias.name.split(".")[0] for alias in node.names
+        )
+
+    def visit_ImportFrom(self, node):
+        self.names.update(alias.asname or alias.name for alias in node.names)
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node):
+        for child in ast.walk(node):
+            if isinstance(child, ast.NamedExpr):
+                self.visit(child.target)
+
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+
+_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+_COMPREHENSION_NODES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+_SCOPE_NODES = (
+    ast.Module,
+    *_FUNCTION_NODES,
+    ast.Lambda,
+    ast.ClassDef,
+    *_COMPREHENSION_NODES,
+)
+_TYPING_MODULES = frozenset({"typing", "typing_extensions"})
+# Stubs (@overload) and declared overrides (@override) take their parameter
+# list from another definition.
+_SIGNATURE_MARKERS = frozenset({"overload", "override"})
+_BOOL_ANNOTATION_TEXTS = frozenset({"bool", "builtins.bool"})
+
+
+def _bool_annotation_text(annotation):
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return annotation.value.strip()
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if isinstance(annotation, ast.Attribute) and isinstance(annotation.value, ast.Name):
+        return f"{annotation.value.id}.{annotation.attr}"
+    return None
+
+
+def _has_name_decorator(func, name):
+    return any(
+        isinstance(decorator, ast.Name) and decorator.id == name
+        for decorator in func.decorator_list
+    )
+
+
+def _callee_call(node, parents):
+    """The call that invokes ``node`` in place, also via ``a if c else b``."""
+    current = node
+    parent = parents.get(current)
+    while (isinstance(parent, ast.IfExp) and current is not parent.test) or (
+        isinstance(parent, ast.BoolOp)
+    ):
+        current = parent
+        parent = parents.get(current)
+    if isinstance(parent, ast.Call) and parent.func is current:
+        return parent
+    return None
+
+
+class _ModuleCallables:
+    """Per-module facts on whether a def's parameter list is its own API.
+
+    A def whose function object escapes (passed, stored, returned or
+    registered) has its signature set by the consumer; an override's is
+    set by its base; an @overload stub's by the implementation. Names are
+    resolved with Python's scope rules within this module only.
+    """
+
+    def __init__(self, tree):
+        self.module = tree
+        self.parents = {}
+        self.scope_of = {}
+        self.bound = defaultdict(set)
+        self.global_names = defaultdict(set)
+        self.nonlocal_names = defaultdict(set)
+        self.classes = defaultdict(list)
+        self.assigned = defaultdict(list)
+        self.marker_names = set()
+        self.typing_modules = set()
+        self.value_refs = defaultdict(list)
+        self.aliases = defaultdict(set)
+        self.name_calls = defaultdict(list)
+        self.attribute_calls = defaultdict(list)
+        self.attribute_refs = defaultdict(list)
+        self._bases = {}
+        self._subclasses = defaultdict(list)
+        name_loads, attribute_loads = self._index(tree)
+        self._collect_references(name_loads, attribute_loads)
+        self._link_classes()
+
+    def _index(self, tree):
+        """One pass: parent, evaluation scope and bindings of every node."""
+        parents, scope_of, bound = self.parents, self.scope_of, self.bound
+        name_loads, attribute_loads = [], []
+        pending = [(child, tree, tree) for child in ast.iter_child_nodes(tree)]
+        while pending:
+            node, scope, parent = pending.pop()
+            parents[node] = parent
+            scope_of[node] = scope
+            kind = type(node)
+            if kind is ast.Name:
+                if type(node.ctx) is ast.Load:
+                    name_loads.append(node)
+                else:
+                    bound[scope].add(node.id)
+                continue
+            if kind is ast.Constant:
+                continue
+            if kind is ast.Attribute:
+                if type(node.ctx) is ast.Load:
+                    attribute_loads.append(node)
+                pending.append((node.value, scope, node))
+                continue
+            # Decorators, defaults, annotations and class bases run in the
+            # enclosing scope; only the body runs in the def's own scope.
+            if kind in _FUNCTION_NODES:
+                bound[scope].add(node.name)
+                self._bind_parameters(node)
+                outer = [*node.decorator_list, node.args]
+                if node.returns is not None:
+                    outer.append(node.returns)
+                outer.extend(getattr(node, "type_params", ()))
+                pending.extend((child, scope, node) for child in outer)
+                pending.extend((child, node, node) for child in node.body)
+                continue
+            if kind is ast.Lambda:
+                self._bind_parameters(node)
+                pending.append((node.args, scope, node))
+                pending.append((node.body, node, node))
+                continue
+            if kind is ast.ClassDef:
+                bound[scope].add(node.name)
+                self.classes[(scope, node.name)].append(node)
+                outer = [
+                    *node.decorator_list,
+                    *node.bases,
+                    *node.keywords,
+                    *getattr(node, "type_params", ()),
+                ]
+                pending.extend((child, scope, node) for child in outer)
+                pending.extend((child, node, node) for child in node.body)
+                continue
+            inner = node if kind in _COMPREHENSION_NODES else scope
+            pending.extend(
+                (child, inner, node)
+                for child in ast.iter_child_nodes(node)
+                if not isinstance(child, ast.expr_context)
+            )
+            self._bind_statement(node, kind, scope)
+        return name_loads, attribute_loads
+
+    def _bind_parameters(self, func):
+        args = func.args
+        for arg in [
+            *args.posonlyargs,
+            *args.args,
+            *args.kwonlyargs,
+            args.vararg,
+            args.kwarg,
+        ]:
+            if arg is not None:
+                self.bound[func].add(arg.arg)
+
+    def _bind_statement(self, node, kind, scope):
+        if kind is ast.Assign or kind is ast.AnnAssign:
+            if node.value is not None:
+                targets = node.targets if kind is ast.Assign else [node.target]
+                for target in targets:
+                    if type(target) is ast.Name:
+                        self.assigned[(scope, target.id)].append(node.value)
+        elif kind is ast.Import:
+            for alias in node.names:
+                self.bound[scope].add(alias.asname or alias.name.split(".")[0])
+                if alias.name in _TYPING_MODULES:
+                    self.typing_modules.add(alias.asname or alias.name)
+        elif kind is ast.ImportFrom:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                self.bound[scope].add(alias.asname or alias.name)
+                if (
+                    not node.level
+                    and node.module in _TYPING_MODULES
+                    and alias.name in _SIGNATURE_MARKERS
+                ):
+                    self.marker_names.add(alias.asname or alias.name)
+        elif kind is ast.ExceptHandler:
+            if node.name:
+                self.bound[scope].add(node.name)
+        elif kind is ast.Global:
+            self.global_names[scope].update(node.names)
+        elif kind is ast.Nonlocal:
+            self.nonlocal_names[scope].update(node.names)
+        elif kind is ast.MatchAs or kind is ast.MatchStar:
+            if node.name:
+                self.bound[scope].add(node.name)
+        elif kind is ast.MatchMapping:
+            if node.rest:
+                self.bound[scope].add(node.rest)
+
+    def resolve(self, name, scope):
+        """The scope whose binding ``name`` refers to, or None (builtin)."""
+        current, first = scope, True
+        while current is not None:
+            # Class bodies are visible only to code directly inside them.
+            if first or not isinstance(current, ast.ClassDef):
+                if name in self.global_names.get(current, ()):
+                    module_names = self.bound.get(self.module, ())
+                    return self.module if name in module_names else None
+                if name in self.bound.get(current, ()) and name not in (
+                    self.nonlocal_names.get(current, ())
+                ):
+                    return current
+            first = False
+            current = self.scope_of.get(current)
+        return None
+
+    def _collect_references(self, name_loads, attribute_loads):
+        for node in name_loads:
+            target = self.resolve(node.id, self.scope_of[node])
+            if target is None:
+                continue
+            key = (target, node.id)
+            call = _callee_call(node, self.parents)
+            if call is not None:
+                self.name_calls[key].append(call)
+                continue
+            parent = self.parents.get(node)
+            if (
+                isinstance(parent, ast.Assign)
+                and parent.value is node
+                and self.scope_of.get(parent) is target
+                and all(isinstance(t, ast.Name) for t in parent.targets)
+            ):
+                # ``wait = get`` re-exports the same def under another name
+                # in the same namespace; calls through it are still calls.
+                self.aliases[key].update(t.id for t in parent.targets)
+                continue
+            self.value_refs[key].append(node)
+        for node in attribute_loads:
+            call = _callee_call(node, self.parents)
+            if call is not None:
+                self.attribute_calls[node.attr].append((call, node))
+            else:
+                self.attribute_refs[node.attr].append(node)
+
+    def _link_classes(self):
+        for definitions in self.classes.values():
+            for cls in definitions:
+                bases = []
+                for base in cls.bases:
+                    if not isinstance(base, ast.Name):
+                        continue
+                    target = self.resolve(base.id, self.scope_of[base])
+                    bases.extend(
+                        candidate
+                        for candidate in self.classes.get((target, base.id), ())
+                        if candidate is not cls
+                    )
+                self._bases[cls] = bases
+                for base in bases:
+                    self._subclasses[base].append(cls)
+
+    def _closure(self, cls, links):
+        order, seen = [], {cls}
+        pending = list(reversed(links.get(cls, ())))
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            order.append(current)
+            pending.extend(reversed(links.get(current, ())))
+        return order
+
+    def _defines(self, cls, name):
+        return name in self.bound.get(cls, ())
+
+    def _names_for(self, scope, name):
+        names, pending = {name}, [name]
+        while pending:
+            for alias in self.aliases.get((scope, pending.pop()), ()):
+                if alias not in names:
+                    names.add(alias)
+                    pending.append(alias)
+        return names
+
+    def _dispatch_classes(self, cls, name):
+        """Classes whose ``name`` a lookup on ``cls`` (or a subclass) can reach."""
+        result = set()
+        for candidate in [cls, *self._closure(cls, self._bases)]:
+            if self._defines(candidate, name):
+                result.add(candidate)
+                break
+        result.update(
+            sub
+            for sub in self._closure(cls, self._subclasses)
+            if self._defines(sub, name)
+        )
+        return result
+
+    def _class_named(self, name, scope):
+        target = self.resolve(name, scope)
+        return tuple(self.classes.get((target, name), ())) if target else ()
+
+    def _receiver(self, expr, seen=frozenset()):
+        """(classes, is_class) for a receiver this module can type, else ((), False)."""
+        if not isinstance(expr, ast.Name) or expr.id in seen:
+            return (), False
+        scope = self.scope_of.get(expr)
+        target = self.resolve(expr.id, scope) if scope is not None else None
+        if target is None:
+            return (), False
+        named = tuple(self.classes.get((target, expr.id), ()))
+        if named:
+            return named, True
+        if not isinstance(target, _FUNCTION_NODES):
+            return (), False
+        args = target.args
+        positional = [*args.posonlyargs, *args.args]
+        owner = self.scope_of.get(target)
+        if (
+            positional
+            and positional[0].arg == expr.id
+            and isinstance(owner, ast.ClassDef)
+            and not _has_name_decorator(target, "staticmethod")
+        ):
+            return (owner,), _has_name_decorator(target, "classmethod")
+        parameter = next(
+            (arg for arg in [*positional, *args.kwonlyargs] if arg.arg == expr.id),
+            None,
+        )
+        if parameter is not None:
+            annotation = parameter.annotation
+            if isinstance(annotation, ast.Constant) and isinstance(
+                annotation.value, str
+            ):
+                name = annotation.value.strip()
+            elif isinstance(annotation, ast.Name):
+                name = annotation.id
+            else:
+                return (), False
+            return self._class_named(name, owner), False
+        found = []
+        for value in self.assigned.get((target, expr.id), ()):
+            # ``o = cls(...)`` / ``o = Plugin(...)`` constructs an instance.
+            if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)):
+                return (), False
+            classes, _ = self._receiver(value.func, seen | {expr.id})
+            if not classes:
+                return (), False
+            found.extend(classes)
+        return tuple(found), False
+
+    def has_signature_marker(self, func):
+        for decorator in func.decorator_list:
+            if isinstance(decorator, ast.Name) and decorator.id in self.marker_names:
+                return True
+            if (
+                isinstance(decorator, ast.Attribute)
+                and decorator.attr in _SIGNATURE_MARKERS
+                and isinstance(decorator.value, ast.Name)
+                and decorator.value.id in self.typing_modules
+            ):
+                return True
+        return False
+
+    def overrides_local_base(self, func):
+        cls = self.scope_of.get(func)
+        if not isinstance(cls, ast.ClassDef):
+            return False
+        return any(
+            self._defines(base, func.name) for base in self._closure(cls, self._bases)
+        )
+
+    def is_value_referenced(self, func):
+        scope = self.scope_of.get(func)
+        if scope is None:
+            return False
+        # ``@name.setter`` on def ``name`` refers to the earlier binding.
+        own = {
+            id(node)
+            for decorator in func.decorator_list
+            for node in ast.walk(decorator)
+        }
+        names = self._names_for(scope, func.name)
+        for name in names:
+            if any(
+                id(ref) not in own for ref in self.value_refs.get((scope, name), ())
+            ):
+                return True
+        if not isinstance(scope, ast.ClassDef):
+            return False
+        for name in names:
+            for node in self.attribute_refs.get(name, ()):
+                if id(node) in own:
+                    continue
+                classes, _ = self._receiver(node.value)
+                if any(scope in self._dispatch_classes(cls, name) for cls in classes):
+                    return True
+        return False
+
+    def needs_call_evidence(self, func):
+        scope = self.scope_of.get(func)
+        nested = isinstance(scope, (*_FUNCTION_NODES, ast.Lambda))
+        return nested or func.name.startswith("_")
+
+    def positional_bool_calls(self, func, index):
+        """(line, value) of calls passing a bool literal at parameter ``index``."""
+        scope = self.scope_of.get(func)
+        names = self._names_for(scope, func.name)
+        calls = [
+            (call, 0)
+            for name in names
+            for call in self.name_calls.get((scope, name), ())
+        ]
+        if isinstance(scope, ast.ClassDef):
+            static = _has_name_decorator(func, "staticmethod")
+            classmethod_ = _has_name_decorator(func, "classmethod")
+            for name in names:
+                for call, node in self.attribute_calls.get(name, ()):
+                    classes, is_class = self._receiver(node.value)
+                    if classes and not any(
+                        scope in self._dispatch_classes(cls, name) for cls in classes
+                    ):
+                        continue
+                    # ``obj.m(x)`` and ``cls.cm(x)`` bind the first parameter.
+                    bound = classmethod_ or (not static and not is_class)
+                    calls.append((call, 1 if bound else 0))
+        evidence = set()
+        for call, offset in calls:
+            position = index - offset
+            if position < 0:
+                continue
+            positional = []
+            for arg in call.args:
+                if isinstance(arg, ast.Starred):
+                    break
+                positional.append(arg)
+            if position < len(positional):
+                arg = positional[position]
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, bool):
+                    evidence.add((arg.lineno, arg.value))
+        return sorted(evidence)
+
+
 class BooleanTrapRule(SkylosRule):
     rule_id = "SKY-L029"
     name = "Boolean Trap"
 
+    # These contracts exclude bool instances. Numeric/object annotations do
+    # not: bool is an int subclass, and object explicitly includes bool.
+    _NON_BOOLEAN_BUILTINS = frozenset(
+        {
+            "str",
+            "bytes",
+            "bytearray",
+            "memoryview",
+            "list",
+            "tuple",
+            "set",
+            "frozenset",
+            "dict",
+            "range",
+            "slice",
+            "type",
+        }
+    )
+    _KNOWN_BUILTINS = _NON_BOOLEAN_BUILTINS | {"bool", "int", "object"}
+    _GENERIC_BUILTINS = frozenset({"list", "tuple", "set", "frozenset", "dict", "type"})
+
+    def __init__(self):
+        self._parents = {}
+        self._module = None
+        self._callables = None
+        self._non_production = False
+        self._bool_annotation_cache = {}
+        self._intact_cache = {}
+
+    def _module_callables(self):
+        # Built on the first candidate parameter only: a module without
+        # one pays for no parent map or scope index.
+        if self._callables is None and self._module is not None:
+            self._callables = _ModuleCallables(self._module)
+            self._parents = self._callables.parents
+        return self._callables
+
+    @staticmethod
+    def _definition_effect_nodes(node):
+        pending = [node]
+        while pending:
+            node = pending.pop()
+            yield node
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                # Bodies do not run at declaration time; defaults, annotations
+                # and decorators do. Class bodies still execute normally.
+                expressions = [node.args]
+                if not isinstance(node, ast.Lambda):
+                    expressions.extend(node.decorator_list)
+                    if node.returns is not None:
+                        expressions.append(node.returns)
+            else:
+                expressions = list(ast.iter_child_nodes(node))
+            pending.extend(reversed(expressions))
+
+    @classmethod
+    def _module_namespace_may_change(cls, statement, name):
+        def root_name(expression):
+            while isinstance(expression, (ast.Attribute, ast.Subscript)):
+                expression = expression.value
+            return expression.id if isinstance(expression, ast.Name) else None
+
+        for node in cls._definition_effect_nodes(statement):
+            if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                if root_name(node) == name:
+                    return True
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                # A captured type attribute is independent of later module
+                # mutations; an alias of the module itself can mutate it.
+                if isinstance(node.value, ast.Name) and node.value.id == name:
+                    return True
+            if isinstance(node, ast.Call):
+                if root_name(node.func) == name:
+                    return True
+                if any(
+                    isinstance(arg, ast.Name) and arg.id == name
+                    or root_name(arg) == name
+                    and any(
+                        isinstance(child, ast.Attribute) and child.attr == "__dict__"
+                        for child in ast.walk(arg)
+                    )
+                    for arg in [*node.args, *(kw.value for kw in node.keywords)]
+                ):
+                    return True
+        return False
+
+    def _builtin_namespace_is_intact(self, location):
+        # The proof rescans every statement before ``location``; it depends
+        # only on the tree, so one answer per location serves the module.
+        key = id(location)
+        if key not in self._intact_cache:
+            self._intact_cache[key] = self._scan_builtin_namespace(location)
+        return self._intact_cache[key]
+
+    def _scan_builtin_namespace(self, location):
+        prefixes = []
+        current = location
+        while current in self._parents:
+            parent = self._parents[current]
+            for field in ("body", "orelse", "finalbody"):
+                statements = getattr(parent, field, None)
+                if isinstance(statements, list) and current in statements:
+                    prefixes.append(statements[: statements.index(current)])
+            current = parent
+
+        module_aliases = {"__builtins__"}
+        for statements in reversed(prefixes):
+            for statement in statements:
+                for node in self._definition_effect_nodes(statement):
+                    if isinstance(node, ast.Import):
+                        module_aliases.update(
+                            alias.asname or alias.name
+                            for alias in node.names
+                            if alias.name == "builtins"
+                        )
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id in {"exec", "eval", "globals", "locals"}
+                    ):
+                        # Dynamic namespace access refutes a positive builtin
+                        # identity proof. Do not interpret or execute its input.
+                        return False
+                if any(
+                    self._module_namespace_may_change(statement, alias)
+                    for alias in module_aliases
+                ):
+                    return False
+        return True
+
+    def _builtin_annotation_type(self, annotation, location, seen=()):
+        if len(seen) >= 12:
+            return None
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            try:
+                expression = ast.parse(annotation.value, mode="eval").body
+            except (SyntaxError, ValueError):
+                return None
+            return self._builtin_annotation_type(
+                expression, location, (*seen, "quoted")
+            )
+        if isinstance(annotation, ast.Subscript):
+            origin = self._builtin_annotation_type(annotation.value, location, seen)
+            return origin if origin in self._GENERIC_BUILTINS else None
+        if isinstance(annotation, ast.Name):
+            name, attribute = annotation.id, None
+        elif (
+            isinstance(annotation, ast.Attribute)
+            and isinstance(annotation.value, ast.Name)
+            and annotation.attr in self._KNOWN_BUILTINS
+        ):
+            name, attribute = annotation.value.id, annotation.attr
+        else:
+            return None
+        if attribute is not None and not self._builtin_namespace_is_intact(location):
+            return None
+        marker = (name, id(location))
+        if marker in seen:
+            return None
+        current = location
+        in_function = False
+        while current in self._parents:
+            parent = self._parents[current]
+            if isinstance(parent, ast.ClassDef) and in_function:
+                current = parent
+                continue
+            scope_bindings = None
+            if isinstance(parent, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope_bindings = _BooleanTypeBindings()
+                for statement in parent.body:
+                    scope_bindings.visit(statement)
+            for field in ("body", "orelse", "finalbody"):
+                statements = getattr(parent, field, None)
+                if not isinstance(statements, list) or current not in statements:
+                    continue
+                for statement in reversed(statements[: statements.index(current)]):
+                    if attribute is not None and self._module_namespace_may_change(
+                        statement, name
+                    ):
+                        return None
+                    bindings = _BooleanTypeBindings()
+                    bindings.visit(statement)
+                    if name not in bindings.names and "*" not in bindings.names:
+                        continue
+                    if (
+                        isinstance(statement, (ast.Assign, ast.AnnAssign))
+                        and attribute is None
+                    ):
+                        targets = (
+                            statement.targets
+                            if isinstance(statement, ast.Assign)
+                            else [statement.target]
+                        )
+                        if any(
+                            isinstance(target, ast.Name) and target.id == name
+                            for target in targets
+                        ):
+                            return self._builtin_annotation_type(
+                                statement.value, statement, (*seen, marker)
+                            )
+                    if isinstance(statement, ast.ImportFrom) and not statement.level:
+                        if (
+                            attribute is None
+                            and statement.module == "builtins"
+                            and self._builtin_namespace_is_intact(statement)
+                        ):
+                            return next(
+                                (
+                                    alias.name
+                                    for alias in statement.names
+                                    if alias.name in self._KNOWN_BUILTINS
+                                    and (alias.asname or alias.name) == name
+                                ),
+                                None,
+                            )
+                        return None
+                    if isinstance(statement, ast.Import):
+                        is_builtin_module = any(
+                            alias.name == "builtins"
+                            and (alias.asname or alias.name) == name
+                            for alias in statement.names
+                        )
+                        return attribute if is_builtin_module else None
+                    return None
+            if scope_bindings is not None and name in scope_bindings.global_names:
+                # Annotation expressions obey the defining scope's global
+                # declaration. Skip intervening closure/class bindings, while
+                # retaining any earlier assignment found in this scope above.
+                while current in self._parents and not isinstance(
+                    self._parents[current], ast.Module
+                ):
+                    current = self._parents[current]
+                continue
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                in_function = True
+                args = parent.args
+                parameters = [
+                    *args.posonlyargs,
+                    *args.args,
+                    *args.kwonlyargs,
+                    args.vararg,
+                    args.kwarg,
+                ]
+                if any(arg is not None and arg.arg == name for arg in parameters):
+                    return None
+                bindings = scope_bindings or _BooleanTypeBindings()
+                if name in bindings.names or "*" in bindings.names:
+                    return None
+            current = parent
+        if (
+            name in self._KNOWN_BUILTINS
+            and attribute is None
+            and self._builtin_namespace_is_intact(location)
+        ):
+            return name
+        return None
+
+    def _boolean_type(self, annotation, location):
+        # Only these spellings can name the builtin; any other annotation
+        # skips the scope proof, which rescans the enclosing statements.
+        text = _bool_annotation_text(annotation)
+        if text not in _BOOL_ANNOTATION_TEXTS:
+            return False
+        key = (text, id(location))
+        if key not in self._bool_annotation_cache:
+            self._module_callables()
+            self._bool_annotation_cache[key] = (
+                self._builtin_annotation_type(annotation, location) == "bool"
+            )
+        return self._bool_annotation_cache[key]
+
     def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            self._parents = {}
+            self._module = node
+            self._callables = None
+            self._bool_annotation_cache = {}
+            self._intact_cache = {}
+            # A test or example signature is not an API others call.
+            self._non_production = is_non_production_python(
+                context.get("filename"), context.get("project_root")
+            )
+            return None
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if self._non_production:
             return None
 
         func_name = node.name
@@ -673,6 +1515,7 @@ class BooleanTrapRule(SkylosRule):
         num_positional = len(positional_args)
 
         findings = []
+        candidates = []
         filename = context.get("filename", "")
 
         for i, arg in enumerate(positional_args):
@@ -687,14 +1530,12 @@ class BooleanTrapRule(SkylosRule):
             is_bool_trap = False
 
             if arg.annotation is not None:
-                if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "bool":
-                    is_bool_trap = True
-                elif (
-                    isinstance(arg.annotation, ast.Constant)
-                    and arg.annotation.value == "bool"
-                ):
-                    is_bool_trap = True
+                # An annotation is evaluated in the defining scope, so this
+                # function's own parameters do not shadow builtin bool here.
+                is_bool_trap = self._boolean_type(arg.annotation, node)
 
+            # A literal Boolean default is independent signature evidence.
+            # An incompatible annotation does not remove that runtime value.
             if not is_bool_trap and num_defaults > 0:
                 default_index = i - (num_positional - num_defaults)
                 if 0 <= default_index < num_defaults:
@@ -705,25 +1546,56 @@ class BooleanTrapRule(SkylosRule):
                         is_bool_trap = True
 
             if is_bool_trap:
-                findings.append(
-                    {
-                        "rule_id": self.rule_id,
-                        "kind": "quality",
-                        "severity": "LOW",
-                        "type": "function",
-                        "name": f"{func_name}.{arg_name}",
-                        "simple_name": arg_name,
-                        "value": arg_name,
-                        "threshold": 0,
-                        "message": f"Boolean positional parameter '{arg_name}' is a readability trap. Use keyword-only arguments instead.",
-                        "file": filename,
-                        "basename": Path(filename).name,
-                        "line": arg.lineno if hasattr(arg, "lineno") else node.lineno,
-                        "col": arg.col_offset
-                        if hasattr(arg, "col_offset")
-                        else node.col_offset,
-                    }
+                candidates.append((i, arg))
+
+        if not candidates:
+            return None
+
+        callables = self._module_callables()
+        needs_evidence = False
+        if callables is not None:
+            if (
+                callables.has_signature_marker(node)
+                or callables.overrides_local_base(node)
+                or callables.is_value_referenced(node)
+            ):
+                return None
+            # A private or nested def is not an API: only a call in this
+            # module that passes a bare literal shows a trap to fix.
+            needs_evidence = callables.needs_call_evidence(node)
+
+        for i, arg in candidates:
+            arg_name = arg.arg
+            message = f"Boolean parameter '{arg_name}' permits positional calls, which can obscure their meaning. Prefer named calls; consider keyword-only arguments when the public or callback contract permits it."
+            if needs_evidence:
+                evidence = callables.positional_bool_calls(node, i)
+                if not evidence:
+                    continue
+                sites = ", ".join(
+                    f"{value} at line {line}" for line, value in evidence[:3]
                 )
+                if len(evidence) > 3:
+                    sites += f" (+{len(evidence) - 3} more)"
+                message = f"Boolean parameter '{arg_name}' is called positionally with {sites}; the bare literal does not say what it controls. Pass it by keyword, or make the parameter keyword-only."
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "quality",
+                    "severity": "LOW",
+                    "type": "function",
+                    "name": f"{func_name}.{arg_name}",
+                    "simple_name": arg_name,
+                    "value": arg_name,
+                    "threshold": 0,
+                    "message": message,
+                    "file": filename,
+                    "basename": Path(filename).name,
+                    "line": arg.lineno if hasattr(arg, "lineno") else node.lineno,
+                    "col": arg.col_offset
+                    if hasattr(arg, "col_offset")
+                    else node.col_offset,
+                }
+            )
 
         return findings if findings else None
 
@@ -926,7 +1798,7 @@ def _scope_import_bindings(scope):
         else:
             bindings[name] = target
 
-    class Bindings(ast.NodeVisitor):
+    class Bindings(IterativeNodeVisitor):
         def visit_Name(self, node):
             if isinstance(node.ctx, (ast.Store, ast.Del)):
                 record(node.id)

@@ -289,6 +289,10 @@ def analyze_architecture(
             dep_metrics = result.modules.get(dep)
             if not dep_metrics:
                 continue
+            # A package that imports its own submodules composes them into
+            # its public surface; it is not a separate component to invert.
+            if dep.startswith(module + "."):
+                continue
             if dep_metrics.instability > unstable_threshold:
                 if m_metrics.instability < 0.1:
                     severity = "HIGH"
@@ -539,7 +543,7 @@ def _filter_contextual_findings(
             continue
 
         if (
-            rule_id == "SKY-Q803"
+            rule_id in {"SKY-Q803", "SKY-Q804"}
             and isinstance(module_name, str)
             and _is_test_module(module_name, finding.get("file", ""))
         ):
@@ -595,5 +599,6 @@ def _is_test_module(module_name: str, file_path: Any) -> bool:
         or ".test_" in module_name
         or basename.startswith("test_")
         or basename.endswith("_test.py")
+        or basename == "conftest.py"
         or "/tests/" in path
     )

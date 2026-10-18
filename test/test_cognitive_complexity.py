@@ -100,7 +100,9 @@ def outer():
                 pass
 """
         score_outer = _calc(code)
-        assert score_outer == 2
+        # The inner function retains the enclosing if depth and adds a
+        # function nesting level: outer if +1, inner if +3.
+        assert score_outer == 4
 
 
 class TestBooleanOperators:
@@ -120,7 +122,7 @@ def f():
         pass
 """
         score = _calc(code)
-        assert score == 3
+        assert score == 2
 
     def test_or_operator(self):
         code = """
@@ -134,10 +136,10 @@ def f():
     def test_bool_ops_no_nesting_penalty(self):
         code = """
 def f():
-    x = a and b or c
+    x = a and (b or c) and d
 """
         score = _calc(code)
-        assert score == 2
+        assert score == 3
 
 
 class TestElseIncrement:
@@ -147,10 +149,11 @@ def f():
     if a:
         pass
     else:
-        pass
+        if b:
+            pass
 """
         score = _calc(code)
-        assert score == 2
+        assert score == 4
 
     def test_elif_adds_one(self):
         code = """
@@ -168,11 +171,14 @@ class TestLoops:
     def test_for_loop(self):
         code = """
 def f():
-    for x in items:
+    for x in items or fallback:
         pass
+    else:
+        if ready:
+            pass
 """
         score = _calc(code)
-        assert score == 1
+        assert score == 5
 
     def test_nested_for_loops(self):
         code = """
@@ -189,9 +195,12 @@ def f():
 def f():
     while True:
         pass
+    else:
+        if ready:
+            pass
 """
         score = _calc(code)
-        assert score == 1
+        assert score == 4
 
 
 class TestExceptHandlers:
@@ -202,9 +211,12 @@ def f():
         pass
     except ValueError:
         pass
+    else:
+        if ready:
+            pass
 """
         score = _calc(code)
-        assert score == 1
+        assert score == 4
 
     def test_nested_except(self):
         code = """
@@ -223,10 +235,10 @@ class TestTernary:
     def test_ternary_expression(self):
         code = """
 def f():
-    x = a if condition else b
+    x = (a if inner_condition else b) if condition else c
 """
         score = _calc(code)
-        assert score == 1
+        assert score == 3
 
 
 class TestRuleIntegration:
@@ -329,12 +341,160 @@ def f():
             pass  # Python < 3.10
 
 
-class TestLambdaResets:
-    def test_lambda_resets_nesting(self):
+class TestMatchConditions:
+    def test_match_subject_boolean_sequence_counts(self):
+        code = """
+def f(x):
+    match (a or b):
+        case 1:
+            pass
+"""
+        # match +1, subject `or` +1.
+        assert _calc(code) == 2
+
+    def test_match_guard_boolean_sequence_counts(self):
+        code = """
+def f(x):
+    match x:
+        case 1 if a and b:
+            pass
+        case _:
+            pass
+"""
+        # match +1, guard `and` +1.
+        assert _calc(code) == 2
+
+    def test_match_guard_is_inside_the_match(self):
+        code = """
+def f(x):
+    match x:
+        case 1 if (p if q else r):
+            pass
+"""
+        # match +1 (nesting 0), guard ternary +2 (nesting 1).
+        assert _calc(code) == 3
+
+
+class TestLambdaNesting:
+    def test_lambda_increases_nesting(self):
         code = """
 def f():
     if a:
         fn = lambda x: x if x > 0 else -x
 """
+        # Cognitive Complexity spec: a lambda is a nested function, so its
+        # body is one level deeper. if +1 (nesting 0), ternary +3 (nesting 2).
         score = _calc(code)
-        assert score == 2
+        assert score == 4
+
+    def test_nested_lambdas_each_add_nesting(self):
+        code = """
+def f():
+    g = lambda a: (lambda b: b if b else a)
+"""
+        # ternary inside two lambdas: +1 + nesting 2.
+        assert _calc(code) == 3
+
+    def test_lambda_default_is_scored_at_enclosing_level(self):
+        code = """
+def f():
+    if a:
+        g = lambda v=(p if q else r): v
+"""
+        # if +1; the default is evaluated where the lambda is created: +2.
+        assert _calc(code) == 3
+
+    def test_lambda_boolean_sequence_has_no_nesting_cost(self):
+        code = """
+def f():
+    return sorted(xs, key=lambda v: v.a or v.b)
+"""
+        assert _calc(code) == 1
+
+
+class TestFunctionSignatureScope:
+    def test_own_decorators_defaults_and_annotations_are_not_scored(self):
+        code = """
+@option(callback=lambda c, p, v: v or c.default)
+@option(callback=lambda c, p, v: v if v else c.default)
+def f(x=1 if FLAG else 2) -> (A if B else C):
+    pass
+"""
+        assert _calc(code) == 0
+
+    def test_rule_ignores_decorator_callbacks(self):
+        decorators = "\n".join(
+            "@click.option(callback=lambda c, p, v: v or c.default)"
+            for _ in range(4)
+        )
+        body = "\n".join(f"    if x{i}:\n        pass" for i in range(15))
+        code = f"{decorators}\ndef cmd():\n{body}\n"
+        # Body is 15 flat ifs: exactly at the threshold, not above it.
+        findings = check_code(CognitiveComplexityRule(threshold=15), code)
+        assert findings == []
+
+    def test_nested_def_signature_scored_at_enclosing_level(self):
+        code = """
+def outer():
+    if a:
+        @deco(x if y else z)
+        def inner(p=q or r):
+            if b:
+                pass
+        inner()
+"""
+        # if a +1; decorator ternary at nesting 1: +2; default `or` +1;
+        # inner body is at nesting 2: if b +3.
+        assert _calc(code) == 7
+
+
+class TestDecoratorWrapperShape:
+    def test_leading_docstring_keeps_wrapper_shape(self):
+        code = '''
+def deco(fn):
+    """Doc."""
+    @wraps(fn)
+    def inner(*a):
+        if a:
+            for x in a:
+                pass
+        return fn(*a)
+    return inner
+'''
+        # inner body at nesting 0: if +1, for +2.
+        assert _calc(code) == 3
+
+    def test_pass_keeps_wrapper_shape(self):
+        code = """
+def deco(fn):
+    pass
+    def inner():
+        if a:
+            pass
+    return inner
+"""
+        assert _calc(code) == 1
+
+    def test_other_statements_break_wrapper_shape(self):
+        code = '''
+def deco(fn):
+    """Doc."""
+    import functools
+    def inner():
+        if a:
+            pass
+    return inner
+'''
+        # The import is real code: inner body at nesting 1, if +2.
+        assert _calc(code) == 2
+
+    def test_non_leading_string_breaks_wrapper_shape(self):
+        code = '''
+def deco(fn):
+    def inner():
+        if a:
+            pass
+    """not a docstring"""
+    return inner
+'''
+        assert _calc(code) == 2

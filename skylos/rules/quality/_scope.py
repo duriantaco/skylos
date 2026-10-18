@@ -90,6 +90,17 @@ def is_non_production_python(filename, project_root=None) -> bool:
         path = Path(str(project_root)) / path
     if _is_pytest_module(path, project_root):
         return True
+    return is_sample_or_build_python(filename, project_root)
+
+
+def is_sample_or_build_python(filename, project_root=None) -> bool:
+    """Examples, benchmarks, documentation builds and packaging scripts.
+
+    Test code is classified separately when a metric needs collection or
+    production-import evidence instead of a directory name.
+    """
+    if not filename:
+        return False
     if project_root is None and Path(str(filename)).is_absolute():
         # Without a root, an ancestor folder of the checkout is not evidence.
         return False

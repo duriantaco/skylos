@@ -284,7 +284,7 @@ STILL_REPORTED_ROUND5 = {
         "import pytest\n\nclass TestHarness:\n    def __init__(self):\n        self.x = 1\n"
         + _methods(23),
         "/repo/tests/test_harness.py",
-        [("TestHarness", 24)],
+        [("TestHarness", 23)],  # __init__ is a protocol method, outside the count.
     ),
 }
 

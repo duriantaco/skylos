@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from skylos.rules.quality._test_code import is_python_test_file, is_test_package_name
+from skylos.rules.quality._code_lines import code_lines, count_statements
+from skylos.rules.quality._scope import is_sample_or_build_python
 
 
 class CloneType(str, Enum):
@@ -33,8 +35,11 @@ class GroupingMode(str, Enum):
 
 @dataclass(frozen=True)
 class CloneConfig:
+    # Code lines of the fragment: blank, comment and docstring lines excluded.
     min_lines: int = 8
     min_nodes: int = 10
+    # Statements in the compared body (docstrings excluded, nested counted).
+    min_statements: int = 4
     type1_threshold: float = 0.98
     type2_threshold: float = 0.95
     type3_threshold: float = 0.88
@@ -97,6 +102,27 @@ def _strip_docstring(body: List[ast.stmt]) -> List[ast.stmt]:
     ):
         return body[1:]
     return body
+
+
+def clone_member_label(
+    fragment: "Fragment", project_root: str | Path | None = None
+) -> str:
+    """``path:start-end (kind name)`` with the path relative to the project.
+
+    Copies in ``a/x.py`` and ``b/x.py`` share a basename; the relative path
+    keeps them apart.
+    """
+    path = Path(fragment.file_path)
+    shown = str(path)
+    if project_root is not None:
+        try:
+            shown = path.resolve().relative_to(Path(project_root).resolve()).as_posix()
+        except (OSError, ValueError):
+            shown = str(path)
+    return (
+        f"{shown}:{fragment.start_line}-{fragment.end_line} "
+        f"({fragment.kind} {fragment.name})"
+    )
 
 
 def _normalize_text(source: str) -> str:
@@ -180,7 +206,6 @@ def _similarity(a: str, b: str, threshold: float | None = None) -> float:
     return matcher.ratio()
 
 
-_SKIP_PREFIXES = ("test_", "conftest")
 _BOILERPLATE_METHODS = {
     "__init__",
     "__repr__",
@@ -206,9 +231,16 @@ _BOILERPLATE_METHODS = {
 }
 
 
-def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Fragment]:
-    basename = py_path.name
-    if any(basename.startswith(p) for p in _SKIP_PREFIXES):
+def extract_fragments(
+    py_path: Path,
+    source: str,
+    cfg: CloneConfig,
+    *,
+    project_root: str | Path | None = None,
+) -> List[Fragment]:
+    # Keep test fragments until group analysis can retain shared production
+    # implementations. Sample and build code has no such metric contract.
+    if is_sample_or_build_python(py_path, project_root):
         return []
 
     # Always a private tree: _Type2Normalizer rewrites identifiers in place,
@@ -229,6 +261,13 @@ def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Frag
         if start is None or end is None:
             return
         if (end - start + 1) < cfg.min_lines:
+            return
+        # Size is measured in code: docstring, comment and blank lines do not
+        # count, and a long signature over a one- or two-statement body is
+        # not duplicated logic.
+        if len(code_lines(n, source, start=start, end=end)) < cfg.min_lines:
+            return
+        if body is not None and count_statements(body) < cfg.min_statements:
             return
 
         if body is not None:

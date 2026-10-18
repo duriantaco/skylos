@@ -178,29 +178,35 @@ def _masked_tree(tree: ast.AST, file, cfg) -> tuple[ast.AST, int]:
 
 def _quality_findings(
     file, prepared: _PreparedPython, cfg, options: _WorkerOptions
-) -> list:
+) -> tuple[list, dict | None]:
     if not options.full_scan or not options.enable_quality_rules:
-        return []
+        return [], None
     credential_kwargs = {}
     if options.credential_source_locations:
         credential_kwargs["credential_source_locations"] = (
             options.credential_source_locations
         )
-    findings = scan_python_quality(
-        prepared.tree,
-        prepared.source,
-        file,
-        cfg,
-        project_root=options.project_root,
-        **credential_kwargs,
-    )
+    try:
+        findings = scan_python_quality(
+            prepared.tree,
+            prepared.source,
+            file,
+            cfg,
+            project_root=options.project_root,
+            **credential_kwargs,
+        )
+    except Exception as error:
+        # A quality rule failure must not discard the file's security,
+        # secret and dead-code results; report the incomplete quality scan.
+        logger.debug("Quality analysis failed for %s", file, exc_info=True)
+        return [], analysis_error_payload(file, error, kind="quality_scan_error")
     if Path(file).suffix == ".pyi":
         findings = [
             finding
             for finding in findings
             if finding.get("rule_id") not in {"SKY-L026", "SKY-L033"}
         ]
-    return findings
+    return findings, None
 
 
 def _danger_findings(
@@ -371,7 +377,12 @@ def _clone_fragments(
     ):
         return []
     try:
-        return extract_fragments(Path(file), prepared.source, options.clone_cfg)
+        return extract_fragments(
+            Path(file),
+            prepared.source,
+            options.clone_cfg,
+            project_root=options.project_root,
+        )
     except Exception:
         logger.debug("Clone fragment extraction failed for %s", file, exc_info=True)
         return []
@@ -384,7 +395,7 @@ def _success_result(
     visitors: _VisitorResults,
     artifacts: _Artifacts,
     *,
-    analysis_error: dict | None = None,
+    analysis_error: dict | list[dict] | None = None,
 ) -> tuple:
     visitor = visitors.visitor
     return (
@@ -492,8 +503,10 @@ def _prepare_python(file, mod, cfg, source: str) -> _PreparedPython:
 
 def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tuple:
     prepared = _prepare_python(file, mod, cfg, source)
-    quality = _quality_findings(file, prepared, cfg, options)
-    danger, analysis_error = _danger_findings(file, prepared, options)
+    quality, quality_error = _quality_findings(file, prepared, cfg, options)
+    danger, danger_error = _danger_findings(file, prepared, options)
+    errors = [error for error in (quality_error, danger_error) if error]
+    analysis_error = errors[0] if len(errors) == 1 else errors or None
     custom = _custom_findings(prepared.tree, file, options.extra_visitors)
     quality, danger, suppressed = _apply_inline_ignores(
         quality,

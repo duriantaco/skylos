@@ -371,7 +371,7 @@ _RULES = (
         "SKY-T101", "Missing type annotations", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
-        "SKY-T102", "Weak framework route typing", "quality", finding_type="advice"
+        "SKY-T102", "Missing return type annotations", "quality", finding_type="advice"
     ),
     RuleCatalogEntry(
         "SKY-T103",

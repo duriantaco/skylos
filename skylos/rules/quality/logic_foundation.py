@@ -1,5 +1,8 @@
 import ast
+import bisect
+import io
 import operator
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1382,18 +1385,221 @@ class DuplicateBranchRule(SkylosRule):
         }
 
 
-def _is_function_level_try(node: ast.Try, parent_body: list[ast.stmt]) -> bool:
-    if len(parent_body) == 1 and parent_body[0] is node:
-        return True
-    if (
-        len(parent_body) == 2
-        and isinstance(parent_body[0], ast.Expr)
-        and isinstance(parent_body[0].value, ast.Constant)
-        and isinstance(parent_body[0].value.value, str)
-        and parent_body[1] is node
-    ):
-        return True
+_TRY_TYPES = (ast.Try,) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+_LOOP_TYPES = (ast.For, ast.AsyncFor, ast.While)
+_CONTROL_FLOW_TYPES = (ast.If, ast.For, ast.AsyncFor, ast.While)
+_NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+_IMPORT_ERROR_NAMES = frozenset({"ImportError", "ModuleNotFoundError"})
+_NON_CODE_TOKENS = frozenset(
+    {
+        tokenize.COMMENT,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENDMARKER,
+        tokenize.ENCODING,
+    }
+)
+
+
+def _is_string_statement(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+
+
+def _has_escaping_jump(statements: list[ast.stmt]) -> bool:
+    """Whether a return/break/continue in these statements leaves them.
+
+    A break or continue inside a loop that is itself nested in the
+    statements only steers that loop; nested definitions are separate code.
+    """
+    stack = [(stmt, False) for stmt in statements]
+    while stack:
+        node, inside_own_loop = stack.pop()
+        if isinstance(node, _NESTED_SCOPE_TYPES):
+            continue
+        if isinstance(node, ast.Return):
+            return True
+        if isinstance(node, (ast.Break, ast.Continue)) and not inside_own_loop:
+            return True
+        if isinstance(node, _LOOP_TYPES):
+            stack.extend((child, True) for child in node.body)
+            stack.extend((child, inside_own_loop) for child in node.orelse)
+            continue
+        stack.extend((child, inside_own_loop) for child in ast.iter_child_nodes(node))
     return False
+
+
+def _rebinds_name(statements: list[ast.stmt], name: str) -> bool:
+    for stmt in statements:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and node.id == name:
+                if not isinstance(node.ctx, ast.Load):
+                    return True
+            elif isinstance(node, ast.ExceptHandler) and node.name == name:
+                return True
+            elif isinstance(node, ast.alias):
+                if (node.asname or node.name.split(".")[0]) == name:
+                    return True
+            elif (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == name
+            ):
+                return True
+    return False
+
+
+def _handler_only_reraises(handler: ast.ExceptHandler) -> bool:
+    """A handler that always re-raises the caught exception catches nothing."""
+    if not handler.body:
+        return False
+    last = handler.body[-1]
+    if not isinstance(last, ast.Raise) or last.cause is not None:
+        return False
+    if last.exc is not None:
+        if not (
+            handler.name
+            and isinstance(last.exc, ast.Name)
+            and last.exc.id == handler.name
+            and not _rebinds_name(handler.body, handler.name)
+        ):
+            return False
+    return not _has_escaping_jump(handler.body)
+
+
+def _try_catches(node: ast.AST) -> bool:
+    """Whether an exception raised in the try body can stop propagating there.
+
+    It can when a handler does not re-raise, or when the finally block leaves
+    via return/break/continue (which discards the in-flight exception).
+    """
+    if _has_escaping_jump(node.finalbody):
+        return True
+    return any(not _handler_only_reraises(handler) for handler in node.handlers)
+
+
+def _exception_leaf_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _handler_catches_only_import_errors(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return False
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return bool(types) and all(
+        _exception_leaf_name(exc_type) in _IMPORT_ERROR_NAMES for exc_type in types
+    )
+
+
+def _is_import_fallback_try(node: ast.AST) -> bool:
+    return bool(node.handlers) and all(
+        _handler_catches_only_import_errors(handler) for handler in node.handlers
+    )
+
+
+def _scan_protected_body(body: list[ast.stmt]) -> tuple[int, bool]:
+    """Count control flow and find confusing nested catching in a try body.
+
+    An inner try counts as nested catching unless it catches nothing, is an
+    optional-import fallback, or sits inside a loop within the outer try
+    (per-item isolation).
+    """
+    control_flow_count = 0
+    has_nested_try = False
+    stack = [(stmt, False) for stmt in body]
+    while stack:
+        node, inside_loop = stack.pop()
+        if isinstance(node, _NESTED_SCOPE_TYPES):
+            continue
+        if isinstance(node, _CONTROL_FLOW_TYPES):
+            control_flow_count += 1
+        if (
+            isinstance(node, _TRY_TYPES)
+            and not inside_loop
+            and not has_nested_try
+            and _try_catches(node)
+            and not _is_import_fallback_try(node)
+        ):
+            has_nested_try = True
+        if isinstance(node, _LOOP_TYPES):
+            stack.extend((child, True) for child in node.body)
+            stack.extend((child, inside_loop) for child in node.orelse)
+            continue
+        stack.extend((child, inside_loop) for child in ast.iter_child_nodes(node))
+    return control_flow_count, has_nested_try
+
+
+def _is_guard_clause(stmt: ast.stmt) -> bool:
+    return (
+        isinstance(stmt, ast.If)
+        and not stmt.orelse
+        and bool(stmt.body)
+        and isinstance(stmt.body[-1], (ast.Return, ast.Raise))
+    )
+
+
+def _is_boundary_prefix_statement(stmt: ast.stmt) -> bool:
+    return (
+        _is_string_statement(stmt)
+        or isinstance(
+            stmt,
+            (
+                ast.Import,
+                ast.ImportFrom,
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+            ),
+        )
+        or _is_guard_clause(stmt)
+    )
+
+
+def _is_function_level_try(node: ast.AST, parent_body: list[ast.stmt]) -> bool:
+    """The try is the function's error boundary: its last statement, preceded
+    only by docstrings, imports, nested definitions and guard clauses."""
+    if not parent_body or parent_body[-1] is not node:
+        return False
+    return all(_is_boundary_prefix_statement(stmt) for stmt in parent_body[:-1])
+
+
+def _significant_token_spans(source: str):
+    """Start rows and spans of tokens that carry code (not comments/blanks)."""
+    starts = []
+    spans = []
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type in _NON_CODE_TOKENS:
+            continue
+        starts.append(tok.start[0])
+        spans.append((tok.start, tok.end))
+    return starts, spans
+
+
+def _ast_code_rows(body: list[ast.stmt], first: int, last: int) -> set[int]:
+    """Approximate code rows from node positions when source is unavailable."""
+    rows = set()
+    comment_rows = set()
+    for stmt in body:
+        for node in ast.walk(stmt):
+            start = getattr(node, "lineno", None)
+            if start is None:
+                continue
+            end = getattr(node, "end_lineno", None) or start
+            if _is_string_statement(node):
+                comment_rows.update(range(start, end + 1))
+            elif isinstance(node, (ast.Constant, ast.JoinedStr)):
+                rows.update(range(start, end + 1))
+            else:
+                rows.update((start, end))
+    return {row for row in rows - comment_rows if first <= row <= last}
 
 
 class TryBlockPatternsRule(SkylosRule):
@@ -1403,22 +1609,72 @@ class TryBlockPatternsRule(SkylosRule):
     def __init__(self, max_lines=15, max_control_flow=3):
         self.max_lines = max_lines
         self.max_control_flow = max_control_flow
+        self._token_source = None
+        self._token_index = None
+
+    def _token_spans_for(self, source):
+        if source is not self._token_source:
+            self._token_source = source
+            try:
+                self._token_index = _significant_token_spans(source)
+            except (tokenize.TokenError, SyntaxError, ValueError):
+                self._token_index = None
+        return self._token_index
+
+    def _code_line_count(self, node, context) -> int:
+        """Lines in the try body that carry code.
+
+        Blank lines, comment-only lines and string-literal statements used as
+        block comments are not counted; every line of a multi-line expression
+        or string value is.
+        """
+        first = node.body[0].lineno
+        last = getattr(node.body[-1], "end_lineno", None) or first
+        source = context.get("source")
+        index = self._token_spans_for(source) if isinstance(source, str) else None
+        if index is None:
+            return len(_ast_code_rows(node.body, first, last))
+
+        comment_strings = [
+            ((n.lineno, n.col_offset), (n.end_lineno, n.end_col_offset))
+            for stmt in node.body
+            for n in ast.walk(stmt)
+            if _is_string_statement(n)
+        ]
+        starts, spans = index
+        rows = set()
+        for i in range(bisect.bisect_left(starts, first), len(starts)):
+            (srow, scol), (erow, _) = spans[i]
+            if srow > last:
+                break
+            if any(lo <= (srow, scol) < hi for lo, hi in comment_strings):
+                continue
+            rows.update(range(srow, min(erow, last) + 1))
+        return len(rows)
 
     def visit_node(self, node, context):
-        if not isinstance(node, ast.Try):
+        if not isinstance(node, _TRY_TYPES):
+            return None
+        # When no handler can stop an exception (none, or each re-raises it)
+        # and the finally block does not discard it, the try is a cleanup
+        # scope like try/finally: error-catching scope advice does not apply.
+        if not _try_catches(node):
             return None
 
-        parent_body = context.get("_parent_body")
-        is_func_level = parent_body is not None and _is_function_level_try(
-            node, parent_body
-        )
+        # A try that forms the whole function after its docstring, imports,
+        # nested definitions and guard clauses is the function's intentional
+        # error boundary. Its size and branching are the function's size and
+        # complexity (C304/Q301/Q306), so those checks are skipped; nested
+        # catch scopes inside it are not measured elsewhere and stay checked.
+        parent = context.get("_parent_node")
+        is_boundary = isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and _is_function_level_try(node, parent.body)
 
         findings = []
 
-        if node.body and not is_func_level:
-            start = node.body[0].lineno
-            end = getattr(node.body[-1], "end_lineno", start)
-            length = end - start + 1
+        if node.body and not is_boundary:
+            length = self._code_line_count(node, context)
 
             if length > self.max_lines:
                 findings.append(
@@ -1427,21 +1683,16 @@ class TryBlockPatternsRule(SkylosRule):
                         context,
                         severity="LOW",
                         value=length,
-                        msg=f"Try block covers {length} lines (limit: {self.max_lines}). Reduce scope to the risky operation only.",
+                        msg=(
+                            f"Try block covers {length} lines of code "
+                            f"(limit: {self.max_lines}; blank and comment lines "
+                            "are not counted). Reduce scope to the risky "
+                            "operation only."
+                        ),
                     )
                 )
 
-        control_flow_count = 0
-        has_nested_try = False
-
-        for stmt in node.body:
-            for child in _walk_scope([stmt]):
-                if child is stmt:
-                    continue
-                if isinstance(child, ast.Try):
-                    has_nested_try = True
-                if isinstance(child, (ast.If, ast.For, ast.While)):
-                    control_flow_count += 1
+        control_flow_count, has_nested_try = _scan_protected_body(node.body)
 
         if has_nested_try:
             findings.append(
@@ -1454,7 +1705,7 @@ class TryBlockPatternsRule(SkylosRule):
                 )
             )
 
-        if control_flow_count > self.max_control_flow:
+        if not is_boundary and control_flow_count > self.max_control_flow:
             findings.append(
                 self._create_finding(
                     node,
