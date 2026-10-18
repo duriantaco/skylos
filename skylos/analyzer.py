@@ -5912,6 +5912,14 @@ class Skylos:
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )
+        if enable_danger and all_dangers:
+            from skylos.rules.danger.danger_fs.closed_world import (
+                drop_closed_world_helper_findings,
+            )
+
+            all_dangers = drop_closed_world_helper_findings(
+                all_dangers, scan_path=path, suppressed=all_suppressed
+            )
         result = self._build_result(
             files,
             thr,

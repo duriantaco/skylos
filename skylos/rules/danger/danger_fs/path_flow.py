@@ -1,9 +1,12 @@
 from __future__ import annotations
 import ast
+import re
 import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
+from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.rules.danger.untrusted_sources import (
+    is_traversal_safe_value,
     UntrustedSourceIndex,
     entrypoint_decorator,
 )
@@ -86,6 +89,147 @@ _OPERATOR_SOURCE_MARKERS = (
     "CLI arguments",
     "CLI parameter",
 )
+
+
+class _HelperParameterEvidence(dict):
+    """No source evidence: the path comes from a helper parameter whose
+    callers may be in another module. The analyzer can prove otherwise for a
+    complete repository scan (``closed_world``)."""
+
+
+_FROM_PARAMETER = "the path comes from a function parameter whose callers are not visible"
+
+
+def _helper_parameter_message(rule_id, message):
+    """The finding rests on a parameter, not on input Skylos saw: say so
+    instead of "untrusted" or "attacker-controlled"."""
+    if rule_id == "SKY-D215":
+        served = re.match(r"Possible path traversal: untrusted path served by (\w+)\(\)", message)
+        where = f"{served.group(1)}() serves a path" if served else "a filesystem call uses a path"
+        return (
+            f"Possible path traversal: {where} from a function parameter whose "
+            "callers are not visible, with no containment check; if a caller can "
+            "pass user input, resolve it and check it stays under the base directory."
+        )
+    if rule_id == "SKY-D324":
+        return (
+            f"Possible symlink-following write: {_FROM_PARAMETER}; if a caller can "
+            "pass user input, reject symlinks or open with O_NOFOLLOW and check containment."
+        )
+    if rule_id == "SKY-D325":
+        if "unbounded" in message:
+            return (
+                f"Possible symlink-following or unbounded read: {_FROM_PARAMETER}; if a "
+                "caller can pass user input, require a regular in-root file and a size cap."
+            )
+        return (
+            f"Possible symlink-following read: {_FROM_PARAMETER}; if a caller can pass "
+            "user input, require a regular in-root file."
+        )
+    return message
+
+
+def _mark_helper_parameter(finding, evidence):
+    if isinstance(evidence, _HelperParameterEvidence):
+        finding.setdefault("metadata", {})["path_source"] = HELPER_PARAMETER_SOURCE
+        finding["message"] = _helper_parameter_message(finding["rule_id"], finding["message"])
+
+
+# Fix 3 support: a file handle read only in bounded chunks.
+_STREAMING_CONSUMERS = frozenset({"shutil.copyfileobj", "hashlib.file_digest"})
+_HARMLESS_HANDLE_METHODS = frozenset({"seek", "tell", "close", "readinto", "fileno"})
+
+
+def _constant_size(node, constants):
+    """A positive int known without running the program: a literal, constant
+    arithmetic (``1 << 20``, ``64 * 1024``) or a module constant of one."""
+    if isinstance(node, ast.Constant) and type(node.value) is int:
+        return node.value if node.value > 0 else None
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.LShift, ast.Mult, ast.Add)):
+        left = _constant_size(node.left, constants)
+        right = _constant_size(node.right, constants)
+        if left is None or right is None:
+            return None
+        if isinstance(node.op, ast.LShift):
+            return left << right if right < 64 else None
+        return left * right if isinstance(node.op, ast.Mult) else left + right
+    return None
+
+
+def _module_constant_sizes(module):
+    """Module names bound exactly once, at top level, to a constant size."""
+    counts, values = {}, {}
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            counts[node.id] = counts.get(node.id, 0) + 1
+    for statement in module.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            size = _constant_size(statement.value, {})
+            if size is not None:
+                values[statement.targets[0].id] = size
+    return {name: size for name, size in values.items() if counts.get(name) == 1}
+
+
+def _handle_reads_bounded(target, body, constants):
+    """Every use of the ``with`` handle ``target`` in ``body`` reads a bounded
+    amount: ``read(<constant>)``, ``readinto``, a ``partial(fh.read,
+    <constant>)``, or ``shutil.copyfileobj`` / ``hashlib.file_digest``. Any
+    other use (``read()``, ``readline()``, line iteration, passing or
+    returning the handle, rebinding it) may read the whole file."""
+    if not isinstance(target, ast.Name):
+        return False
+    name = target.id
+    parents = {}
+    for statement in body:
+        for parent in ast.walk(statement):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+    uses = [
+        node
+        for statement in body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name) and node.id == name
+    ]
+    if not uses:
+        return False
+    for use in uses:
+        if not isinstance(use.ctx, ast.Load):
+            return False
+        parent = parents.get(use)
+        if isinstance(parent, ast.Attribute) and parent.value is use:
+            call = parents.get(parent)
+            if parent.attr in _HARMLESS_HANDLE_METHODS:
+                continue
+            if parent.attr != "read":
+                return False
+            if isinstance(call, ast.Call) and call.func is parent:
+                if len(call.args) == 1 and not call.keywords and _constant_size(call.args[0], constants):
+                    continue
+                return False
+            if (
+                isinstance(call, ast.Call)
+                and _qualified_name(call) in {"functools.partial", "partial"}
+                and len(call.args) == 2
+                and call.args[0] is parent
+                and _constant_size(call.args[1], constants)
+            ):
+                continue
+            return False
+        if (
+            isinstance(parent, ast.Call)
+            and parent.args
+            and parent.args[0] is use
+            and _qualified_name(parent) in _STREAMING_CONSUMERS
+        ):
+            continue
+        return False
+    return True
 
 
 def _callee_last(node):
@@ -362,9 +506,13 @@ class _PathFlowChecker(TaintVisitor):
         self.validated_stack = [set()]
         self.file_object_stack = [set()]
         self.branch_validated = []
+        # ids of open() calls whose ``with`` handle is only read in bounded chunks
+        self._bounded_opens = set()
+        self._constant_sizes = {}
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
+        self._constant_sizes = _module_constant_sizes(node)
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
         self.generic_visit(node)
@@ -578,7 +726,7 @@ class _PathFlowChecker(TaintVisitor):
         return False
 
     def is_tainted(self, node):
-        if _is_path_name_projection(node):
+        if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             return self.is_tainted(node.left) or self.is_tainted(node.right)
@@ -843,15 +991,20 @@ class _PathFlowChecker(TaintVisitor):
             or safety["containment"]
         )
 
-    def _has_symlink_read_guard(self):
+    def _has_symlink_read_path_guard(self):
         safety = self._current_safety()
-        path_guard = (
+        return (
             safety["symlink_guard"]
             or safety["nofollow"]
             or safety["regular_file"]
             or safety["containment"]
         )
-        return path_guard and (safety["bounded_read"] or safety["regular_file"])
+
+    def _has_symlink_read_guard(self):
+        safety = self._current_safety()
+        return self._has_symlink_read_path_guard() and (
+            safety["bounded_read"] or safety["regular_file"]
+        )
 
     def _has_archive_guard(self):
         return self._current_safety()["archive_member_guard"]
@@ -889,6 +1042,7 @@ class _PathFlowChecker(TaintVisitor):
         }
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
+        _mark_helper_parameter(finding, evidence)
         self.findings.append(finding)
 
     def _source_evidence(self, node, path_expr, sink):
@@ -959,7 +1113,7 @@ class _PathFlowChecker(TaintVisitor):
                 ]
             return evidence
         if self._has_open_world_parameter(path_expr, facts):
-            return {}
+            return _HelperParameterEvidence()
         if evidence is None:
             return {}
         return None
@@ -978,6 +1132,7 @@ class _PathFlowChecker(TaintVisitor):
             evidence = self._source_evidence(node, path_expr, sink)
         if evidence:
             finding["metadata"] = {"security_evidence": evidence}
+        _mark_helper_parameter(finding, evidence)
         self.findings.append(finding)
 
     def _flag_if_tainted_path(self, node, path_expr):
@@ -1016,21 +1171,38 @@ class _PathFlowChecker(TaintVisitor):
             evidence,
         )
 
+    def visit_With(self, node):
+        self._record_bounded_handles(node)
+        self.generic_visit(node)
+
+    def visit_AsyncWith(self, node):
+        self._record_bounded_handles(node)
+        self.generic_visit(node)
+
+    def _record_bounded_handles(self, node):
+        for item in node.items:
+            if isinstance(item.context_expr, ast.Call) and _handle_reads_bounded(
+                item.optional_vars, node.body, self._constant_sizes
+            ):
+                self._bounded_opens.add(id(item.context_expr))
+
     def _flag_symlink_read_if_unsafe(self, node, path_expr):
         if not self._path_needs_symlink_protection(path_expr):
             return
-        if self._has_symlink_read_guard():
+        bounded = id(node) in self._bounded_opens
+        if self._has_symlink_read_guard() or (
+            bounded and self._has_symlink_read_path_guard()
+        ):
             return
         evidence = self._untrusted_path_evidence(path_expr, "filesystem read")
         if evidence is None:
             return
-        self._add_finding(
-            node,
-            SYMLINK_READ_RULE,
-            "MEDIUM",
-            "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap.",
-            evidence,
+        message = (
+            "Possible symlink-following read on attacker-controlled path; require a regular in-root file."
+            if bounded
+            else "Possible symlink-following or unbounded read on attacker-controlled path; require a regular in-root file and a size cap."
         )
+        self._add_finding(node, SYMLINK_READ_RULE, "MEDIUM", message, evidence)
 
     def _flag_archive_extract_if_unsafe(self, node):
         if self._has_archive_guard():
