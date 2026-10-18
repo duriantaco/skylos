@@ -79,7 +79,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
-          REF_NAME: ${{ github.ref_name || 'main' }}
         shell: bash
         run: |
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -89,12 +88,14 @@ jobs:
             fi
             git cat-file -e "$PR_BASE_SHA^{commit}"
             echo "base=$PR_BASE_SHA" >> "$GITHUB_OUTPUT"
-          elif [[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            git cat-file -e "$BEFORE_SHA^{commit}"
+          elif [[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] \
+            && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null \
+            && git merge-base --is-ancestor "$BEFORE_SHA" HEAD; then
             echo "base=$BEFORE_SHA" >> "$GITHUB_OUTPUT"
           else
-            git check-ref-format --branch "$REF_NAME" >/dev/null
-            echo "base=origin/$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "::warning::No available ancestor push base; running a full scan."
+            echo "base=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Skylos
@@ -118,7 +119,7 @@ jobs:
             .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
             SCAN_STATUS=$?
           else
-            .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --baseline --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --json -o "$REPORT"
             SCAN_STATUS=$?
           fi
           set -e
@@ -135,7 +136,7 @@ jobs:
         run: |
           .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
-      - name: Block new high-risk security findings
+      - name: Block high-risk security findings
         if: always() && steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
@@ -160,14 +161,14 @@ jobs:
                       blocking.append((category, severity, finding))
 
           if not blocking:
-              print("No new high-risk security findings.")
+              print("No high-risk security findings in the scanned scope.")
               sys.exit(0)
 
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
           lines = [
               "## Blocking Skylos findings",
               "",
-              "New HIGH/CRITICAL security or secret findings were detected in this diff.",
+              "HIGH/CRITICAL security or secret findings were detected in the scanned scope.",
               "",
           ]
 
