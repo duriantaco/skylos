@@ -157,6 +157,12 @@ def run_pr_review(
             max_comments=max_comments,
             identity=identity,
         )
+    # Past the inline-comment cap, or when posting the review failed, a
+    # finding has no inline comment: the summary is where it is named.
+    shown_inline = review_outcome.shown_inline if review_outcome else frozenset()
+    left_unused = _left_unused_rows(
+        all_findings, [f for f in findings if id(f) in shown_inline], review_root
+    )
 
     summary_outcome = _post_summary_comment(
         all_findings,
@@ -169,12 +175,34 @@ def run_pr_review(
         evidence_cards=evidence_cards,
         risk_passport=risk_passport,
         identity=identity,
+        left_unused=left_unused,
     )
 
     console.print(
         _review_outcome_line(pr_number, review_outcome, summary_outcome),
         soft_wrap=True,
     )
+
+
+_LEFT_UNUSED_SCOPE = "dependency_impact"
+_MAX_LEFT_UNUSED_ROWS = 20
+
+
+def _left_unused_rows(
+    all_findings: list[dict], inline_findings: list[dict], review_root
+) -> list[tuple[str, str]]:
+    """(what, where) for code the change left unused that no inline comment
+    shows: its definition is off the changed lines, past the inline-comment
+    cap, or the review posts no inline comments."""
+    inline = {id(finding) for finding in inline_findings}
+    rows = []
+    for finding in all_findings:
+        if finding.get("report_scope") != _LEFT_UNUSED_SCOPE or id(finding) in inline:
+            continue
+        file = finding.get("file", "")
+        where = _project_relative_file(file, review_root) or file
+        rows.append((finding.get("message", ""), f"{where}:{finding.get('line', '')}"))
+    return rows
 
 
 def _review_root_for_results(results: dict) -> Path:
@@ -706,6 +734,12 @@ def _flatten_findings(results: dict) -> list[dict]:
                 safe_reason = sanitize_untrusted_text(reason, max_length=1_000)
                 finding["explanation"] = safe_reason
                 finding["_review_reason"] = safe_reason
+            # `--diff-mode impact`: in use at the base revision, unused now.
+            if (
+                item.get("report_scope") == _LEFT_UNUSED_SCOPE
+                and item.get("change_status") == "introduced"
+            ):
+                finding["report_scope"] = _LEFT_UNUSED_SCOPE
             _copy_safe_finding_metadata(item, finding)
             findings.append(finding)
 
@@ -1203,6 +1237,9 @@ class _CommentOutcome:
     new_inline: int = 0
     existing_inline: int = 0
     note: str = ""
+    # id() of each finding with an inline comment after this run, posted now
+    # or on an earlier push.
+    shown_inline: frozenset = frozenset()
 
 
 def _gh_error_text(exc: BaseException) -> str:
@@ -1335,6 +1372,7 @@ def _post_pr_review(
 ) -> _CommentOutcome:
     comments = []
     seen_keys: set[str] = set()
+    finding_keys: list[tuple[int, str]] = []
     for f in findings:
         if not f.get("file") or not f.get("line"):
             continue
@@ -1343,6 +1381,7 @@ def _post_pr_review(
         )
         path = _to_relative_path(comment_file)
         key = _inline_comment_key(path, comment_line, f)
+        finding_keys.append((id(f), key))
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -1357,7 +1396,14 @@ def _post_pr_review(
                 "line": comment_line,
                 "body": f"{body}\n<!-- skylos-finding:{key} -->",
                 "_key": key,
-                "_legacy": (path, comment_line, str(f.get("rule_id") or "").upper()),
+                # Legacy location/rule identities cannot distinguish unused
+                # symbols on the same line. Emit keyed dead-code comments
+                # once rather than treating another symbol as already shown.
+                "_legacy": (
+                    None
+                    if f.get("category") == "dead_code"
+                    else (path, comment_line, str(f.get("rule_id") or "").upper())
+                ),
             }
         )
 
@@ -1381,12 +1427,22 @@ def _post_pr_review(
         if c["_key"] not in posted_keys and c["_legacy"] not in legacy
     ]
     already = len(comments) - len(new_comments)
+    existing_keys = {c["_key"] for c in comments} - {c["_key"] for c in new_comments}
+
+    def shown(keys) -> frozenset:
+        return frozenset(fid for fid, key in finding_keys if key in keys)
+
     if max_comments is not None:
         # The cap is per PR, not per push: findings that already have an
         # inline comment use up slots, so an unchanged PR gets no new review.
         new_comments = new_comments[: max(0, max_comments - already)]
     if not new_comments:
-        return _CommentOutcome("unchanged", existing_inline=already, note=note)
+        return _CommentOutcome(
+            "unchanged",
+            existing_inline=already,
+            note=note,
+            shown_inline=shown(existing_keys),
+        )
 
     payload = {
         "body": (
@@ -1415,12 +1471,18 @@ def _post_pr_review(
             payload,
         )
     except (subprocess.SubprocessError, OSError) as exc:
-        return _CommentOutcome("failed", error=_gh_error_text(exc), note=note)
+        return _CommentOutcome(
+            "failed",
+            error=_gh_error_text(exc),
+            note=note,
+            shown_inline=shown(existing_keys),
+        )
     return _CommentOutcome(
         "created",
         new_inline=len(new_comments),
         existing_inline=already,
         note=note,
+        shown_inline=shown(existing_keys | {c["_key"] for c in new_comments}),
     )
 
 
@@ -1507,7 +1569,9 @@ def _post_summary_comment(
     evidence_cards: bool = False,
     risk_passport: dict | None = None,
     identity: _TokenIdentity | None = None,
+    left_unused: list[tuple[str, str]] | None = None,
 ) -> _CommentOutcome:
+    left_unused = left_unused or []
     existing_comments, list_error = _gh_list(
         f"/repos/{repo}/issues/{pr_number}/comments"
     )
@@ -1543,9 +1607,12 @@ def _post_summary_comment(
                 "",
             ]
         )
+    left_unused_count = (
+        f" | **{len(left_unused)}** left unused by this change" if left_unused else ""
+    )
     lines.append(
         f"**{changed_now}** issue(s) on changed lines{was} | "
-        f"**{len(all_findings)}** total"
+        f"**{len(all_findings)}** total{left_unused_count}"
     )
     lines.extend(format_risk_passport_markdown(risk_passport))
     lines.extend(
@@ -1676,6 +1743,29 @@ def _post_summary_comment(
                     lines.append(
                         f"  - **Fix:** {sanitize_markdown_text(fix, max_length=500)}"
                     )
+
+    if left_unused:
+        lines.extend(
+            [
+                "",
+                "### Left unused by this change",
+                "",
+                "In use before this change, unused after it. Delete them or "
+                "restore the use.",
+                "",
+                "| Unused | Location |",
+                "|--------|----------|",
+            ]
+        )
+        for what, where in left_unused[:_MAX_LEFT_UNUSED_ROWS]:
+            lines.append(
+                f"| {sanitize_markdown_text(what, max_length=300)} "
+                f"| {sanitize_markdown_text(where, max_length=300)} |"
+            )
+        if len(left_unused) > _MAX_LEFT_UNUSED_ROWS:
+            lines.extend(
+                ["", f"…and {len(left_unused) - _MAX_LEFT_UNUSED_ROWS} more."]
+            )
 
     if isinstance(assessment, dict) and assessment:
         lines.extend(_format_assessment_markdown(assessment))

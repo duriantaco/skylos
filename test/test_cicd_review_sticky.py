@@ -165,14 +165,32 @@ def test_one_new_finding_gets_exactly_one_new_inline_comment():
 
 
 def test_same_rule_same_line_but_different_dead_code_names_both_post():
-    gh = FakeGitHub()
     findings = [
         _finding(1, "SKY-U002", "Unused import: os", "dead_code"),
         _finding(1, "SKY-U002", "Unused import: sys", "dead_code"),
         _finding(1, "SKY-U002", "Unused import: os", "dead_code"),
     ]
-    inline, _ = _run(gh, findings)
-    assert inline.new_inline == 2
+    for legacy in (False, True):
+        gh = FakeGitHub()
+        if legacy:
+            gh.review_comments = [
+                {
+                    "id": 55,
+                    "path": "app.py",
+                    "line": 1,
+                    "body": "🔵 **LOW** `SKY-U002`\n\nUnused import: os\n\n---\n"
+                    "_🤖 Analyzed by [Skylos](https://x)_",
+                    "user": BOT,
+                }
+            ]
+        inline, _ = _run(gh, findings)
+        assert inline.new_inline == 2
+        assert inline.existing_inline == 0
+
+        # Once precise keys exist, both symbols deduplicate on later pushes.
+        inline, _ = _run(gh, findings)
+        assert inline.new_inline == 0
+        assert inline.existing_inline == 2
 
 
 def test_cap_counts_inline_comments_already_on_the_pr():
