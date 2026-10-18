@@ -19,6 +19,7 @@ from skylos.rules.quality.logic_foundation import (
 from skylos.rules.quality.logic_security import _qualified_call_name
 from skylos.rules.quality._ast_visit import IterativeNodeVisitor
 from skylos.rules.quality._provider_context import project_local_provider
+from skylos.rules.quality._overload_groups import overload_groups
 
 
 _SENSITIVE_LITERAL_KEYWORDS = (
@@ -979,6 +980,76 @@ _SIGNAL_LITERAL_MODULES = frozenset(
 )
 
 
+def _overload_default_literals(module, filename, calls):
+    """Repeated defaults describe one callable, not independent runtime values.
+
+    Keep distinct signature-only defaults, incomplete groups and unknown
+    decorators. Collapse only the same named literal default also present on
+    the concrete implementation of an import-proven overload group.
+    """
+    result = set()
+
+    def defaults(function):
+        positional = (*function.args.posonlyargs, *function.args.args)
+        pairs = list(
+            zip(
+                positional[len(positional) - len(function.args.defaults) :],
+                function.args.defaults,
+            )
+        )
+        pairs.extend(zip(function.args.kwonlyargs, function.args.kw_defaults))
+        return {
+            argument.arg: value
+            for argument, value in pairs
+            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        }
+
+    def imported_marker(function):
+        facts = calls()
+        for decorator in function.decorator_list:
+            if isinstance(decorator, ast.Name):
+                values = facts._values(decorator)
+                marker = "overload"
+            elif (
+                isinstance(decorator, ast.Attribute)
+                and isinstance(decorator.value, ast.Name)
+                and decorator.attr == "overload"
+            ):
+                values = facts._values(decorator.value)
+                marker = None
+            else:
+                continue
+            # The grouping helper already rejects mutation and escaped marker
+            # bindings. Its decorator reference is a call, not an export; the
+            # import resolver here additionally rejects local provider names.
+            if (
+                values
+                and None not in values
+                and all(
+                    module_name in _TYPING_MODULES
+                    and member == marker
+                    and module_name not in facts.changed_modules
+                    for module_name, member in values
+                )
+            ):
+                return True
+        return False
+
+    for group in overload_groups(module, filename=filename):
+        if group.implementation is None:
+            continue
+        anchor = defaults(group.implementation)
+        if not anchor:
+            continue
+        for signature in group.signatures:
+            if not imported_marker(signature):
+                continue
+            for name, value in defaults(signature).items():
+                if name in anchor and value.value == anchor[name].value:
+                    result.add(id(value))
+    return result
+
+
 def _is_signal_field_collection(node, parent_map, calls):
     """Only the documented field-name collection of a resolved Signal API."""
     collection = parent_map.get(id(node))
@@ -1043,6 +1114,8 @@ def _is_cli_declaration_literal(node, parent_map):
         return False
     if keyword.arg == "action":
         return node.value in _CLI_STANDARD_ACTIONS
+    # A destination keyword alone is not proof of a Namespace declaration:
+    # custom same-named APIs can consume it as an ordinary application value.
     return keyword.arg in _CLI_DOCUMENTATION_KEYWORDS
 
 
@@ -1093,15 +1166,79 @@ def _is_reflection_field_literal(node, parent_map, calls, attribute_names):
     if node.value.startswith("_") and node.value not in _INTERPRETER_PROTOCOL_NAMES:
         return False
     call = parent_map.get(id(node))
+    if not isinstance(call, ast.Call):
+        return False
+    position = _reflection_field_position(call.func, calls)
     return (
-        isinstance(call, ast.Call)
-        and len(call.args) >= 2
-        and call.args[1] is node
-        and any(
-            calls.is_builtin_reference(call.func, name)
-            for name in ("getattr", "hasattr")
-        )
+        position is not None
+        and len(call.args) > position
+        and call.args[position] is node
     )
+
+
+def _reflection_field_position(expression, calls):
+    """Resolve immutable builtin attribute operations, including bound aliases.
+
+    A string passed to object.__setattr__.__get__(obj) names the same field
+    as obj.field. Unknown setters and reassigned aliases keep their literals.
+    """
+    if calls.dynamic_namespace or "builtins" in calls.changed_modules:
+        return None
+    if not hasattr(calls, "_reflection_aliases"):
+        aliases = defaultdict(list)
+        for (scope, name), values in calls.scopes.assigned.items():
+            aliases[(calls.scopes.resolve(name, scope), name)].extend(values)
+        calls._reflection_aliases = aliases
+        calls._reflection_cache = {}
+
+    def resolve(value, seen=()):
+        if value in calls._reflection_cache:
+            return calls._reflection_cache[value]
+        if len(seen) >= 8:
+            return None
+        for name in ("getattr", "hasattr", "setattr", "delattr"):
+            if calls.is_builtin_reference(value, name):
+                return (1, False)
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr in {"__getattribute__", "__setattr__", "__delattr__"}
+            and calls.is_builtin_reference(value.value, "object")
+        ):
+            return (1, True)
+        if isinstance(value, ast.Name):
+            scope = calls.scopes.resolve(value.id, calls.scopes.scope_of.get(value))
+            key = (scope, value.id)
+            values = calls._reflection_aliases.get(key, ())
+            if (
+                key in seen
+                or key in calls.scopes.receiver_unknown_bindings
+                or len(values) != 1
+            ):
+                return None
+            assigned = values[0]
+            statement = calls.scopes.parents.get(assigned)
+            if (
+                not isinstance(statement, (ast.Assign, ast.AnnAssign))
+                or calls.scopes.parents.get(statement) is not scope
+                or assigned.lineno >= value.lineno
+            ):
+                return None
+            return resolve(assigned, (*seen, key))
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "__get__"
+            and len(value.args) == 1
+            and not value.keywords
+            and not isinstance(value.args[0], ast.Starred)
+            and resolve(value.func.value, seen) == (1, True)
+        ):
+            return (0, False)
+        return None
+
+    result = resolve(expression)
+    calls._reflection_cache[expression] = result
+    return result[0] if result is not None else None
 
 
 def _is_mapping_membership_key(node, parent_map, mapping_receivers):
@@ -1324,6 +1461,7 @@ class DuplicateStringLiteralRule(SkylosRule):
             return typing_calls
 
         mapping_receivers = _mapping_receiver_evidence(node, parent_map, call_facts)
+        overload_defaults = _overload_default_literals(node, filename, call_facts)
         attribute_names = {
             child.attr for child in ast.walk(node) if isinstance(child, ast.Attribute)
         }
@@ -1333,10 +1471,40 @@ class DuplicateStringLiteralRule(SkylosRule):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
             and isinstance(parent_map.get(id(child)), ast.ClassDef)
         )
+        for definition in ast.walk(node):
+            if not isinstance(definition, ast.ClassDef):
+                continue
+            for statement in definition.body:
+                if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    continue
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else [statement.target]
+                )
+                if not any(
+                    isinstance(target, ast.Name) and target.id == "__slots__"
+                    for target in targets
+                ):
+                    continue
+                value = statement.value
+                members = (
+                    value.elts
+                    if isinstance(value, (ast.Tuple, ast.List, ast.Set))
+                    else [value]
+                )
+                attribute_names.update(
+                    member.value
+                    for member in members
+                    if isinstance(member, ast.Constant)
+                    and isinstance(member.value, str)
+                )
 
         string_occurrences = {}
         for child in ast.walk(node):
             if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                if id(child) in overload_defaults:
+                    continue
                 if len(child.value) < 5:
                     continue
                 if self._is_docstring(child, parent_map):

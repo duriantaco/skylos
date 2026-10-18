@@ -1168,7 +1168,9 @@ implementation as one callable; `.pyi` overload groups need no implementation.
 Raw `code_lines` remains an inventory measurement. Q502 uses
 `implementation_code_lines` for its size threshold, excluding literal catalog
 spans and proven declaration-only classes; unknown declaration mechanisms and
-behavioral code remain measured. C303 reports one warning per such group,
+behavioral code remain measured. Literal catalogs receive the same exclusion
+at module and class scope; computed catalogs and method bodies remain measured.
+C303 reports one warning per such group,
 preserving the strongest violation and each signature's parameter layout in
 `overload_signatures`. Custom decorators and incomplete runtime groups retain
 their separate measurements.
@@ -1252,10 +1254,16 @@ operator selectors, gettext message-ID positions and SQLAlchemy schema-name
 positions. Module/class declaration collections, uniform class-field catalogs
 and formatting-only skeletons are excluded; outside these contexts, runtime
 defaults and message text remain eligible. Mapping lookups and membership keys
-require source evidence; an arbitrary `get` method is not enough. Read-only reflection
-requires a proven builtin plus static attribute/method evidence, and preserves
-ordinary private state names. Import evidence rejects shadowing, rebinding and
+require source evidence; an arbitrary `get` method is not enough. Builtin field
+access and mutation require a proven builtin plus static attribute, method or
+slot evidence, and preserve ordinary private state names. Immutable
+`object.__setattr__`/`__getattribute__`/`__delattr__` operations and their proven
+bound aliases use the same field-selector rule. Unknown, conditional or rebound
+setters remain eligible. Import evidence rejects shadowing, rebinding and
 recognized module mutations.
+Identical literal defaults for the same named parameter on import-proven overload
+signatures and their concrete implementation count once for that callable.
+Distinct defaults, incomplete overload groups and uncertain decorators remain eligible.
 These detector exclusions reduce raw occurrence counts and can remove findings
 from JSON and gate inputs; the configured repetition threshold is unchanged.
 Bounded occurrence context records function-body counts, non-function
@@ -1311,12 +1319,23 @@ cleanup can be excluded when its callable and path evidence support that
 purpose; a handler that swallows `BaseException`, `KeyboardInterrupt`,
 `SystemExit` or `GeneratorExit` does not receive that cleanup exemption.
 
+Q301 counts refutable `match` patterns and their guards. A wildcard or capture
+pattern does not add a decision; its guard still does. A match without a default
+retains the path where no case matches. Nested callable bodies stay independent.
+
 Q306 scores only the measured function's body; a nested function's decorators,
 defaults and annotations count at the enclosing level and its body one level
 deeper (except the decorator-wrapper shape, which a leading docstring does not
 break). Lambda bodies are one level deeper, and `match` subjects and guards are
 scored. Q302 traverses `match` cases and treats a `with` around a top-level
 `try` like the `try` alone.
+
+Q306 records additive `cognitive_scope` evidence: its source end line, own-scope
+score, nested contributions and nearest containing function. The numeric score,
+threshold and original findings stay unchanged. Human reports can use this
+evidence to present overlapping enclosing/nested metric entries together while
+retaining every child location and measurement. No ownership proof means no
+cross-function grouping.
 
 Q804 does not report a package `__init__` importing its own submodules (a
 package composing its public surface) or test modules. U005 reads dependency

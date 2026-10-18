@@ -49,10 +49,11 @@ class ComplexityDisplay:
     """
 
     findings: tuple[dict, ...]
+    primary_line: int | None = None
 
     @property
     def rule_ids(self) -> tuple[str, ...]:
-        return tuple(_rule_id(finding) for finding in self.findings)
+        return tuple(dict.fromkeys(_rule_id(finding) for finding in self.findings))
 
     @property
     def rule_label(self) -> str:
@@ -60,11 +61,22 @@ class ComplexityDisplay:
 
     @property
     def name(self) -> str:
+        if self.primary_line is not None:
+            return "Function maintainability including nested scopes"
         return _family_name(self.rule_ids)
 
     @property
     def metric_lines(self) -> tuple[str, ...]:
-        return tuple(_metric_line(finding) for finding in self.findings)
+        return tuple(
+            (
+                f"Nested {finding.get('simple_name') or finding.get('name')} "
+                f"at line {finding['line']}: {_metric_line(finding)}"
+                if self.primary_line is not None
+                and finding.get("line") != self.primary_line
+                else _metric_line(finding)
+            )
+            for finding in self.findings
+        )
 
     @property
     def message(self) -> str:
@@ -246,6 +258,172 @@ def combine_complexity_advice(
         replacements[min(indices)] = ("quality", view)
         consumed.update(indices)
 
+    grouped = [
+        replacements[index] if index in replacements else row
+        for index, row in enumerate(rows)
+        if index in replacements or index not in consumed
+    ]
+    return _combine_included_cognitive_scopes(grouped)
+
+
+def _cognitive_scope(finding):
+    """Validate the analyzer's additive, source-owned score decomposition."""
+    scope = finding.get("cognitive_scope")
+    line = finding.get("line")
+    value = finding.get("value")
+    if (
+        not isinstance(scope, Mapping)
+        or type(scope.get("version")) is not int
+        or scope["version"] != 1
+        or type(line) is not int
+        or line < 1
+        or type(value) is not int
+        or value < 1
+        or type(scope.get("end_line")) is not int
+        or scope["end_line"] < line
+        or type(scope.get("own_score")) is not int
+        or scope["own_score"] < 0
+        or not isinstance(scope.get("nested_contributions"), list)
+    ):
+        return None
+    owners = {}
+    for owner in scope["nested_contributions"]:
+        if (
+            not isinstance(owner, Mapping)
+            or any(type(owner.get(key)) is not int for key in ("line", "end_line", "score"))
+            or not line <= owner["line"] <= owner["end_line"] <= scope["end_line"]
+            or owner["score"] < 0
+            or not isinstance(owner.get("name"), str)
+            or not owner["name"]
+            or not isinstance(owner.get("kind"), str)
+            or owner.get("kind") not in {"FunctionDef", "AsyncFunctionDef", "ClassDef", "Lambda"}
+        ):
+            return None
+        key = (owner["line"], owner["end_line"], owner["name"], owner["kind"])
+        if key in owners:
+            return None
+        owners[key] = owner["score"]
+    if scope["own_score"] + sum(owners.values()) != value:
+        return None
+    return scope, owners
+
+
+def _includes_cognitive_scope(parent, child):
+    parent_proof = _cognitive_scope(parent)
+    child_proof = _cognitive_scope(child)
+    if parent_proof is None or child_proof is None:
+        return False
+    parent_scope, parent_owners = parent_proof
+    child_scope, child_owners = child_proof
+    containing = child_scope.get("containing_function")
+    parent_name = parent.get("simple_name") or str(parent.get("name", "")).rsplit(".", 1)[-1]
+    child_name = child.get("simple_name") or str(child.get("name", "")).rsplit(".", 1)[-1]
+    if (
+        not isinstance(containing, Mapping)
+        or (
+            parent.get("language") is not None
+            and child.get("language") is not None
+            and parent["language"] != child["language"]
+        )
+        or containing.get("name") != parent_name
+        or type(containing.get("line")) is not int
+        or containing["line"] != parent["line"]
+        or not parent["line"] < child["line"] <= child_scope["end_line"] <= parent_scope["end_line"]
+    ):
+        return False
+    # Parent and child scores use different nesting contexts. Check each
+    # source owner, rather than assuming that two similar totals overlap.
+    for key, score in child_owners.items():
+        if parent_owners.get(key, -1) < score:
+            return False
+    if child_scope["own_score"]:
+        matches = [
+            score for (line, end, name, kind), score in parent_owners.items()
+            if (line, end, name) == (child["line"], child_scope["end_line"], child_name)
+            and kind in {"FunctionDef", "AsyncFunctionDef"}
+        ]
+        if len(matches) != 1 or matches[0] < child_scope["own_score"]:
+            return False
+    return True
+
+
+def _combine_included_cognitive_scopes(rows):
+    """Present nested checks together only when their scores really overlap.
+
+    Cognitive complexity includes nested bodies. Separate findings on those
+    same bodies are related evidence, not independent corroboration. Keep all
+    child measurements and locations under the enclosing entry. An absent,
+    suppressed, conflicting or unproven parent leaves the child independent.
+    """
+    originals = []
+    candidates = {}
+    uncertain = set()
+    for index, (category, finding) in enumerate(rows):
+        display = complexity_display(finding)
+        members = display.findings if display else (finding,)
+        originals.append(members)
+        if category != "quality":
+            continue
+        for member in members:
+            if _rule_id(member) != "SKY-Q306":
+                continue
+            if _advice_identity(category, member) is None:
+                line = member.get("line")
+                if get_finding_type(member, category) == "advice" and type(line) is int and line > 0:
+                    for field in ("file", "file_path"):
+                        file = member.get(field)
+                        if isinstance(file, str) and file:
+                            uncertain.add((file, line))
+                continue
+            key = (member.get("file") or member.get("file_path"), member["line"])
+            candidates.setdefault(key, []).append((index, member))
+    unique = {
+        key: values[0] for key, values in candidates.items()
+        if len(values) == 1 and key not in uncertain
+    }
+    parents = {}
+    for (file, _line), (index, child) in unique.items():
+        scope = child.get("cognitive_scope")
+        containing = scope.get("containing_function") if isinstance(scope, Mapping) else None
+        if not isinstance(containing, Mapping) or type(containing.get("line")) is not int:
+            continue
+        parent = unique.get((file, containing["line"]))
+        if parent is None or parent[0] == index or not _includes_cognitive_scope(parent[1], child):
+            continue
+        # A previously grouped component can carry several cognitive records;
+        # contradictory ownership for one entry must not combine components.
+        if index in parents and parents[index] != parent[0]:
+            parents[index] = None
+        else:
+            parents[index] = parent[0]
+    parents = {child: parent for child, parent in parents.items() if parent is not None}
+    components = {}
+    for index in range(len(rows)):
+        root = index
+        seen = set()
+        while root in parents and root not in seen:
+            seen.add(root)
+            root = parents[root]
+        if root in seen:  # Defensive: valid lexical source spans cannot cycle.
+            return rows
+        components.setdefault(root, []).append(index)
+    if all(len(indices) == 1 for indices in components.values()):
+        return rows
+    replacements = {}
+    consumed = set()
+    for root, indices in components.items():
+        if len(indices) == 1:
+            continue
+        members = tuple(
+            member for index in (root, *(i for i in indices if i != root))
+            for member in originals[index]
+        )
+        view = dict(rows[root][1])
+        display = ComplexityDisplay(members, primary_line=view["line"])
+        view["_complexity_display"] = display
+        view["message"] = display.message
+        replacements[root] = ("quality", view)
+        consumed.update(indices)
     return [
         replacements[index] if index in replacements else row
         for index, row in enumerate(rows)

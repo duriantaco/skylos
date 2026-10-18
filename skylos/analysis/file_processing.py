@@ -90,7 +90,7 @@ CPP_ANALYSIS_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 
 LINTER_RULE_NODE_TYPES = {
     ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    CognitiveComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    CognitiveComplexityRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     NestingRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     AsyncBlockingRule: (
         ast.Import,

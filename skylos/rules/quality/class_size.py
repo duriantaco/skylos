@@ -289,7 +289,11 @@ def _implementation_lines(module, source, declaration_calls=frozenset()):
             # Retain the closing line too: another statement may follow a
             # literal on that line after a semicolon.
             removed.update(range(item.lineno + 1, item.end_lineno))
-        elif not isinstance(item, (*_FUNCTIONS, ast.ClassDef)):
+        elif not isinstance(item, _FUNCTIONS):
+            # A class may contain both real methods and literal catalogs.
+            # Its namespace does not turn the same literal assignment into
+            # implementation work. Keep method bodies intact while applying
+            # the existing data-only proof to statements in the class body.
             pending.extend(
                 child
                 for child in ast.iter_child_nodes(item)

@@ -45,6 +45,129 @@ def test_parser_wrappers_with_explicit_destinations_share_the_contract():
     assert findings(source) == []
 
 
+def test_repeated_destinations_stay_until_parser_contract_is_proved():
+    source = "\n".join(
+        f"parser.add_argument('--{flag}', dest='request_type')"
+        for flag in ("json", "form", "multipart")
+    )
+    assert findings(source)[0]["value"] == 3
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "consume('--flag', dest='Repeated application value')",
+        "parser.add_argument('--flag', default='Repeated application value')",
+    ],
+)
+def test_cli_destination_proof_does_not_exclude_other_roles(expression):
+    assert findings("\n".join([expression] * 3))[0]["value"] == 3
+
+
+def test_cli_destinations_do_not_hide_ordinary_repeated_values_in_other_functions():
+    source = (
+        "\n".join(
+            f"parser.add_argument('--{flag}', dest='request_type')"
+            for flag in ("json", "form", "multipart")
+        )
+        + "\n"
+        + "\n".join(
+            f"def runtime_{index}(): return consume('request_type')"
+            for index in range(3)
+        )
+    )
+    (finding,) = findings(source)
+    assert finding["value"] == 6
+
+
+@pytest.mark.parametrize("method", ["add_argument", "addoption", "option"])
+@pytest.mark.parametrize("form", ["local_function", "local_method", "unknown_method"])
+def test_destination_values_on_same_named_custom_apis_remain(method, form):
+    if form == "local_function":
+        prefix = f"def {method}(value, *, dest): return value + dest\n"
+        receiver = method
+    elif form == "local_method":
+        prefix = f"class Collector:\n    def {method}(self, value, *, dest): return value + dest\napi = Collector()\n"
+        receiver = f"api.{method}"
+    else:
+        prefix = ""
+        receiver = f"unknown_api.{method}"
+    source = prefix + "\n".join(
+        f"def call_{index}(): return {receiver}('--flag{index}', dest='application_value')"
+        for index in range(3)
+    )
+    (finding,) = findings(source)
+    assert finding["name"] == "application_value"
+    assert finding["value"] == 3
+
+
+@pytest.mark.parametrize(
+    "prefix, marker",
+    [
+        ("from typing import overload", "overload"),
+        ("import typing as hints", "hints.overload"),
+        ("from typing_extensions import overload as overloaded", "overloaded"),
+    ],
+)
+def test_overload_defaults_matching_one_concrete_callable_are_counted_once(
+    prefix, marker
+):
+    source = (
+        prefix
+        + f"\n@{marker}\ndef render(value: int, theme='shared template'): ...\n@{marker}\ndef render(value: str, theme='shared template'): ...\ndef render(value, theme='shared template'):\n    return theme\n"
+    )
+    assert findings(source) == []
+
+
+def test_overload_collapse_retains_actual_runtime_repetition_across_callables():
+    source = "from typing import overload\n@overload\ndef first(value:int, theme='shared template'): ...\n@overload\ndef first(value:str, theme='shared template'): ...\ndef first(value, theme='shared template'):\n    return theme\ndef second(theme='shared template'):\n    return theme\ndef third(theme='shared template'):\n    return theme\n"
+    (finding,) = findings(source)
+    assert finding["value"] == 3
+
+
+@pytest.mark.parametrize(
+    "prefix, marker, implementation",
+    [
+        (
+            "def overload(fn): return fn",
+            "overload",
+            "def render(value, theme='shared template'):\n    return theme\n",
+        ),
+        (
+            "from typing import overload\noverload=custom",
+            "overload",
+            "def render(value, theme='shared template'):\n    return theme\n",
+        ),
+        ("from typing import overload", "overload", ""),
+    ],
+)
+def test_unknown_or_incomplete_overload_contracts_remain_eligible(
+    prefix, marker, implementation
+):
+    source = (
+        prefix
+        + f"\n@{marker}\ndef render(value:int, theme='shared template'): ...\n@{marker}\ndef render(value:str, theme='shared template'): ...\n@{marker}\ndef render(value:bytes, theme='shared template'): ...\n"
+        + implementation
+    )
+    assert findings(source)[0]["value"] >= 3
+
+
+def test_overload_defaults_for_other_parameters_are_not_removed():
+    source = "from typing import overload\n@overload\ndef render(value:int, first='shared template', second='shared template'): ...\n@overload\ndef render(value:str, first='shared template', second='shared template'): ...\ndef render(value, **kwargs):\n    return value\n"
+    assert findings(source)[0]["value"] == 4
+
+
+def test_project_local_typing_provider_cannot_authorize_default_collapse(tmp_path):
+    (tmp_path / "typing.py").write_text("def overload(fn): return fn\n")
+    source = "from typing import overload\n@overload\ndef render(value:int, theme='shared template'): ...\n@overload\ndef render(value:str, theme='shared template'): ...\ndef render(value, theme='shared template'):\n    return theme\n"
+    filename = tmp_path / "app.py"
+    filename.write_text(source)
+    (finding,) = DuplicateStringLiteralRule().visit_node(
+        ast.parse(source), {"filename": str(filename), "project_root": str(tmp_path)}
+    )
+    assert finding["value"] == 3
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -893,6 +1016,106 @@ def test_reflection_without_a_static_contract_remains_visible():
     """)[0]["value"]
         == 3
     )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "setattr",
+        "delattr",
+        "object.__setattr__",
+        "object.__getattribute__",
+        "object.__delattr__",
+    ],
+)
+def test_builtin_field_operations_use_declared_public_slots(operation):
+    arguments = (
+        ", True" if operation.endswith("setattr__") or operation == "setattr" else ""
+    )
+    assert (
+        findings(
+            "class Record:\n    __slots__ = ('external_field',)\n"
+            + "def update(value):\n"
+            + f"    {operation}(value, 'external_field'{arguments})\n" * 3
+        )
+        == []
+    )
+
+
+def test_bound_object_setattr_alias_is_a_public_field_selector():
+    assert (
+        findings("""
+        _SET = object.__setattr__
+        class Record:
+            __slots__ = ('external_field',)
+            def update(self):
+                setter = _SET.__get__(self)
+                setter('external_field', True)
+                _SET.__get__(self)('external_field', True)
+                object.__setattr__.__get__(self)('external_field', False)
+    """)
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "object = arbitrary_object\n_SET = object.__setattr__",
+        "_SET = object.__setattr__\n_SET = arbitrary_setter",
+        "_SET = object.__setattr__\ndef rebind():\n    global _SET\n    _SET = arbitrary_setter",
+        "from arbitrary_api import _SET",
+        "if condition:\n    _SET = object.__setattr__",
+    ],
+)
+def test_unknown_rebound_or_conditional_bound_setters_keep_values(prefix):
+    result = findings(
+        prefix
+        + "\nclass Record:\n    __slots__ = ('external_field',)\n"
+        + "    def update(self):\n        setter = _SET.__get__(self)\n"
+        + "        setter('external_field', True)\n" * 3
+    )
+    assert result[0]["value"] >= 3
+
+
+@pytest.mark.parametrize("field", ["__thing", "__pending__", "_private_field"])
+def test_owned_private_bound_setter_names_still_report(field):
+    result = findings(
+        "_SET = object.__setattr__\n"
+        + f"class Record:\n    __slots__ = ({field!r},)\n"
+        + "    def update(self):\n        setter = _SET.__get__(self)\n"
+        + f"        setter({field!r}, True)\n" * 3
+    )
+    assert result[0]["value"] >= 3
+
+
+def test_declared_field_does_not_suppress_independent_application_values():
+    result = findings("""
+        class Record:
+            __slots__ = ('external_field',)
+        def a(value):
+            setattr(value, 'external_field', True)
+            return consume('external_field')
+        def b(): return consume('external_field')
+        def c(): return consume('external_field')
+    """)
+    assert result[0]["value"] >= 3
+
+
+@pytest.mark.parametrize("parameter", ["setattr", "object", "_SET"])
+def test_field_operation_parameters_shadow_builtin_or_module_alias_proof(parameter):
+    operation = {
+        "setattr": "setattr(value, 'external_field', True)",
+        "object": "object.__setattr__(value, 'external_field', True)",
+        "_SET": "_SET.__get__(value)('external_field', True)",
+    }[parameter]
+    result = findings(
+        "_SET = object.__setattr__\n"
+        + "class Record:\n    __slots__ = ('external_field',)\n"
+        + f"def update(value, {parameter}):\n"
+        + f"    {operation}\n" * 3
+    )
+    assert result[0]["value"] >= 3
 
 
 @pytest.mark.parametrize(

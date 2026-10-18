@@ -525,7 +525,13 @@ function identity is unambiguous. Every triggered rule keeps its own score,
 threshold, message and evidence. Duplicate rule variants or conflicting
 identities remain separate. The two architecture metrics (`SKY-Q802`/`SKY-Q803`)
 likewise share one module entry in the all-advice view. The headline distinguishes
-displayed entries from underlying checks. Human reports label advice severity as
+displayed entries from underlying checks. Cognitive complexity includes nested
+function bodies. When source ownership proves that a visible enclosing function
+already includes a nested function's cognitive score, their metric entries share
+one enclosing entry. Every nested function keeps its name, line, measurements and
+original records. A missing, suppressed or ambiguous enclosing finding leaves the
+nested entry separate. Older saved reports without ownership evidence retain
+their existing entries. Human reports label advice severity as
 **Advice priority** and cap HIGH/CRITICAL advice at MEDIUM. Lower priorities are
 unchanged. The original severities remain in JSON, expanded record evidence,
 assessments and gate inputs. Defect, Review, security, secret and custom findings

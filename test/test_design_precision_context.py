@@ -78,6 +78,37 @@ def test_literal_closing_line_retains_executable_statement():
     assert _size(source)
 
 
+def test_behavioral_class_literal_catalog_has_same_weight_as_module_catalog():
+    catalog = "VALUES = {\n" + "".join(f"    {index}: 'label {index}',\n" for index in range(40)) + "}\n"
+    method = "def lookup(self, key):\n    return self.VALUES[key]\n"
+    source = "class Symbols:\n" + textwrap.indent(catalog + method, "    ")
+    assert _size(source) == []
+    assert _size(catalog + "class Symbols:\n" + textwrap.indent(method, "    ")) == []
+
+
+def test_class_catalog_does_not_remove_method_implementation_lines():
+    catalog = "VALUES = [\n" + "    1,\n" * 40 + "]\n"
+    method = "def transform(self, value):\n" + "    value += 1\n" * 11 + "    return value\n"
+    source = "class Symbols:\n" + textwrap.indent(catalog + method, "    ")
+    (finding,) = _size(source)
+    assert finding["implementation_code_lines"] > 10
+    assert finding["code_lines"] - finding["implementation_code_lines"] == 40
+
+
+def test_class_computed_catalog_retains_implementation_weight():
+    catalog = "VALUES = {\n" + "".join(f"    {index}: build({index}),\n" for index in range(40)) + "}\n"
+    source = "class Symbols:\n" + textwrap.indent(catalog + "def lookup(self, key):\n    return self.VALUES[key]\n", "    ")
+    (finding,) = _size(source)
+    assert finding["code_lines"] == finding["implementation_code_lines"]
+
+
+def test_nested_class_literal_closing_line_retains_runtime_statement():
+    source = "class Outer:\n    class Symbols:\n        VALUES = [\n" + "            1,\n" * 40 + "        ]; register()\n"
+    source += "        def lookup(self, key):\n            return self.VALUES[key]\n"
+    source += "\n".join(f"execute_{index}()" for index in range(8))
+    assert _size(source)
+
+
 def test_declaration_catalog_is_not_a_god_file():
     source = "".join(
         f"class Event{index}:\n    code: int\n    label: str\n" for index in range(20)
