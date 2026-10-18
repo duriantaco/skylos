@@ -187,7 +187,12 @@ def _quality_findings(
             options.credential_source_locations
         )
     findings = scan_python_quality(
-        prepared.tree, prepared.source, file, cfg, **credential_kwargs
+        prepared.tree,
+        prepared.source,
+        file,
+        cfg,
+        project_root=options.project_root,
+        **credential_kwargs,
     )
     if Path(file).suffix == ".pyi":
         findings = [
@@ -366,13 +371,7 @@ def _clone_fragments(
     ):
         return []
     try:
-        clone_tree = None if prepared.masked else prepared.tree
-        return extract_fragments(
-            Path(file),
-            prepared.source,
-            options.clone_cfg,
-            tree=clone_tree,
-        )
+        return extract_fragments(Path(file), prepared.source, options.clone_cfg)
     except Exception:
         logger.debug("Clone fragment extraction failed for %s", file, exc_info=True)
         return []

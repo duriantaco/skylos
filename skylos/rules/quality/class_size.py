@@ -1,6 +1,8 @@
 import ast
 from pathlib import Path
+
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._test_code import is_collected_test_class, is_python_test_file
 
 
 def _count_code_lines(lines: list[str]) -> int:
@@ -34,6 +36,42 @@ def _count_ast_lines(node: ast.AST) -> int:
         if isinstance(line, int) and line > max_line:
             max_line = line
     return max_line
+
+
+def _base_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def _is_test_class(node: ast.ClassDef) -> bool:
+    return is_collected_test_class(
+        node.name,
+        [_base_name(base) for base in node.bases],
+        method_names=[
+            item.name
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ],
+        opted_out=_opts_out_of_collection(node),
+    )
+
+
+def _opts_out_of_collection(node: ast.ClassDef) -> bool:
+    """``__test__ = False`` in the class body."""
+    for item in node.body:
+        targets = item.targets if isinstance(item, ast.Assign) else [getattr(item, "target", None)]
+        value = getattr(item, "value", None)
+        if (
+            isinstance(item, (ast.Assign, ast.AnnAssign))
+            and any(isinstance(t, ast.Name) and t.id == "__test__" for t in targets)
+            and isinstance(value, ast.Constant)
+            and value.value is False
+        ):
+            return True
+    return False
 
 
 class GodFileRule(SkylosRule):
@@ -151,6 +189,15 @@ class GodClassRule(SkylosRule):
 
     def visit_node(self, node, context):
         if not isinstance(node, ast.ClassDef):
+            return None
+
+        # A test class groups many cases (and their fixtures) by design;
+        # its size is not a design defect.
+        if _is_test_class(node) and is_python_test_file(
+            context.get("filename", ""),
+            context.get("project_root"),
+            context.get("source"),
+        ):
             return None
 
         method_count = 0

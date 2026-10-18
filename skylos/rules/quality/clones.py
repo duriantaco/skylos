@@ -16,6 +16,8 @@ except ImportError:
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from skylos.rules.quality._test_code import is_python_test_file, is_test_package_name
+
 
 class CloneType(str, Enum):
     TYPE1 = "type1"
@@ -204,18 +206,18 @@ _BOILERPLATE_METHODS = {
 }
 
 
-def extract_fragments(
-    py_path: Path, source: str, cfg: CloneConfig, *, tree: ast.AST | None = None
-) -> List[Fragment]:
+def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Fragment]:
     basename = py_path.name
     if any(basename.startswith(p) for p in _SKIP_PREFIXES):
         return []
 
-    if tree is None:
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            return []
+    # Always a private tree: _Type2Normalizer rewrites identifiers in place,
+    # and a tree shared with the analyzer keeps nodes later passes read (the
+    # class bases behind framework-override evidence).
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
 
     fragments: List[Fragment] = []
     class_stack: List[str] = []
@@ -549,3 +551,71 @@ def _group_kcore(frag_list, adj, cfg: CloneConfig, k: int):
                 sub_adj.setdefault(i, {})[j] = p
 
     return _group_connected(frag_list, sub_adj, cfg)
+
+
+def without_test_only_groups(
+    groups: List[CloneGroup],
+    project_root: Path | str | None = None,
+    *,
+    imported_modules: Set[str] = frozenset(),
+    module_names: Optional[Dict[str, str]] = None,
+) -> List[CloneGroup]:
+    """Drop clone groups whose members are all test code.
+
+    Near-identical test bodies are normal (one case per input), so such a
+    group is not a duplication defect. A group that reaches production code
+    is kept, and so is one whose test module non-test code imports
+    (``imported_modules``, with ``module_names`` mapping files to modules):
+    production then depends on the duplicated code. ``test_*.py`` files never
+    yield fragments (``_SKIP_PREFIXES``); this also covers ``*_test.py`` files
+    that hold tests and files under the project's test directories.
+    """
+    module_names = module_names or {}
+
+    def imported(fragment) -> bool:
+        # The module itself, or a test package above it (its ``__init__`` can
+        # re-export it); importing ``pkg`` does not reach ``pkg.tests.x``.
+        module = module_names.get(_resolved(fragment.file_path))
+        return bool(module) and any(
+            module == name or (module.startswith(name + ".") and is_test_package_name(name))
+            for name in imported_modules
+        )
+
+    return [
+        group
+        for group in groups
+        if not all(
+            is_python_test_file(fragment.file_path, project_root)
+            and not imported(fragment)
+            for fragment in group.fragments
+        )
+    ]
+
+
+def python_imports_outside_tests(
+    raw_imports: Dict[Path, list], project_root: Path | str | None = None
+) -> Set[str]:
+    """Modules that non-test files import, as dotted names (``module`` and
+    ``module.name`` for ``from`` imports).
+
+    ``raw_imports`` maps a file to its module-level imports as
+    ``(module, line, kind, names)``.
+    """
+    names: Set[str] = set()
+    for file, imports in raw_imports.items():
+        if is_python_test_file(file, project_root):
+            continue
+        for module, _line, kind, imported_names in imports:
+            if not module:
+                continue
+            names.add(module)
+            if kind == "from_import":
+                names.update(f"{module}.{name}" for name in imported_names)
+    return names
+
+
+def _resolved(path) -> str:
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)

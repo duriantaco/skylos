@@ -89,6 +89,8 @@ from skylos.rules.quality.clones import (
     CloneType,
     detect_pairs,
     group_pairs,
+    python_imports_outside_tests,
+    without_test_only_groups,
 )
 from skylos.analysis.penalties import apply_penalties
 from skylos.analysis.file_worker import process_file
@@ -4610,7 +4612,14 @@ class Skylos:
             frags = all_clone_fragments
 
             pairs = detect_pairs(frags, clone_cfg)
-            groups = group_pairs(pairs, clone_cfg)
+            groups = without_test_only_groups(
+                group_pairs(pairs, clone_cfg),
+                root,
+                imported_modules=python_imports_outside_tests(all_raw_imports, root),
+                module_names={
+                    str(Path(file).resolve()): module for file, module in modmap.items()
+                },
+            )
 
             for g in groups:
                 if len(g.fragments) < 2:
