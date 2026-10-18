@@ -8,12 +8,23 @@ the code is safe, unused, or exempt from a configured quality gate.
 from __future__ import annotations
 
 import ast
+import base64
 import builtins
+import csv
+import hashlib
+import io
 import re
+import shlex
 import stat
 from collections.abc import Mapping
+from email.parser import Parser
+from email.errors import MessageError
+from fnmatch import fnmatchcase
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
+
+from packaging.requirements import InvalidRequirement, Requirement
 
 try:
     import tomllib
@@ -32,6 +43,11 @@ _SAMPLE_DIRS = frozenset({"example", "examples", "docs_src", "doc_src"})
 _BENCHMARK_DIRS = frozenset({"bench", "benchmark", "benchmarks"})
 _READMES = ("README", "README.md", "README.rst", "README.txt")
 _LICENSES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.txt")
+_LICENSES = (
+    *_LICENSES, "LICENCE", "LICENCE.md", "LICENCE.txt", "LICENSE.BSD",
+    "LICENSE.APACHE", "LICENSE-MIT", "LICENSE-APACHE",
+)
+_VENDOR_DIRS = frozenset({"vendor", "_vendor", "vendored", "_vendored", "third_party"})
 _CONTEXT_MARKERS = (
     "pyproject.toml",
     "setup.py",
@@ -65,6 +81,11 @@ _WHOLE_TREE_PROVENANCE = re.compile(
 )
 _UPSTREAM = re.compile(
     r"https?://\S+|\b(?:cpython|python\s+\d)|\bcommit\s+(?:hash\s*:)?\s*[0-9a-f]{7,40}\b",
+    re.IGNORECASE,
+)
+_FIRST_PARTY = re.compile(
+    r"\bfirst.party\b|\bre.?writ(?:ten|ing|e)\b|\bre.?implement(?:ed|ation)\b"
+    r"|\bmaintained\s+(?:here|locally|in.house)\b|\bindependently\s+maintained\b",
     re.IGNORECASE,
 )
 
@@ -182,6 +203,108 @@ def _tree(root, path, info):
     )
 
 
+@lru_cache(maxsize=128)
+def _toml(source):
+    try:
+        return tomllib.loads(source)
+    except (ValueError, RecursionError):
+        return None
+
+
+def _project_document(root):
+    source = _text(root, root / "pyproject.toml")
+    return _toml(source) if source is not None else None
+
+
+def _package_path(value):
+    if not isinstance(value, str) or Path(value).is_absolute():
+        return None
+    return _literal_directory(value)
+
+
+def _declared_package_paths(document):
+    """Literal package declarations; uncertain/dynamic declarations add no proof."""
+    if not isinstance(document, dict):
+        return ()
+    tool = document.get("tool", {})
+    if not isinstance(tool, dict):
+        return ()
+    paths = []
+    setuptools = tool.get("setuptools", {})
+    if isinstance(setuptools, dict):
+        packages = setuptools.get("packages")
+        package_dirs = setuptools.get("package-dir", {})
+        if isinstance(packages, list) and isinstance(package_dirs, dict):
+            base = package_dirs.get("", ".")
+            for package in packages:
+                if isinstance(package, str) and all(part.isidentifier() for part in package.split(".")):
+                    value = package_dirs.get(package, str(Path(base) / package.replace(".", "/"))) if isinstance(base, str) else None
+                    path = _package_path(value)
+                    if path is not None:
+                        paths.append(path)
+    poetry = tool.get("poetry", {})
+    if isinstance(poetry, dict) and isinstance(poetry.get("packages"), list):
+        for package in poetry["packages"]:
+            if isinstance(package, dict):
+                include, base = package.get("include"), package.get("from", ".")
+                if isinstance(include, str) and isinstance(base, str):
+                    path = _package_path(str(Path(base) / include))
+                    if path is not None:
+                        paths.append(path)
+    hatch = tool.get("hatch", {})
+    try:
+        packages = hatch["build"]["targets"]["wheel"].get("packages", [])
+    except (KeyError, TypeError, AttributeError):
+        packages = []
+    if isinstance(packages, list):
+        paths.extend(path for item in packages if (path := _package_path(item)) is not None)
+    return tuple(paths)
+
+
+def _shipped_package(root, relative):
+    document = _project_document(root)
+    if any(relative.is_relative_to(path) for path in _declared_package_paths(document)):
+        return True
+    parts = relative.parts
+    # A regular package within src, including a child of a namespace package,
+    # is library layout. Its bench/examples module names are not sample proof.
+    if len(parts) > 2 and parts[0] == "src" and parts[1].isidentifier():
+        if any(
+            _guarded_file(root.joinpath(*parts[:index], "__init__.py"), root)
+            for index in range(2, len(parts))
+        ):
+            return True
+    if isinstance(document, dict):
+        try:
+            selection = document["tool"]["setuptools"]["packages"]["find"]
+            where = selection.get("where", ["."])
+            includes = selection.get("include", ["*"])
+            excludes = selection.get("exclude", [])
+            if all(
+                isinstance(values, list) and all(isinstance(value, str) for value in values)
+                for values in (where, includes, excludes)
+            ):
+                for value in where:
+                    base = Path(".") if value == "." else _package_path(value)
+                    if base is None or not relative.is_relative_to(base):
+                        continue
+                    package = ".".join(relative.relative_to(base).parts[:-1])
+                    if package and any(fnmatchcase(package, pattern) for pattern in includes) and not any(
+                        fnmatchcase(package, pattern) for pattern in excludes
+                    ):
+                        return True
+        except (KeyError, TypeError, AttributeError):
+            pass
+        project = document.get("project", {})
+        name = project.get("name") if isinstance(project, dict) else None
+        if isinstance(name, str) and len(parts) > 1:
+            normalized = re.sub(r"[-_.]+", "_", name).lower()
+            return parts[0].lower() == normalized and bool(
+                _guarded_file(root / parts[0] / "__init__.py", root)
+            )
+    return False
+
+
 def _sample_path(parts):
     """Conventional checkout and package sample folders, not arbitrary ancestors."""
     dirs = [part.lower() for part in parts[:-1]]
@@ -206,6 +329,10 @@ def _declared_vendor(root, path):
             source = _text(root, directory / name)
             if source is None:
                 continue
+            # A later local rewrite/ownership declaration is evidence too;
+            # paragraph placement must not restore the copied-code label.
+            if _FIRST_PARTY.search(source):
+                return False
             if re.search(r"\bnot\s+(?:vendored|copied|taken|derived)\b", source, re.I):
                 continue
             paragraph = re.split(r"\n\s*\n", source.strip(), maxsplit=1)[0]
@@ -231,6 +358,197 @@ def _declared_vendor(root, path):
                     r"\b(?:copyright|permission|licen[cs]e)\b", license_text, re.I
                 ):
                     return True
+    return _configured_vendor(root, path) or _recorded_vendor(root, path)
+
+
+def _license_present(root, directory):
+    return any(
+        source and re.search(r"\b(?:copyright|permission|licen[cs]e)\b", source, re.I)
+        for name in _LICENSES
+        if (source := _text(root, directory / name)) is not None
+    )
+
+
+@lru_cache(maxsize=128)
+def _pinned_inventory(source):
+    result = []
+    try:
+        for line in source.splitlines():
+            value = line.split("#", 1)[0].strip()
+            if not value:
+                continue
+            requirement = Requirement(value)
+            pins = list(requirement.specifier)
+            if requirement.url or len(pins) != 1 or pins[0].operator != "==" or "*" in pins[0].version:
+                return ()
+            result.append(re.sub(r"[-_.]+", "_", requirement.name).lower())
+            if len(result) > 256:
+                return ()
+    except (InvalidRequirement, ValueError):
+        return ()
+    return tuple(result)
+
+
+def _configured_vendor(root, path):
+    document = _project_document(root)
+    try:
+        config = document["tool"]["vendoring"]
+        destination = _package_path(config["destination"])
+        inventory_path = _package_path(config["requirements"])
+        if destination is None or inventory_path is None:
+            return False
+        relative = path.relative_to(root / destination)
+        protected = config.get("protected-files", [])
+        if not isinstance(protected, list) or not all(isinstance(item, str) for item in protected):
+            return False
+        if any(_package_path(item) is None for item in protected):
+            return False
+        if relative.as_posix() in protected:
+            return False
+        source = _text(root, root / inventory_path)
+        if source is None:
+            return False
+        inventory = _pinned_inventory(source)
+        project = document.get("project", {})
+        own_name = project.get("name", "") if isinstance(project, dict) else ""
+        if not isinstance(own_name, str):
+            return False
+        own_name = re.sub(r"[-_.]+", "_", own_name).lower()
+        aliases = config.get("license", {}).get("directories", {})
+        if not isinstance(aliases, dict):
+            return False
+        for name in inventory:
+            if name == own_name:
+                continue
+            directory = next(
+                (value for key, value in aliases.items() if re.sub(r"[-_.]+", "_", key).lower() == name),
+                name,
+            )
+            package = _package_path(directory)
+            if package is not None and relative.is_relative_to(package):
+                if _license_present(root, root / destination / package):
+                    return True
+            elif (
+                package is not None
+                and len(package.parts) == 1
+                and len(relative.parts) == 1
+                and relative.suffix in {".py", ".pyi"}
+                and relative.stem == package.name
+            ):
+                for license_name in _LICENSES:
+                    source = _text(root, root / destination / f"{package.name}.{license_name}")
+                    if source and re.search(r"\b(?:copyright|permission|licen[cs]e)\b", source, re.I):
+                        return True
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+    return False
+
+
+@lru_cache(maxsize=128)
+def _source_hash(root, path, size, mtime_ns, ctime_ns, inode):
+    source = read_project_text_no_symlink(
+        root, path, max_bytes=_MAX_BYTES, errors="strict", newline=""
+    )
+    if source is None:
+        return None
+    return base64.urlsafe_b64encode(hashlib.sha256(source.encode("utf-8")).digest()).rstrip(b"=").decode("ascii")
+
+
+def _recorded_vendor(root, path):
+    """A wheel's exact file inventory, provenance, license and content digest.
+
+    A vendor-looking directory alone proves nothing. The RECORD must attest
+    this current file; unlisted wrappers, siblings and changed copies remain.
+    """
+    for directory in list(path.parents)[:8]:
+        if directory == root:
+            break
+        if directory.name not in _VENDOR_DIRS:
+            continue
+        try:
+            entries = list(islice(directory.iterdir(), 257))
+        except OSError:
+            return False
+        if len(entries) > 256:
+            return False
+        for entry in entries:
+            if not entry.name.endswith(".dist-info"):
+                continue
+            record = _text(root, entry / "RECORD")
+            if record is None:
+                continue
+            relative = path.relative_to(directory).as_posix()
+            row = _wheel_record_rows(record).get(relative)
+            if row is None:
+                continue
+            metadata = _text(root, entry / "METADATA")
+            if metadata is None:
+                continue
+            try:
+                headers = Parser().parsestr(metadata, headersonly=True)
+            except (MessageError, ValueError, TypeError, RecursionError):
+                continue
+            name, version = headers.get("Name"), headers.get("Version")
+            if not name or not version or len(headers.get_all("Name", [])) != 1 or len(headers.get_all("Version", [])) != 1:
+                continue
+            try:
+                if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", name):
+                    continue
+                Requirement(f"{name}=={version}")
+            except InvalidRequirement:
+                continue
+            normalized = re.sub(r"[-_.]+", "_", name).lower()
+            stem = re.sub(r"[-_.]+", "_", entry.name[:-10]).lower()
+            if stem != re.sub(r"[-_.]+", "_", f"{name}-{version}").lower():
+                continue
+            document = _project_document(root)
+            project = (document or {}).get("project", {})
+            own_name = project.get("name", "") if isinstance(project, dict) else ""
+            if not isinstance(own_name, str):
+                continue
+            if normalized == re.sub(r"[-_.]+", "_", own_name).lower():
+                continue
+            if not any("https://" in value or "http://" in value for key in ("Home-page", "Project-URL") for value in headers.get_all(key, [])):
+                continue
+            if not _wheel_license_present(root, entry, headers):
+                continue
+            digest, size = row
+            guarded = _guarded_file(path, root)
+            if guarded is None or size != str(guarded[-1].st_size) or not digest.startswith("sha256="):
+                continue
+            info = guarded[-1]
+            actual = _source_hash(str(root), str(path), info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+            if actual is not None and digest == "sha256=" + actual:
+                return True
+    return False
+
+
+@lru_cache(maxsize=128)
+def _wheel_record_rows(source):
+    rows = {}
+    try:
+        for row in csv.reader(io.StringIO(source)):
+            if len(row) == 3:
+                rows[row[0]] = (row[1], row[2]) if row[0] not in rows else None
+    except csv.Error:
+        return {}
+    return rows
+
+
+def _wheel_license_present(root, directory, metadata):
+    if _license_present(root, directory) or _license_present(root, directory / "licenses"):
+        return True
+    declared = metadata.get_all("License-File", [])
+    if len(declared) > 32:
+        return False
+    for value in declared:
+        path = _package_path(value)
+        if path is None:
+            continue
+        for base in (directory, directory / "licenses"):
+            source = _text(root, base / path)
+            if source and re.search(r"\b(?:copyright|permission|licen[cs]e)\b", source, re.I):
+                return True
     return False
 
 
@@ -285,11 +603,74 @@ def _excluded_from_distributions(root, relative):
     paths = _distribution_paths(
         str(root), info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino
     )
-    return bool(
+    hatch_excluded = bool(
         paths
         and any(relative.is_relative_to(part) for part in paths[0])
         and not any(relative.is_relative_to(part) for part in paths[1])
     )
+    document = _project_document(root)
+    if not isinstance(document, dict):
+        return False
+    tool = document.get("tool", {})
+    build_system = document.get("build-system", {})
+    if not isinstance(tool, dict) or not isinstance(build_system, dict):
+        return False
+    backend = build_system.get("build-backend")
+    if hatch_excluded and backend in {None, "hatchling.build"}:
+        try:
+            build = tool["hatch"]["build"]
+            wheel = build["targets"]["wheel"]
+            if not build.get("force-include") and not wheel.get("force-include"):
+                return True
+        except (KeyError, TypeError, AttributeError):
+            return False
+    if backend == "poetry.core.masonry.api":
+        poetry = tool.get("poetry", {})
+        if not isinstance(poetry, dict) or poetry.get("include"):
+            return False
+        excluded = poetry.get("exclude", [])
+        if not isinstance(excluded, list):
+            return False
+        for value in excluded:
+            if not isinstance(value, str):
+                return False
+            directory = _literal_directory(value.removesuffix("/**"))
+            if directory is not None and relative.is_relative_to(directory):
+                return True
+    elif backend in {"setuptools.build_meta", "setuptools.build_meta:__legacy__"}:
+        setuptools = tool.get("setuptools", {})
+        if not isinstance(setuptools, dict) or any(
+            setuptools.get(key) for key in ("data-files", "script-files", "py-modules")
+        ):
+            return False
+        wheel_roots = list(_declared_package_paths({"tool": {"setuptools": setuptools}}))
+        try:
+            where = setuptools["packages"]["find"].get("where", [])
+        except (KeyError, TypeError, AttributeError):
+            where = []
+        if isinstance(where, list):
+            wheel_roots.extend(path for value in where if (path := _package_path(value)) is not None)
+        if not wheel_roots or any(relative.is_relative_to(path) for path in wheel_roots):
+            return False
+        manifest = _text(root, root / "MANIFEST.in")
+        if manifest is None:
+            return False
+        pruned = False
+        try:
+            for line in manifest.splitlines():
+                words = shlex.split(line, comments=True)
+                if not words:
+                    continue
+                if words[0] == "prune" and len(words) == 2:
+                    directory = _literal_directory(words[1])
+                    if directory is not None and relative.is_relative_to(directory):
+                        pruned = True
+                elif pruned and words[0] not in {"exclude", "recursive-exclude", "global-exclude", "prune"}:
+                    return False
+        except ValueError:
+            return False
+        return pruned
+    return False
 
 
 def _data_expression(node, assigned):
@@ -389,7 +770,7 @@ def _file_context(filename, project_root):
         if tree is not None and _uses_test_framework(tree):
             return "test"
     sample = _sample_path(relative.parts)
-    if sample is not None:
+    if sample is not None and not _shipped_package(root, relative):
         return sample
     if _declared_vendor(root, path):
         return "vendored"
@@ -397,6 +778,7 @@ def _file_context(filename, project_root):
         len(relative.parts) > 1
         and relative.parts[0] == "profiling"
         and path.suffix == ".py"
+        and not _shipped_package(root, relative)
         and _excluded_from_distributions(root, relative)
         and _profile_data(_tree(root, path, info))
     ):
@@ -430,7 +812,7 @@ def _clone_context(finding, project_root):
     locations = set()
     for index, member in enumerate(members):
         match = re.fullmatch(
-            r"([^(),\r\n]+):(\d+)-(\d+) \((?:function|class) ([^()]+)\)", member
+            r"([^(),\r\n]+):([0-9]{1,10})-([0-9]{1,10}) \((?:function|class) ([^()]+)\)", member
         )
         if match is None or not (0 < int(match[2]) <= int(match[3])):
             return None
