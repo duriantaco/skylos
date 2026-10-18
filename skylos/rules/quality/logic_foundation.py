@@ -1512,7 +1512,28 @@ def _is_import_fallback_try(node: ast.AST) -> bool:
     )
 
 
-def _scan_protected_body(body: list[ast.stmt]) -> tuple[int, bool]:
+def _protected_operation_count(body: list[ast.stmt]) -> int:
+    """Count operations, not the visual layout of one multiline expression."""
+    count = 0
+    pending = list(body)
+    while pending:
+        current = pending.pop()
+        if isinstance(current, _NESTED_SCOPE_TYPES):
+            continue
+        # One wrapped call with literal/name arguments remains one operation.
+        # Nested calls in its arguments are independent protected work, even
+        # though all of them are formatted as one assignment statement.
+        if isinstance(current, ast.Call):
+            count += 1
+        elif isinstance(current, ast.stmt) and not _is_string_statement(current):
+            value = getattr(current, "value", None)
+            if not isinstance(value, ast.Call):
+                count += 1
+        pending.extend(ast.iter_child_nodes(current))
+    return count
+
+
+def _scan_protected_body(body: list[ast.stmt], nested_is_broad=None) -> tuple[int, bool]:
     """Count control flow and find confusing nested catching in a try body.
 
     An inner try counts as nested catching unless it catches nothing, is an
@@ -1534,6 +1555,7 @@ def _scan_protected_body(body: list[ast.stmt]) -> tuple[int, bool]:
             and not has_nested_try
             and _try_catches(node)
             and not _is_import_fallback_try(node)
+            and (nested_is_broad is None or nested_is_broad(node))
         ):
             has_nested_try = True
         if isinstance(node, _LOOP_TYPES):
@@ -1572,10 +1594,55 @@ def _is_boundary_prefix_statement(stmt: ast.stmt) -> bool:
 
 def _is_function_level_try(node: ast.AST, parent_body: list[ast.stmt]) -> bool:
     """The try is the function's error boundary: its last statement, preceded
-    only by docstrings, imports, nested definitions and guard clauses."""
-    if not parent_body or parent_body[-1] is not node:
+    only by docstrings, imports, nested definitions and guard clauses.
+
+    A second common form initializes local result/state variables, handles the
+    work, then returns those results. Initialization and packaging the result
+    do not turn that whole-function boundary into a smaller catch scope.
+    """
+    if not parent_body:
         return False
-    return all(_is_boundary_prefix_statement(stmt) for stmt in parent_body[:-1])
+    if parent_body[-1] is node:
+        return all(_is_boundary_prefix_statement(stmt) for stmt in parent_body[:-1])
+    if len(parent_body) < 2 or parent_body[-2] is not node:
+        return False
+    result = parent_body[-1]
+    if not isinstance(result, ast.Return):
+        return False
+
+    def result_atom(expression):
+        return isinstance(expression, (ast.Name, ast.Constant)) or (
+            isinstance(expression, (ast.Tuple, ast.List))
+            and all(result_atom(item) for item in expression.elts)
+        )
+
+    value = result.value
+    # An arbitrary call can persist, transform or fetch data; simple-looking
+    # arguments do not establish that it merely packages a result.
+    if value is not None and not result_atom(value):
+        return False
+    outer_names = {
+        name
+        for statement in parent_body
+        for child in ast.walk(statement)
+        if isinstance(child, (ast.Global, ast.Nonlocal))
+        for name in child.names
+    }
+    for statement in parent_body[:-2]:
+        if _is_boundary_prefix_statement(statement):
+            continue
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            return False
+        targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        if not targets or any(
+            not isinstance(target, ast.Name) or target.id in outer_names for target in targets
+        ):
+            return False
+        # Calls, attributes and subscriptions can do substantive work outside
+        # the catch. Only source-visible literal/name initialization is safe.
+        if statement.value is not None and not result_atom(statement.value):
+            return False
+    return True
 
 
 def _significant_token_spans(source: str):
@@ -1683,7 +1750,7 @@ class TryBlockPatternsRule(SkylosRule):
         if node.body and not is_boundary:
             length = self._code_line_count(node, context)
 
-            if length > self.max_lines:
+            if length > self.max_lines and _protected_operation_count(node.body) > self.max_lines:
                 findings.append(
                     self._create_finding(
                         node,
@@ -1699,7 +1766,16 @@ class TryBlockPatternsRule(SkylosRule):
                     )
                 )
 
-        control_flow_count, has_nested_try = _scan_protected_body(node.body)
+        def nested_is_broad(inner):
+            controls, _ = _scan_protected_body(inner.body)
+            return controls > self.max_control_flow or (
+                _protected_operation_count(inner.body) > self.max_lines
+                and self._code_line_count(inner, context) > self.max_lines
+            )
+
+        control_flow_count, has_nested_try = _scan_protected_body(
+            node.body, nested_is_broad=nested_is_broad
+        )
 
         if has_nested_try:
             findings.append(
@@ -1708,7 +1784,10 @@ class TryBlockPatternsRule(SkylosRule):
                     context,
                     severity="MEDIUM",
                     value="nested",
-                    msg="Nested 'try' block detected. Flatten logic or move inner try to a helper function.",
+                    msg=(
+                        "Nested 'try' block also protects a broad scope. "
+                        "Reduce the inner catch scope to its risky operations."
+                    ),
                 )
             )
 
@@ -1749,9 +1828,66 @@ class UnusedExceptVarRule(SkylosRule):
     rule_id = "SKY-L005"
     name = "Unused Exception Variable"
 
+    def __init__(self):
+        self._namespace_builtins = set()
+        self._namespace_source = None
+
+    def _explicit_namespace_use(self, handler):
+        pending = list(handler.body)
+        while pending:
+            current = pending.pop()
+            if isinstance(current, _NESTED_SCOPE_TYPES + (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                continue
+            namespace = key = None
+            if isinstance(current, ast.Subscript):
+                namespace, key = current.value, current.slice
+            elif isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute) and current.func.attr == "get" and current.args:
+                namespace, key = current.func.value, current.args[0]
+            if (
+                isinstance(key, ast.Constant) and key.value == handler.name
+                and isinstance(namespace, ast.Call) and not namespace.args and not namespace.keywords
+                and isinstance(namespace.func, ast.Name) and namespace.func.id in self._namespace_builtins
+            ):
+                return True
+            pending.extend(ast.iter_child_nodes(current))
+        return False
+
     def visit_node(self, node, context):
+        if isinstance(node, ast.Module):
+            # Resolve only these builtin no-argument namespace lookups. Any
+            # source binding or dynamic namespace makes that proof uncertain.
+            possible = {"locals", "vars"}
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and not isinstance(child.ctx, ast.Load):
+                    possible.discard(child.id)
+                elif isinstance(child, ast.arg):
+                    possible.discard(child.arg)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    possible.discard(child.name)
+                elif isinstance(child, ast.ExceptHandler):
+                    possible.discard(child.name)
+                elif isinstance(child, ast.alias):
+                    possible.discard(child.asname or child.name.split(".")[0])
+                    if child.name == "*":
+                        possible.clear()
+                elif isinstance(child, ast.Attribute) and not isinstance(child.ctx, ast.Load):
+                    possible.discard(child.attr)
+                elif isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id in {"exec", "eval", "globals"}:
+                    possible.clear()
+            self._namespace_builtins = possible
+            self._namespace_source = context.get("source", context.get("_source"))
+            return None
         if not isinstance(node, ast.ExceptHandler):
             return None
+        # The optimized rule dispatcher visits ExceptHandler only. Preserve
+        # its narrow dispatch while resolving source evidence once per file.
+        source = context.get("source", context.get("_source"))
+        if isinstance(source, str) and source is not self._namespace_source:
+            try:
+                self.visit_node(ast.parse(source), context)
+            except (SyntaxError, ValueError, TypeError):
+                self._namespace_builtins = set()
+                self._namespace_source = source
         if not node.name:
             return None
         if node.name == "_":
@@ -1762,7 +1898,7 @@ class UnusedExceptVarRule(SkylosRule):
             if isinstance(child, ast.Name) and child.id == node.name:
                 use_count += 1
 
-        if use_count == 0:
+        if use_count == 0 and not self._explicit_namespace_use(node):
             return [
                 {
                     "rule_id": self.rule_id,

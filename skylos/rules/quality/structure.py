@@ -6,6 +6,7 @@ from skylos.rules.base import SkylosRule
 from skylos.rules.quality._argument_contracts import ArgumentContracts
 from skylos.rules.quality._code_lines import code_lines
 from skylos.rules.quality._overload_groups import overload_groups
+from skylos.rules.quality._parameter_context import ParameterContext
 from skylos.rules.quality._receivers import (
     context_method_kinds,
     method_receiver,
@@ -44,11 +45,13 @@ class ArgCountRule(SkylosRule):
         self._overloads = {}
         self._tree = None
         self._contracts = None
+        self._parameter_context = None
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
             self._tree = node
             self._contracts = None
+            self._parameter_context = None
             self._skip_file = is_non_production_python(
                 context.get("filename"), context.get("project_root")
             )
@@ -85,6 +88,16 @@ class ArgCountRule(SkylosRule):
             return self._overload_finding(group, node, context)
 
         arity = self._arity(node)
+        if arity.required > self.max_required or arity.total > self.max_total:
+            if self._parameter_context is None:
+                self._parameter_context = ParameterContext(
+                    self._tree,
+                    self._methods,
+                    filename=context.get("filename"),
+                    project_root=context.get("project_root"),
+                )
+            if self._parameter_context.exempts(node):
+                return None
         if arity.required > self.max_required:
             return [self._required_finding(node, context, arity)]
         if arity.total > self.max_total:

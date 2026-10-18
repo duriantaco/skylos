@@ -12,6 +12,7 @@ from skylos.rules.quality._receivers import (
 )
 from skylos.rules.quality._ast_visit import IterativeNodeVisitor
 from skylos.rules.quality._scope import is_non_production_python
+from skylos.rules.quality._provider_context import project_local_provider
 
 
 def _target_names(target: ast.AST) -> set[str]:
@@ -503,6 +504,7 @@ class PerformanceRule(SkylosRule):
         self._read_filename = None
         self._read_non_library = False
         self._read_source_reader = None
+        self._read_project_providers = {}
 
         self._reset_scope_caches()
 
@@ -873,7 +875,9 @@ class PerformanceRule(SkylosRule):
                 # A local assigned later shadows any outer binding throughout
                 # the function; it is not an initialized outer constant.
                 bindings = _ScopeBindings()
-                for statement in getattr(parent, "body", []):
+                # A lambda has one expression, not a list of statements.
+                body = [parent.body] if isinstance(parent, ast.Lambda) else parent.body
+                for statement in body:
                     bindings.visit(statement)
                 if name in bindings.names or "*" in bindings.names:
                     return None
@@ -1753,6 +1757,125 @@ class PerformanceRule(SkylosRule):
             return False
         return True
 
+    def _materialized_return_types(self, annotation, seen=()):
+        """Resolve only stable, built-in scalar return contracts."""
+        if annotation is None or len(seen) >= 12 or self._read_dynamic_namespace:
+            return None
+        if isinstance(annotation, ast.Constant):
+            if annotation.value is None:
+                return frozenset({None})
+            if annotation.value in {"str", "bytes"} and self._is_builtin(annotation, annotation.value):
+                current = annotation
+                while current in self._parents:
+                    current = self._parents[current]
+                    if isinstance(current, ast.ClassDef) and annotation.value in self._scope_names(current):
+                        return None
+                return frozenset({annotation.value})
+            return None
+        if isinstance(annotation, ast.Name):
+            name = annotation.id
+            current = annotation
+            while current in self._parents:
+                current = self._parents[current]
+                # Function annotations can resolve a class namespace even
+                # though a method's runtime body skips that namespace.
+                if isinstance(current, ast.ClassDef) and name in self._scope_names(current):
+                    return None
+            if name in {"str", "bytes"} and self._is_builtin(annotation, name):
+                return frozenset({name})
+            if name in seen:
+                return None
+            value = self._read_binding(annotation, name)
+            if value is None:
+                return None
+            root = annotation
+            while root in self._parents:
+                root = self._parents[root]
+            bindings = [child for child in ast.walk(root) if (
+                isinstance(child, ast.Name) and child.id == name and not isinstance(child.ctx, ast.Load)
+            ) or (
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == name
+            ) or (
+                isinstance(child, ast.alias) and (child.asname or child.name.split(".")[0]) == name
+            )]
+            if len(bindings) != 1:
+                return None
+            return self._materialized_return_types(value, (*seen, name))
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            left = self._materialized_return_types(annotation.left, seen)
+            right = self._materialized_return_types(annotation.right, seen)
+            return left | right if left is not None and right is not None else None
+        if isinstance(annotation, ast.Subscript) and self._stdlib_read_module_unshadowed("typing"):
+            if self._read_stdlib_callable(annotation.value, "typing", "Optional"):
+                inner = self._materialized_return_types(annotation.slice, seen)
+                return inner | {None} if inner is not None else None
+            if self._read_stdlib_callable(annotation.value, "typing", "Union") and isinstance(annotation.slice, ast.Tuple):
+                result = frozenset()
+                for item in annotation.slice.elts:
+                    inner = self._materialized_return_types(item, seen)
+                    if inner is None:
+                        return None
+                    result |= inner
+                return result
+        return None
+
+    def _returned_materialized_read(self, node):
+        value = node
+        parent = self._parents.get(value)
+        if isinstance(parent, ast.Await) and parent.value is value:
+            value, parent = parent, self._parents.get(parent)
+        if isinstance(parent, ast.Attribute) and parent.value is value and parent.attr == "decode":
+            call = self._parents.get(parent)
+            if not isinstance(call, ast.Call) or call.func is not parent:
+                return False
+            value, parent = call, self._parents.get(call)
+        if not isinstance(parent, ast.Return) or parent.value is not value:
+            return False
+        function = self._enclosing_scope(parent)
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) or function.decorator_list:
+            return False
+        kinds = self._materialized_return_types(function.returns)
+        return bool(kinds and kinds <= {"str", "bytes", None} and kinds & {"str", "bytes"})
+
+    def _whole_buffer_consumer(self, node: ast.Call) -> bool:
+        """Known consumers need a complete value, so chunking breaks the API.
+
+        Resolve imports and local shadow modules instead of trusting a parser
+        spelling. This deliberately excludes unknown helpers and return/read
+        wrappers: those alone do not establish a complete-buffer contract.
+        """
+        parent = self._parents.get(node)
+        if not isinstance(parent, ast.Call):
+            return False
+        # The argument is the buffer itself, not a later computation that
+        # happens to include a read (e.g. hashing or joining several chunks).
+        positional = bool(parent.args) and parent.args[0] is node
+        if not positional and not any(keyword.value is node for keyword in parent.keywords):
+            return False
+        if isinstance(parent.func, ast.Name) and parent.func.id == "compile":
+            return self._is_builtin(parent, "compile") and (
+                positional or any(keyword.arg == "source" and keyword.value is node for keyword in parent.keywords)
+            )
+        contracts = (
+            ("ast", "parse", "source"),
+            ("json", "loads", "s"),
+            ("tomllib", "loads", "s"),
+            ("pickle", "loads", "data"),
+            ("marshal", "loads", "bytes"),
+            ("gzip", "decompress", "data"),
+            ("zlib", "decompress", "data"),
+        )
+        for module, symbol, argument in contracts:
+            if not positional and not any(
+                keyword.arg == argument and keyword.value is node for keyword in parent.keywords
+            ):
+                continue
+            if self._stdlib_read_module_unshadowed(module) and self._read_stdlib_callable(
+                parent.func, module, symbol
+            ):
+                return True
+        return False
+
     def _read_message(self, node: ast.Call) -> str | None:
         origin = self._read_origin(node.func.value)
         archive_member = (
@@ -1767,6 +1890,10 @@ class PerformanceRule(SkylosRule):
         if not archive_member and self._read_bound(node) == "bounded":
             return None
         if self._non_stream_read_api(node):
+            return None
+        if node.func.attr == "read" and (
+            self._whole_buffer_consumer(node) or self._returned_materialized_read(node)
+        ):
             return None
         if archive_member:
             return (
@@ -4120,6 +4247,96 @@ class PerformanceRule(SkylosRule):
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
         }
 
+    def _sequence_item_annotation(self, annotation):
+        if not isinstance(annotation, ast.Subscript):
+            return None
+        base = annotation.value
+        if isinstance(base, ast.Name) and base.id in {"list", "tuple"} and self._is_builtin(base, base.id):
+            if base.id == "tuple":
+                parts = annotation.slice
+                if not (
+                    isinstance(parts, ast.Tuple) and len(parts.elts) == 2
+                    and isinstance(parts.elts[1], ast.Constant) and parts.elts[1].value is Ellipsis
+                ):
+                    return None
+                return parts.elts[0]
+            return annotation.slice
+        if any(self._read_stdlib_callable(base, module, symbol) for module, symbol in (
+            ("typing", "List"), ("typing", "Sequence"), ("typing", "Iterable"),
+            ("collections.abc", "Sequence"), ("collections.abc", "Iterable"),
+        )):
+            return annotation.slice
+        return None
+
+    def _loop_source_annotation(self, loop):
+        scope = self._enclosing_scope(loop)
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        source = loop.iter
+        if isinstance(source, ast.Name):
+            if source.id in self._scope_names(scope):
+                return None
+            return next((arg.annotation for arg in _parameters(scope.args) if arg.arg == source.id), None)
+        owner = self._parents.get(scope)
+        if not (
+            isinstance(source, ast.Attribute) and isinstance(source.value, ast.Name)
+            and isinstance(owner, ast.ClassDef)
+            and source.value.id == method_receiver(scope, instance_only=True, kinds=self._read_method_kinds)
+        ):
+            return None
+        annotations = []
+        for method in class_method_nodes(owner):
+            receiver = method_receiver(method, instance_only=True, kinds=self._read_method_kinds)
+            for statement in ast.walk(method):
+                targets = statement.targets if isinstance(statement, ast.Assign) else (
+                    [statement.target] if isinstance(statement, (ast.AnnAssign, ast.AugAssign)) else []
+                )
+                for target in targets:
+                    if not (
+                        isinstance(target, ast.Attribute) and target.attr == source.attr
+                        and isinstance(target.value, ast.Name) and target.value.id == receiver
+                    ):
+                        continue
+                    if not isinstance(statement, ast.AnnAssign):
+                        return None
+                    annotations.append(statement.annotation)
+        return annotations[0] if len(annotations) == 1 else None
+
+    def _regex_loop_item(self, receiver):
+        current = receiver
+        while current in self._parents:
+            current = self._parents[current]
+            if isinstance(current, _SCOPES):
+                return False
+            if not isinstance(current, ast.For) or receiver.id not in _target_names(current.target):
+                continue
+            annotation = self._sequence_item_annotation(self._loop_source_annotation(current))
+            target = current.target
+            while isinstance(target, (ast.Tuple, ast.List)):
+                if not (
+                    isinstance(annotation, ast.Subscript)
+                    and isinstance(annotation.value, ast.Name) and annotation.value.id == "tuple"
+                    and self._is_builtin(annotation.value, "tuple")
+                    and isinstance(annotation.slice, ast.Tuple)
+                    and len(annotation.slice.elts) == len(target.elts)
+                ):
+                    return False
+                position = next((index for index, item in enumerate(target.elts) if receiver.id in _target_names(item)), None)
+                if position is None:
+                    return False
+                target, annotation = target.elts[position], annotation.slice.elts[position]
+            base = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+            return base is not None and self._stdlib_read_module_unshadowed("re") and self._read_stdlib_callable(base, "re", "Pattern")
+        return False
+
+    def _regex_predicate(self, call):
+        """Regex dispatch is a predicate search, not an indexable equality join."""
+        if not isinstance(call.func, ast.Attribute) or call.func.attr not in {"match", "search", "fullmatch"}:
+            return False
+        if self._stdlib_read_module_unshadowed("re") and self._read_stdlib_callable(call.func, "re", call.func.attr):
+            return True
+        return isinstance(call.func.value, ast.Name) and self._regex_loop_item(call.func.value)
+
     def _relates_items(
         self, body, outer_names: set[str], inner_names: set[str], *, extra_tests=()
     ):
@@ -4157,6 +4374,8 @@ class PerformanceRule(SkylosRule):
                 ):
                     parts = [node.left, *node.comparators]
                 elif isinstance(node, ast.Call):
+                    if self._regex_predicate(node):
+                        continue
                     callee = (
                         node.func.value
                         if isinstance(node.func, ast.Attribute)
@@ -4196,8 +4415,34 @@ class PerformanceRule(SkylosRule):
         return False
 
     def _is_pandas_read(self, node):
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "read_csv":
+        # A parser or project-specific object's read_csv method is not
+        # necessarily pandas and need not accept chunksize at all.
+        if not self._read_stdlib_callable(node.func, "pandas", "read_csv"):
+            return False
+        if self._read_source_reader is not None:
+            # Historical source readers cannot establish provider absence.
+            # Preserve their AST-only contract instead of applying HEAD's
+            # local modules to a different revision.
             return True
+        local = self._read_project_providers.get("pandas")
+        if local is None:
+            local = self._read_project_providers["pandas"] = project_local_provider(
+                "pandas", self._read_filename, self._read_project_root
+            )
+        return not local
+
+    def _pandas_row_bound(self, node):
+        for keyword in node.keywords:
+            if keyword.arg not in {"chunksize", "nrows"}:
+                continue
+            value = self._read_size_value(keyword.value)
+            if value is _UNKNOWN_READ_SIZE:
+                # A caller-supplied row budget is a bound, as for read(size).
+                return True
+            if value is not None and (
+                value > 0 or keyword.arg == "nrows" and value == 0
+            ):
+                return True
         return False
 
     def _find_nested_loops(self, outer: ast.For, body: list[ast.stmt]) -> list[ast.For]:
@@ -4236,6 +4481,7 @@ class PerformanceRule(SkylosRule):
         if isinstance(node, ast.Module):
             self._read_project_root = context.get("project_root")
             self._read_filename = context.get("filename")
+            self._read_project_providers = {}
             # Tests, examples and benchmarks read inputs whose size they set
             # themselves; whole reads there are not a production memory risk.
             self._read_non_library = is_non_production_python(
@@ -4299,13 +4545,7 @@ class PerformanceRule(SkylosRule):
 
             if self._is_pandas_read(node):
                 if "SKY-P402" not in self.ignore_list:
-                    has_chunk = False
-                    for kw in node.keywords:
-                        if kw.arg == "chunksize":
-                            has_chunk = True
-                            break
-
-                    if not has_chunk:
+                    if not self._pandas_row_bound(node):
                         findings.append(
                             {
                                 "rule_id": "SKY-P402",
@@ -4316,7 +4556,10 @@ class PerformanceRule(SkylosRule):
                                 "simple_name": "read_csv",
                                 "value": "no_chunk",
                                 "threshold": 0,
-                                "message": "Pandas Memory Risk: read_csv used without 'chunksize'. Large files may crash RAM.",
+                                "message": (
+                                    "Pandas Memory Risk: read_csv has no row bound. "
+                                    "For large inputs, use chunksize or nrows."
+                                ),
                                 "file": context.get("filename"),
                                 "basename": Path(context.get("filename", "")).name,
                                 "line": node.lineno,

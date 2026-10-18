@@ -1405,16 +1405,101 @@ def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def _iter_public_functions(module: ast.Module, receivers):
+    exports = _literal_public_exports(module)
     for stmt in module.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if _is_public_function(stmt):
+            if _is_public_function(stmt) and (exports is None or stmt.name in exports):
                 yield stmt, stmt.name, None
-        elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_"):
+        elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_") and (
+            exports is None or stmt.name in exports
+        ):
             for item in sorted(
                 class_method_nodes(stmt), key=lambda method: method.lineno
             ):
                 if _is_public_function(item):
                     yield item, f"{stmt.name}.{item.name}", receivers.get(id(item))
+
+
+def _literal_public_exports(module):
+    """A complete literal __all__, otherwise keep the normal public-name rule.
+
+    A mutable/dynamic export list is not evidence that a symbol is private.
+    Export aliases also make the relationship uncertain, so retain advice.
+    """
+    declarations = []
+    for statement in module.body:
+        targets = statement.targets if isinstance(statement, ast.Assign) else (
+            [statement.target] if isinstance(statement, ast.AnnAssign) else []
+        )
+        if any(isinstance(target, ast.Name) and target.id == "__all__" for target in targets):
+            declarations.append((statement, targets))
+    if len(declarations) != 1:
+        return None
+    declaration, targets = declarations[0]
+    if len(targets) != 1 or not isinstance(declaration.value, (ast.Tuple, ast.List)):
+        return None
+    items = declaration.value.elts
+    if not all(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in items):
+        return None
+    exports = {item.value for item in items}
+    for node in ast.walk(module):
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+            # A wildcard import may publish an __all__ of its own or import
+            # aliases for local definitions. The final surface is unknown.
+            return None
+        if isinstance(node, ast.Name) and node.id == "__all__" and node is not targets[0]:
+            return None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {
+            "globals", "locals", "vars", "eval", "exec"
+        }:
+            return None
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node is not declaration:
+            assigned = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(target, ast.Name) and target.id in exports for target in assigned):
+                # ``Public = Internal`` can publish a class or function whose
+                # definition has a different spelling.
+                if isinstance(node.value, (ast.Name, ast.Attribute, ast.Call)):
+                    return None
+    return exports
+
+
+def _inferable_none_procedure(function):
+    """A concrete procedure has no value-return contract left to discover.
+
+    Do not infer through decorators, generators, nested definitions, abstract
+    placeholders, or returned calls. Explicit project typing policy still
+    takes precedence over this source-local precision check.
+    """
+    if function.decorator_list:
+        return False
+    body = [statement for statement in function.body if not (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    )]
+    if not body or all(isinstance(statement, (ast.Pass, ast.Raise)) or (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+    ) for statement in body):
+        return False
+    pending = list(body)
+    while pending:
+        current = pending.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(current, (ast.Yield, ast.YieldFrom)):
+            return False
+        if isinstance(current, ast.Raise) and isinstance(current.exc, ast.Call) and (
+            isinstance(current.exc.func, ast.Name) and current.exc.func.id == "NotImplementedError"
+        ):
+            return False
+        if isinstance(current, ast.Return) and current.value is not None and not (
+            isinstance(current.value, ast.Constant) and current.value.value is None
+        ):
+            return False
+        pending.extend(ast.iter_child_nodes(current))
+    return True
 
 
 def _has_signature_typing_intent(function, args, comment_lines):
@@ -1606,7 +1691,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
-            if function.returns is None and not return_comment:
+            if function.returns is None and not return_comment and not (
+                requirement is not True and _inferable_none_procedure(function)
+            ):
                 findings.append(
                     {
                         "rule_id": "SKY-T102",
