@@ -8181,8 +8181,8 @@ ENV API_TOKEN_FILE=/run/secrets/api_token
 **Example to review**
 
 ```python
-# The following comment contains actual U+202E and U+202C characters.
-# account status: ‮allowed‬
+# Visible escapes show the U+202E/U+202C payload without reordering this page.
+# account status: \u202eallowed\u202c
 def account_status():
     return "disabled"
 ```
@@ -8196,7 +8196,7 @@ def account_status():
     return status
 ```
 
-**Context:** The before string contains real bidi controls, which may be invisible or reorder text in a renderer. Writing the six ASCII characters \u202e does not trigger this text check. A detected control is review evidence, not proof of malicious intent.
+**Context:** The displayed comment uses visible Unicode escapes so this page contains no hidden direction controls. The represented payload has U+202E (RIGHT-TO-LEFT OVERRIDE) before allowed and U+202C (POP DIRECTIONAL FORMATTING) after it. The rule reports those actual code points in scanned source; the six ASCII characters \u202e in a comment do not trigger it. A detected control requires review and does not by itself prove malicious intent.
 
 **Source:** `skylos/rules/danger/danger.py`.
 

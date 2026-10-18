@@ -650,7 +650,23 @@ Edit blocking is evidence-sensitive: secrets, supported hallucinated dependencie
 
 `skylos agent init` creates `.skylos/agent-test.yml` (custom project-local path/force supported). `agent test [contract]` evaluates a declared suite against an OpenAI-compatible chat endpoint or evaluates normalized `--observations` JSON offline. Assertions cover required/excluded response strings; required, allowed and forbidden tool calls; tool arguments, exact sequence and call counts; refusal; and cited required sources. The verdict comes from deterministic assertions, not an LLM judge. Tool-call observations are evaluated as evidence rather than granting Skylos permission to execute arbitrary tools. Sources: [skylos/commands/agent_test_cmd.py:31](../skylos/commands/agent_test_cmd.py), [skylos/agents/evaluation/schema.py:69](../skylos/agents/evaluation/schema.py), [skylos/agents/evaluation/evaluator.py:25](../skylos/agents/evaluation/evaluator.py).
 
-Live endpoint invocation requires explicit trust: `--endpoint`, optional bearer token from `--auth-env`, and `--allow-remote` for nonloopback HTTPS endpoints; a contract's unauthenticated loopback endpoint needs `--allow-contract-endpoint`. Repeated `--scenario` selects cases. Defaults cap a run at 25 scenarios, 300 seconds and a requested 1,024 output tokens; caps are configurable. Outputs are table/JSON with optional project-local file, and evidence/harness artifacts are saved by default unless `--no-artifacts`. Fixture observations remain identified as unverified data; offline fixture success is not proof of a live deployment's behavior. Sources: [skylos/commands/agent_test_cmd.py:51](../skylos/commands/agent_test_cmd.py), [skylos/agents/evaluation/runner.py:47](../skylos/agents/evaluation/runner.py), `skylos/agents/evaluation/_runner_evidence.py`.
+Live endpoint invocation requires explicit trust. The CLI options make the selected endpoint, credentials and run limits explicit:
+
+| Option | Meaning | Default or requirement |
+| --- | --- | --- |
+| `--endpoint URL` | Override the agent endpoint for this run | Select an endpoint you trust |
+| `--auth-env NAME` | Read its bearer credential from the named environment variable | Requires `--endpoint` |
+| `--allow-remote` | Permit a nonloopback HTTPS endpoint override | Explicit opt-in |
+| `--allow-contract-endpoint` | Permit the contract's unauthenticated loopback endpoint | Explicit opt-in |
+| `--scenario ID` | Select a scenario; repeat to select several | All declared scenarios otherwise |
+| `--max-scenarios` | Limit scenarios per run | `25` |
+| `--max-seconds` | Limit elapsed run time | `300` seconds |
+| `--max-tokens` | Request an endpoint response-token cap | `1024` |
+| `--format` | Select the result representation | `table` or `json` |
+| `--output PATH` | Write that representation to a project-local file | Optional |
+| `--no-artifacts` | Disable saved local harness/evidence artifacts | Artifacts are saved by default |
+
+Fixture observations remain identified as unverified data; offline fixture success is not proof of a live deployment's behavior. Sources: [agent test option definitions](../skylos/commands/agent_test_cmd.py), [run defaults and limits](../skylos/agents/evaluation/runner.py), and `skylos/agents/evaluation/_runner_evidence.py`.
 
 `skylos agent replay RUN_DIR --format table|json` validates and inspects saved harness records such as `.skylos/runs/<run-id>`. It exposes run identity/status, phases, tool calls, decisions, duration, budgets used/remaining, artifacts and consistency issues. It returns 0 for a valid saved run and 1 for invalid evidence. It does not rerun provider calls. Sources: [skylos/commands/agent_replay_cmd.py:27](../skylos/commands/agent_replay_cmd.py).
 
