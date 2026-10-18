@@ -11,6 +11,12 @@ from rich.text import Text
 
 from skylos.api._snippets import _resolve_snippet_path
 from skylos.deadcode.confidence import confidence_detail
+from skylos.reporting.advice_display import (
+    advice_display_counts,
+    combine_complexity_advice,
+    complexity_display,
+    group_advice_for_display,
+)
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -19,9 +25,7 @@ from skylos.reporting.assessment_display import (
 )
 from skylos.reporting.finding_types import (
     get_finding_type,
-    group_advice,
     iter_result_findings,
-    summarize_finding_types,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos.ui.dead_code_evidence import (
@@ -321,17 +325,21 @@ def _finding_count_label(findings: list[PrettyFinding]) -> str:
 
 
 def _finding_type_headline(result):
-    counts = summarize_finding_types(result)
+    counts = advice_display_counts(result)
     defect_label = "defect" if counts["defect"] == 1 else "defects"
     group_label = "group" if counts["advice_groups"] == 1 else "groups"
+    advice = f"{counts['advice']} advice"
+    if counts["raw_advice"] != counts["advice"]:
+        entry_label = "entry" if counts["advice"] == 1 else "entries"
+        advice += f" {entry_label} ({counts['raw_advice']} checks)"
     return (
         f"{counts['defect']} {defect_label} · {counts['review']} review · "
-        f"{counts['advice']} advice in {counts['advice_groups']} {group_label}"
+        f"{advice} in {counts['advice_groups']} {group_label}"
     )
 
 
 def _print_advice_groups(console, result, *, root_path=None, limit=None):
-    groups = group_advice(result)
+    groups = group_advice_for_display(result)
     if not groups:
         return
     console.print(Text("  Advice", style="bold"))
@@ -404,7 +412,7 @@ def collect_pretty_findings(
         for item in result.get(section, []) or []:
             source_sections.setdefault((id(item), section == "custom_rules"), section)
     by_category = {"analysis_errors": result.get("analysis_errors", []) or []}
-    for category, item in iter_result_findings(result):
+    for category, item in combine_complexity_advice(iter_result_findings(result)):
         section = source_sections.get((id(item), category == "custom_rules"), "quality")
         by_category.setdefault(section, []).append(item)
 
@@ -443,8 +451,15 @@ def _make_pretty_finding(
     )
     line = _line_number(item)
     severity = _severity(item, category)
-    rule = _sanitize_terminal_text(_rule_id(item, category))
-    title = _sanitize_terminal_text(_title(item, category, fallback_label))
+    complexity = complexity_display(item)
+    rule = _sanitize_terminal_text(
+        complexity.rule_label if complexity is not None else _rule_id(item, category)
+    )
+    title = _sanitize_terminal_text(
+        f"Function complexity: {item.get('name') or item.get('simple_name')}"
+        if complexity is not None
+        else _title(item, category, fallback_label)
+    )
     snippet = _sanitize_terminal_text(
         _snippet(item, category, root_path=root_path, source_cache=source_cache)
     )
@@ -452,6 +467,9 @@ def _make_pretty_finding(
     why = _sanitize_terminal_text(
         _dead_code_why(item) if category in DEAD_CODE_TYPES else ""
     )
+    details = _context_details(item)
+    if complexity is not None:
+        details = [*complexity.message.splitlines(), *details]
     return PrettyFinding(
         category=category,
         category_label=category_label,
@@ -466,7 +484,7 @@ def _make_pretty_finding(
         why=why,
         finding_type=get_finding_type(item, category),
         details=tuple(
-            _sanitize_terminal_text(detail) for detail in _context_details(item)
+            _sanitize_terminal_text(detail) for detail in details
         ),
     )
 

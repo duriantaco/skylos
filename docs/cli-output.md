@@ -481,6 +481,12 @@ this as **Type**, separately from severity:
 When quality checks are enabled (`--quality` or `-a`), Advice is retained in
 the report. Terminal output leads with counts by type, lists Defect and Review
 individually, then shows one Advice row per rule with its count and top files.
+Cyclomatic (`SKY-Q301`) and cognitive (`SKY-Q306`) complexity share a Function
+complexity group. When both checks flag the same function, that function counts
+as one displayed entry. `--expand-advice` shows one entry with both scores,
+thresholds, rule IDs and messages; either check can still trigger independently.
+The headline distinguishes displayed entries from underlying checks when they
+differ. Missing or ambiguous function identities retain separate entries.
 Use `--expand-advice` for every Advice location and message:
 
 ```bash
@@ -497,7 +503,8 @@ inputs. Finding Type does not suppress findings or change analyzer thresholds.
 
 Deterministic LLM reports and MCP scan replies list Defect and Review in full
 and summarize Advice by rule by default. `--expand-advice` expands Advice in
-LLM reports. MCP callers can request `expand_advice` or read the complete scan
+LLM reports, with both original records retained under a combined complexity
+entry. MCP callers can request `expand_advice` or read the complete scan
 resource URI returned with the reply; the stored report retains all Advice.
 An advice-only report says how much Advice exists rather than claiming there
 are no findings.

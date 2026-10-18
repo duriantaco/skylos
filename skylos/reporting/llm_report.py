@@ -3,12 +3,16 @@ import pathlib
 import json
 
 from skylos.audit.redaction import SECRET_KEYWORDS, sanitize_for_audit
+from skylos.reporting.advice_display import (
+    advice_display_counts,
+    combine_complexity_advice,
+    complexity_display,
+    group_advice_for_display,
+)
 from skylos.reporting.finding_types import (
     annotate_finding_types,
     get_finding_type,
-    group_advice,
     iter_result_findings,
-    summarize_finding_types,
 )
 
 
@@ -145,18 +149,25 @@ def _llm_report_secret_block(finding: dict) -> str:
 def _format_llm_report_section(finding_num, finding, label, code_block):
     if label == "Secrets":
         finding = _redacted_secret_record(finding)
-    rule_id = finding.get("rule_id", "")
+    complexity = complexity_display(finding)
+    rule_id = complexity.rule_label if complexity else finding.get("rule_id", "")
     severity = finding.get("severity", "INFO")
     name = finding.get("name") or finding.get("simple_name", "")
     file_path = finding.get("file", "")
     line = finding.get("line", 0)
-    message = finding.get("message", "")
+    message = complexity.message if complexity else finding.get("message", "")
     finding_type = (
         "Analysis incomplete"
         if label == "Analysis Incomplete"
         else _llm_finding_type(finding, label).title()
     )
-    record = json.dumps(finding, ensure_ascii=False, indent=2, default=str)
+    original_findings = complexity.findings if complexity else (finding,)
+    records = "\n".join(
+        "Record:\n```json\n"
+        + json.dumps(original, ensure_ascii=False, indent=2, default=str)
+        + "\n```\n"
+        for original in original_findings
+    )
 
     return (
         f"\n## {finding_num}. {rule_id} | {severity} | {label}\n"
@@ -165,7 +176,7 @@ def _format_llm_report_section(finding_num, finding, label, code_block):
         f"Name: {name}\n"
         f"{code_block}\n"
         f"Problem: {message}\n"
-        f"Record:\n```json\n{record}\n```\n"
+        f"{records}"
         f"\n---\n"
     )
 
@@ -198,21 +209,34 @@ def _generate_llm_report(
     if not all_findings:
         return "# Skylos Report\n\n" + assessment_text + dependency_text + "No findings.\n"
 
-    counts = summarize_finding_types(result)
-    displayed = [
-        (finding, label)
+    counts = advice_display_counts(result)
+    category_for_label = {
+        label: category for category, label in _LLM_REPORT_CATEGORIES.items()
+    }
+    display_findings = combine_complexity_advice(
+        (category_for_label.get(label, label), finding)
         for finding, label in all_findings
+    )
+    displayed = [
+        (finding, _LLM_REPORT_CATEGORIES.get(category, category))
+        for category, finding in display_findings
         if expand_advice
-        or label == "Analysis Incomplete"
-        or _llm_finding_type(finding, label) != "advice"
+        or category == "Analysis Incomplete"
+        or get_finding_type(finding, category) != "advice"
     ]
     displayed.sort(key=_llm_report_sort_key)
 
     groups = counts["advice_groups"]
+    entry_label = "entry" if counts["advice"] == 1 else "entries"
+    advice_count = (
+        f"{counts['advice']} advice {entry_label} ({counts['raw_advice']} checks)"
+        if counts["raw_advice"] != counts["advice"]
+        else f"{counts['advice']} advice"
+    )
     sections = [
         "# Skylos Report\n\n"
         f"{counts['defect']} defects · {counts['review']} review · "
-        f"{counts['advice']} advice in {groups} {'group' if groups == 1 else 'groups'}.\n\n"
+        f"{advice_count} in {groups} {'group' if groups == 1 else 'groups'}.\n\n"
         "Severity is separate from finding type.\n"
         "Review the evidence before changing code.\n\n---\n"
     ]
@@ -249,10 +273,11 @@ def _format_advice_groups(result: dict) -> str:
     lines = [
         "\n## Advice groups\n\n",
         "Advice is grouped below. All Defect and Review records are included. "
-        "Add --expand-advice to show every Advice record; JSON output retains "
-        "the complete findings.\n\n",
+        "Add --expand-advice to show every Advice entry, including both original "
+        "records for paired complexity checks; JSON output retains the complete "
+        "findings.\n\n",
     ]
-    for group in group_advice(result):
+    for group in group_advice_for_display(result):
         count = group["count"]
         files = len(group["files"])
         lines.append(

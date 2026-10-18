@@ -10,6 +10,12 @@ from rich.table import Table
 from rich.tree import Tree
 
 from skylos.deadcode.confidence import confidence_detail
+from skylos.reporting.advice_display import (
+    advice_display_counts,
+    combine_complexity_advice,
+    complexity_display,
+    group_advice_for_display,
+)
 from skylos.reporting.assessment_display import (
     assessment_coverage_text,
     assessment_rows,
@@ -18,9 +24,7 @@ from skylos.reporting.assessment_display import (
 )
 from skylos.reporting.finding_types import (
     get_finding_type,
-    group_advice,
     iter_result_findings,
-    summarize_finding_types,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
 from skylos.ui.dead_code_evidence import (
@@ -190,12 +194,16 @@ def _fit_side_columns(console, fixed_widths, optional):
 
 
 def _finding_type_headline(result):
-    counts = summarize_finding_types(result)
+    counts = advice_display_counts(result)
     defect_label = "defect" if counts["defect"] == 1 else "defects"
     group_label = "group" if counts["advice_groups"] == 1 else "groups"
+    advice = f"{counts['advice']} advice"
+    if counts["raw_advice"] != counts["advice"]:
+        entry_label = "entry" if counts["advice"] == 1 else "entries"
+        advice += f" {entry_label} ({counts['raw_advice']} checks)"
     return (
         f"{counts['defect']} {defect_label} · {counts['review']} review · "
-        f"{counts['advice']} advice in {counts['advice_groups']} {group_label}"
+        f"{advice} in {counts['advice_groups']} {group_label}"
     )
 
 
@@ -212,7 +220,10 @@ def _finding_view(result, finding_type):
                 (id(finding), section == "custom_rules"), section
             )
     view = defaultdict(list)
-    for category, finding in iter_result_findings(result):
+    rows = iter_result_findings(result)
+    if finding_type == "advice":
+        rows = combine_complexity_advice(rows)
+    for category, finding in rows:
         if get_finding_type(finding, category) == finding_type:
             section = source_sections.get(
                 (id(finding), category == "custom_rules"), "quality"
@@ -232,7 +243,12 @@ def _finding_severity(item, category):
 
 def _finding_table_cells(item, category, root_path=None):
     """Keep category-specific evidence in a consistent finding table."""
-    rule = str(item.get("rule_id") or item.get("rule") or "")
+    complexity = complexity_display(item)
+    rule = (
+        complexity.rule_label
+        if complexity is not None
+        else str(item.get("rule_id") or item.get("rule") or "")
+    )
     name = str(item.get("name") or item.get("simple_name") or "")
     details = []
     if category.startswith("unused_"):
@@ -326,8 +342,12 @@ def _finding_table_cells(item, category, root_path=None):
     file_path = item.get("file") or item.get("file_path") or item.get("basename")
     line = item.get("line") or item.get("line_number") or item.get("lineno") or 1
     location = f"{_shorten_path(file_path, root_path)}:{line}"
-    rule_name = _display_rule_name(
-        rule, default=str(item.get("kind") or "Finding").replace("_", " ").title()
+    rule_name = (
+        complexity.name
+        if complexity is not None
+        else _display_rule_name(
+            rule, default=str(item.get("kind") or "Finding").replace("_", " ").title()
+        )
     )
     return rule, rule_name, "\n".join(details), location
 
@@ -374,7 +394,7 @@ def _render_finding_table(console, root_path, limit, title, items, category):
 
 
 def _render_advice_groups(console, result, *, root_path=None, limit=None):
-    groups = group_advice(result)
+    groups = group_advice_for_display(result)
     if not groups:
         return
     console.rule("[bold]Advice")
@@ -718,6 +738,13 @@ def _structure_detail(quality, value, limit):
 
 
 def _quality_detail(quality):
+    complexity = complexity_display(quality)
+    if complexity is not None:
+        return (
+            "Complexity",
+            quality.get("name") or quality.get("simple_name") or "<?>",
+            complexity.message,
+        )
     raw_kind = quality.get("kind") or quality.get("metric") or "quality"
     func = quality.get("name") or quality.get("simple_name") or "<?>"
     value = quality.get("value")
