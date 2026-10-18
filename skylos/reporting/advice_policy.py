@@ -32,7 +32,8 @@ class AdviceVisibility:
             f"{count} {labels[reason]}" for reason, count in self.reasons
         )
         return (
-            f"{self.omitted_checks} optional advice checks ({detail}) available "
+            f"{self.omitted_checks} optional advice "
+            f"{'finding' if self.omitted_checks == 1 else 'findings'} ({detail}) available "
             "with --all-advice. JSON and gates retain all findings."
         )
 

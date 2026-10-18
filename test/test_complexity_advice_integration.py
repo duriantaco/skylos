@@ -101,7 +101,7 @@ def test_paired_metrics_display_once_and_leave_full_report_unchanged(kind, expan
 
     assert result == before
     assert summarize_finding_types(result)["advice"] == 2
-    assert "1 advice entry (2 checks) in 1 group" in text
+    assert "1 advice entry (2 findings) in 1 group" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text
     if expand:
         assert re.search(r"cyclomatic[^\n]*12", text, re.IGNORECASE)

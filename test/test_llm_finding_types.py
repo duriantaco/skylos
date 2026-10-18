@@ -50,7 +50,7 @@ def test_default_report_groups_large_advice_and_keeps_every_risk_record(tmp_path
     assert report.startswith(
         "# Skylos Report\n\n60 defects · 75 review · 1500 advice in 1 group."
     )
-    assert "SKY-Q301: 1500 findings in 1 file" in report
+    assert "SKY-Q301: 1500 advice entries in 1 file" in report
     assert "--expand-advice" in report
     assert "message-SKY-Q301-" not in report
     assert "Fix each finding" not in report
@@ -64,8 +64,8 @@ def test_advice_only_report_discloses_records_instead_of_no_findings(tmp_path):
     report = _generate_llm_report(result, tmp_path)
     assert "No findings." not in report
     assert "0 defects · 0 review · 2 advice in 2 groups." in report
-    assert "SKY-Q301: 1 finding" in report
-    assert "SKY-R101: 1 finding" in report
+    assert "SKY-Q301: 1 advice entry" in report
+    assert "SKY-R101: 1 advice entry" in report
     assert _records(report) == []
 
 

@@ -51,8 +51,8 @@ def test_default_report_counts_functions_and_discloses_original_checks(tmp_path)
 
     report = _generate_llm_report(result, tmp_path)
 
-    assert "0 defects · 0 review · 2 advice entries (3 checks) in 1 group." in report
-    assert "SKY-Q301 + SKY-Q306: 2 findings in 1 file — Function complexity" in report
+    assert "0 defects · 0 review · 2 advice entries (3 findings) in 1 group." in report
+    assert "SKY-Q301 + SKY-Q306: 2 advice entries in 1 file — Function complexity" in report
     assert "each original record for grouped metric checks" in report
     assert _records(report) == []
 
@@ -106,7 +106,7 @@ def test_unpaired_complexity_report_keeps_original_rule_and_record(tmp_path, rul
     expanded = _generate_llm_report(result, tmp_path, expand_advice=True)
 
     assert "0 defects · 0 review · 1 advice in 1 group." in compact
-    assert f"{rule}: 1 finding in 1 file" in compact
+    assert f"{rule}: 1 advice entry in 1 file" in compact
     assert f"## 1. {rule} | MEDIUM | Quality\n" in expanded
     assert " + " not in expanded
     assert _records(expanded) == [{**finding, "finding_type": "advice"}]

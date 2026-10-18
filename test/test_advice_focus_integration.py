@@ -156,16 +156,16 @@ def test_focus_selection_matches_expanded_and_grouped_views(
     assert "Defect remains" in text and "Custom review remains" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text and "SKY-C304" in text
     assert "FAIL · configured policy blocked this scan" in normalized
-    assert "8 advice · 7 checks · 3 affected files" in normalized
+    assert "8 total advice findings · 7 rules · 3 affected files" in normalized
     if all_advice:
-        assert "5 advice entries (8 checks)" in normalized
+        assert "5 advice entries (8 findings)" in normalized
         assert "SKY-Q802" in text and "SKY-Q803" in text and "SKY-Q302" in text
-        assert "optional advice checks" not in text
+        assert "optional advice findings" not in text
         if expand:
             assert "permits positional calls" in text
     else:
-        assert "2 advice entries (4 checks)" in normalized
-        assert "4 optional advice checks" in normalized
+        assert "2 advice entries (4 findings)" in normalized
+        assert "4 optional advice findings" in normalized
         assert (
             "--all-advice" in text
             and "JSON and gates retain all findings" in normalized
@@ -191,7 +191,7 @@ def test_all_optional_still_reports_recovery_and_raw_gate(kind, tmp_path):
     text = _render(kind, result, tmp_path)
     normalized = " ".join(text.split())
 
-    assert "1 optional advice checks" in normalized
+    assert "1 optional advice finding" in normalized
     assert "--all-advice" in text
     assert "FAIL · configured policy blocked this scan" in normalized
     assert "Assessment includes all analyzed findings" in normalized
