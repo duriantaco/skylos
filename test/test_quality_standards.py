@@ -162,7 +162,99 @@ y = "hello world"
 z = "hello world"
 """
         tree = ast.parse(textwrap.dedent(code))
-        assert rule.visit_node(tree, {"filename": "test_foo.py"}) is None
+        # Test helpers and package inits under tests/, and examples, repeat
+        # inputs by design; the basename alone does not decide it.
+        for filename in (
+            "tests/test_foo.py",
+            "tests/utils/bases/engine.py",
+            "tests/test_pkg/__init__.py",
+            "examples/demo.py",
+        ):
+            assert rule.visit_node(tree, {"filename": filename}) is None
+
+    def test_test_named_module_without_test_framework_still_reports(self, tmp_path):
+        rule = DuplicateStringLiteralRule()
+        shipped = tmp_path / "pkg" / "test_like.py"
+        shipped.parent.mkdir()
+        shipped.write_text('a = "hello world"\nb = "hello world"\nc = "hello world"\n')
+        tree = ast.parse(shipped.read_text())
+        context = {"filename": str(shipped), "project_root": str(tmp_path)}
+        assert rule.visit_node(tree, context) is not None
+
+    def test_skips_fstring_fragments_but_counts_replacement_field_literals(self):
+        code = """
+def render(x, y, z):
+    real = "Visitor: Sig "
+    return (
+        real, f"Visitor: Sig {x}", f"Visitor: Sig {y}", f"Visitor: Sig {z}",
+        f"{x:%Y-%m-%d}", f"{y:%Y-%m-%d}", f"{z:%Y-%m-%d}",
+        f"{x or 'anonymous-user'}", f"{y or 'anonymous-user'}", f"{z or 'anonymous-user'}",
+    )
+"""
+        results = self._run(code)
+        assert [result["name"] for result in results] == ["anonymous-user"]
+
+    def test_skips_class_level_tables_but_not_scalar_class_attributes(self):
+        code = """
+from typing import ClassVar
+
+class Types:
+    CLASSES = {"a": "pkg.http.XmlResponse", "b": "pkg.http.XmlResponse", "c": "pkg.http.XmlResponse"}
+    lookup: ClassVar[dict] = {"a": "pkg.Text", "b": "pkg.Text", "c": "pkg.Text"}
+
+class Labels:
+    first = "Queue Options"
+    second = "Queue Options"
+    third = "Queue Options"
+"""
+        results = self._run(code)
+        assert [result["name"] for result in results] == ["Queue Options"]
+
+    def test_skips_kwargs_keys_but_not_plain_parameter_keys(self):
+        code = """
+def send(signal, **named):
+    named.pop("dont_log", None)
+    named.get("dont_log")
+    named.setdefault("dont_log", False)
+
+def relay(signal, named):
+    named.pop("keep_alive", None)
+    named.get("keep_alive")
+    named.setdefault("keep_alive", False)
+"""
+        results = self._run(code)
+        assert [result["name"] for result in results] == ["keep_alive"]
+
+    def test_skips_literal_type_members(self):
+        code = """
+from typing import Literal
+
+Mode = Literal["skip-bad", "keep-all"]
+
+def check(mode: Mode):
+    if mode == "skip-bad":
+        return 1
+    return mode == "skip-bad"
+"""
+        assert self._run(code) is None
+
+    def test_skips_python_registry_names_but_not_lookalikes(self):
+        code = """
+def decode(data, v):
+    return (
+        data.decode("utf-8"), data.decode("utf-8"), data.decode("utf-8"),
+        data.decode("ascii", "replace"), data.decode("ascii", "replace"),
+        data.decode("ascii", "replace"),
+        v == "https", v == "https", v == "https",
+        v == "utf-8-ish", v == "utf-8-ish", v == "utf-8-ish",
+        v == "use utf-8 here", v == "use utf-8 here", v == "use utf-8 here",
+    )
+"""
+        results = self._run(code)
+        assert sorted(result["name"] for result in results) == [
+            "use utf-8 here",
+            "utf-8-ish",
+        ]
 
     def test_skips_docstrings(self):
         code = '''
@@ -390,21 +482,203 @@ class TestBooleanTrapRule:
 
     def test_detects_bool_default(self):
         code = """
-def foo(x, flag=True):
+bool = str
+def foo(x, flag=True, items: list[str]=True, text: str=False):
     pass
 """
         results = self._run(code)
-        assert len(results) == 1
-        assert results[0]["simple_name"] == "flag"
+        assert {result["simple_name"] for result in results} == {"flag", "items", "text"}
 
     def test_detects_bool_annotation(self):
+        # The global declaration makes ``bool`` the builtin again inside
+        # ``inner``. ``bar`` is nested, so it needs a positional literal call.
         code = """
-def bar(x, enable: bool):
-    pass
+def outer():
+    bool = str
+    def inner():
+        global bool
+        def bar(x, enable: bool):
+            pass
+        bar(1, True)
 """
         results = self._run(code)
         assert len(results) == 1
         assert results[0]["simple_name"] == "enable"
+        assert "called positionally with True at line 8" in results[0]["message"]
+
+    def test_public_function_keeps_api_shape_message(self):
+        results = self._run("def publish(data, notify: bool = False):\n    pass\n")
+        assert [result["simple_name"] for result in results] == ["notify"]
+        assert "public or callback contract" in results[0]["message"]
+
+    def test_skips_overload_stubs_and_declared_overrides(self):
+        code = """
+import typing_extensions
+from typing import overload, override
+
+@overload
+def fetch(url: str, raw: bool = False) -> bytes: ...
+def fetch(url, raw: bool = False):
+    return url
+
+class Fancy(External):
+    @override
+    def render(self, compact: bool = False):
+        return compact
+
+class Plain(External):
+    @typing_extensions.override
+    def render(self, compact: bool = False):
+        return compact
+"""
+        results = self._run(code)
+        assert [(result["name"], result["line"]) for result in results] == [
+            ("fetch.raw", 7)
+        ]
+
+    def test_skips_same_module_overrides_but_keeps_base(self):
+        code = """
+class Store:
+    def save(self, commit=True):
+        return commit
+
+class Cached(Store):
+    pass
+
+class Sharded(Cached):
+    def save(self, commit=True):
+        return commit
+
+class Remote(External):
+    def save(self, commit=True):
+        return commit
+"""
+        results = self._run(code)
+        assert [result["line"] for result in results] == [3, 14]
+
+    def test_skips_defs_used_as_values(self):
+        code = """
+def on_event(payload, retry=False):
+    return payload
+
+register(on_event)
+
+class Plugin:
+    def start(self):
+        bus.connect(self.on_close)
+
+    def on_close(self, error=False):
+        return error
+
+    @classmethod
+    def build(cls):
+        o = cls()
+        bus.connect(o.on_open)
+
+    def on_open(self, replay=False):
+        return replay
+
+def deco(fn):
+    def wrapper(arg, quiet=False):
+        return fn(arg)
+    return wrapper
+"""
+        assert self._run(code) == []
+
+    def test_aliases_conditional_calls_and_unrelated_receivers_still_report(self):
+        code = """
+class Result:
+    def get(self, timeout=None, propagate=True):
+        return timeout
+    wait = get
+
+    def join(self, propagate=True):
+        return propagate
+
+    def collect(self, native):
+        return (self.join_native if native else self.join)(propagate=True)
+
+class Panel:
+    def __init__(self, app):
+        self.durable = app.conf.durable
+
+    def conf(self, with_defaults=False):
+        return with_defaults
+"""
+        results = self._run(code)
+        assert [result["name"] for result in results] == [
+            "get.propagate",
+            "join.propagate",
+            "conf.with_defaults",
+        ]
+
+    def test_private_and_nested_defs_need_positional_literal_calls(self):
+        code = """
+def _apply(rows, strict_mode=False):
+    return rows
+
+def _load(path, cache=False):
+    return path
+
+def _render(x, flag=False):
+    return x
+
+class Emitter:
+    def _emit(self, final=False):
+        return final
+
+    def _send(self, msg, urgent=False):
+        return msg
+
+    @staticmethod
+    def _fmt(value, upper=False):
+        return value
+
+    def flush(self, flag):
+        self._emit(True)
+        self._send(True)
+        Emitter._fmt("v", True)
+        _apply([], True)
+        _load([], cache=True)
+        _render([], flag)
+
+def outer():
+    def step(x, final=False):
+        return x
+    def helper(x, final=False):
+        return x
+    helper(1, final=True)
+    return step(1, False)
+
+def helper(x, final=False):
+    return x
+"""
+        results = self._run(code)
+        found = {result["name"]: result["message"] for result in results}
+        assert sorted(found) == [
+            "_apply.strict_mode",
+            "_emit.final",
+            "_fmt.upper",
+            "helper.final",
+            "step.final",
+        ]
+        assert "called positionally with True at line 26" in found["_apply.strict_mode"]
+        assert "called positionally with True at line 23" in found["_emit.final"]
+        assert "called positionally with True at line 25" in found["_fmt.upper"]
+        assert "called positionally with False at line 36" in found["step.final"]
+        assert "public or callback contract" in found["helper.final"]
+
+    def test_skips_test_and_example_modules(self):
+        rule = BooleanTrapRule()
+        tree = ast.parse("def make(x, flag=False):\n    return x\n")
+        for filename in ("tests/helpers.py", "examples/demo.py"):
+            context = {"filename": filename}
+            results = [
+                r
+                for node in ast.walk(tree)
+                for r in rule.visit_node(node, context) or []
+            ]
+            assert results == []
 
     def test_skips_allowed_names(self):
         code = """
@@ -431,7 +705,9 @@ def foo(self, flag=True):
 
     def test_no_false_positives_on_non_bool(self):
         code = """
-def foo(x, y=42, z="hello"):
+bool = str
+Alias = bool
+def foo(x, y: list[str] | None=None, z="hello", enabled: bool="yes", active: Alias="yes"):
     pass
 """
         assert self._run(code) == []
