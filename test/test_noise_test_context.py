@@ -2,6 +2,7 @@
 
 import ast
 import json
+import os
 
 import pytest
 
@@ -9,10 +10,46 @@ from skylos.rules.quality.class_size import GodClassRule
 
 
 def _write(root, files):
+    root = root.resolve()
     for name, source in files.items():
-        path = root / name
+        path = (root / name).resolve()
+        path.relative_to(root)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source, encoding="utf-8")
+        fd = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(source)
+
+
+def test_fixture_writer_rejects_paths_outside_its_root(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    with pytest.raises(ValueError):
+        _write(root, {"../outside.py": "unexpected"})
+    assert not (tmp_path / "outside.py").exists()
+
+
+def test_fixture_writer_does_not_overwrite_existing_files(tmp_path):
+    _write(tmp_path, {"case.py": "original"})
+    with pytest.raises(FileExistsError):
+        _write(tmp_path, {"case.py": "replacement"})
+    assert (tmp_path / "case.py").read_text(encoding="utf-8") == "original"
+
+
+def test_fixture_writer_rejects_symlinks_outside_its_root(tmp_path):
+    _write(tmp_path, {"outside.py": "original"})
+    root = tmp_path / "project"
+    root.mkdir()
+    try:
+        (root / "case.py").symlink_to(tmp_path / "outside.py")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable")
+    with pytest.raises(ValueError):
+        _write(root, {"case.py": "replacement"})
+    assert (tmp_path / "outside.py").read_text(encoding="utf-8") == "original"
 
 
 def _methods(prefix="test_case", count=23):
