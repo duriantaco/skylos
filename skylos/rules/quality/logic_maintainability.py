@@ -3,6 +3,7 @@ import codecs
 import math
 import operator
 import re
+import string
 import urllib.parse
 from collections import defaultdict
 from pathlib import Path
@@ -17,6 +18,7 @@ from skylos.rules.quality.logic_foundation import (
 )
 from skylos.rules.quality.logic_security import _qualified_call_name
 from skylos.rules.quality._ast_visit import IterativeNodeVisitor
+from skylos.rules.quality._provider_context import project_local_provider
 
 
 _SENSITIVE_LITERAL_KEYWORDS = (
@@ -183,7 +185,8 @@ def _duplicate_string_context(
         # This describes syntax, not a proof that an arbitrary called API
         # requires the value. Consumers can keep mixed and unknown roles visible.
         "all_occurrences_contract_tokens": identifier_like
-        and set(roles) <= {"call_argument", "call_keyword", "dict_key", "subscript_key"},
+        and set(roles)
+        <= {"call_argument", "call_keyword", "dict_key", "subscript_key"},
         "role_counts": roles,
     }
 
@@ -516,14 +519,34 @@ def _bound_receiver_keys(
     if isinstance(target, ast.Starred):
         return _bound_receiver_keys(target.value, parent_map)
     key = _mapping_receiver_key(target, parent_map)
-    return {key} if key is not None else set()
+    keys = {key} if key is not None else set()
+    if isinstance(target, ast.Attribute) and target.attr in {
+        "get",
+        "pop",
+        "setdefault",
+        "__class__",
+        "__getattribute__",
+        "__getattr__",
+    }:
+        receiver = _mapping_receiver_key(target.value, parent_map)
+        if receiver is not None:
+            keys.add(receiver)
+    return keys
 
 
 def _mapping_receiver_evidence(
-    tree: ast.Module, parent_map: dict[int, ast.AST]
+    tree: ast.Module, parent_map: dict[int, ast.AST], call_facts=None
 ) -> set[tuple[int | None, tuple]]:
     receivers: set[tuple[int | None, tuple]] = set()
     rebound: set[tuple[int | None, tuple]] = set()
+
+    def mapping_value(value):
+        if isinstance(value, (ast.Dict, ast.DictComp)):
+            return True
+        if not isinstance(value, ast.Call) or call_facts is None:
+            return False
+        return call_facts().is_mapping_constructor(value.func)
+
     for node in ast.walk(tree):
         candidate: ast.AST | None = None
         if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
@@ -532,7 +555,7 @@ def _mapping_receiver_evidence(
         elif isinstance(node, ast.AnnAssign):
             if _is_mapping_annotation(node.annotation):
                 candidate = node.target
-            if node.value is not None and not isinstance(node.value, ast.Dict):
+            if node.value is not None and not mapping_value(node.value):
                 rebound.update(_bound_receiver_keys(node.target, parent_map))
         elif isinstance(node, ast.arg):
             # ``**kwargs`` is always a dict; an annotation can prove others.
@@ -544,7 +567,7 @@ def _mapping_receiver_evidence(
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 keys = _bound_receiver_keys(target, parent_map)
-                if isinstance(node.value, ast.Dict):
+                if mapping_value(node.value):
                     receivers.update(keys)
                 else:
                     rebound.update(keys)
@@ -585,28 +608,48 @@ _TYPING_NAMED_DECLARATIONS = frozenset(
 class _TypingLiteralCalls:
     """Recognize imported typing operations without trusting their spelling."""
 
-    def __init__(self, tree):
+    def __init__(self, tree, modules=None, filename=None, project_root=None):
+        modules = _TYPING_MODULES if modules is None else modules
+        package = _literal_module_package(filename)
         self.scopes = _ModuleCallables(tree)
         self.bindings = defaultdict(set)
         self.changed_modules = set()
+        self.changed_members = set()
         self.dynamic_namespace = False
+        local_providers = {}
+
+        def external_module(module):
+            if module not in modules:
+                return None
+            provider = module.split(".", 1)[0]
+            if provider not in local_providers:
+                local_providers[provider] = project_local_provider(
+                    provider, filename, project_root
+                )
+            return None if local_providers[provider] else module
+
         for node in ast.walk(tree):
             scope = self.scopes.scope_of.get(node, tree)
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    value = (
-                        (alias.name, None) if alias.name in _TYPING_MODULES else None
-                    )
+                    module = external_module(alias.name)
+                    value = (module, None) if module else None
                     self._bind(alias.asname or alias.name.split(".")[0], scope, value)
             elif isinstance(node, ast.ImportFrom):
+                module = node.module
+                if node.level:
+                    parts = package.split(".") if package else []
+                    if node.level <= len(parts):
+                        prefix = parts[: len(parts) - node.level + 1]
+                        module = ".".join([*prefix, *([module] if module else [])])
+                    else:
+                        module = None
+                else:
+                    module = external_module(module)
                 for alias in node.names:
                     if alias.name == "*":
                         self.dynamic_namespace = True
-                    value = (
-                        (node.module, alias.name)
-                        if not node.level and node.module in _TYPING_MODULES
-                        else None
-                    )
+                    value = (module, alias.name) if module in modules else None
                     self._bind(alias.asname or alias.name, scope, value)
             elif isinstance(node, ast.Name) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
@@ -627,8 +670,17 @@ class _TypingLiteralCalls:
                 if node.func.id in {"exec", "eval", "globals", "locals"}:
                     self.dynamic_namespace = True
 
-        # A module alias passed around or assigned through can be monkeypatched.
-        # Do not use it as identity proof, including through another import alias.
+        for key, values in self.bindings.items():
+            if self.scopes.value_refs.get(key):
+                # Includes objects nested in registries/containers, returned
+                # or yielded, not only direct call arguments and assignments.
+                self.changed_members.update(
+                    value for value in values if value and value[1] is not None
+                )
+
+        # Imported objects passed around or assigned through can be mutated.
+        # Track individual exports too: an escaped Integer is not proof that
+        # the separate Column callable changed, but a mutated Column is.
         for node in ast.walk(tree):
             expressions = []
             if isinstance(node, ast.Attribute) and node.attr == "__dict__":
@@ -647,12 +699,24 @@ class _TypingLiteralCalls:
                 expressions.append(node.value)
             elif isinstance(node, ast.Call):
                 expressions.extend([*node.args, *(kw.value for kw in node.keywords)])
+            if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                root = node.value
+                while isinstance(root, (ast.Attribute, ast.Subscript)):
+                    root = root.value
+                if isinstance(root, ast.Name) and root.id == "__builtins__":
+                    self.changed_modules.add("builtins")
             for expression in expressions:
                 if isinstance(expression, ast.Name):
                     values = self._values(expression)
-                    self.changed_modules.update(
-                        value[0] for value in values if value and value[1] is None
-                    )
+                    for value in values:
+                        if not value:
+                            continue
+                        if value[1] is None:
+                            self.changed_modules.add(value[0])
+                        else:
+                            self.changed_members.add(value)
 
     def _bind(self, name, scope, value):
         target = self.scopes.resolve(name, scope)
@@ -675,7 +739,7 @@ class _TypingLiteralCalls:
         target = self.scopes.resolve(node.id, scope)
         return self.bindings.get((target, node.id), ())
 
-    def member(self, expression):
+    def member(self, expression, modules=None):
         if self.dynamic_namespace:
             return None
         if isinstance(expression, ast.Name):
@@ -691,21 +755,104 @@ class _TypingLiteralCalls:
             return None
         members = set()
         for module, imported in values:
+            if modules is not None and module not in modules:
+                return None
             if module in self.changed_modules:
                 return None
             if attribute is not None:
                 if imported is not None:
                     return None
+                if (module, attribute) in self.changed_members:
+                    return None
                 members.add(attribute)
             else:
+                if (module, imported) in self.changed_members:
+                    return None
                 members.add(imported)
         return next(iter(members)) if len(members) == 1 else None
+
+    def is_builtin_reference(self, expression, name):
+        if self.dynamic_namespace or "builtins" in self.changed_modules:
+            return False
+        if isinstance(expression, ast.Name) and expression.id == name:
+            scope = self.scopes.scope_of.get(expression)
+            if self.scopes.resolve(name, scope) is None:
+                return True
+        return self.member(expression, {"builtins"}) == name
+
+    def is_mapping_constructor(self, expression, seen=()):
+        if self.is_builtin_reference(expression, "dict"):
+            return True
+        if self.member(expression, {"collections"}) in {
+            "defaultdict",
+            "OrderedDict",
+            "UserDict",
+        }:
+            return True
+        if not isinstance(expression, ast.Name) or len(seen) >= 8:
+            return False
+        scope = self.scopes.resolve(expression.id, self.scopes.scope_of.get(expression))
+        key = (scope, expression.id)
+        if key in seen or self.scopes.assigned.get(key) or self.scopes.aliases.get(key):
+            return False
+        classes = self.scopes.classes.get(key, ())
+        if len(classes) != 1:
+            return False
+        definition = classes[0]
+        for reference in self.scopes.value_refs.get(key, ()):
+            parent = self.scopes.parents.get(reference)
+            if not (
+                isinstance(parent, ast.ClassDef)
+                and any(base is reference for base in parent.bases)
+            ):
+                # A class object stored, passed, annotated through or mutated
+                # is no longer proof of an unchanged dict implementation.
+                return False
+        if (
+            definition.decorator_list
+            or definition.keywords
+            or len(definition.bases) != 1
+        ):
+            return False
+        for statement in definition.body:
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            ):
+                continue
+            if (
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and all(
+                    isinstance(target, ast.Name) and not target.id.startswith("__")
+                    for target in statement.targets
+                )
+            ):
+                continue
+            # A custom initializer, method, descriptor or class-body action
+            # can rebind lookup methods on an instance. Only plain subclasses
+            # establish unchanged dict dispatch without an escape analysis.
+            return False
+        overrides = self.scopes.bound.get(definition, ())
+        if set(overrides) & {
+            "get",
+            "pop",
+            "setdefault",
+            "__new__",
+            "__init_subclass__",
+            "__getattribute__",
+            "__getattr__",
+            "__contains__",
+        }:
+            return False
+        return self.is_mapping_constructor(definition.bases[0], (*seen, key))
 
     def is_type_literal(self, node, parent_map):
         call = parent_map.get(id(node))
         if not isinstance(call, ast.Call) or not call.args or call.args[0] is not node:
             return False
-        member = self.member(call.func)
+        member = self.member(call.func, _TYPING_MODULES)
         if member == "cast":
             try:
                 ast.parse(node.value, mode="eval")
@@ -727,6 +874,303 @@ class _TypingLiteralCalls:
                 and targets[0].id == node.value
             )
         return False
+
+
+def _literal_module_package(filename):
+    """Qualify relative imports from at most sixteen regular package parents."""
+    if not filename or not Path(filename).is_absolute():
+        return ""
+    current = Path(filename).parent
+    parts = []
+    for _ in range(16):
+        marker = current / "__init__.py"
+        if current.is_symlink() or marker.is_symlink() or not marker.is_file():
+            break
+        parts.append(current.name)
+        current = current.parent
+    return ".".join(reversed(parts))
+
+
+_CLI_LITERAL_DECLARATIONS = frozenset(
+    {
+        "add_argument",
+        "addoption",
+        "_addoption",
+        "add_option",
+        "add_base_argument",
+        "option",
+        "argument",
+    }
+)
+_CLI_STANDARD_ACTIONS = frozenset(
+    {
+        "store",
+        "store_const",
+        "store_true",
+        "store_false",
+        "append",
+        "append_const",
+        "count",
+        "help",
+        "version",
+        "extend",
+    }
+)
+_CLI_DOCUMENTATION_KEYWORDS = frozenset({"help", "short_help", "help_group", "metavar"})
+_CATALOG_LITERAL_ARGUMENTS = {
+    "gettext": {0},
+    "gettext_lazy": {0},
+    "gettext_noop": {0},
+    "ugettext": {0},
+    "ugettext_lazy": {0},
+    "ugettext_noop": {0},
+    "dgettext": {1},
+    "dcgettext": {1},
+    "ngettext": {0, 1},
+    "ngettext_lazy": {0, 1},
+    "ungettext": {0, 1},
+    "ungettext_lazy": {0, 1},
+    "dngettext": {1, 2},
+    "dcngettext": {1, 2},
+    "pgettext": {1},
+    "pgettext_lazy": {1},
+    "npgettext": {1, 2},
+    "npgettext_lazy": {1, 2},
+}
+_DUPLICATE_LITERAL_API_MODULES = frozenset(
+    {
+        "typing",
+        "typing_extensions",
+        "operator",
+        "gettext",
+        "django.utils.translation",
+        "flask_babel",
+        "sqlalchemy",
+        "sqlalchemy.sql",
+        "sqlalchemy.sql.schema",
+        "sqlalchemy.sql.expression",
+        "builtins",
+        "collections",
+        "types",
+        "celery.utils.dispatch",
+        "celery.utils.dispatch.signal",
+        "django.dispatch",
+        "django.dispatch.dispatcher",
+    }
+)
+_SCHEMA_LITERAL_MODULES = frozenset(
+    {
+        "sqlalchemy",
+        "sqlalchemy.sql",
+        "sqlalchemy.sql.schema",
+        "sqlalchemy.sql.expression",
+    }
+)
+_TRANSLATION_LITERAL_MODULES = frozenset(
+    {"gettext", "django.utils.translation", "flask_babel"}
+)
+_SIGNAL_LITERAL_MODULES = frozenset(
+    {
+        "celery.utils.dispatch",
+        "celery.utils.dispatch.signal",
+        "django.dispatch",
+        "django.dispatch.dispatcher",
+    }
+)
+
+
+def _is_signal_field_collection(node, parent_map, calls):
+    """Only the documented field-name collection of a resolved Signal API."""
+    collection = parent_map.get(id(node))
+    if not isinstance(collection, (ast.Set, ast.List, ast.Tuple)):
+        return False
+    keyword = parent_map.get(id(collection))
+    if not isinstance(keyword, ast.keyword) or keyword.arg != "providing_args":
+        return False
+    call = parent_map.get(id(keyword))
+    return (
+        isinstance(call, ast.Call)
+        and calls().member(call.func, _SIGNAL_LITERAL_MODULES) == "Signal"
+    )
+
+
+def _is_collection_wrapper(call, calls):
+    if any(
+        calls.is_builtin_reference(call.func, name)
+        for name in ("dict", "list", "set", "tuple", "frozenset")
+    ):
+        return True
+    if calls.member(call.func, {"collections"}) in {
+        "OrderedDict",
+        "defaultdict",
+        "deque",
+        "Counter",
+    }:
+        return True
+    return calls.member(call.func, {"types"}) == "MappingProxyType"
+
+
+def _is_cli_declaration_literal(node, parent_map):
+    """Recognize the argument slot, never just an identifier's spelling.
+
+    Parser wrappers share argparse's declarations, so accept their public
+    declaration shape too: a known method and a flag or explicit destination.
+    User actions and defaults remain ordinary values, as do arbitrary calls
+    with an ``action`` keyword.
+    """
+    keyword = parent_map.get(id(node))
+    if not isinstance(keyword, ast.keyword):
+        return False
+    call = parent_map.get(id(keyword))
+    if not isinstance(call, ast.Call):
+        return False
+    if _call_name(call.func).rsplit(".", 1)[-1] not in _CLI_LITERAL_DECLARATIONS:
+        return False
+    has_flag = any(
+        isinstance(arg, ast.Constant)
+        and isinstance(arg.value, str)
+        and arg.value.startswith("-")
+        and len(arg.value) > 1
+        for arg in call.args
+    )
+    has_destination = any(
+        kw.arg == "dest"
+        and isinstance(kw.value, ast.Constant)
+        and isinstance(kw.value.value, str)
+        for kw in call.keywords
+    )
+    if not (has_flag or has_destination):
+        return False
+    if keyword.arg == "action":
+        return node.value in _CLI_STANDARD_ACTIONS
+    return keyword.arg in _CLI_DOCUMENTATION_KEYWORDS
+
+
+def _is_imported_literal_contract(node, parent_map, calls):
+    parent = parent_map.get(id(node))
+    if not isinstance(parent, ast.Call):
+        return False
+    member = calls.member(parent.func, {"operator"})
+    if member in {"itemgetter", "attrgetter"}:
+        # operator selectors name fields just like obj["field"].
+        return any(argument is node for argument in parent.args)
+    if calls.member(parent.func, _SCHEMA_LITERAL_MODULES) in {
+        "Column",
+        "Table",
+        "column",
+        "table",
+    }:
+        # These constructors declare persistent/schema identifiers. Like dict
+        # keys, repeating a field name in distinct schemas needs no constant.
+        return bool(parent.args) and parent.args[0] is node
+    positions = _CATALOG_LITERAL_ARGUMENTS.get(
+        calls.member(parent.func, _TRANSLATION_LITERAL_MODULES), ()
+    )
+    # gettext extraction needs a literal at these exact msgid positions;
+    # replacing one with a constant can remove it from the translation catalog.
+    return any(
+        position < len(parent.args) and parent.args[position] is node
+        for position in positions
+    )
+
+
+_INTERPRETER_PROTOCOL_NAMES = frozenset(
+    name
+    for builtin in (object, type, str, bytes, list, tuple, dict, set, int, float)
+    for name in builtin.__dict__
+    if name.startswith("__") and name.endswith("__")
+)
+_PERCENT_PLACEHOLDER = re.compile(
+    r"%(?:\([^)]+\))?[#0 +\-]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlL]?[diouxXeEfFgGcrsa%]"
+)
+
+
+def _is_reflection_field_literal(node, parent_map, calls, attribute_names):
+    if node.value not in attribute_names:
+        return False
+    # Private state names can benefit from a shared constant. Interpreter
+    # protocol names, unlike arbitrary private slots, have fixed spellings.
+    if node.value.startswith("_") and node.value not in _INTERPRETER_PROTOCOL_NAMES:
+        return False
+    call = parent_map.get(id(node))
+    return (
+        isinstance(call, ast.Call)
+        and len(call.args) >= 2
+        and call.args[1] is node
+        and any(
+            calls.is_builtin_reference(call.func, name)
+            for name in ("getattr", "hasattr")
+        )
+    )
+
+
+def _is_mapping_membership_key(node, parent_map, mapping_receivers):
+    comparison = parent_map.get(id(node))
+    if not (
+        isinstance(comparison, ast.Compare)
+        and comparison.left is node
+        and len(comparison.ops) == 1
+        and isinstance(comparison.ops[0], (ast.In, ast.NotIn))
+    ):
+        return False
+    receiver = comparison.comparators[0]
+    return (
+        isinstance(receiver, (ast.Dict, ast.DictComp))
+        or _mapping_receiver_key(receiver, parent_map) in mapping_receivers
+    )
+
+
+def _is_format_structure_literal(node, parent_map):
+    parent = parent_map.get(id(node))
+    if (
+        isinstance(parent, ast.BinOp)
+        and isinstance(parent.op, ast.Mod)
+        and parent.left is node
+    ):
+        rest, count = _PERCENT_PLACEHOLDER.subn("", node.value)
+        return count > 0 and not any(character.isalnum() for character in rest)
+    if not (
+        isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and parent.attr == "format"
+    ):
+        return False
+    call = parent_map.get(id(parent))
+    if not isinstance(call, ast.Call) or call.func is not parent:
+        return False
+    try:
+        parts = list(string.Formatter().parse(node.value))
+    except ValueError:
+        return False
+    return any(field is not None for _, field, _, _ in parts) and not any(
+        character.isalnum() for literal, _, _, _ in parts for character in literal
+    )
+
+
+def _all_class_field_declarations(nodes, parent_map):
+    """Independent classes declaring the same field are a catalog, not logic.
+
+    Do not drop just one declaration from a mixed group: a declared name plus
+    repeated runtime defaults can still have a real consistency problem.
+    """
+    fields = set()
+    classes = set()
+    for node in nodes:
+        assignment = parent_map.get(id(node))
+        if (
+            not isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            or assignment.value is not node
+        ):
+            return False
+        owner = parent_map.get(id(assignment))
+        if not isinstance(owner, ast.ClassDef):
+            return False
+        names = _assignment_targets(assignment)
+        if len(names) != 1:
+            return False
+        fields.update(names)
+        classes.add(id(owner))
+    return len(fields) == 1 and len(classes) == len(nodes)
 
 
 class DuplicateStringLiteralRule(SkylosRule):
@@ -751,12 +1195,21 @@ class DuplicateStringLiteralRule(SkylosRule):
                     return True
         return False
 
-    def _is_structural_key_literal(self, node, parent_map):
+    def _is_structural_key_literal(self, node, parent_map, membership_cache=None):
         parent = parent_map.get(id(node))
         if isinstance(parent, ast.Subscript) and parent.slice is node:
             return True
-        if isinstance(parent, ast.Dict) and node in parent.keys:
-            return True
+        if isinstance(parent, ast.Dict):
+            if membership_cache is None:
+                return node in parent.keys
+            members = membership_cache.get(id(parent))
+            if members is None:
+                members = (
+                    {id(key) for key in parent.keys},
+                    {id(value) for value in parent.values},
+                )
+                membership_cache[id(parent)] = members
+            return id(node) in members[0]
         return False
 
     def _is_mapping_lookup_key(self, node, parent_map, mapping_receivers):
@@ -804,8 +1257,10 @@ class DuplicateStringLiteralRule(SkylosRule):
 
             current = parent
 
-    def _is_declarative_table_literal(self, node, parent_map):
+    def _is_declarative_table_literal(self, node, parent_map, calls=None):
         current = node
+        in_collection = False
+        wrappers = []
 
         while True:
             parent = parent_map.get(id(current))
@@ -815,10 +1270,26 @@ class DuplicateStringLiteralRule(SkylosRule):
             if _is_local_scope_node(parent):
                 return False
 
+            if isinstance(parent, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+                in_collection = True
+            elif isinstance(parent, ast.Call):
+                wrappers.append(parent)
+
             if isinstance(parent, (ast.Assign, ast.AnnAssign)):
                 if not _is_declaration_level_assignment(parent, parent_map):
                     return False
-                return _is_declarative_assignment(parent)
+                if _is_declarative_assignment(parent):
+                    return True
+                # A collection argument is not proof of a declaration: an
+                # arbitrary wrapper may send messages, execute SQL, or do any
+                # other runtime work. Only known collection constructors keep
+                # the literal's catalog role through the wrapper.
+                return (
+                    in_collection
+                    and bool(wrappers)
+                    and calls is not None
+                    and all(_is_collection_wrapper(call, calls()) for call in wrappers)
+                )
 
             current = parent
 
@@ -838,8 +1309,30 @@ class DuplicateStringLiteralRule(SkylosRule):
         for parent in ast.walk(node):
             for child in ast.iter_child_nodes(parent):
                 parent_map[id(child)] = parent
-        mapping_receivers = _mapping_receiver_evidence(node, parent_map)
         typing_calls = None
+        membership_cache = {}
+
+        def call_facts():
+            nonlocal typing_calls
+            if typing_calls is None:
+                typing_calls = _TypingLiteralCalls(
+                    node,
+                    _DUPLICATE_LITERAL_API_MODULES,
+                    filename,
+                    context.get("project_root"),
+                )
+            return typing_calls
+
+        mapping_receivers = _mapping_receiver_evidence(node, parent_map, call_facts)
+        attribute_names = {
+            child.attr for child in ast.walk(node) if isinstance(child, ast.Attribute)
+        }
+        attribute_names.update(
+            child.name
+            for child in ast.walk(node)
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and isinstance(parent_map.get(id(child)), ast.ClassDef)
+        )
 
         string_occurrences = {}
         for child in ast.walk(node):
@@ -850,13 +1343,21 @@ class DuplicateStringLiteralRule(SkylosRule):
                     continue
                 if _is_fstring_fragment(child, parent_map):
                     continue
-                if self._is_structural_key_literal(child, parent_map):
+                if self._is_structural_key_literal(child, parent_map, membership_cache):
                     continue
                 if self._is_mapping_lookup_key(child, parent_map, mapping_receivers):
+                    continue
+                if _is_mapping_membership_key(child, parent_map, mapping_receivers):
+                    continue
+                if _is_format_structure_literal(child, parent_map):
                     continue
                 if self._is_annotation_literal(child, parent_map):
                     continue
                 if _is_literal_type_member(child, parent_map):
+                    continue
+                if _is_cli_declaration_literal(child, parent_map):
+                    continue
+                if _is_signal_field_collection(child, parent_map, call_facts):
                     continue
                 parent = parent_map.get(id(child))
                 if (
@@ -864,11 +1365,16 @@ class DuplicateStringLiteralRule(SkylosRule):
                     and parent.args
                     and parent.args[0] is child
                 ):
-                    if typing_calls is None:
-                        typing_calls = _TypingLiteralCalls(node)
-                    if typing_calls.is_type_literal(child, parent_map):
+                    if call_facts().is_type_literal(child, parent_map):
                         continue
-                if self._is_declarative_table_literal(child, parent_map):
+                if isinstance(parent, ast.Call):
+                    if _is_imported_literal_contract(child, parent_map, call_facts()):
+                        continue
+                    if _is_reflection_field_literal(
+                        child, parent_map, call_facts(), attribute_names
+                    ):
+                        continue
+                if self._is_declarative_table_literal(child, parent_map, call_facts):
                     continue
                 if _is_duplicate_string_noise(child.value):
                     continue
@@ -879,12 +1385,13 @@ class DuplicateStringLiteralRule(SkylosRule):
 
         findings = []
         function_scopes = None
-        membership_cache = {}
         for value, nodes in string_occurrences.items():
             count = len(nodes)
             if count < self.threshold:
                 continue
             if _is_python_registry_name(value):
+                continue
+            if _all_class_field_declarations(nodes, parent_map):
                 continue
             severity = "MEDIUM" if count >= 6 else "LOW"
             display = _duplicate_string_display(value)
@@ -930,7 +1437,7 @@ class TooManyReturnsRule(SkylosRule):
                 continue
             if isinstance(child, ast.Return):
                 count += 1
-            for attr in ("body", "orelse", "finalbody", "handlers"):
+            for attr in ("body", "orelse", "finalbody", "handlers", "cases"):
                 block = getattr(child, attr, None)
                 if block and isinstance(block, list):
                     stack.extend(block)

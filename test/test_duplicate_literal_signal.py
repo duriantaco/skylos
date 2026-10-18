@@ -206,9 +206,9 @@ def test_argument_roles_include_keywords_without_serializing_api_names():
     finding = _findings(
         """
         def private_credential_handler():
-            parser.add_argument("--read", action="store_true")
-            parser.add_argument("--copy", action="store_true")
-            consume("store_true")
+            parser.add_argument("--read", action="custom_action")
+            parser.add_argument("--copy", action="custom_action")
+            consume("custom_action")
         """
     )[0]
     context = finding["literal_context"]
