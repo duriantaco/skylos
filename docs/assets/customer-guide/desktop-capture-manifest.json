@@ -1,0 +1,104 @@
+{
+  "capturedAt": "2026-10-16T07:29:43.025Z",
+  "manifest": [
+    {
+      "file": "compliance-report-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "",
+      "textLength": 1658,
+      "source": "Actual Cloud compliance report renderer, illustrative SOC 2 evidence"
+    },
+    {
+      "file": "compliance-overview-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=compliance",
+      "textLength": 3932,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "compliance-menu-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=compliance&openFormats=1",
+      "textLength": 4052,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "compliance-history-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=compliance&section=reports",
+      "textLength": 3932,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "compliance-export-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=compliance&section=agent-changes",
+      "textLength": 3932,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "audit-reports-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=history&path=/dashboard/evidence",
+      "textLength": 2189,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "fix-confirmation-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=fixresults&openFix=1",
+      "textLength": 2270,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "fix-results-desktop.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=fixresults",
+      "textLength": 1688,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-home.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=home",
+      "textLength": 2359,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-project.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=project",
+      "textLength": 1760,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-scan.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=scan",
+      "textLength": 1511,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-policy.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=policy",
+      "textLength": 8375,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-not-fixing.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=exceptions",
+      "textLength": 1501,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    },
+    {
+      "file": "cloud-investigator.png",
+      "viewport": "1600x1050 desktop",
+      "query": "mode=investigator",
+      "textLength": 2098,
+      "source": "Actual Cloud React UI with isolated illustrative fixtures; no production account or actions"
+    }
+  ],
+  "errors": []
+}
