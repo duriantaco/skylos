@@ -12,7 +12,9 @@ from rich.text import Text
 from skylos.api._snippets import _resolve_snippet_path
 from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.advice_display import (
+    ADVICE_PRIORITY_NOTE,
     advice_display_counts,
+    advice_priority,
     combine_complexity_advice,
     complexity_display,
     group_advice_for_display,
@@ -168,6 +170,8 @@ def render_pretty_results(
         console.print(summary)
     if visibility.message:
         console.print(Text(_sanitize_terminal_text(visibility.message), style="dim"))
+    if advice_display_counts(result)["advice"]:
+        console.print(Text(ADVICE_PRIORITY_NOTE, style="dim"))
     uncertainty = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
     if uncertainty:
         console.print(Text(_sanitize_terminal_text(uncertainty), style="yellow"))
@@ -381,7 +385,7 @@ def _print_advice_groups(console, result, *, root_path=None, limit=None):
         severities = ", ".join(
             sorted(
                 {
-                    str(finding.get("severity") or "MEDIUM").upper()
+                    advice_priority(finding, "quality")
                     for finding in group["findings"]
                 }
             )
@@ -542,11 +546,12 @@ def _context_details(item):
 
 
 def _print_finding(console: Console, finding: PrettyFinding, short_path: str) -> None:
+    priority_label = "Advice priority" if finding.finding_type == "advice" else "Severity"
     first = Text.assemble(
         ("    ", ""),
         ("█", _severity_rail_style(finding.severity)),
         (" ", ""),
-        (f"Type: {finding.finding_type.title()}  Severity: ", "dim"),
+        (f"Type: {finding.finding_type.title()}  {priority_label}: ", "dim"),
         (
             _severity_badge(finding.severity),
             SEVERITY_STYLES.get(finding.severity, "dim"),
@@ -773,6 +778,8 @@ def _line_number(item: dict) -> int:
 
 
 def _severity(item: dict, category: str) -> str:
+    if get_finding_type(item, category) == "advice":
+        return advice_priority(item, category)
     raw = item.get("severity")
     if raw:
         label = str(raw).strip().upper()

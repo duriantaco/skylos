@@ -5,7 +5,9 @@ from copy import deepcopy
 
 from skylos.audit.redaction import SECRET_KEYWORDS, sanitize_for_audit
 from skylos.reporting.advice_display import (
+    ADVICE_PRIORITY_NOTE,
     advice_display_counts,
+    advice_priority,
     combine_complexity_advice,
     complexity_display,
     group_advice_for_display,
@@ -153,7 +155,11 @@ def _format_llm_report_section(finding_num, finding, label, code_block):
         finding = _redacted_secret_record(finding)
     complexity = complexity_display(finding)
     rule_id = complexity.rule_label if complexity else finding.get("rule_id", "")
-    severity = finding.get("severity", "INFO")
+    severity = (
+        advice_priority(finding, "quality" if label == "Quality" else label.lower())
+        if _llm_finding_type(finding, label) == "advice"
+        else finding.get("severity", "INFO")
+    )
     name = finding.get("name") or finding.get("simple_name", "")
     file_path = finding.get("file", "")
     line = finding.get("line", 0)
@@ -278,6 +284,8 @@ def _generate_llm_report(
         sections.insert(1, dependency_text)
     if visibility_text:
         sections.insert(1, visibility_text)
+    if counts["advice"]:
+        sections.insert(1, f"\n{ADVICE_PRIORITY_NOTE}\n")
     incomplete = sum(label == "Analysis Incomplete" for _finding, label in all_findings)
     if incomplete:
         sections.insert(
@@ -317,7 +325,7 @@ def _format_advice_groups(result: dict) -> str:
         priority = ", ".join(
             sorted(
                 {
-                    str(finding.get("severity") or "MEDIUM").upper()
+                    advice_priority(finding, "quality")
                     for finding in group["findings"]
                 }
             )

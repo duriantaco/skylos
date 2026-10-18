@@ -1202,6 +1202,20 @@ L027 excludes import-proven `typing`/`typing_extensions` `cast` type strings and
 matching declaration names in `TypeVar`, `ParamSpec`, `TypeVarTuple` and `NewType`.
 Runtime string occurrences still count. Shadowed, rebound or visibly mutated
 typing operations retain the ordinary literal checks.
+L027 also records bounded occurrence context without serializing extra literal
+values: distinct function-body counts, non-function occurrences and occurrence
+roles. Focused reports can make one-function repetition optional while retaining
+strings shared across functions or with module/class declarations. Raw duplicate
+counts and gate inputs are unchanged. Secret masking evaluates opaque tokens
+individually rather than treating a complete ordinary sentence as a credential;
+known credential patterns and sensitive values remain masked.
+
+C303 retains its required-positional and total-parameter measurements, limits
+and overload evidence. Additive `argument_evidence` records the known caller
+parameter shape and, when provable, an identical project-base signature.
+Focused reports make total-only wide signatures and confirmed inherited
+contracts optional. Unresolved bindings and independently widened signatures
+stay visible. `--all-advice`, raw reports and gates retain every violation.
 
 L004 evaluates error-catching scopes. Handlerless `try/finally` cleanup, and
 handlers that only clean up and re-raise, catch nothing and are not reported; a

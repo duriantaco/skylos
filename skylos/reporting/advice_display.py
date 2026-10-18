@@ -35,6 +35,9 @@ _SEVERITY_RANK = {
     "INFO": 4,
 }
 _UNKNOWN_NAMES = {"<?>", "<module>", "anonymous", "<anonymous>"}
+ADVICE_PRIORITY_NOTE = (
+    "Advice priority is capped at MEDIUM; original severities remain in JSON and gates."
+)
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,18 @@ def complexity_display(item) -> ComplexityDisplay | None:
         if isinstance(display, ComplexityDisplay):
             return display
     return None
+
+
+def advice_priority(finding: Mapping, category=None) -> str:
+    """Human advice priority; original severity remains evidence and gate input."""
+    severity = str(finding.get("severity") or "MEDIUM").strip().upper()
+    if (
+        category in (None, "quality")
+        and get_finding_type(finding, category) == "advice"
+        and severity in {"HIGH", "CRITICAL"}
+    ):
+        return "MEDIUM"
+    return severity
 
 
 def _compatible_names(names) -> bool:
@@ -236,6 +251,40 @@ def combine_complexity_advice(
         for index, row in enumerate(rows)
         if index in replacements or index not in consumed
     ]
+
+
+def standalone_function_advice(rows) -> set[int]:
+    """Identify unambiguous size-only signals without dropping metric groups.
+
+    Missing identities, conflicting measurements and duplicate variants remain
+    visible. A second function metric corroborates a measurement even when it
+    is not a complexity rule; existing combined entries retain every member.
+    """
+    locations = {}
+    uncertain = set()
+    for category, finding in rows:
+        identity = _advice_identity(category, finding)
+        if identity is not None:
+            location, _details = identity
+            locations.setdefault(location, []).append(finding)
+        elif (
+            category == "quality"
+            and _rule_id(finding) in _FUNCTION_RULES
+            and get_finding_type(finding, category) == "advice"
+        ):
+            line = finding.get("line")
+            if type(line) is int and line > 0:
+                for field in ("file", "file_path"):
+                    file = finding.get(field)
+                    if isinstance(file, str) and file:
+                        uncertain.add((_FUNCTION_RULES, file, line))
+    return {
+        id(findings[0])
+        for location, findings in locations.items()
+        if location not in uncertain
+        and len(findings) == 1
+        and _rule_id(findings[0]) in {"SKY-C304", "SKY-Q302", "SKY-L028"}
+    }
 
 
 # Generic spellings for new callers; historical imports remain compatible.

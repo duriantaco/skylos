@@ -489,11 +489,28 @@ tests, examples, profiling inputs and vendored code. A notice gives the count,
 reasons and `--all-advice` recovery option. Unknown source contexts remain
 visible. Explicitly enforced architecture policy remains visible too.
 
+Focused reports also make standalone function-length, nesting and return-count
+measurements optional. Existing combined function entries and standalone
+cyclomatic/cognitive complexity remain visible. Repeated strings become
+optional only when complete occurrence evidence confines them to one function,
+with no module/class occurrences. Shared strings remain visible even when they
+look like identifiers. Wide signatures are optional when their known required
+positional count is within the configured limit, or a resolved project base
+requires the same signature. Unknown bindings and newly widened overrides stay
+visible. These choices retain the original findings, counts and thresholds;
+`--all-advice` restores them and explicit rule selection keeps its existing
+behavior.
+
 Non-production context is project-relative and read without executing the
 target. Conventional test, example and benchmark paths are checked relative to
 the checkout root, even when the scan targets a package or a single file. A
 bounded, static lookup uses the Git boundary or an enclosing project manifest;
-the requested scan path still bounds which findings can be classified. Other
+the requested scan path still bounds which findings can be classified. An
+explicitly selected nested application with its own parsed project identity
+evaluates sample-folder names relative to that application. Scanning the whole
+checkout still treats it as an example, and nested examples inside the selected
+application remain optional. Test, pytest and vendor evidence retain the
+checkout boundary. Other
 profiling inputs require packaging exclusion and sample-data
 evidence; vendored trees require whole-directory upstream provenance and a
 license. A vendor-looking directory name or mention of one copied file is
@@ -508,8 +525,11 @@ function identity is unambiguous. Every triggered rule keeps its own score,
 threshold, message and evidence. Duplicate rule variants or conflicting
 identities remain separate. The two architecture metrics (`SKY-Q802`/`SKY-Q803`)
 likewise share one module entry in the all-advice view. The headline distinguishes
-displayed entries from underlying checks. Grouped advice tables label severity as
-**Advice priority**, retaining the original values; it is not defect confidence.
+displayed entries from underlying checks. Human reports label advice severity as
+**Advice priority** and cap HIGH/CRITICAL advice at MEDIUM. Lower priorities are
+unchanged. The original severities remain in JSON, expanded record evidence,
+assessments and gate inputs. Defect, Review, security, secret and custom findings
+keep their original severity. Advice priority is not defect confidence.
 
 Use `--expand-advice` for focused locations, or combine it with `--all-advice`
 to include optional advice. An explicit `--select` keeps the requested rules
