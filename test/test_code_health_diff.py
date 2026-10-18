@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.quality.code_health import (
     CODE_HEALTH_RULES,
     partition_code_health,
@@ -49,7 +50,14 @@ def repo(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init", "-q")
-    (root / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    # strict needs a selection: mypy with neither targets nor files checks
+    # nothing, so without files = [...] the annotation scope is unknown.
+    assert write_text_no_symlink(
+        root / "pyproject.toml",
+        '[tool.mypy]\nstrict = true\nfiles = ["app.py"]\n', encoding="utf-8"
+    )
+    assert write_text_no_symlink(
+        root / "app.py",
         _long_function("legacy", 70) + "\n\n" + _long_function("grows", 55),
         encoding="utf-8",
     )
@@ -57,7 +65,8 @@ def repo(tmp_path):
     _git(root, "commit", "-q", "-m", "base")
     # The change touches every function: legacy unchanged in size, grows gets
     # longer, fresh is new and long.
-    (root / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        root / "app.py",
         "# edited\n"
         + _long_function("legacy", 70)
         + "\n\n"
@@ -85,9 +94,11 @@ def test_partition_keeps_only_introduced_or_worsened(repo):
             _metric("legacy", 72, repo / "app.py"),
             _metric("grows", 82, repo / "app.py"),
             _metric("fresh", 62, repo / "app.py"),
+            {"rule_id": "SKY-T102", "name": "legacy", "value": 1,
+             "file": str(repo / "app.py"), "line": 2},
             {"rule_id": "SKY-L007", "name": "x", "file": str(repo / "app.py"), "line": 3},
         ],
-        "analysis_summary": {"quality_count": 4},
+        "analysis_summary": {"quality_count": 5},
     }
     base = resolve_merge_base("HEAD", repo)
     out = partition_code_health(result, git_root=repo, base_commit=base)
@@ -95,7 +106,7 @@ def test_partition_keeps_only_introduced_or_worsened(repo):
     assert [f["rule_id"] for f in out["quality"]] == ["SKY-L007"]
     changes = {f["name"]: f["code_health_change"] for f in out["code_health"]}
     assert changes == {"grows": "worsened", "fresh": "introduced"}
-    assert out["analysis_summary"]["code_health_preexisting_count"] == 1
+    assert out["analysis_summary"]["code_health_preexisting_count"] == 2
     assert out["analysis_summary"]["quality_count"] == 1
 
 
@@ -174,3 +185,51 @@ def test_diff_base_gate_is_not_failed_by_code_health(repo):
     proc, data = _scan(repo, "--diff-base", "HEAD", "--gate")
     assert data.get("code_health")
     assert proc.returncode == 0, proc.stderr[-2000:]
+
+
+def test_base_scan_uses_head_project_root_below_git_root(tmp_path):
+    # Monorepo: the analyzer roots the head scan at the nearest pyproject,
+    # services/api. The base side must read the same policy from the base
+    # revision, or a pre-existing T101/T102 is misreported as introduced.
+    repo = tmp_path / "repo"
+    service = repo / "services" / "api"
+    (service / "svc").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    assert write_text_no_symlink(
+        service / "pyproject.toml",
+        '[tool.mypy]\ndisallow_untyped_defs = true\nfiles = ["svc"]\n',
+        encoding="utf-8",
+    )
+    assert write_text_no_symlink(service / "svc" / "__init__.py", "", encoding="utf-8")
+    core = service / "svc" / "core.py"
+    assert write_text_no_symlink(core, "def legacy(x):\n    return x\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    assert write_text_no_symlink(
+        core,
+        "def legacy(x):\n    return x\n\n\ndef fresh(y):\n    return y\n",
+        encoding="utf-8",
+    )
+
+    def typing(name, rule):
+        return {"rule_id": rule, "name": name, "value": "x", "file": str(core), "line": 1}
+
+    def result():
+        return {
+            "quality": [
+                typing("legacy", "SKY-T101"),
+                typing("legacy", "SKY-T102"),
+                typing("fresh", "SKY-T101"),
+            ],
+            "analysis_summary": {
+                "comparison_scope": {"repository_root": str(service.resolve())}
+            },
+        }
+
+    base = resolve_merge_base("HEAD", repo)
+    out = partition_code_health(result(), git_root=repo, base_commit=base)
+
+    assert {(f["name"], f["code_health_change"]) for f in out["code_health"]} == {
+        ("fresh", "introduced")
+    }
+    assert out["analysis_summary"]["code_health_preexisting_count"] == 2

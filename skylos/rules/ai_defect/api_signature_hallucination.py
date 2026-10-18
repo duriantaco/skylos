@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import sys
 import unicodedata
 from collections import Counter
@@ -18,6 +19,7 @@ from skylos.analysis.ast_cache import (
     releases_python_ast_cache,
 )
 from skylos.core.python_api_surface import PythonApiSurfaceCacheSession
+from skylos.core.python_requirements import normalize_distribution_name
 
 RULE_ID_API_SIGNATURE = "SKY-D224"
 RULE_ID_PHANTOM_REFERENCE = "SKY-L012"
@@ -83,8 +85,12 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         surface_loader: SurfaceLoader,
         findings: list[dict[str, Any]],
         submodule_resolver: SubmoduleResolver | None = None,
+        foreign_roots: dict[str, str] | None = None,
     ) -> None:
         self.submodule_resolver = submodule_resolver
+        # Module roots whose installed package is not the project's (another
+        # distribution or version is declared), with the reason.
+        self.foreign_roots = foreign_roots or {}
         self.import_guard_depth = 0
         self.project_root = project_root
         self.file_path = file_path
@@ -99,10 +105,34 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         self.instance_stack: list[dict[str, tuple[str, str]]] = [{}]
         self.inspected_modules: dict[str, str | None] = {}
         self.unchecked_calls: list[dict[str, Any]] = []
+        # ``from pkg import name`` where the inspected package has no such
+        # name; reported only where the name is called.
+        self.missing_imports: dict[str, tuple[str, str]] = {}
+        self.binding_counts: Counter[str] = Counter()
+        # Names bound inside the functions being visited (innermost last).
+        self.local_bindings: list[Counter[str]] = []
+        self.suppress_names: tuple[set[str], set[str]] = (set(), set())
+        self.top_level_imports: set[int] = set()
 
     def generic_visit(self, node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
             self.visit(child)
+
+    def visit_Module(self, node: ast.Module) -> None:
+        # Only unconditional imports are tracked: at module level or inside
+        # ``with`` blocks. One under ``if``, ``try`` or a loop may be guarded
+        # by a check the call depends on (``if hasattr(pkg, "name")``).
+        self.top_level_imports = set()
+        pending = list(node.body)
+        while pending:
+            statement = pending.pop()
+            if isinstance(statement, ast.ImportFrom):
+                self.top_level_imports.add(id(statement))
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                pending.extend(statement.body)
+        self.binding_counts = _binding_counts(node)
+        self.suppress_names = _contextlib_suppress_names(node)
+        self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -119,6 +149,11 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.level:
+            # ``from .jwt import x`` names a module of this project, not the
+            # installed package that happens to share its name.
+            self.generic_visit(node)
+            return
         module_name = _safe_module_name(node.module)
         if module_name is None:
             self.generic_visit(node)
@@ -138,6 +173,10 @@ class _ApiSignatureChecker(ast.NodeVisitor):
 
             local_name = _member_alias_name(alias, imported_name)
             member = self._module_member(module_name, imported_name)
+            if member is None:
+                if id(node) in self.top_level_imports:
+                    self._record_missing_import(module_name, imported_name, local_name)
+                continue
             if _entry_kind(member) == "class":
                 self.class_aliases[local_name] = (module_name, imported_name)
                 continue
@@ -158,6 +197,22 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             self.visit(part)
 
     visit_TryStar = visit_Try
+
+    def visit_With(self, node: ast.With) -> None:
+        guarded = any(
+            _suppresses_import_error(item.context_expr, self.suppress_names)
+            for item in node.items
+        )
+        for item in node.items:
+            self.visit(item)
+        if guarded:
+            self.import_guard_depth += 1
+        for statement in node.body:
+            self.visit(statement)
+        if guarded:
+            self.import_guard_depth -= 1
+
+    visit_AsyncWith = visit_With
 
     def _check_submodule_path(self, node: ast.AST, module_name: str) -> bool:
         """Report the first dotted segment of an installed package that does
@@ -209,6 +264,31 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             return True
         return False
 
+    def _record_missing_import(
+        self, module_name: str, imported_name: str, local_name: str
+    ) -> None:
+        """Remember ``from pkg import name`` when ``pkg`` has no such name.
+
+        The surface lists public callables only, so absence alone does not
+        prove a constant or an instance is missing. A later call of the name
+        does, the same evidence as ``pkg.name()``. The import system must also
+        answer "no such submodule or attribute": a submodule or a lazy module
+        ``__getattr__`` stays silent, as do guarded imports and names that are
+        bound again elsewhere in the module.
+        """
+        if self.import_guard_depth or self.submodule_resolver is None:
+            return
+        if self.local_bindings:
+            return  # only module-level imports are tracked
+        if imported_name.startswith("_") or self.binding_counts[local_name] != 1:
+            return
+        members = self._surface_members(module_name)
+        if members is None or imported_name in members:
+            return
+        if self.submodule_resolver(f"{module_name}.{imported_name}") is not False:
+            return
+        self.missing_imports[local_name] = (module_name, imported_name)
+
     def _surface_members(self, module_name: str) -> dict[str, Any] | None:
         surface = self._surface(module_name)
         if surface is None or surface.get("members_truncated") is True:
@@ -219,14 +299,40 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         return members
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self.instance_stack.append({})
-        self.generic_visit(node)
-        self.instance_stack.pop()
+        self._visit_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        # Decorators, defaults and annotations run in the enclosing scope.
+        self._visit_decorators(node)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        self.local_bindings.append(_binding_counts(node, include_parameters=True))
         self.instance_stack.append({})
-        self.generic_visit(node)
+        for statement in node.body:
+            self.visit(statement)
         self.instance_stack.pop()
+        self.local_bindings.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._visit_decorators(node)
+        for child in ast.iter_child_nodes(node):
+            if child not in node.decorator_list:
+                self.visit(child)
+
+    def _visit_decorators(self, node: ast.AST) -> None:
+        """``@name`` calls ``name`` with the decorated object, so a bare
+        decorator is checked as a call (``@name(...)`` is a call already)."""
+        for decorator in node.decorator_list:
+            if isinstance(decorator, (ast.Name, ast.Attribute)):
+                call = ast.copy_location(ast.Call(func=decorator, args=[], keywords=[]), decorator)
+                target = self._call_target(call)
+                if target is not None:
+                    self._check_call_target(call, target)
+            self.visit(decorator)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         constructed = self._constructed_class(node.value)
@@ -259,6 +365,10 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         return None
 
     def _surface(self, module_name: str) -> dict[str, Any] | None:
+        reason = self.foreign_roots.get(module_name.split(".", 1)[0])
+        if reason is not None:
+            self.inspected_modules[module_name] = reason
+            return None
         if module_name not in self.surfaces:
             try:
                 self.surfaces[module_name] = self.surface_loader(
@@ -335,6 +445,12 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             module_name, class_name = class_alias
             entry = self._module_member(module_name, class_name)
             return _CallTarget(module_name, f"{module_name}.{class_name}", entry, "")
+
+        missing = self.missing_imports.get(name)
+        if missing is not None and not any(name in frame for frame in self.local_bindings):
+            module_name, member_name = missing
+            label = f"{module_name}.{member_name}"
+            return _CallTarget(module_name, label, None, "module_member")
 
         return None
 
@@ -518,6 +634,7 @@ def scan_python_api_signature_hallucinations(
         if resolver is None:
             resolver = installed_submodule_exists
     local_modules = _local_module_roots(root, py_files)
+    foreign_roots = _unverifiable_roots(root, allowed_roots)
     surfaces: dict[str, dict[str, Any] | None] = {}
     inspected = 0
     reasons: Counter[str] = Counter()
@@ -539,6 +656,7 @@ def scan_python_api_signature_hallucinations(
                 loader,
                 findings,
                 resolver,
+                foreign_roots,
             )
             checker.visit(tree)
             inspected += len(checker.inspected_modules)
@@ -612,6 +730,91 @@ def installed_submodule_exists(module_name: str) -> bool | None:
     return False
 
 
+def _scope_nodes(scope: ast.AST):
+    """Nodes that bind names in ``scope`` itself: nested function, class,
+    lambda and comprehension bodies have their own scopes (their own names
+    still bind in this one)."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            pending.extend(node.decorator_list)
+            continue
+        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def _binding_counts(scope: ast.AST, *, include_parameters: bool = False) -> Counter[str]:
+    """How many statements in ``scope`` (not nested scopes) bind each name."""
+    counts: Counter[str] = Counter()
+    if include_parameters:
+        args = getattr(scope, "args", None)
+        if args is not None:
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg):
+                if arg is not None:
+                    counts[arg.arg] += 1
+    for node in _scope_nodes(scope):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            counts[node.id] += 1
+        elif isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            counts[node.name] += 1
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                counts[(alias.asname or alias.name).split(".")[0]] += 1
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            counts[node.name] += 1
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            counts[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            counts[node.rest] += 1
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                counts[name] += 1
+    return counts
+
+
+def _contextlib_suppress_names(module: ast.AST) -> tuple[set[str], set[str]]:
+    """Local names a module-level import binds to ``contextlib.suppress``,
+    and to the ``contextlib`` module itself."""
+    functions, modules = set(), set()
+    for node in ast.iter_child_nodes(module):
+        if isinstance(node, ast.ImportFrom) and node.module == "contextlib" and not node.level:
+            for alias in node.names:
+                if alias.name == "suppress":
+                    functions.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "contextlib":
+                    modules.add(alias.asname or alias.name)
+    return functions, modules
+
+
+def _suppresses_import_error(
+    expr: ast.AST, suppress_names: tuple[set[str], set[str]]
+) -> bool:
+    """``contextlib.suppress(ImportError)`` (or a broader exception)."""
+    if not isinstance(expr, ast.Call):
+        return False
+    functions, modules = suppress_names
+    func = expr.func
+    if isinstance(func, ast.Attribute):
+        if func.attr != "suppress" or not (
+            isinstance(func.value, ast.Name) and func.value.id in modules
+        ):
+            return False
+    elif not (isinstance(func, ast.Name) and func.id in functions):
+        return False
+    for arg in expr.args:
+        arg_name = arg.attr if isinstance(arg, ast.Attribute) else getattr(arg, "id", None)
+        if arg_name in _IMPORT_ERROR_NAMES:
+            return True
+    return False
+
+
 def _handlers_catch_import_error(handlers: list[ast.ExceptHandler]) -> bool:
     for handler in handlers:
         if handler.type is None:
@@ -635,6 +838,160 @@ def _repo_root(value: str | Path | None) -> Path | None:
         return Path(value).resolve()
     except OSError:
         return Path(value)
+
+
+def _installed_providers() -> dict[str, list[str]]:
+    from importlib.metadata import packages_distributions
+
+    return packages_distributions()
+
+
+def _installed_version(dist: str) -> str | None:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(dist)
+    except PackageNotFoundError:
+        return None
+
+
+_MANIFEST_SKIP_DIRS = frozenset(
+    {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", ".nox",
+     "site-packages", ".eggs", "build", "dist"}
+)  # fmt: skip
+_MANIFEST_NAMES = frozenset({"pyproject.toml", "setup.py", "setup.cfg", "Pipfile"})
+_MAX_MANIFEST_DIRS = 2000
+
+
+def _declared_requirements(root: Path) -> dict[str, str | None]:
+    """Every dependency the repository declares, by normalized name, with its
+    version specifier ("" for any version, None when unknown): requirements
+    files, pyproject, setup and Pipfile packages in any folder (a monorepo
+    declares per service)."""
+    from skylos.rules.ai_defect.dependency_hallucination import (
+        _merge_provider_specs,
+        _provider_directory_metadata,
+    )
+
+    specs: dict[str, str | None] = {}
+    seen = 0
+    for current, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in _MANIFEST_SKIP_DIRS)
+        names = set(files)
+        if not (
+            names & _MANIFEST_NAMES
+            or any(n.startswith("requirements") and n.endswith(".txt") for n in names)
+            or "requirements" in dirs
+        ):
+            continue
+        seen += 1
+        if seen > _MAX_MANIFEST_DIRS:
+            break
+        directory = Path(current)
+        additions, _own, _unknown = _provider_directory_metadata(
+            directory, project_root=root
+        )
+        _merge_provider_specs(specs, additions)
+        if "Pipfile" in names:
+            _merge_provider_specs(specs, _pipfile_requirements(directory / "Pipfile"))
+    return specs
+
+
+def _pipfile_requirements(path: Path) -> dict[str, str | None]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
+
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    specs: dict[str, str | None] = {}
+    for section in ("packages", "dev-packages"):
+        for name, value in (data.get(section) or {}).items():
+            if isinstance(value, str):
+                spec = "" if value.strip() == "*" else value
+            elif isinstance(value, dict) and set(value) <= {"version"}:
+                spec = "" if value.get("version") in (None, "*") else value["version"]
+            else:
+                spec = None  # git, path, markers or extras: version unknown
+            specs[normalize_distribution_name(name)] = spec
+    return specs
+
+
+def _unverifiable_roots(root: Path, module_roots: set[str]) -> dict[str, str]:
+    """Module roots whose installed package is not the project's, with why:
+    another distribution is declared for the import name (``jwt`` from
+    GehirnInc while the scanner has PyJWT), or the installed version is
+    outside the declared range. Absence from the installed API then proves
+    nothing about the project's package."""
+    from skylos.core.python_distributions import (
+        CURATED_IMPORT_PATHS,
+        heuristic_import_paths,
+    )
+
+    try:
+        installed = _installed_providers()
+        declared = _declared_requirements(root)
+    except Exception:
+        return {}
+    result: dict[str, str] = {}
+    for module_root in module_roots:
+        providers = {
+            normalize_distribution_name(name) for name in installed.get(module_root, ())
+        }
+        claimants = {
+            dist
+            for dist in declared
+            if module_root in CURATED_IMPORT_PATHS.get(dist, ())
+            or module_root in heuristic_import_paths(dist)
+        }
+        if providers and claimants and not claimants & providers:
+            result[module_root] = "installed_distribution_not_declared"
+            continue
+        for dist in sorted(providers & set(declared)):
+            spec, installed_version = declared[dist], _installed_version(dist)
+            if not spec or installed_version is None:
+                continue
+            if not _same_api_line(spec, installed_version):
+                result[module_root] = "installed_version_not_declared"
+    return result
+
+
+def _api_line(version) -> tuple[int, ...]:
+    """The part of a version that names its API: the major, or major.minor
+    while the major is 0 (where minors break APIs)."""
+    release = version.release + (0, 0)
+    return release[:2] if release[0] == 0 else release[:1]
+
+
+def _same_api_line(spec: str, installed: str) -> bool:
+    """The installed package can stand for the declared one: it satisfies the
+    specifier, or the specifier pins (``==``, ``===``, ``~=``) a version on
+    the same API line. A patch or minor drift (requests 2.31 declared, 2.34
+    installed) keeps the evidence; another major (PyJWT 1.7 declared, 2.x
+    installed) does not."""
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        version = Version(installed)
+        specifiers = SpecifierSet(spec)
+    except (InvalidSpecifier, InvalidVersion):
+        return False
+    if version in specifiers:
+        return True
+    for item in specifiers:
+        if item.operator not in {"==", "===", "~="}:
+            continue
+        try:
+            pinned = Version(item.version.rstrip(".*"))
+        except InvalidVersion:
+            continue
+        if _api_line(pinned) == _api_line(version):
+            return True
+    return False
 
 
 def _allowed_roots(allowed_modules: tuple[str, ...] | None) -> set[str]:

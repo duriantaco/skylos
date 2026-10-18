@@ -1,39 +1,105 @@
 import ast
 from pathlib import Path
+
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    read_text_no_symlink,
+)
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._test_code import is_collected_test_class, is_python_test_file
+from skylos.rules.quality._code_lines import code_lines
+from skylos.rules.quality._receivers import (
+    class_method_nodes,
+    context_method_kinds,
+    method_receiver,
+    receiver_usage,
+    resolve_method_kinds,
+)
+from skylos.rules.quality._scope import (
+    is_non_production_python,
+    is_sample_or_build_python,
+)
+
+_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+_BLOCKS = (ast.stmt, ast.excepthandler, ast.match_case)
 
 
-def _count_code_lines(lines: list[str]) -> int:
-    return sum(
-        1 for line in lines if line.strip() and not line.lstrip().startswith("#")
-    )
-
-
-def _count_code_lines_from_source(source: str) -> int:
-    return _count_code_lines(source.splitlines())
-
-
-def _count_code_lines_from_file(filename: str) -> int | None:
+def _read_source(filename: str, project_root=None) -> str | None:
     if not filename:
         return None
 
     try:
-        lines = (
-            Path(filename).read_text(encoding="utf-8", errors="ignore").splitlines()
-        )  # skylos: ignore[SKY-D215] analyzer reads discovered source files
-    except OSError:
+        if project_root is None:
+            return read_text_no_symlink(
+                filename, max_bytes=2_000_000, errors="ignore"
+            )
+        return read_project_text_no_symlink(
+            project_root, filename, max_bytes=2_000_000, errors="ignore"
+        )
+    except (OSError, ValueError, RuntimeError):
         return None
 
-    return _count_code_lines(lines)
+
+def _module_definitions(module: ast.Module) -> tuple[int, int]:
+    """Classes, and functions or methods, defined outside any function body.
+
+    A function's nested helpers and local classes belong to that function,
+    not to the file's surface.
+    """
+    classes = functions = 0
+    pending = list(module.body)
+    while pending:
+        child = pending.pop()
+        if isinstance(child, _FUNCTIONS):
+            functions += 1
+        elif isinstance(child, ast.ClassDef):
+            classes += 1
+            pending.extend(child.body)
+        else:
+            pending.extend(
+                item for item in ast.iter_child_nodes(child) if isinstance(item, _BLOCKS)
+            )
+    return classes, functions
 
 
-def _count_ast_lines(node: ast.AST) -> int:
-    max_line = 0
-    for child in ast.walk(node):
-        line = getattr(child, "end_lineno", None) or getattr(child, "lineno", None)
-        if isinstance(line, int) and line > max_line:
-            max_line = line
-    return max_line
+def _is_dunder(name: str) -> bool:
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
+def _base_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def _is_test_class(node: ast.ClassDef) -> bool:
+    return is_collected_test_class(
+        node.name,
+        [_base_name(base) for base in node.bases],
+        method_names=[
+            item.name
+            for item in node.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ],
+        opted_out=_opts_out_of_collection(node),
+    )
+
+
+def _opts_out_of_collection(node: ast.ClassDef) -> bool:
+    """``__test__ = False`` in the class body."""
+    for item in node.body:
+        targets = item.targets if isinstance(item, ast.Assign) else [getattr(item, "target", None)]
+        value = getattr(item, "value", None)
+        if (
+            isinstance(item, (ast.Assign, ast.AnnAssign))
+            and any(isinstance(t, ast.Name) and t.id == "__test__" for t in targets)
+            and isinstance(value, ast.Constant)
+            and value.value is False
+        ):
+            return True
+    return False
 
 
 class GodFileRule(SkylosRule):
@@ -55,36 +121,33 @@ class GodFileRule(SkylosRule):
             return None
 
         filename = context.get("filename", "")
+        if is_non_production_python(filename, context.get("project_root")):
+            return None
         source = context.get("source")
-        if isinstance(source, str):
-            code_lines = _count_code_lines_from_source(source)
-        else:
-            code_lines = _count_code_lines_from_file(filename)
-        if code_lines is None:
-            code_lines = _count_ast_lines(node)
+        if not isinstance(source, str):
+            source = _read_source(filename, context.get("project_root"))
+        code_line_count = len(code_lines(node, source))
 
         top_level_definitions = sum(
             1
             for item in node.body
             if isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         )
-        class_count = sum(
-            1 for item in ast.walk(node) if isinstance(item, ast.ClassDef)
-        )
-        function_count = sum(
-            1
-            for item in ast.walk(node)
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        )
+        class_count, function_count = _module_definitions(node)
         total_definitions = class_count + function_count
 
         metrics = [
-            ("code_lines", code_lines, self.max_lines, "code lines"),
+            (
+                "code_lines",
+                code_line_count,
+                self.max_lines,
+                "code lines, not counting blank, comment or docstring lines",
+            ),
             (
                 "total_definitions",
                 total_definitions,
                 self.max_definitions,
-                "definitions",
+                "classes, functions and methods outside function bodies",
             ),
             (
                 "top_level_definitions",
@@ -109,7 +172,7 @@ class GodFileRule(SkylosRule):
         basename = Path(filename).name if filename else "<module>"
         module_name = context.get("mod") or basename
         violation_summary = ", ".join(
-            f"{label}={actual} (limit: {limit})"
+            f"{actual} {label} (limit: {limit})"
             for _metric, actual, limit, label in violations
         )
 
@@ -124,7 +187,7 @@ class GodFileRule(SkylosRule):
                 "value": value,
                 "threshold": threshold,
                 "metric": primary_metric,
-                "code_lines": code_lines,
+                "code_lines": code_line_count,
                 "total_definitions": total_definitions,
                 "top_level_definitions": top_level_definitions,
                 "class_count": class_count,
@@ -142,32 +205,56 @@ class GodFileRule(SkylosRule):
 
 
 class GodClassRule(SkylosRule):
+    """Too many methods or instance attributes for one class.
+
+    Dunder methods implement protocols (``__len__``, ``__getitem__``, ...);
+    a mapping or sequence type needs them all, so they are not counted
+    toward the method limit.
+    """
+
     rule_id = "SKY-Q501"
     name = "God Class"
 
     def __init__(self, max_methods=20, max_attributes=15):
         self.max_methods = max_methods
         self.max_attributes = max_attributes
+        self._method_kinds = {}
+        self._skip_file = False
 
     def visit_node(self, node, context):
-        if not isinstance(node, ast.ClassDef):
+        if isinstance(node, ast.Module):
+            self._skip_file = is_sample_or_build_python(
+                context.get("filename"), context.get("project_root")
+            )
+            self._method_kinds = (
+                {} if self._skip_file else context_method_kinds(node, context)
+            )
+            return None
+        if self._skip_file or not isinstance(node, ast.ClassDef):
+            return None
+
+        # A test class groups many cases (and their fixtures) by design;
+        # its size is not a design defect.
+        if _is_test_class(node) and is_python_test_file(
+            context.get("filename", ""),
+            context.get("project_root"),
+            context.get("source"),
+        ):
             return None
 
         method_count = 0
+        dunder_count = 0
         attributes = set()
 
-        for item in node.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        kinds = self._method_kinds or resolve_method_kinds(node)
+        for item in class_method_nodes(node):
+            if _is_dunder(item.name):
+                dunder_count += 1
+            else:
                 method_count += 1
 
-                for child in ast.walk(item):
-                    if (
-                        isinstance(child, ast.Attribute)
-                        and isinstance(child.value, ast.Name)
-                        and child.value.id == "self"
-                        and isinstance(child.ctx, ast.Store)
-                    ):
-                        attributes.add(child.attr)
+            if method_receiver(item, instance_only=True, kinds=kinds) is not None:
+                attributes.update(receiver_usage(item, kinds=kinds).writes)
 
         findings = []
 
@@ -182,7 +269,12 @@ class GodClassRule(SkylosRule):
                     "simple_name": node.name,
                     "value": method_count,
                     "threshold": self.max_methods,
-                    "message": f"Class '{node.name}' has {method_count} methods (limit: {self.max_methods}). Consider splitting into smaller classes.",
+                    "dunder_methods": dunder_count,
+                    "message": (
+                        f"Class '{node.name}' has {method_count} methods "
+                        f"(limit: {self.max_methods}); dunder protocol methods "
+                        "are not counted. Consider splitting into smaller classes."
+                    ),
                     "file": context.get("filename"),
                     "basename": Path(context.get("filename", "")).name,
                     "line": node.lineno,

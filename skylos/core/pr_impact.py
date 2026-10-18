@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from contextlib import contextmanager
 import json
 import logging
@@ -10,6 +11,8 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tempfile
+from typing import NamedTuple
+import unicodedata
 
 from skylos.core.git_context import GitContext
 from skylos.core.git_safety import read_only_git_command
@@ -23,17 +26,34 @@ _OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 MAX_SNAPSHOT_FILES = 20_000
 MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
 MAX_BLOB_BYTES = 2 * 1024 * 1024
+MAX_SYMLINK_BYTES = 4096
+MAX_SYMLINK_HOPS = 40  # Linux SYMLOOP_MAX
+MAX_LINK_WORK = 50_000_000  # path characters walked for one snapshot
+MAX_LINK_PATH = 4096  # Linux PATH_MAX
+_REGULAR_MODES = frozenset({"100644", "100755"})
+_SYMLINK_MODE = "120000"
+_SUBMODULE_MODE = "160000"
 
 
 class ImpactUnavailable(ValueError):
     pass
 
 
-def _snapshot_entries(context: GitContext, commit: str):
+class _Snapshot(NamedTuple):
+    files: list  # (path, object id, size) of regular blobs to write
+    links: list  # (path, object id, size) of symlink blobs
+    omitted: dict  # path -> why the base snapshot does not hold it
+
+
+def _snapshot_entries(context: GitContext, commit: str, source_suffixes) -> _Snapshot:
+    """What the base snapshot holds. An entry it cannot hold is omitted only
+    when omission cannot add a definition the head has and the base lacks:
+    omitting anything else only removes references from the base, which can
+    hide a newly unused finding but never invent one."""
     listing = context.run("ls-tree", "-r", "-l", "-z", commit)
     if listing.returncode:
         raise ImpactUnavailable("base_tree_unavailable")
-    entries, total = [], 0
+    files, links, omitted, total = [], [], {}, 0
     for record in listing.stdout.split("\0"):
         if not record:
             continue
@@ -46,32 +66,149 @@ def _snapshot_entries(context: GitContext, commit: str):
             or "\\" in name or ":" in name
         ):
             raise ImpactUnavailable("invalid_base_tree_entry")
-        # Submodules cannot be treated as empty directories in a complete
-        # static baseline; their source is not present in the parent objects.
-        if fields[0] == "160000":
-            raise ImpactUnavailable("base_submodule_unavailable")
-        # Static liveness also reads templates, documentation, project metadata
-        # and literal configured filenames with arbitrary extensions. Retain
-        # every bounded regular blob rather than pretending a suffix allowlist
-        # contains all evidence that the head analyzer may have read.
         mode, kind, object_id, size = fields
-        if mode not in {"100644", "100755"} or kind != "blob":
+        if mode == _SUBMODULE_MODE:
+            # The parent repository holds no source for a submodule. One the
+            # head checkout did not initialize is an empty folder there too;
+            # an initialized one gives the head definitions the base lacks.
+            if _has_entries(context.root / name):
+                raise ImpactUnavailable("base_submodule_unavailable")
+            omitted[name] = "submodule_not_checked_out"
+            continue
+        if mode not in _REGULAR_MODES and mode != _SYMLINK_MODE or kind != "blob":
             raise ImpactUnavailable("nonregular_base_source")
         if not _OBJECT_ID.fullmatch(object_id) or not size.isdigit():
             raise ImpactUnavailable("invalid_base_blob")
         size = int(size)
-        if size > MAX_BLOB_BYTES:
-            raise ImpactUnavailable("base_blob_too_large")
+        if mode == _SYMLINK_MODE:
+            if size > MAX_SYMLINK_BYTES:
+                raise ImpactUnavailable("invalid_base_symlink")
+            links.append((name, object_id, size))
+        elif size > MAX_BLOB_BYTES and path.suffix.lower() not in source_suffixes:
+            # Images, archives, model weights, data: no definitions in them.
+            # Analyzed source is kept at any size; the head read it in full.
+            omitted[name] = "oversize_non_source"
+            continue
+        else:
+            files.append((name, object_id, size))
         total += size
-        entries.append((name, object_id, size))
-        if len(entries) > MAX_SNAPSHOT_FILES or total > MAX_SNAPSHOT_BYTES:
+        if len(files) + len(links) > MAX_SNAPSHOT_FILES or total > MAX_SNAPSHOT_BYTES:
             raise ImpactUnavailable("base_snapshot_too_large")
-    return entries
+    return _Snapshot(files, links, omitted)
 
 
-def _write_snapshot(context: GitContext, entries, destination: Path):
+def _has_entries(directory: Path) -> bool:
+    try:
+        with os.scandir(directory) as entries:
+            return any(True for _ in entries)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+_OUTSIDE = (None, "symlink_outside_repository")
+
+
+class _LinkTable:
+    """Where the base tree's symlinks point, resolved the way the kernel
+    does: one component at a time, following links as they are reached, so
+    ``s/..`` is the parent of where ``s`` points, not the folder holding
+    ``s`` (a ``..`` normalized away as text can still climb out through a
+    chain). Only the tree's own link table (path -> target text) is
+    consulted, so nothing on disk is read. Each link is resolved once.
+
+    The snapshot may sit on a case-insensitive file system (macOS, Windows),
+    where ``d/S`` reaches ``d/s``. So a link is omitted on every system when
+    its path goes through a component the tree holds only under another
+    spelling (case or Unicode form, against every file, folder and link), a
+    non-ASCII component (no Unicode table is trusted to match the disk's), or
+    a component the tree does not hold at all (it points at nothing in the
+    snapshot, and the disk must never get to choose what it reaches)."""
+
+    def __init__(self, targets: dict, files=()):
+        self.targets = targets
+        self.folded: dict[str, set] = {}
+        for name in (*targets, *files):
+            parts = PurePosixPath(name).parts
+            for end in range(1, len(parts) + 1):
+                path = "/".join(parts[:end])
+                self.folded.setdefault(_fold(path), set()).add(path)
+        self.memo: dict[str, tuple] = {}
+        self.active: set[str] = set()
+        self.budget = MAX_LINK_WORK
+
+    def resolve(self, name: str, depth: int = 0) -> tuple:
+        """(where ``name`` points, "") inside the repository, else (None,
+        why the snapshot omits it). The repository root itself and ``.git``
+        are outside."""
+        if name in self.memo:
+            return self.memo[name]
+        if name in self.active or depth >= MAX_SYMLINK_HOPS:
+            return None, "symlink_loop"
+        self.active.add(name)
+        try:
+            result = self._walk(name, depth)
+        finally:
+            self.active.discard(name)
+        self.memo[name] = result
+        return result
+
+    def _walk(self, name: str, depth: int) -> tuple:
+        target = self.targets[name]
+        if not _relative_link_target(target):
+            return _OUTSIDE
+        resolved = list(PurePosixPath(name).parent.parts)
+        for part in target.split("/"):
+            self.budget -= 1
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not resolved:
+                    return _OUTSIDE
+                resolved.pop()
+                continue
+            if _fold(part) == ".git":
+                return _OUTSIDE
+            if not part.isascii():
+                return None, "symlink_ambiguous_name"
+            resolved.append(part)
+            path = "/".join(resolved)
+            if len(path) > MAX_LINK_PATH:
+                return None, "symlink_too_long"
+            self.budget -= len(path)
+            if self.budget < 0:
+                raise ImpactUnavailable("base_symlinks_too_complex")
+            spellings = self.folded.get(_fold(path))
+            if not spellings:
+                return None, "symlink_dangling"
+            if spellings != {path}:
+                return None, "symlink_ambiguous_name"
+            if path not in self.targets:
+                continue
+            destination, why = self.resolve(path, depth + 1)
+            if destination is None:
+                return None, why
+            resolved = destination.split("/")
+        return ("/".join(resolved), "") if resolved else _OUTSIDE
+
+
+def _resolve_link(name: str, targets: dict, files=()) -> tuple:
+    return _LinkTable(targets, files).resolve(name)
+
+
+def _fold(text: str) -> str:
+    """``text`` as a case- and normalization-insensitive file system compares it."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", text).casefold())
+
+
+def _relative_link_target(target: str) -> bool:
+    return bool(target) and "\0" not in target and "\\" not in target and not target.startswith("/")
+
+
+def _read_blobs(context: GitContext, entries) -> list[bytes]:
+    """Raw contents of (path, object id, size) entries, in order; the whole
+    batch is validated before anything is written."""
     if not entries:
-        return
+        return []
     # Use object IDs, never checkout, archive, smudge filters or executable
     # package scripts. Sizes from ls-tree bound the captured raw object batch.
     batch = subprocess.run(
@@ -85,7 +222,8 @@ def _write_snapshot(context: GitContext, entries, destination: Path):
     expected_size = sum(size + len(object_id) + 32 for _, object_id, size in entries)
     if len(data) > expected_size:
         raise ImpactUnavailable("invalid_base_blob_batch")
-    for name, object_id, size in entries:
+    contents = []
+    for _, object_id, size in entries:
         end = data.find(b"\n", offset)
         header = data[offset:end].decode("ascii") if end >= offset else ""
         if header != f"{object_id} blob {size}":
@@ -96,11 +234,56 @@ def _write_snapshot(context: GitContext, entries, destination: Path):
         if len(content) != size or data[offset:offset + 1] != b"\n":
             raise ImpactUnavailable("invalid_base_blob_batch")
         offset += 1
+        contents.append(content)
+    if offset != len(data):
+        raise ImpactUnavailable("invalid_base_blob_batch")
+    return contents
+
+
+def _write_snapshot(context: GitContext, entries, destination: Path):
+    """Write regular files, given as (path, object id, size), under destination."""
+    for (name, _, _), content in zip(entries, _read_blobs(context, entries)):
         target = destination.joinpath(*PurePosixPath(name).parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)  # skylos: ignore[SKY-D324] validated Git entry under a fresh private TemporaryDirectory; no checkout or target-code execution
-    if offset != len(data):
-        raise ImpactUnavailable("invalid_base_blob_batch")
+
+
+def _write_links(context: GitContext, snapshot: _Snapshot, destination: Path):
+    """Recreate the symlinks that resolve inside the repository, after every
+    file is written so nothing is written through one; the head scan treats
+    the two trees alike (source discovery never follows a symlinked file).
+    Others are recorded in ``snapshot.omitted``."""
+    targets = {}
+    for (name, _, _), content in zip(snapshot.links, _read_blobs(context, snapshot.links)):
+        try:
+            targets[name] = content.decode("utf-8")
+        except UnicodeDecodeError:
+            targets[name] = ""
+    table = _LinkTable(targets, [name for name, _, _ in snapshot.files])
+    for name, target_text in targets.items():
+        resolved, why = table.resolve(name)
+        link = destination.joinpath(*PurePosixPath(name).parts)
+        if resolved is None or _crosses_link(destination, link):
+            snapshot.omitted[name] = why or "symlink_outside_repository"
+            continue
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(target_text, link)
+        except OSError:
+            snapshot.omitted[name] = "symlink_unavailable"
+
+
+def _crosses_link(root: Path, path: Path) -> bool:
+    current = path.parent
+    while current != root and root in current.parents:
+        if current.is_symlink():
+            return True
+        current = current.parent
+    return False
+
+
+def _in_omitted(relative: str, omitted) -> bool:
+    return any(relative == path or relative.startswith(path + "/") for path in omitted)
 
 
 @contextmanager
@@ -142,7 +325,7 @@ def annotate_dead_code_impact(
     config_file=None,
 ):
     """Mark newly unused findings; missing baselines produce incomplete analysis."""
-    from skylos.analyzer import Skylos
+    from skylos.analyzer import ANALYZED_SOURCE_SUFFIXES, Skylos
     from skylos.cicd.policy import resolve_policy_base
 
     receipt = {"mode": "impact", "status": "incomplete", "introduced_count": 0}
@@ -152,10 +335,11 @@ def annotate_dead_code_impact(
         context = GitContext.from_path(project_root)
         commit = resolve_policy_base(project_root, base_ref)
         receipt["base_commit"] = commit
-        entries = _snapshot_entries(context, commit)
+        entries = _snapshot_entries(context, commit, ANALYZED_SOURCE_SUFFIXES)
         with tempfile.TemporaryDirectory(prefix="skylos-pr-impact-") as directory:
             snapshot = Path(directory).resolve()
-            _write_snapshot(context, entries, snapshot)
+            _write_snapshot(context, entries.files, snapshot)
+            _write_links(context, entries, snapshot)
             requested = paths if isinstance(paths, (list, tuple)) else [paths]
             targets = []
             for requested_path in requested:
@@ -201,14 +385,19 @@ def annotate_dead_code_impact(
                     identity = _identity(item, category, context.root)
                     if identity is None:
                         raise ImpactUnavailable("finding_identity_unavailable")
-                    if identity not in baseline_ids:
+                    # The base has no copy of an omitted path to compare with.
+                    if identity not in baseline_ids and not _in_omitted(
+                        identity[1], entries.omitted
+                    ):
                         introduced.append(item)
             # Do not mutate findings until the entire comparison succeeds.
             for item in introduced:
                 item["change_status"] = "introduced"
                 item["report_scope"] = "dependency_impact"
             receipt.update(status="complete", introduced_count=len(introduced),
-                           snapshot_file_count=len(entries))
+                           snapshot_file_count=len(entries.files) + len(entries.links))
+            if entries.omitted:
+                receipt["omitted"] = dict(Counter(entries.omitted.values()))
     except Exception as exc:
         logging.getLogger("Skylos").debug("PR impact comparison failed", exc_info=True)
         receipt["error_type"] = type(exc).__name__

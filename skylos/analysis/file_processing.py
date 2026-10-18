@@ -17,6 +17,7 @@ from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.concurrency import LockOrderRule, ThreadSharedStateRule
 from skylos.rules.quality.complexity import ComplexityRule, CognitiveComplexityRule
 from skylos.rules.quality.coupling import CBORule
+from skylos.rules.quality.logic_foundation import TRY_NODE_TYPES
 from skylos.rules.quality.logic import (
     BareExceptRule,
     BooleanTrapRule,
@@ -86,7 +87,6 @@ TS_JS_SOURCE_EXTS = (
 )
 KOTLIN_SOURCE_EXTS = (".kt", ".kts")
 CPP_ANALYSIS_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
-TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
 LINTER_RULE_NODE_TYPES = {
     ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
@@ -102,17 +102,17 @@ LINTER_RULE_NODE_TYPES = {
     ),
     LockOrderRule: (ast.Module,),
     ThreadSharedStateRule: (ast.Module,),
-    ArgCountRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    ArgCountRule: (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
     FunctionLengthRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     MutableDefaultRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     RepeatedMutableAliasRule: (ast.Module, ast.BinOp),
     BareExceptRule: (ast.ExceptHandler,),
     DangerousComparisonRule: (ast.Compare,),
     DuplicateBranchRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    TryBlockPatternsRule: (ast.Try,),
+    TryBlockPatternsRule: TRY_NODE_TYPES,
     UnusedExceptVarRule: (ast.ExceptHandler,),
     ReturnConsistencyRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    EmptyErrorHandlerRule: (ast.ExceptHandler, ast.With),
+    EmptyErrorHandlerRule: (ast.Module, *TRY_NODE_TYPES, ast.ExceptHandler, ast.With),
     MissingResourceCleanupRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     DebugLeftoverRule: (ast.Call,),
     SecurityTodoRule: (ast.Module,),
@@ -132,12 +132,12 @@ LINTER_RULE_NODE_TYPES = {
     UnfinishedGenerationRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     DuplicateStringLiteralRule: (ast.Module,),
     TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    BooleanTrapRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     BroadExceptionRule: (ast.ExceptHandler,),
     MissingNetworkTimeoutRule: (ast.Call,),
     NoEffectStatementRule: (ast.Module, ast.Expr),
     GodFileRule: (ast.Module,),
-    GodClassRule: (ast.ClassDef,),
+    GodClassRule: (ast.Module, ast.ClassDef),
     CBORule: (ast.ClassDef,),
     LCOMRule: (ast.Module, ast.ClassDef),
     UnreachableCodeRule: (

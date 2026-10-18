@@ -232,6 +232,7 @@ def test_new_scan_directory_has_an_empty_baseline(tmp_path, monkeypatch, capsys)
 
 
 def test_baseline_retains_arbitrary_liveness_inputs_and_supported_source_suffixes(tmp_path):
+    from skylos.analyzer import ANALYZED_SOURCE_SUFFIXES
     from skylos.core.git_context import GitContext
     from skylos.core.pr_impact import _snapshot_entries
 
@@ -246,12 +247,17 @@ def test_baseline_retains_arbitrary_liveness_inputs_and_supported_source_suffixe
     git(tmp_path, "commit", "-q", "-m", "Liveness inputs")
     commit = git(tmp_path, "rev-parse", "HEAD")
 
-    entries = _snapshot_entries(GitContext.from_path(tmp_path), commit)
+    snapshot = _snapshot_entries(
+        GitContext.from_path(tmp_path), commit, ANALYZED_SOURCE_SUFFIXES
+    )
 
-    assert {name for name, _, _ in entries} == {"app.py", *names}
+    assert {name for name, _, _ in snapshot.files} == {"app.py", *names}
+    assert not snapshot.omitted
 
 
-def test_oversized_non_source_blob_makes_baseline_incomplete(tmp_path, monkeypatch):
+def test_oversized_non_source_blob_is_left_out_of_the_baseline(tmp_path, monkeypatch):
+    # A large binary defines nothing: leaving it out only removes references
+    # from the baseline, which can hide a newly unused finding, never invent one.
     baseline(tmp_path, "print('existing')\n")
     (tmp_path / "asset.bin").write_bytes(b"a" * 129)
     git(tmp_path, "add", "asset.bin")
@@ -264,12 +270,14 @@ def test_oversized_non_source_blob_makes_baseline_incomplete(tmp_path, monkeypat
         config={}, grep_verify=False,
     )
 
-    assert receipt["status"] == "incomplete"
-    assert receipt["reason"] == "base_blob_too_large"
-    assert report["analysis_errors"][0]["kind"] == "pr_impact_incomplete"
+    assert receipt["status"] == "complete"
+    assert receipt["omitted"] == {"oversize_non_source": 1}
+    assert not report.get("analysis_errors")
 
 
-def test_symlinked_base_source_is_incomplete(tmp_path):
+def test_symlinked_base_source_is_recreated_in_the_baseline(tmp_path):
+    # Source discovery never reads a symlinked file in either tree, so the
+    # same link in the baseline keeps the two scans alike.
     target = baseline(tmp_path, "print('ok')\n")
     (tmp_path / "linked.py").symlink_to(target.name)
     git(tmp_path, "add", "linked.py")
@@ -277,8 +285,9 @@ def test_symlinked_base_source_is_incomplete(tmp_path):
     report = {}
     receipt = annotate_dead_code_impact(report, str(tmp_path), project_root=tmp_path,
                                        base_ref="HEAD", config={}, grep_verify=False)
-    assert receipt["status"] == "incomplete"
-    assert receipt["reason"] == "nonregular_base_source"
+    assert receipt["status"] == "complete"
+    assert "omitted" not in receipt
+    assert receipt["snapshot_file_count"] == 2
 
 
 def test_snapshot_reads_raw_blobs_without_filters_or_target_execution(tmp_path):

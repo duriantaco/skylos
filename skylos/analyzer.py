@@ -90,6 +90,8 @@ from skylos.rules.quality.clones import (
     CloneType,
     detect_pairs,
     group_pairs,
+    python_imports_outside_tests,
+    without_test_only_groups,
 )
 from skylos.analysis.penalties import apply_penalties
 from skylos.analysis.file_worker import process_file
@@ -607,6 +609,22 @@ _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
 _KOTLIN_SOURCE_EXTS = (".kt", ".kts")
 _SHELL_SOURCE_EXTS = SHELL_SOURCE_EXTS
+# Every suffix a directory scan parses as source.
+ANALYZED_SOURCE_SUFFIXES = frozenset(
+    {
+        *PYTHON_SIGNATURE_SUFFIXES,
+        ".go",
+        *_TS_JS_SOURCE_EXTS,
+        ".java",
+        *_PHP_SOURCE_EXTS,
+        *_RUST_SOURCE_EXTS,
+        *_CPP_SOURCE_EXTS,
+        *_DART_SOURCE_EXTS,
+        *_CSHARP_SOURCE_EXTS,
+        *_KOTLIN_SOURCE_EXTS,
+        *_SHELL_SOURCE_EXTS,
+    }
+)
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
 _REFERENCE_LANGUAGE_FAMILIES = {
     **dict.fromkeys(PYTHON_SIGNATURE_SUFFIXES, "python"),
@@ -1865,19 +1883,7 @@ class Skylos:
             return [], Path(os.path.abspath(raw_path)).parent.resolve()
         p = raw_path.resolve()
 
-        exts = {
-            *PYTHON_SIGNATURE_SUFFIXES,
-            ".go",
-            *(_TS_JS_SOURCE_EXTS),
-            ".java",
-            *(_PHP_SOURCE_EXTS),
-            *(_RUST_SOURCE_EXTS),
-            *(_CPP_SOURCE_EXTS),
-            *(_DART_SOURCE_EXTS),
-            *(_CSHARP_SOURCE_EXTS),
-            *(_KOTLIN_SOURCE_EXTS),
-            *(_SHELL_SOURCE_EXTS),
-        }
+        exts = set(ANALYZED_SOURCE_SUFFIXES)
         if p.is_file():
             # Explicit paths need the same source filter as directory scans.
             # Config files also have a worker adapter for the later repo checks.
@@ -4382,6 +4388,12 @@ class Skylos:
                 file_has_explicit_all = bool(out[27]) if len(out) > 27 else False
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
+                elif isinstance(file_analysis_error, list):
+                    analysis_errors.extend(
+                        error
+                        for error in file_analysis_error
+                        if isinstance(error, dict)
+                    )
                 (
                     defs,
                     refs,
@@ -4607,11 +4619,19 @@ class Skylos:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: clone detection"))
             RULE_ID = "SKY-C401"
+            from skylos.rules.quality.clones import clone_member_label
 
             frags = all_clone_fragments
 
             pairs = detect_pairs(frags, clone_cfg)
-            groups = group_pairs(pairs, clone_cfg)
+            groups = without_test_only_groups(
+                group_pairs(pairs, clone_cfg),
+                root,
+                imported_modules=python_imports_outside_tests(all_raw_imports, root),
+                module_names={
+                    str(Path(file).resolve()): module for file, module in modmap.items()
+                },
+            )
 
             for g in groups:
                 if len(g.fragments) < 2:
@@ -4620,11 +4640,10 @@ class Skylos:
                 g.fragments.sort(key=lambda x: (x.file_path, x.start_line))
                 top = g.fragments[0]
 
-                members_preview = []
-                for frag in g.fragments[:4]:
-                    members_preview.append(
-                        f"{Path(frag.file_path).name}:{frag.start_line}-{frag.end_line} ({frag.kind} {frag.name})"
-                    )
+                members_preview = [
+                    clone_member_label(frag, project_root)
+                    for frag in g.fragments[:4]
+                ]
 
                 if (
                     g.clone_type in (CloneType.TYPE1, CloneType.TYPE2)
@@ -5894,6 +5913,18 @@ class Skylos:
             workspace_inventory=workspace_inventory,
         )
 
+        if enable_quality:
+            from skylos.analysis.typing_scope import scope_typing_findings
+
+            all_quality = scope_typing_findings(
+                all_quality,
+                modmap,
+                all_raw_imports,
+                project_root,
+                production_modules=(
+                    pyproject_entrypoint_modules | architecture_main_guard_modules
+                ),
+            )
         self._review_file_configs = effective_file_configs
         if effective_file_configs is None or any(
             _resolution_scope_limited(config, thr)
@@ -5905,6 +5936,14 @@ class Skylos:
         analysis_errors, outside_diff_warnings = _split_outside_diff_analysis_errors(
             analysis_errors, changed_files
         )
+        if enable_danger and all_dangers:
+            from skylos.rules.danger.danger_fs.closed_world import (
+                drop_closed_world_helper_findings,
+            )
+
+            all_dangers = drop_closed_world_helper_findings(
+                all_dangers, scan_path=path, suppressed=all_suppressed
+            )
         result = self._build_result(
             files,
             thr,

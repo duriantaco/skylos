@@ -454,18 +454,59 @@ def _node_sources(
     return []
 
 
+_UUID_FACTORIES = frozenset({"uuid.uuid1", "uuid.uuid3", "uuid.uuid4", "uuid.uuid5", "uuid.UUID"})
+_SAFE_TOKEN_CALLS = frozenset({"secrets.token_hex", "secrets.token_urlsafe", "int"})
+
+
+def _dotted_call_name(node: ast.AST) -> str | None:
+    func = node.func if isinstance(node, ast.Call) else None
+    parts = []
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if not isinstance(func, ast.Name):
+        return None
+    parts.append(func.id)
+    return ".".join(reversed(parts))
+
+
+def is_traversal_safe_value(node: ast.AST) -> bool:
+    """A value that cannot contain a path separator or "..": a hash's
+    ``hexdigest()``, a UUID (``uuid.uuid4()``, ``.hex``, ``str(uuid...)``),
+    ``secrets.token_hex()`` / ``token_urlsafe()``, or ``int(...)``.
+    ``digest()`` is not one: raw bytes can contain "/"."""
+    if isinstance(node, ast.Attribute) and node.attr == "hex":
+        return _dotted_call_name(node.value) in _UUID_FACTORIES
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "hexdigest":
+        return True
+    name = _dotted_call_name(node)
+    if name in _UUID_FACTORIES or name in _SAFE_TOKEN_CALLS:
+        return True
+    return (
+        name == "str"
+        and len(node.args) == 1
+        and _dotted_call_name(node.args[0]) in _UUID_FACTORIES
+    )
+
+
 def _direct_sources(
     node: ast.AST,
     origins: dict[str, list[str]],
     request_names: set[str],
     import_bindings: dict[str, str | None] | None = None,
     cli_parser_names=frozenset(),
+    skip=None,
 ) -> list[str]:
-    """Source labels referenced anywhere inside ``node``, in source order."""
+    """Source labels referenced anywhere inside ``node``, in source order.
+    ``skip`` marks subexpressions whose value carries no source."""
     found: list[str] = []
     stack = [node]
     while stack:
         sub = stack.pop()
+        if skip is not None and skip(sub):
+            continue
         labels = _node_sources(
             sub, origins, request_names, import_bindings, cli_parser_names
         )
@@ -579,12 +620,14 @@ class _FunctionSources:
         )
 
     def traversal_sources_in(self, expr: ast.AST) -> list[str]:
+        # A hex digest, UUID, token or int of untrusted data cannot traverse.
         return _direct_sources(
             expr,
             self.traversal_origins,
             self.request_names,
             self.import_bindings,
             self.cli_parser_names,
+            skip=is_traversal_safe_value,
         )
 
     def direct_sources_in(self, expr: ast.AST) -> list[str]:

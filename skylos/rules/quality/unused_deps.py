@@ -364,6 +364,10 @@ def _collect_declared(repo_root):
 
         if deps:
             break
+        # A pyproject or repository root is the scanned project's boundary;
+        # an enclosing project's manifest does not declare this one's deps.
+        if pyproj_path.exists() or (current / ".git").exists():
+            break
 
         parent = current.parent
         if parent == current:

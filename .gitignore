@@ -45,3 +45,6 @@ coverage.xml
 !/manual/agent_behavior/
 !/manual/agent_behavior/**
 /kiv/
+
+# Local comprehensive rule audit: generated fixtures, runners, and reports.
+/benchmarks/independent_python/

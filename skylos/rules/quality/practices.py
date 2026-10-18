@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import ast
+import builtins
+import io
 import re
+import tokenize
 from pathlib import Path
 
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._object_auth import defeated_owner_guard
+from skylos.rules.quality._receivers import (
+    class_method_nodes,
+    context_method_kinds,
+    possible_method_receiver,
+)
+from skylos.rules.quality._typing import (
+    comment_contract,
+    is_typing_test_path,
+    parameters,
+    pytest_fixture_ids,
+)
 
 
 AUTH_MARKERS = (
@@ -302,6 +316,986 @@ def _route_has_auth_guard(
     return _body_verifies_signature(node)
 
 
+# PUT, PATCH and DELETE change state by definition. POST is also used for
+# read-only RPC (search, inference, embedding): a POST route whose name or
+# path reads as a query counts as mutating only when its body shows a state
+# change. Any other POST keeps counting as mutating, since it may change
+# state through calls whose names say nothing (``remote.fork(...)``).
+STATE_CHANGING_HTTP_METHODS = {"PUT", "PATCH", "DELETE"}
+
+# Words in a route's function name or URL path that read as a query.
+_QUERY_ROUTE_WORDS = frozenset(
+    {
+        "analyse", "analyze", "ask", "autocomplete", "calculate", "caption",
+        "chat", "check", "classify", "compare", "completion", "completions",
+        "compute", "convert", "count", "decode", "describe", "detect", "diff",
+        "download", "echo", "embed", "embedding", "embeddings", "encode",
+        "estimate", "eval", "evaluate", "explain", "extract", "fetch", "find",
+        "format", "generate", "get", "health", "healthz", "infer", "inference",
+        "inspect", "lint", "list", "lookup", "match", "ocr", "parse", "ping",
+        "predict", "prediction", "predictions", "preview", "query", "rank",
+        "read", "recognize", "recommend", "render", "rerank", "retrieval",
+        "retrieve", "score", "search", "segment", "show", "similar",
+        "similarity", "suggest", "summarize", "tokenize", "transcribe",
+        "translate", "validate", "view",
+    }
+)  # fmt: skip
+
+# Words in a route's function name or URL path that name a state change.
+# Common nouns ("order", "book") and read-only actions of inference or file
+# tools ("run", "complete", "apply", "merge") are left out.
+_STATE_CHANGE_ROUTE_WORDS = frozenset(
+    {
+        "accept", "activate", "add", "append", "approve", "archive", "assign",
+        "ban", "block", "callback", "cancel", "charge", "checkout", "claim",
+        "clear", "close", "comment", "commit", "confirm", "create",
+        "deactivate", "decline", "decrement", "delete", "deploy", "destroy",
+        "disable", "drop", "edit", "enable", "enqueue", "exec", "execute",
+        "finish", "follow", "grant", "hook", "hooks", "import", "increment",
+        "ingest", "insert", "install", "invite", "join", "kill", "leave",
+        "like", "lock", "login", "logout", "mark", "migrate", "modify", "move",
+        "notify", "pay", "publish", "purchase", "purge", "push", "refund",
+        "rebuild", "refresh", "register", "reindex", "reject", "release",
+        "reload", "remove", "rename", "reserve", "reset", "restart", "restore",
+        "revoke", "save", "schedule", "send",
+        "set", "share", "shutdown", "signin", "signout", "signup", "start",
+        "stop", "store", "submit", "subscribe", "sync", "terminate", "toggle",
+        "train", "transfer", "trigger", "unassign", "unblock", "unfollow",
+        "uninstall", "unlike", "unlock", "unsubscribe", "update", "upload",
+        "upsert", "vote", "webhook", "webhooks", "write",
+    }
+)  # fmt: skip
+
+# Call names that persist data or cause an external side effect: ORM /
+# session / cursor writes, key-value stores, queues, messaging, outgoing
+# writes over HTTP, file-system changes.
+_STATE_CHANGE_CALL_NAMES = frozenset(
+    {
+        "add", "apply_async", "approve", "cancel", "charge", "chmod", "chown",
+        "commit", "create", "decr", "decrement", "delay", "delete", "deploy",
+        "destroy", "dispatch", "drop", "dump", "emit", "enqueue", "evict",
+        "execute", "executemany", "executescript", "expire", "flush", "grant",
+        "hdel", "hmset", "hset", "incr", "incrby", "increment", "insert",
+        "install", "invalidate", "kill", "lpush", "makedirs", "merge", "mkdir",
+        "notify", "patch", "persist", "post", "publish", "purge", "push",
+        "put", "refund", "register", "reject", "remove", "rename", "reset",
+        "revoke", "rmdir", "rmtree", "rpush", "sadd", "save", "schedule",
+        "send", "send_task", "sendall", "sendmail", "set", "setex", "setnx",
+        "srem", "store", "submit", "terminate", "touch", "train", "transfer",
+        "trigger", "truncate", "unlink", "update", "upload", "upsert", "write",
+        "writelines", "zadd", "zrem",
+    }
+)  # fmt: skip
+
+# Leading words of compound call names that do the same (``add_task``,
+# ``insert_one``, ``put_object``, ``send_email``). Words whose compounds are
+# common read-only data helpers (``post_process``, ``drop_duplicates``,
+# ``reset_index``, ``train_test_split``) only count as whole names.
+_STATE_CHANGE_CALL_PREFIXES = frozenset(
+    {
+        "add", "approve", "bulk", "cancel", "charge", "commit", "create",
+        "decrement", "delete", "deploy", "destroy", "enqueue", "execute",
+        "grant", "increment", "insert", "install", "invalidate", "notify",
+        "persist", "publish", "purge", "push", "put", "refund", "register",
+        "remove", "revoke", "save", "schedule", "send", "set", "store",
+        "submit", "transfer", "trigger", "update", "upload", "upsert", "write",
+    }
+)  # fmt: skip
+
+# Framework helpers that build a read-only response.
+_READ_ONLY_CALL_NAMES = frozenset({"send_file", "send_from_directory"})
+
+# Words that mark a write anywhere in a compound call name
+# (``get_or_create``, ``find_one_and_update``, ``batch_write_item``).
+_STATE_CHANGE_CALL_ANY_WORDS = frozenset(
+    {
+        "commit", "create", "delete", "destroy", "insert", "persist", "purge",
+        "remove", "save", "update", "upload", "upsert", "write",
+    }
+)  # fmt: skip
+
+# Container methods that change only the receiver: a state change only when
+# the receiver outlives the request (module state, ``self``, an injected
+# object), not when it is a local built during the request.
+_RECEIVER_MUTATORS = frozenset(
+    {
+        "add", "append", "clear", "discard", "drop", "extend", "insert",
+        "pop", "popitem", "put", "remove", "reverse", "set", "setdefault",
+        "sort", "update", "write", "writelines",
+    }
+)  # fmt: skip
+
+_OS_SIDE_EFFECTS = frozenset(
+    {
+        "chmod", "chown", "kill", "killpg", "link", "makedirs", "mkdir",
+        "popen", "putenv", "remove", "removedirs", "rename", "renames",
+        "replace", "rmdir", "startfile", "symlink", "system", "truncate",
+        "unlink", "unsetenv", "utime", "write",
+    }
+)  # fmt: skip
+_SHUTIL_READ_ONLY = frozenset({"disk_usage", "get_terminal_size", "which"})
+# A call proves nothing about state unless it is known to be read-only:
+# builtins, same-module helpers (their bodies are checked), the modules and
+# value methods below, response helpers, and callees whose own name reads as
+# a query. Any other callee (``coupons.redeem``, ``frame.to_sql``,
+# ``client.invoke``) counts as a state change.
+_READ_ONLY_CALL_MODULES = frozenset(
+    {"json", "re", "math", "logging", "time", "datetime", "uuid", "statistics",
+     "itertools", "functools", "operator", "string", "textwrap", "base64",
+     "hashlib", "html", "typing", "copy", "decimal", "fractions", "os.path",
+     "posixpath", "urllib.parse", "unicodedata"}
+)  # fmt: skip
+# Value methods prove nothing on a long-lived object (``s3.copy(...)``
+# copies an object in a bucket, ``es.index(...)`` stores a document), so they
+# count only on values made during the request; see ``_is_request_value``.
+_READ_ONLY_VALUE_METHODS = frozenset(
+    {"strip", "lstrip", "rstrip", "lower", "upper", "title", "split",
+     "rsplit", "splitlines", "join", "replace", "format", "encode", "decode",
+     "startswith", "endswith", "get", "items", "keys", "values", "copy",
+     "count", "find", "tolist", "item", "isoformat", "hexdigest",
+     "model_dump", "dict", "json", "to_dict", "numpy", "cpu", "detach",
+     "astype", "reshape", "mean", "sum", "max", "min", "argmax", "argmin"}
+)  # fmt: skip
+# ``list.index`` / ``str.index``; on anything but a literal it may be a
+# search-engine write (``es.index(document=...)``).
+_LITERAL_NODES = (ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.ListComp)
+# Logging methods are read-only only on a logger (``audit.log(...)`` may
+# write an audit record).
+_LOG_METHODS = frozenset(
+    {"critical", "debug", "error", "exception", "fatal", "info", "log",
+     "warn", "warning"}
+)  # fmt: skip
+_LOGGER_FACTORIES = frozenset({"getLogger", "get_logger"})
+_LOGGER_MODULES = frozenset({"loguru", "structlog"})
+# The framework request object: reading its body, query, form, headers or
+# files changes nothing (``request.get_json()``, ``request.args.get("q")``,
+# ``await request.form()``, ``request.files["f"].read()``).
+_REQUEST_NAMES = frozenset({"request", "req"})
+_REQUEST_READ_METHODS = frozenset(
+    {"body", "form", "get_data", "get_json", "json", "read", "stream", "text"}
+)  # fmt: skip
+_REQUEST_CONTAINERS = frozenset(
+    {"args", "cookies", "data", "files", "form", "GET", "headers", "json",
+     "META", "params", "path_params", "POST", "query", "query_params",
+     "values"}
+)  # fmt: skip
+_INJECTION_CALLS = frozenset({"Depends", "Security"})
+_RESPONSE_HELPERS = frozenset(
+    {"jsonify", "make_response", "Response", "JSONResponse",
+     "PlainTextResponse", "HTMLResponse", "StreamingResponse", "FileResponse",
+     "HTTPException", "abort", "render_template", "redirect", "url_for",
+     "escape"}
+)  # fmt: skip
+# Words that make a callee's own name read as a query (``search_documents``,
+# ``predict_proba``, ``batch_search``). ``get`` is left out: getters often
+# create or claim (``get_or_create``, ``get_lock``, ``get_next_id``); so are
+# ``count``, ``match`` and ``score``, which as verbs often record something
+# (count a vote, match a rider, score a submission).
+_QUERY_CALL_WORDS = frozenset(
+    {"search", "retrieve", "retrieval", "predict", "prediction", "predictions",
+     "infer", "inference", "classify", "embed", "embedding", "embeddings",
+     "encode", "decode", "find", "lookup", "query", "read", "fetch",
+     "describe", "rank", "rerank", "similar", "similarity", "parse",
+     "tokenize"}
+)  # fmt: skip
+# A name that joins a second action (``fetch_and_store``) or names a write
+# anywhere (``mark_as_read``, ``record_query``, ``find_one_and_replace``)
+# does not read as a query, even where the write word is a noun
+# (``fetch_record``): the name alone cannot tell.
+_ACTION_JOINERS = frozenset({"and", "or", "then"})
+_WRITE_WORDS = frozenset(
+    {"add", "append", "apply", "approve", "archive", "assign", "ban", "block",
+     "book", "cache", "cancel", "charge", "claim", "clear", "commit",
+     "confirm", "copy", "create", "decrement", "delete", "destroy", "disable",
+     "drop", "edit", "emit", "enable", "enqueue", "extend", "fit", "flush",
+     "grant", "increment", "index", "insert", "invalidate", "lock", "log",
+     "mark", "merge", "modify", "move", "notify", "patch", "pay", "persist",
+     "pop", "post", "publish", "purge", "push", "put", "record", "refresh",
+     "refund", "register", "reject", "remove", "rename", "replace", "reserve",
+     "reset", "revoke", "save", "send", "set", "store", "submit",
+     "subscribe", "sync", "toggle", "track", "train", "unlock", "update",
+     "upload", "upsert", "vote", "write"}
+)  # fmt: skip
+_SHARED_STATE_ATTRIBUTES = frozenset({"session", "cookies", "state"})
+_WRITE_MODE_CHARACTERS = frozenset("wax+")
+_FILE_MODE_RE = re.compile(r"^[rwaxbtU+]{1,4}$")
+_HELPER_DEPTH = 3
+# Builtins that run code or stop the process (``eval(expr)``).
+_CODE_EXECUTION_BUILTINS = frozenset(
+    {"eval", "exec", "compile", "__import__", "breakpoint", "exit", "quit"}
+)
+# Builtins that hand back an existing object (an element, an attribute, a
+# namespace) rather than a value the call makes.
+_PASS_THROUGH_BUILTINS = frozenset(
+    {"next", "iter", "getattr", "vars", "globals", "locals", "super", "memoryview"}
+)
+# Callees whose first positional argument is a function they call.
+_HIGHER_ORDER_CALLEES = frozenset({"map", "filter", "reduce", "partial", "starmap"})
+# Request attributes that reach state shared across requests
+# (``request.app.state.vectors``, ``request.session``).
+_SHARED_REQUEST_ATTRIBUTES = frozenset({"app", "session"})
+# Value methods that are also client or file operations (``s3.copy``,
+# ``path.replace`` renames, ``sio.join(room)``): read-only only on a value
+# made during the request.
+_CLIENT_VALUE_METHODS = frozenset({"copy", "replace", "join"})
+_READ_ONLY_MODULE_ROOTS = frozenset(
+    {"json", "re", "math", "logging", "itertools", "functools", "operator"}
+)
+# Nodes that always evaluate to a new object.
+_NEW_VALUE_NODES = (
+    ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.Set, ast.Dict,
+    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.BinOp,
+    ast.UnaryOp, ast.Compare, ast.Lambda,
+)  # fmt: skip
+# SQL sent through a query-named method (``db.query(sql)``): the statement,
+# not the method name, says whether it writes.
+_SQL_CALL_WORDS = frozenset({"query", "execute"})
+# Receivers that name a database connection; SQL built at run time and sent
+# to one may write.
+_SQL_RECEIVER_WORDS = frozenset(
+    {"conn", "connection", "cur", "cursor", "database", "databases", "db",
+     "dbapi", "duckdb", "clickhouse", "mariadb", "mysql", "pg", "postgres",
+     "postgresql", "psql", "sql", "sqlite", "sqlite3", "warehouse"}
+)  # fmt: skip
+_SQL_READ_STATEMENTS = frozenset(
+    {"select", "with", "show", "explain", "describe", "desc", "values", "table"}
+)
+_SQL_STATEMENTS = _SQL_READ_STATEMENTS | frozenset(
+    {"insert", "update", "delete", "merge", "upsert", "replace", "create",
+     "drop", "alter", "truncate", "grant", "revoke", "call", "copy", "lock",
+     "vacuum", "reindex", "set", "attach", "detach", "pragma", "commit",
+     "rollback"}
+)  # fmt: skip
+# A write keyword anywhere in a read statement (``WITH x AS (DELETE ...)``,
+# ``SELECT ... INTO``, ``FOR UPDATE``); ``replace(`` is the string function.
+_SQL_WRITE_RE = re.compile(
+    r"\b(?:insert|update|delete|merge|upsert|replace|create|drop|alter|"
+    r"truncate|grant|revoke|call|copy|into|lock|vacuum|reindex|attach|"
+    r"detach)\b(?!\s*\()",
+    re.IGNORECASE,
+)
+# Comments and quoted strings or identifiers, which never change the statement.
+_SQL_NOISE_RE = re.compile(
+    r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"", re.DOTALL
+)
+_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[^A-Za-z]|$)|[A-Z]?[a-z]+|[0-9]+")
+
+
+def _words(value: str) -> list[str]:
+    return [word.lower() for word in _WORD_RE.findall(value)]
+
+
+def _route_paths(decorators: list[ast.AST]) -> list[str]:
+    paths = []
+    for decorator in decorators:
+        call = _decorator_call(decorator)
+        if call is None:
+            continue
+        if call.args:
+            paths.extend(_string_values(call.args[0]))
+        for keyword in call.keywords:
+            if keyword.arg in {"path", "rule"}:
+                paths.extend(_string_values(keyword.value))
+    return paths
+
+
+def _route_words(function, route_decorators) -> set[str]:
+    words = set(_words(function.name))
+    for path in _route_paths(route_decorators):
+        words.update(_words(path))
+    return words
+
+
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call, ast.Await)):
+        if isinstance(node, ast.Call):
+            node = node.func
+        else:
+            node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _chain_attributes(node: ast.AST) -> set[str]:
+    names = set()
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        if isinstance(node, ast.Attribute):
+            names.add(node.attr.lower())
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        else:
+            node = node.value
+    return names
+
+
+def _bound_names(target: ast.AST) -> set[str]:
+    return {
+        node.id
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+
+def _local_names(function) -> tuple[set[str], set[str], set[str]]:
+    """Names a function binds, its parameters, and names declared global or
+    nonlocal (which bind outer state)."""
+    params = {
+        arg.arg
+        for arg in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+            function.args.vararg,
+            function.args.kwarg,
+        ]
+        if arg is not None
+    }
+    outer: set[str] = set()
+    bound: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            outer.update(node.names)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, (ast.Name, ast.Tuple, ast.List, ast.Starred)):
+                    bound.update(_bound_names(target))
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            bound.update(_bound_names(node.target))
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            bound.update(_bound_names(node.optional_vars))
+        elif isinstance(node, ast.NamedExpr):
+            bound.update(_bound_names(node.target))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound.update(
+                (alias.asname or alias.name).split(".", 1)[0] for alias in node.names
+            )
+    return bound - outer, params, outer
+
+
+def _shared_aliases(function, local, params) -> dict[str, str]:
+    """Locals that stand for shared state, not a value made during the
+    request, mapped to the dotted name they stand for: anything imported in
+    the function (``import shutil as file_ops``), and names assigned a module,
+    a global, ``self``/``cls`` state or another such alias (``file_ops =
+    shutil``, ``store = cache``, ``store = request.app.state.vectors``).
+    Request data (``query = request.json``) stays request data."""
+    aliases: dict[str, str] = {}
+    assigned = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:
+                    root = alias.name.split(".", 1)[0]
+                    aliases[root] = root
+        elif isinstance(node, ast.ImportFrom):
+            module = "." * (node.level or 0) + (node.module or "")
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = f"{module}.{alias.name}"
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(node.value, (ast.Name, ast.Attribute)):
+                assigned.extend(
+                    (target.id, node.value)
+                    for target in targets
+                    if isinstance(target, ast.Name)
+                )
+    changed = True
+    while changed:
+        changed = False
+        for name, value in assigned:
+            root = _root_name(value)
+            if name in aliases or root is None:
+                continue
+            dotted = _dotted_name(value)
+            if root in _REQUEST_NAMES:
+                if not _chain_attributes(value) & _SHARED_REQUEST_ATTRIBUTES:
+                    continue
+                aliases[name] = dotted
+            elif root in aliases:
+                aliases[name] = aliases[root] + dotted[len(root) :]
+            elif root in {"self", "cls"} or (root not in local and root not in params):
+                aliases[name] = dotted
+            else:
+                continue
+            changed = True
+    return aliases
+
+
+def _resolve_alias(dotted: str, aliases) -> str:
+    root, _, rest = dotted.partition(".")
+    if root not in aliases:
+        return dotted
+    return f"{aliases[root]}.{rest}" if rest else aliases[root]
+
+
+def _store_changes_state(target, scope: _RouteScope) -> bool:
+    if isinstance(target, (ast.Tuple, ast.List, ast.Starred)):
+        elts = target.elts if not isinstance(target, ast.Starred) else [target.value]
+        return any(_store_changes_state(elt, scope) for elt in elts)
+    if isinstance(target, ast.Name):
+        return target.id in scope.outer
+    if not isinstance(target, (ast.Attribute, ast.Subscript)):
+        return False
+    root = _root_name(target)
+    if root is None:
+        return False
+    if root in {"self", "cls"} or root in scope.outer:
+        return True
+    if root in scope.params:
+        # A request model is the caller's copy; its session, cookies or
+        # app state are not.
+        return bool(_chain_attributes(target) & _SHARED_STATE_ATTRIBUTES)
+    # A local may hold shared state (``cache = results_cache()``) unless it
+    # was made during the request.
+    return root not in scope.request_locals
+
+
+def _open_writes(call: ast.Call) -> bool:
+    name = _dotted_name(call.func)
+    if name in {"open", "io.open", "codecs.open"}:
+        mode_node = call.args[1] if len(call.args) > 1 else None
+    elif isinstance(call.func, ast.Attribute) and call.func.attr == "open":
+        mode_node = call.args[0] if call.args else None
+    else:
+        return False
+    for keyword in call.keywords:
+        if keyword.arg == "mode":
+            mode_node = keyword.value
+    # ``Image.open("cat.png")`` passes a path where ``Path.open`` takes a mode.
+    return any(
+        _FILE_MODE_RE.match(mode) and set(mode) & _WRITE_MODE_CHARACTERS
+        for mode in _string_values(mode_node)
+    )
+
+
+def _call_changes_state(call: ast.Call, scope: _RouteScope) -> bool:
+    if _open_writes(call):
+        return True
+    func = call.func
+    if isinstance(func, ast.Name):
+        name = func.id
+        if name in _CODE_EXECUTION_BUILTINS and name not in scope.bound:
+            return True
+        if name in {"setattr", "delattr"} and call.args:
+            receiver = _root_name(call.args[0])
+            return receiver is not None and receiver not in scope.request_locals
+        if hasattr(builtins, name):
+            return False
+    elif isinstance(func, ast.Attribute):
+        name = func.attr
+    else:
+        # A dispatch-table entry, a returned callable or a lambda: nothing
+        # says what it does.
+        return True
+    dotted = _resolve_alias(_dotted_name(func), scope.aliases)
+    module = dotted.split(".", 1)[0] if "." in dotted else ""
+    if module == "subprocess":
+        return True
+    if module == "shutil" and name not in _SHUTIL_READ_ONLY:
+        return True
+    if module == "os" and (
+        name in _OS_SIDE_EFFECTS or name.startswith(("exec", "spawn"))
+    ):
+        return True
+    lowered = name.lower()
+    if lowered in _READ_ONLY_CALL_NAMES:
+        return False
+    if isinstance(func, ast.Attribute) and lowered in _RECEIVER_MUTATORS:
+        receiver = _root_name(func.value)
+        return receiver is not None and receiver not in scope.request_locals
+    if lowered in _STATE_CHANGE_CALL_NAMES:
+        return True
+    words = _words(name)
+    if len(words) >= 2 and (
+        words[0] in _STATE_CHANGE_CALL_PREFIXES
+        or set(words) & _STATE_CHANGE_CALL_ANY_WORDS
+    ):
+        return True
+    return not _call_is_read_only(call, func, name, dotted, scope)
+
+
+def _call_is_read_only(call, func, name: str, dotted: str, scope: _RouteScope) -> bool:
+    if isinstance(func, ast.Name):
+        if name in scope.module_functions or name in _RESPONSE_HELPERS:
+            return True
+    module = dotted.rsplit(".", 1)[0] if "." in dotted else ""
+    if module in _READ_ONLY_CALL_MODULES or module.split(".", 1)[0] in (
+        _READ_ONLY_MODULE_ROOTS
+    ):
+        return True
+    if isinstance(func, ast.Attribute):
+        lowered = name.lower()
+        if lowered in _LOG_METHODS:
+            return _is_logger(func.value, scope.loggers)
+        if lowered == "index":
+            return isinstance(func.value, _LITERAL_NODES)
+        if _reads_request(func):
+            return True
+        if lowered in _READ_ONLY_VALUE_METHODS and scope.value_method_is_read_only(
+            func.value, lowered
+        ):
+            return True
+    if not _name_reads_as_query(name):
+        return False
+    return _sql_call_writes(call, name, scope) is not True
+
+
+def _sql_text(node) -> str | None:
+    """The text of a string literal, with ``?`` for an f-string's fields."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            else " ? "
+            for part in node.values
+        )
+    return None
+
+
+def _sql_writes(text: str) -> bool | None:
+    """True for SQL that may write, False for a read-only statement, None
+    when the text is not SQL (a question in words, a filter expression)."""
+    code = _SQL_NOISE_RE.sub(" ", text)
+    match = re.match(r"[\s(]*([A-Za-z]+)", code)
+    if match is None or match.group(1).lower() not in _SQL_STATEMENTS:
+        return None
+    statement = match.group(1).lower()
+    return statement not in _SQL_READ_STATEMENTS or bool(_SQL_WRITE_RE.search(code))
+
+
+def _receiver_words(node) -> set[str]:
+    words: set[str] = set()
+    while True:
+        if isinstance(node, ast.Attribute):
+            words.update(_words(node.attr))
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        else:
+            if isinstance(node, ast.Name):
+                words.update(_words(node.id))
+            return words
+
+
+def _sql_call_writes(call: ast.Call, name: str, scope: _RouteScope) -> bool | None:
+    """Whether SQL sent through a query-named call may write: decided by the
+    statement when it is a literal (or a local only ever bound to literals),
+    and True for SQL built at run time (a local or parameter) sent to a
+    database connection. None when the call says nothing about SQL (an ORM
+    model, a question for a retrieval engine)."""
+    if not call.args or not set(_words(name)) & _SQL_CALL_WORDS:
+        return None
+    first = call.args[0]
+    text = _sql_text(first)
+    if text is not None:
+        return _sql_writes(text)
+    if not isinstance(first, ast.Name) or first.id not in scope.bound:
+        return None
+    texts = scope.literal_strings.get(first.id)
+    if texts:
+        verdicts = {_sql_writes(text) for text in texts}
+        if True in verdicts:
+            return True
+        return False if verdicts == {False} else None
+    if isinstance(call.func, ast.Attribute) and (
+        _receiver_words(call.func.value) & _SQL_RECEIVER_WORDS
+    ):
+        return True
+    return None
+
+
+def _name_reads_as_query(name: str) -> bool:
+    words = set(_words(name))
+    if words & (_ACTION_JOINERS | _WRITE_WORDS):
+        return False
+    return bool(words & _QUERY_CALL_WORDS)
+
+
+def _reads_request(func: ast.Attribute) -> bool:
+    receiver = func.value
+    if isinstance(receiver, ast.Name):
+        return receiver.id in _REQUEST_NAMES and func.attr in _REQUEST_READ_METHODS
+    node = receiver
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return node.value.id in _REQUEST_NAMES and node.attr in _REQUEST_CONTAINERS
+        node = node.value
+    return False
+
+
+def _is_logger_factory(node) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and _dotted_name(node.func).rsplit(".", 1)[-1] in _LOGGER_FACTORIES
+    )
+
+
+def _is_logger(receiver: ast.AST, loggers) -> bool:
+    """``logger`` bound to ``logging.getLogger(...)`` (or imported from
+    loguru/structlog), ``app.logger`` / ``self.logger``, or the factory call."""
+    if isinstance(receiver, ast.Name):
+        return receiver.id in loggers
+    if isinstance(receiver, ast.Attribute):
+        return receiver.attr == "logger"
+    return _is_logger_factory(receiver)
+
+
+def _logger_names(statements) -> set[str]:
+    names = set()
+    for statement in statements:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and _is_logger_factory(
+                node.value
+            ):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                names.update(t.id for t in targets if isinstance(t, ast.Name))
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".", 1)[0] in _LOGGER_MODULES
+            ):
+                names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "logger"
+                )
+    return names
+
+
+def _injected_parameters(function) -> set[str]:
+    """Parameters the framework fills with a shared object
+    (``db=Depends(get_db)``, ``Annotated[Redis, Depends(get_redis)]``)."""
+    args = function.args
+    positional = [*args.posonlyargs, *args.args]
+    defaults = list(
+        zip(positional[len(positional) - len(args.defaults) :], args.defaults)
+    )
+    defaults += list(zip(args.kwonlyargs, args.kw_defaults))
+    injected = set()
+    for arg in [*positional, *args.kwonlyargs]:
+        nodes = [default for owner, default in defaults if owner is arg and default]
+        if arg.annotation is not None:
+            nodes.append(arg.annotation)
+        if any(
+            isinstance(node, ast.Call)
+            and _dotted_name(node.func).rsplit(".", 1)[-1] in _INJECTION_CALLS
+            for root in nodes
+            for node in ast.walk(root)
+        ):
+            injected.add(arg.arg)
+    return injected
+
+
+def _local_bindings(function) -> dict[str, list[tuple[str, ast.AST | None]]]:
+    """Every binding of each local, as ``(kind, expression)``: ``value`` (the
+    name holds the expression's value), ``item`` (an element or unpacked
+    part of it), ``aug`` (an augmented assignment), ``new`` (an exception
+    object or a nested definition) or ``shared`` (an import)."""
+    bindings: dict[str, list[tuple[str, ast.AST | None]]] = {}
+
+    def bind(target, kind, value):
+        if isinstance(target, ast.Name):
+            bindings.setdefault(target.id, []).append((kind, value))
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            if (
+                kind == "value"
+                and isinstance(value, (ast.Tuple, ast.List))
+                and len(value.elts) == len(target.elts)
+                and not any(isinstance(elt, ast.Starred) for elt in target.elts)
+            ):
+                for elt, part in zip(target.elts, value.elts):
+                    bind(elt, "value", part)
+            else:
+                for elt in target.elts:
+                    bind(elt, "item", value)
+        elif isinstance(target, ast.Starred):
+            bind(target.value, "item", value)
+
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, "value", node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            bind(node.target, "value", node.value)
+        elif isinstance(node, ast.AugAssign):
+            bind(node.target, "aug", node.value)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            bind(node.target, "item", node.iter)
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            bind(node.optional_vars, "value", node.context_expr)
+        elif isinstance(node, ast.NamedExpr):
+            bind(node.target, "value", node.value)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bindings.setdefault(node.name, []).append(("new", None))
+        elif (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node is not function
+        ):
+            bindings.setdefault(node.name, []).append(("new", None))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                name = (alias.asname or alias.name).split(".", 1)[0]
+                bindings.setdefault(name, []).append(("shared", None))
+    return bindings
+
+
+def _returns_shared_state(function) -> bool:
+    """A helper that hands back module or instance state (``return _CACHE``)."""
+    local, params, outer = _local_names(function)
+    for node in ast.walk(function):
+        if isinstance(node, ast.Return) and isinstance(
+            node.value, (ast.Name, ast.Attribute, ast.Subscript)
+        ):
+            root = _root_name(node.value)
+            if root is None:
+                continue
+            if root in {"self", "cls"} or root in outer:
+                return True
+            if root not in local and root not in params and not hasattr(builtins, root):
+                return True
+    return False
+
+
+class _RouteScope:
+    """What a route's names hold.
+
+    ``request_locals`` are locals made during the request: new objects
+    (literals, displays, comprehensions, builtin results), request data and
+    values computed from it. A call whose callee and arguments say nothing
+    about the request (``results_cache()``, ``lookup_store()``) may return
+    shared state, so a local bound to one is not request-local.
+    """
+
+    def __init__(self, function, module_functions, module_loggers=frozenset()):
+        local, params, outer = _local_names(function)
+        self.module_functions = module_functions
+        self.outer = outer
+        self.params = params
+        self.request_params = params - _injected_parameters(function)
+        self.bound = frozenset(local | params)
+        self.aliases = _shared_aliases(function, local, params)
+        candidates = local - set(self.aliases)
+        self.loggers = (set(module_loggers) - candidates - params) | _logger_names(
+            function.body
+        )
+        bindings = _local_bindings(function)
+        self.literal_strings = {
+            name: tuple(_sql_text(value) for _kind, value in entries)
+            for name, entries in bindings.items()
+            if all(kind == "value" and _sql_text(value) is not None for kind, value in entries)
+        }
+        # Greatest fixed point: drop a local while one of its bindings is not
+        # request-local.
+        self.request_locals = set(candidates)
+        changed = True
+        while changed:
+            changed = False
+            for name in list(self.request_locals):
+                if not all(
+                    self._binding_is_request_local(kind, value)
+                    for kind, value in bindings.get(name, ())
+                ):
+                    self.request_locals.discard(name)
+                    changed = True
+        self.request_locals = frozenset(self.request_locals)
+        self.other_locals = frozenset(candidates - self.request_locals)
+
+    def _binding_is_request_local(self, kind, value) -> bool:
+        if kind in {"new", "aug"}:
+            return True
+        if kind == "shared":
+            return False
+        return self.is_request_local(value)
+
+    def _request_name(self, name: str) -> bool:
+        return (
+            name in self.request_locals
+            or name in self.request_params
+            or (name in _REQUEST_NAMES and name not in self.bound)
+        )
+
+    def is_request_local(self, node) -> bool:
+        if isinstance(node, _NEW_VALUE_NODES):
+            return True
+        if isinstance(node, ast.BoolOp):
+            return all(self.is_request_local(value) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return self.is_request_local(node.body) and self.is_request_local(
+                node.orelse
+            )
+        if isinstance(node, (ast.Await, ast.Starred)):
+            return self.is_request_local(node.value)
+        if isinstance(node, ast.Name):
+            return self._request_name(node.id)
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            if _root_name(node) in _REQUEST_NAMES and (
+                _chain_attributes(node) & _SHARED_REQUEST_ATTRIBUTES
+            ):
+                return False
+            return self.is_request_local(node.value)
+        if isinstance(node, ast.Call):
+            return self._call_result_is_request_local(node)
+        return False
+
+    def _mentions_request_data(self, node) -> bool:
+        return any(
+            isinstance(child, ast.Name) and self._request_name(child.id)
+            for child in ast.walk(node)
+        )
+
+    def _call_result_is_request_local(self, call: ast.Call) -> bool:
+        func = call.func
+        if isinstance(func, ast.Name) and func.id not in self.bound:
+            if hasattr(builtins, func.id):
+                return (
+                    func.id not in _PASS_THROUGH_BUILTINS
+                    and func.id not in _CODE_EXECUTION_BUILTINS
+                )
+            helper = self.module_functions.get(func.id)
+            if helper is not None and _returns_shared_state(helper):
+                return False
+        dotted = _resolve_alias(_dotted_name(func), self.aliases)
+        module = dotted.rsplit(".", 1)[0] if "." in dotted else ""
+        if module and (
+            module in _READ_ONLY_CALL_MODULES
+            or module.split(".", 1)[0] in _READ_ONLY_MODULE_ROOTS
+        ):
+            return True
+        if isinstance(func, ast.Attribute) and (
+            _reads_request(func) or self.is_request_local(func.value)
+        ):
+            return True
+        return any(
+            self._mentions_request_data(argument)
+            for argument in [*call.args, *(keyword.value for keyword in call.keywords)]
+        )
+
+    def value_method_is_read_only(self, receiver, method: str) -> bool:
+        """``text.strip()``, ``rows.copy()``: read-only on a value made during
+        the request; on a value a query returned, unless the method is also a
+        client operation; never on shared state (``s3.copy(...)``)."""
+        if _root_name(receiver) in _REQUEST_NAMES and (
+            _chain_attributes(receiver) & _SHARED_REQUEST_ATTRIBUTES
+        ):
+            return False
+        node = receiver
+        while isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        if isinstance(node, ast.Name):
+            if self._request_name(node.id):
+                return True
+            if node.id in self.other_locals:
+                return method not in _CLIENT_VALUE_METHODS
+            return False
+        if isinstance(node, ast.Call):
+            return (
+                self._call_result_is_request_local(node)
+                or method not in _CLIENT_VALUE_METHODS
+            )
+        return True
+
+    def holds_shared_state(self, name: str) -> bool:
+        return name in self.aliases or name in self.other_locals
+
+
+def _function_arguments(call: ast.Call) -> list[ast.AST]:
+    """Arguments the callee calls: the function given to ``map``/``filter``/
+    ``partial``/``reduce``/``starmap`` and any ``key=`` function."""
+    functions = [keyword.value for keyword in call.keywords if keyword.arg == "key"]
+    if call.args and _dotted_name(call.func).rsplit(".", 1)[-1] in _HIGHER_ORDER_CALLEES:
+        functions.append(call.args[0])
+    return functions
+
+
+def _body_changes_state(
+    function, module_functions, depth=0, seen=None, module_loggers=frozenset()
+) -> bool:
+    """Evidence in the function body, or in a same-module helper it calls,
+    that it persists data or has an external side effect. Helpers past the
+    inspection depth are unchecked, so they count as a state change."""
+    seen = set() if seen is None else seen
+    seen.add(id(function))
+    scope = _RouteScope(function, module_functions, module_loggers)
+    helpers = []
+    for statement in function.body:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                if any(_store_changes_state(target, scope) for target in targets):
+                    return True
+                # ``cache += [q]`` extends a shared list in place.
+                if (
+                    isinstance(node, ast.AugAssign)
+                    and isinstance(node.target, ast.Name)
+                    and scope.holds_shared_state(node.target.id)
+                ):
+                    return True
+            elif isinstance(node, ast.Delete):
+                if any(_store_changes_state(target, scope) for target in node.targets):
+                    return True
+            elif isinstance(node, ast.Call):
+                if _call_changes_state(node, scope):
+                    return True
+                called = [node.func, *_function_arguments(node)]
+                # A same-module function passed as a value (a callback, a
+                # ``map`` function) runs too; its body is checked.
+                called += [
+                    argument
+                    for argument in [*node.args, *(k.value for k in node.keywords)]
+                    if isinstance(argument, ast.Name)
+                    and argument.id in module_functions
+                ]
+                for callee in called:
+                    if not isinstance(callee, ast.Name) or callee.id in scope.bound:
+                        continue
+                    helper = module_functions.get(callee.id)
+                    if helper is not None:
+                        if id(helper) not in seen:
+                            helpers.append(helper)
+                    elif callee is not node.func and _call_changes_state(
+                        ast.Call(func=callee, args=[], keywords=[]), scope
+                    ):
+                        return True
+    if depth >= _HELPER_DEPTH:
+        return bool(helpers)
+    return any(
+        _body_changes_state(helper, module_functions, depth + 1, seen, module_loggers)
+        for helper in helpers
+        if id(helper) not in seen
+    )
+
+
+def _route_changes_state(
+    function,
+    route_decorators,
+    methods: set[str],
+    module_functions,
+    module_loggers=frozenset(),
+) -> bool:
+    if methods & STATE_CHANGING_HTTP_METHODS:
+        return True
+    if "POST" not in methods:
+        return False
+    words = _route_words(function, route_decorators)
+    if words & _STATE_CHANGE_ROUTE_WORDS or not words & _QUERY_ROUTE_WORDS:
+        return True
+    return _body_changes_state(
+        function, module_functions, module_loggers=module_loggers
+    )
+
+
 def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     if node.name.startswith("_"):
         return False
@@ -310,42 +1304,29 @@ def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
-def _iter_public_functions(module: ast.Module):
+def _iter_public_functions(module: ast.Module, receivers):
     for stmt in module.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if _is_public_function(stmt):
-                yield stmt, stmt.name
+                yield stmt, stmt.name, None
         elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_"):
-            for item in stmt.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if _is_public_function(item):
-                        yield item, f"{stmt.name}.{item.name}"
+            for item in sorted(
+                class_method_nodes(stmt), key=lambda method: method.lineno
+            ):
+                if _is_public_function(item):
+                    yield item, f"{stmt.name}.{item.name}", receivers.get(id(item))
 
 
-def _module_has_typing_signal(module: ast.Module) -> bool:
-    for node in ast.walk(module):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.returns is not None:
-                return True
-            args = [
-                *node.args.args,
-                *node.args.posonlyargs,
-                *node.args.kwonlyargs,
-            ]
-            if node.args.vararg:
-                args.append(node.args.vararg)
-            if node.args.kwarg:
-                args.append(node.args.kwarg)
-            if any(arg.annotation is not None for arg in args):
-                return True
-        if isinstance(node, ast.AnnAssign):
-            return True
-        if isinstance(node, ast.ImportFrom) and node.module == "typing":
-            return True
-        if isinstance(node, ast.Import):
-            if any(alias.name == "typing" for alias in node.names):
-                return True
-    return False
+def _has_signature_typing_intent(function, args, comment_lines):
+    if function.returns is not None or any(arg.annotation is not None for arg in args):
+        return True
+    if getattr(function, "type_comment", None) or any(
+        getattr(arg, "type_comment", None) for arg in args
+    ):
+        return True
+    return bool(function.body) and any(
+        function.lineno <= line < function.body[0].lineno for line in comment_lines
+    )
 
 
 def _route_object_inputs(function):
@@ -448,25 +1429,60 @@ class TypeAnnotationPracticeRule(SkylosRule):
             return None
 
         filename = context.get("filename")
-        if _is_non_production_path(filename) or not _module_has_typing_signal(node):
+        if is_typing_test_path(filename, context.get("project_root")):
             return None
+        source = context.get("source", context.get("_source"))
+        lines = source.splitlines(keepends=True) if isinstance(source, str) else []
+        from skylos.analysis.typing_policy import annotation_requirement
 
+        requirement = annotation_requirement(
+            filename,
+            context.get("project_root"),
+            source if isinstance(source, str) else "",
+            reader=context.get("typing_source_reader", context.get("receiver_source_reader")),
+        )
+        if requirement is False:
+            return None
+        kinds = context_method_kinds(node, context)
+        receivers = {
+            # Do not prescribe annotation of a possible implicit receiver.
+            # Proven static methods and free functions keep their first arg.
+            id(method): possible_method_receiver(method, kinds=kinds)
+            for cls in ast.walk(node)
+            if isinstance(cls, ast.ClassDef)
+            for method in class_method_nodes(cls)
+        }
+        functions = list(_iter_public_functions(node, receivers))
+        # A multiline default can contain text resembling a type comment.
+        # Only real comment tokens establish a source signature contract.
+        comment_lines = {
+            token.start[0]
+            for token in tokenize.generate_tokens(io.StringIO("".join(lines)).readline)
+            if token.type == tokenize.COMMENT
+            and re.match(r"#\s*type:\s*(?!ignore\b)\S", token.string)
+        }
+        comments = {
+            id(function): comment_contract(function, lines, receivers.get(id(function)))
+            for function in ast.walk(node)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        fixtures = pytest_fixture_ids(node)
         findings = []
-        for function, display_name in _iter_public_functions(node):
-            args = [
-                *function.args.posonlyargs,
-                *function.args.args,
-                *function.args.kwonlyargs,
-            ]
-            if function.args.vararg:
-                args.append(function.args.vararg)
-            if function.args.kwarg:
-                args.append(function.args.kwarg)
-
+        for function, display_name, receiver in functions:
+            if id(function) in fixtures:
+                continue
+            args = parameters(function)
+            typed_comments, return_comment = comments[id(function)]
+            if requirement is not True and not _has_signature_typing_intent(
+                function, args, comment_lines
+            ):
+                continue
             missing_params = [
                 arg.arg
                 for arg in args
-                if arg.arg not in {"self", "cls"} and arg.annotation is None
+                if arg.arg != receiver
+                and arg.annotation is None
+                and arg.arg not in typed_comments
             ]
             if missing_params:
                 findings.append(
@@ -490,7 +1506,7 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
-            if function.returns is None:
+            if function.returns is None and not return_comment:
                 findings.append(
                     {
                         "rule_id": "SKY-T102",
@@ -528,6 +1544,18 @@ class FrameworkPracticeRule(SkylosRule):
 
         findings = []
         guarded_routers = _guarded_router_names(node)
+        module_functions = {
+            statement.name: statement
+            for statement in node.body
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        module_loggers = _logger_names(
+            statement
+            for statement in node.body
+            if not isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+        )
         for function in ast.walk(node):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -572,9 +1600,9 @@ class FrameworkPracticeRule(SkylosRule):
                 _, decorator_methods = _route_methods(decorator)
                 methods.update(decorator_methods)
 
-            if methods & MUTATING_HTTP_METHODS and not _route_has_auth_guard(
-                function, guarded_routers
-            ):
+            if _route_changes_state(
+                function, route_decorators, methods, module_functions, module_loggers
+            ) and not _route_has_auth_guard(function, guarded_routers):
                 findings.append(
                     {
                         "rule_id": "SKY-F102",
@@ -586,8 +1614,10 @@ class FrameworkPracticeRule(SkylosRule):
                         "value": ",".join(sorted(methods & MUTATING_HTTP_METHODS)),
                         "threshold": 0,
                         "message": (
-                            f"Mutating route '{function.name}' has no obvious auth, "
-                            "permission, security, or dependency guard."
+                            f"Function '{function.name}' uses a decorator matching a "
+                            "mutating HTTP method, with no obvious auth, permission, "
+                            "security, or dependency guard. Review whether it registers "
+                            "a route and whether access is protected."
                         ),
                         "file": filename,
                         "basename": _basename(filename),

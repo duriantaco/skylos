@@ -16,6 +16,10 @@ except ImportError:
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from skylos.rules.quality._test_code import is_python_test_file, is_test_package_name
+from skylos.rules.quality._code_lines import code_lines, count_statements
+from skylos.rules.quality._scope import is_sample_or_build_python
+
 
 class CloneType(str, Enum):
     TYPE1 = "type1"
@@ -31,8 +35,11 @@ class GroupingMode(str, Enum):
 
 @dataclass(frozen=True)
 class CloneConfig:
+    # Code lines of the fragment: blank, comment and docstring lines excluded.
     min_lines: int = 8
     min_nodes: int = 10
+    # Statements in the compared body (docstrings excluded, nested counted).
+    min_statements: int = 4
     type1_threshold: float = 0.98
     type2_threshold: float = 0.95
     type3_threshold: float = 0.88
@@ -95,6 +102,27 @@ def _strip_docstring(body: List[ast.stmt]) -> List[ast.stmt]:
     ):
         return body[1:]
     return body
+
+
+def clone_member_label(
+    fragment: "Fragment", project_root: str | Path | None = None
+) -> str:
+    """``path:start-end (kind name)`` with the path relative to the project.
+
+    Copies in ``a/x.py`` and ``b/x.py`` share a basename; the relative path
+    keeps them apart.
+    """
+    path = Path(fragment.file_path)
+    shown = str(path)
+    if project_root is not None:
+        try:
+            shown = path.resolve().relative_to(Path(project_root).resolve()).as_posix()
+        except (OSError, ValueError):
+            shown = str(path)
+    return (
+        f"{shown}:{fragment.start_line}-{fragment.end_line} "
+        f"({fragment.kind} {fragment.name})"
+    )
 
 
 def _normalize_text(source: str) -> str:
@@ -178,7 +206,6 @@ def _similarity(a: str, b: str, threshold: float | None = None) -> float:
     return matcher.ratio()
 
 
-_SKIP_PREFIXES = ("test_", "conftest")
 _BOILERPLATE_METHODS = {
     "__init__",
     "__repr__",
@@ -205,17 +232,24 @@ _BOILERPLATE_METHODS = {
 
 
 def extract_fragments(
-    py_path: Path, source: str, cfg: CloneConfig, *, tree: ast.AST | None = None
+    py_path: Path,
+    source: str,
+    cfg: CloneConfig,
+    *,
+    project_root: str | Path | None = None,
 ) -> List[Fragment]:
-    basename = py_path.name
-    if any(basename.startswith(p) for p in _SKIP_PREFIXES):
+    # Keep test fragments until group analysis can retain shared production
+    # implementations. Sample and build code has no such metric contract.
+    if is_sample_or_build_python(py_path, project_root):
         return []
 
-    if tree is None:
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            return []
+    # Always a private tree: _Type2Normalizer rewrites identifiers in place,
+    # and a tree shared with the analyzer keeps nodes later passes read (the
+    # class bases behind framework-override evidence).
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
 
     fragments: List[Fragment] = []
     class_stack: List[str] = []
@@ -227,6 +261,13 @@ def extract_fragments(
         if start is None or end is None:
             return
         if (end - start + 1) < cfg.min_lines:
+            return
+        # Size is measured in code: docstring, comment and blank lines do not
+        # count, and a long signature over a one- or two-statement body is
+        # not duplicated logic.
+        if len(code_lines(n, source, start=start, end=end)) < cfg.min_lines:
+            return
+        if body is not None and count_statements(body) < cfg.min_statements:
             return
 
         if body is not None:
@@ -549,3 +590,71 @@ def _group_kcore(frag_list, adj, cfg: CloneConfig, k: int):
                 sub_adj.setdefault(i, {})[j] = p
 
     return _group_connected(frag_list, sub_adj, cfg)
+
+
+def without_test_only_groups(
+    groups: List[CloneGroup],
+    project_root: Path | str | None = None,
+    *,
+    imported_modules: Set[str] = frozenset(),
+    module_names: Optional[Dict[str, str]] = None,
+) -> List[CloneGroup]:
+    """Drop clone groups whose members are all test code.
+
+    Near-identical test bodies are normal (one case per input), so such a
+    group is not a duplication defect. A group that reaches production code
+    is kept, and so is one whose test module non-test code imports
+    (``imported_modules``, with ``module_names`` mapping files to modules):
+    production then depends on the duplicated code. ``test_*.py`` files never
+    yield fragments (``_SKIP_PREFIXES``); this also covers ``*_test.py`` files
+    that hold tests and files under the project's test directories.
+    """
+    module_names = module_names or {}
+
+    def imported(fragment) -> bool:
+        # The module itself, or a test package above it (its ``__init__`` can
+        # re-export it); importing ``pkg`` does not reach ``pkg.tests.x``.
+        module = module_names.get(_resolved(fragment.file_path))
+        return bool(module) and any(
+            module == name or (module.startswith(name + ".") and is_test_package_name(name))
+            for name in imported_modules
+        )
+
+    return [
+        group
+        for group in groups
+        if not all(
+            is_python_test_file(fragment.file_path, project_root)
+            and not imported(fragment)
+            for fragment in group.fragments
+        )
+    ]
+
+
+def python_imports_outside_tests(
+    raw_imports: Dict[Path, list], project_root: Path | str | None = None
+) -> Set[str]:
+    """Modules that non-test files import, as dotted names (``module`` and
+    ``module.name`` for ``from`` imports).
+
+    ``raw_imports`` maps a file to its module-level imports as
+    ``(module, line, kind, names)``.
+    """
+    names: Set[str] = set()
+    for file, imports in raw_imports.items():
+        if is_python_test_file(file, project_root):
+            continue
+        for module, _line, kind, imported_names in imports:
+            if not module:
+                continue
+            names.add(module)
+            if kind == "from_import":
+                names.update(f"{module}.{name}" for name in imported_names)
+    return names
+
+
+def _resolved(path) -> str:
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)

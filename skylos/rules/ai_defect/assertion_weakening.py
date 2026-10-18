@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from itertools import chain, islice
 from pathlib import Path
 
 from skylos.constants import get_non_library_dir_kind
@@ -37,6 +39,17 @@ _UNITTEST_STRONG_RE = re.compile(
     r"\bself\.assert(?:Equal|NotEqual|Greater|GreaterEqual|Less|LessEqual|In|NotIn|Regex|Raises)\s*\("
 )
 _UNITTEST_WEAK_RE = re.compile(r"\bself\.assert(?:True|False|IsNone|IsNotNone)\s*\(")
+# A line that starts another test (or a decorated function) inside one hunk.
+_TEST_START_RE = re.compile(
+    r"^\s*(?:@|(?:async\s+)?def\s+test|class\s+Test|"
+    r"(?:it|test|describe)(?:\.\w+)*\s*(?:\(\s*['\"`]|`)|"
+    r"(?:it|test|describe)\.each\b)"
+)
+# A test definition line (not a decorator, describe block or helper call).
+_TEST_DECLARATION_RE = re.compile(
+    r"^\s*(?:(?:async\s+)?def\s+test\w*\s*\(|"
+    r"(?:it|test)(?:\.\w+)*\s*\(\s*['\"`])"
+)
 _SKIP_OR_XFAIL_RE = re.compile(
     r"(?:@pytest\.mark\.(?:skip|skipif|xfail)\b|"
     r"\bpytest\.(?:skip|xfail)\s*\(|"
@@ -135,11 +148,38 @@ class _DiffLine:
 
 
 @dataclass
+class _Row:
+    kind: str
+    old: _DiffLine | None
+    new: _DiffLine | None
+
+    @property
+    def text(self) -> str:
+        return (self.new or self.old).text
+
+
+@dataclass
 class _Hunk:
     removed: list[_DiffLine] = field(default_factory=list)
     added: list[_DiffLine] = field(default_factory=list)
     old_side: list[_DiffLine] = field(default_factory=list)
     new_side: list[_DiffLine] = field(default_factory=list)
+    rows: list[_Row] = field(default_factory=list)
+    # Rows after this hunk in the same file diff (the next hunk's rows, after
+    # unchanged lines the diff does not show); empty when nothing later in
+    # the file changed.
+    following: Iterable[_Row] = ()
+
+    def append(self, row: _Row) -> None:
+        self.rows.append(row)
+        if row.old is not None:
+            self.old_side.append(row.old)
+            if row.kind == "-":
+                self.removed.append(row.old)
+        if row.new is not None:
+            self.new_side.append(row.new)
+            if row.kind == "+":
+                self.added.append(row.new)
 
 
 @dataclass
@@ -183,12 +223,106 @@ def detect_assertion_weakening(diff_text: str, file_path: str) -> list[dict]:
         return []
 
     findings: list[dict] = []
-    for hunk in _parse_hunks(diff_text):
-        finding = _finding_for_hunk(hunk, file_path)
-        if finding:
-            findings.append(finding)
+    hunks = _parse_hunks(diff_text)
+    for hunk, later in zip(hunks, hunks[1:] + [None]):
+        hunk.following = later.rows if later else ()
+        findings.extend(_findings_for_hunk(hunk, file_path))
 
     return findings
+
+
+def _findings_for_hunk(hunk: _Hunk, file_path: str) -> list[dict]:
+    """One finding per weakened test in the hunk.
+
+    The detectors below report the strongest signal of a hunk. A hunk can
+    span several tests (git merges nearby edits), so a skipped test would hide
+    a weakened assertion in the test before it. The whole-hunk finding is
+    kept unchanged; each test's own part then adds what it alone reports.
+    """
+    whole = _finding_for_hunk(hunk, file_path)
+    findings: list[dict] = []
+    seen: set[tuple[int, str]] = set()
+    for part in _split_by_test(hunk):
+        finding = _finding_for_hunk(part, file_path)
+        if finding is None:
+            continue
+        key = (finding["line"], finding["metadata"]["weakening_type"])
+        if key not in seen:
+            seen.add(key)
+            findings.append(finding)
+    # The whole-hunk result stays unless one test's own finding already
+    # reports the same weakening (anchored at that test's line).
+    if whole and not any(_same_weakening(whole, kept) for kept in findings):
+        findings.append(whole)
+    return sorted(findings, key=lambda finding: finding["line"])
+
+
+def _split_by_test(hunk: _Hunk) -> list[_Hunk]:
+    """Split a hunk at test boundaries between its change blocks.
+
+    A change block is a run of removed/added lines. A new part starts at a
+    block whose first line, or a context line before it, starts a test. A
+    removed and an added declaration in one block (a rename) stay together.
+    Returns [] when the hunk covers a single test.
+    """
+    blocks: list[tuple[int, int]] = []
+    index = 0
+    while index < len(hunk.rows):
+        if hunk.rows[index].kind == " ":
+            index += 1
+            continue
+        end = index
+        while end + 1 < len(hunk.rows) and hunk.rows[end + 1].kind != " ":
+            end += 1
+        blocks.append((index, end))
+        index = end + 1
+
+    groups = [[block] for block in blocks[:1]]
+    for previous, block in zip(blocks, blocks[1:]):
+        boundary_rows = hunk.rows[previous[1] + 1 : block[0] + 1]
+        if any(_TEST_START_RE.match(row.text) for row in boundary_rows):
+            groups.append([block])
+        else:
+            groups[-1].append(block)
+    if len(groups) < 2:
+        return []
+
+    parts = []
+    start = 0
+    for position, group in enumerate(groups):
+        last = position == len(groups) - 1
+        end = len(hunk.rows) - 1 if last else group[-1][1]
+        part = _Hunk(following=_RowsAfter(hunk.rows, end + 1, hunk.following))
+        for row in hunk.rows[start : end + 1]:
+            part.append(row)
+        parts.append(part)
+        start = end + 1
+    return parts
+
+
+@dataclass(frozen=True)
+class _RowsAfter:
+    """``rows[start:]`` followed by ``rest``, without copying either."""
+
+    rows: list[_Row]
+    start: int
+    rest: Iterable[_Row]
+
+    def __iter__(self) -> Iterator[_Row]:
+        yield from islice(self.rows, self.start, None)
+        yield from self.rest
+
+
+def _same_weakening(finding: dict, other: dict) -> bool:
+    meta, other_meta = finding["metadata"], other["metadata"]
+    if meta["weakening_type"] != other_meta["weakening_type"]:
+        return False
+    if finding["line"] == other["line"]:
+        return True
+    removed, other_removed = meta["removed_assertion"], other_meta["removed_assertion"]
+    return bool(removed and other_removed) and (
+        removed in other_removed or other_removed in removed
+    )
 
 
 def _finding_for_hunk(hunk: _Hunk, file_path: str) -> dict | None:
@@ -437,7 +571,45 @@ def _behavior_to_existence_finding(hunk: _Hunk, file_path: str) -> dict | None:
     return None
 
 
+def _joined_statements(lines: list[_DiffLine]) -> list[_DiffLine]:
+    """Join an assertion that spans consecutive lines (``assert (`` ...
+    ``)``, as formatters wrap long asserts) into one line, so it is judged on
+    its whole condition. Other lines are returned unchanged."""
+    joined: list[_DiffLine] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        depth = _bracket_depth(line.text)
+        if depth <= 0 or not _PY_ASSERT_RE.match(line.text.strip()):
+            joined.append(line)
+            index += 1
+            continue
+        parts = [line.text.strip()]
+        end = index
+        while depth > 0 and end + 1 < len(lines) and lines[end + 1].line_no == lines[end].line_no + 1:
+            end += 1
+            parts.append(lines[end].text.strip())
+            depth += _bracket_depth(lines[end].text)
+        text = " ".join(parts)
+        text = re.sub(r"([\(\[\{])\s+", r"\1", text)
+        text = re.sub(r"\s+([\)\]\}])", r"\1", text)
+        joined.append(_DiffLine(line.line_no, text))
+        index = end + 1
+    return joined
+
+
+_STRING_LITERAL_RE = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""")
+
+
+def _bracket_depth(text: str) -> int:
+    """Open brackets minus closed ones, outside string literals and comments."""
+    code = _STRING_LITERAL_RE.sub('""', text).split("#", 1)[0]
+    return sum(code.count(c) for c in "([{") - sum(code.count(c) for c in ")]}")
+
+
 def _collect_assertion_evidence(hunk: _Hunk) -> _AssertionEvidence:
+    removed_statements = _joined_statements(hunk.removed)
+    added_statements = _joined_statements(hunk.added)
     removed_mock_statements = _mock_statements(
         hunk.old_side,
         changed_lines={id(line) for line in hunk.removed},
@@ -448,10 +620,12 @@ def _collect_assertion_evidence(hunk: _Hunk) -> _AssertionEvidence:
     )
     return _AssertionEvidence(
         removed_strong=[
-            line for line in hunk.removed if _is_strong_assertion(line.text)
+            line for line in removed_statements if _is_strong_assertion(line.text)
         ],
-        added_strong=[line for line in hunk.added if _is_strong_assertion(line.text)],
-        added_weak=[line for line in hunk.added if _is_weak_assertion(line.text)],
+        added_strong=[
+            line for line in added_statements if _is_strong_assertion(line.text)
+        ],
+        added_weak=[line for line in added_statements if _is_weak_assertion(line.text)],
         removed_exception=[
             line for line in hunk.removed if _is_exception_assertion(line.text)
         ],
@@ -531,10 +705,12 @@ def _removed_negative_test_finding(
     if not evidence.removed_negative_test:
         return None
 
+    renamed = _renamed_test_declarations(hunk)
     unmatched_removed = [
         line
         for line in evidence.removed_negative_test
-        if not any(
+        if id(line) not in renamed
+        and not any(
             _negative_tests_equivalent(line, added)
             for added in evidence.added_negative_test
         )
@@ -678,22 +854,19 @@ def _parse_hunks(diff_text: str) -> list[_Hunk]:
             continue
 
         if raw_line.startswith("-") and not raw_line.startswith("---"):
-            line = _DiffLine(old_line, raw_line[1:])
-            current.removed.append(line)
-            current.old_side.append(line)
+            current.append(_Row("-", _DiffLine(old_line, raw_line[1:]), None))
             old_line += 1
             continue
 
         if raw_line.startswith("+") and not raw_line.startswith("+++"):
-            line = _DiffLine(new_line, raw_line[1:])
-            current.added.append(line)
-            current.new_side.append(line)
+            current.append(_Row("+", None, _DiffLine(new_line, raw_line[1:])))
             new_line += 1
             continue
 
         text = raw_line[1:] if raw_line.startswith(" ") else raw_line
-        current.old_side.append(_DiffLine(old_line, text))
-        current.new_side.append(_DiffLine(new_line, text))
+        current.append(
+            _Row(" ", _DiffLine(old_line, text), _DiffLine(new_line, text))
+        )
         old_line += 1
         new_line += 1
 
@@ -754,6 +927,9 @@ def _is_weak_assertion(line: str) -> bool:
     py_assert = _PY_ASSERT_RE.match(stripped)
     if py_assert:
         expr = py_assert.group(1).strip()
+        if _bracket_depth(expr) > 0 or expr.endswith("\\"):
+            # An unfinished multi-line assertion: only judge it once joined.
+            return False
         if _is_strong_assertion(stripped):
             return " is not None" in expr or " is None" in expr
         return bool(expr) and bool(_PY_WEAK_ASSERT_RE.search(stripped))
@@ -773,6 +949,138 @@ def _is_negative_test_declaration(line: str) -> bool:
     return bool(
         _NEGATIVE_TEST_NAME_RE.search(stripped) or _JS_NEGATIVE_TEST_RE.search(stripped)
     )
+
+
+def _renamed_test_declarations(hunk: _Hunk) -> set[int]:
+    """Removed test declarations that the hunk only renamed.
+
+    A change block that replaces test declaration lines one for one (blank
+    lines aside) is a rename when each pair matches apart from the test name
+    or label, the new name is not declared again in the diff (a later test
+    of that name would replace it), and the renamed test is unchanged up to
+    the end of its body, in this hunk or a later one.
+    """
+    renamed: set[int] = set()
+    rows = hunk.rows
+    index = 0
+    while index < len(rows):
+        if rows[index].kind == " ":
+            index += 1
+            continue
+        end = index
+        while end + 1 < len(rows) and rows[end + 1].kind != " ":
+            end += 1
+        block = rows[index : end + 1]
+        removed = [row for row in block if row.kind == "-" and row.text.strip()]
+        added = [row for row in block if row.kind == "+" and row.text.strip()]
+        if (
+            removed
+            and len(removed) == len(added)
+            and all(_TEST_DECLARATION_RE.match(row.text) for row in removed + added)
+            and all(
+                _masked_declaration(old.text) == _masked_declaration(new.text)
+                for old, new in zip(removed, added)
+            )
+            and not _declared_again(
+                {_test_name(row.text) for row in added},
+                (row for row in chain(rows[:index], rows[end + 1 :], hunk.following)),
+            )
+            and _test_body_unchanged(
+                _RowsAfter(rows, end + 1, hunk.following), added[-1].text
+            )
+        ):
+            renamed.update(id(row.old) for row in removed)
+        index = end + 1
+    return renamed
+
+
+_PY_TEST_NAME_RE = re.compile(r"(\bdef\s+)(test\w*)")
+_JS_DECLARATION_LABEL_RE = re.compile(r"""^(\s*(?:it|test)(?:\.\w+)*\s*\(\s*)(['"`])((?:\\.|(?!\2).)*)\2""")
+_PY_DEF_RE = re.compile(r"^\s*(?:async\s+)?def\s")
+_TRIPLE_QUOTES = ('"""', "'''")
+
+
+def _test_name(text: str) -> str:
+    match = _PY_TEST_NAME_RE.search(text) or _JS_DECLARATION_LABEL_RE.match(text)
+    if match is None:
+        return ""
+    return match.group(2) if match.re is _PY_TEST_NAME_RE else match.group(3)
+
+
+def _masked_declaration(text: str) -> str:
+    """The declaration line with its test name or label blanked out."""
+    text = _PY_TEST_NAME_RE.sub(r"\1test", text, count=1)
+    return _JS_DECLARATION_LABEL_RE.sub(r"\1\2\2", text, count=1).strip()
+
+
+def _declared_again(names: set[str], rows: Iterable[_Row]) -> bool:
+    names.discard("")
+    return bool(names) and any(
+        row.kind != "-"
+        and _TEST_DECLARATION_RE.match(row.text)
+        and _test_name(row.text) in names
+        for row in rows
+    )
+
+
+def _test_body_unchanged(rows: Iterable[_Row], declaration: str) -> bool:
+    """No line of the declared test is added or removed before it ends.
+
+    The declaration continues until its brackets close (a multi-line
+    signature, or a JavaScript test's whole callback). A Python body then
+    runs until the next line indented no deeper than ``def``, outside
+    triple-quoted strings and comments. Rows that run out mean nothing later
+    in the file changed. Lines the diff does not show between hunks are
+    unchanged, so missing a body end there only keeps a rename unproven.
+    """
+    rows = iter(rows)
+    depth = _bracket_depth(declaration)
+    while depth > 0:
+        row = next(rows, None)
+        if row is None:
+            return True
+        if row.kind != " " and row.text.strip():
+            return False
+        depth += _bracket_depth(row.text)
+    if not _PY_DEF_RE.match(declaration):
+        return True
+    indent = _indent(declaration)
+    string = None
+    for row in rows:
+        stripped = row.text.strip()
+        if (
+            string is None
+            and stripped
+            and not stripped.startswith("#")
+            and _indent(row.text) <= indent
+        ):
+            return True
+        if row.kind != " " and stripped:
+            return False
+        string = _triple_quote_state(row.text, string)
+    return True
+
+
+def _triple_quote_state(text: str, string: str | None) -> str | None:
+    """The triple quote still open after ``text`` (``string`` at its start)."""
+    position = 0
+    while True:
+        if string is None:
+            found = [(text.find(q, position), q) for q in _TRIPLE_QUOTES]
+            found = [(at, q) for at, q in found if at >= 0]
+            if not found:
+                return None
+            at, string = min(found)
+        else:
+            at = text.find(string, position)
+            if at < 0:
+                return string
+            string = None
+        position = at + 3
+
+
+def _indent(text: str) -> int:
+    return len(text.expandtabs()) - len(text.expandtabs().lstrip())
 
 
 def _negative_tests_equivalent(removed: _DiffLine, added: _DiffLine) -> bool:

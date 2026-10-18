@@ -29,5 +29,14 @@ class LinterVisitor(ast.NodeVisitor):
             if results:
                 self.findings.extend(results)
 
-        for child in ast.iter_child_nodes(node):
-            self.visit(child)
+        had_parent = "_parent_node" in self.context
+        previous_parent = self.context.get("_parent_node")
+        self.context["_parent_node"] = node
+        try:
+            for child in ast.iter_child_nodes(node):
+                self.visit(child)
+        finally:
+            if had_parent:
+                self.context["_parent_node"] = previous_parent
+            else:
+                self.context.pop("_parent_node", None)
