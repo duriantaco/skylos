@@ -10,6 +10,7 @@ from skylos.rules.quality._protocols import protocol_class_ids
 from skylos.rules.quality._receivers import (
     FUNCTION_NODES,
     _ReceiverVisitor,
+    _scope_bindings,
     class_method_nodes,
     context_method_kinds,
     method_kind,
@@ -74,7 +75,12 @@ INTERFACE_DUNDERS = frozenset(
 )
 
 ABSTRACT_DECORATORS = frozenset(
-    {"abstractmethod", "abstractproperty", "abstractclassmethod", "abstractstaticmethod"}
+    {
+        "abstractmethod",
+        "abstractproperty",
+        "abstractclassmethod",
+        "abstractstaticmethod",
+    }
 )
 
 # The receiver's type and namespace are not fields of the class.
@@ -376,7 +382,9 @@ class _CohesionVisitor(_ReceiverVisitor):
         if self._alias(value):
             if all(isinstance(target, ast.Name) for target in node.targets):
                 self._consume(value)  # Aliasing, tracked by the receiver flow.
-            elif all(isinstance(target, (ast.Tuple, ast.List)) for target in node.targets):
+            elif all(
+                isinstance(target, (ast.Tuple, ast.List)) for target in node.targets
+            ):
                 self._consume(value)
                 self.links.append(_ITER)
         elif (
@@ -677,6 +685,131 @@ def _class_namespace(
     return attributes, references
 
 
+class _ClassConfigurationWrites(_CohesionVisitor):
+    """Track mutations through the class name with normal lexical alias flow."""
+
+    def visit_Attribute(self, node):
+        if isinstance(node.ctx, ast.Del) and self._alias(node.value):
+            self.usage.writes.add(node.attr)
+        super().visit_Attribute(node)
+
+    def visit_Assign(self, node):
+        # A local alias assignment does not expose the class to unknown code.
+        if all(isinstance(target, ast.Name) for target in node.targets):
+            self._consume(node.value)
+        super().visit_Assign(node)
+
+    def visit_AnnAssign(self, node):
+        if isinstance(node.target, ast.Name):
+            self._consume(node.value)
+        super().visit_AnnAssign(node)
+
+    def visit_NamedExpr(self, node):
+        self._consume(node.value)
+        super().visit_NamedExpr(node)
+
+
+def _class_configuration_writes(class_node):
+    writes = set()
+    for method in class_method_nodes(class_node):
+        bindings = _scope_bindings(method)
+        parameters = {
+            item.arg
+            for item in (
+                *method.args.posonlyargs,
+                *method.args.args,
+                *method.args.kwonlyargs,
+            )
+        }
+        parameters.update(
+            item.arg for item in (method.args.vararg, method.args.kwarg) if item
+        )
+        globals_ = set()
+        pending = list(method.body)
+        while pending:
+            item = pending.pop()
+            if isinstance(item, (*FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(item, ast.Global):
+                globals_.update(item.names)
+            pending.extend(ast.iter_child_nodes(item))
+        if class_node.name in parameters | (bindings.names - globals_):
+            continue
+        facts = _ClassConfigurationWrites(class_node.name, method, class_receiver=True)
+        for statement in method.body:
+            facts.visit(statement)
+        if facts.dynamic_writes or facts.escapes:
+            return None
+        writes.update(facts.usage.writes)
+    return writes
+
+
+def _immutable_configuration_attrs(class_node):
+    """Read-only literal defaults are configuration, not owned mutable state.
+
+    Unknown values, mutable containers and repeated bindings keep their normal
+    state weight. Named class writes and unknown class mutations prevent the
+    read-only exemption; receiver writes restore the field's state edge too.
+    """
+
+    def immutable(value):
+        return isinstance(value, ast.Constant) or (
+            isinstance(value, ast.Tuple) and all(immutable(item) for item in value.elts)
+        )
+
+    literal = set()
+    unknown = set()
+    pending = list(class_node.body)
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, (*FUNCTION_NODES, ast.ClassDef)):
+            continue
+        if isinstance(statement, ast.Delete):
+            unknown.update(
+                child.id
+                for target in statement.targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name)
+            )
+        if any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id in {"locals", "vars"}
+            and not child.args
+            and not child.keywords
+            for child in ast.walk(statement)
+        ):
+            return set()
+        if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            for target in targets:
+                for child in ast.walk(target):
+                    if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                        if (
+                            isinstance(statement, ast.AugAssign)
+                            or not immutable(statement.value)
+                            or child.id in literal
+                        ):
+                            unknown.add(child.id)
+                        else:
+                            literal.add(child.id)
+            continue
+        for field in ("body", "orelse", "finalbody"):
+            pending.extend(getattr(statement, field, None) or [])
+        for handler in getattr(statement, "handlers", None) or []:
+            pending.extend(handler.body)
+        for case in getattr(statement, "cases", None) or []:
+            pending.extend(case.body)
+    if not literal - unknown:
+        return set()
+    writes = _class_configuration_writes(class_node)
+    return literal - unknown - writes if writes is not None else set()
+
+
 def _extract_method_info(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
     kinds=None,
@@ -814,6 +947,13 @@ def _analyze_cohesion_graph(
 
     assigned = {normalize_attr(a) for m in methods for a in m.writes}
     assigned.update(normalize_attr(a) for a in class_attrs)
+    owned_state = assigned - {
+        normalize_attr(attribute)
+        for attribute in _immutable_configuration_attrs(class_node)
+    }
+    owned_state.update(
+        normalize_attr(attribute) for method in methods for attribute in method.writes
+    )
 
     # A write to an unnamed attribute may be what assigns a field that no
     # source line assigns by name, so it may reach every method reading one.
@@ -870,7 +1010,7 @@ def _analyze_cohesion_graph(
                 "methods": sorted(members),
                 "shared_attributes": sorted(group_attrs),
                 "size": len(members),
-                "touches_assigned_state": bool(group_attrs & assigned),
+                "touches_assigned_state": bool(group_attrs & owned_state),
             }
         )
 

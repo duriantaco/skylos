@@ -16,6 +16,92 @@ from pathlib import Path
 from typing import Any
 from skylos.analysis.architecture_findings import generate_architecture_findings
 from skylos.analysis.architecture_layers import get_layer_policy_findings
+from skylos.core.safe_cache_io import read_text_no_symlink
+
+
+def _export_facade(tree: ast.AST) -> bool:
+    """An explicit static export namespace owns no collaborator implementation.
+
+    Calls, classes, functions, conditional imports, wildcard exports and dynamic
+    export lists make the role unknown; they retain the normal DIP check.
+    """
+    if not isinstance(tree, ast.Module):
+        return False
+    namespace = set()
+    explicit_exports = set()
+    public_exports = None
+
+    def imported_reference(value):
+        while isinstance(value, ast.Attribute):
+            value = value.value
+        return isinstance(value, ast.Name) and value.id in namespace
+
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            continue
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            if (
+                isinstance(statement, ast.ImportFrom)
+                and statement.module == "__future__"
+            ):
+                continue
+            for alias in statement.names:
+                if alias.name == "*":
+                    return False
+                local = alias.asname or alias.name.split(".", 1)[0]
+                if local in namespace or local == "__all__":
+                    return False
+                namespace.add(local)
+                if alias.asname is not None and not local.startswith("_"):
+                    explicit_exports.add(local)
+            continue
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            return False
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name) or target.id in namespace:
+            return False
+        if target.id == "__all__":
+            if public_exports is not None or not isinstance(
+                statement.value, (ast.List, ast.Tuple)
+            ):
+                return False
+            if not all(
+                isinstance(item, ast.Constant) and isinstance(item.value, str)
+                for item in statement.value.elts
+            ):
+                return False
+            public_exports = {item.value for item in statement.value.elts}
+        elif imported_reference(statement.value):
+            namespace.add(target.id)
+        else:
+            return False
+    exports = explicit_exports if public_exports is None else public_exports
+    return bool(exports) and exports <= namespace
+
+
+def _module_export_facade(module_name, module_files, module_trees):
+    tree = (module_trees or {}).get(module_name)
+    if tree is not None:
+        return _export_facade(tree)
+    filename = module_files.get(module_name, "")
+    if not filename:
+        return False
+    path = Path(filename)
+    if path.suffix != ".py" or ".." in path.parts:
+        return False
+    try:
+        # Cached worker metrics can omit trees. Read only the candidate's
+        # existing source, bounded and without crossing symlink components.
+        if any(part.is_symlink() for part in (path, *path.parents)):
+            return False
+        source = read_text_no_symlink(path, max_bytes=2_000_000)
+        return source is not None and _export_facade(ast.parse(source))
+    except (OSError, ValueError, SyntaxError, RecursionError):
+        return False
 
 
 @dataclass
@@ -279,6 +365,7 @@ def analyze_architecture(
     instability_threshold = 0.3
     # "unstable" means instability > 0.7
     unstable_threshold = 0.7
+    export_facades = {}
 
     for module, deps in efferent.items():
         m_metrics = result.modules.get(module)
@@ -294,6 +381,12 @@ def analyze_architecture(
             if dep.startswith(module + "."):
                 continue
             if dep_metrics.instability > unstable_threshold:
+                if module not in export_facades:
+                    export_facades[module] = _module_export_facade(
+                        module, module_files, module_trees
+                    )
+                if export_facades[module]:
+                    continue
                 if m_metrics.instability < 0.1:
                     severity = "HIGH"
                 else:
