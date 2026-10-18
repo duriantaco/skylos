@@ -982,6 +982,16 @@ establish a credential. A resolved credential use still takes precedence over
 a setting-key use. SKY-L016 is
 not reported when the read declares a default other than
 `None` (`os.getenv("ENABLE_X", "False")`).
+An exact module-level declaration such as
+`ENABLE_X = os.getenv("ENABLE_X")` also defines that external setting.
+This says nothing about whether enabling the setting is secure; unrelated
+environment reads and differently named assignments retain their checks.
+
+SKY-L001 accepts an empty literal default used exclusively to construct fresh
+copies through a supported, unmodified constructor. The proof checks imports,
+shadowing, parameter uses and constructor replacement. Mutation, alias escape,
+nested captures, nonempty shallow copies and uncertain constructor identity
+retain the finding; ordinary unused mutable defaults are still reported.
 
 SKY-L014 distinguishes credential names from ambiguous names ending in `_key`.
 Credential-use or secret-literal evidence distinguishes known credentials from
@@ -1114,6 +1124,12 @@ assigns. Raw declared graph components remain available separately as
 `declared_lcom4` in findings. These measurements alone do not prove that a
 class should be split.
 
+Q501 reads pytest's configured `python_classes` patterns without executing the
+project, and recognizes collected classes only in evidenced test modules.
+Import-proven `typing.overload` signatures with a concrete implementation in
+the same class do not add runtime methods; property accessor counting is
+unchanged. Ordinary helpers and uncertain decorator bindings remain measured.
+
 Design, size and memory advice (C303, Q501, Q502, Q702, C401, P401, L027 and
 L029) is not reported for test, example, benchmark, documentation-build or
 packaging-script code: files the project-relative test convention identifies,
@@ -1124,6 +1140,11 @@ applies to tests. C304, Q502 and C401 count code lines: blank lines,
 comment-only lines and docstrings are excluded. C401 also requires at least
 four statements in each fragment body and names members by project-relative
 path.
+C401 distinguishes test-suite helper imports from production importers and
+preserves helpers reached by production, including package initializers.
+Test-data input/expected-output pairs require a matching text-reader harness
+before their clone groups are excluded. These branches apply to clone advice;
+security and correctness rules still analyze those files.
 T101 does not prescribe annotations for a possibly implicit method receiver;
 proven static methods and free functions retain their first ordinary parameter.
 
@@ -1191,6 +1212,10 @@ can replace that callable with a real route decorator. F102 describes matching
 decorators as a conditional route review. Ordinary mock decorators can still
 produce false positives; removing those requires stronger route-identity
 analysis, not a name-based exemption.
+One narrow F102 branch recognizes an unmodified stdlib mock patch decorator
+with a literal Python attribute target on a collected `unittest.TestCase`
+method. Import spelling alone, URL-like targets, rebound APIs and independent
+route decorators do not satisfy that proof.
 PUT, PATCH and DELETE remain state-changing methods for F102. POST can also
 serve read-only query/RPC operations: a query-like route is checked for body
 side effects, including supported same-module helpers, shared-state writes and
@@ -1203,6 +1228,9 @@ excluding ordinary string payloads. It recognizes credential components such
 as `access_token` and `certificate_pinning`, and explicit `SQLi`/`SSLContext`
 topics, without treating lexer `token_stream`, `tokenize`, `author`, `certainly`
 or `oracle` as security terms.
+Generic maintenance words such as `hack`, `workaround` and `temporary` require
+an independent security subject. They do not make an ordinary formatter or
+retry-maintenance TODO a security finding by themselves.
 Docstring TODOs remain review markers even when surrounding text calls them
 examples. L017 distinguishes exception text from a formatted stack trace and
 names the call receiving it, without claiming the value was sent to a client.

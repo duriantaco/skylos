@@ -104,7 +104,7 @@ LINTER_RULE_NODE_TYPES = {
     ThreadSharedStateRule: (ast.Module,),
     ArgCountRule: (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
     FunctionLengthRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    MutableDefaultRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    MutableDefaultRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     RepeatedMutableAliasRule: (ast.Module, ast.BinOp),
     BareExceptRule: (ast.ExceptHandler,),
     DangerousComparisonRule: (ast.Compare,),

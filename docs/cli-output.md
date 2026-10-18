@@ -462,6 +462,13 @@ incomplete scan from appearing clean.
 
 ## Finding Types And Advice
 
+Advice describes measurements and design or policy suggestions. An accurate
+measurement does not establish that applying its suggested change would help:
+public API compatibility, test matrices and formatter fixtures can make a
+suggestion inappropriate. Review that context before changing code. Default
+grouping keeps these signals visible without presenting every location as a
+separate defect; `--expand-advice` exposes the individual records.
+
 Each built-in rule declares `finding_type` in the rule catalog. Reports show
 this as **Type**, separately from severity:
 

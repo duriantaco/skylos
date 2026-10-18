@@ -16,7 +16,12 @@ except ImportError:
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from skylos.rules.quality._test_code import is_python_test_file, is_test_package_name
+from skylos.rules.quality._test_code import (
+    is_python_golden_fixture,
+    is_python_test_file,
+    is_test_package_name,
+    python_test_directory,
+)
 from skylos.rules.quality._code_lines import code_lines, count_statements
 from skylos.rules.quality._scope import is_sample_or_build_python
 
@@ -605,18 +610,28 @@ def without_test_only_groups(
     group is not a duplication defect. A group that reaches production code
     is kept, and so is one whose test module non-test code imports
     (``imported_modules``, with ``module_names`` mapping files to modules):
-    production then depends on the duplicated code. ``test_*.py`` files never
-    yield fragments (``_SKIP_PREFIXES``); this also covers ``*_test.py`` files
-    that hold tests and files under the project's test directories.
+    production then depends on the duplicated code. Golden source/output
+    fixture pairs also count when a matching text reader proves the fixture
+    protocol. Path names alone do not establish either exemption.
     """
     module_names = module_names or {}
+    test_context = {}
+
+    def test_only(fragment) -> bool:
+        filename = fragment.file_path
+        if filename not in test_context:
+            test_context[filename] = is_python_test_file(
+                filename, project_root
+            ) or is_python_golden_fixture(filename, project_root)
+        return test_context[filename]
 
     def imported(fragment) -> bool:
         # The module itself, or a test package above it (its ``__init__`` can
         # re-export it); importing ``pkg`` does not reach ``pkg.tests.x``.
         module = module_names.get(_resolved(fragment.file_path))
         return bool(module) and any(
-            module == name or (module.startswith(name + ".") and is_test_package_name(name))
+            module == name
+            or (module.startswith(name + ".") and is_test_package_name(name))
             for name in imported_modules
         )
 
@@ -624,8 +639,7 @@ def without_test_only_groups(
         group
         for group in groups
         if not all(
-            is_python_test_file(fragment.file_path, project_root)
-            and not imported(fragment)
+            test_only(fragment) and not imported(fragment)
             for fragment in group.fragments
         )
     ]
@@ -638,18 +652,81 @@ def python_imports_outside_tests(
     ``module.name`` for ``from`` imports).
 
     ``raw_imports`` maps a file to its module-level imports as
-    ``(module, line, kind, names)``.
+    ``(module, line, kind, names)``. Helpers in a directory containing actual
+    tests do not count as outside importers unless production reaches them.
     """
-    names: Set[str] = set()
-    for file, imports in raw_imports.items():
-        if is_python_test_file(file, project_root):
-            continue
+    test_files = {
+        file for file in raw_imports if is_python_test_file(file, project_root)
+    }
+    # An uncollected support module in a proven test suite is not itself a
+    # production importer. Otherwise ``tests/mockserver.py: from tests ...``
+    # keeps every clone under tests/, even when no shipped code uses it.
+    # Do retain support modules reached by production imports, transitively.
+    suite_directories = {
+        directory
+        for file in test_files
+        if (directory := python_test_directory(file, project_root)) is not None
+    }
+    test_context_files = test_files | {
+        file
+        for file in raw_imports
+        if python_test_directory(file, project_root) in suite_directories
+    }
+
+    def import_names(imports):
+        names = set()
         for module, _line, kind, imported_names in imports:
             if not module:
                 continue
             names.add(module)
             if kind == "from_import":
                 names.update(f"{module}.{name}" for name in imported_names)
+        return names
+
+    candidate_modules = {}
+    if project_root is not None:
+        root = Path(project_root).resolve()
+        for file in test_context_files:
+            try:
+                path = Path(file)
+                if not path.is_absolute():
+                    path = root / path
+                parts = list(path.resolve().relative_to(root).with_suffix("").parts)
+                if parts[-1] == "__init__":
+                    parts.pop()
+                modules = {".".join(parts)}
+                if parts and parts[0] == "src":
+                    modules.add(".".join(parts[1:]))
+                candidate_modules[file] = modules - {""}
+            except (OSError, RuntimeError, ValueError):
+                continue
+
+    names: Set[str] = set()
+    for file, imports in raw_imports.items():
+        if file in test_context_files:
+            continue
+        names.update(import_names(imports))
+    pending = set(candidate_modules)
+    package_initializers = {
+        file for file in candidate_modules if Path(file).name == "__init__.py"
+    }
+    while pending:
+        reached = {
+            file
+            for file in pending
+            if any(
+                module == name
+                or module.startswith(name + ".")
+                or (file in package_initializers and name.startswith(module + "."))
+                for module in candidate_modules[file]
+                for name in names
+            )
+        }
+        if not reached:
+            break
+        for file in reached:
+            names.update(import_names(raw_imports[file]))
+        pending.difference_update(reached)
     return names
 
 
