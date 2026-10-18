@@ -4382,6 +4382,12 @@ class Skylos:
                 file_has_explicit_all = bool(out[27]) if len(out) > 27 else False
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
+                elif isinstance(file_analysis_error, list):
+                    analysis_errors.extend(
+                        error
+                        for error in file_analysis_error
+                        if isinstance(error, dict)
+                    )
                 (
                     defs,
                     refs,
@@ -4607,6 +4613,7 @@ class Skylos:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: clone detection"))
             RULE_ID = "SKY-C401"
+            from skylos.rules.quality.clones import clone_member_label
 
             frags = all_clone_fragments
 
@@ -4620,11 +4627,10 @@ class Skylos:
                 g.fragments.sort(key=lambda x: (x.file_path, x.start_line))
                 top = g.fragments[0]
 
-                members_preview = []
-                for frag in g.fragments[:4]:
-                    members_preview.append(
-                        f"{Path(frag.file_path).name}:{frag.start_line}-{frag.end_line} ({frag.kind} {frag.name})"
-                    )
+                members_preview = [
+                    clone_member_label(frag, project_root)
+                    for frag in g.fragments[:4]
+                ]
 
                 if (
                     g.clone_type in (CloneType.TYPE1, CloneType.TYPE2)
@@ -5894,6 +5900,18 @@ class Skylos:
             workspace_inventory=workspace_inventory,
         )
 
+        if enable_quality:
+            from skylos.analysis.typing_scope import scope_typing_findings
+
+            all_quality = scope_typing_findings(
+                all_quality,
+                modmap,
+                all_raw_imports,
+                project_root,
+                production_modules=(
+                    pyproject_entrypoint_modules | architecture_main_guard_modules
+                ),
+            )
         self._review_file_configs = effective_file_configs
         if effective_file_configs is None or any(
             _resolution_scope_limited(config, thr)
