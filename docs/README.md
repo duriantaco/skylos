@@ -4,6 +4,10 @@ This repository keeps lightweight local docs for features that need examples clo
 
 | Topic | Page |
 |:---|:---|
+| Customer tutorials for CLI and Cloud, screenshots, task lookup and customer outcomes | [Customer Guide](./customer-guide.md) |
+| Generate framework reports, export audit history and prepare a SOC 2 evidence pack | [Compliance Report Guide](./guides/compliance-reports.md) |
+| Before/after examples and activation context for every cataloged rule | [Rule Examples Appendix](./guides/rule-examples.md) |
+| Complete implemented CLI and Cloud feature, command and rule reference | [Feature Catalog](./feature-catalog.md) |
 | Official real-project regression testing and PR comparison reports | [liveness_primer](./liveness-primer.md) |
 | Generated codebase navigator for contributors | [Skylos Repo Map](./repo-map/index.html) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./cli-output.md) |
