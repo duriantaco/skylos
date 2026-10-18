@@ -9,6 +9,7 @@ import ast
 import pytest
 
 from skylos.core.linter import LinterVisitor
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.danger.danger import scan_ctx
 
@@ -19,9 +20,7 @@ HASH_RULES = {"SKY-D207", "SKY-D208"}
 def _both_paths(tmp_path, code):
     """(scan_ctx findings, LinterVisitor findings) as sorted (rule, line)."""
     path = tmp_path / "weak_hash_case.py"
-    path.write_text(  # skylos: ignore[SKY-D324] fixed fixture path under pytest tmp_path
-        code, encoding="utf-8"
-    )
+    assert write_text_no_symlink(path, code, encoding="utf-8")
     linter = LinterVisitor([DangerousCallsRule()], str(path))
     linter.visit(ast.parse(code))
     scanned = scan_ctx(tmp_path, [path])

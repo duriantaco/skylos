@@ -24,13 +24,12 @@ import os
 import pytest
 
 import skylos.rules.ai_defect.dependency_hallucination as dep
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 def _write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
-        text, encoding="utf-8"
-    )
+    assert write_text_no_symlink(path, text, encoding="utf-8")
     return path
 
 
