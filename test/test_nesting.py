@@ -40,9 +40,9 @@ def shallow():
 
     def test_deep_nesting_trigger(self):
         code = """
-def deep():
+async def deep():
     if True: 
-        for x in range(10):
+        async for x in items:
             if x > 5:
                 while True:
                     break
@@ -132,3 +132,66 @@ def complex_try():
 
         assert len(findings) == 1
         assert findings[0]["value"] == 1
+
+    def test_with_around_top_level_try_keeps_try_exemption(self):
+        code = """
+def drain(a, b, c):
+    with lock:
+        try:
+            if a:
+                for x in b:
+                    if c:
+                        pass
+        except ValueError:
+            pass
+"""
+        # with adds no level and the try is top level: if 1, for 2, if 3.
+        findings = check_code(NestingRule(threshold=2), code)
+        assert len(findings) == 1
+        assert findings[0]["value"] == 3
+
+    def test_try_under_with_inside_branch_still_counts(self):
+        code = """
+def drain(a, b):
+    if a:
+        with lock:
+            try:
+                if b:
+                    pass
+            except ValueError:
+                pass
+"""
+        # if 1; the try is not top level: 2; if 3.
+        findings = check_code(NestingRule(threshold=0), code)
+        assert findings[0]["value"] == 3
+
+    def test_match_case_bodies_are_traversed(self):
+        code = """
+def route(x, a, b, c, d):
+    match x:
+        case 1:
+            if a:
+                for y in b:
+                    if c:
+                        while d:
+                            pass
+        case _:
+            pass
+"""
+        # case 1, if 2, for 3, if 4, while 5.
+        findings = check_code(NestingRule(threshold=3), code)
+        assert len(findings) == 1
+        assert findings[0]["value"] == 5
+
+    def test_match_counts_as_one_level(self):
+        code = """
+def route(xs):
+    for x in xs:
+        match x:
+            case 1:
+                if x:
+                    pass
+"""
+        # for 1, case 2, if 3.
+        findings = check_code(NestingRule(threshold=0), code)
+        assert findings[0]["value"] == 3
