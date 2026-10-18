@@ -6,7 +6,7 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from skylos.reporting.advice_display import standalone_function_advice
+from skylos.reporting.advice_display import _advice_identity, standalone_function_advice
 from skylos.reporting.finding_types import get_finding_type, iter_result_findings
 from skylos.reporting.rollups import FINDING_SECTIONS
 
@@ -209,9 +209,12 @@ def prepare_advice_view(result, *, project_root=None, all_advice=False):
             if (
                 decisions[key] is None
                 and category == "quality"
-                and id(row) in standalone
+                and isinstance(row, Mapping)
             ):
-                decisions[key] = "single_function_metric"
+                identity = _advice_identity(category, row)
+                candidate = standalone.get(identity[0]) if identity else None
+                if candidate is not None and row == candidate:
+                    decisions[key] = "single_function_metric"
         return decisions[key]
 
     for category, row in canonical:

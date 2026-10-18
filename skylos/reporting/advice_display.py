@@ -253,7 +253,7 @@ def combine_complexity_advice(
     ]
 
 
-def standalone_function_advice(rows) -> set[int]:
+def standalone_function_advice(rows) -> dict[tuple, dict]:
     """Identify unambiguous size-only signals without dropping metric groups.
 
     Missing identities, conflicting measurements and duplicate variants remain
@@ -279,7 +279,7 @@ def standalone_function_advice(rows) -> set[int]:
                     if isinstance(file, str) and file:
                         uncertain.add((_FUNCTION_RULES, file, line))
     return {
-        id(findings[0])
+        location: findings[0]
         for location, findings in locations.items()
         if location not in uncertain
         and len(findings) == 1

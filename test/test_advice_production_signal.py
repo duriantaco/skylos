@@ -7,6 +7,7 @@ import json
 import pytest
 from rich.console import Console
 
+from scripts.check_advice_output import check_report
 from skylos.cli import _skylos_console_theme
 from skylos.core.gatekeeper import check_gate
 from skylos.reporting.advice_display import advice_priority
@@ -80,6 +81,21 @@ def test_duplicate_or_conflicting_metric_records_are_not_mistaken_for_singles():
     rows = [_finding("SKY-C304"), _finding("SKY-C304", value=14)]
     report = {"quality": rows}
     assert prepare_advice_view(report)[0] is report
+
+
+def test_canonical_metric_mirrors_are_hidden_once_in_every_presentation_bucket():
+    row = _finding("SKY-C304")
+    report = {"quality": [row], "code_health": [deepcopy(row)]}
+    before = deepcopy(report)
+    focused, visibility = prepare_advice_view(report)
+    assert focused["quality"] == focused["code_health"] == []
+    assert visibility.total_checks == visibility.omitted_checks == 1
+    assert report == before
+    assert prepare_advice_view(report, all_advice=True)[0] is report
+    checked = check_report(report, None)
+    assert checked["raw_advice_checks"] == 1
+    assert checked["focused_advice_checks"] == 0
+    assert checked["optional_advice_checks"] == 1
 
 
 def test_an_uncertain_companion_metric_cannot_establish_a_standalone_measurement():
