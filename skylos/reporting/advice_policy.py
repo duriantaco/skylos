@@ -45,6 +45,10 @@ def _signature_only_boolean(finding: Mapping, rule_id: str) -> bool:
     """
     if rule_id != "SKY-L029":
         return False
+    # Positive or unknown evidence must remain available for review, even
+    # when an older producer retained the signature-only wording.
+    if "call_evidence" in finding and finding["call_evidence"] not in (None, []):
+        return False
     parameter = finding.get("value")
     if not isinstance(parameter, str) or not parameter:
         return False
