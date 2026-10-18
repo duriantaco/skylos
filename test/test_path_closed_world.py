@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from skylos.analyzer import analyze
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.danger.danger_fs.closed_world import _has_computed_loader_call
 
 PATH_RULES = {"SKY-D215", "SKY-D324", "SKY-D325"}
@@ -33,11 +34,14 @@ def _read_doc(path):
 def _project(tmp_path: Path, files: dict[str, str]) -> Path:
     root = tmp_path / "proj"
     (root / ".git").mkdir(parents=True)
-    (root / "pyproject.toml").write_text('[project]\nname = "proj"\n')
+    assert write_text_no_symlink(root / "pyproject.toml", '[project]\nname = "proj"\n')
     for name, text in files.items():
-        path = root / name
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("fixture path leaves project")
+        path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        assert write_text_no_symlink(path, text)
     return root
 
 

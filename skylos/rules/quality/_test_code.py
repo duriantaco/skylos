@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 
 from skylos.constants import NON_LIBRARY_DIR_KINDS
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    read_text_no_symlink,
+)
 
 _TEST_DIR_NAMES = frozenset(
     name for name, kind in NON_LIBRARY_DIR_KINDS.items() if kind == "test"
@@ -54,10 +58,20 @@ def is_python_test_file(path, project_root=None, source: str | None = None) -> b
         return True
     if source is None:
         try:
-            if file_path.stat().st_size > _MAX_SOURCE_BYTES:
-                return False
-            source = file_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            if project_root is None:
+                source = read_text_no_symlink(
+                    file_path, max_bytes=_MAX_SOURCE_BYTES, errors="replace"
+                )
+            else:
+                source = read_project_text_no_symlink(
+                    project_root,
+                    file_path,
+                    max_bytes=_MAX_SOURCE_BYTES,
+                    errors="replace",
+                )
+        except (OSError, ValueError, RuntimeError):
+            return False
+        if source is None:
             return False
     return bool(_COLLECTABLE_RE.search(source))
 
