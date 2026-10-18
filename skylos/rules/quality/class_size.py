@@ -1,6 +1,10 @@
 import ast
 from pathlib import Path
 
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    read_text_no_symlink,
+)
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality._test_code import is_collected_test_class, is_python_test_file
 from skylos.rules.quality._code_lines import code_lines
@@ -20,15 +24,19 @@ _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _BLOCKS = (ast.stmt, ast.excepthandler, ast.match_case)
 
 
-def _read_source(filename: str) -> str | None:
+def _read_source(filename: str, project_root=None) -> str | None:
     if not filename:
         return None
 
     try:
-        return Path(filename).read_text(
-            encoding="utf-8", errors="ignore"
-        )  # skylos: ignore[SKY-D215] analyzer reads discovered source files
-    except OSError:
+        if project_root is None:
+            return read_text_no_symlink(
+                filename, max_bytes=2_000_000, errors="ignore"
+            )
+        return read_project_text_no_symlink(
+            project_root, filename, max_bytes=2_000_000, errors="ignore"
+        )
+    except (OSError, ValueError, RuntimeError):
         return None
 
 
@@ -117,7 +125,7 @@ class GodFileRule(SkylosRule):
             return None
         source = context.get("source")
         if not isinstance(source, str):
-            source = _read_source(filename)
+            source = _read_source(filename, context.get("project_root"))
         code_line_count = len(code_lines(node, source))
 
         top_level_definitions = sum(

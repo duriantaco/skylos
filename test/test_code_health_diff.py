@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.quality.code_health import (
     CODE_HEALTH_RULES,
     partition_code_health,
@@ -51,10 +52,12 @@ def repo(tmp_path):
     _git(root, "init", "-q")
     # strict needs a selection: mypy with neither targets nor files checks
     # nothing, so without files = [...] the annotation scope is unknown.
-    (root / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        root / "pyproject.toml",
         '[tool.mypy]\nstrict = true\nfiles = ["app.py"]\n', encoding="utf-8"
     )
-    (root / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        root / "app.py",
         _long_function("legacy", 70) + "\n\n" + _long_function("grows", 55),
         encoding="utf-8",
     )
@@ -62,7 +65,8 @@ def repo(tmp_path):
     _git(root, "commit", "-q", "-m", "base")
     # The change touches every function: legacy unchanged in size, grows gets
     # longer, fresh is new and long.
-    (root / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        root / "app.py",
         "# edited\n"
         + _long_function("legacy", 70)
         + "\n\n"
@@ -191,16 +195,18 @@ def test_base_scan_uses_head_project_root_below_git_root(tmp_path):
     service = repo / "services" / "api"
     (service / "svc").mkdir(parents=True)
     _git(repo, "init", "-q")
-    (service / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        service / "pyproject.toml",
         '[tool.mypy]\ndisallow_untyped_defs = true\nfiles = ["svc"]\n',
         encoding="utf-8",
     )
-    (service / "svc" / "__init__.py").write_text("", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(service / "svc" / "__init__.py", "", encoding="utf-8")
     core = service / "svc" / "core.py"
-    core.write_text("def legacy(x):\n    return x\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(core, "def legacy(x):\n    return x\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "base")
-    core.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        core,
         "def legacy(x):\n    return x\n\n\ndef fresh(y):\n    return y\n",
         encoding="utf-8",
     )

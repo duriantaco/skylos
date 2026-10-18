@@ -10,14 +10,20 @@ import pytest
 from skylos.analysis.file_processing import collect_python_raw_imports
 from skylos.analysis.typing_policy import annotation_requirement
 from skylos.analysis.typing_scope import scope_typing_findings
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.quality._typing import is_typing_test_path
 
 
 def _project(root: Path, files: dict[str, str]) -> Path:
     for relative, text in files.items():
-        path = root / relative
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError("fixture path leaves project")
+        path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(textwrap.dedent(text).lstrip("\n"), encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+        assert write_text_no_symlink(
+            path, textwrap.dedent(text).lstrip("\n"), encoding="utf-8"
+        )
     return root
 
 
@@ -144,13 +150,19 @@ def test_project_policy_cache_tracks_consulted_files(tmp_path):
 
     tox = root / "tox.ini"
     original = tox.read_text(encoding="utf-8")
-    tox.write_text(original.replace("{posargs:pkg tests}", "{posargs:pkg scripts tests}"), encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        tox,
+        original.replace("{posargs:pkg tests}", "{posargs:pkg scripts tests}"),
+        encoding="utf-8",
+    )
     assert _requirement(root, "scripts/tool.py") is True
 
-    tox.write_text(original, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(tox, original, encoding="utf-8")
     workflow = root / ".github" / "workflows" / "ci.yml"
     workflow.parent.mkdir(parents=True)
-    workflow.write_text("jobs:\n  t:\n    steps:\n      - run: mypy scripts\n", encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path
+    assert write_text_no_symlink(
+        workflow, "jobs:\n  t:\n    steps:\n      - run: mypy scripts\n", encoding="utf-8"
+    )
     assert _requirement(root, "scripts/tool.py") is True
 
     workflow.unlink()
