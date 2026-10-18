@@ -219,6 +219,48 @@ _SECURITY_TODO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Generic maintenance words are useful candidates, but do not establish a
+# security claim by themselves (e.g. a formatter's "HACK ... workaround").
+# Keep candidate discovery intact and require an independent security subject
+# when the candidate contains only those words.
+_GENERIC_TODO_SUBJECT_RE = re.compile(
+    r"\b(?:disabl(?:e[ds]?|ing)|bypass(?:es|ed|ing)?"
+    r"|hardcod(?:e[ds]?|ing)|hack(?:s|ed|ing|y|ish)?|workarounds?"
+    r"|temporary|fixme)(?=\W|_|$)",
+    re.IGNORECASE,
+)
+
+# Preserve security subjects that used to match through a generic verb. Keep
+# these concepts explicit so maintenance-word filtering cannot erase known
+# authentication, cryptographic or transport-security work.
+_SECURITY_TODO_SUBJECTS = {
+    "authentication_factor": re.compile(
+        r"(?<![a-z0-9])(?:mfa|2fa|otp|totp|hotp|webauthn|passkeys?)(?![a-z0-9])", re.I
+    ),
+    "cryptographic_signature": re.compile(
+        r"(?<![a-z0-9])(?:signatures?|signing[ _-]+keys?|hmac|cryptograph\w*)(?![a-z0-9])", re.I
+    ),
+    "transport_security": re.compile(
+        r"(?<![a-z0-9])(?:https|dnssec|ipsec|mtls|ssh)(?![a-z0-9])", re.I
+    ),
+}
+
+
+def _has_security_todo_subject(line: str) -> bool:
+    subject = re.sub(
+        r"^\s*#\s*(?:TODO|FIXME|HACK|XXX|TEMP)\b[:\s]*",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    specific = _GENERIC_TODO_SUBJECT_RE.sub("", subject)
+    # Reuse the existing vocabulary, so new security subjects are expanded in
+    # one place. The synthetic marker is only the regex's required prefix.
+    return (
+        _SECURITY_TODO_RE.search(f"# TODO: {specific}") is not None
+        or any(pattern.search(specific) for pattern in _SECURITY_TODO_SUBJECTS.values())
+    )
+
 
 class SecurityTodoRule(SkylosRule):
     rule_id = "SKY-L010"
@@ -275,7 +317,7 @@ class SecurityTodoRule(SkylosRule):
         reported_lines = set()
         for i, column, line in sorted(fragments):
             m = _SECURITY_TODO_RE.search(line)
-            if m and i not in reported_lines:
+            if m and _has_security_todo_subject(line) and i not in reported_lines:
                 reported_lines.add(i)
                 comment = m.group(0).strip()
                 if len(comment) > 120:
@@ -1670,6 +1712,7 @@ class UndefinedConfigRule(SkylosRule):
         self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
         self._env_refs = None
         self._env_sets = None
+        self._env_declarations = set()
         self._current_file = None
 
     def visit_node(self, node, context):
@@ -1679,6 +1722,26 @@ class UndefinedConfigRule(SkylosRule):
             self._current_file = filename
             self._env_refs = []
             self._env_sets = set()
+            self._env_declarations = set()
+            for statement in node.body:
+                if isinstance(statement, ast.Assign):
+                    targets = statement.targets
+                    value = statement.value
+                elif isinstance(statement, ast.AnnAssign):
+                    targets = [statement.target]
+                    value = statement.value
+                else:
+                    continue
+                if not isinstance(value, ast.Call):
+                    continue
+                env_name = self._extract_env_var(value)
+                if any(
+                    isinstance(target, ast.Name) and target.id == env_name
+                    for target in targets
+                ):
+                    # This statement declares a named external setting; it
+                    # does not imply the setting's value or use is secure.
+                    self._env_declarations.add(id(value))
             for child in ast.walk(node):
                 if isinstance(child, ast.Subscript):
                     if (
@@ -1701,6 +1764,9 @@ class UndefinedConfigRule(SkylosRule):
 
         env_var_name = self._extract_env_var(node)
         if not env_var_name:
+            return None
+
+        if id(node) in self._env_declarations:
             return None
 
         # ``os.getenv("ENABLE_X", "False")`` declares the flag's default; the

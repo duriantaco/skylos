@@ -147,6 +147,106 @@ def _route_methods(decorator: ast.AST) -> tuple[str | None, set[str]]:
     return framework, methods
 
 
+def _mock_patch_decorators(module: ast.Module) -> set[int]:
+    """Identify stdlib patch decorators without trusting their spelling.
+
+    Import spelling alone does not prove runtime identity. Require a collected
+    unittest.TestCase test method and a dotted mock target as well as an
+    imported API with no possible rebinding. The rebinding check is deliberately
+    conservative across nested scopes.
+    """
+    imports: dict[str, str] = {}
+    for statement in module.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                local = alias.asname or alias.name.split(".")[0]
+                imports[local] = alias.name if alias.asname else local
+        elif isinstance(statement, ast.ImportFrom) and not statement.level:
+            for alias in statement.names:
+                imports[alias.asname or alias.name] = f"{statement.module}.{alias.name}"
+
+    if not any(
+        value == "unittest" or value.startswith("unittest.")
+        for value in imports.values()
+    ):
+        return set()
+
+    rebound: set[str] = set()
+    for part in ast.walk(module):
+        if isinstance(part, ast.Name) and isinstance(part.ctx, (ast.Store, ast.Del)):
+            rebound.add(part.id)
+        elif isinstance(part, ast.Attribute) and isinstance(
+            part.ctx, (ast.Store, ast.Del)
+        ):
+            head = _dotted_name(part).split(".")[0]
+            rebound.add(head)
+            if head in imports:
+                # Imported module aliases can refer to the same mutable
+                # object. An assignment through another alias is uncertain.
+                rebound.update(imports)
+        elif isinstance(part, ast.arg):
+            rebound.add(part.arg)
+        elif isinstance(part, ast.ExceptHandler) and part.name:
+            rebound.add(part.name)
+        elif isinstance(part, (ast.MatchAs, ast.MatchStar)) and part.name:
+            rebound.add(part.name)
+        elif isinstance(part, ast.MatchMapping) and part.rest:
+            rebound.add(part.rest)
+        elif isinstance(part, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            rebound.add(part.name)
+        elif isinstance(part, ast.Import):
+            for alias in part.names:
+                local = alias.asname or alias.name.split(".")[0]
+                resolved = alias.name if alias.asname else local
+                if imports.get(local) != resolved:
+                    rebound.add(local)
+        elif isinstance(part, ast.ImportFrom):
+            for alias in part.names:
+                if alias.name == "*":
+                    rebound.update(imports)
+                local = alias.asname or alias.name
+                resolved = f"{part.module}.{alias.name}"
+                if part.level or imports.get(local) != resolved:
+                    rebound.add(local)
+
+    def resolved_name(name: str) -> str:
+        head, dot, tail = name.partition(".")
+        if head in rebound:
+            return ""
+        return imports.get(head, "") + (dot + tail if dot else "")
+
+    test_methods = {
+        id(method)
+        for cls in ast.walk(module)
+        if isinstance(cls, ast.ClassDef)
+        and any(
+            resolved_name(_dotted_name(base)) == "unittest.TestCase"
+            for base in cls.bases
+        )
+        for method in cls.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and method.name.startswith("test_")
+    }
+    decorators: set[int] = set()
+    for function in ast.walk(module):
+        if id(function) not in test_methods:
+            continue
+        for decorator in function.decorator_list:
+            if not isinstance(decorator, ast.Call) or not decorator.args:
+                continue
+            target = decorator.args[0]
+            if not (
+                isinstance(target, ast.Constant)
+                and isinstance(target.value, str)
+                and "." in target.value
+                and all(part.isidentifier() for part in target.value.split("."))
+            ):
+                continue
+            if resolved_name(_decorator_name(decorator)) == "unittest.mock.patch":
+                decorators.add(id(decorator))
+    return decorators
+
+
 def _is_fastapi_route(decorator: ast.AST) -> bool:
     name = _decorator_name(decorator)
     method_name = _last_name_part(name)
@@ -1544,6 +1644,7 @@ class FrameworkPracticeRule(SkylosRule):
 
         findings = []
         guarded_routers = _guarded_router_names(node)
+        mock_patch_decorators = _mock_patch_decorators(node)
         module_functions = {
             statement.name: statement
             for statement in node.body
@@ -1563,7 +1664,8 @@ class FrameworkPracticeRule(SkylosRule):
             route_decorators = [
                 decorator
                 for decorator in function.decorator_list
-                if _route_methods(decorator)[0] is not None
+                if id(decorator) not in mock_patch_decorators
+                and _route_methods(decorator)[0] is not None
             ]
             if not route_decorators:
                 continue

@@ -6,9 +6,14 @@ from skylos.core.safe_cache_io import (
     read_text_no_symlink,
 )
 from skylos.rules.base import SkylosRule
-from skylos.rules.quality._test_code import is_collected_test_class, is_python_test_file
+from skylos.rules.quality._test_code import (
+    is_collected_test_class,
+    is_python_test_file,
+    pytest_class_patterns,
+)
 from skylos.rules.quality._code_lines import code_lines
 from skylos.rules.quality._receivers import (
+    _scope_bindings,
     class_method_nodes,
     context_method_kinds,
     method_receiver,
@@ -30,9 +35,7 @@ def _read_source(filename: str, project_root=None) -> str | None:
 
     try:
         if project_root is None:
-            return read_text_no_symlink(
-                filename, max_bytes=2_000_000, errors="ignore"
-            )
+            return read_text_no_symlink(filename, max_bytes=2_000_000, errors="ignore")
         return read_project_text_no_symlink(
             project_root, filename, max_bytes=2_000_000, errors="ignore"
         )
@@ -57,7 +60,9 @@ def _module_definitions(module: ast.Module) -> tuple[int, int]:
             pending.extend(child.body)
         else:
             pending.extend(
-                item for item in ast.iter_child_nodes(child) if isinstance(item, _BLOCKS)
+                item
+                for item in ast.iter_child_nodes(child)
+                if isinstance(item, _BLOCKS)
             )
     return classes, functions
 
@@ -74,7 +79,7 @@ def _base_name(node: ast.expr) -> str:
     return ""
 
 
-def _is_test_class(node: ast.ClassDef) -> bool:
+def _is_test_class(node: ast.ClassDef, class_patterns=("Test",)) -> bool:
     return is_collected_test_class(
         node.name,
         [_base_name(base) for base in node.bases],
@@ -84,13 +89,114 @@ def _is_test_class(node: ast.ClassDef) -> bool:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         ],
         opted_out=_opts_out_of_collection(node),
+        class_patterns=class_patterns,
     )
+
+
+def _overload_stubs(module: ast.Module) -> set[ast.AST]:
+    """Import-proven typing signatures with a real local implementation.
+
+    A rebound module import or class-local decorator name leaves the metric
+    unchanged. Property getters/setters still count as before.
+    """
+    bindings = _scope_bindings(module)
+    aliases = {}
+    pending = list(module.body)
+    while pending:
+        node = pending.pop()
+        if (
+            isinstance(node, ast.ImportFrom)
+            and not node.level
+            and node.module in {"typing", "typing_extensions"}
+        ):
+            aliases.update(
+                {
+                    alias.asname or alias.name: "function"
+                    for alias in node.names
+                    if alias.name == "overload"
+                }
+            )
+        elif isinstance(node, ast.Import):
+            aliases.update(
+                {
+                    alias.asname or alias.name: "module"
+                    for alias in node.names
+                    if alias.name in {"typing", "typing_extensions"}
+                }
+            )
+        elif not isinstance(node, (*_FUNCTIONS, ast.ClassDef, ast.Lambda)):
+            pending.extend(ast.iter_child_nodes(node))
+    aliases = {
+        name: kind for name, kind in aliases.items() if bindings.counts[name] == 1
+    }
+    mutated = {
+        child.value.id
+        for child in ast.walk(module)
+        if isinstance(child, ast.Attribute)
+        and isinstance(child.ctx, (ast.Store, ast.Del))
+        and isinstance(child.value, ast.Name)
+    }
+    result = set()
+    for cls in module.body:
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        class_aliases = {
+            name: kind
+            for name, kind in aliases.items()
+            if name not in _scope_bindings(cls).names and name not in mutated
+        }
+        methods = list(class_method_nodes(cls))
+        decorated = {
+            method
+            for method in methods
+            if any(
+                (
+                    isinstance(decorator, ast.Name)
+                    and class_aliases.get(decorator.id) == "function"
+                )
+                or (
+                    isinstance(decorator, ast.Attribute)
+                    and decorator.attr == "overload"
+                    and isinstance(decorator.value, ast.Name)
+                    and class_aliases.get(decorator.value.id) == "module"
+                )
+                for decorator in method.decorator_list
+            )
+        }
+        implementations = {method.name for method in methods if method not in decorated}
+        for method in decorated:
+            body = method.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+            if (
+                method.name in implementations
+                and len(body) == 1
+                and (
+                    isinstance(body[0], ast.Pass)
+                    or (
+                        isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and body[0].value.value is Ellipsis
+                    )
+                )
+            ):
+                result.add(method)
+    return result
 
 
 def _opts_out_of_collection(node: ast.ClassDef) -> bool:
     """``__test__ = False`` in the class body."""
     for item in node.body:
-        targets = item.targets if isinstance(item, ast.Assign) else [getattr(item, "target", None)]
+        targets = (
+            item.targets
+            if isinstance(item, ast.Assign)
+            else [getattr(item, "target", None)]
+        )
         value = getattr(item, "value", None)
         if (
             isinstance(item, (ast.Assign, ast.AnnAssign))
@@ -209,7 +315,8 @@ class GodClassRule(SkylosRule):
 
     Dunder methods implement protocols (``__len__``, ``__getitem__``, ...);
     a mapping or sequence type needs them all, so they are not counted
-    toward the method limit.
+    toward the method limit. Import-proven overload signatures with a local
+    implementation do not add runtime methods either.
     """
 
     rule_id = "SKY-Q501"
@@ -220,9 +327,13 @@ class GodClassRule(SkylosRule):
         self.max_attributes = max_attributes
         self._method_kinds = {}
         self._skip_file = False
+        self._class_patterns = ("Test",)
+        self._overload_stubs = set()
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
+            self._class_patterns = pytest_class_patterns(context.get("project_root"))
+            self._overload_stubs = _overload_stubs(node)
             self._skip_file = is_sample_or_build_python(
                 context.get("filename"), context.get("project_root")
             )
@@ -235,7 +346,7 @@ class GodClassRule(SkylosRule):
 
         # A test class groups many cases (and their fixtures) by design;
         # its size is not a design defect.
-        if _is_test_class(node) and is_python_test_file(
+        if _is_test_class(node, self._class_patterns) and is_python_test_file(
             context.get("filename", ""),
             context.get("project_root"),
             context.get("source"),
@@ -248,6 +359,8 @@ class GodClassRule(SkylosRule):
 
         kinds = self._method_kinds or resolve_method_kinds(node)
         for item in class_method_nodes(node):
+            if item in self._overload_stubs:
+                continue
             if _is_dunder(item.name):
                 dunder_count += 1
             else:
