@@ -182,7 +182,9 @@ def _compact_verification(value: Any) -> dict[str, Any] | None:
             compact[key] = text
     lines = value.get("proof_lines")
     if isinstance(lines, list):
-        compact["proof_lines"] = [line for line in lines if isinstance(line, int) and line > 0][:20]
+        compact["proof_lines"] = [
+            line for line in lines if isinstance(line, int) and line > 0
+        ][:20]
     return compact
 
 
@@ -217,6 +219,7 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "language",
         "symbol",
         "review_decision",
+        "listing",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
     verification = _compact_verification(metadata.get("verification"))
@@ -273,6 +276,11 @@ def _compact_upload_finding(
         if snippet:
             compact["snippet"] = snippet
     metadata = _compact_finding_metadata(finding.get("metadata"))
+    from skylos.reporting.listing import listing_decision
+
+    listing = listing_decision(finding)
+    if listing is not None:
+        compact["listing"] = dict(listing)
     dead_code_evidence = dead_code_finding_evidence_payload(
         finding,
         max_events=8,
@@ -296,7 +304,7 @@ def _build_report_scan_summary(
     all_findings: list[dict], core_payload: dict[str, Any], definitions
 ) -> dict[str, int]:
     runs = core_payload.get("runs") or []
-    return {
+    summary = {
         "finding_count": len(all_findings),
         "sarif_result_count": sum(len(run.get("results") or []) for run in runs),
         "sarif_rule_count": sum(
@@ -305,3 +313,14 @@ def _build_report_scan_summary(
         ),
         "definitions_count": len(definitions or {}),
     }
+    from skylos.reporting.listing import is_listed, listing_decision
+
+    if any(listing_decision(row) is not None for row in all_findings):
+        summary["listing_policy_version"] = 1
+        summary["listed_finding_count"] = sum(
+            is_listed(row, row.get("category")) for row in all_findings
+        )
+        summary["unlisted_finding_count"] = (
+            len(all_findings) - summary["listed_finding_count"]
+        )
+    return summary

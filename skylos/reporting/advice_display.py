@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from skylos.reporting.finding_types import (
     get_finding_type,
@@ -88,6 +89,30 @@ class ComplexityDisplay:
             if original:
                 lines.append(str(original))
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class FileAnnotationDisplay(ComplexityDisplay):
+    """Missing-annotation advice for one file: one entry, every line kept."""
+
+    @property
+    def name(self) -> str:
+        return "Missing type annotations"
+
+    @property
+    def metric_lines(self) -> tuple[str, ...]:
+        return tuple(
+            f"Line {finding.get('line')}: {finding.get('message') or _rule_id(finding)}"
+            for finding in self.findings
+        )
+
+    @property
+    def message(self) -> str:
+        count = len({finding.get("line") for finding in self.findings})
+        noun = "function" if count == 1 else "functions"
+        return "\n".join(
+            (f"{count} {noun} in this file miss annotations.", *self.metric_lines)
+        )
 
 
 def _rule_id(finding: Mapping) -> str:
@@ -272,7 +297,90 @@ def combine_complexity_advice(
         for index, row in enumerate(rows)
         if index in replacements or index not in consumed
     ]
-    return _combine_included_cognitive_scopes(grouped)
+    return _combine_file_annotations(_combine_included_cognitive_scopes(grouped))
+
+
+def _annotation_file(category, finding) -> str | None:
+    if (
+        category != "quality"
+        or not isinstance(finding, Mapping)
+    ):
+        return None
+    display = complexity_display(finding)
+    members = display.findings if display is not None else (finding,)
+    if not members:
+        return None
+    member_files = set()
+    for member in members:
+        if (
+            not isinstance(member, Mapping)
+            or _rule_id(member) not in _TYPING_RULES
+            or get_finding_type(member, category) != "advice"
+            or complexity_display(member) is not None
+        ):
+            return None
+        files = [member[field] for field in ("file", "file_path") if member.get(field)]
+        line = member.get("line")
+        if (
+            not files
+            or any(not isinstance(file, str) or not file.strip() for file in files)
+            or len(set(files)) != 1
+            or type(line) is not int
+            or line <= 0
+        ):
+            return None
+        member_files.add(files[0])
+    return next(iter(member_files)) if len(member_files) == 1 else None
+
+
+def _combine_file_annotations(rows):
+    """One missing-annotation entry per file; each function stays a member.
+
+    Annotation advice is per function but read per file: fixing it means
+    working through one module. Unknown files or lines stay separate.
+    """
+    by_file = {}
+    for index, (category, finding) in enumerate(rows):
+        file = _annotation_file(category, finding)
+        if file is not None:
+            by_file.setdefault(file, []).append(index)
+    replacements = {}
+    consumed = set()
+    for file, indices in by_file.items():
+        if len(indices) < 2:
+            continue
+        members = tuple(
+            sorted(
+                (
+                    member
+                    for index in indices
+                    for member in (
+                        complexity_display(rows[index][1]).findings
+                        if complexity_display(rows[index][1]) is not None
+                        else (rows[index][1],)
+                    )
+                ),
+                key=lambda finding: (finding["line"], _rule_id(finding)),
+            )
+        )
+        display = FileAnnotationDisplay(members)
+        view = dict(members[0])
+        view["_complexity_display"] = display
+        view["message"] = display.message
+        view["name"] = view["simple_name"] = Path(file).name
+        view["severity"] = min(
+            (str(finding.get("severity") or "LOW").upper() for finding in members),
+            key=lambda severity: _SEVERITY_RANK.get(severity, 99),
+        )
+        replacements[min(indices)] = ("quality", view)
+        consumed.update(indices)
+    if not replacements:
+        return rows
+    return [
+        replacements[index] if index in replacements else row
+        for index, row in enumerate(rows)
+        if index in replacements or index not in consumed
+    ]
 
 
 def _cognitive_scope(finding):

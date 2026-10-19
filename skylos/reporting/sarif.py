@@ -346,6 +346,11 @@ class SarifExporter:
                     max_length=40,
                 ),
             }
+            from skylos.reporting.listing import is_listed, listing_decision
+
+            listing = listing_decision(finding)
+            if listing is not None:
+                properties["listing"] = {**listing, "listed": is_listed(finding, category)}
             if category == "PUBLISHER_CHANGE":
                 properties["review_only"] = True
 
