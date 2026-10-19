@@ -435,3 +435,69 @@ def test_coupling_conditional_provider_rebinding_remains_unknown():
 
 def test_coupling_class_rebinding_cannot_use_older_native_resolution():
     assert _needs_scope_resolution(ast.parse("class A: pass\nA = external\n"))
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        "Provider = decorate(Provider)",
+        "Provider = decorate(target=Provider)",
+        "Provider = outer(inner(options=True)(Provider))",
+        "Provider = decorate(outer(Provider))",
+        "Provider = Provider",
+        "Provider: type",
+        "Provider: type = decorate(Provider)",
+        "Provider = Provider()",
+        "Provider = Provider[int]",
+    ],
+)
+def test_coupling_explicit_decorator_application_retains_source_class_family(transform):
+    result = _coupling(
+        "class Provider: pass\n" + transform + "\n"
+        "class Consumer:\n    def run(self): return Provider()\n"
+    )
+    assert result["efferent_classes"] == ["Provider"]
+
+
+def test_coupling_source_returning_class_decorator_retains_real_edge():
+    result = _coupling("""
+        def add_behavior(cls):
+            cls.enabled = True
+            return cls
+        class Provider: pass
+        Provider = add_behavior(Provider)
+        class Consumer:
+            def run(self): return Provider()
+    """)
+    assert result["efferent_classes"] == ["Provider"]
+
+
+def test_coupling_conditional_class_family_transforms_retain_real_edge():
+    result = _coupling("""
+        if configured:
+            class Provider: pass
+        else:
+            class Provider: pass
+        if decorated:
+            Provider = decorate(Provider)
+        class Consumer:
+            def run(self): return Provider()
+    """)
+    assert len(result["efferent_classes"]) == 1
+    assert result["efferent_classes"][0].startswith("Provider@")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "decorate('Provider')",
+        "decorate(other)",
+        "unrelated_factory()",
+    ],
+)
+def test_coupling_rebinding_lookalike_does_not_carry_old_source_class(value):
+    result = _coupling(
+        "class Provider: pass\nProvider = " + value + "\n"
+        "class Consumer:\n    def run(self): return Provider()\n"
+    )
+    assert result["efferent_classes"] == []

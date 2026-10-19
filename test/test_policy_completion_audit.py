@@ -5,12 +5,14 @@ import json
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.quality.practices import FrameworkPracticeRule
 
 
 def _policies(root, changed=None):
-    (root / "app.py").write_text("def app(): return True\n")
+    write_fixture(root, "app.py", "def app(): return True\n", overwrite=True)
     return {row["rule_id"] for row in analyze_repo_policy(root, changed_files=changed)}
 
 
@@ -63,12 +65,13 @@ def test_native_policy_file_changes_trigger_repo_policy_review(tmp_path, name):
 
 
 def _typescript(root, script, *, package=None, config=None):
-    (root / "tsconfig.json").write_text("{}")
-    (root / "package.json").write_text(
-        json.dumps(package if package is not None else {"scripts": {"check": script}})
+    write_fixture(root, "tsconfig.json", "{}", overwrite=True)
+    write_fixture(root, "package.json",
+        json.dumps(package if package is not None else {"scripts": {"check": script}}),
+        overwrite=True,
     )
     if config is not None:
-        (root / "next.config.js").write_text(config)
+        write_fixture(root, "next.config.js", config, overwrite=True)
     return {row["rule_id"] for row in analyze_repo_policy(root)}
 
 
