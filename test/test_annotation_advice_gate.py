@@ -79,6 +79,41 @@ def test_requirement_outside_selected_path_cannot_trigger_advice(tmp_path):
     assert coverage["unreported_missing_definitions"] == 1
 
 
+@pytest.mark.parametrize(
+    "settings, source",
+    [
+        (
+            'include = ["api.py", "tests/pipeline.py"]\n'
+            'strict = ["tests/pipeline.py"]\n',
+            "def resolve(value: int): return value\n",
+        ),
+        (
+            'typeCheckingMode = "strict"\n',
+            "def resolve(value: int): return value\n",
+        ),
+        (
+            'reportMissingParameterType = "error"\n',
+            "def resolve(value: int): return value\n",
+        ),
+        (
+            'reportUnknownParameterType = "error"\n',
+            "def resolve(value=0): return value\n",
+        ),
+    ],
+)
+def test_inferred_types_do_not_establish_missing_annotation_requirements(
+    tmp_path, settings, source
+):
+    # Pyright can infer these returns. Its strict/missing-parameter settings
+    # cannot establish T102; Unknown-only diagnostics also accept known defaults.
+    findings, coverage = run_rule(
+        tmp_path, source, policy="[tool.pyright]\n" + settings
+    )
+    assert findings == []
+    assert coverage["missing_return_annotations"] == 1
+    assert coverage["definitions_missing_annotations"] == 1
+
+
 def test_requested_coverage_requires_a_real_export_boundary(tmp_path):
     findings, coverage = run_rule(
         tmp_path,

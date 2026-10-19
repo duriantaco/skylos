@@ -544,6 +544,12 @@ signature does not establish that requirement. Other annotation gaps appear as
 one public-signature coverage summary and in `analysis_summary.typing_coverage`,
 without individual findings or gate penalties.
 
+Applicable mypy requirements can come from project settings, literal checked-in
+commands, or supported pre-commit hook configuration. Hook file/type filters,
+exclusions and arguments determine scope; unsupported wrappers remain unknown.
+Other checkers' strict settings are not treated as blanket annotation
+requirements: Pyright can infer returns without explicit return annotations.
+
 To request optional coverage advice for source-declared API boundaries:
 
 ```toml

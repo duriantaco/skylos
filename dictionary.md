@@ -1101,8 +1101,28 @@ root-relative selections. A strict setting with neither a
 An applicable `ignore_errors` also disables annotation-policy advice unless
 the effective inline policy explicitly re-enables diagnostics.
 Unsupported or unresolved policy contributes coverage information rather than
-default per-function advice. Indirect pre-commit hook invocations and non-mypy
-checker policy formats are not resolved by this gate. Diff comparisons read policy at the base
+default per-function advice. Standard `.pre-commit-config.yaml` selections can
+establish scope for the official `pre-commit/mirrors-mypy` hook with explicit
+arguments, or a local hook whose entry directly invokes mypy. Global and hook
+file filters, supported Python type filters, argument overrides and exclusions
+determine applicability. Hook scope uses the declared project root for a
+standalone source tree; an enclosing Git root, when present, must match it.
+A nested project's config is not silently treated as the parent repository's
+default hook config. Historical reads require the reader's matching Git root
+context instead of current filesystem metadata.
+Filename passing and supported file-bearing stages
+must be established; manual-only hooks and filename-less invocations remain
+unknown. Implicit mirror defaults establish ordinary `.py` selection only;
+stub selection needs explicit supported type filters. Unknown providers,
+wrappers or unsupported filters do not add a
+requirement or erase independently established policy.
+Extra files or directories named in hook arguments are not independently
+inferred as policy scope outside the hook's filename selection.
+Non-mypy checker policy formats are not interpreted as mypy requirements.
+Pyright's missing-parameter and unknown-type diagnostics have different
+semantics, and its strict mode does not require return annotations on all functions.
+Those settings must not enable both T101 and T102 through a generic strict flag.
+Diff comparisons read policy at the base
 revision rather than applying the current checkout's policy to old source.
 The rules exclude pytest fixtures resolved from imports and test-support
 helpers reached from a non-root conftest suite when no production importer is

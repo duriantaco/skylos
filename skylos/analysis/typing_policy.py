@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import threading
 import tokenize
 
@@ -48,6 +49,19 @@ _NEUTRAL_VALUE_FLAGS = frozenset({
 })
 # Literal checker contexts do not change path selection or annotation policy.
 _CONTEXT_VALUE_FLAGS = frozenset({"--platform", "--python-version"})
+_PRECOMMIT_CONFIG = ".pre-commit-config.yaml"
+_MYPY_MIRRORS = frozenset({
+    "https://github.com/pre-commit/mirrors-mypy",
+    "https://github.com/pre-commit/mirrors-mypy.git",
+    "git@github.com:pre-commit/mirrors-mypy.git",
+})
+_FILE_STAGES = frozenset({"pre-commit", "pre-push", "pre-merge-commit"})
+_OTHER_STAGES = frozenset({
+    "manual", "commit-msg", "prepare-commit-msg", "post-checkout", "post-commit",
+    "post-merge", "post-rewrite", "pre-rebase",
+})
+_STAGE_ALIASES = {"commit": "pre-commit", "push": "pre-push", "merge-commit": "pre-merge-commit"}
+_PYTHON_TAGS = frozenset({"file", "text", "python", "pyi"})
 _STRICT_FLAGS = {"disallow_untyped_defs": True, "disallow_incomplete_defs": True}
 _UNTYPED_DEF_FLAGS = frozenset({
     "--disallow-untyped-defs", "--allow-untyped-defs",
@@ -76,6 +90,45 @@ class AnnotationPolicy:
 
     require_complete: bool | None = None
     require_partial: bool | None = None
+
+
+@dataclass(frozen=True)
+class _PreCommitInvocation:
+    """An additional declared invocation, evaluated against each source file."""
+
+    targets: tuple[str, ...]
+    options: dict
+    patterns: tuple
+    types: frozenset[str]
+    types_or: frozenset[str]
+    exclude_types: frozenset[str]
+    stub_selection_proved: bool
+
+    def command_for(self, relative, root, reader):
+        path = relative.as_posix()
+        if any(not include.search(path) or exclude.search(path) for include, exclude in self.patterns):
+            return None
+        suffix = relative.suffix.lower()
+        if suffix not in {".py", ".pyw", ".pyi"}:
+            return None
+        if suffix == ".pyi" and not self.stub_selection_proved:
+            return None
+        # Read only source supplied by the same safe filesystem/snapshot
+        # contract; never consult today's file for a historical decision.
+        try:
+            _read(root, relative, reader)
+        except _POLICY_ERRORS:
+            return None
+        tags = {"file", "text", "pyi" if suffix == ".pyi" else "python"}
+        if (
+            not tags.issuperset(self.types)
+            or self.types_or and not tags.intersection(self.types_or)
+            or tags.intersection(self.exclude_types)
+        ):
+            return None
+        # Pre-commit appends selected filenames after entry and args; these
+        # explicit targets replace mypy's config.files discovery selection.
+        return [*self.targets, path], self.options
 
 
 def _read(root, relative, reader):
@@ -395,6 +448,164 @@ def _workflow_runs_at_root(workflow, job, step):
     return isinstance(directory, str) and bool(directory) and Path(directory) == Path(".")
 
 
+def _precommit_invocations(root, reader, config_name):
+    """Read bounded, declared mypy hooks without installing their providers.
+
+    The official mirror's canonical entry/Python selectors are documented in
+    its .pre-commit-hooks.yaml. Explicit args avoid revision-specific defaults;
+    only ordinary Python files use the common implicit selector profile.
+    Stub selection needs explicit type selectors, since older manifests used
+    types:[python]. Local hooks declare a direct mypy entry themselves.
+    """
+    if not _precommit_at_project_root(root, reader):
+        return []
+    try:
+        text = _read(root, _PRECOMMIT_CONFIG, reader)
+        import yaml
+
+        config = yaml.safe_load(text)
+        if not isinstance(config, dict) or not isinstance(config.get("repos"), list):
+            return []
+        if set(config) - {
+            "repos", "files", "exclude", "default_stages", "default_install_hook_types",
+            "default_language_version", "minimum_pre_commit_version", "fail_fast", "ci",
+        }:
+            return []
+        if "fail_fast" in config and type(config["fail_fast"]) is not bool:
+            return []
+        if "minimum_pre_commit_version" in config and not isinstance(config["minimum_pre_commit_version"], str):
+            return []
+        versions = config.get("default_language_version", {})
+        if not isinstance(versions, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in versions.items()
+        ):
+            return []
+        if len(config["repos"]) > 256:
+            return []
+        patterns = _precommit_patterns(config)
+        result = []
+        hook_count = 0
+        for repository in config["repos"]:
+            if not isinstance(repository, dict) or set(repository) - {"repo", "rev", "hooks"}:
+                continue
+            hooks = repository.get("hooks")
+            provider = repository.get("repo")
+            if not isinstance(hooks, list) or len(hooks) > 256:
+                continue
+            hook_count += len(hooks)
+            if hook_count > 1024:
+                return []
+            mirror = provider in _MYPY_MIRRORS if isinstance(provider, str) else False
+            if not mirror and provider != "local":
+                continue
+            if mirror and (
+                not isinstance(repository.get("rev"), str)
+                or not re.fullmatch(r"(?:v?\d+(?:\.\d+){1,2}|[a-fA-F0-9]{40})", repository["rev"])
+            ):
+                continue
+            for hook in hooks:
+                try:
+                    invocation = _precommit_hook(hook, config, patterns, mirror, config_name)
+                except (ValueError, TypeError, re.error):
+                    continue
+                if invocation is not None:
+                    result.append(invocation)
+        return result
+    except (*_POLICY_ERRORS, re.error, RecursionError):
+        return []
+    except yaml.YAMLError:
+        return []
+
+
+def _precommit_patterns(config):
+    result = []
+    for key, default in (("files", ""), ("exclude", "^$")):
+        value = config.get(key, default)
+        if not isinstance(value, str) or len(value) > 2048:
+            raise ValueError("unsupported pre-commit path filter")
+        result.append(re.compile(value))
+    return tuple(result)
+
+
+def _precommit_hook(hook, config, patterns, mirror, config_name):
+    if not isinstance(hook, dict) or not isinstance(hook.get("id"), str):
+        return None
+    if mirror and (hook["id"] != "mypy" or "args" not in hook):
+        return None
+    supported = {
+        "id", "name", "alias", "entry", "language", "files", "exclude", "types",
+        "types_or", "exclude_types", "args", "pass_filenames", "stages",
+        "always_run", "require_serial", "additional_dependencies", "description",
+        "minimum_pre_commit_version", "language_version", "verbose", "fail_fast", "log_file",
+    }
+    if set(hook) - supported:
+        return None
+    if not mirror and not isinstance(hook.get("name"), str):
+        return None
+    for key in (
+        "name", "alias", "description", "minimum_pre_commit_version", "language_version", "log_file",
+    ):
+        if key in hook and not isinstance(hook[key], str):
+            return None
+    dependencies = hook.get("additional_dependencies", [])
+    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
+        return None
+    if hook.get("language", "python" if mirror else None) not in {"python", "system", "unsupported"}:
+        return None
+    for key in ("pass_filenames", "always_run", "require_serial", "verbose", "fail_fast"):
+        if key in hook and type(hook[key]) is not bool:
+            return None
+    if hook.get("pass_filenames", True) is not True:
+        return None
+    stages = hook.get("stages", [])
+    if not isinstance(stages, list):
+        return None
+    if not stages:
+        stages = config.get("default_stages", list(_FILE_STAGES))
+    if not isinstance(stages, list) or not all(isinstance(stage, str) for stage in stages):
+        return None
+    stages = {_STAGE_ALIASES.get(stage, stage) for stage in stages}
+    if stages - (_FILE_STAGES | _OTHER_STAGES) or not stages.intersection(_FILE_STAGES):
+        return None
+    tag_sets = []
+    for key, default in (
+        ("types", ["file"]),
+        ("types_or", ["python", "pyi"] if mirror else []),
+        ("exclude_types", []),
+    ):
+        tags = hook.get(key, default)
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            return None
+        if set(tags) - _PYTHON_TAGS:
+            return None
+        tag_sets.append(frozenset(tags))
+    entry = hook.get("entry", "mypy" if mirror else None)
+    args = hook.get("args", [])
+    if not isinstance(entry, str) or not isinstance(args, list) or len(args) > 128:
+        return None
+    if not all(isinstance(argument, str) and len(argument) <= 2048 for argument in args):
+        return None
+    tokens = shlex.split(entry)
+    if not tokens or not re.fullmatch(r"(?:mypy|python(?:3(?:\.\d+)?)?)", tokens[0]):
+        return None
+    if tokens[0] != "mypy" and tokens[1:3] != ["-m", "mypy"]:
+        return None
+    tokens.extend(args)
+    if any(any(char in token for char in "\r\n${}") or token in {"&&", ";", "|", ">", "<"} for token in tokens):
+        return None
+    # These flags change import diagnostics/script naming, not annotation
+    # requirements or selection of the .py/.pyi files supported here.
+    tokens = [token for token in tokens if token not in {"--ignore-missing-imports", "--scripts-are-modules"}]
+    commands = _command_targets(shlex.join(tokens), config_name)
+    if len(commands) != 1 or commands[0][1] is None:
+        return None
+    targets, options = commands[0]
+    return _PreCommitInvocation(
+        tuple(targets), options, (patterns, _precommit_patterns(hook)), *tag_sets,
+        not mirror or "types" in hook and "types_or" in hook,
+    )
+
+
 def _project_commands(root, reader, config_name):
     files = ["tox.ini", "Makefile"]
     if reader is None:
@@ -452,6 +663,7 @@ def _project_commands(root, reader, config_name):
             continue
         for command in commands:
             result.extend(_command_targets(command, config_name))
+    result.extend(_precommit_invocations(root, reader, config_name))
     return result
 
 
@@ -486,15 +698,54 @@ def _stat_signature(path):
     return stat.st_mode, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
 
+def _historical_git_root(reader):
+    """Use explicit snapshot context, without resolving today's filesystem."""
+    root = getattr(reader, "git_root", None)
+    if not isinstance(root, (str, Path)) or not Path(root).is_absolute():
+        return None
+    return os.path.normpath(root)
+
+
+def _git_marker_evidence(root):
+    """Record every consulted marker, including absent nearer markers."""
+    result = []
+    for directory in (root, *root.parents):
+        marker = directory / ".git"
+        signature = _stat_signature(marker)
+        result.append((str(marker), signature))
+        if signature is not None:
+            break
+    return result
+
+
+def _precommit_at_project_root(root, reader):
+    # Pre-commit's default configuration and filenames are relative to its
+    # Git root. A nested project's config cannot establish that invocation.
+    if reader is not None:
+        return _historical_git_root(reader) == os.path.normpath(root)
+    try:
+        evidence = _git_marker_evidence(root)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    marker, signature = evidence[-1]
+    if signature is None:
+        # A standalone source tree can declare policy without a .git checkout.
+        return True
+    return marker == str(root / ".git") and (
+        stat.S_ISDIR(signature[0]) or stat.S_ISREG(signature[0])
+    )
+
+
 def _filesystem_fingerprint(root):
     """Stat of every path the project parse consults, absent ones included."""
-    names = [*_CONFIGS, "tox.ini", "Makefile", ".github", ".github/workflows"]
+    names = [*_CONFIGS, _PRECOMMIT_CONFIG, "tox.ini", "Makefile", ".github", ".github/workflows"]
     signature = [(name, _stat_signature(root / name)) for name in names]
     folder = root / ".github" / "workflows"
     if signature[-1][1] is not None and not folder.is_symlink() and folder.is_dir():
         for entry in sorted(os.listdir(folder)):
             name = f".github/workflows/{entry}"
             signature.append((name, _stat_signature(root / name)))
+    signature.extend(_git_marker_evidence(root))
     return tuple(signature)
 
 
@@ -511,11 +762,13 @@ def _policy_identity(root, reader):
     if not isinstance(revision, str) or not revision or reader_root is None:
         # An opaque reader may change between calls; never reuse its answer.
         return None, None
-    return ("revision", type(reader).__qualname__, str(reader_root), revision, str(root)), ()
+    return (
+        "revision", type(reader).__qualname__, str(reader_root), revision, str(root)
+    ), (("git_root", _historical_git_root(reader)),)
 
 
 def _project_policy(root, reader):
-    """Parse config, tox.ini, Makefile and workflows once per project state.
+    """Parse config, tox, Makefile, workflows and hooks once per project state.
 
     A filesystem entry is reused only while every consulted path keeps its
     (mode, inode, size, mtime_ns, ctime_ns); a historical reader is reused per
@@ -573,6 +826,14 @@ def _annotation_policy(filename, project_root, source, reader):
         if policy is None:
             return inline_policy, True if inline_required else None
         config, overrides, commands = policy
+        ordinary_commands = [command for command in commands if not isinstance(command, _PreCommitInvocation)]
+        hooks = [command for command in commands if isinstance(command, _PreCommitInvocation)]
+        hook_commands = [hook.command_for(relative, root, reader) or ([], None) for hook in hooks]
+        # Known hooks define real invocation scope even for an excluded file;
+        # never invent a bare config.files invocation that bypasses a hook's
+        # filters/allow flags. Unsupported hooks add no evidence, preserving
+        # independent ordinary commands or the existing config-only fallback.
+        commands = [*(ordinary_commands or ([] if hooks else [([], {})])), *hook_commands]
         module = _module_name(relative, config, root, reader) if overrides else ""
         settings = _options(config)
         matches = []
