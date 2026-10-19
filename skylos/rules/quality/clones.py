@@ -110,6 +110,36 @@ def _strip_docstring(body: List[ast.stmt]) -> List[ast.stmt]:
     return body
 
 
+def _copy_syntax(tree: ast.AST) -> ast.AST:
+    """Copy syntax without following metadata on shared parser nodes.
+
+    Contexts and operators are singleton objects in parsed ASTs. Another
+    analyzer can annotate one with a parent in an unrelated source tree;
+    deepcopy would traverse that graph rather than just this fragment.
+    """
+    copies = {}
+    for original in ast.walk(tree):
+        if original in copies:
+            continue
+        duplicate = copy.copy(original)
+        duplicate.__dict__.clear()
+        for attribute in original._attributes:
+            if hasattr(original, attribute):
+                setattr(duplicate, attribute, getattr(original, attribute))
+        copies[original] = duplicate
+    for original, duplicate in copies.items():
+        for field, value in ast.iter_fields(original):
+            if isinstance(value, ast.AST):
+                value = copies[value]
+            elif isinstance(value, list):
+                value = [
+                    copies[item] if isinstance(item, ast.AST) else item
+                    for item in value
+                ]
+            setattr(duplicate, field, value)
+    return copies[tree]
+
+
 def clone_member_label(
     fragment: "Fragment", project_root: str | Path | None = None
 ) -> str:
@@ -656,7 +686,7 @@ def extract_fragments(
                 parameters=parameters,
                 global_names=global_names,
                 nonlocal_names=nonlocal_names,
-            ).visit(copy.deepcopy(node_for_dump))
+            ).visit(_copy_syntax(node_for_dump))
             ast_norm_type2 = _dump_ast(t2)
         else:
             ast_norm_type2 = ast_norm_type3
@@ -716,9 +746,10 @@ def classify_clone(
     enabled = set(cfg.enabled_clone_types)
 
     if CloneType.TYPE1 in enabled:
-        sim1 = _similarity(f1.text_norm, f2.text_norm, cfg.type1_threshold)
-        if sim1 >= cfg.type1_threshold:
-            return (CloneType.TYPE1, sim1)
+        # Type 1 permits layout/comments only. A high similarity score cannot
+        # establish that literal, annotation or operator differences are absent.
+        if f1.text_norm == f2.text_norm and cfg.type1_threshold <= 1.0:
+            return (CloneType.TYPE1, 1.0)
 
     if CloneType.TYPE2 in enabled:
         sim2 = _similarity(f1.ast_norm_type2, f2.ast_norm_type2, cfg.type2_threshold)
@@ -729,6 +760,12 @@ def classify_clone(
         sim3 = _similarity(f1.ast_norm_type3, f2.ast_norm_type3, cfg.type3_threshold)
         if sim3 >= cfg.type3_threshold:
             return (CloneType.TYPE3, sim3)
+        if CloneType.TYPE1 in enabled:
+            # Preserve already accepted near-copies if text similarity is
+            # stronger than AST similarity, but label their edits honestly.
+            sim1 = _similarity(f1.text_norm, f2.text_norm, cfg.type1_threshold)
+            if sim1 >= cfg.type1_threshold:
+                return (CloneType.TYPE3, sim1)
 
     if CloneType.TYPE4 in enabled:
         pass
