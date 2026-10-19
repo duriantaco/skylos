@@ -171,8 +171,15 @@ def _worker(
     project_root=None,
     credential_source_locations=(),
 ):
-    from skylos.analyzer import proc_file
+    import multiprocessing
 
+    from skylos.analyzer import proc_file
+    from skylos.analysis.implicit_refs import pattern_tracker
+
+    if multiprocessing.parent_process() is not None:
+        # The parent merges the tracker returned with each file (see
+        # ImplicitRefTracker.merge); reset so it holds only this file's refs.
+        pattern_tracker.reset_for_worker_file()
     out = proc_file(
         file_path,
         mod,

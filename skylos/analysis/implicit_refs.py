@@ -9,6 +9,24 @@ def _compile_pattern_ref(pattern):
     return re.compile(f"^{escaped}$")
 
 
+def is_specific_name_pattern(pattern) -> bool:
+    """Whether a wildcard name pattern keeps a literal identifier part.
+
+    ``handle_*`` or ``*_queries`` name a family of attributes. ``*``, ``_*`` or
+    ``*.*`` come from a fully computed name and would match every definition.
+    """
+    if not isinstance(pattern, str) or not pattern:
+        return False
+    if "*" not in pattern:
+        return True
+    literal = pattern.replace("*", "").strip("_")
+    return len(literal) >= 2 and any(ch.isalnum() for ch in literal)
+
+
+def _owner_of(qualified_name: str) -> str:
+    return qualified_name.rsplit(".", 1)[0] if "." in qualified_name else ""
+
+
 class ImplicitRefTracker:
     def __init__(self):
         self.known_refs = set()
@@ -22,19 +40,148 @@ class ImplicitRefTracker:
         self.traced_by_file = {}
         self._traced_by_basename = {}
         self._coverage_by_basename = {}
+        # Name patterns reached through ``self``/``cls`` or a class object:
+        # (regex, confidence, pattern, owner class). They apply to members of
+        # that class and of its subclasses in any module.
+        self._class_patterns = []
+        self._subclasses_of = {}
+        # Reflection over a module object (``dir(module)``, ``vars(module)``,
+        # ``inspect.getmembers(module)``), resolved once all modules are known.
+        # A name filter is (issubclass bases, name patterns); empty means none.
+        # reflective_params: (function, positional index) -> {name filter}
+        self.reflective_params = {}
+        # module_call_args: (callee, positional index, imported name)
+        self.module_call_args = set()
+        # reflected_modules: {(imported name, name filter)}
+        self.reflected_modules = set()
 
     def __getattr__(self, name):
         if name == "known_qualified_refs":
             self.known_qualified_refs = set()
             return self.known_qualified_refs
+        defaults = {
+            "_class_patterns": list,
+            "_subclasses_of": dict,
+            "reflective_params": dict,
+            "module_call_args": set,
+            "reflected_modules": set,
+        }
+        if name in defaults:
+            value = defaults[name]()
+            setattr(self, name, value)
+            return value
         raise AttributeError(
             f"'{type(self).__name__}' object has no attribute '{name}'"
         )
 
     def add_pattern_ref(self, pattern, confidence, source_module=None):
+        if not is_specific_name_pattern(pattern):
+            return
         self.pattern_refs.append((pattern, confidence))
         regex = _compile_pattern_ref(pattern)
         self._compiled_patterns.append((regex, confidence, pattern, source_module))
+
+    def add_class_pattern_ref(self, pattern, confidence, owner_class):
+        if not owner_class or not is_specific_name_pattern(pattern):
+            return
+        entry = (_compile_pattern_ref(pattern), confidence, pattern, owner_class)
+        if any(existing[1:] == entry[1:] for existing in self._class_patterns):
+            return
+        self._class_patterns.append(entry)
+
+    def set_class_hierarchy(self, children_of):
+        """Record direct subclasses so class-scoped patterns reach overrides."""
+        closure = {}
+        for owner in {entry[3] for entry in self._class_patterns}:
+            seen = set()
+            stack = list(children_of.get(owner, ()))
+            while stack:
+                child = stack.pop()
+                if child in seen:
+                    continue
+                seen.add(child)
+                stack.extend(children_of.get(child, ()))
+            closure[owner] = seen
+        self._subclasses_of = closure
+
+    def merge(self, other) -> None:
+        """Fold the tracker a worker process returned into this one.
+
+        Workers fill their own module-level tracker, so patterns found while
+        visiting files in a process pool reach the parent only through here.
+        """
+        if other is None or other is self:
+            return
+        self.known_refs.update(getattr(other, "known_refs", ()) or ())
+        self.known_qualified_refs.update(
+            getattr(other, "known_qualified_refs", ()) or ()
+        )
+        seen = {
+            (entry[2], entry[1], entry[3] if len(entry) > 3 else None)
+            for entry in self._compiled_patterns
+        }
+        for entry in getattr(other, "_compiled_patterns", ()) or ():
+            source_module = entry[3] if len(entry) > 3 else None
+            key = (entry[2], entry[1], source_module)
+            if key in seen:
+                continue
+            seen.add(key)
+            self.pattern_refs.append((entry[2], entry[1]))
+            self._compiled_patterns.append(
+                (entry[0], entry[1], entry[2], source_module)
+            )
+        for entry in getattr(other, "_class_patterns", ()) or ():
+            self.add_class_pattern_ref(entry[2], entry[1], entry[3])
+        for key, filters in (getattr(other, "reflective_params", None) or {}).items():
+            self.reflective_params.setdefault(key, set()).update(filters)
+        self.module_call_args.update(getattr(other, "module_call_args", ()) or ())
+        self.reflected_modules.update(getattr(other, "reflected_modules", ()) or ())
+
+    def reset_for_worker_file(self) -> None:
+        """Start a pool worker's file with an empty tracker.
+
+        The parent merges each returned tracker, so a worker only needs what
+        the current file adds; carrying earlier files would re-send them.
+        """
+        self.known_refs = set()
+        self.known_qualified_refs = set()
+        self.pattern_refs = []
+        self._compiled_patterns = []
+        self.f_string_patterns = {}
+        self.coverage_hits = set()
+        self.covered_files_lines = {}
+        self.traced_calls = set()
+        self.traced_by_file = {}
+        self._traced_by_basename = {}
+        self._coverage_by_basename = {}
+        self._class_patterns = []
+        self._subclasses_of = {}
+        self.reflective_params = {}
+        self.module_call_args = set()
+        self.reflected_modules = set()
+
+    def reset_dynamic_refs(self) -> None:
+        self._class_patterns.clear()
+        self._subclasses_of.clear()
+        self.reflective_params.clear()
+        self.module_call_args.clear()
+        self.reflected_modules.clear()
+
+    def _class_pattern_match(self, definition):
+        if not self._class_patterns:
+            return None
+        owner = _owner_of(str(getattr(definition, "name", "") or ""))
+        if not owner:
+            return None
+        simple_name = definition.simple_name
+        for regex, confidence, pattern, owner_class in self._class_patterns:
+            if owner != owner_class and owner not in self._subclasses_of.get(
+                owner_class, ()
+            ):
+                continue
+            if regex.match(simple_name):
+                return confidence, pattern
+        return None
 
     def should_mark_as_used(self, definition):
         if getattr(definition, "name", None) in self.known_qualified_refs:
@@ -53,6 +200,11 @@ class ImplicitRefTracker:
                 continue
             if regex.match(simple_name):
                 return True, confidence, f"pattern '{pattern}'"
+
+        class_match = self._class_pattern_match(definition)
+        if class_match is not None:
+            confidence, pattern = class_match
+            return True, confidence, f"pattern '{pattern}'"
 
         def_file = str(definition.filename)
         def_line = definition.line

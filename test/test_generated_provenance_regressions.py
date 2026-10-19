@@ -2,6 +2,9 @@
 
 import pytest
 
+from test.fixture_paths import make_fixture_directory
+from skylos.core.safe_cache_io import write_text_no_symlink
+
 from skylos.core.generated_files import (
     classify_generated_file,
     partition_generated_files,
@@ -136,8 +139,10 @@ def test_globstar_only_crosses_slashes_at_component_boundaries(
     tmp_path, pattern, relative, vendored
 ):
     path = tmp_path / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("def unused():\n    return 1\n")
+    path.resolve().relative_to(tmp_path.resolve())
+    make_fixture_directory(tmp_path, path.parent.relative_to(tmp_path))
+    if not write_text_no_symlink(path, "def unused():\n    return 1\n"):
+        raise OSError("cannot safely create generated-pattern fixture")
     (tmp_path / ".gitattributes").write_text(f"{pattern} linguist-vendored\n")
     assert classify_generated_file(path, tmp_path) == (
         "linguist_vendored" if vendored else None

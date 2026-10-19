@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.core.generated_files import (
     REASON_BUNDLE,
     REASON_LINGUIST_GENERATED,
@@ -19,9 +21,7 @@ from skylos.visitors.languages.typescript import scan_typescript_file
 
 
 def _metrics(tmp_path, relative, source):
-    path = tmp_path / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    path = write_fixture(tmp_path, relative, source, overwrite=True)
     rows = scan_typescript_file(str(path))[6]
     return {
         (row["rule_id"], row["name"]): row["value"]

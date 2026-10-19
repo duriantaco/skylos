@@ -9,6 +9,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.registration_liveness import (
+    find_method_registered_targets,
+    find_patched_instance_methods,
+    find_registered_decorator_targets,
+)
+from skylos.deadcode.string_references import (
+    find_dynamic_module_attribute_targets,
+)
 from skylos.deadcode.framework_liveness import find_framework_entrypoint_targets
 from skylos.deadcode.external_protocols import find_external_protocol_callbacks
 from skylos.analysis.ast_cache import releases_python_ast_cache
@@ -109,6 +117,7 @@ def apply_dead_code_liveness(
     files: Iterable[str | Path] | None = None,
     *,
     exclude_folders: Iterable[str] | None = None,
+    module_names: dict[str, str] | None = None,
 ) -> LivenessReport:
 
     report = LivenessReport()
@@ -140,6 +149,16 @@ def apply_dead_code_liveness(
         _mark(target, reason, report)
     for target in find_literal_plugin_registry_targets(definitions, parsed_files):
         _mark(target, "literal_plugin_registry", report)
+    for target in find_dynamic_module_attribute_targets(definitions, parsed_files):
+        _mark(target, "dynamic_module_attribute", report)
+    for target in find_registered_decorator_targets(
+        definitions, parsed_files, module_names
+    ):
+        _mark(target, "registered_by_decorator", report)
+    for target in find_method_registered_targets(definitions, parsed_files):
+        _mark(target, "registered_by_decorator", report)
+    for target in find_patched_instance_methods(definitions, parsed_files):
+        _mark(target, "patched_into_external_module", report)
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
     _rescue_unique_external_attr_calls(classes, class_methods, attr_calls, report)
     return report
