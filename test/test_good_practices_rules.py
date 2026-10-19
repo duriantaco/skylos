@@ -36,6 +36,9 @@ def _run_policy_cli(monkeypatch, capsys, root, *args) -> dict:
             "json",
             "--no-upload",
             "--no-provenance",
+            # Repo policy is measured, not listed, by default; these cases
+            # check detection, so they ask for every check.
+            "--all-advice",
             *args,
         ],
     )

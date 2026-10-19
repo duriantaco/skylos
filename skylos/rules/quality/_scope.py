@@ -94,6 +94,18 @@ def is_non_production_python(filename, project_root=None) -> bool:
     return is_sample_or_build_python(filename, project_root)
 
 
+def is_non_production_function_scope(context) -> bool:
+    """Function metrics judge shipped code, as the design and size rules do."""
+    filename = context.get("filename") if isinstance(context, dict) else None
+    if not filename:
+        return False
+    root = context.get("project_root")
+    # Scope depends on current source, pytest configuration and package
+    # declarations. A path-only cache survives changes to all of those.
+    # The underlying source/config readers already cache by file metadata.
+    return is_non_production_python(filename, root)
+
+
 def is_sample_or_build_python(filename, project_root=None) -> bool:
     """Examples, benchmarks, documentation builds and packaging scripts.
 
@@ -102,19 +114,38 @@ def is_sample_or_build_python(filename, project_root=None) -> bool:
     """
     if not filename:
         return False
-    if project_root is None and Path(str(filename)).is_absolute():
+    path = Path(str(filename))
+    if project_root is not None and not path.is_absolute():
+        path = Path(str(project_root)) / path
+    if project_root is None and path.is_absolute():
         # Without a root, an ancestor folder of the checkout is not evidence.
         return False
-    if get_non_library_dir_kind(filename, project_root) in {"example", "benchmark"}:
-        return True
+    conventional_sample = get_non_library_dir_kind(path, project_root) in {
+        "example",
+        "benchmark",
+    }
     # Documentation builds and the packaging script run only at build time.
     try:
         relative = (
-            Path(str(filename)).resolve().relative_to(Path(str(project_root)).resolve())
+            path.resolve().relative_to(Path(str(project_root)).resolve())
             if project_root is not None
-            else Path(str(filename))
+            else path
         )
     except (OSError, ValueError):
         return False
     parts = [part.lower() for part in relative.parts]
-    return parts == ["setup.py"] or (len(parts) > 1 and parts[0] in {"doc", "docs"})
+    if parts == ["setup.py"]:
+        return True
+    conventional_docs = len(parts) > 1 and parts[0] in {"doc", "docs"}
+    if not conventional_sample and not conventional_docs:
+        return False
+    if project_root is None:
+        return True
+    # Use the same positive package/project evidence as advice presentation:
+    # shipped src/<pkg>/bench and explicitly scanned nested apps remain code.
+    # The lazy import avoids a dependency during rule-module initialisation.
+    from skylos.reporting.advice_scope import advice_source_context
+
+    return advice_source_context(
+        {"rule_id": "SKY-Q301", "file": str(path), "line": 1}, project_root
+    ) in {"example", "profiling", "tooling"}

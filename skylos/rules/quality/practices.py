@@ -14,6 +14,7 @@ from skylos.rules.quality._receivers import (
     context_method_kinds,
     possible_method_receiver,
 )
+from skylos.rules.quality._scope import is_sample_or_build_python
 from skylos.rules.quality._typing import (
     comment_contract,
     is_typing_test_path,
@@ -1463,6 +1464,32 @@ def _literal_public_exports(module):
     return exports
 
 
+# pylint's default ignored-argument-names: a placeholder the body never reads.
+_PLACEHOLDER_NAME = re.compile(r"_.*|ignored_.*|unused_.*")
+
+
+def _unused_placeholders(function, args) -> set[str]:
+    """Parameters named as placeholders and never read: nothing to annotate."""
+    candidates = {arg.arg for arg in args if _PLACEHOLDER_NAME.fullmatch(arg.arg)}
+    if not candidates:
+        return set()
+    read = {
+        node.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Store)
+    }
+    return candidates - read
+
+
+def _accessor_mutator(decorator) -> bool:
+    """``@<property>.setter`` / ``.deleter``: the protocol discards the result."""
+    return (
+        isinstance(decorator, ast.Attribute)
+        and decorator.attr in {"setter", "deleter"}
+        and isinstance(decorator.value, ast.Name)
+    )
+
+
 def _inferable_none_procedure(function):
     """A concrete procedure has no value-return contract left to discover.
 
@@ -1470,7 +1497,9 @@ def _inferable_none_procedure(function):
     placeholders, or returned calls. Explicit project typing policy still
     takes precedence over this source-local precision check.
     """
-    if function.decorator_list:
+    if function.decorator_list and not all(
+        _accessor_mutator(decorator) for decorator in function.decorator_list
+    ):
         return False
     body = [statement for statement in function.body if not (
         isinstance(statement, ast.Expr)
@@ -1632,6 +1661,16 @@ class TypeAnnotationPracticeRule(SkylosRule):
             source if isinstance(source, str) else "",
             reader=context.get("typing_source_reader", context.get("receiver_source_reader")),
         )
+        sample_or_build = is_sample_or_build_python(
+            filename, context.get("project_root")
+        )
+        if (
+            sample_or_build
+            and policy.require_complete is not True
+            and policy.require_partial is not True
+        ):
+            # Examples, docs builds and packaging scripts are not public API.
+            return None
         kinds = context_method_kinds(node, context)
         receivers = {
             # Do not prescribe annotation of a possible implicit receiver.
@@ -1685,6 +1724,10 @@ class TypeAnnotationPracticeRule(SkylosRule):
                 continue
             args = parameters(function)
             typed_comments, return_comment = comments[id(function)]
+            required = policy.require_complete is True or (
+                policy.require_partial is True
+                and _has_signature_typing_intent(function, args, comment_lines)
+            )
             missing_params = [
                 arg.arg
                 for arg in args
@@ -1701,10 +1744,6 @@ class TypeAnnotationPracticeRule(SkylosRule):
             coverage["missing_parameter_annotations"] += len(missing_params)
             coverage["missing_return_annotations"] += missing_return
             coverage["definitions_with_supplied_contract"] += supplied
-            required = policy.require_complete is True or (
-                policy.require_partial is True
-                and _has_signature_typing_intent(function, args, comment_lines)
-            )
             explicitly_allowed = (
                 policy.require_complete is not True
                 and policy.require_partial is False
@@ -1712,12 +1751,21 @@ class TypeAnnotationPracticeRule(SkylosRule):
             optional = (
                 self.coverage_advice
                 and not explicitly_allowed
+                and not sample_or_build
                 and id(function) in evidence.boundary_ids
                 and not supplied
             )
             if not required and not optional:
                 coverage["unreported_missing_definitions"] += incomplete
                 continue
+            # Placeholder naming can limit optional suggestions; it cannot
+            # override an applicable implementation-annotation requirement.
+            # Coverage above still counts the actual missing annotations.
+            if not required:
+                unused_placeholders = _unused_placeholders(function, args)
+                missing_params = [
+                    name for name in missing_params if name not in unused_placeholders
+                ]
             before = len(findings)
             if missing_params:
                 findings.append(
@@ -1764,6 +1812,12 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
+            for finding in findings[before:]:
+                finding["annotation_evidence"] = {
+                    "version": 1,
+                    "required": required,
+                    "source": "annotation_policy" if required else "api_coverage",
+                }
             if incomplete and len(findings) == before:
                 coverage["unreported_missing_definitions"] += 1
 
@@ -1783,6 +1837,7 @@ class FrameworkPracticeRule(SkylosRule):
             return None
 
         findings = []
+        response_contracts = None
         guarded_routers = _guarded_router_names(node)
         mock_patch_decorators = _mock_patch_decorators(node)
         module_functions = {
@@ -1810,7 +1865,14 @@ class FrameworkPracticeRule(SkylosRule):
             if not route_decorators:
                 continue
 
-            if any(_is_fastapi_route(decorator) for decorator in route_decorators):
+            if response_contracts is None:
+                from skylos.rules.quality._framework_practices import FrameworkResponseContracts
+
+                response_contracts = FrameworkResponseContracts(node, context)
+            if any(
+                response_contracts.is_fastapi_route(decorator)
+                for decorator in route_decorators
+            ):
                 has_response_contract = function.returns is not None or any(
                     _decorator_has_response_contract(decorator)
                     for decorator in route_decorators
