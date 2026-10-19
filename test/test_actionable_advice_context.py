@@ -23,7 +23,7 @@ def analyze(rule, code, *, root=None, filename="app.py"):
 
 
 def test_literal_exports_distinguish_internal_helpers_and_public_methods():
-    findings = analyze(TypeAnnotationPracticeRule(), '''
+    findings = analyze(TypeAnnotationPracticeRule(coverage_advice=True), '''
         __all__ = ("Published", "published")
         def internal(value: str):
             return unknown(value)
@@ -50,9 +50,9 @@ def test_literal_exports_distinguish_internal_helpers_and_public_methods():
     '__all__ = [*BASE_EXPORTS, "Published"]',
     '__all__ = ["Published"]\nexports_alias = __all__',
 ])
-def test_uncertain_exports_do_not_hide_unresolved_public_contracts(exports):
+def test_uncertain_exports_do_not_establish_optional_api_boundaries(exports):
     code = exports + '\ndef internal(value: str):\n    return unknown(value)\n'
-    assert [row["name"] for row in analyze(TypeAnnotationPracticeRule(), code)] == ["internal"]
+    assert analyze(TypeAnnotationPracticeRule(coverage_advice=True), code) == []
 
 
 @pytest.mark.parametrize("import_statement", [
@@ -67,11 +67,10 @@ def test_wildcard_import_cannot_prove_a_complete_literal_export_surface(import_s
         def published(value: str):
             return unknown(value)
     '''
-    baseline = analyze(TypeAnnotationPracticeRule(), code)
+    baseline = analyze(TypeAnnotationPracticeRule(coverage_advice=True), code)
     assert [row["name"] for row in baseline] == ["published"]
-    uncertain = analyze(TypeAnnotationPracticeRule(), textwrap.dedent(code) + "\n" + import_statement + "\n")
-    assert {row["name"] for row in uncertain} == {"internal", "published"}
-    assert all(row["rule_id"] == "SKY-T102" for row in uncertain)
+    uncertain = analyze(TypeAnnotationPracticeRule(coverage_advice=True), textwrap.dedent(code) + "\n" + import_statement + "\n")
+    assert uncertain == []
 
 
 @pytest.mark.parametrize("body", [
@@ -83,8 +82,8 @@ def test_wildcard_import_cannot_prove_a_complete_literal_export_surface(import_s
     'class Nested:\n    def other(self):\n        yield 1\nprint(value)',
 ])
 def test_obvious_none_procedure_does_not_require_redundant_return_advice(body):
-    code = 'def procedure(value: str):\n' + textwrap.indent(body, '    ')
-    assert analyze(TypeAnnotationPracticeRule(), code) == []
+    code = '__all__ = ["procedure"]\ndef procedure(value: str):\n' + textwrap.indent(body, '    ')
+    assert analyze(TypeAnnotationPracticeRule(coverage_advice=True), code) == []
 
 
 @pytest.mark.parametrize("body", [
@@ -97,16 +96,17 @@ def test_obvious_none_procedure_does_not_require_redundant_return_advice(body):
     '...',
 ])
 def test_unknown_value_generator_and_extension_contracts_remain_visible(body):
-    code = 'def public_hook(value: str):\n' + textwrap.indent(body, '    ')
-    assert [row["rule_id"] for row in analyze(TypeAnnotationPracticeRule(), code)] == ["SKY-T102"]
+    code = '__all__ = ["public_hook"]\ndef public_hook(value: str):\n' + textwrap.indent(body, '    ')
+    assert [row["rule_id"] for row in analyze(TypeAnnotationPracticeRule(coverage_advice=True), code)] == ["SKY-T102"]
 
 
-def test_decorated_none_procedure_keeps_unknown_decorator_contract():
+def test_decorated_none_procedure_keeps_explicit_annotation_requirement(tmp_path):
+    (tmp_path / "mypy.ini").write_text("[mypy]\nfiles = app.py\ndisallow_untyped_defs = True\n")
     assert [row["rule_id"] for row in analyze(TypeAnnotationPracticeRule(), '''
         @unknown_decorator
         def procedure(value: str):
             print(value)
-    ''')] == ["SKY-T102"]
+    ''', root=tmp_path)] == ["SKY-T102"]
 
 
 def test_explicit_annotation_policy_still_requires_none_annotation(tmp_path):

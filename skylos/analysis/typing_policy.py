@@ -1,14 +1,16 @@
 """Source-only annotation requirements from a project's declared mypy policy.
 
 This is an applicability check for T101/T102, not a replacement type checker.
-Unknown settings preserve source-local partial-signature advice. They never
-establish that security analysis or an entire file can be skipped.
+Only a proved, applicable requirement enables default annotation advice.
+Unknown settings do not establish an annotation requirement or authorize
+skipping security analysis or an entire file.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
 import configparser
+from dataclasses import dataclass
 import fnmatch
 from functools import lru_cache
 import io
@@ -37,12 +39,15 @@ _NEUTRAL_FLAGS = frozenset({
     "--no-color-output", "--install-types", "--non-interactive",
     "--incremental", "--no-incremental", "--sqlite-cache", "--no-sqlite-cache",
     "--warn-unused-configs", "--no-warn-unused-configs",
+    "--check-untyped-defs", "--no-check-untyped-defs",
 })
 _NEUTRAL_VALUE_FLAGS = frozenset({
     "--junit-xml", "--cache-dir", "--junit-format", "--html-report",
     "--txt-report", "--xml-report", "--linecount-report", "--linecoverage-report",
     "--lineprecision-report", "--any-exprs-report", "--cobertura-xml-report",
 })
+# Literal checker contexts do not change path selection or annotation policy.
+_CONTEXT_VALUE_FLAGS = frozenset({"--platform", "--python-version"})
 _STRICT_FLAGS = {"disallow_untyped_defs": True, "disallow_incomplete_defs": True}
 _UNTYPED_DEF_FLAGS = frozenset({
     "--disallow-untyped-defs", "--allow-untyped-defs",
@@ -53,6 +58,24 @@ _TOX_POSARGS = re.compile(r"\{posargs(?::([^{}]*))?\}")
 # tox: {[section]key} copies another value from the same tox.ini.
 _TOX_REFERENCE = re.compile(r"\{\[([^\[\]{}]+)\]([^\[\]{}:]+)\}")
 _TOX_REFERENCE_DEPTH = 8
+_DIRECTORY_CHANGE = re.compile(
+    r"(?:^|[;&|])\s*(?:(?:builtin|command)\s+)?(?:cd|pushd|popd)(?:\s|$)",
+    re.MULTILINE,
+)
+
+
+@dataclass(frozen=True)
+class AnnotationPolicy:
+    """Requirements proved for one source file, not type-checker presence.
+
+    Complete requirements cover untyped and partially typed signatures.
+    Partial-only requirements apply only to signatures that already contain
+    annotation/type-comment intent. Only exact ``True`` proves a requirement;
+    ``None`` includes absent declarations and unsupported or unknown scope.
+    """
+
+    require_complete: bool | None = None
+    require_partial: bool | None = None
 
 
 def _read(root, relative, reader):
@@ -261,17 +284,31 @@ def _command_targets(text, config_name):
             flag = token.split("=", 1)[0]
             if token == "--config-file":
                 index += 1
-                if index >= len(tokens) or tokens[index] not in {config_name, "./" + config_name}:
+                if (
+                    config_name is None
+                    or index >= len(tokens)
+                    or tokens[index] not in {config_name, "./" + config_name}
+                ):
                     options = None
                     break
             elif token.startswith("--config-file="):
-                if token.split("=", 1)[1] not in {config_name, "./" + config_name}:
+                if config_name is None or token.split("=", 1)[1] not in {config_name, "./" + config_name}:
                     options = None
                     break
             elif token == "--strict":
                 strict = True
             elif token in _UNTYPED_DEF_FLAGS:
                 options.update(_options({token[2:]: True}))
+            elif flag in _CONTEXT_VALUE_FLAGS:
+                if "=" in token:
+                    value = token.split("=", 1)[1]
+                else:
+                    index += 1
+                    value = tokens[index] if index < len(tokens) else ""
+                pattern = r"[A-Za-z0-9_][A-Za-z0-9_-]*" if flag == "--platform" else r"\d+\.\d+"
+                if not re.fullmatch(pattern, value):
+                    options = None
+                    break
             elif token in _NEUTRAL_FLAGS or flag in _NEUTRAL_VALUE_FLAGS and "=" in token:
                 pass
             elif token in _NEUTRAL_VALUE_FLAGS:
@@ -291,10 +328,12 @@ def _command_targets(text, config_name):
             # mypy applies --strict first; explicit flags override it.
             options = {**_STRICT_FLAGS, **options}
         commands.append((targets, options))
-    return commands
+    # A multiline shell block shares directory state. Its later mypy line
+    # must not be interpreted using the root directory after a cd/pushd/popd.
+    return [([], None)] if commands and _DIRECTORY_CHANGE.search(text) else commands
 
 
-def _tox_commands(text):
+def _tox_commands(text, root):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string(text)
 
@@ -311,12 +350,49 @@ def _tox_commands(text):
 
         return _TOX_REFERENCE.sub(replace, value)
 
+    def runs_at_root(section):
+        directories = []
+        for option in ("change_dir", "changedir"):
+            if parser.has_option(section, option):
+                directories.append(expand(parser.get(section, option), 0).strip())
+            elif section.startswith("testenv:") and parser.has_option("testenv", option):
+                directories.append(expand(parser.get("testenv", option), 0).strip())
+        if not directories:
+            return True
+        for directory in directories:
+            directory = directory.replace("{toxinidir}", str(root)).replace("{tox_root}", str(root))
+            if not directory or any(token in directory for token in "${}~"):
+                return False
+            path = Path(directory)
+            if path != Path(".") and path != root:
+                return False
+        return True
+
     return [
-        expand(parser.get(section, option), 0)
+        (expand(parser.get(section, option), 0), runs_at_root(section))
         for section in parser.sections()
         for option in ("commands", "commands_pre", "commands_post")
         if parser.has_option(section, option)
     ]
+
+
+def _workflow_runs_at_root(workflow, job, step):
+    """Prove the effective run directory before interpreting relative targets."""
+    directory = "."
+    for owner in (workflow, job):
+        defaults = owner.get("defaults", {})
+        if not isinstance(defaults, dict):
+            return False
+        run = defaults.get("run", {})
+        if not isinstance(run, dict):
+            return False
+        if "working-directory" in run:
+            directory = run["working-directory"]
+    directory = step.get("working-directory", directory)
+    # Expressions, absolute paths and non-root relative directories need a
+    # different source/config selection context; do not reinterpret them as
+    # commands executed at the repository root.
+    return isinstance(directory, str) and bool(directory) and Path(directory) == Path(".")
 
 
 def _project_commands(root, reader, config_name):
@@ -344,7 +420,13 @@ def _project_commands(root, reader, config_name):
         except FileNotFoundError:
             continue
         if name == "tox.ini":
-            commands = _tox_commands(text)
+            for command, at_root in _tox_commands(text, root):
+                commands = _command_targets(command, config_name)
+                if at_root:
+                    result.extend(commands)
+                elif commands:
+                    result.append(([], None))
+            continue
         elif name == "Makefile":
             commands = [line[1:].lstrip("@-") for line in text.splitlines() if line.startswith("\t")]
         else:
@@ -356,13 +438,18 @@ def _project_commands(root, reader, config_name):
                 raise ValueError("typing workflow unavailable") from exc
             if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs", {}), dict):
                 raise ValueError("invalid typing workflow")
-            commands = [
-                step["run"]
-                for job in workflow.get("jobs", {}).values()
-                if isinstance(job, dict) and isinstance(job.get("steps", []), list)
-                for step in job.get("steps", [])
-                if isinstance(step, dict) and isinstance(step.get("run"), str)
-            ]
+            for job in workflow.get("jobs", {}).values():
+                if not isinstance(job, dict) or not isinstance(job.get("steps", []), list):
+                    continue
+                for step in job.get("steps", []):
+                    if not isinstance(step, dict) or not isinstance(step.get("run"), str):
+                        continue
+                    commands = _command_targets(step["run"], config_name)
+                    if _workflow_runs_at_root(workflow, job, step):
+                        result.extend(commands)
+                    elif commands:
+                        result.append(([], None))
+            continue
         for command in commands:
             result.extend(_command_targets(command, config_name))
     return result
@@ -380,8 +467,11 @@ def _parse_project_policy(root, reader):
     try:
         loaded = _load(root, reader)
         if loaded is None:
-            return None
-        config, overrides, config_name = loaded
+            # A checked-in invocation can declare strict annotation policy
+            # without a mypy configuration file.
+            config, overrides, config_name = {}, [], None
+        else:
+            config, overrides, config_name = loaded
         commands = _project_commands(root, reader, config_name)
     except _POLICY_ERRORS:
         return None
@@ -448,13 +538,10 @@ def _project_policy(root, reader):
     return policy
 
 
-def annotation_requirement(filename, project_root, source="", *, reader=None):
-    """True: require annotations; False: explicit opt-out; None: source-local.
-
-    Default file selection establishes where project-wide requirements apply.
-    Outside that selection, partial public contracts still apply independently.
-    Unsupported policy likewise retains source-local advice.
-    """
+def _annotation_policy(filename, project_root, source, reader):
+    """Return structured requirements and the historical tri-state answer."""
+    inline_policy = AnnotationPolicy()
+    inline_required = False
     try:
         inline = {}
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -467,18 +554,24 @@ def annotation_requirement(filename, project_root, source="", *, reader=None):
                 values[key] = value.strip() if separator else True
             inline.update(_options(values))
         if inline.get("ignore_errors"):
-            return False
+            return AnnotationPolicy(False, False), False
         if inline.get("disallow_untyped_defs") is True:
-            return True
+            # Keep the historical wrapper's immediate True answer, while the
+            # structured policy still checks applicable ignore_errors below.
+            inline_required = True
         if inline.get("disallow_untyped_defs") is False and inline.get("disallow_incomplete_defs") is False:
-            return False
+            return AnnotationPolicy(False, False), False
+        inline_policy = AnnotationPolicy(
+            inline.get("disallow_untyped_defs"),
+            True if inline_required else inline.get("disallow_incomplete_defs"),
+        )
         if project_root is None:
-            return None
+            return inline_policy, True if inline_required else None
         root = Path(project_root).absolute()
         relative = Path(filename).absolute().relative_to(root)
         policy = _project_policy(root, reader)
         if policy is None:
-            return None
+            return inline_policy, True if inline_required else None
         config, overrides, commands = policy
         module = _module_name(relative, config, root, reader) if overrides else ""
         settings = _options(config)
@@ -491,10 +584,20 @@ def annotation_requirement(filename, project_root, source="", *, reader=None):
                     matches.append(("*" not in pattern, len(pattern.split(".")), override))
         # Without a checked-in invocation, only the config's own default
         # selection (a bare ``mypy`` run) can establish where it applies.
-        decisions = []
+        decisions, requirements = [], []
         for targets, cli_options in commands or [([], {})]:
             if cli_options is None:
                 decisions.append(None)
+                # An unknown command cannot prove a new requirement; it
+                # must not bypass a known module/global diagnostic opt-out.
+                effective = dict(settings)
+                for _, _, override in sorted(matches, key=lambda item: item[:2]):
+                    effective.update(_options(override))
+                effective.update(inline)
+                requirements.append(
+                    AnnotationPolicy(False, False)
+                    if effective.get("ignore_errors") else inline_policy
+                )
                 continue
             effective = {**settings, **cli_options}
             for _, _, override in sorted(matches, key=lambda item: item[:2]):
@@ -508,6 +611,7 @@ def annotation_requirement(filename, project_root, source="", *, reader=None):
             # unless disallow_untyped_defs still rejects every untyped def.
             if effective.get("ignore_errors") or partial is False and required is not True:
                 decisions.append(False)
+                requirements.append(AnnotationPolicy(False, False))
                 continue
             # Explicit command targets replace default discovery settings.
             selection = targets or _sequence(config.get("files", []))
@@ -519,12 +623,44 @@ def annotation_requirement(filename, project_root, source="", *, reader=None):
             ):
                 # mypy with neither targets nor files checks nothing.
                 decisions.append(None)
+                requirements.append(inline_policy)
             else:
                 decisions.append(True if required is True else None)
+                requirements.append(
+                    AnnotationPolicy(required, True if required is True else partial)
+                )
+        def combine(attribute):
+            values = [getattr(requirement, attribute) for requirement in requirements]
+            if True in values:
+                return True
+            return None if None in values else False
+
+        requirement = AnnotationPolicy(combine("require_complete"), combine("require_partial"))
         # Every checked-in invocation can impose a requirement. Unknown scope
-        # preserves the function's own contract rather than proving an opt-out.
-        if True in decisions:
-            return True
-        return None if None in decisions else False
+        # cannot establish an additional annotation requirement.
+        if inline_required or True in decisions:
+            return requirement, True
+        return requirement, None if None in decisions else False
     except (*_POLICY_ERRORS, tokenize.TokenError):
-        return None
+        return inline_policy, True if inline_required else None
+
+
+def annotation_policy(filename, project_root, source="", *, reader=None):
+    """Return complete and partial-only requirements for this file.
+
+    Mypy presence and ``check_untyped_defs`` alone impose neither requirement.
+    A partial-only requirement must additionally be checked against each
+    signature's actual annotations/type comments by the caller. Unknown scope
+    never establishes project-wide enforcement.
+    """
+    return _annotation_policy(filename, project_root, source, reader)[0]
+
+
+def annotation_requirement(filename, project_root, source="", *, reader=None):
+    """Legacy tri-state: complete requirement, explicit opt-out, or unknown.
+
+    This preserves the pre-existing API. New callers must use
+    :func:`annotation_policy` to distinguish an applicable partial-only policy
+    from absent or unknown policy; both historically returned ``None`` here.
+    """
+    return _annotation_policy(filename, project_root, source, reader)[1]

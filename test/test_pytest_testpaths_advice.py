@@ -45,7 +45,8 @@ def _config(root, testpaths, *, legacy=False, norecursedirs=None):
     return _write(
         root, "pyproject.toml",
         f'{table}\npython_files = ["*.py"]\ntestpaths = {json.dumps(testpaths)}\n'
-        + excludes,
+        + excludes
+        + '\n[tool.mypy]\nfiles = ["app"]\ndisallow_untyped_defs = true\n',
     )
 
 

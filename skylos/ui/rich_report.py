@@ -1082,6 +1082,11 @@ def render_results(
             "[muted]Architecture advice describes maintainability; gate decisions use "
             "your configured limits. To list signals, add --format concise.[/muted]"
         )
+    from skylos.reporting.typing_coverage import typing_coverage_text
+
+    annotation_summary = typing_coverage_text(summ)
+    if annotation_summary:
+        console.print(escape(annotation_summary), style="muted")
     if result.get("quality"):
         console.print(
             "[muted]Quality thresholds: tune in "

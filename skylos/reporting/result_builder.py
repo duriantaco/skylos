@@ -205,6 +205,13 @@ def build_analysis_result(
         for item in getattr(analyzer, "_maintainability_inventory", [])
         if item.get("file") in measured_paths
     ]
+    from skylos.reporting.typing_coverage import summarize_typing_coverage
+
+    typing_coverage = summarize_typing_coverage(
+        getattr(analyzer, "_annotation_coverage", []), measured_paths=measured_paths
+    )
+    if typing_coverage is not None:
+        result["analysis_summary"]["typing_coverage"] = typing_coverage
     _attach_grade(
         result,
         graded_files,

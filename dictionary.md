@@ -1075,41 +1075,63 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
 
-T101/T102 report incomplete public signatures and missing signatures required
-by an applicable declared mypy annotation policy. A typing import, typed sibling,
-private helper or class attribute alone does not require every public function
-in a module to adopt annotations. Valid function and parameter type comments
+T101/T102 report missing public-signature annotations required by an applicable
+declared mypy policy. `strict` and `disallow_untyped_defs` require complete
+signatures; `disallow_incomplete_defs` applies only to definitions that already
+have signature typing intent. Checker presence, `check_untyped_defs`, a partial
+signature, a typed sibling or a typing import alone establishes no requirement.
+Missing annotations are LOW-priority policy or coverage advice, not type errors.
+Valid function and parameter type comments
 count as contracts alongside inline annotations. Supported mypy settings include
 the standard project config precedence, literal file/directory selections,
 structured module overrides and inline options. Package markers and declared
 package bases determine module identity; directory names alone do not. Checked-in
 literal mypy commands can replace a default file selection, with supported
 allow/disallow annotation flags and `--strict` taking precedence over global
-config; output-only flags do not change scope. Command discovery reads tox
+config; output-only flags and literal `--platform` / `--python-version` values
+do not change file selection. Missing, invalid or dynamic values remain unknown.
+Command discovery reads tox
 command values (including `{posargs:DEFAULT}` defaults and `{[section]key}`
 references), Make recipes and workflow `run` entries; environment names and
-workflow titles do not establish checker scope. A strict setting with neither a
+workflow titles do not establish checker scope. Non-root or unknown Tox/workflow
+working directories and directory-changing shell blocks do not establish
+root-relative selections. A strict setting with neither a
 `files` selection nor a discovered invocation has unknown scope. An explicit
 `allow_incomplete_defs` without a required-annotation setting is an opt-out.
-Unsupported or unresolved policy falls
-back to advice on the function's own partial contract; it does not establish a
-project-wide annotation requirement. Diff comparisons read policy at the base
+An applicable `ignore_errors` also disables annotation-policy advice unless
+the effective inline policy explicitly re-enables diagnostics.
+Unsupported or unresolved policy contributes coverage information rather than
+default per-function advice. Indirect pre-commit hook invocations and non-mypy
+checker policy formats are not resolved by this gate. Diff comparisons read policy at the base
 revision rather than applying the current checkout's policy to old source.
 The rules exclude pytest fixtures resolved from imports and test-support
 helpers reached from a non-root conftest suite when no production importer is
 found; modules imported by a non-test package `__init__` are production code.
 Test folders are judged relative to the project root. A directory named `t`
 alone does not establish that role. Shared helpers
-retain advice. This typing-only scope does not filter security findings.
+retain applicable policy advice. This typing-only scope does not filter security findings.
 
 A complete literal `__all__` limits T101/T102 to the module's exported
-functions and classes. Dynamic or mutated export lists, exported aliases,
-wildcard imports and dynamic namespace access leave the public surface
-uncertain, so the normal public-name checks remain. Concrete procedures with
+functions and classes. Set `[tool.skylos] typing_coverage_advice = true` to opt
+into optional API coverage advice. Optional advice requires a source-declared
+boundary: a stable explicit export or an import-proven interface declaration.
+Public spelling alone, dynamic/mutated exports, unknown decorators and replaced
+owners are insufficient. Complete proven overloads and exact compatible sibling
+stubs can supply the optional caller contract; explicit implementation-annotation
+requirements still take precedence. Inherited/re-exported contracts and arbitrary
+runtime class construction are not resolved by this bounded check.
+Concrete procedures with
 only implicit, bare or literal `None` returns do not receive redundant T102
 advice unless an applicable mypy policy explicitly requires annotations.
 Decorators, generators, abstract placeholders and unknown value returns do not
 establish that inference. Missing parameter annotations remain independent.
+T101/T102 on the same unambiguous function share one human entry, retaining both
+original records in JSON and gate inputs. Coverage is separately disclosed in
+`analysis_summary.typing_coverage` and one terminal summary. Its denominator is
+public source definitions (including overload declarations), not runtime
+callables; explicit missing annotations can coexist with a supplied stub or
+overload contract. `--all-advice` expands generated advice but does not enable
+optional annotation checks; use `typing_coverage_advice` for that opt-in.
 
 Python C303, Q501 and Q702 resolve implicit receivers and distinguish instance,
 class and static methods. Nested functions have their own bindings; captured

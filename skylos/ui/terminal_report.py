@@ -31,6 +31,7 @@ from skylos.reporting.finding_types import (
     iter_result_findings,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
+from skylos.reporting.typing_coverage import typing_coverage_text
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
@@ -164,6 +165,9 @@ def render_pretty_results(
         (f"  {total_files} file{'s' if total_files != 1 else ''} analyzed", "dim"),
     )
     console.print(header)
+    annotation_summary = typing_coverage_text(result.get("analysis_summary"))
+    if annotation_summary:
+        console.print(Text(annotation_summary, style="dim"))
 
     summary = _summary_line(result)
     if summary.plain:

@@ -16,6 +16,7 @@ from skylos.rules.catalog import get_rule_name
 _COMPLEXITY_RULES = ("SKY-Q301", "SKY-Q306")
 _FUNCTION_RULES = (*_COMPLEXITY_RULES, "SKY-C304", "SKY-Q302", "SKY-L028")
 _ARCHITECTURE_RULES = ("SKY-Q802", "SKY-Q803")
+_TYPING_RULES = ("SKY-T101", "SKY-T102")
 _METRIC_NAMES = {
     "SKY-Q301": "Cyclomatic complexity",
     "SKY-Q306": "Cognitive complexity",
@@ -94,6 +95,8 @@ def _rule_id(finding: Mapping) -> str:
 
 
 def _family_name(rule_ids) -> str:
+    if set(rule_ids).issubset(_TYPING_RULES):
+        return "Function annotations"
     if set(rule_ids).issubset(_ARCHITECTURE_RULES):
         return "Module architecture"
     if tuple(rule_ids) == _COMPLEXITY_RULES:
@@ -103,6 +106,10 @@ def _family_name(rule_ids) -> str:
 
 def _metric_line(finding: dict) -> str:
     rule_id = _rule_id(finding)
+    if rule_id == "SKY-T101":
+        return f"{rule_id}: Untyped parameters: {finding.get('value', '')}"
+    if rule_id == "SKY-T102":
+        return f"{rule_id}: Missing return annotation"
     value = finding.get("value")
     if value is None:
         value = finding.get("complexity")
@@ -152,6 +159,8 @@ def _advice_identity(category, finding):
         if rule_id in _FUNCTION_RULES
         else _ARCHITECTURE_RULES
         if rule_id in _ARCHITECTURE_RULES
+        else _TYPING_RULES
+        if rule_id in _TYPING_RULES
         else None
     )
     if (
@@ -160,7 +169,7 @@ def _advice_identity(category, finding):
         or get_finding_type(finding, category) != "advice"
         or complexity_display(finding) is not None
         or finding.get("type")
-        not in (None, "function" if family == _FUNCTION_RULES else "module")
+        not in (None, "module" if family == _ARCHITECTURE_RULES else "function")
     ):
         return None
     files = [finding[field] for field in ("file", "file_path") if finding.get(field)]
@@ -489,7 +498,7 @@ def group_advice_for_display(result) -> list[dict]:
     }
     families = [
         tuple(rule for rule in family if rule in present_rules)
-        for family in (_FUNCTION_RULES, _ARCHITECTURE_RULES)
+        for family in (_FUNCTION_RULES, _ARCHITECTURE_RULES, _TYPING_RULES)
     ]
     shared = {rule: family for family in families if len(family) > 1 for rule in family}
     grouped = {}

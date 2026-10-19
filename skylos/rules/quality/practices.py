@@ -1609,6 +1609,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
     rule_id = "SKY-T101"
     name = "Typed API Surface"
 
+    def __init__(self, *, coverage_advice=False):
+        self.coverage_advice = coverage_advice is True
+
     def visit_node(self, node, context):
         if not isinstance(node, ast.Module):
             return None
@@ -1618,16 +1621,17 @@ class TypeAnnotationPracticeRule(SkylosRule):
         if is_typing_test_path(filename, context.get("project_root"), source=source):
             return None
         lines = source.splitlines(keepends=True) if isinstance(source, str) else []
-        from skylos.analysis.typing_policy import annotation_requirement
+        from skylos.analysis.typing_policy import annotation_policy
+        from skylos.rules.quality._annotation_contract import (
+            annotation_contract_evidence,
+        )
 
-        requirement = annotation_requirement(
+        policy = annotation_policy(
             filename,
             context.get("project_root"),
             source if isinstance(source, str) else "",
             reader=context.get("typing_source_reader", context.get("receiver_source_reader")),
         )
-        if requirement is False:
-            return None
         kinds = context_method_kinds(node, context)
         receivers = {
             # Do not prescribe annotation of a possible implicit receiver.
@@ -1652,16 +1656,35 @@ class TypeAnnotationPracticeRule(SkylosRule):
             if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         fixtures = pytest_fixture_ids(node)
+        evidence = annotation_contract_evidence(
+            node,
+            filename=filename or "",
+            source_lines=lines,
+            method_kinds=kinds,
+            project_root=context.get("project_root"),
+            source_reader=context.get(
+                "typing_source_reader", context.get("receiver_source_reader")
+            ),
+            exported_names=_literal_public_exports(node),
+        )
+        coverage = context.setdefault("annotation_coverage", {})
+        coverage.update(
+            version=1,
+            scope="public_source_definitions",
+            definition_count=0,
+            definitions_with_complete_annotations=0,
+            definitions_missing_annotations=0,
+            missing_parameter_annotations=0,
+            missing_return_annotations=0,
+            definitions_with_supplied_contract=0,
+            unreported_missing_definitions=0,
+        )
         findings = []
         for function, display_name, receiver in functions:
             if id(function) in fixtures:
                 continue
             args = parameters(function)
             typed_comments, return_comment = comments[id(function)]
-            if requirement is not True and not _has_signature_typing_intent(
-                function, args, comment_lines
-            ):
-                continue
             missing_params = [
                 arg.arg
                 for arg in args
@@ -1669,6 +1692,33 @@ class TypeAnnotationPracticeRule(SkylosRule):
                 and arg.annotation is None
                 and arg.arg not in typed_comments
             ]
+            missing_return = function.returns is None and not return_comment
+            incomplete = bool(missing_params or missing_return)
+            supplied = id(function) in evidence.supplied_ids
+            coverage["definition_count"] += 1
+            coverage["definitions_with_complete_annotations"] += not incomplete
+            coverage["definitions_missing_annotations"] += incomplete
+            coverage["missing_parameter_annotations"] += len(missing_params)
+            coverage["missing_return_annotations"] += missing_return
+            coverage["definitions_with_supplied_contract"] += supplied
+            required = policy.require_complete is True or (
+                policy.require_partial is True
+                and _has_signature_typing_intent(function, args, comment_lines)
+            )
+            explicitly_allowed = (
+                policy.require_complete is not True
+                and policy.require_partial is False
+            )
+            optional = (
+                self.coverage_advice
+                and not explicitly_allowed
+                and id(function) in evidence.boundary_ids
+                and not supplied
+            )
+            if not required and not optional:
+                coverage["unreported_missing_definitions"] += incomplete
+                continue
+            before = len(findings)
             if missing_params:
                 findings.append(
                     {
@@ -1691,8 +1741,8 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
-            if function.returns is None and not return_comment and not (
-                requirement is not True and _inferable_none_procedure(function)
+            if missing_return and not (
+                not required and _inferable_none_procedure(function)
             ):
                 findings.append(
                     {
@@ -1713,6 +1763,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
                         "col": function.col_offset,
                     }
                 )
+
+            if incomplete and len(findings) == before:
+                coverage["unreported_missing_definitions"] += 1
 
         return findings or None
 

@@ -177,7 +177,7 @@ def _masked_tree(tree: ast.AST, file, cfg) -> tuple[ast.AST, int]:
 
 
 def _quality_findings(
-    file, prepared: _PreparedPython, cfg, options: _WorkerOptions
+    file, prepared: _PreparedPython, cfg, options: _WorkerOptions, *, annotation_coverage=None
 ) -> tuple[list, dict | None]:
     if not options.full_scan or not options.enable_quality_rules:
         return [], None
@@ -193,12 +193,15 @@ def _quality_findings(
             file,
             cfg,
             project_root=options.project_root,
+            annotation_coverage=annotation_coverage,
             **credential_kwargs,
         )
     except Exception as error:
         # A quality rule failure must not discard the file's security,
         # secret and dead-code results; report the incomplete quality scan.
         logger.debug("Quality analysis failed for %s", file, exc_info=True)
+        if annotation_coverage is not None:
+            annotation_coverage.clear()
         return [], analysis_error_payload(file, error, kind="quality_scan_error")
     if Path(file).suffix == ".pyi":
         findings = [
@@ -396,6 +399,7 @@ def _success_result(
     artifacts: _Artifacts,
     *,
     analysis_error: dict | list[dict] | None = None,
+    annotation_coverage=None,
 ) -> tuple:
     visitor = visitors.visitor
     return (
@@ -427,6 +431,7 @@ def _success_result(
         analysis_error,
         prepared.ignore_rules_by_line,
         bool(getattr(visitor, "has_explicit_all", False)),
+        annotation_coverage or {},
     )
 
 
@@ -472,6 +477,7 @@ def _error_result(file, cfg, error, options: _WorkerOptions) -> tuple:
         ),
         {},
         False,
+        {},
     )
 
 
@@ -503,7 +509,10 @@ def _prepare_python(file, mod, cfg, source: str) -> _PreparedPython:
 
 def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tuple:
     prepared = _prepare_python(file, mod, cfg, source)
-    quality, quality_error = _quality_findings(file, prepared, cfg, options)
+    annotation_coverage = {}
+    quality, quality_error = _quality_findings(
+        file, prepared, cfg, options, annotation_coverage=annotation_coverage
+    )
     danger, danger_error = _danger_findings(file, prepared, options)
     errors = [error for error in (quality_error, danger_error) if error]
     analysis_error = errors[0] if len(errors) == 1 else errors or None
@@ -542,6 +551,7 @@ def _process_python_file(file, mod, cfg, source, options: _WorkerOptions) -> tup
         visitors,
         artifacts,
         analysis_error=analysis_error,
+        annotation_coverage=annotation_coverage,
     )
 
 
