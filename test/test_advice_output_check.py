@@ -45,6 +45,28 @@ def test_checker_recovers_every_metric_and_keeps_risk_records(tmp_path):
     assert report == before
 
 
+def test_checker_verifies_shared_marks_and_keeps_unlisted_records(tmp_path):
+    from skylos.reporting.advice_policy import apply_advice_policy
+
+    report = _report()
+    report["quality"][0]["rule_id"] = "SKY-L027"
+    marked = apply_advice_policy(report, project_root=tmp_path)
+    assert len(marked["quality"]) == 3
+    result = checker.check_report(marked, tmp_path)
+    assert result["shared_listing_verified"]
+    assert result["optional_advice_checks"] > 0
+    assert len(marked["quality"]) == 3
+
+
+def test_checker_rejects_incomplete_versioned_marks(tmp_path):
+    from skylos.reporting.advice_policy import apply_advice_policy
+
+    report = apply_advice_policy(_report(), project_root=tmp_path)
+    report["quality"][0].pop("listing")
+    with pytest.raises(AssertionError, match="unmarked finding"):
+        checker.check_report(report, tmp_path)
+
+
 def test_checker_rejects_a_renderer_that_drops_original_records(monkeypatch, tmp_path):
     monkeypatch.setattr(checker, "combine_advice", lambda rows: [])
     with pytest.raises(AssertionError, match="cannot recover every original"):

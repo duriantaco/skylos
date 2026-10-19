@@ -9,6 +9,8 @@ import json
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.reporting.advice_display import advice_display_counts, combine_advice
 from skylos.reporting.advice_evidence import corroborated
 from skylos.reporting.advice_policy import optional_advice_reason, prepare_advice_view
@@ -169,10 +171,7 @@ def _advice(path):
 
 
 def _write(root, relative, text):
-    path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    return path
+    return write_fixture(root, relative, text, overwrite=True)
 
 
 def test_folder_conventions_need_confirming_file_facts(tmp_path):

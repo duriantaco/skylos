@@ -5,6 +5,8 @@ from copy import deepcopy
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.reporting.advice_display import (
     FileAnnotationDisplay,
     combine_advice,
@@ -30,10 +32,7 @@ BRANCHY = (
 
 
 def _write(root, relative, source):
-    path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
-    return path
+    return write_fixture(root, relative, source, overwrite=True)
 
 
 def _metric_rows(path, root, source=BRANCHY):
