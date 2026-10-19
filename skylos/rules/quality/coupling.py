@@ -286,6 +286,7 @@ def _second_pass_analyze(tree, classes, known_classes):
     definitions = {}
     globals_by_scope = {}
     first_iterators = {}
+    binding_counts = {}
     for scope in ast.walk(tree):
         if not isinstance(scope, scopes):
             continue
@@ -344,6 +345,10 @@ def _second_pass_analyze(tree, classes, known_classes):
         else:
             names = _scope_bindings(scope).names
         bindings[scope] = names
+        if isinstance(
+            scope, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            binding_counts[scope] = _scope_bindings(scope).counts
         definitions[scope] = {}
         globals_by_scope[scope] = set()
     for statement in ast.walk(tree):
@@ -396,6 +401,35 @@ def _second_pass_analyze(tree, classes, known_classes):
                         # binding still represent one dependency family.
                         # Other lexical scopes retain their own identities.
                         identity = candidates[-1]
+                        if binding_counts[scope][parts[0]] != len(candidates):
+                            # An ordinary rebinding is not the old class. For
+                            # eager module/class expressions use their source
+                            # prefix; deferred method bodies see the final scope.
+                            statements = scope.body
+                            if not function_scope:
+                                statement = at
+                                while parents.get(statement) is not scope:
+                                    statement = parents.get(statement)
+                                    if statement is None:
+                                        return None
+                                if statement in statements:
+                                    statements = statements[
+                                        : statements.index(statement) + 1
+                                    ]
+                            direct = [
+                                candidate
+                                for candidate in candidates
+                                if classes[candidate].node in statements
+                            ]
+                            if not direct:
+                                return None
+                            identity = direct[-1]
+                            declaration = classes[identity].node
+                            suffix = statements[statements.index(declaration) + 1 :]
+                            if _scope_bindings(
+                                ast.Module(body=suffix, type_ignores=[])
+                            ).counts[parts[0]]:
+                                return None
                         break
                     if parts[0] in bindings[scope]:
                         return None
@@ -540,6 +574,9 @@ def _needs_scope_resolution(tree):
     classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
     names = {node.name for node in classes}
     if len(names) != len(classes) or any(node not in tree.body for node in classes):
+        return True
+    module_counts = _scope_bindings(tree).counts
+    if any(module_counts[name] != 1 for name in names):
         return True
     for node in ast.walk(tree):
         if isinstance(
