@@ -1750,6 +1750,7 @@ _TYPING_MODULES = frozenset({"typing", "typing_extensions"})
 # list from another definition.
 _SIGNATURE_MARKERS = frozenset({"overload", "override"})
 _BOOL_ANNOTATION_TEXTS = frozenset({"bool", "builtins.bool"})
+_MAX_BOOLEAN_BINDING_DEPTH = 64
 
 
 def _bool_annotation_text(annotation):
@@ -1800,9 +1801,17 @@ class _ModuleCallables:
         self.global_names = defaultdict(set)
         self.nonlocal_names = defaultdict(set)
         self.classes = defaultdict(list)
+        self.functions = defaultdict(list)
         self.assigned = defaultdict(list)
+        self.parameter_names = defaultdict(set)
+        self.binding_counts = defaultdict(int)
+        self.unknown_namespaces = set()
+        self.attribute_writes = defaultdict(list)
+        self.attribute_mutations = []
+        self.attribute_dictionary_writes = []
         self.marker_names = set()
         self.typing_modules = set()
+        self.identity_class_decorators = set()
         self.value_refs = defaultdict(list)
         self.aliases = defaultdict(set)
         self.name_calls = defaultdict(list)
@@ -1816,6 +1825,7 @@ class _ModuleCallables:
         self.receiver_unknown_bindings = set()
         for scope, name, unknown in self._receiver_binding_events:
             key = (self.resolve(name, scope), name)
+            self.binding_counts[key] += 1
             self.receiver_writes.add(key)
             if unknown:
                 self.receiver_unknown_bindings.add(key)
@@ -1856,12 +1866,15 @@ class _ModuleCallables:
             if kind is ast.Attribute:
                 if type(node.ctx) is ast.Load:
                     attribute_loads.append(node)
+                else:
+                    self.attribute_writes[node.attr].append(node)
                 pending.append((node.value, scope, node))
                 continue
             # Decorators, defaults, annotations and class bases run in the
             # enclosing scope; only the body runs in the def's own scope.
             if kind in _FUNCTION_NODES:
                 bound[scope].add(node.name)
+                self.functions[(scope, node.name)].append(node)
                 self._receiver_binding_events.append((scope, node.name, True))
                 self._bind_parameters(node)
                 outer = [*node.decorator_list, node.args]
@@ -1908,6 +1921,7 @@ class _ModuleCallables:
         ]:
             if arg is not None:
                 self.bound[func].add(arg.arg)
+                self.parameter_names[func].add(arg.arg)
 
     def _bind_statement(self, node, kind, scope):
         if kind is ast.Assign or kind is ast.AnnAssign:
@@ -1926,6 +1940,7 @@ class _ModuleCallables:
         elif kind is ast.ImportFrom:
             for alias in node.names:
                 if alias.name == "*":
+                    self.unknown_namespaces.add(scope)
                     continue
                 self.bound[scope].add(alias.asname or alias.name)
                 self._receiver_binding_events.append(
@@ -1937,6 +1952,14 @@ class _ModuleCallables:
                     and alias.name in _SIGNATURE_MARKERS
                 ):
                     self.marker_names.add(alias.asname or alias.name)
+                if (
+                    not node.level
+                    and node.module in _TYPING_MODULES
+                    and alias.name == "final"
+                ):
+                    self.identity_class_decorators.add(
+                        (scope, alias.asname or alias.name)
+                    )
         elif kind is ast.ExceptHandler:
             if node.name:
                 self.bound[scope].add(node.name)
@@ -1953,6 +1976,27 @@ class _ModuleCallables:
             if node.rest:
                 self.bound[scope].add(node.rest)
                 self._receiver_binding_events.append((scope, node.rest, True))
+        elif (
+            kind is ast.Subscript
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "__dict__"
+        ):
+            self.attribute_dictionary_writes.append((node.value.value, node.slice))
+        elif kind is ast.Call and isinstance(node.func, ast.Name):
+            if node.func.id in {"exec", "eval", "globals"}:
+                self.unknown_namespaces.add(self.module)
+                self.unknown_namespaces.add(scope)
+            elif node.func.id in {"locals", "vars"} and not node.args:
+                self.unknown_namespaces.add(scope)
+            elif node.func.id in {"setattr", "delattr", "vars"} and node.args:
+                self.attribute_mutations.append(node)
+        elif kind is ast.Call and isinstance(node.func, ast.Attribute):
+            if (
+                isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "__dict__"
+            ):
+                self.attribute_dictionary_writes.append((node.func.value.value, None))
 
     def resolve(self, name, scope):
         """The scope whose binding ``name`` refers to, or None (builtin)."""
@@ -2064,11 +2108,21 @@ class _ModuleCallables:
 
     def _receiver(self, expr, seen=frozenset(), *, strict=False):
         """(classes, is_class) for a receiver this module can type, else ((), False)."""
+        if strict and len(seen) >= _MAX_BOOLEAN_BINDING_DEPTH:
+            return (), False
         # Call evidence needs a positive identity. Keep the older, broader
         # value-reference lookup for functions whose signatures escape to users.
         if strict and isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
             classes, is_class = self._receiver(expr.func, seen, strict=True)
             return (classes, False) if is_class else ((), False)
+        if strict and isinstance(expr, ast.Attribute):
+            current, depth = expr, 0
+            while isinstance(current, ast.Attribute):
+                depth += 1
+                if depth > _MAX_BOOLEAN_BINDING_DEPTH:
+                    return (), False
+                current = current.value
+            return self._field_receiver(expr, seen)
         if not isinstance(expr, ast.Name) or expr.id in seen:
             return (), False
         scope = self.scope_of.get(expr)
@@ -2126,6 +2180,205 @@ class _ModuleCallables:
             found.extend(classes)
         return tuple(found), False
 
+    def _field_receiver(self, expr, seen):
+        """A stable constructor field can retain its local class annotation.
+
+        Unknown writes, descriptors and replacement assignments retain the
+        signature-only policy. This does not guess types from attribute names.
+        """
+        owners, is_class = self._receiver(expr.value, seen, strict=True)
+        if len(owners) != 1 or is_class:
+            return (), False
+        owner = owners[0]
+        marker = (owner, expr.attr)
+        if marker in seen or owner.bases or not self._stable_class_identity(owner):
+            return (), False
+        if any(
+            self._defines(owner, hook)
+            for hook in ("__getattribute__", "__setattr__", "__delattr__")
+        ):
+            return (), False
+        if self._defines(owner, expr.attr):
+            return (), False
+        writes = []
+        for target in self.attribute_writes.get(expr.attr, ()):
+            classes, class_receiver = self._receiver(
+                target.value, seen | {marker}, strict=True
+            )
+            if not classes:
+                return (), False
+            if owner not in classes:
+                continue
+            if class_receiver or classes != (owner,):
+                return (), False
+            writes.append(target)
+        for call in self.attribute_mutations:
+            known_attribute = False
+            if call.func.id != "vars" and len(call.args) >= 2:
+                attribute = call.args[1]
+                if isinstance(attribute, ast.Constant) and attribute.value != expr.attr:
+                    continue
+                known_attribute = isinstance(attribute, ast.Constant)
+            classes, _ = self._receiver(call.args[0], seen | {marker}, strict=True)
+            if owner in classes or known_attribute and not classes:
+                return (), False
+        if self._dictionary_mutation(owner, expr.attr, seen | {marker}):
+            return (), False
+        if len(writes) != 1:
+            return (), False
+        target = writes[0]
+        assignment = self.parents.get(target)
+        method = self.scope_of.get(target)
+        if (
+            not isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            or assignment.value is None
+            or not isinstance(method, _FUNCTION_NODES)
+            or method.name != "__init__"
+            or method.decorator_list
+            or self.scope_of.get(method) is not owner
+            or assignment not in method.body
+        ):
+            return (), False
+        if any(
+            isinstance(child, ast.Return)
+            for statement in method.body[: method.body.index(assignment)]
+            for child in ast.walk(statement)
+        ):
+            return (), False
+        classes, is_class = self._receiver(
+            assignment.value, seen | {marker}, strict=True
+        )
+        return (classes, False) if classes and not is_class else ((), False)
+
+    def _dictionary_mutation(self, owner, name, seen=frozenset()):
+        for receiver, attribute in self.attribute_dictionary_writes:
+            if isinstance(attribute, ast.Constant) and attribute.value != name:
+                continue
+            classes, _ = self._receiver(receiver, seen, strict=True)
+            if not classes or any(
+                cls is owner or owner in self._closure(cls, self._bases)
+                for cls in classes
+            ):
+                return True
+        return False
+
+    def _stable_method_binding(self, owner, name):
+        if not self._stable_class_identity(owner) or not self._plain_method_lookup(
+            owner
+        ):
+            return False
+        for target in self.attribute_writes.get(name, ()):
+            classes, _ = self._receiver(target.value, strict=True)
+            if not classes or any(
+                cls is owner or owner in self._closure(cls, self._bases)
+                for cls in classes
+            ):
+                return False
+        for call in self.attribute_mutations:
+            known_attribute = False
+            if call.func.id != "vars" and len(call.args) >= 2:
+                attribute = call.args[1]
+                if isinstance(attribute, ast.Constant) and attribute.value != name:
+                    continue
+                known_attribute = isinstance(attribute, ast.Constant)
+            classes, _ = self._receiver(call.args[0], strict=True)
+            if (
+                known_attribute
+                and not classes
+                or any(
+                    cls is owner or owner in self._closure(cls, self._bases)
+                    for cls in classes
+                )
+            ):
+                return False
+        return not self._dictionary_mutation(owner, name)
+
+    def _plain_method_lookup(self, owner):
+        return not any(
+            self._defines(cls, "__getattribute__")
+            for cls in (owner, *self._closure(owner, self._bases))
+        )
+
+    def _stable_class_identity(self, owner, seen=frozenset()):
+        if owner.keywords or owner in seen or len(seen) >= _MAX_BOOLEAN_BINDING_DEPTH:
+            return False
+        for decorator in owner.decorator_list:
+            if not isinstance(decorator, ast.Name):
+                return False
+            target = self.resolve(decorator.id, self.scope_of.get(decorator))
+            key = (target, decorator.id)
+            if (
+                key not in self.identity_class_decorators
+                or self.binding_counts.get(key) != 1
+            ):
+                return False
+        for base in owner.bases:
+            if not isinstance(base, ast.Name):
+                return False
+            scope = self.scope_of.get(base)
+            if base.id == "object" and self.resolve(base.id, scope) is None:
+                continue
+            classes = self._class_named(base.id, scope, strict=True)
+            if len(classes) != 1 or not self._stable_class_identity(
+                classes[0], seen | {owner}
+            ):
+                return False
+        return True
+
+    def _stable_callable(self, func):
+        scope = self.scope_of.get(func)
+        key = (scope, func.name)
+        if (
+            self.functions.get(key) != [func]
+            or self.binding_counts.get(key) != 1
+            or self.classes.get(key)
+            or func.name in self.parameter_names.get(scope, ())
+            or scope in self.unknown_namespaces
+            or self.module in self.unknown_namespaces
+        ):
+            return False
+        if isinstance(scope, ast.ClassDef):
+            for name in self._names_for(scope, func.name):
+                for reference in self.attribute_refs.get(name, ()):
+                    classes, _ = self._receiver(reference.value, strict=True)
+                    if any(
+                        scope in self._dispatch_classes(cls, name) for cls in classes
+                    ):
+                        # A newly resolved field may expose a callback binding
+                        # the legacy signature policy could not identify. Keep
+                        # its declaration advice without promoting bare calls.
+                        return False
+        return all(
+            isinstance(decorator, ast.Name)
+            and decorator.id in {"staticmethod", "classmethod"}
+            and self.resolve(decorator.id, scope) is None
+            for decorator in func.decorator_list
+        )
+
+    def _stable_call_names(self, func):
+        """Single-definition names and unchanged local aliases of that def."""
+        scope = self.scope_of.get(func)
+        names = {func.name}
+        pending = [func.name]
+        while pending:
+            for alias in self.aliases.get((scope, pending.pop()), ()):
+                key = (scope, alias)
+                values = self.assigned.get(key, ())
+                if (
+                    alias in names
+                    or self.binding_counts.get(key) != 1
+                    or self.functions.get(key)
+                    or self.classes.get(key)
+                    or alias in self.parameter_names.get(scope, ())
+                    or len(values) != 1
+                    or not isinstance(values[0], ast.Name)
+                    or values[0].id not in names
+                ):
+                    continue
+                names.add(alias)
+                pending.append(alias)
+        return names
+
     def has_signature_marker(self, func):
         for decorator in func.decorator_list:
             if isinstance(decorator, ast.Name) and decorator.id in self.marker_names:
@@ -2179,30 +2432,67 @@ class _ModuleCallables:
         nested = isinstance(scope, (*_FUNCTION_NODES, ast.Lambda))
         return nested or func.name.startswith("_")
 
-    def positional_bool_calls(self, func, index):
-        """(line, value) of calls passing a bool literal at parameter ``index``."""
+    def positional_bool_calls(self, func, index, *, strict=False):
+        """Static bindings of bare Boolean literals to parameter ``index``."""
+        if strict and not self._stable_callable(func):
+            return []
         scope = self.scope_of.get(func)
-        names = self._names_for(scope, func.name)
+        names = (
+            self._stable_call_names(func)
+            if strict
+            else self._names_for(scope, func.name)
+        )
         calls = [
-            (call, 0)
+            (call, 0, {"binding": "local_definition", "callee": name})
             for name in names
             for call in self.name_calls.get((scope, name), ())
+            if not strict or isinstance(call.func, ast.Name) and call.func.id == name
         ]
         if isinstance(scope, ast.ClassDef):
             static = _has_name_decorator(func, "staticmethod")
             classmethod_ = _has_name_decorator(func, "classmethod")
             for name in names:
                 for call, node in self.attribute_calls.get(name, ()):
+                    if strict and (
+                        call.func is not node
+                        or not self._stable_method_binding(scope, name)
+                    ):
+                        continue
                     classes, is_class = self._receiver(node.value, strict=True)
+                    if strict and not all(
+                        self._stable_class_identity(cls)
+                        and self._plain_method_lookup(cls)
+                        for cls in classes
+                    ):
+                        continue
                     if not classes or not all(
-                        scope in self._dispatch_classes(cls, name) for cls in classes
+                        self._dispatch_classes(cls, name) == {scope}
+                        if strict
+                        else scope in self._dispatch_classes(cls, name)
+                        for cls in classes
                     ):
                         continue
                     # ``obj.m(x)`` and ``cls.cm(x)`` bind the first parameter.
                     bound = classmethod_ or (not static and not is_class)
-                    calls.append((call, 1 if bound else 0))
-        evidence = set()
-        for call, offset in calls:
+                    calls.append(
+                        (
+                            call,
+                            1 if bound else 0,
+                            {
+                                "binding": "constructor_field"
+                                if isinstance(node.value, ast.Attribute)
+                                else "static_receiver",
+                                "callee": node.attr,
+                                "receiver_classes": sorted(
+                                    {cls.name for cls in classes}
+                                ),
+                            },
+                        )
+                    )
+        evidence = {}
+        positional_parameters = [*func.args.posonlyargs, *func.args.args]
+        parameter = positional_parameters[index]
+        for call, offset, binding in calls:
             position = index - offset
             if position < 0:
                 continue
@@ -2214,8 +2504,28 @@ class _ModuleCallables:
             if position < len(positional):
                 arg = positional[position]
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, bool):
-                    evidence.add((arg.lineno, arg.value))
-        return sorted(evidence)
+                    if (
+                        strict
+                        and parameter not in func.args.posonlyargs
+                        and any(
+                            keyword.arg == parameter.arg for keyword in call.keywords
+                        )
+                    ):
+                        continue
+                    if (
+                        strict
+                        and not func.args.vararg
+                        and not any(isinstance(item, ast.Starred) for item in call.args)
+                        and len(call.args) + offset > len(positional_parameters)
+                    ):
+                        continue
+                    evidence[(arg.lineno, arg.value)] = {
+                        "kind": "positional_boolean_literal",
+                        "line": arg.lineno,
+                        "value": arg.value,
+                        **binding,
+                    }
+        return [evidence[key] for key in sorted(evidence)]
 
 
 class BooleanTrapRule(SkylosRule):
@@ -2536,9 +2846,6 @@ class BooleanTrapRule(SkylosRule):
                 continue
             if arg is setter_value_arg:
                 continue
-            if arg_name in _BOOLEAN_TRAP_ALLOWED_NAMES:
-                continue
-
             is_bool_trap = False
 
             if arg.annotation is not None:
@@ -2578,16 +2885,29 @@ class BooleanTrapRule(SkylosRule):
 
         for i, arg in candidates:
             arg_name = arg.arg
+            # Familiar public flags keep the existing signature exemption.
+            # Private flags need an actual bare literal call to be advice.
+            if arg_name in _BOOLEAN_TRAP_ALLOWED_NAMES and not needs_evidence:
+                continue
             positional_only = i < len(args.posonlyargs)
+            evidence = (
+                callables.positional_bool_calls(
+                    node,
+                    i,
+                    strict=not needs_evidence
+                    or arg_name in _BOOLEAN_TRAP_ALLOWED_NAMES,
+                )
+                if callables
+                else []
+            )
+            if needs_evidence and not evidence:
+                continue
             message = f"Boolean parameter '{arg_name}' permits positional calls, which can obscure their meaning. Prefer named calls; consider keyword-only arguments when the public or callback contract permits it."
             if positional_only:
                 message = f"Boolean parameter '{arg_name}' is positional-only, so calls cannot name it. Consider a descriptive enum or a separate named operation when the public or callback contract permits it."
-            if needs_evidence:
-                evidence = callables.positional_bool_calls(node, i)
-                if not evidence:
-                    continue
+            if evidence:
                 sites = ", ".join(
-                    f"{value} at line {line}" for line, value in evidence[:3]
+                    f"{site['value']} at line {site['line']}" for site in evidence[:3]
                 )
                 if len(evidence) > 3:
                     sites += f" (+{len(evidence) - 3} more)"
@@ -2613,6 +2933,8 @@ class BooleanTrapRule(SkylosRule):
                     else node.col_offset,
                 }
             )
+            if evidence:
+                findings[-1]["call_evidence"] = evidence
 
         return findings if findings else None
 

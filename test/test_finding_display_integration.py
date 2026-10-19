@@ -132,7 +132,7 @@ def test_expansion_and_terminal_width_do_not_change_records_grade_or_gate():
                         assert "app.py (2)" in output
                 else:
                     assert "1 defect · 2 review · 0 advice in 0 groups" in normalized
-                    assert "2 optional advice checks" in normalized
+                    assert "2 optional advice findings" in normalized
                     assert "--all-advice" in output
                     assert "SKY-C304" not in output
                 assert result == before

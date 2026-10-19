@@ -1254,6 +1254,9 @@ can allocate a new list and is reported with that explanation, unless the
 contents are a fixed literal with no growth or escape. Other whole reads
 remain LOW advice; the rule cannot know the source's size, and some consumers
 need the whole value.
+Lambda bodies are expression scopes. Resolving a captured read size considers
+enclosing bindings without iterating the lambda's expression as statements;
+unknown or shadowed sizes retain the ordinary P401 behavior.
 
 P401 does not recommend chunking a direct read passed to a resolved whole-buffer
 consumer: builtin `compile`, or standard-library `ast.parse`, `json.loads`,
@@ -1287,6 +1290,13 @@ compatibility evidence.
 Positional-only Boolean parameters receive advice that does not suggest an
 impossible named call. A private-method call requires a resolved receiver;
 an unrelated object's same-named attribute is not evidence for that method.
+Public signature findings also retain observed calls in `call_evidence`, so
+focused advice does not hide a proven positional call as signature-only advice.
+The static resolver accepts stable local bindings and bounded receiver chains,
+including constructor fields assigned from same-module annotated parameters.
+Rebinding, uncertain decorators, custom attribute hooks and ambiguous receivers
+do not establish new call evidence. Familiar public flag names retain their
+existing exemption; familiar private flags require a proven positional call.
 
 L027 excludes import-proven `typing`/`typing_extensions` `cast` type strings and
 matching declaration names in `TypeVar`, `ParamSpec`, `TypeVarTuple` and `NewType`.

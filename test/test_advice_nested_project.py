@@ -57,6 +57,19 @@ def test_nested_app_own_examples_still_remain_optional(tmp_path, boundary):
         assert advice_source_context(_advice(path), scan_root) == "example"
 
 
+@pytest.mark.parametrize("module", ["bench", "examples", "docs_src"])
+@pytest.mark.parametrize("scan_subdir", [".", "src"])
+def test_nested_app_shipping_evidence_survives_sample_context_merge(
+    tmp_path, module, scan_subdir
+):
+    _checkout(tmp_path, "git-directory")
+    project = tmp_path / "examples/realapp"
+    _write(project, "pyproject.toml", '[project]\nname = "realapp"\n')
+    _write(project, "src/shop/__init__.py", "")
+    path = _write(project, f"src/shop/{module}/service.py")
+    assert advice_source_context(_advice(path), project / scan_subdir) is None
+
+
 @pytest.mark.parametrize(
     "metadata",
     [

@@ -148,10 +148,10 @@ def test_cli_human_and_saved_reports_share_focus_and_selection(
             assert ("SKY-L029" in text) is visible
             assert ("permits positional calls" in normalized) is (visible and expanded)
             if visible:
-                assert "optional advice checks" not in normalized
+                assert "optional advice findings" not in normalized
                 assert "MEDIUM" in text
             else:
-                assert "1 optional advice checks" in normalized
+                assert "1 optional advice finding" in normalized
                 assert "--all-advice" in text
             assert ("Concrete defect remains visible" in normalized) is (
                 name != "selected"

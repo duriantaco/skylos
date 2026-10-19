@@ -875,7 +875,8 @@ class PerformanceRule(SkylosRule):
                 # A local assigned later shadows any outer binding throughout
                 # the function; it is not an initialized outer constant.
                 bindings = _ScopeBindings()
-                # A lambda has one expression, not a list of statements.
+                # Lambda bodies are expressions, but their walrus bindings
+                # still shadow captured names throughout the lambda scope.
                 body = [parent.body] if isinstance(parent, ast.Lambda) else parent.body
                 for statement in body:
                     bindings.visit(statement)

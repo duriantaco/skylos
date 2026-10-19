@@ -105,7 +105,7 @@ def test_paired_metrics_display_once_and_leave_full_report_unchanged(kind, expan
 
     assert result == before
     assert summarize_finding_types(result)["advice"] == 2
-    assert "1 advice entry (2 checks) in 1 group" in text
+    assert "1 advice entry (2 findings) in 1 group" in text
     assert "SKY-Q301" in text and "SKY-Q306" in text
     if expand:
         assert re.search(r"cyclomatic[^\n]*12", text, re.IGNORECASE)
@@ -225,7 +225,7 @@ def test_nested_scope_components_render_all_child_metrics_and_locations(kind, li
     text = _render(kind, result, expand=True, limit=limit)
     normalized = " ".join(text.split())
 
-    assert "1 advice entry (6 checks) in 1 group" in normalized
+    assert "1 advice entry (6 findings) in 1 group" in normalized
     assert "Nested inner at line 3" in normalized
     assert "factory" in text
     assert "app.py:1" in text or (kind == "llm" and "app.py" in text)
