@@ -15,6 +15,7 @@ from .conventions import (
     expo_router_exports,
     is_jest_manual_mock,
     is_package_tool_config,
+    is_rc_tool_config,
     is_react_email_template,
 )
 from .tool_configs import is_tool_config_file
@@ -185,8 +186,10 @@ class TSFrameworkVisitor:
         # Next.js serves convention files by their default export, and a tool
         # (next, postcss, tailwind, vite, ...) reads its config file's default
         # export, so ``const config = {...}; export default config`` is live.
-        if is_nextjs_default_export_file(self._file_path) or is_tool_config_file(
-            self._file_path
+        if (
+            is_nextjs_default_export_file(self._file_path)
+            or is_tool_config_file(self._file_path)
+            or is_rc_tool_config(self._file_path)
         ):
             self._mark_default_export()
         # A tool reads every export of its config file (``export const auth``

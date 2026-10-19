@@ -42,10 +42,15 @@ from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
     _discover_ts_vscode_lifecycle_entry_files,
+    discover_ts_build_aliases,
     discover_ts_bundle_entry_files,
     find_dead_ts_files,
     find_unused_ts_exports,
     mark_package_api_ts_exports_consumed,
+)
+from skylos.visitors.languages.typescript.build_configs import (
+    JestMappedResolver,
+    apply_ts_module_substitutions,
 )
 from skylos.visitors.languages.typescript.framework import is_framework_loaded_file
 from skylos.analysis.ast_cache import (
@@ -5761,7 +5766,37 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("JS API hallucination scan failed", exc_info=True)
 
-        self._build_ts_import_graph(ts_raw_imports, monorepo_resolver)
+        jest_mappings, file_replacements = [], []
+        try:
+            jest_mappings, file_replacements = discover_ts_build_aliases(
+                files,
+                project_root=str(self._project_root),
+                workspace_inventory=workspace_inventory,
+                exclude_folders=exclude_folders,
+            )
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("JS/TS build config alias scan failed", exc_info=True)
+        graph_resolver = monorepo_resolver
+        if jest_mappings:
+            # Under Jest, moduleNameMapper decides what a bare import loads;
+            # the analysis resolver is only asked first.
+            graph_resolver = JestMappedResolver(
+                monorepo_resolver,
+                jest_mappings,
+                {
+                    os.path.realpath(str(f))
+                    for f in files
+                    if str(f).endswith(_TS_JS_SOURCE_EXTS)
+                },
+            )
+        self._build_ts_import_graph(ts_raw_imports, graph_resolver)
+        apply_ts_module_substitutions(
+            file_replacements,
+            self.ts_consumed_exports,
+            self._ts_importers_of,
+            self._ts_wildcard_edges,
+        )
 
         self._global_type_map = {}
         self._global_type_map.update(all_inferred_types)

@@ -584,11 +584,12 @@ class TestTSQualityRules:
         quality = scan_typescript_file(str(path), config={"complexity": 1})[6]
         complexity = [f for f in quality if f["rule_id"] == "SKY-Q301"]
 
+        # An arrow function takes the name of the variable it is bound to.
         assert {f["name"] for f in complexity} == {
             "inner",
             "generator",
             "declared",
-            "anonymous",
+            "c",
         }
         assert len(complexity) == 4
         assert not any(f["name"] == "outer" for f in complexity)
