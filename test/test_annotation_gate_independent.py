@@ -5,20 +5,22 @@ import textwrap
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.rules.quality.practices import TypeAnnotationPracticeRule
 
 
 def _scan(tmp_path, source, *, policy=None, stub=None, coverage=False):
     source = textwrap.dedent(source).lstrip("\n")
     filename = tmp_path / "surface.py"
-    filename.write_text(source, encoding="utf-8")
+    write_fixture(tmp_path, "surface.py", source, overwrite=True)
     if policy is not None:
-        (tmp_path / "pyproject.toml").write_text(
+        write_fixture(tmp_path, "pyproject.toml",
             '[tool.mypy]\nfiles = ["surface.py"]\n' + policy,
-            encoding="utf-8",
+            overwrite=True,
         )
     if stub is not None:
-        filename.with_suffix(".pyi").write_text(textwrap.dedent(stub), encoding="utf-8")
+        write_fixture(tmp_path, "surface.pyi", textwrap.dedent(stub), overwrite=True)
     context = {"filename": str(filename), "project_root": tmp_path, "source": source}
     findings = TypeAnnotationPracticeRule(coverage_advice=coverage).visit_node(
         ast.parse(source, type_comments=True), context

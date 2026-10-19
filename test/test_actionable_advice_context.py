@@ -6,6 +6,8 @@ import textwrap
 
 import pytest
 
+from test.fixture_paths import make_fixture_directory, write_fixture
+
 from skylos.core.linter import LinterVisitor
 from skylos.rules.quality.logic_foundation import TryBlockPatternsRule, UnusedExceptVarRule
 from skylos.rules.quality.performance import PerformanceRule
@@ -274,11 +276,10 @@ def test_pandas_unbounded_and_none_limits_still_report(source):
 ])
 def test_project_local_pandas_is_not_a_proven_pandas_api(tmp_path, provider, source):
     local = tmp_path / provider
-    local.parent.mkdir(parents=True, exist_ok=True)
     if local.suffix:
-        local.write_bytes(b"inert local provider fixture; never execute")
+        write_fixture(tmp_path, provider, b"inert local provider fixture; never execute")
     else:
-        local.mkdir()
+        make_fixture_directory(tmp_path, provider)
     assert analyze(PerformanceRule(), source, root=tmp_path) == []
 
 

@@ -4,6 +4,8 @@ import ast
 import textwrap
 
 import pytest
+
+from test.fixture_paths import write_fixture
 import skylos.rules.quality.coupling as coupling
 
 from skylos.rules.quality.class_size import GodClassRule, GodFileRule
@@ -605,7 +607,7 @@ def test_project_local_field_factory_retains_runtime_design_checks(
     tmp_path, provider, factory, import_style, local
 ):
     if local:
-        (tmp_path / f"{provider}.py").write_text(
+        write_fixture(tmp_path, f"{provider}.py",
             f"def {factory}(*args): return install_runtime_descriptor()\n"
         )
     if import_style == "symbol":

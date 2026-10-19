@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.analysis.typing_policy import (
     AnnotationPolicy,
     annotation_policy,
@@ -12,9 +14,7 @@ from skylos.analysis.typing_policy import (
 
 
 def _write(root, relative, text):
-    path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    write_fixture(root, relative, text, overwrite=True)
 
 
 def _policy(root, relative="pkg/core.py", source=""):

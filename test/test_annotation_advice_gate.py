@@ -6,6 +6,8 @@ import json
 import textwrap
 
 import pytest
+
+from test.fixture_paths import write_fixture
 from rich.console import Console
 
 from skylos.analysis.file_processing import scan_python_quality
@@ -16,7 +18,7 @@ from skylos.reporting.typing_coverage import typing_coverage_text
 
 def run_rule(tmp_path, source, *, policy="", coverage=False, filename="api.py"):
     if policy:
-        (tmp_path / "pyproject.toml").write_text(textwrap.dedent(policy))
+        write_fixture(tmp_path, "pyproject.toml", textwrap.dedent(policy), overwrite=True)
     source = textwrap.dedent(source)
     context = {
         "filename": str(tmp_path / filename),

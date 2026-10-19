@@ -6,6 +6,8 @@ import textwrap
 
 import pytest
 
+from test.fixture_paths import make_fixture_directory, write_fixture
+
 from skylos.rules.quality.structure import ArgCountRule
 
 
@@ -88,12 +90,12 @@ def test_local_click_provider_cannot_prove_named_callback_inputs(
     tmp_path, provider, imports, prefix
 ):
     local = tmp_path / provider
-    local.parent.mkdir(parents=True, exist_ok=True)
     if local.suffix:
-        local.write_text("def command(): return lambda function: function\n")
+        write_fixture(tmp_path, provider, "def command(): return lambda function: function\n")
     else:
-        local.mkdir()
-        (local / "__init__.py").write_text("# A project-owned decorator package.\n")
+        make_fixture_directory(tmp_path, provider)
+        write_fixture(tmp_path, local.relative_to(tmp_path) / "__init__.py",
+                      "# A project-owned decorator package.\n")
     source = command(imports=imports, prefix=prefix)
     rows = findings(source, filename=tmp_path / "commands.py", project_root=tmp_path)
     assert len(rows) == 1

@@ -6,6 +6,8 @@ import textwrap
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.audit.redaction import REDACTION
 from skylos.rules.quality.logic_maintainability import (
     BooleanTrapRule,
@@ -573,7 +575,8 @@ def test_local_modules_cannot_prove_external_literal_contracts(
         local = local / "__init__.py"
     else:
         local = provider_dir / f"{provider}.py"
-    local.write_text(f"def {member}(value):\n    return transform(value)\n")
+    write_fixture(tmp_path, local.relative_to(tmp_path),
+                  f"def {member}(value):\n    return transform(value)\n")
     source = f"from {provider} import {member}\n" + "\n".join(
         f"def handler_{index}(): return {member}('Repeated application error')"
         for index in range(3)

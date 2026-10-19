@@ -2,11 +2,13 @@
 
 import pytest
 
+from test.fixture_paths import write_fixture
+
 from skylos.rules.quality.policy import analyze_repo_policy
 
 
 def rules(root):
-    (root / "app.py").write_text("def process(value): return value\n")
+    write_fixture(root, "app.py", "def process(value): return value\n", overwrite=True)
     return {row["rule_id"] for row in analyze_repo_policy(root, {})}
 
 
@@ -24,7 +26,7 @@ def test_empty_linter_table_selects_default_policy(tmp_path, tool):
 
 @pytest.mark.parametrize("filename", [".flake8", ".pylintrc", "pylintrc"])
 def test_equivalent_linter_config_files_are_recognized(tmp_path, filename):
-    (tmp_path / filename).write_text(
+    write_fixture(tmp_path, filename,
         "[flake8]\n" if filename == ".flake8" else "[MAIN]\n"
     )
     assert "SKY-R102" not in rules(tmp_path)
