@@ -2,7 +2,7 @@
 
 import ast
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -44,6 +44,41 @@ def test_invalid_fixture_paths_create_nothing(tmp_path, fixture_io, relative):
     with pytest.raises(ValueError):
         make_fixture_directory(root, relative)
     assert sorted(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("operation", ["write", "directory"])
+def test_windows_string_separators_are_rejected_before_path_normalization(
+    tmp_path, fixture_io, monkeypatch, operation
+):
+    relative = "nested\\outside.py"
+    real_path = fixture_paths.Path
+
+    def parse_like_windows(value):
+        # Emulate Windows separator normalization without claiming native execution.
+        if isinstance(value, str) and value == relative:
+            return PureWindowsPath(value)
+        return real_path(value)
+
+    monkeypatch.setattr(fixture_paths, "Path", parse_like_windows)
+    with pytest.raises(ValueError):
+        if operation == "write":
+            write_fixture(tmp_path, relative, "must not write")
+        else:
+            make_fixture_directory(tmp_path, relative)
+    assert not (tmp_path / "nested").exists()
+
+
+def test_parsed_relative_windows_paths_preserve_fixture_layout(tmp_path, fixture_io):
+    path = write_fixture(
+        tmp_path, PureWindowsPath("nested", "case.py"), "inert fixture\n"
+    )
+    assert path == tmp_path.resolve() / "nested" / "case.py"
+    assert path.read_text(encoding="utf-8") == "inert fixture\n"
+    directory = make_fixture_directory(
+        tmp_path, PureWindowsPath("nested", "package")
+    )
+    assert directory == tmp_path.resolve() / "nested" / "package"
+    assert directory.is_dir()
 
 
 def test_fixture_overwrite_requires_explicit_intent(tmp_path, fixture_io):

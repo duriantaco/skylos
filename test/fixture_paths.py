@@ -15,6 +15,8 @@ from skylos.core.safe_cache_io import _open_output_file
 
 def _fixture_path(root, relative):
     root = Path(root).resolve(strict=True)
+    if isinstance(relative, str) and "\\" in relative:
+        raise ValueError("fixture string paths must use forward slashes")
     relative = Path(relative)
     windows = PureWindowsPath(str(relative))
     if relative.is_absolute() or windows.drive or windows.root:
