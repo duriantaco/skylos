@@ -6,7 +6,11 @@ import textwrap
 
 import pytest
 
-from skylos.reporting.advice_policy import optional_advice_reason, prepare_advice_view
+from skylos.reporting.advice_policy import (
+    apply_advice_policy,
+    optional_advice_reason,
+    prepare_advice_view,
+)
 from skylos.rules.quality.logic_maintainability import BooleanTrapRule
 
 
@@ -22,6 +26,29 @@ def _findings(source):
 def _one(source):
     [row] = _findings(source)
     return row
+
+
+def _assert_optional_record_is_preserved_and_selectable(row):
+    """Default eligibility is separate from whether the rule proved a call."""
+    raw = {"quality": [row]}
+    before = deepcopy(row)
+    assert optional_advice_reason(row, "quality") == "measurement"
+    report = apply_advice_policy(raw)
+    assert report["quality"][0]["call_evidence"] == row["call_evidence"]
+    assert report["quality"][0]["listing"] == {
+        "version": 1,
+        "listed": False,
+        "reason": "measurement",
+    }
+    assert (
+        prepare_advice_view(report, all_advice=True)[0]["quality"] == report["quality"]
+    )
+    selected = apply_advice_policy(raw, explicit_rules=["SKY-L029"])
+    assert prepare_advice_view(selected)[0]["quality"] == selected["quality"]
+    from skylos.core.gatekeeper import check_gate
+
+    assert check_gate(selected, {"gate": {"max_quality": 0}})[0] is False
+    assert row == before
 
 
 @pytest.mark.parametrize(
@@ -45,8 +72,7 @@ def test_existing_public_signature_gains_actual_local_call_evidence(source, valu
     assert row["call_evidence"][0]["value"] is value
     assert row["call_evidence"][0]["binding"] == "local_definition"
     assert "called positionally" in row["message"]
-    assert optional_advice_reason(row, "quality") is None
-    assert prepare_advice_view({"quality": [row]})[0]["quality"] == [row]
+    _assert_optional_record_is_preserved_and_selectable(row)
 
 
 @pytest.mark.parametrize(
@@ -346,7 +372,7 @@ def test_positional_only_observed_call_retains_applicable_recommendation():
     assert "called positionally with False" in row["message"]
     assert "positional-only" in row["message"]
     assert "Pass it by keyword" not in row["message"]
-    assert optional_advice_reason(row, "quality") is None
+    _assert_optional_record_is_preserved_and_selectable(row)
 
 
 def test_callback_and_declared_override_policies_remain_unchanged():
@@ -365,12 +391,11 @@ def test_callback_and_declared_override_policies_remain_unchanged():
 @pytest.mark.parametrize(
     "evidence", [[{"unknown": "producer"}], {"unexpected": True}, 0]
 )
-def test_policy_never_hides_positive_or_unknown_call_evidence(evidence):
+def test_policy_never_discards_or_mislabels_unknown_call_evidence(evidence):
     row = _one("def publish(enabled: bool): pass")
     row["call_evidence"] = evidence
     before = deepcopy(row)
-    assert optional_advice_reason(row, "quality") is None
-    assert prepare_advice_view({"quality": [row]})[0]["quality"] == [row]
+    _assert_optional_record_is_preserved_and_selectable(row)
     assert row == before
 
 

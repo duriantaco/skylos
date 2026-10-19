@@ -253,6 +253,8 @@ def run_suite(
                 exclude_folders=sorted(exclude),
                 include_review_proofs=include_review_proofs,
                 include_review_context=include_review_context,
+                # The suite shows and uploads the same focused result as a scan.
+                all_advice=False,
             )
     finally:
         analyzer_logger.setLevel(original_level)
