@@ -273,11 +273,13 @@ def test_repo_level_policy_findings_without_file_locations_remain_incomplete(
         encoding="utf-8",
     )
     # Unused parameters are listed from --confidence 50 (below the default).
+    # Repo-level policy checks are uploaded with --all-advice.
     code, stdout, stderr = _invoke(
         project,
         monkeypatch,
         capsys,
         "--all",
+        "--all-advice",
         "--upload",
         "--force",
         "--confidence",
@@ -303,8 +305,15 @@ def test_minimal_repository_managed_json_upload_retains_repository_policy_findin
         encoding="utf-8",
     )
     monkeypatch.chdir(project.parent)
+    # Repo-level policy checks are uploaded with --all-advice.
     code, stdout, stderr = _invoke(
-        project, monkeypatch, capsys, "--all", "--upload", format_option="json"
+        project,
+        monkeypatch,
+        capsys,
+        "--all",
+        "--all-advice",
+        "--upload",
+        format_option="json",
     )
     assert code == 0
     local = json.loads(stdout)

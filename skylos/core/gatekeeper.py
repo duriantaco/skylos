@@ -240,14 +240,62 @@ def _is_advisory_quality_finding(finding):
     )
 
 
-def _gate_quality_findings(quality):
-    return [finding for finding in quality if not _is_advisory_quality_finding(finding)]
+def _gate_quality_findings(quality, *, explicit_rules=(), use_listing_policy=False):
+    from skylos.reporting.finding_types import get_finding_type
+    from skylos.reporting.listing import is_listed, listing_decision
+
+    def included(finding):
+        rule = (
+            str(finding.get("rule_id") or finding.get("id") or "").upper()
+            if isinstance(finding, dict)
+            else ""
+        )
+        if rule in explicit_rules:
+            return True
+        if use_listing_policy or listing_decision(finding) is not None:
+            return is_listed(finding, "quality", explicit_rules=explicit_rules)
+        if get_finding_type(finding, "quality") != "advice":
+            return True
+        return not _is_advisory_quality_finding(finding)
+
+    return [finding for finding in quality if included(finding)]
 
 
-def _quality_findings_with_custom_rules(results, *, gate_only=False):
+def _quality_findings_with_custom_rules(results, *, gate_only=False, explicit_rules=()):
     quality = list(results.get("quality", []) or [])
+    if results.get("listing_policy_version") == 1:
+        from skylos.reporting.finding_types import iter_result_findings
+
+        # Architecture signals are the additional Advice family carried
+        # outside quality. Keep circular-dependency and code-health policies
+        # independent of the ordinary quality threshold.
+        quality = [
+            row
+            for category, row in iter_result_findings(
+                {
+                    "quality": quality,
+                    "architecture_metrics": results.get("architecture_metrics"),
+                }
+            )
+            if category == "quality"
+        ]
+    if explicit_rules:
+        from skylos.reporting.finding_types import iter_result_findings
+
+        for category, row in iter_result_findings(results):
+            if (
+                category == "quality"
+                and str(row.get("rule_id") or row.get("id") or "").upper()
+                in explicit_rules
+                and row not in quality
+            ):
+                quality.append(row)
     if gate_only:
-        quality = _gate_quality_findings(quality)
+        quality = _gate_quality_findings(
+            quality,
+            explicit_rules=explicit_rules,
+            use_listing_policy=results.get("listing_policy_version") == 1,
+        )
     seen = {json.dumps(finding, sort_keys=True, default=str) for finding in quality}
     # Custom rules are quality findings, but are reported in a separate array.
     # Only built-in advisory rules may opt out of the gate. A custom rule must
@@ -637,12 +685,16 @@ def _apply_gate_thresholds(reasons, gate_config, groups):
     return passed
 
 
-def _gate_findings(results):
+def _gate_findings(results, config=None):
+    from skylos.reporting.listing import explicit_rule_ids
+
     return {
         "danger": results.get("danger", []) or [],
         "reliability": results.get("reliability", []) or [],
         "ai_defects": results.get("ai_defects", []) or [],
-        "quality": _quality_findings_with_custom_rules(results, gate_only=True),
+        "quality": _quality_findings_with_custom_rules(
+            results, gate_only=True, explicit_rules=explicit_rule_ids(config)
+        ),
         "secrets": results.get("secrets", []) or [],
         "dependencies": results.get("dependency_vulnerabilities", []) or [],
         "dead_code": _collect_dead_code_items(results),
@@ -721,7 +773,11 @@ def sca_coverage_warnings(results):
         ]
     queried = receipt.get("queried_dependency_count", 0)
     unresolved = receipt.get("unresolved_dependency_count", 0)
-    if isinstance(unresolved, int) and not isinstance(unresolved, bool) and unresolved > 0:
+    if (
+        isinstance(unresolved, int)
+        and not isinstance(unresolved, bool)
+        and unresolved > 0
+    ):
         return [
             f"SCA coverage limited: {queried} dependencies queried; "
             f"{unresolved} dependencies have unresolved versions"
@@ -745,12 +801,18 @@ def _coverage_count(value):
 
 def _sca_required_coverage_reasons(receipt, *, require_resolved):
     if not isinstance(receipt, dict) or not receipt:
-        return [GateReason("Required SCA coverage missing: dependency scan was not recorded")]
+        return [
+            GateReason(
+                "Required SCA coverage missing: dependency scan was not recorded"
+            )
+        ]
     reasons = []
     supported = _coverage_count(receipt.get("supported_manifest_candidate_count"))
     if supported is None or supported == 0:
         reasons.append(
-            GateReason("Required SCA coverage missing: no supported dependency manifests found")
+            GateReason(
+                "Required SCA coverage missing: no supported dependency manifests found"
+            )
         )
     status = receipt.get("status")
     supported_complete = (
@@ -763,7 +825,9 @@ def _sca_required_coverage_reasons(receipt, *, require_resolved):
         or receipt.get("complete") is not True
     ):
         reasons.append(
-            GateReason("Required SCA coverage incomplete: supported dependency inventory was not completed")
+            GateReason(
+                "Required SCA coverage incomplete: supported dependency inventory was not completed"
+            )
         )
     unsupported_counts = [
         _coverage_count(receipt[key]) if key in receipt else 0
@@ -771,30 +835,52 @@ def _sca_required_coverage_reasons(receipt, *, require_resolved):
     ]
     if any(count is None for count in unsupported_counts):
         reasons.append(
-            GateReason("Required SCA coverage incomplete: invalid unsupported inventory accounting")
+            GateReason(
+                "Required SCA coverage incomplete: invalid unsupported inventory accounting"
+            )
         )
     elif any(count > 0 for count in unsupported_counts):
         reasons.append(
-            GateReason("Required SCA coverage incomplete: unsupported dependency manifest or lockfile inventory")
+            GateReason(
+                "Required SCA coverage incomplete: unsupported dependency manifest or lockfile inventory"
+            )
         )
     dependencies = _coverage_count(receipt.get("dependency_count"))
     queried = _coverage_count(receipt.get("queried_dependency_count"))
     if dependencies is None or queried is None:
-        reasons.append(GateReason("Required SCA coverage incomplete: missing query accounting"))
+        reasons.append(
+            GateReason("Required SCA coverage incomplete: missing query accounting")
+        )
     else:
         query = receipt.get("query")
         query_complete = isinstance(query, dict) and query.get("complete") is True
         if queried < dependencies or (dependencies > 0 and not query_complete):
             reasons.append(
-                GateReason("Required SCA coverage incomplete: not every inventoried dependency was queried")
+                GateReason(
+                    "Required SCA coverage incomplete: not every inventoried dependency was queried"
+                )
             )
     if require_resolved:
         unresolved = _coverage_count(receipt.get("unresolved_dependency_count"))
-        unresolved_lockfile = _coverage_count(receipt.get("unresolved_lockfile_dependency_count"))
+        unresolved_lockfile = _coverage_count(
+            receipt.get("unresolved_lockfile_dependency_count")
+        )
         if unresolved is None or unresolved_lockfile is None:
-            reasons.append(GateReason("Required SCA coverage incomplete: dependency version resolution was not verified"))
-        elif unresolved > 0 or unresolved_lockfile > 0 or status == "complete_with_unresolved_versions":
-            reasons.append(GateReason("Required SCA coverage incomplete: dependency versions must be resolved"))
+            reasons.append(
+                GateReason(
+                    "Required SCA coverage incomplete: dependency version resolution was not verified"
+                )
+            )
+        elif (
+            unresolved > 0
+            or unresolved_lockfile > 0
+            or status == "complete_with_unresolved_versions"
+        ):
+            reasons.append(
+                GateReason(
+                    "Required SCA coverage incomplete: dependency versions must be resolved"
+                )
+            )
     return reasons
 
 
@@ -829,7 +915,10 @@ def _required_coverage_reasons(results, gate_config):
         rules_receipt = (
             summary.get("custom_rules_coverage") if isinstance(summary, dict) else None
         )
-        if not isinstance(rules_receipt, dict) or rules_receipt.get("status") != "complete":
+        if (
+            not isinstance(rules_receipt, dict)
+            or rules_receipt.get("status") != "complete"
+        ):
             reasons.append(
                 GateReason(
                     "Required custom rule coverage missing: configured rules were not checked"
@@ -868,7 +957,7 @@ def check_gate(results, config, strict=False, provenance=None):
     if reasons:
         return False, reasons
 
-    found = _gate_findings(results)
+    found = _gate_findings(results, config)
     gate_config = _effective_gate_config(config)
     reasons.extend(_required_coverage_reasons(results, gate_config))
 
@@ -1003,7 +1092,7 @@ def _passed_gate_summary(results, config, *, strict):
     results = results if isinstance(results, dict) else {}
     config = config if isinstance(config, dict) else {}
     gate_config = _effective_gate_config(config)
-    groups = _gate_issue_groups(**_gate_findings(results))
+    groups = _gate_issue_groups(**_gate_findings(results, config))
     security_scanned = _security_scanned(results)
 
     parts = []

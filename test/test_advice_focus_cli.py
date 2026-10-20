@@ -158,12 +158,18 @@ def test_cli_human_and_saved_reports_share_focus_and_selection(
             )
         assert json.dumps(raw) == encoded
 
-    # Presentation switches are never analyzer configuration. Explicit rule
-    # selection has its own established analyzer prerequisite contract.
-    assert calls[0] == calls[1] == calls[2]
+    # --all-advice decides which findings are listed; no other
+    # presentation switch reaches the analyzer. Explicit rule selection has
+    # its own established analyzer prerequisite contract.
+    without_scope = [
+        {key: value for key, value in call.items() if key != "all_advice"}
+        for call in calls[:3]
+    ]
+    assert without_scope[0] == without_scope[1] == without_scope[2]
+    assert [call.get("all_advice") for call in calls[:3]] == [False, True, True]
 
 
-def test_actual_cli_all_advice_keeps_json_sarif_and_gate_inputs_identical(
+def test_actual_cli_json_sarif_and_gate_read_the_same_result(
     project, monkeypatch, capsys
 ):
     real_check_gate = gatekeeper.check_gate
@@ -176,10 +182,9 @@ def test_actual_cli_all_advice_keeps_json_sarif_and_gate_inputs_identical(
         return real_check_gate(result, config, **kwargs)
 
     monkeypatch.setattr(gatekeeper, "check_gate", capture_gate)
-    runs = []
-    for label, switches in (
-        ("focused", []),
-        ("all", ["--all-advice", "--expand-advice"]),
+    for label, switches, listed in (
+        ("focused", [], False),
+        ("all", ["--all-advice", "--expand-advice"], True),
     ):
         json_path = project.parent / f"{label}.json"
         sarif_path = project.parent / f"{label}.sarif"
@@ -197,8 +202,6 @@ def test_actual_cli_all_advice_keeps_json_sarif_and_gate_inputs_identical(
             str(sarif_path),
             *switches,
         )
-        assert code == 1
-        assert "Quality Gate: FAILED" in stderr
         raw_json = read_text_no_symlink(json_path, max_bytes=1_000_000)
         raw_sarif = read_text_no_symlink(sarif_path, max_bytes=1_000_000)
         assert raw_json is not None and raw_sarif is not None
@@ -206,18 +209,63 @@ def test_actual_cli_all_advice_keeps_json_sarif_and_gate_inputs_identical(
         signature_rows = [
             row for row in report["quality"] if row["rule_id"] == "SKY-L029"
         ]
-        assert len(signature_rows) == 1
-        assert "permits positional calls" in signature_rows[0]["message"]
-        assert report["gate"]["passed"] is False
-        assert any("quality" in reason.lower() for reason in report["gate"]["reasons"])
         sarif_run = sarif["runs"][0]
-        assert any(row["ruleId"] == "SKY-L029" for row in sarif_run["results"])
-        assert sarif_run["properties"]["gate"] == report["gate"]
+        # JSON, SARIF and the gate all read the one result.
+        assert len(signature_rows) == 1
+        assert signature_rows[0]["listing"]["listed"] is listed
+        signature_sarif = [
+            row for row in sarif_run["results"] if row["ruleId"] == "SKY-L029"
+        ]
+        assert len(signature_sarif) == 1
+        assert signature_sarif[0]["properties"]["listing"]["listed"] is listed
         assert gate_inputs
         assert all(
-            any(row["rule_id"] == "SKY-L029" for _category, row in rows)
+            next(
+                row["listing"]["listed"]
+                for _category, row in rows
+                if row["rule_id"] == "SKY-L029"
+            )
+            is listed
             for rows, _config, _kwargs in gate_inputs
         )
-        runs.append((report, sarif, deepcopy(gate_inputs)))
+        assert sarif_run["properties"]["gate"] == report["gate"]
+        assert report["gate"]["passed"] is not listed
+        assert code == (1 if listed else 0)
+        assert ("Quality Gate: FAILED" in stderr) is listed
+        if listed:
+            assert report["advice_visibility"]["omitted_checks"] == 0
+            assert "permits positional calls" in signature_rows[0]["message"]
+        else:
+            visibility = report["advice_visibility"]
+            assert visibility["reasons"]["boolean_signature"] == 1
+            assert visibility["rules"]["SKY-L029"] == 1
+            assert visibility["omitted_checks"] == sum(visibility["reasons"].values())
 
-    assert runs[0] == runs[1]
+
+@pytest.mark.parametrize("selection", ["config", "cli"])
+def test_named_advice_rule_is_listed_and_enforced_through_actual_cli(
+    project, monkeypatch, capsys, selection
+):
+    switches = ["--select", "SKY-L029"] if selection == "cli" else []
+    if selection == "config":
+        assert write_text_no_symlink(
+            project / "pyproject.toml",
+            '[tool.skylos.gate]\nmax_quality=0\nrules=["SKY-L029"]\n',
+        )
+    path = project.parent / f"named-{selection}.json"
+    code, _, _ = _run(
+        project,
+        monkeypatch,
+        capsys,
+        "--format",
+        "json",
+        "--gate",
+        "--output",
+        str(path),
+        *switches,
+    )
+    report = json.loads(path.read_text())
+    finding = next(row for row in report["quality"] if row["rule_id"] == "SKY-L029")
+    assert finding["listing"]["listed"] is True
+    assert report["gate"]["passed"] is False
+    assert code == 1

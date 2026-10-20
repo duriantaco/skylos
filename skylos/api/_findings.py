@@ -111,6 +111,13 @@ def _normalize_finding(
     _apply_default_message(finding, category)
     _apply_snippet(finding, category, file_abs, line, git_root)
     _copy_review_metadata(finding, analyzer_owned=analyzer_owned)
+    from skylos.reporting.listing import is_listed, listing_decision
+
+    listing = listing_decision(finding)
+    if listing is not None:
+        listing = {**listing, "listed": is_listed(finding, category)}
+        finding["listing"] = listing
+        finding.setdefault("metadata", {})["listing"] = dict(listing)
 
     if extract_metadata:
         _move_private_metadata(finding)

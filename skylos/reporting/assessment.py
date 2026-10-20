@@ -288,6 +288,12 @@ def _maintainability(result, advice, assessed):
 
 def compute_assessment(result: dict, *, scanned_checks=None) -> dict:
     """Summarize canonical observations; do not mutate findings or gate inputs."""
+    # The complete report retains unlisted Advice. Repeated assessment calls
+    # (including the CLI's final pass) must use the same decision as the gate.
+    if result.get("listing_policy_version") == 1:
+        from skylos.reporting.listing import listed_result
+
+        result = listed_result(result)
     raw_checks = (
         scanned_checks
         if scanned_checks is not None

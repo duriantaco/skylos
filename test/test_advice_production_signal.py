@@ -53,19 +53,25 @@ def test_standalone_size_metrics_are_optional_but_raw_gate_stays_enforced(rule):
 
 
 @pytest.mark.parametrize(
-    "rules",
+    "rules, listed",
     [
-        ["SKY-Q301"],
-        ["SKY-Q306"],
-        ["SKY-C304", "SKY-Q302"],
-        ["SKY-C304", "SKY-Q301"],
-        ["SKY-Q302", "SKY-Q306", "SKY-L028"],
+        (["SKY-Q301"], False),
+        (["SKY-Q306"], False),
+        (["SKY-C304", "SKY-Q302"], False),
+        (["SKY-C304", "SKY-Q301"], False),
+        (["SKY-Q301", "SKY-Q306"], True),
+        (["SKY-Q302", "SKY-Q306", "SKY-L028"], True),
     ],
 )
-def test_complexity_signals_and_existing_combined_groups_stay_visible(rules):
+def test_function_metrics_are_listed_when_two_complexity_measures_agree(rules, listed):
     report = {"quality": [_finding(rule) for rule in rules]}
     focused, visibility = prepare_advice_view(report)
-    assert focused is report and visibility.omitted_checks == 0
+    if listed:
+        assert focused is report and visibility.omitted_checks == 0
+    else:
+        assert focused["quality"] == []
+        assert dict(visibility.reasons) == {"single_dimension": len(rules)}
+    assert prepare_advice_view(report, all_advice=True)[0] is report
 
 
 @pytest.mark.parametrize(
@@ -140,14 +146,14 @@ def test_repetition_confined_to_one_function_is_recoverable_optional_advice():
         {"distinct_function_count": -1},
     ],
 )
-def test_shared_and_unknown_literals_keep_their_existing_visibility(changes):
+def test_shared_and_unknown_literals_get_no_specific_reason(changes):
     row = _finding("SKY-L027", value=3, literal_context=_literal_context(**changes))
-    assert optional_advice_reason(row, "quality") is None
+    assert optional_advice_reason(row, "quality") == "measurement"
 
 
-def test_missing_new_evidence_never_hides_saved_literal_or_argument_findings():
+def test_missing_new_evidence_never_earns_a_specific_reason():
     for rule in ["SKY-L027", "SKY-C303"]:
-        assert optional_advice_reason(_finding(rule), "quality") is None
+        assert optional_advice_reason(_finding(rule), "quality") == "measurement"
 
 
 def _argument_evidence(**changes):
@@ -183,9 +189,9 @@ def test_wide_optional_signatures_retain_the_raw_violation():
         {"version": 2},
     ],
 )
-def test_real_or_uncertain_required_parameter_excess_stays_visible(changes):
+def test_real_or_uncertain_required_parameter_excess_gets_no_specific_reason(changes):
     row = _finding("SKY-C303", argument_evidence=_argument_evidence(**changes))
-    assert optional_advice_reason(row, "quality") is None
+    assert optional_advice_reason(row, "quality") == "measurement"
 
 
 @pytest.mark.parametrize("binding", [None, "unknown", "wrapped", []])
@@ -197,7 +203,7 @@ def test_unknown_binding_cannot_supply_an_inherited_signature_contract(binding):
             override_contract={"kind": "project_base_signature"},
         ),
     )
-    assert optional_advice_reason(row, "quality") is None
+    assert optional_advice_reason(row, "quality") == "measurement"
 
 
 def test_complete_inherited_signature_contract_is_optional_but_unknown_shape_is_visible():
@@ -225,7 +231,7 @@ def test_complete_inherited_signature_contract_is_optional_but_unknown_shape_is_
         unknown["override_contract"].pop(field)
         assert (
             optional_advice_reason({**row, "argument_evidence": unknown}, "quality")
-            is None
+            == "measurement"
         )
 
 
@@ -271,7 +277,9 @@ def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
     report = {"quality": [row], "analysis_summary": {"total_files": 1}}
     before = deepcopy(report)
     if kind == "llm":
-        output = _generate_llm_report(report, tmp_path, expand_advice=expanded)
+        output = _generate_llm_report(
+            report, tmp_path, expand_advice=expanded, all_advice=True
+        )
         if expanded:
             assert "SKY-Q501 | MEDIUM | Quality" in output
             assert '"severity": "HIGH"' in output
@@ -282,7 +290,11 @@ def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
         )
         if kind == "pretty":
             render_pretty_results(
-                console, report, root_path=tmp_path, expand_advice=expanded
+                console,
+                report,
+                root_path=tmp_path,
+                expand_advice=expanded,
+                all_advice=True,
             )
         else:
             render_results(
@@ -292,6 +304,7 @@ def test_every_human_view_caps_advice_priority_and_keeps_complete_records(
                 tree=kind == "tree",
                 expand_advice=expanded,
                 copy_badge=False,
+                all_advice=True,
             )
         output = stream.getvalue()
     assert "MEDIUM" in output and "Advice priority" in output

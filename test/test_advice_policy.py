@@ -47,10 +47,14 @@ def test_optional_boolean_contract_and_unknown_or_observed_evidence():
         message="Boolean parameter 'verbose' is called positionally with True at line 8; the bare literal does not say what it controls. Pass it by keyword, or make the parameter keyword-only."
     )
     unknown = _signature(message="New evidence contract requiring review")
-    view, visibility = prepare_advice_view({"quality": [signature, observed, unknown]})
-    assert view["quality"] == [observed, unknown]
-    assert visibility.omitted_checks == 1
-    assert "without call evidence" in visibility.message
+    report = {"quality": [signature, observed, unknown]}
+    view, visibility = prepare_advice_view(report)
+    # Boolean traps are measured by default; only the signature-only contract
+    # earns the specific reason. --all-advice lists all three.
+    assert view["quality"] == []
+    assert dict(visibility.reasons) == {"boolean_signature": 1, "measurement": 2}
+    assert "--all-advice lists them" in visibility.message
+    assert prepare_advice_view(report, all_advice=True)[0] is report
 
 
 @pytest.mark.parametrize(

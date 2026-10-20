@@ -316,8 +316,8 @@ def _format_advice_groups(result: dict) -> str:
         "\n## Advice groups\n\n",
         "Advice is grouped below. All Defect and Review records are included. "
         "Add --expand-advice to show every visible Advice entry, including each original "
-        "record for grouped metric checks; JSON output retains the complete "
-        "findings.\n\n",
+        "record for grouped metric checks; JSON output holds the same findings "
+        "with their full records.\n\n",
     ]
     for group in group_advice_for_display(result):
         count = group["count"]

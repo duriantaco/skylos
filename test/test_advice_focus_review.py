@@ -51,12 +51,14 @@ def test_mention_of_one_copied_helper_does_not_prove_sibling_code_is_vendored(tm
         root, "src/payments/LICENSE", "Copyright Payments Ltd. Licensed under MIT.\n"
     )
     row = _advice(path)
-    result = {"quality": [row]}
+    # A second, agreeing complexity measure makes this listed advice by default.
+    companion = _advice(path, rule_id="SKY-Q306", value=30, threshold=15)
+    result = {"quality": [row, companion]}
     before = deepcopy(result)
 
     assert advice_source_context(row, root) is None
     view, visibility = prepare_advice_view(result, project_root=root)
-    assert view["quality"] == [row]
+    assert view["quality"] == [row, companion]
     assert visibility.omitted_checks == 0
     assert result == before
 
@@ -185,8 +187,13 @@ def test_boolean_aliases_require_the_same_known_signature_contract(
 
     view, visibility = prepare_advice_view(result)
 
-    assert visibility.omitted_checks == int(optional)
-    assert view["quality"] == ([] if optional else [row])
+    # Boolean traps are measured by default; only the known signature-only
+    # contract earns the specific reason, whatever the rule-id spelling.
+    assert visibility.omitted_checks == 1 and view["quality"] == []
+    assert dict(visibility.reasons) == {
+        "boolean_signature" if optional else "measurement": 1
+    }
+    assert prepare_advice_view(result, all_advice=True)[0] is result
     assert result == before
 
 
