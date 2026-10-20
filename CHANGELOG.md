@@ -1,5 +1,32 @@
 ## Changelog
 
+## [4.51.0](https://github.com/duriantaco/skylos/compare/v4.50.1...v4.51.0) (2026-10-20)
+
+
+### Features
+
+* **agents:** skylos agent recap, hook activity in doctor, live readme badge ([#1012](https://github.com/duriantaco/skylos/issues/1012)) ([ba7a926](https://github.com/duriantaco/skylos/commit/ba7a92635ceea56bea7d221e0f440c589bdeba1f))
+
+
+### Bug Fixes
+
+* **analyzer:** require source evidence for exclusions and live references ([#1025](https://github.com/duriantaco/skylos/issues/1025)) ([f93ce5e](https://github.com/duriantaco/skylos/commit/f93ce5ec0ff72b3d737d359eb802952a264b68eb))
+* **ci:** run a full scan when push history is unavailable ([#1017](https://github.com/duriantaco/skylos/issues/1017)) ([851d8b7](https://github.com/duriantaco/skylos/commit/851d8b7de377bddaa2223eeacbe4b73e2e77ad6d))
+* **performance:** correct P401/P403 receiver and control flow analysis ([#1015](https://github.com/duriantaco/skylos/issues/1015)) ([7b5c5a3](https://github.com/duriantaco/skylos/commit/7b5c5a3f776e2be1a0db1f0a8d4015459c88fcd5))
+* **quality:** correct advice using source and scope evidence ([#1027](https://github.com/duriantaco/skylos/issues/1027)) ([f43e565](https://github.com/duriantaco/skylos/commit/f43e56538460426b54a1cfcef92619ed4b049ea3))
+* **quality:** correct advice using source and scope evidence ([#1029](https://github.com/duriantaco/skylos/issues/1029)) ([2b15100](https://github.com/duriantaco/skylos/commit/2b151005d79f5471f356414e39ef658e5bea3854))
+* **quality:** correct metrics and typing scope, report code left unused by PRs ([#1016](https://github.com/duriantaco/skylos/issues/1016)) ([9d6255f](https://github.com/duriantaco/skylos/commit/9d6255f97000dae1fb6d15b6e45d6cdef840f5b1))
+* **quality:** correct source evidence and control flow analysis in noisy rules ([#1013](https://github.com/duriantaco/skylos/issues/1013)) ([12ea15f](https://github.com/duriantaco/skylos/commit/12ea15f9c321b69e150afef878c66740f5022d50))
+* **quality:** guard advice collection and typing contexts ([#1021](https://github.com/duriantaco/skylos/issues/1021)) ([5f4a478](https://github.com/duriantaco/skylos/commit/5f4a478ae4a5906847f6349c0e3b1b0e77597f07))
+* **quality:** preserve boolean call evidence and correct advice context ([#1023](https://github.com/duriantaco/skylos/issues/1023)) ([2b0c305](https://github.com/duriantaco/skylos/commit/2b0c3050cca19b253fa299df88d38eebdf5db615))
+* **quality:** reduce advice noise with source and policy evidence ([#1024](https://github.com/duriantaco/skylos/issues/1024)) ([7c2ce60](https://github.com/duriantaco/skylos/commit/7c2ce602caa374f400c50b12c61e28d79ee44331))
+* **quality:** reduce false positives with guarded context checks ([#1018](https://github.com/duriantaco/skylos/issues/1018)) ([47d631c](https://github.com/duriantaco/skylos/commit/47d631ccf255c5b7fc523daa1ea92c8bc5278e83))
+* **reporting:** combine complexity advice per function ([#1019](https://github.com/duriantaco/skylos/issues/1019)) ([91ac1ed](https://github.com/duriantaco/skylos/commit/91ac1ed2a8be3ac6f4785292a0a052d97676d175))
+* **reporting:** focus advice while preserving raw findings ([#1022](https://github.com/duriantaco/skylos/issues/1022)) ([5ecd621](https://github.com/duriantaco/skylos/commit/5ecd62166176cb3877aea58746d6408eafa09878))
+* **secrets:** preserve scalar values in pnpm lockfile streams ([#1031](https://github.com/duriantaco/skylos/issues/1031)) ([34b5e20](https://github.com/duriantaco/skylos/commit/34b5e20478559193af7f0b9374c316650ee4440f))
+* **security:** resolve open modes before classifying path operations ([#1033](https://github.com/duriantaco/skylos/issues/1033)) ([f7accea](https://github.com/duriantaco/skylos/commit/f7acceae92ec6110ff14f875e2a4b402c0b48a5e))
+* **security:** resolve sink receivers from source bindings ([#1030](https://github.com/duriantaco/skylos/issues/1030)) ([59aecb8](https://github.com/duriantaco/skylos/commit/59aecb83dee2cd28d632e850eb6ceef587308160))
+
 ## [4.50.1](https://github.com/duriantaco/skylos/compare/v4.50.0...v4.50.1) (2026-10-15)
 
 
