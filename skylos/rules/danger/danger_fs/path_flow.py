@@ -5,6 +5,10 @@ import sys
 from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
+from skylos.rules.danger.danger_fs.pytest_fixture_paths import (
+    FixturePathEvidence,
+    fixture_path_evidence,
+)
 from skylos.security.receiver_resolution import ReceiverResolver
 from skylos.rules.danger.untrusted_sources import (
     is_traversal_safe_value,
@@ -501,6 +505,7 @@ class _PathFlowChecker(TaintVisitor):
         ]
         self._emitted = set()
         self._literal_pytest_paths = {}
+        self._pytest_fixture_paths = FixturePathEvidence()
         self.import_aliases = {}
         self.untrusted_sources = UntrustedSourceIndex(None)
         self.normalized_stack = [set()]
@@ -523,6 +528,13 @@ class _PathFlowChecker(TaintVisitor):
         self._constant_sizes = _module_constant_sizes(node)
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
+        try:
+            self._pytest_fixture_paths = fixture_path_evidence(
+                node, self.file_path, self._literal_pytest_paths
+            )
+        except Exception:
+            # Optional project/fixture proof must not disable ordinary path checks.
+            self._pytest_fixture_paths = FixturePathEvidence()
         self.generic_visit(node)
 
     def visit_Import(self, node):
@@ -655,23 +667,22 @@ class _PathFlowChecker(TaintVisitor):
             name = getattr(arg, "arg", None)
             if not name or name in {"self", "cls"}:
                 continue
+            if name in PYTEST_TMP_FIXTURE_NAMES:
+                # This recognizes path syntax only. Source trust requires the
+                # per-expression provider proof below, including overrides.
+                self._set_path_like(name, True)
             if self._is_pytest_tmp_fixture_param(name, fn):
-                self._set(name, False)
                 self._set_path_like(name, True)
                 self._set_basename_sanitized(name, False)
-                self._set_symlink_sensitive(name, False)
             else:
-                self._set_path_like(name, False)
+                if name not in PYTEST_TMP_FIXTURE_NAMES:
+                    self._set_path_like(name, False)
                 if name in self._literal_pytest_paths.get(fn, ()):
                     self._set(name, False)
 
     def _is_pytest_tmp_fixture_param(self, name: str, fn: ast.AST) -> bool:
-        if name not in PYTEST_TMP_FIXTURE_NAMES:
-            return False
-        if not _is_probable_test_file(self.file_path):
-            return False
-        function_name = getattr(fn, "name", "")
-        return function_name.startswith("test_") or _is_pytest_fixture_function(fn)
+        parameters = self._pytest_fixture_paths.parameters.get(fn, ())
+        return name in parameters
 
     def _is_path_like_expr(self, node):
         if _is_path_constructor_call(node):
@@ -696,6 +707,8 @@ class _PathFlowChecker(TaintVisitor):
 
     def _is_symlink_sensitive_expr(self, node):
         if node is None:
+            return False
+        if node in self._pytest_fixture_paths.paths:
             return False
         if _is_path_name_projection(node):
             path_call = node.value
@@ -734,6 +747,10 @@ class _PathFlowChecker(TaintVisitor):
         return False
 
     def is_tainted(self, node):
+        if node in self._pytest_fixture_paths.unsafe:
+            return True
+        if node in self._pytest_fixture_paths.paths:
+            return False
         if _is_path_name_projection(node) or is_traversal_safe_value(node):
             return False
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):

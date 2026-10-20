@@ -2,10 +2,13 @@
 
 import ast
 import textwrap
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
 from skylos.rules.danger.danger_fs import path_flow
+from skylos.core.safe_cache_io import write_text_no_symlink
 
 
 PATH_RULES = {"SKY-D215", "SKY-D324", "SKY-D325"}
@@ -30,12 +33,30 @@ class _RawPathFlowChecker(path_flow._PathFlowChecker):
     REPORT_ONLY_UNTRUSTED_SOURCES = False
 
 
+def _scan_context(source, filename, *, raw):
+    # Supply actual source/config/provider context. A filename and a parameter
+    # named tmp_path no longer establish the pytest builtin provider.
+    with TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        assert write_text_no_symlink(
+            root / "pyproject.toml", "[project]\nname='literal-path-proof'\n"
+        )
+        path = root / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        assert write_text_no_symlink(path, source)
+        findings = []
+        if raw:
+            checker = _RawPathFlowChecker(
+                path, findings, sanitizers=path_flow.PATH_SANITIZERS
+            )
+            checker.visit(ast.parse(source))
+        else:
+            path_flow.scan(ast.parse(source), path, findings)
+        return findings
+
+
 def _scan(source, filename="tests/test_paths.py"):
-    findings = []
-    checker = _RawPathFlowChecker(
-        filename, findings, sanitizers=path_flow.PATH_SANITIZERS
-    )
-    checker.visit(ast.parse(source))
+    findings = _scan_context(source, filename, raw=True)
     return [finding for finding in findings if finding["rule_id"] in PATH_RULES]
 
 
@@ -45,15 +66,13 @@ def test_default_policy_keeps_request_override_in_test_file():
         body='filename = request.args["name"]\n(tmp_path / filename).write_text("x")',
     )
     assert _scan(source)  # the raw flow still sees the tainted write
-    findings = []
-    path_flow.scan(ast.parse(source), "tests/test_paths.py", findings)
+    findings = _scan_context(source, "tests/test_paths.py", raw=False)
     assert WRITE_RULES <= {f["rule_id"] for f in findings}
 
 
 def test_default_policy_preserves_literal_pytest_path_proof():
     source = _fixture()
-    findings = []
-    path_flow.scan(ast.parse(source), "tests/test_paths.py", findings)
+    findings = _scan_context(source, "tests/test_paths.py", raw=False)
     assert not [f for f in findings if f["rule_id"] in PATH_RULES]
 
 
@@ -63,7 +82,9 @@ def _assert_write_flagged(
     findings = _scan(source, filename)
     relevant = [finding for finding in findings if finding["symbol"] == symbol]
     assert WRITE_RULES <= {finding["rule_id"] for finding in relevant}, findings
-    assert all(finding["file"] == filename for finding in relevant)
+    assert all(
+        Path(finding["file"]).as_posix().endswith(filename) for finding in relevant
+    )
     assert all(finding["line"] > 0 for finding in relevant)
 
 

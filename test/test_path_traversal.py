@@ -346,6 +346,7 @@ def handler(p):
 
 
 def test_proven_pytest_fixture_path_in_tests_dir_is_not_reported(tmp_path):
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'fixture-provider-proof'\n")
     code = """
 from pathlib import Path
 import pytest
@@ -360,7 +361,7 @@ def seeded(tmp_path):
     doc = tmp_path / "a.txt"
     doc.write_text("alpha")
 """
-    target = tmp_path / "tests" / "testbatch_incremental.py"
+    target = tmp_path / "tests" / "test_batch_incremental.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(code, encoding="utf-8")
     out = scan_ctx(tmp_path, [target])
