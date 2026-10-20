@@ -48,7 +48,7 @@ class ReceiverResolver:
             self.search_roots.append(self.root / "src")
         self.modules = {}
         self._unavailable_modules = set()
-        self.main = _Module(module, self.path, self._module_name(self.path))
+        self.main = _Module(module, self.path, self._module_name(self.path), self.root)
         self.modules[str(self.path)] = self.main
         self._effect_cache = {}
         self._bound_receiver_context = {}
@@ -105,7 +105,7 @@ class ReceiverResolver:
             tree = ast.parse(text, filename=key)
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
             return None
-        module = _Module(tree, path, name)
+        module = _Module(tree, path, name, self.root)
         self.modules[key] = module
         self._unavailable_modules.discard(name)
         return module
