@@ -10,6 +10,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from skylos.rules.danger.danger_fs.pytest_paths import _name, _resolved
+from skylos.rules.danger.danger_fs.pytest_paths import _relative_path
 from skylos.rules.danger.danger_fs.pytest_fixture_values import (
     FixturePathEvidence,
     _FunctionPaths,
@@ -43,6 +44,102 @@ def _fixture_parameters(function):
         if default is None:
             result.append(argument)
     return result
+
+
+def _factory_capability_unchanged(function, parameter):
+    """A factory may only create literal children, never escape or be changed.
+
+    This proves the provider capability, not every unrelated callback effect.
+    Explicit access to a created path's parent remains unsupported here.
+    """
+    parents = {}
+    for parent in ast.walk(function):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    created = set()
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Name) or node.id != parameter:
+            continue
+        if not isinstance(node.ctx, ast.Load):
+            return False
+        current = node
+        while current is not function:
+            current = parents.get(current)
+            if current is None:
+                return False
+            if current is not function and isinstance(
+                current,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+            ):
+                return False
+        attribute = parents.get(node)
+        call = parents.get(attribute)
+        if (
+            not isinstance(attribute, ast.Attribute)
+            or attribute.attr != "mktemp"
+            or not isinstance(call, ast.Call)
+            or call.func is not attribute
+            or len(call.args) != 1
+            or call.keywords
+            or not _relative_path(call.args[0])
+        ):
+            return False
+        created.add(call)
+    # A descendant can reach the factory base through .parent/.parents. Keep
+    # that case conservative even if it appears inside unsupported control flow.
+    derived_names = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(function):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                assigned = node.value
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                else:
+                    targets = [node.target]
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                assigned = node.iter
+                targets = [node.target]
+            elif isinstance(node, ast.withitem):
+                assigned = node.context_expr
+                targets = []
+                if node.optional_vars is not None:
+                    targets.append(node.optional_vars)
+            elif isinstance(node, ast.Match):
+                assigned = node.subject
+                targets = None
+            else:
+                continue
+            if assigned is None:
+                continue
+            owned = False
+            for value in ast.walk(assigned):
+                if value in created or (
+                    isinstance(value, ast.Name) and value.id in derived_names
+                ):
+                    owned = True
+            if not owned:
+                continue
+            if targets is None:
+                return False
+            for target in targets:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name) and name.id not in derived_names:
+                        derived_names.add(name.id)
+                        changed = True
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Attribute) or node.attr not in {
+            "parent",
+            "parents",
+        }:
+            continue
+        for value in ast.walk(node.value):
+            if value in created or (
+                isinstance(value, ast.Name) and value.id in derived_names
+            ):
+                return False
+    return True
 
 
 def _providers(context, path):
@@ -181,7 +278,7 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
     for provider in providers.values():
         if provider is None:
             continue
-        _provider_path, provider_function = provider
+        provider_path, provider_function = provider
         autouse = False
         for decorator in provider_function.decorator_list:
             if not isinstance(decorator, ast.Call):
@@ -242,6 +339,30 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
                 return None
         return returned
 
+    def activated_factory_mutation(names):
+        pending = list(names)
+        inspected = set()
+        while pending:
+            name = pending.pop()
+            if name in inspected:
+                continue
+            inspected.add(name)
+            provider = providers.get(name)
+            if provider is None:
+                continue
+            _path, function = provider
+            for node in ast.walk(function):
+                if isinstance(node, ast.Attribute) and node.attr == "getfixturevalue":
+                    return True
+            for argument in _fixture_parameters(function):
+                dependency = resolve(argument.arg, (), complete_proof=False)
+                if dependency == "factory" and not _factory_capability_unchanged(
+                    function, argument.arg
+                ):
+                    return True
+                pending.append(argument.arg)
+        return False
+
     for provider in providers.values():
         if provider is None:
             continue
@@ -258,9 +379,18 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
                             autouse = True
         if not autouse:
             continue
+        dependencies = []
         for argument in _fixture_parameters(provider_function):
-            if resolve(argument.arg, (), complete_proof=False) == "path":
+            dependencies.append(argument.arg)
+            dependency = resolve(argument.arg, (), complete_proof=False)
+            if dependency == "path":
                 return evidence
+            if dependency == "factory" and not _factory_capability_unchanged(
+                provider_function, argument.arg
+            ):
+                return evidence
+        if activated_factory_mutation(dependencies):
+            return evidence
         for node in ast.walk(provider_function):
             if isinstance(node, ast.Attribute) and node.attr == "getfixturevalue":
                 return evidence
@@ -316,6 +446,12 @@ def fixture_path_evidence(tree, file_path, literal_parameters=None):
             } and not name.startswith("pytest.mark."):
                 valid_decorators = False
         if not valid_decorators:
+            continue
+        activated_names = []
+        for argument in _fixture_parameters(function):
+            if argument.arg not in parameterized:
+                activated_names.append(argument.arg)
+        if activated_factory_mutation(activated_names):
             continue
         parameters = {}
         for argument in _fixture_parameters(function):

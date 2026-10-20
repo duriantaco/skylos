@@ -375,10 +375,26 @@ def fixture_definitions(tree):
 
 def fixture_scope_supported(tree):
     from skylos.rules.danger.danger_fs.closed_world import _Names
+    from skylos.rules.danger.danger_fs.pytest_fixture_bindings import binding_escapes
 
     names = _Names(tree)
     if names.namespace_mutated:
         return False
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                if alias.name == "pytest" and not pytest_imports(tree):
+                    if binding_escapes(
+                        tree, alias.asname or alias.name, allow_decorators=True
+                    ):
+                        return False
+        elif isinstance(statement, ast.ImportFrom):
+            if statement.module == "pytest":
+                for alias in statement.names:
+                    if binding_escapes(
+                        tree, alias.asname or alias.name, allow_decorators=True
+                    ):
+                        return False
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in {"exec", "eval"} and names.unbound(node.func.id):

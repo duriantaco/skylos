@@ -444,6 +444,96 @@ def test_write(prepared):
     assert "SKY-D324" in _rules(_scan(tmp_path, source))
 
 
+@pytest.mark.parametrize("factory", ["tmp_path_factory", "tmpdir_factory"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        ".mktemp = lambda *args: outside_path",
+        ".mktemp = replace_factory",
+    ],
+)
+def test_autouse_factory_dependency_can_replace_temporary_provider(
+    tmp_path, factory, mutation
+):
+    source = (
+        "import pytest\n@pytest.fixture(autouse=True)\ndef rewrite("
+        + factory
+        + "):\n    "
+        + factory
+        + mutation
+        + "\ndef test_write("
+        + factory
+        + "):\n    ("
+        + factory
+        + '.mktemp("x") / "file").write_text("x")\n'
+    )
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "configure(tmp_path_factory)",
+        "registry = [tmp_path_factory]\n    configure(registry)",
+        "temporary = tmp_path_factory\n    temporary.mktemp = replace_factory",
+        "tmp_path_factory._basetemp = outside_path",
+        'created = tmp_path_factory.mktemp("warm")\n    created.parent.chmod(0o777)',
+        'created = tmp_path_factory.mktemp("warm")\n    for item in items:\n        created.parent.symlink_to(outside_path)',
+        'if (created := tmp_path_factory.mktemp("warm")):\n        created.parent.chmod(0o777)',
+        'for created in [tmp_path_factory.mktemp("warm")]:\n        created.parent.chmod(0o777)',
+    ],
+)
+def test_autouse_factory_capability_requires_no_mutation_or_escape(tmp_path, mutation):
+    source = (
+        "import pytest\n@pytest.fixture(autouse=True)\ndef rewrite(tmp_path_factory):\n    "
+        + mutation
+        + '\ndef test_write(tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    )
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+def test_escaped_pytest_provider_cannot_prove_direct_factory_parameter(tmp_path):
+    source = 'import pytest\nconfigure(pytest)\ndef test_write(tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+def test_returned_factory_with_replaced_method_keeps_warning(tmp_path):
+    source = 'import pytest\n@pytest.fixture\ndef prepared(tmp_path_factory):\n    tmp_path_factory.mktemp = lambda *args: outside_path\n    return tmp_path_factory\ndef test_write(prepared):\n    (prepared.mktemp("x") / "file").write_text("x")\n'
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+@pytest.mark.parametrize("transitive", [False, True])
+def test_required_sibling_fixture_cannot_replace_factory_before_consumer(
+    tmp_path, transitive
+):
+    source = 'import pytest\n@pytest.fixture\ndef payload(tmp_path_factory):\n    tmp_path_factory.mktemp = lambda *args: outside_path\n    return "x"\n'
+    dependency = "payload"
+    if transitive:
+        source += '@pytest.fixture\ndef intermediary(payload):\n    return "x"\n'
+        dependency = "intermediary"
+    source += (
+        "def test_write("
+        + dependency
+        + ', tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    )
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+def test_inactive_factory_mutator_does_not_change_consumer_provider(tmp_path):
+    source = 'import pytest\n@pytest.fixture\ndef unused(tmp_path_factory):\n    tmp_path_factory.mktemp = lambda *args: outside_path\ndef test_write(tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    assert not _rules(_scan(tmp_path, source))
+
+
+def test_autouse_dependency_closure_cannot_replace_factory(tmp_path):
+    source = 'import pytest\n@pytest.fixture\ndef payload(tmp_path_factory):\n    tmp_path_factory.mktemp = lambda *args: outside_path\n    return "x"\n@pytest.fixture(autouse=True)\ndef intermediary(payload):\n    pass\ndef test_write(tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
+def test_required_fixture_dynamic_lookup_keeps_factory_warning(tmp_path):
+    source = 'import pytest\n@pytest.fixture\ndef payload(request):\n    factory = request.getfixturevalue("tmp_path_factory")\n    factory.mktemp = lambda *args: outside_path\n    return "x"\ndef test_write(payload, tmp_path_factory):\n    (tmp_path_factory.mktemp("x") / "file").write_text("x")\n'
+    assert "SKY-D324" in _rules(_scan(tmp_path, source))
+
+
 def test_autouse_dynamic_fixture_lookup_keeps_warning(tmp_path):
     source = """import pytest
 @pytest.fixture(autouse=True)

@@ -42,14 +42,14 @@ def provider_namespace_stable(tree, module, member):
     return run_memo(("fixture-provider-namespace", id(tree), module, member), evaluate)
 
 
-def binding_escapes(tree, name):
+def binding_escapes(tree, name, *, allow_decorators=False):
     return run_memo(
-        ("fixture-binding-escape", id(tree), name),
-        lambda: _binding_escapes(tree, name),
+        ("fixture-binding-escape", id(tree), name, allow_decorators),
+        lambda: _binding_escapes(tree, name, allow_decorators),
     )
 
 
-def _binding_escapes(tree, name):
+def _binding_escapes(tree, name, allow_decorators):
     parents = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -67,6 +67,14 @@ def _binding_escapes(tree, name):
             expression = parent
             parent = parents.get(expression)
         if isinstance(parent, ast.Call) and parent.func is expression:
+            continue
+        if (
+            allow_decorators
+            and isinstance(
+                parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+            and expression in parent.decorator_list
+        ):
             continue
         current = expression
         annotation = False

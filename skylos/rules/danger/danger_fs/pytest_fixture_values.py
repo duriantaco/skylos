@@ -391,6 +391,15 @@ class _FunctionPaths:
                             self.env[target.id] = kind
                     elif kind in {"path", "factory", "aggregate"}:
                         escapes = True
+                    if isinstance(target, (ast.Attribute, ast.Subscript)):
+                        if self.value(target.value) in {
+                            "path",
+                            "factory",
+                            "aggregate",
+                            "outside_path",
+                        }:
+                            self.explicit_mutation = True
+                            escapes = True
                 if escapes:
                     self._lose_paths()
             elif isinstance(statement, ast.Expr):
