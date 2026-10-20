@@ -6,6 +6,7 @@ from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
+from skylos.security.operation_contracts import archive_receiver_evidence
 from skylos.rules.danger.untrusted_sources import (
     is_traversal_safe_value,
     UntrustedSourceIndex,
@@ -1255,6 +1256,15 @@ class _PathFlowChecker(TaintVisitor):
         self._add_finding(node, SYMLINK_READ_RULE, "MEDIUM", message, evidence)
 
     def _flag_archive_extract_if_unsafe(self, node):
+        if self.receiver_resolver is not None:
+            try:
+                proof = archive_receiver_evidence(self.receiver_resolver, node)
+            except Exception:
+                proof = None
+            if isinstance(proof, dict):
+                self._receiver_proofs[id(node)] = proof
+                if proof.get("archive_operation") == "refuted":
+                    return
         if self._has_archive_guard():
             return
         self._add_finding(

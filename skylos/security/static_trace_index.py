@@ -283,7 +283,7 @@ class ProjectTraceIndex:
         selected = json.dumps(self.selected_paths, separators=(",", ":"))
         return {
             "algorithm": "security-static-trace-v1",
-            "receiver_model_version": 1,
+            "receiver_model_version": 3,
             "analyzer_version": __version__,
             "python_syntax_version": ".".join(map(str, sys.version_info[:3])),
             "limits": dict(vars(self.limits)),

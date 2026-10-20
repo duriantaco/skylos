@@ -18,6 +18,23 @@ _BRANCHES = (
 )
 
 
+def _escaped_object_names(value):
+    """Names passed as values, rather than names used to compute a result.
+
+    Containers preserve references to their contents. A call's result does
+    not, by itself, prove that its receiver or arguments have escaped; that
+    call is inspected separately. This distinction matters for nested calls.
+    """
+    if isinstance(value, ast.Name):
+        return {value.id}
+    if isinstance(value, (ast.Call, ast.Lambda)):
+        return set()
+    names = set()
+    for child in ast.iter_child_nodes(value):
+        names.update(_escaped_object_names(child))
+    return names
+
+
 @dataclass
 class _Reference:
     kind: str
@@ -48,9 +65,13 @@ class _Module:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     object_names.add(alias.asname or alias.name.split(".")[0])
-            if isinstance(node, ast.Assign):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = []
-                for target in node.targets:
+                if isinstance(node, ast.Assign):
+                    assignments = node.targets
+                else:
+                    assignments = [node.target]
+                for target in assignments:
                     if isinstance(target, ast.Name):
                         targets.append(target.id)
                 value = node.value
@@ -62,6 +83,10 @@ class _Module:
                     for target in targets:
                         aliases.append((target, value.id))
         for node in ast.walk(tree):
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                # A nested scope can replace the binding after its import or
+                # initialization; outer-scope lookup alone cannot prove it.
+                self.mutated.update(node.names)
             if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
             ):
@@ -99,14 +124,37 @@ class _Module:
         # Passing an owned object/class to an unresolved callable can replace
         # its dispatch, including qualified/aliased setattr and patch helpers.
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            arguments = list(node.args)
-            for keyword in node.keywords:
-                arguments.append(keyword.value)
-            for arg in arguments:
-                if isinstance(arg, ast.Name) and arg.id in object_names:
-                    self.mutated.add(arg.id)
+            values = []
+            if isinstance(node, ast.Call):
+                values.extend(node.args)
+                for keyword in node.keywords:
+                    values.append(keyword.value)
+            elif isinstance(node, (ast.Return, ast.Yield)) and node.value is not None:
+                values.append(node.value)
+            elif isinstance(node, (*_FUNCTIONS, ast.Lambda)):
+                values.extend(node.args.defaults)
+                for default in node.args.kw_defaults:
+                    if default is not None:
+                        values.append(default)
+            elif isinstance(node, ast.NamedExpr):
+                values.append(node.value)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                if node.value is not None and not isinstance(
+                    node.value, (ast.Name, ast.Attribute)
+                ):
+                    values.append(node.value)
+                if isinstance(self.scope(node), ast.ClassDef) and node.value is not None:
+                    values.append(node.value)
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                else:
+                    targets = [node.target]
+                for target in targets:
+                    if isinstance(target, (ast.Attribute, ast.Subscript)):
+                        if node.value is not None:
+                            values.append(node.value)
+            for value in values:
+                self.mutated.update(_escaped_object_names(value) & object_names)
         changed = True
         while changed:
             changed = False
