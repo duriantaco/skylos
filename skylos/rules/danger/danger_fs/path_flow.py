@@ -6,6 +6,8 @@ from skylos.rules.danger.taint import TaintVisitor, PATH_SANITIZERS
 from skylos.rules.danger.danger_fs.closed_world import HELPER_PARAMETER_SOURCE
 from skylos.rules.danger.danger_fs.pytest_paths import literal_path_parameters
 from skylos.security.receiver_resolution import ReceiverResolver
+from skylos.rules.danger.danger_fs.path_open_modes import PathOpenModes
+from skylos.rules.danger.danger_fs.open_read_evidence import UpdateHandleReads
 from skylos.rules.danger.untrusted_sources import (
     is_traversal_safe_value,
     UntrustedSourceIndex,
@@ -512,6 +514,8 @@ class _PathFlowChecker(TaintVisitor):
         self._constant_sizes = {}
         self.receiver_resolver = None
         self._receiver_proofs = {}
+        self.path_open_modes = None
+        self.update_handle_reads = None
 
     def visit_Module(self, node):
         self.untrusted_sources = UntrustedSourceIndex(node, follow_local_calls=True)
@@ -520,7 +524,15 @@ class _PathFlowChecker(TaintVisitor):
         except Exception:
             # Optional receiver evidence must never remove an existing warning.
             self.receiver_resolver = None
+        try:
+            self.path_open_modes = PathOpenModes(node, self.receiver_resolver)
+        except Exception:
+            self.path_open_modes = None
         self._constant_sizes = _module_constant_sizes(node)
+        try:
+            self.update_handle_reads = UpdateHandleReads(node, self.receiver_resolver)
+        except Exception:
+            self.update_handle_reads = None
         if _is_probable_test_file(self.file_path):
             self._literal_pytest_paths = literal_path_parameters(node)
         self.generic_visit(node)
@@ -1264,6 +1276,36 @@ class _PathFlowChecker(TaintVisitor):
             "Unsafe archive extraction can write through traversal paths or symlink members; validate members before extraction.",
         )
 
+    def _flag_open_operations(self, node, path_expr, *, bound_method=False):
+        modes = None
+        if self.path_open_modes is not None:
+            try:
+                modes = self.path_open_modes.modes(node, bound_method=bound_method)
+            except Exception:
+                modes = None
+        may_read = modes is None
+        may_write = modes is None
+        if modes is not None:
+            for mode in modes:
+                if "r" in mode and "+" not in mode:
+                    may_read = True
+                if "+" in mode and self._update_handle_is_read(node):
+                    may_read = True
+                if _mode_writes(mode):
+                    may_write = True
+        if may_write:
+            self._flag_symlink_write_if_unsafe(node, path_expr)
+        if may_read:
+            self._flag_symlink_read_if_unsafe(node, path_expr)
+
+    def _update_handle_is_read(self, node):
+        if self.update_handle_reads is None:
+            return False
+        try:
+            return self.update_handle_reads.observed(node)
+        except Exception:
+            return False
+
     def visit_Call(self, node: ast.Call):
         qn = _qualified_name(node)
         method_sink = isinstance(node.func, ast.Attribute) and node.func.attr in {
@@ -1307,18 +1349,12 @@ class _PathFlowChecker(TaintVisitor):
             elif node.func.attr in self.PATHLIB_READ_METHODS:
                 self._flag_symlink_read_if_unsafe(node, operand)
             elif node.func.attr == "open":
-                mode = _call_mode(node, bound_method=bound_path_method)
-                if _mode_writes(mode):
-                    self._flag_symlink_write_if_unsafe(node, operand)
-                else:
-                    self._flag_symlink_read_if_unsafe(node, operand)
+                self._flag_open_operations(
+                    node, operand, bound_method=bound_path_method
+                )
 
         if qn == "open" and first_path is not None:
-            mode = _call_mode(node)
-            if _mode_writes(mode):
-                self._flag_symlink_write_if_unsafe(node, first_path)
-            else:
-                self._flag_symlink_read_if_unsafe(node, first_path)
+            self._flag_open_operations(node, first_path)
 
         if qn == "os.open" and first_path is not None:
             if (
