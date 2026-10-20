@@ -32,6 +32,8 @@ The trace follows imports, stable assignments, source-resolved calls, argument-t
 
 Receiver identity has its own proof. A method named `execute`, `write_text` or `open` does not establish that its object is a database cursor or filesystem path. The resolver tracks source bindings, constructors and import aliases and reports effects separately from identity. An annotation alone does not prove the runtime object. Unknown providers, rebinding, mutation, dynamic dispatch and unsupported inheritance remain unknown.
 
+An exact, unambiguous call location can be traced even when its name is absent from the legacy sink-name list. Calls sharing the reported start remain ambiguous. Source-bound `os` and `shutil` filesystem operations identify their declared path argument rather than treating the module as a path; project-local providers and unresolved lookalikes do not receive that standard-library contract. These additional operand models apply only to the explanation.
+
 Rules exclude a lookalike only when source proof establishes the relevant non-database or non-filesystem effect. Unknown receiver warnings, real unsafe paths, SQL interpolation and interpolated SQL with an additional parameter argument remain detectable. This feature does not lower severity or change gate policy.
 
 The status describes the recorded explanation:
