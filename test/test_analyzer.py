@@ -2893,7 +2893,8 @@ class TestClass:
             project_root=scan_root,
         )
 
-        assert len(result) == 28
+        assert len(result) == 29
+        assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
         assert result[25]["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
@@ -2909,7 +2910,8 @@ class TestClass:
 
         result = proc_file(str(source), "oversized", project_root=tmp_path)
 
-        assert len(result) == 28
+        assert len(result) == 29
+        assert result[28] == {}
         assert result[0] == []
         assert result[19] == []
         assert result[25]["kind"] == "source_read_error"
@@ -2929,7 +2931,9 @@ class TestClass:
 
         result = proc_file(str(source), "bounded", project_root=tmp_path)
 
-        assert len(result) == 28
+        assert len(result) == 29
+        assert result[28]["version"] == 1
+        assert result[28]["definition_count"] == 0
         assert result[19] == [source_text]
         assert result[25] is None
 

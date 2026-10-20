@@ -3,8 +3,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._argument_contracts import ArgumentContracts
 from skylos.rules.quality._code_lines import code_lines
 from skylos.rules.quality._overload_groups import overload_groups
+from skylos.rules.quality._parameter_context import ParameterContext
 from skylos.rules.quality._receivers import (
     context_method_kinds,
     method_receiver,
@@ -41,9 +43,15 @@ class ArgCountRule(SkylosRule):
         self._methods = {}
         self._skip_file = False
         self._overloads = {}
+        self._tree = None
+        self._contracts = None
+        self._parameter_context = None
 
     def visit_node(self, node, context):
         if isinstance(node, ast.Module):
+            self._tree = node
+            self._contracts = None
+            self._parameter_context = None
             self._skip_file = is_non_production_python(
                 context.get("filename"), context.get("project_root")
             )
@@ -80,6 +88,16 @@ class ArgCountRule(SkylosRule):
             return self._overload_finding(group, node, context)
 
         arity = self._arity(node)
+        if arity.required > self.max_required or arity.total > self.max_total:
+            if self._parameter_context is None:
+                self._parameter_context = ParameterContext(
+                    self._tree,
+                    self._methods,
+                    filename=context.get("filename"),
+                    project_root=context.get("project_root"),
+                )
+            if self._parameter_context.exempts(node):
+                return None
         if arity.required > self.max_required:
             return [self._required_finding(node, context, arity)]
         if arity.total > self.max_total:
@@ -96,12 +114,12 @@ class ArgCountRule(SkylosRule):
             member, arity = max(
                 required, key=lambda item: (item[1].required, item[1].total)
             )
-            finding = self._required_finding(node, context, arity)
+            finding = self._required_finding(node, context, arity, metric_node=member)
         elif total:
             member, arity = max(
                 total, key=lambda item: (item[1].total, item[1].required)
             )
-            finding = self._total_finding(node, context, arity)
+            finding = self._total_finding(node, context, arity, metric_node=member)
         else:
             return None
         if member is not group.implementation:
@@ -109,6 +127,20 @@ class ArgCountRule(SkylosRule):
                 "Function has", "Callable has an overload signature with", 1
             )
         finding["overload_metric_source_line"] = member.lineno
+        evidence = finding["argument_evidence"]
+        contracts = [
+            self._contract_resolver(context).contract_for(signature)
+            for signature, _ in required + total
+        ]
+        if contracts and all(contracts):
+            evidence["override_contract"] = {
+                **self._contract_resolver(context).contract_for(member),
+                "covered_source_lines": sorted(
+                    {signature.lineno for signature, _ in required + total}
+                ),
+            }
+        else:
+            evidence.pop("override_contract", None)
         finding["overload_signatures"] = [
             {
                 "line": signature.lineno,
@@ -181,6 +213,81 @@ class ArgCountRule(SkylosRule):
             uncertain=possible_receiver and not implicit_receiver,
         )
 
+    def _contract_resolver(self, context):
+        if self._contracts is None:
+            self._contracts = ArgumentContracts(self._tree, context, self._methods)
+        return self._contracts
+
+    def _argument_evidence(self, node, context, arity, metric):
+        resolver = self._contract_resolver(context)
+        binding = resolver.binding_for(node)
+        positional = [*node.args.posonlyargs, *node.args.args]
+        required = len(positional) - len(node.args.defaults)
+        receiver = (
+            positional[0].arg
+            if positional and binding in {"instance", "class"}
+            else None
+        )
+        receiver_count = int(receiver is not None)
+        parameters = [
+            {
+                "name": parameter.arg,
+                "kind": "positional_only"
+                if index < len(node.args.posonlyargs)
+                else "positional_or_keyword",
+                "required": index < required,
+            }
+            for index, parameter in enumerate(positional)
+            if index >= receiver_count
+        ]
+        keyword_only = [
+            {"name": parameter.arg, "required": default is None}
+            for parameter, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+        ]
+        evidence = {
+            "version": 1,
+            "complete": binding is not None,
+            "metric": metric,
+            "source_line": node.lineno,
+            "required_positional": (
+                sum(item["required"] for item in parameters)
+                if binding is not None
+                else arity.required
+            ),
+            "optional_positional": sum(not item["required"] for item in parameters),
+            "positional_only": sum(
+                item["kind"] == "positional_only" for item in parameters
+            ),
+            "positional_or_keyword": sum(
+                item["kind"] == "positional_or_keyword" for item in parameters
+            ),
+            "required_keyword_only": sum(item["required"] for item in keyword_only),
+            "optional_keyword_only": sum(not item["required"] for item in keyword_only),
+            "keyword_only": len(keyword_only),
+            "total_parameters": (
+                len(parameters) + len(keyword_only)
+                if binding is not None
+                else arity.total
+            ),
+            "positional_parameters": parameters,
+            "keyword_only_parameters": keyword_only,
+            "variadic_positional": node.args.vararg.arg if node.args.vararg else None,
+            "variadic_keyword": node.args.kwarg.arg if node.args.kwarg else None,
+            "receiver_binding": binding or "unknown",
+            "receiver_parameter": receiver,
+            "limits": {
+                "required_positional": self.max_required,
+                "total_parameters": self.max_total,
+            },
+        }
+        if arity.uncertain:
+            evidence["required_positional_range"] = [arity.required, arity.max_required]
+            evidence["total_parameter_range"] = [arity.total, arity.max_total]
+        contract = resolver.contract_for(node)
+        if contract is not None:
+            evidence["override_contract"] = contract
+        return evidence
+
     def _finding(self, node, context, arity, **fields):
         mod = context.get("mod", "")
         filename = context.get("filename")
@@ -202,7 +309,7 @@ class ArgCountRule(SkylosRule):
             finding["receiver_binding"] = "unknown"
         return finding
 
-    def _required_finding(self, node, context, arity):
+    def _required_finding(self, node, context, arity, *, metric_node=None):
         at_least = "at least " if arity.uncertain else ""
         return self._finding(
             node,
@@ -211,6 +318,9 @@ class ArgCountRule(SkylosRule):
             value=arity.required,
             threshold=self.max_required,
             severity="MEDIUM",
+            argument_evidence=self._argument_evidence(
+                metric_node or node, context, arity, "required_positional"
+            ),
             message=(
                 f"Function has {at_least}{arity.required} required positional "
                 f"arguments (limit: {self.max_required}). Callers must pass "
@@ -219,7 +329,7 @@ class ArgCountRule(SkylosRule):
             ),
         )
 
-    def _total_finding(self, node, context, arity):
+    def _total_finding(self, node, context, arity, *, metric_node=None):
         if arity.uncertain:
             breakdown = (
                 f"Required positional arguments range from {arity.required} to "
@@ -240,6 +350,9 @@ class ArgCountRule(SkylosRule):
             value=arity.total,
             threshold=self.max_total,
             severity="LOW",
+            argument_evidence=self._argument_evidence(
+                metric_node or node, context, arity, "total_parameters"
+            ),
             message=(
                 f"Function has {at_least}{arity.total} total parameters "
                 f"(limit: {self.max_total}). {breakdown}"

@@ -1405,16 +1405,101 @@ def _is_public_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def _iter_public_functions(module: ast.Module, receivers):
+    exports = _literal_public_exports(module)
     for stmt in module.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if _is_public_function(stmt):
+            if _is_public_function(stmt) and (exports is None or stmt.name in exports):
                 yield stmt, stmt.name, None
-        elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_"):
+        elif isinstance(stmt, ast.ClassDef) and not stmt.name.startswith("_") and (
+            exports is None or stmt.name in exports
+        ):
             for item in sorted(
                 class_method_nodes(stmt), key=lambda method: method.lineno
             ):
                 if _is_public_function(item):
                     yield item, f"{stmt.name}.{item.name}", receivers.get(id(item))
+
+
+def _literal_public_exports(module):
+    """A complete literal __all__, otherwise keep the normal public-name rule.
+
+    A mutable/dynamic export list is not evidence that a symbol is private.
+    Export aliases also make the relationship uncertain, so retain advice.
+    """
+    declarations = []
+    for statement in module.body:
+        targets = statement.targets if isinstance(statement, ast.Assign) else (
+            [statement.target] if isinstance(statement, ast.AnnAssign) else []
+        )
+        if any(isinstance(target, ast.Name) and target.id == "__all__" for target in targets):
+            declarations.append((statement, targets))
+    if len(declarations) != 1:
+        return None
+    declaration, targets = declarations[0]
+    if len(targets) != 1 or not isinstance(declaration.value, (ast.Tuple, ast.List)):
+        return None
+    items = declaration.value.elts
+    if not all(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in items):
+        return None
+    exports = {item.value for item in items}
+    for node in ast.walk(module):
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+            # A wildcard import may publish an __all__ of its own or import
+            # aliases for local definitions. The final surface is unknown.
+            return None
+        if isinstance(node, ast.Name) and node.id == "__all__" and node is not targets[0]:
+            return None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {
+            "globals", "locals", "vars", "eval", "exec"
+        }:
+            return None
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node is not declaration:
+            assigned = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(target, ast.Name) and target.id in exports for target in assigned):
+                # ``Public = Internal`` can publish a class or function whose
+                # definition has a different spelling.
+                if isinstance(node.value, (ast.Name, ast.Attribute, ast.Call)):
+                    return None
+    return exports
+
+
+def _inferable_none_procedure(function):
+    """A concrete procedure has no value-return contract left to discover.
+
+    Do not infer through decorators, generators, nested definitions, abstract
+    placeholders, or returned calls. Explicit project typing policy still
+    takes precedence over this source-local precision check.
+    """
+    if function.decorator_list:
+        return False
+    body = [statement for statement in function.body if not (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    )]
+    if not body or all(isinstance(statement, (ast.Pass, ast.Raise)) or (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+    ) for statement in body):
+        return False
+    pending = list(body)
+    while pending:
+        current = pending.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(current, (ast.Yield, ast.YieldFrom)):
+            return False
+        if isinstance(current, ast.Raise) and isinstance(current.exc, ast.Call) and (
+            isinstance(current.exc.func, ast.Name) and current.exc.func.id == "NotImplementedError"
+        ):
+            return False
+        if isinstance(current, ast.Return) and current.value is not None and not (
+            isinstance(current.value, ast.Constant) and current.value.value is None
+        ):
+            return False
+        pending.extend(ast.iter_child_nodes(current))
+    return True
 
 
 def _has_signature_typing_intent(function, args, comment_lines):
@@ -1524,6 +1609,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
     rule_id = "SKY-T101"
     name = "Typed API Surface"
 
+    def __init__(self, *, coverage_advice=False):
+        self.coverage_advice = coverage_advice is True
+
     def visit_node(self, node, context):
         if not isinstance(node, ast.Module):
             return None
@@ -1533,16 +1621,17 @@ class TypeAnnotationPracticeRule(SkylosRule):
         if is_typing_test_path(filename, context.get("project_root"), source=source):
             return None
         lines = source.splitlines(keepends=True) if isinstance(source, str) else []
-        from skylos.analysis.typing_policy import annotation_requirement
+        from skylos.analysis.typing_policy import annotation_policy
+        from skylos.rules.quality._annotation_contract import (
+            annotation_contract_evidence,
+        )
 
-        requirement = annotation_requirement(
+        policy = annotation_policy(
             filename,
             context.get("project_root"),
             source if isinstance(source, str) else "",
             reader=context.get("typing_source_reader", context.get("receiver_source_reader")),
         )
-        if requirement is False:
-            return None
         kinds = context_method_kinds(node, context)
         receivers = {
             # Do not prescribe annotation of a possible implicit receiver.
@@ -1567,16 +1656,35 @@ class TypeAnnotationPracticeRule(SkylosRule):
             if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         fixtures = pytest_fixture_ids(node)
+        evidence = annotation_contract_evidence(
+            node,
+            filename=filename or "",
+            source_lines=lines,
+            method_kinds=kinds,
+            project_root=context.get("project_root"),
+            source_reader=context.get(
+                "typing_source_reader", context.get("receiver_source_reader")
+            ),
+            exported_names=_literal_public_exports(node),
+        )
+        coverage = context.setdefault("annotation_coverage", {})
+        coverage.update(
+            version=1,
+            scope="public_source_definitions",
+            definition_count=0,
+            definitions_with_complete_annotations=0,
+            definitions_missing_annotations=0,
+            missing_parameter_annotations=0,
+            missing_return_annotations=0,
+            definitions_with_supplied_contract=0,
+            unreported_missing_definitions=0,
+        )
         findings = []
         for function, display_name, receiver in functions:
             if id(function) in fixtures:
                 continue
             args = parameters(function)
             typed_comments, return_comment = comments[id(function)]
-            if requirement is not True and not _has_signature_typing_intent(
-                function, args, comment_lines
-            ):
-                continue
             missing_params = [
                 arg.arg
                 for arg in args
@@ -1584,6 +1692,33 @@ class TypeAnnotationPracticeRule(SkylosRule):
                 and arg.annotation is None
                 and arg.arg not in typed_comments
             ]
+            missing_return = function.returns is None and not return_comment
+            incomplete = bool(missing_params or missing_return)
+            supplied = id(function) in evidence.supplied_ids
+            coverage["definition_count"] += 1
+            coverage["definitions_with_complete_annotations"] += not incomplete
+            coverage["definitions_missing_annotations"] += incomplete
+            coverage["missing_parameter_annotations"] += len(missing_params)
+            coverage["missing_return_annotations"] += missing_return
+            coverage["definitions_with_supplied_contract"] += supplied
+            required = policy.require_complete is True or (
+                policy.require_partial is True
+                and _has_signature_typing_intent(function, args, comment_lines)
+            )
+            explicitly_allowed = (
+                policy.require_complete is not True
+                and policy.require_partial is False
+            )
+            optional = (
+                self.coverage_advice
+                and not explicitly_allowed
+                and id(function) in evidence.boundary_ids
+                and not supplied
+            )
+            if not required and not optional:
+                coverage["unreported_missing_definitions"] += incomplete
+                continue
+            before = len(findings)
             if missing_params:
                 findings.append(
                     {
@@ -1606,7 +1741,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
                     }
                 )
 
-            if function.returns is None and not return_comment:
+            if missing_return and not (
+                not required and _inferable_none_procedure(function)
+            ):
                 findings.append(
                     {
                         "rule_id": "SKY-T102",
@@ -1626,6 +1763,9 @@ class TypeAnnotationPracticeRule(SkylosRule):
                         "col": function.col_offset,
                     }
                 )
+
+            if incomplete and len(findings) == before:
+                coverage["unreported_missing_definitions"] += 1
 
         return findings or None
 

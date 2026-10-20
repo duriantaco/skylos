@@ -90,7 +90,7 @@ CPP_ANALYSIS_EXTS = CPP_SOURCE_EXTS + CPP_HEADER_EXTS
 
 LINTER_RULE_NODE_TYPES = {
     ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    CognitiveComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    CognitiveComplexityRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
     NestingRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     AsyncBlockingRule: (
         ast.Import,
@@ -268,7 +268,11 @@ def _build_structural_quality_rules(cfg: dict) -> list:
     ]
     q_rules.extend(factory() for rule_id, factory in specs if _enabled(cfg, rule_id))
     if _enabled(cfg, "SKY-T101") or _enabled(cfg, "SKY-T102"):
-        q_rules.append(TypeAnnotationPracticeRule())
+        q_rules.append(
+            TypeAnnotationPracticeRule(
+                coverage_advice=cfg.get("typing_coverage_advice", False)
+            )
+        )
     if _enabled(cfg, "SKY-F101") or _enabled(cfg, "SKY-F102"):
         q_rules.append(FrameworkPracticeRule())
     return q_rules
@@ -325,6 +329,7 @@ def scan_python_quality(
     project_root=None,
     receiver_source_reader=None,
     typing_source_reader=None,
+    annotation_coverage=None,
 ) -> list[dict]:
     q_rules = _build_builtin_quality_rules(cfg)
     _extend_env_custom_quality_rules(q_rules, file)
@@ -333,6 +338,8 @@ def scan_python_quality(
     linter_q = LinterVisitor(q_rules, str(file))
     linter_q.context["source"] = source
     linter_q.context["project_root"] = project_root
+    if annotation_coverage is not None:
+        linter_q.context["annotation_coverage"] = annotation_coverage
     if receiver_source_reader is not None:
         linter_q.context["receiver_source_reader"] = receiver_source_reader
     if typing_source_reader is not None:

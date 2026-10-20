@@ -149,7 +149,7 @@ def test_cli_human_and_saved_reports_share_focus_and_selection(
             assert ("permits positional calls" in normalized) is (visible and expanded)
             if visible:
                 assert "optional advice findings" not in normalized
-                assert "HIGH" in text
+                assert "MEDIUM" in text
             else:
                 assert "1 optional advice finding" in normalized
                 assert "--all-advice" in text

@@ -1,8 +1,15 @@
 import ast
+from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._receivers import _bound_names, _scope_bindings
+from skylos.rules.quality.class_size import (
+    _declaration_calls,
+    _is_declarative_class,
+    _read_source,
+)
 
 try:
     from skylos_fast import analyze_coupling as _fast_analyze_coupling
@@ -156,6 +163,7 @@ class _ClassInfo:
         "is_abc",
         "is_dataclass",
         "methods",
+        "node",
     )
 
     def __init__(self, name: str, lineno: int, col_offset: int):
@@ -174,6 +182,7 @@ class _ClassInfo:
         self.is_abc = False
         self.is_dataclass = False
         self.methods: list[str] = []
+        self.node = None
 
 
 def _get_decorator_name(node: ast.expr) -> str | None:
@@ -197,11 +206,20 @@ def _first_pass_collect(tree):
     classes: dict[str, _ClassInfo] = {}
     module_imports: dict[str, str] = {}
     known_classes: set[str] = set()
+    counts = Counter(
+        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            info = _ClassInfo(node.name, node.lineno, node.col_offset)
-            known_classes.add(node.name)
+            key = (
+                node.name
+                if counts[node.name] == 1
+                else f"{node.name}@{node.lineno}:{node.col_offset}"
+            )
+            info = _ClassInfo(key, node.lineno, node.col_offset)
+            info.node = node
+            known_classes.add(key)
 
             for base in node.bases:
                 for name in _extract_type_names(base):
@@ -230,7 +248,7 @@ def _first_pass_collect(tree):
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     info.methods.append(item.name)
 
-            classes[node.name] = info
+            classes[key] = info
 
         elif isinstance(node, ast.Import):
             for alias in node.names:
@@ -247,57 +265,207 @@ def _first_pass_collect(tree):
 
 
 def _second_pass_analyze(tree, classes, known_classes):
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    identities = {info.node: name for name, info in classes.items()}
+    scopes = (
+        ast.Module,
+        ast.ClassDef,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    bindings = {}
+    definitions = {}
+    globals_by_scope = {}
+    first_iterators = {}
+    for scope in ast.walk(tree):
+        if not isinstance(scope, scopes):
             continue
-        if node.name not in classes:
-            continue
+        if isinstance(scope, ast.Lambda):
+            names = {
+                argument.arg
+                for argument in (
+                    *scope.args.posonlyargs,
+                    *scope.args.args,
+                    *scope.args.kwonlyargs,
+                )
+            }
+            names.update(
+                argument.arg
+                for argument in (scope.args.vararg, scope.args.kwarg)
+                if argument is not None
+            )
+            first_iterators[scope] = {
+                child
+                for value in (*scope.args.defaults, *scope.args.kw_defaults)
+                if value is not None
+                for child in ast.walk(value)
+            }
+        elif isinstance(
+            scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            names = {
+                child.id
+                for generator in scope.generators
+                for child in ast.walk(generator.target)
+                if isinstance(child, ast.Name)
+            }
+            first_iterators[scope] = set(ast.walk(scope.generators[0].iter))
+        elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = _bound_names(scope)
+            outside = [
+                *scope.decorator_list,
+                *scope.args.defaults,
+                *scope.args.kw_defaults,
+                scope.returns,
+            ]
+            outside.extend(
+                argument.annotation
+                for argument in (
+                    *scope.args.posonlyargs,
+                    *scope.args.args,
+                    *scope.args.kwonlyargs,
+                )
+            )
+            first_iterators[scope] = {
+                child
+                for value in outside
+                if value is not None
+                for child in ast.walk(value)
+            }
+        else:
+            names = _scope_bindings(scope).names
+        bindings[scope] = names
+        definitions[scope] = {}
+        globals_by_scope[scope] = set()
+    for statement in ast.walk(tree):
+        if isinstance(statement, ast.Global):
+            scope = parents.get(statement)
+            while scope not in bindings and scope is not None:
+                scope = parents.get(scope)
+            if scope is not None:
+                globals_by_scope[scope].update(statement.names)
+    for child, identity in identities.items():
+        parent = parents.get(child)
+        while parent is not None and parent not in bindings:
+            parent = parents.get(parent)
+        if parent is not None:
+            definitions[parent].setdefault(child.name, []).append(identity)
 
-        info = classes[node.name]
+    def resolve(name, at):
+        parts = name.split(".")
+        scope = parents.get(at)
+        while scope is not None and scope not in bindings:
+            scope = parents.get(scope)
+        function_scope = False
+        identity = None
+        while scope is not None:
+            if scope in bindings:
+                if at in first_iterators.get(scope, ()):
+                    scope = parents.get(scope)
+                    continue
+                if parts[0] in globals_by_scope[scope] and scope is not tree:
+                    scope = tree
+                    continue
+                if isinstance(
+                    scope,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.Lambda,
+                        ast.ListComp,
+                        ast.SetComp,
+                        ast.DictComp,
+                        ast.GeneratorExp,
+                    ),
+                ):
+                    function_scope = True
+                # Function bodies do not close over their class namespace.
+                if not (function_scope and isinstance(scope, ast.ClassDef)):
+                    candidates = definitions[scope].get(parts[0], ())
+                    if candidates:
+                        # Conditional/repeated definitions in ONE lexical
+                        # binding still represent one dependency family.
+                        # Other lexical scopes retain their own identities.
+                        identity = candidates[-1]
+                        break
+                    if parts[0] in bindings[scope]:
+                        return None
+            scope = parents.get(scope)
+        if identity is None:
+            return None
+        for part in parts[1:]:
+            candidates = definitions[classes[identity].node].get(part, ())
+            if not candidates:
+                return None
+            identity = candidates[-1]
+        return identity
 
-        for child in ast.walk(node):
+    def owned_nodes(node):
+        pending = list(reversed(node.body))
+        while pending:
+            child = pending.pop()
+            if isinstance(child, ast.ClassDef):
+                continue
+            yield child
+            pending.extend(reversed(list(ast.iter_child_nodes(child))))
+
+    for class_name, info in classes.items():
+        node = info.node
+        info.bases = {
+            resolved
+            for base in node.bases
+            for name in _extract_type_names(base)
+            if (resolved := resolve(name, node)) is not None and resolved != class_name
+        }
+        for child in owned_nodes(node):
             if isinstance(child, ast.AnnAssign) and child.annotation:
                 for name in _extract_type_names(child.annotation):
-                    if name != node.name and name not in BUILTIN_TYPES:
-                        info.type_deps.add(name)
+                    resolved = resolve(name, child)
+                    if resolved is not None and resolved != class_name:
+                        info.type_deps.add(resolved)
 
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if child.returns:
                     for name in _extract_type_names(child.returns):
-                        if name != node.name and name not in BUILTIN_TYPES:
-                            info.type_deps.add(name)
+                        resolved = resolve(name, child)
+                        if resolved is not None and resolved != class_name:
+                            info.type_deps.add(resolved)
 
-                for arg in child.args.args + child.args.kwonlyargs:
+                for arg in (
+                    child.args.posonlyargs + child.args.args + child.args.kwonlyargs
+                ):
                     if arg.annotation:
                         for name in _extract_type_names(arg.annotation):
-                            if name != node.name and name not in BUILTIN_TYPES:
-                                info.type_deps.add(name)
+                            resolved = resolve(name, child)
+                            if resolved is not None and resolved != class_name:
+                                info.type_deps.add(resolved)
 
                 for dec in child.decorator_list:
                     dec_name = _get_decorator_name(dec)
-                    if dec_name and dec_name in known_classes and dec_name != node.name:
-                        info.decorator_deps.add(dec_name)
+                    resolved = resolve(dec_name, child) if dec_name else None
+                    if resolved is not None and resolved != class_name:
+                        info.decorator_deps.add(resolved)
 
             if isinstance(child, ast.Call):
-                if isinstance(child.func, ast.Name):
-                    callee = child.func.id
-                    if callee in known_classes and callee != node.name:
-                        info.instantiation_deps.add(callee)
-                elif isinstance(child.func, ast.Attribute):
-                    attr_name = child.func.attr
-                    if attr_name in known_classes and attr_name != node.name:
-                        info.instantiation_deps.add(attr_name)
+                callee = _get_decorator_name(child.func)
+                resolved = resolve(callee, child) if callee else None
+                if resolved is not None and resolved != class_name:
+                    info.instantiation_deps.add(resolved)
 
             if isinstance(child, ast.Attribute):
                 if isinstance(child.value, ast.Name):
-                    obj_name = child.value.id
-                    if (
-                        obj_name in known_classes
-                        and obj_name != node.name
-                        and obj_name != "self"
-                        and obj_name != "cls"
-                    ):
-                        info.attribute_deps.add(obj_name)
+                    resolved = resolve(child.value.id, child)
+                    if resolved is not None and resolved != class_name:
+                        info.attribute_deps.add(resolved)
 
 
 def _compute_metrics(classes, known_classes):
@@ -367,6 +535,41 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
     return _compute_metrics(classes, known_classes)
 
 
+def _needs_scope_resolution(tree):
+    """Older native analyzers need Python's lexical proof for these cases."""
+    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    names = {node.name for node in classes}
+    if len(names) != len(classes) or any(node not in tree.body for node in classes):
+        return True
+    for node in ast.walk(tree):
+        if isinstance(
+            node,
+            (
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.Global,
+                ast.Nonlocal,
+            ),
+        ):
+            return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _bound_names(node) & names:
+                return True
+            if any(
+                argument.annotation is not None for argument in node.args.posonlyargs
+            ):
+                return True
+        if isinstance(node, ast.ClassDef) and _scope_bindings(node).names & names:
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in names:
+                return True
+    return False
+
+
 def _normalize_coupling_result(result: dict[str, Any]) -> dict[str, Any]:
     """Remove sibling edges produced by older optional native extensions.
 
@@ -424,7 +627,11 @@ class CBORule(SkylosRule):
     def visit_node(
         self, node: ast.AST, context: dict[str, Any]
     ) -> Optional[list[dict[str, Any]]]:
-        if not isinstance(node, ast.ClassDef):
+        if isinstance(node, ast.Module):
+            # One rule instance may be reused across scans of edited files.
+            self._file_cache.pop(context.get("filename", ""), None)
+            return None
+        if not isinstance(node, ast.ClassDef) or _is_declarative_class(node):
             return None
 
         filename = context.get("filename", "")
@@ -436,20 +643,34 @@ class CBORule(SkylosRule):
         if not file_data.get("_analyzed"):
             file_data["_analyzed"] = True
             try:
-                source = Path(filename).read_text(encoding="utf-8", errors="ignore")
+                source = context.get("source")
+                if not isinstance(source, str):
+                    source = _read_source(filename, context.get("project_root"))
+                if source is None:
+                    return None
+                tree = ast.parse(source)
+                file_data["_declaration_calls"] = _declaration_calls(tree)
                 if _fast_analyze_coupling is not None:
                     result = _normalize_coupling_result(
                         _fast_analyze_coupling(source, filename)
                     )
+                    if _needs_scope_resolution(tree):
+                        result = analyze_coupling(tree, filename)
                 else:
-                    tree = ast.parse(source)
                     result = analyze_coupling(tree, filename)
                 file_data.update(result)
             except Exception:
                 return None
 
-        class_data = file_data.get("classes", {}).get(node.name)
+        classes = file_data.get("classes", {})
+        class_data = classes.get(node.name) or classes.get(
+            f"{node.name}@{node.lineno}:{node.col_offset}"
+        )
         if not class_data:
+            return None
+        if _is_declarative_class(
+            node, file_data.get("_declaration_calls", frozenset())
+        ):
             return None
 
         ce = class_data["efferent_coupling"]
@@ -485,10 +706,13 @@ class CBORule(SkylosRule):
                 "threshold": self.low_threshold,
                 "efferent_coupling": ce,
                 "afferent_coupling": class_data["afferent_coupling"],
+                "coupling_scope": "file",
+                "afferent_coupling_scope": "file",
                 "instability": round(class_data["instability"], 3),
                 "coupling_breakdown": breakdown_str,
                 "message": (
-                    f"Class '{node.name}' has high coupling (Ce={ce}, Ca={class_data['afferent_coupling']}). "
+                    f"Class '{node.name}' has high coupling within this file "
+                    f"(Ce={ce}, file-local Ca={class_data['afferent_coupling']}). "
                     f"Breakdown: {breakdown_str}. Consider reducing dependencies."
                 ),
                 "file": filename,

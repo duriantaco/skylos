@@ -53,9 +53,10 @@ def _repo_policy_findings(report: dict) -> list[dict]:
 
 def test_type_annotation_rule_flags_public_typed_api_gaps():
     findings = _run_rule(
-        TypeAnnotationPracticeRule(),
+        TypeAnnotationPracticeRule(coverage_advice=True),
         """
         from typing import Any
+        __all__ = ["load_user"]
 
         def load_user(self, include_deleted: bool):
             return {"id": self, "deleted": include_deleted}
@@ -90,8 +91,9 @@ def test_type_annotation_rule_skips_untyped_script_modules():
 
 def test_type_annotation_rule_accepts_typed_public_function():
     findings = _run_rule(
-        TypeAnnotationPracticeRule(),
+        TypeAnnotationPracticeRule(coverage_advice=True),
         """
+        __all__ = ["load_user"]
         def load_user(user_id):
             # type: (str) -> dict[str, str]
             return {"id": user_id}

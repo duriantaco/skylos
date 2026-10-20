@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from io import StringIO
 
@@ -98,23 +99,44 @@ def test_expansion_and_terminal_width_do_not_change_records_grade_or_gate():
     assert decision[0] is False
     for width in (80, 120):
         for expand in (False, True):
-            buffer = StringIO()
-            cli.render_results(
-                Console(
-                    file=buffer,
-                    width=width,
-                    force_terminal=False,
-                    theme=cli._skylos_console_theme(),
-                ),
-                result,
-                copy_badge=False,
-                expand_advice=expand,
-            )
-            assert "Advice" in buffer.getvalue()
-            assert "Review" in buffer.getvalue()
-            assert "Defect" in buffer.getvalue()
-            assert result == before
-            assert check_gate(result, configuration) == decision
+            for all_advice in (False, True):
+                buffer = StringIO()
+                cli.render_results(
+                    Console(
+                        file=buffer,
+                        width=width,
+                        force_terminal=False,
+                        theme=cli._skylos_console_theme(),
+                    ),
+                    result,
+                    copy_badge=False,
+                    expand_advice=expand,
+                    all_advice=all_advice,
+                )
+                output = buffer.getvalue()
+                normalized = " ".join(output.split())
+                assert "Review" in output and "Defect" in output
+                assert "app.py:170" in output and "http.py:3" in output
+                assert "HIGH" in output and "CRITICAL" in output
+                if all_advice:
+                    assert "1 defect · 2 review · 2 advice in 1 group" in normalized
+                    assert "Advice priority" in normalized
+                    if expand:
+                        assert output.count("SKY-C304") == 2
+                        assert re.search(r"\bapp\.py:1\b", output)
+                        assert "app.py:90" in output
+                        assert "Name: first" in normalized
+                        assert "Name: second" in normalized
+                    else:
+                        assert output.count("SKY-C304") == 1
+                        assert "app.py (2)" in output
+                else:
+                    assert "1 defect · 2 review · 0 advice in 0 groups" in normalized
+                    assert "2 optional advice findings" in normalized
+                    assert "--all-advice" in output
+                    assert "SKY-C304" not in output
+                assert result == before
+                assert check_gate(result, configuration) == decision
 
 
 @pytest.mark.parametrize("expanded", [False, True])

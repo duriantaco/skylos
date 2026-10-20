@@ -1,0 +1,3 @@
+[tool.mypy]
+files = ["module.py"]
+check_untyped_defs = true

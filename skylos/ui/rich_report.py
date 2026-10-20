@@ -11,7 +11,9 @@ from rich.tree import Tree
 
 from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.advice_display import (
+    ADVICE_PRIORITY_NOTE,
     advice_display_counts,
+    advice_priority,
     combine_complexity_advice,
     complexity_display,
     group_advice_for_display,
@@ -234,6 +236,8 @@ def _finding_view(result, finding_type):
 
 
 def _finding_severity(item, category):
+    if get_finding_type(item, category) == "advice":
+        return advice_priority(item, category)
     default = "LOW" if category.startswith("unused_") else "MEDIUM"
     if category == "analysis_errors":
         default = "HIGH"
@@ -367,8 +371,10 @@ def _render_finding_table(console, root_path, limit, title, items, category):
     )
     table = Table(expand=True)
     table.add_column("Type", width=6, overflow="fold")
+    advice_only = all(get_finding_type(item, category) == "advice" for item in show)
+    priority_label = "Advice priority" if advice_only else "Severity"
     if "severity" in columns:
-        table.add_column("Severity", width=9, overflow="fold")
+        table.add_column(priority_label, width=9, overflow="fold")
     table.add_column("Rule", width=rule_width, overflow="fold")
     table.add_column("Message", overflow="fold")
     if "location" in columns:
@@ -379,7 +385,7 @@ def _render_finding_table(console, root_path, limit, title, items, category):
         if "severity" in columns:
             row.append(escape(severity))
         else:
-            detail += f"\nSeverity: {severity}"
+            detail += f"\n{priority_label}: {severity}"
         row.extend([escape(f"{name}\n{rule}"), escape(detail)])
         if "location" in columns:
             row.append(escape(location))
@@ -408,7 +414,7 @@ def _render_advice_groups(console, result, *, root_path=None, limit=None):
     show, overflow = _display_cap(groups, limit)
     for group in show:
         counts = Counter(
-            str(finding.get("severity") or "MEDIUM").upper()
+            advice_priority(finding, "quality")
             for finding in group["findings"]
         )
         severities = ", ".join(sorted(counts))
@@ -832,8 +838,10 @@ def _render_result_tree(console: Console, result, root_path=None):
             file = str(finding.get("file") or finding.get("file_path") or "?")
             line = finding.get("line") or finding.get("lineno") or 1
             severity = _finding_severity(finding, category)
+            finding_type = get_finding_type(finding, category)
+            priority_label = "Advice priority" if finding_type == "advice" else "Severity"
             msg = (
-                f"Type: {get_finding_type(finding, category).title()}  Severity: {severity}\n"
+                f"Type: {finding_type.title()}  {priority_label}: {severity}\n"
                 f"{rule} · {name}\n{detail}\n{location}"
             )
             by_file[file].append((line, severity.lower(), escape(msg)))
@@ -1074,6 +1082,11 @@ def render_results(
             "[muted]Architecture advice describes maintainability; gate decisions use "
             "your configured limits. To list signals, add --format concise.[/muted]"
         )
+    from skylos.reporting.typing_coverage import typing_coverage_text
+
+    annotation_summary = typing_coverage_text(summ)
+    if annotation_summary:
+        console.print(escape(annotation_summary), style="muted")
     if result.get("quality"):
         console.print(
             "[muted]Quality thresholds: tune in "
@@ -1084,6 +1097,8 @@ def render_results(
         )
     if visibility.message:
         console.print(escape(visibility.message), style="muted")
+    if advice_display_counts(result)["advice"]:
+        console.print(ADVICE_PRIORITY_NOTE, style="muted")
     for note in scope_note_lines(result):
         console.print(f"[muted]{escape(note)}[/muted]")
     console.print()

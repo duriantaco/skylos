@@ -1,6 +1,7 @@
 """Human complexity summaries retain both independent detector results."""
 
 import copy
+import ast
 import re
 from pathlib import Path
 
@@ -13,6 +14,9 @@ from skylos.reporting.finding_types import (
     summarize_finding_types,
 )
 from skylos.reporting.llm_report import _generate_llm_report
+from skylos.rules.quality.complexity import CognitiveComplexityRule, ComplexityRule
+from skylos.rules.quality.nesting import NestingRule
+from skylos.rules.quality.structure import FunctionLengthRule
 from skylos.ui.rich_report import render_results
 from skylos.ui.terminal_report import collect_pretty_findings, render_pretty_results
 
@@ -176,4 +180,65 @@ def test_custom_rule_collision_stays_separate_from_builtin_complexity(kind):
         "advice": 1,
         "advice_groups": 1,
     }
+    assert result == before
+
+
+@pytest.mark.parametrize(
+    "kind,limit",
+    [(kind, limit) for kind in ("rich", "pretty", "tree") for limit in (None, 1)]
+    + [("llm", None)],
+)
+def test_nested_scope_components_render_all_child_metrics_and_locations(kind, limit):
+    source = """def factory():
+    marker = 0
+    def inner(value):
+        if value.a:
+            if value.b:
+                if value.c:
+                    if value.d:
+                        if value.e:
+                            if value.f:
+                                return value
+    return inner
+"""
+    tree = ast.parse(source)
+    rules = [
+        CognitiveComplexityRule(),
+        ComplexityRule(threshold=5),
+        NestingRule(),
+        FunctionLengthRule(max_lines=5),
+    ]
+    context = {"filename": "/example/app.py", "source": source}
+    rows = [
+        row
+        for node in ast.walk(tree)
+        for rule in rules
+        for row in rule.visit_node(node, context) or []
+    ]
+    cognitive = {
+        r["simple_name"]: r["value"] for r in rows if r["rule_id"] == "SKY-Q306"
+    }
+    assert cognitive == {"factory": 27, "inner": 21}
+    result = _result(*rows)
+    before = copy.deepcopy(result)
+
+    text = _render(kind, result, expand=True, limit=limit)
+    normalized = " ".join(text.split())
+
+    assert "1 advice entry (6 findings) in 1 group" in normalized
+    assert "Nested inner at line 3" in normalized
+    assert "factory" in text
+    assert "app.py:1" in text or (kind == "llm" and "app.py" in text)
+    for row in rows:
+        assert row["rule_id"] in text
+        assert row["message"] in normalized
+        assert str(row["value"]) in text
+    assert "Cognitive complexity: 27" in normalized
+    assert "Cognitive complexity: 21" in normalized
+    assert "Cyclomatic complexity: 7" in normalized
+    assert "Maximum nesting: 6" in normalized
+    assert "Code lines: 8" in normalized
+    assert "Code lines: 11" in normalized
+    if kind == "llm":
+        assert len(re.findall(r"^## \d+\.", text, re.MULTILINE)) == 1
     assert result == before

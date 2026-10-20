@@ -17,6 +17,9 @@ python_files = ["checks/*.py"]
 python_classes = ["Acceptance"]
 python_functions = ["check_"]
 testpaths = ["checks"]
+[tool.mypy]
+files = ["checks"]
+disallow_untyped_defs = true
 """
 PACKAGING = """[tool.hatch.build.targets.sdist]
 exclude = ["/profiling"]

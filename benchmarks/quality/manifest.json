@@ -115,13 +115,13 @@
     {
       "id": "type-annotation-gaps",
       "path": "fixtures/type_annotation_gaps",
-      "description": "Typed modules should flag public functions with untyped parameters and missing return annotations.",
+      "description": "An explicit disallow_untyped_defs policy must flag public functions with untyped parameters and missing return annotations.",
       "taxonomy": ["typing", "api_design"],
       "importance": "high",
       "source": {
         "repo": "https://github.com/python/cpython",
         "license": "PSF-2.0",
-        "notes": "Distilled from typed helper module API patterns."
+        "notes": "Synthetic helper API with an explicit annotation requirement; preserves both required-annotation controls."
       },
       "budget": {
         "max_seconds": 5.0
@@ -132,6 +132,27 @@
         },
         "absent": {
           "quality": ["typed_helper"]
+        }
+      }
+    },
+    {
+      "id": "type-annotation-coverage-only",
+      "path": "fixtures/type_annotation_coverage_only",
+      "description": "Checking untyped bodies and declaring exports do not require annotations or enable optional coverage advice.",
+      "taxonomy": ["typing", "api_design", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/mypy",
+        "license": "MIT",
+        "notes": "Synthetic counterpart of type-annotation-gaps with check_untyped_defs instead of an annotation requirement."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["SKY-T101", "SKY-T102"]
         }
       }
     },

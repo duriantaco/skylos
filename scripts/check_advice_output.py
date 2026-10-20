@@ -86,6 +86,10 @@ def check_report(result, project_root):
 
     all_counts = advice_display_counts(complete)
     focus_counts = advice_display_counts(focused)
+    assert (
+        all_counts["raw_advice"] - focus_counts["raw_advice"]
+        == visibility.omitted_checks
+    ), "Optional advice notice does not match the findings omitted from the view"
     return {
         "raw_advice_checks": all_counts["raw_advice"],
         "all_advice_entries": all_counts["advice"],

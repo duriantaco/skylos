@@ -202,13 +202,14 @@ def test_all_optional_still_reports_recovery_and_raw_gate(kind, tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["rich", "pretty", "llm"])
-def test_advice_priority_label_retains_exact_high_severity(kind, tmp_path):
+def test_advice_priority_is_capped_while_raw_severity_is_retained(kind, tmp_path):
     result = {"quality": [_finding("SKY-C303")]}
 
     text = _render(kind, result, tmp_path)
 
     assert "Advice priority" in text
-    assert "HIGH" in text
+    assert "MEDIUM" in text
+    assert result["quality"][0]["severity"] == "HIGH"
     assert result["quality"][0]["severity"] == "HIGH"
 
 

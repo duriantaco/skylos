@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import io
 import tokenize
@@ -143,43 +144,379 @@ def _normalize_text(source: str) -> str:
                 tokenize.DEDENT,
             ):
                 continue
-            if tok_type == tokenize.STRING:
-                out.append('"STR"')
-            elif tok_type == tokenize.NUMBER:
-                out.append("0")
-            else:
-                out.append(tok_str)
+            # Type 1 ignores layout/comments, not literal values. Replacing
+            # every string and number here bypassed ignore_literals=False and
+            # made distinct declaration/data tables look like exact clones.
+            out.append(tok_str)
     except tokenize.TokenError:
         return " ".join(source.split())
     return " ".join(out)
 
 
+def _local_clone_bindings(body, parameters=()):
+    """Lexical bindings, excluding independent nested bodies and imports."""
+    names = set(parameters)
+    external = set()
+    pending = list(body)
+    while pending:
+        current = pending.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(current.name)
+            pending.extend(current.decorator_list)
+            if isinstance(current, ast.ClassDef):
+                pending.extend(current.bases)
+                pending.extend(keyword.value for keyword in current.keywords)
+            else:
+                pending.extend(current.args.defaults)
+                pending.extend(
+                    item for item in current.args.kw_defaults if item is not None
+                )
+            continue
+        if isinstance(current, (ast.Global, ast.Nonlocal)):
+            external.update(current.names)
+            continue
+        if isinstance(current, ast.ExceptHandler) and current.name:
+            names.add(current.name)
+        if isinstance(current, (ast.MatchAs, ast.MatchStar)) and current.name:
+            names.add(current.name)
+        if isinstance(current, ast.MatchMapping) and current.rest:
+            names.add(current.rest)
+        if isinstance(
+            current,
+            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        ):
+            # A comprehension's iteration variables are local to it, but a
+            # walrus expression binds the enclosing function's namespace.
+            if isinstance(current, ast.Lambda):
+                pending.extend(current.args.defaults)
+                pending.extend(
+                    item for item in current.args.kw_defaults if item is not None
+                )
+            else:
+                expressions = list(ast.iter_child_nodes(current))
+                while expressions:
+                    expression = expressions.pop()
+                    if isinstance(expression, ast.Lambda):
+                        expressions.extend(expression.args.defaults)
+                        expressions.extend(
+                            item
+                            for item in expression.args.kw_defaults
+                            if item is not None
+                        )
+                        continue
+                    if isinstance(
+                        expression,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    ):
+                        continue
+                    if isinstance(expression, ast.NamedExpr) and isinstance(
+                        expression.target, ast.Name
+                    ):
+                        names.add(expression.target.id)
+                    expressions.extend(ast.iter_child_nodes(expression))
+            continue
+        if isinstance(current, (ast.Import, ast.ImportFrom)):
+            external.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in current.names
+            )
+            continue
+        if isinstance(current, ast.Name) and isinstance(
+            current.ctx, (ast.Store, ast.Del)
+        ):
+            names.add(current.id)
+        pending.extend(ast.iter_child_nodes(current))
+    return names - external
+
+
+def _clone_binding_declarations(body):
+    global_names, nonlocal_names = set(), set()
+    pending = list(body)
+    while pending:
+        current = pending.pop()
+        if isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(current, ast.Global):
+            global_names.update(current.names)
+        elif isinstance(current, ast.Nonlocal):
+            nonlocal_names.update(current.names)
+        pending.extend(ast.iter_child_nodes(current))
+    return global_names, nonlocal_names
+
+
+def _clone_parameters(arguments):
+    return [
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            arguments.vararg,
+            arguments.kwarg,
+        )
+        if argument is not None
+    ]
+
+
 class _Type2Normalizer(ast.NodeTransformer):
-    def __init__(self, ignore_identifiers: bool, ignore_literals: bool):
+    def __init__(
+        self,
+        ignore_identifiers: bool,
+        ignore_literals: bool,
+        *,
+        local_names=(),
+        parameters=(),
+        global_names=(),
+        nonlocal_names=(),
+    ):
         self.ignore_identifiers = ignore_identifiers
         self.ignore_literals = ignore_literals
+        self._scope_number = 0
+        self._scopes = []
+        self._push_scope(
+            set(local_names),
+            parameters,
+            global_names=global_names,
+            nonlocal_names=nonlocal_names,
+        )
+
+    def _push_scope(
+        self,
+        names,
+        parameters=(),
+        *,
+        namespace=False,
+        global_names=(),
+        nonlocal_names=(),
+    ):
+        scope = [
+            self._scope_number,
+            set(names),
+            {},
+            namespace,
+            set(global_names),
+            set(nonlocal_names),
+        ]
+        self._scope_number += 1
+        self._scopes.append(scope)
+        for parameter in parameters:
+            self._identifier(parameter)
+
+    def _identifier(self, name, *, store=False):
+        if not self.ignore_identifiers:
+            return name
+        for (
+            number,
+            names,
+            replacements,
+            namespace,
+            global_names,
+            nonlocal_names,
+        ) in reversed(self._scopes):
+            if namespace and number != self._scopes[-1][0] and not store:
+                # Neither bindings nor directives from an outer class enter
+                # a nested method/class/comprehension's lexical environment.
+                continue
+            if name in global_names:
+                return name
+            if name in nonlocal_names:
+                store = False
+                continue
+            if name in names:
+                if namespace:
+                    return name
+                if name not in replacements:
+                    # This cannot collide with a parsed Python identifier.
+                    replacements[name] = f"<local:{number}:{len(replacements)}>"
+                return replacements[name]
+            if store:
+                break
+        return name
 
     def visit_Name(self, node: ast.Name):
         if self.ignore_identifiers:
-            return ast.copy_location(ast.Name(id="_ID", ctx=node.ctx), node)
+            return ast.copy_location(
+                ast.Name(
+                    id=self._identifier(
+                        node.id, store=isinstance(node.ctx, (ast.Store, ast.Del))
+                    ),
+                    ctx=node.ctx,
+                ),
+                node,
+            )
         return node
 
     def visit_arg(self, node: ast.arg):
         if self.ignore_identifiers:
-            node.arg = "_ARG"
+            node.arg = self._identifier(node.arg)
         return node
 
     def visit_Attribute(self, node: ast.Attribute):
-        node = self.generic_visit(node)
-        if self.ignore_identifiers:
-            node.attr = "_ATTR"
+        # Member/API selectors are operations, not alpha-renamable variables.
+        return self.generic_visit(node)
+
+    def visit_NamedExpr(self, node):
+        if isinstance(node.target, ast.Name):
+            node.target.id = self._identifier(node.target.id)
+        else:
+            node.target = self.visit(node.target)
+        node.value = self.visit(node.value)
         return node
+
+    def visit_Nonlocal(self, node):
+        node.names = [self._identifier(name) for name in node.names]
+        return node
+
+    def visit_ExceptHandler(self, node):
+        if node.type is not None:
+            node.type = self.visit(node.type)
+        if node.name:
+            node.name = self._identifier(node.name, store=True)
+        node.body = [self.visit(item) for item in node.body]
+        return node
+
+    def visit_MatchAs(self, node):
+        if node.pattern is not None:
+            node.pattern = self.visit(node.pattern)
+        if node.name:
+            node.name = self._identifier(node.name, store=True)
+        return node
+
+    def visit_MatchStar(self, node):
+        if node.name:
+            node.name = self._identifier(node.name, store=True)
+        return node
+
+    def visit_MatchMapping(self, node):
+        node.keys = [self.visit(item) for item in node.keys]
+        node.patterns = [self.visit(item) for item in node.patterns]
+        if node.rest:
+            node.rest = self._identifier(node.rest, store=True)
+        return node
+
+    def _function(self, node):
+        original_name = node.name
+        node.name = self._identifier(original_name, store=True)
+        node.decorator_list = [self.visit(item) for item in node.decorator_list]
+        node.args.defaults = [self.visit(item) for item in node.args.defaults]
+        node.args.kw_defaults = [
+            self.visit(item) if item is not None else None
+            for item in node.args.kw_defaults
+        ]
+        parameters = _clone_parameters(node.args)
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+            node.args.vararg,
+            node.args.kwarg,
+        ):
+            if argument is not None and argument.annotation is not None:
+                argument.annotation = self.visit(argument.annotation)
+        if node.returns is not None:
+            node.returns = self.visit(node.returns)
+        global_names, nonlocal_names = _clone_binding_declarations(node.body)
+        self._push_scope(
+            _local_clone_bindings(node.body, parameters),
+            parameters,
+            global_names=global_names,
+            nonlocal_names=nonlocal_names,
+        )
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+            node.args.vararg,
+            node.args.kwarg,
+        ):
+            if argument is not None:
+                argument.arg = self._identifier(argument.arg)
+        node.body = [self.visit(item) for item in node.body]
+        self._scopes.pop()
+        return node
+
+    visit_FunctionDef = _function
+    visit_AsyncFunctionDef = _function
+
+    def visit_ClassDef(self, node):
+        node.name = self._identifier(node.name, store=True)
+        node.bases = [self.visit(item) for item in node.bases]
+        node.keywords = [self.visit(item) for item in node.keywords]
+        node.decorator_list = [self.visit(item) for item in node.decorator_list]
+        names = _local_clone_bindings(node.body)
+        global_names, nonlocal_names = _clone_binding_declarations(node.body)
+        self._push_scope(
+            names,
+            namespace=True,
+            global_names=global_names,
+            nonlocal_names=nonlocal_names,
+        )
+        node.body = [self.visit(item) for item in node.body]
+        self._scopes.pop()
+        return node
+
+    def visit_Lambda(self, node):
+        node.args.defaults = [self.visit(item) for item in node.args.defaults]
+        node.args.kw_defaults = [
+            self.visit(item) if item is not None else None
+            for item in node.args.kw_defaults
+        ]
+        parameters = _clone_parameters(node.args)
+        self._push_scope(_local_clone_bindings([node.body], parameters), parameters)
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+            node.args.vararg,
+            node.args.kwarg,
+        ):
+            if argument is not None:
+                argument.arg = self._identifier(argument.arg)
+        node.body = self.visit(node.body)
+        self._scopes.pop()
+        return node
+
+    def _comprehension(self, node):
+        # The first iterable runs in the enclosing scope.
+        first = node.generators[0]
+        first.iter = self.visit(first.iter)
+        names = {
+            child.id
+            for generator in node.generators
+            for child in ast.walk(generator.target)
+            if isinstance(child, ast.Name)
+        }
+        self._push_scope(names)
+        for index, generator in enumerate(node.generators):
+            generator.target = self.visit(generator.target)
+            if index:
+                generator.iter = self.visit(generator.iter)
+            generator.ifs = [self.visit(item) for item in generator.ifs]
+        if isinstance(node, ast.DictComp):
+            node.key, node.value = self.visit(node.key), self.visit(node.value)
+        else:
+            node.elt = self.visit(node.elt)
+        self._scopes.pop()
+        return node
+
+    visit_ListComp = _comprehension
+    visit_SetComp = _comprehension
+    visit_DictComp = _comprehension
+    visit_GeneratorExp = _comprehension
 
     def visit_Constant(self, node: ast.Constant):
         if self.ignore_literals:
-            if node.value in (None, True, False):
+            if node.value is None or isinstance(node.value, bool):
                 return node
-            return ast.copy_location(ast.Constant(value="_LIT"), node)
+            replacement = {
+                str: "<string>",
+                bytes: b"<bytes>",
+                int: 0,
+                float: 0.0,
+                complex: 0j,
+            }.get(type(node.value), node.value)
+            return ast.copy_location(ast.Constant(value=replacement), node)
         return node
 
 
@@ -288,12 +625,41 @@ def extract_fragments(
         frag_src = "\n".join(src_lines[start - 1 : end])
         text_norm = _normalize_text(frag_src)
 
-        t2 = _Type2Normalizer(cfg.ignore_identifiers, cfg.ignore_literals).visit(
-            ast.fix_missing_locations(node_for_dump)
-        )
-        ast_norm_type2 = _dump_ast(t2)
-
         ast_norm_type3 = _dump_ast(node_for_dump)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # An identical body can bind its names to different positional
+            # inputs. Keep the original signature in the unnormalized
+            # candidate identity; otherwise that bucket bypasses the scoped
+            # type-2 binding comparison (e.g. f(left, right) versus
+            # f(right, left), both returning left - right).
+            ast_norm_type3 = _dump_ast(n.args) + ":" + ast_norm_type3
+        if cfg.ignore_identifiers or cfg.ignore_literals:
+            # Normalizing a class must not rewrite the original AST of the
+            # methods which are extracted as independent fragments afterward.
+            parameters = (
+                _clone_parameters(n.args)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else []
+            )
+            local_names = (
+                _local_clone_bindings(node_for_dump.body, parameters)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else set()
+            )
+            global_names, nonlocal_names = _clone_binding_declarations(
+                node_for_dump.body
+            )
+            t2 = _Type2Normalizer(
+                cfg.ignore_identifiers,
+                cfg.ignore_literals,
+                local_names=local_names,
+                parameters=parameters,
+                global_names=global_names,
+                nonlocal_names=nonlocal_names,
+            ).visit(copy.deepcopy(node_for_dump))
+            ast_norm_type2 = _dump_ast(t2)
+        else:
+            ast_norm_type2 = ast_norm_type3
 
         fragments.append(
             Fragment(

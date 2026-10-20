@@ -89,6 +89,8 @@ DEFAULTS = {
     "security_enabled": False,
     "secrets_enabled": False,
     "quality_enabled": False,
+    # Missing annotations are coverage information unless required by policy.
+    "typing_coverage_advice": False,
     "ai_defects_enabled": False,
     # Scan Django migrations and vendored/minified front-end files as app code.
     "include_generated": False,
@@ -149,6 +151,7 @@ _BOOL_CONFIG_KEYS = {
     "security_enabled",
     "secrets_enabled",
     "quality_enabled",
+    "typing_coverage_advice",
     "ai_defects_enabled",
     "include_generated",
 }

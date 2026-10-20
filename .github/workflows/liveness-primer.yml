@@ -18,7 +18,9 @@ jobs:
   blast-radius:
     name: Skylos analyzer blast radius
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Large corpus targets can need more than five minutes on either revision.
+    # Leave room for both detector invocations plus the remaining corpus/builds.
+    timeout-minutes: 75
 
     steps:
       - name: Check out trusted Skylos base
@@ -173,7 +175,7 @@ jobs:
             --output github \
             --json-out "$REPORT_JSON" \
             --jobs 1 \
-            --timeout 300 \
+            --timeout 900 \
             | tee "$REPORT_MARKDOWN" >> "$GITHUB_STEP_SUMMARY"
 
           test -s "$REPORT_JSON"

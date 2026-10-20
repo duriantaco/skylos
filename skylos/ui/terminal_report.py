@@ -12,7 +12,9 @@ from rich.text import Text
 from skylos.api._snippets import _resolve_snippet_path
 from skylos.deadcode.confidence import confidence_detail
 from skylos.reporting.advice_display import (
+    ADVICE_PRIORITY_NOTE,
     advice_display_counts,
+    advice_priority,
     combine_complexity_advice,
     complexity_display,
     group_advice_for_display,
@@ -29,6 +31,7 @@ from skylos.reporting.finding_types import (
     iter_result_findings,
 )
 from skylos.reporting.rollups import FINDING_SECTIONS
+from skylos.reporting.typing_coverage import typing_coverage_text
 from skylos.ui.dead_code_evidence import (
     compact_dead_code_evidence,
     dead_code_candidate_counts,
@@ -162,12 +165,17 @@ def render_pretty_results(
         (f"  {total_files} file{'s' if total_files != 1 else ''} analyzed", "dim"),
     )
     console.print(header)
+    annotation_summary = typing_coverage_text(result.get("analysis_summary"))
+    if annotation_summary:
+        console.print(Text(annotation_summary, style="dim"))
 
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
     if visibility.message:
         console.print(Text(_sanitize_terminal_text(visibility.message), style="dim"))
+    if advice_display_counts(result)["advice"]:
+        console.print(Text(ADVICE_PRIORITY_NOTE, style="dim"))
     uncertainty = dead_code_uncertainty_text(dead_code_uncertainty_summary(result))
     if uncertainty:
         console.print(Text(_sanitize_terminal_text(uncertainty), style="yellow"))
@@ -381,7 +389,7 @@ def _print_advice_groups(console, result, *, root_path=None, limit=None):
         severities = ", ".join(
             sorted(
                 {
-                    str(finding.get("severity") or "MEDIUM").upper()
+                    advice_priority(finding, "quality")
                     for finding in group["findings"]
                 }
             )
@@ -542,11 +550,12 @@ def _context_details(item):
 
 
 def _print_finding(console: Console, finding: PrettyFinding, short_path: str) -> None:
+    priority_label = "Advice priority" if finding.finding_type == "advice" else "Severity"
     first = Text.assemble(
         ("    ", ""),
         ("█", _severity_rail_style(finding.severity)),
         (" ", ""),
-        (f"Type: {finding.finding_type.title()}  Severity: ", "dim"),
+        (f"Type: {finding.finding_type.title()}  {priority_label}: ", "dim"),
         (
             _severity_badge(finding.severity),
             SEVERITY_STYLES.get(finding.severity, "dim"),
@@ -773,6 +782,8 @@ def _line_number(item: dict) -> int:
 
 
 def _severity(item: dict, category: str) -> str:
+    if get_finding_type(item, category) == "advice":
+        return advice_priority(item, category)
     raw = item.get("severity")
     if raw:
         label = str(raw).strip().upper()

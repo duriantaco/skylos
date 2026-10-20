@@ -142,7 +142,9 @@ class TestTryBlockPatterns:
         rule.node_types = TRY_NODE_TYPES
         findings = check_code(rule, code)
         assert any(f["value"] == 24 for f in findings)
-        assert any(f["value"] == "nested" for f in findings)
+        # The one-call inner catch is already narrow; only the broad outer
+        # scope is actionable.
+        assert not any(f["value"] == "nested" for f in findings)
 
     def test_small_try_block_ok(self):
         # Cleanup scope must include all protected work. It catches no errors,
@@ -165,7 +167,8 @@ class TestTryBlockPatterns:
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L004" for f in findings)
 
-    # 18 code lines, 4 ifs and a direct inner try: trips all three checks.
+    # 18 code lines and 4 ifs remain actionable; the one-call inner catch does
+    # not create another problem merely by being nested.
     BIG_BODY = [
         "a1 = f(1)",
         *[f"if a{i}:\n    a{i + 1} = f({i + 1})" for i in range(1, 5)],
@@ -199,14 +202,14 @@ class TestTryBlockPatterns:
             "        return None",
             "    raise",
         ]
-        assert self._l004_values(self._wrapped(translated)) == ["18", "4", "nested"]
-        assert self._l004_values(self._wrapped(conditional)) == ["18", "4", "nested"]
+        assert self._l004_values(self._wrapped(translated)) == ["18", "4"]
+        assert self._l004_values(self._wrapped(conditional)) == ["18", "4"]
 
     def test_finally_that_discards_the_exception_is_checked(self):
         cleanup = ["finally:", "    cleanup()"]
         returns = ["finally:", "    return total"]
         assert self._l004_values(self._wrapped(cleanup)) == []
-        assert self._l004_values(self._wrapped(returns)) == ["18", "4", "nested"]
+        assert self._l004_values(self._wrapped(returns)) == ["18", "4"]
 
     def test_length_counts_code_lines_only(self):
         def body(code_lines):
@@ -259,11 +262,11 @@ def run(items):
 """
         assert self._l004_values(per_item) == []
         assert self._l004_values(import_fallback) == []
-        assert self._l004_values(direct) == ["nested"]
+        assert self._l004_values(direct) == []
 
     def test_function_level_boundary_skips_size_and_branching(self):
         # Size and branching of a whole-function try are the function's own
-        # metrics; its nested catch scopes are still reported.
+        # metrics; a narrow nested catch is also already precise.
         prefix = (
             '"""Doc."""',
             "import os",
@@ -276,15 +279,15 @@ def run(items):
         )
         handlers = ["except ValueError:", "    return None"]
         boundary = self._wrapped(handlers, prefix=prefix)
-        assert self._l004_values(boundary) == ["nested"]
-        assert self._l004_values(self._wrapped(handlers, prefix=())) == ["nested"]
+        assert self._l004_values(boundary) == []
+        assert self._l004_values(self._wrapped(handlers, prefix=())) == []
         # 18 code lines and 9 ifs, no inner try.
         flat = ["def run(items):", "    try:"]
         flat += [f"        if items > {i}:\n            x{i} = {i}" for i in range(9)]
         flat += ["    except ValueError:", "        return None"]
         assert self._l004_values("\n".join(flat)) == []
 
-        all_checks = ["18", "4", "nested"]
+        all_checks = ["18", "4"]
         guard_with_else = ("if not items:", "    return []", "else:", "    use(items)")
         assert (
             self._l004_values(self._wrapped(handlers, prefix=guard_with_else))

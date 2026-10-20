@@ -4234,6 +4234,7 @@ class Skylos:
         all_dangers = []
         all_quality = []
         self._maintainability_inventory = []
+        self._annotation_coverage = []
         all_ai_defects = []
         all_suppressed = []
         secret_scanned_files = set()
@@ -4391,6 +4392,11 @@ class Skylos:
                 file_top_level_refs = out[24] if len(out) > 24 else set()
                 file_analysis_error = out[25] if len(out) > 25 else None
                 file_has_explicit_all = bool(out[27]) if len(out) > 27 else False
+                file_annotation_coverage = out[28] if len(out) > 28 else None
+                if isinstance(file_annotation_coverage, dict) and file_annotation_coverage:
+                    self._annotation_coverage.append(
+                        {"file": str(file), **file_annotation_coverage}
+                    )
                 if isinstance(file_analysis_error, dict):
                     analysis_errors.append(file_analysis_error)
                 elif isinstance(file_analysis_error, list):

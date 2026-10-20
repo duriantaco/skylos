@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import configparser
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from skylos.constants import parse_exclude_folders
 from skylos.core.file_discovery import exclusion_matcher
+from skylos.core.safe_cache_io import read_project_text_no_symlink
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -100,22 +102,52 @@ def _has_python_sources(root: Path, exclude_folders: tuple[str, ...]) -> bool:
 def _has_type_checker_config(root: Path, pyproject: dict[str, Any]) -> bool:
     tool_cfg = pyproject.get("tool") if isinstance(pyproject.get("tool"), dict) else {}
     return bool(
-        tool_cfg.get("mypy")
-        or tool_cfg.get("pyright")
+        isinstance(tool_cfg.get("mypy"), dict)
+        or isinstance(tool_cfg.get("pyright"), dict)
         or (root / "mypy.ini").exists()
         or (root / "pyrightconfig.json").exists()
-        or (root / "setup.cfg").exists()
-        and "mypy" in (root / "setup.cfg").read_text(encoding="utf-8", errors="ignore")
+        or "mypy" in _ini_sections(root, "setup.cfg")
     )
 
 
 def _has_ruff_config(root: Path, pyproject: dict[str, Any]) -> bool:
     tool_cfg = pyproject.get("tool") if isinstance(pyproject.get("tool"), dict) else {}
     return bool(
-        tool_cfg.get("ruff")
+        isinstance(tool_cfg.get("ruff"), dict)
         or (root / "ruff.toml").exists()
         or (root / ".ruff.toml").exists()
     )
+
+
+def _ini_sections(root: Path, filename: str) -> set[str]:
+    try:
+        source = read_project_text_no_symlink(
+            root, root / filename, max_bytes=2_000_000
+        )
+        if source is None:
+            return set()
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.read_string(source)
+        return {section.lower() for section in parser.sections()}
+    except (OSError, ValueError, RuntimeError, configparser.Error):
+        return set()
+
+
+def _has_python_lint_config(root: Path, pyproject: dict[str, Any]) -> bool:
+    if _has_ruff_config(root, pyproject):
+        return True
+    tool_cfg = pyproject.get("tool") if isinstance(pyproject.get("tool"), dict) else {}
+    if any(isinstance(tool_cfg.get(name), dict) for name in ("flake8", "pylint")):
+        return True
+    if any((root / name).is_file() for name in (".flake8", ".pylintrc", "pylintrc")):
+        return True
+    for filename in ("setup.cfg", "tox.ini"):
+        if any(
+            section == "flake8" or section == "pylint" or section.startswith("pylint.")
+            for section in _ini_sections(root, filename)
+        ):
+            return True
+    return False
 
 
 _NEXT_BUILD_RE = re.compile(r"(?<![\w.-])next\s+build\b")
@@ -254,12 +286,15 @@ def analyze_repo_policy(
             )
 
     if "SKY-R102" not in ignore and has_python_sources:
-        if not _has_ruff_config(root_path, pyproject):
+        if not _has_python_lint_config(root_path, pyproject):
             findings.append(
                 _finding(
                     rule_id="SKY-R102",
                     name="python-lint-policy",
-                    message="Python project has no Ruff policy configured.",
+                    message=(
+                        "Python project has no detected Ruff, Flake8 or Pylint "
+                        "policy configured."
+                    ),
                     file=pyproject_path if pyproject_path.exists() else root_path,
                     severity="LOW",
                     value="missing_ruff",

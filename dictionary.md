@@ -1057,7 +1057,7 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines; Python counts code lines (blank, comment-only and docstring lines excluded); direct test and suite callbacks in TS/JS test files are excluded |
 | C401 | MEDIUM | Duplicated implementation fragments | Python |
 | P401 | LOW | Potential unbounded `read()` / `readlines()` | Python |
-| P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
+| P402 | LOW | Memory risk: resolved `pandas.read_csv` without a chunk or row bound | Python |
 | P403 | LOW | Repeated iterable scans in nested loops | Python / generic | an inner collection repeatedly searched for the outer item (equality, membership or a predicate relating both items); exclusions require evidence of bounded work, partition traversal or required output for every pair |
 | P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | LOW | Missing public parameter type annotation | Python |
@@ -1075,32 +1075,83 @@ branch; their diagnostic does not claim that overloaded operands are pure.
 | R105 | LOW | Repository missing TypeScript type-check command | Repo policy | recognizes `tsc` and Next builds with type errors enabled |
 | CIRC | LOW | Circular dependency between modules (top-level imports). A design finding: severity does not grow with cycle length | Python |
 
-T101/T102 report incomplete public signatures and missing signatures required
-by an applicable declared mypy annotation policy. A typing import, typed sibling,
-private helper or class attribute alone does not require every public function
-in a module to adopt annotations. Valid function and parameter type comments
+T101/T102 report missing public-signature annotations required by an applicable
+declared mypy policy. `strict` and `disallow_untyped_defs` require complete
+signatures; `disallow_incomplete_defs` applies only to definitions that already
+have signature typing intent. Checker presence, `check_untyped_defs`, a partial
+signature, a typed sibling or a typing import alone establishes no requirement.
+Missing annotations are LOW-priority policy or coverage advice, not type errors.
+Valid function and parameter type comments
 count as contracts alongside inline annotations. Supported mypy settings include
 the standard project config precedence, literal file/directory selections,
 structured module overrides and inline options. Package markers and declared
 package bases determine module identity; directory names alone do not. Checked-in
 literal mypy commands can replace a default file selection, with supported
 allow/disallow annotation flags and `--strict` taking precedence over global
-config; output-only flags do not change scope. Command discovery reads tox
+config; output-only flags and literal `--platform` / `--python-version` values
+do not change file selection. Missing, invalid or dynamic values remain unknown.
+Command discovery reads tox
 command values (including `{posargs:DEFAULT}` defaults and `{[section]key}`
 references), Make recipes and workflow `run` entries; environment names and
-workflow titles do not establish checker scope. A strict setting with neither a
+workflow titles do not establish checker scope. Non-root or unknown Tox/workflow
+working directories and directory-changing shell blocks do not establish
+root-relative selections. A strict setting with neither a
 `files` selection nor a discovered invocation has unknown scope. An explicit
 `allow_incomplete_defs` without a required-annotation setting is an opt-out.
-Unsupported or unresolved policy falls
-back to advice on the function's own partial contract; it does not establish a
-project-wide annotation requirement. Diff comparisons read policy at the base
+An applicable `ignore_errors` also disables annotation-policy advice unless
+the effective inline policy explicitly re-enables diagnostics.
+Unsupported or unresolved policy contributes coverage information rather than
+default per-function advice. Standard `.pre-commit-config.yaml` selections can
+establish scope for the official `pre-commit/mirrors-mypy` hook with explicit
+arguments, or a local hook whose entry directly invokes mypy. Global and hook
+file filters, supported Python type filters, argument overrides and exclusions
+determine applicability. Hook scope uses the declared project root for a
+standalone source tree; an enclosing Git root, when present, must match it.
+A nested project's config is not silently treated as the parent repository's
+default hook config. Historical reads require the reader's matching Git root
+context instead of current filesystem metadata.
+Filename passing and supported file-bearing stages
+must be established; manual-only hooks and filename-less invocations remain
+unknown. Implicit mirror defaults establish ordinary `.py` selection only;
+stub selection needs explicit supported type filters. Unknown providers,
+wrappers or unsupported filters do not add a
+requirement or erase independently established policy.
+Extra files or directories named in hook arguments are not independently
+inferred as policy scope outside the hook's filename selection.
+Non-mypy checker policy formats are not interpreted as mypy requirements.
+Pyright's missing-parameter and unknown-type diagnostics have different
+semantics, and its strict mode does not require return annotations on all functions.
+Those settings must not enable both T101 and T102 through a generic strict flag.
+Diff comparisons read policy at the base
 revision rather than applying the current checkout's policy to old source.
 The rules exclude pytest fixtures resolved from imports and test-support
 helpers reached from a non-root conftest suite when no production importer is
 found; modules imported by a non-test package `__init__` are production code.
 Test folders are judged relative to the project root. A directory named `t`
 alone does not establish that role. Shared helpers
-retain advice. This typing-only scope does not filter security findings.
+retain applicable policy advice. This typing-only scope does not filter security findings.
+
+A complete literal `__all__` limits T101/T102 to the module's exported
+functions and classes. Set `[tool.skylos] typing_coverage_advice = true` to opt
+into optional API coverage advice. Optional advice requires a source-declared
+boundary: a stable explicit export or an import-proven interface declaration.
+Public spelling alone, dynamic/mutated exports, unknown decorators and replaced
+owners are insufficient. Complete proven overloads and exact compatible sibling
+stubs can supply the optional caller contract; explicit implementation-annotation
+requirements still take precedence. Inherited/re-exported contracts and arbitrary
+runtime class construction are not resolved by this bounded check.
+Concrete procedures with
+only implicit, bare or literal `None` returns do not receive redundant T102
+advice unless an applicable mypy policy explicitly requires annotations.
+Decorators, generators, abstract placeholders and unknown value returns do not
+establish that inference. Missing parameter annotations remain independent.
+T101/T102 on the same unambiguous function share one human entry, retaining both
+original records in JSON and gate inputs. Coverage is separately disclosed in
+`analysis_summary.typing_coverage` and one terminal summary. Its denominator is
+public source definitions (including overload declarations), not runtime
+callables; explicit missing annotations can coexist with a supplied stub or
+overload contract. `--all-advice` expands generated advice but does not enable
+optional annotation checks; use `typing_coverage_advice` for that opt-in.
 
 Python C303, Q501 and Q702 resolve implicit receivers and distinguish instance,
 class and static methods. Nested functions have their own bindings; captured
@@ -1123,6 +1174,15 @@ and a report needs at least two groups that each use attributes the class
 assigns. Raw declared graph components remain available separately as
 `declared_lcom4` in findings. These measurements alone do not prove that a
 class should be split.
+
+Q501 excludes proven declaration-only records, while unknown descriptors,
+decorators and inherited constructors remain measured. Q702 distinguishes
+immutable, read-only class configuration from owned mutable instance state;
+writes and uncertain values retain the ordinary cohesion checks. Q701 resolves
+class identities and shadowing in their lexical scope. Its incoming dependent
+count is file-local, not a project-wide coupling measurement. Q804 excludes
+proven import/export-only facades from concrete-collaborator advice; dynamic
+exports and runtime consumers remain subject to the check.
 
 Q501 reads pytest's configured `python_classes` patterns without executing the
 project, and recognizes collected classes only in evidenced test modules.
@@ -1147,7 +1207,12 @@ the same class do not add runtime methods; property accessor counting is
 unchanged. Ordinary helpers and uncertain decorator bindings remain measured.
 Q502 counts consecutive, import-proven overload declarations and their runtime
 implementation as one callable; `.pyi` overload groups need no implementation.
-Code-line counts remain unchanged. C303 reports one warning per such group,
+Raw `code_lines` remains an inventory measurement. Q502 uses
+`implementation_code_lines` for its size threshold, excluding literal catalog
+spans and proven declaration-only classes; unknown declaration mechanisms and
+behavioral code remain measured. Literal catalogs receive the same exclusion
+at module and class scope; computed catalogs and method bodies remain measured.
+C303 reports one warning per such group,
 preserving the strongest violation and each signature's parameter layout in
 `overload_signatures`. Custom decorators and incomplete runtime groups retain
 their separate measurements.
@@ -1164,6 +1229,12 @@ four statements in each fragment body and names members by project-relative
 path.
 C401 distinguishes test-suite helper imports from production importers and
 preserves helpers reached by production, including package initializers.
+Clone normalization uses an independent AST for each fragment, preserves literal
+types and variable binding relationships, and keeps external API names and
+member selectors distinct. Identifier normalization consistently renames proven
+local bindings within their lexical scopes. Original function arguments remain
+part of the unnormalized candidate identity, so identical bodies with different
+positional bindings do not bypass the binding comparison.
 Test-data input/expected-output pairs require a matching text-reader harness
 before their clone groups are excluded. These branches apply to clone advice;
 security and correctness rules still analyze those files.
@@ -1186,6 +1257,25 @@ need the whole value.
 Lambda bodies are expression scopes. Resolving a captured read size considers
 enclosing bindings without iterating the lambda's expression as statements;
 unknown or shadowed sizes retain the ordinary P401 behavior.
+
+P401 does not recommend chunking a direct read passed to a resolved whole-buffer
+consumer: builtin `compile`, or standard-library `ast.parse`, `json.loads`,
+`tomllib.loads`, `pickle.loads`, `marshal.loads`, `gzip.decompress` and
+`zlib.decompress`. It also recognizes a direct returned read, optional `await`
+or `.decode()`, in a nondecorated callable with a stable builtin `str`/`bytes`
+return annotation, including supported optional/union aliases. Unknown helpers,
+rebound types and read-then-process bodies retain advice. These contracts make
+the chunking suggestion inapplicable; they do not prove that memory is bounded
+or suppress separate security or resource findings.
+
+P402 resolves pandas imports and aliases before advising on `read_csv`.
+An unrelated object's same-named method is not evidence of pandas. A positive
+`chunksize`, nonnegative `nrows` or caller-supplied row budget establishes a
+bound for this advice; explicit `None` and nonpositive chunksizes do not.
+With current project context, known local pandas providers and uncertain
+filesystem paths do not establish the external pandas API. Provider checks use
+metadata only. Source-only and historical readers retain their import evidence
+instead of consulting another revision's filesystem.
 
 L029 recommends named Boolean arguments and makes a keyword-only rewrite
 conditional on the public or callback contract permitting it. `@overload`
@@ -1210,18 +1300,69 @@ existing exemption; familiar private flags require a proven positional call.
 
 L027 excludes import-proven `typing`/`typing_extensions` `cast` type strings and
 matching declaration names in `TypeVar`, `ParamSpec`, `TypeVarTuple` and `NewType`.
-Runtime string occurrences still count. Shadowed, rebound or visibly mutated
-typing operations retain the ordinary literal checks.
+Runtime values in `sqlalchemy.cast` remain eligible. It also excludes recognized
+CLI declarations' standard action values and documentation fields, import-proven
+operator selectors, gettext message-ID positions and SQLAlchemy schema-name
+positions. Module/class declaration collections, uniform class-field catalogs
+and formatting-only skeletons are excluded; outside these contexts, runtime
+defaults and message text remain eligible. Mapping lookups and membership keys
+require source evidence; an arbitrary `get` method is not enough. Builtin field
+access and mutation require a proven builtin plus static attribute, method or
+slot evidence, and preserve ordinary private state names. Immutable
+`object.__setattr__`/`__getattribute__`/`__delattr__` operations and their proven
+bound aliases use the same field-selector rule. Unknown, conditional or rebound
+setters remain eligible. Import evidence rejects shadowing, rebinding and
+recognized module mutations.
+Identical literal defaults for the same named parameter on import-proven overload
+signatures and their concrete implementation count once for that callable.
+Distinct defaults, incomplete overload groups and uncertain decorators remain eligible.
+These detector exclusions reduce raw occurrence counts and can remove findings
+from JSON and gate inputs; the configured repetition threshold is unchanged.
+Bounded occurrence context records function-body counts, non-function
+occurrences and roles without extra literal values. Focused reports can make
+one-function repetition optional; this display choice preserves the remaining
+raw findings and gate inputs. Secret masking evaluates opaque tokens
+individually, so ordinary sentences stay readable while credential patterns
+and sensitive values remain masked.
+
+L028 counts returns in the measured function's branches, loops, exception
+handlers and `match` cases, excluding nested function and class bodies. The
+default limit remains five returns. Counting `match` cases corrects previously
+missed returns; the count alone does not establish that refactoring would
+improve the function.
+
+C303 retains its required-positional and total-parameter measurements, limits
+and overload evidence. Additive `argument_evidence` records the known caller
+parameter shape and, when provable, an identical project-base signature.
+Source-proven Click callbacks whose entire signature is supplied by declared
+CLI inputs and plain record constructors that only assign parameters directly
+to unique fields are excluded. Unknown decorators, custom command classes,
+descriptors, behavioral constructors and ambiguous bindings retain findings.
+Focused reports make total-only wide signatures and confirmed inherited
+contracts optional. Unresolved bindings and independently widened signatures
+stay visible. These display choices preserve the remaining raw violations and
+gate inputs, and `--all-advice` shows those optional entries.
 
 L004 evaluates error-catching scopes. Handlerless `try/finally` cleanup, and
 handlers that only clean up and re-raise, catch nothing and are not reported; a
 `finally` that returns, breaks or continues swallows exceptions and is. The
-length check counts code lines. An inner `try` that isolates items inside a
-loop, or that only falls back between imports, is not confusing nesting. A
+length check requires both excess code lines and excess protected operations;
+one multiline call with simple arguments remains one operation, while nested
+calls count separately. An inner `try` that isolates items inside a
+loop, only falls back between imports, or protects a narrow operation is not
+confusing nesting. Broad nested catching remains reported. A
 `try` that is the function's whole body, or its last statement after only a
 docstring, imports, nested definitions or guard clauses, is an error boundary:
-its length and control flow are left to C304/Q301/Q306, while nested catch
-scopes are still reported.
+its length and control flow are left to C304/Q301/Q306. The same applies to
+literal/name local initialization followed by the `try` and a plain result
+return; arbitrary setup, transformation or persistence calls do not establish
+that boundary. Broad nested catch scopes remain checked within boundaries.
+
+L005 recognizes an exception variable read explicitly through proven builtin
+`locals()` or no-argument `vars()`, using the exact variable name as a
+subscription or `.get()` key. Shadowed or rebound namespace builtins and
+lookups inside a different nested scope do not establish use. Genuinely unused
+captures remain reported.
 
 L007 distinguishes discarded errors from meaningful handler work and narrow
 trivial fallbacks. Broad placeholder returns belong to L030 rather than a
@@ -1230,12 +1371,23 @@ cleanup can be excluded when its callable and path evidence support that
 purpose; a handler that swallows `BaseException`, `KeyboardInterrupt`,
 `SystemExit` or `GeneratorExit` does not receive that cleanup exemption.
 
+Q301 counts refutable `match` patterns and their guards. A wildcard or capture
+pattern does not add a decision; its guard still does. A match without a default
+retains the path where no case matches. Nested callable bodies stay independent.
+
 Q306 scores only the measured function's body; a nested function's decorators,
 defaults and annotations count at the enclosing level and its body one level
 deeper (except the decorator-wrapper shape, which a leading docstring does not
 break). Lambda bodies are one level deeper, and `match` subjects and guards are
 scored. Q302 traverses `match` cases and treats a `with` around a top-level
 `try` like the `try` alone.
+
+Q306 records additive `cognitive_scope` evidence: its source end line, own-scope
+score, nested contributions and nearest containing function. The numeric score,
+threshold and original findings stay unchanged. Human reports can use this
+evidence to present overlapping enclosing/nested metric entries together while
+retaining every child location and measurement. No ownership proof means no
+cross-function grouping.
 
 Q804 does not report a package `__init__` importing its own submodules (a
 package composing its public surface) or test modules. U005 reads dependency
@@ -1307,7 +1459,9 @@ does not establish the receiver's current type. Unbounded buffer `readlines()`
 can allocate a new list and is reported with that explanation, unless the
 contents are a fixed literal with no growth or escape. Other whole reads
 remain LOW advice; the rule cannot know the source's size, and some consumers
-need the whole value.
+need the whole value. Resolved whole-buffer consumers and stable, declared
+`str`/`bytes` materialized-return contracts are excluded from the chunking
+suggestion as described above; this does not prove memory safety.
 
 SKY-P403 excludes proven fixed bounds, shared-iterator consumption, terminal
 cleanup scans and bounded partition traversal only while that proof holds.
@@ -1333,6 +1487,11 @@ Findings include the
 outer/inner iterable evidence and call for review: nesting alone does not
 prove a performance bug. An index is appropriate only when the keys and
 required duplicate or ordering behavior permit it.
+Resolved standard-library regex `search`/`match`/`fullmatch` dispatch is not an
+indexable equality join. This includes loop elements with source-resolved
+`re.Pattern` sequence or tuple annotations. Unknown `.search()` methods and
+unresolved pattern collections do not establish that exemption; independent
+equality or membership searches remain checked.
 
 SKY-L009 does not assume ordinary `print()` or `pprint()` output is debugging.
 It reports explicit `DEBUG:`/`DBG:` labels, raw `locals()`/`globals()`/`vars()`
