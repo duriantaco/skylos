@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
+from skylos.analysis.metric_imports import MetricImports
 from skylos.rules.quality._cohesion_declarations import (
     declaration_method_ids as _declaration_method_ids,
 )
-from skylos.rules.quality._protocols import protocol_class_ids
 from skylos.rules.quality._receivers import (
     FUNCTION_NODES,
     _ReceiverVisitor,
@@ -1154,26 +1154,21 @@ class LCOMRule(SkylosRule):
         self._method_kinds = {}
         self._declaration_ids = None
         self._protocol_class_ids: set[int] = set()
-        self._abstract_names: tuple[set[str], set[str]] = (set(), set())
+        self._imports = None
+
+    def _identity(self, expression):
+        return self._imports.resolve(expression) if self._imports is not None else None
 
     def _is_abstract(self, method) -> bool:
-        names, modules = self._abstract_names
         for decorator in method.decorator_list:
-            if isinstance(decorator, ast.Name) and decorator.id in names:
-                return True
-            if (
-                isinstance(decorator, ast.Attribute)
-                and decorator.attr in ABSTRACT_DECORATORS
-                and isinstance(decorator.value, ast.Name)
-                and decorator.value.id in modules
-            ):
+            if self._identity(decorator) in {
+                f"abc.{name}" for name in ABSTRACT_DECORATORS
+            }:
                 return True
         return False
 
     def _is_abstract_interface(self, node: ast.ClassDef) -> bool:
         """Every receiver method is ``@abstractmethod`` or a declaration stub."""
-        if not any(self._abstract_names):
-            return False
         declarations = self._declaration_ids or set()
         kinds = self._method_kinds or None
         methods = [
@@ -1192,8 +1187,31 @@ class LCOMRule(SkylosRule):
         if isinstance(node, ast.Module):
             self._method_kinds = context_method_kinds(node, context)
             self._declaration_ids = _declaration_method_ids(node)
-            self._protocol_class_ids = protocol_class_ids(node)
-            self._abstract_names = _abstract_decorator_bindings(node)
+            self._imports = MetricImports(
+                node,
+                {
+                    "abc": ABSTRACT_DECORATORS,
+                    "typing": {"Protocol", "TypedDict", "NamedTuple"},
+                    "typing_extensions": {"Protocol", "TypedDict", "NamedTuple"},
+                    "dataclasses": {"dataclass"},
+                    "attr": {"s", "attrs", "define"},
+                    "attrs": {"define", "frozen"},
+                    "pydantic": {"BaseModel", "BaseSettings"},
+                    "pydantic_settings": {"BaseSettings"},
+                },
+                filename=context.get("filename"),
+                project_root=context.get("project_root"),
+            )
+            self._protocol_class_ids = {
+                id(candidate)
+                for candidate in ast.walk(node)
+                if isinstance(candidate, ast.ClassDef)
+                and any(
+                    self._identity(base)
+                    in {"typing.Protocol", "typing_extensions.Protocol"}
+                    for base in candidate.bases
+                )
+            }
             return None
         if not isinstance(node, ast.ClassDef):
             return None
@@ -1211,6 +1229,35 @@ class LCOMRule(SkylosRule):
         )
         if result is None:
             return None
+
+        # A decorator/base spelling alone is not a container contract. An
+        # unrelated local `define` or `BaseModel` must retain normal checks.
+        result["is_dataclass"] = any(
+            self._identity(
+                decorator.func if isinstance(decorator, ast.Call) else decorator
+            )
+            in {
+                "dataclasses.dataclass",
+                "attr.s",
+                "attr.attrs",
+                "attr.define",
+                "attrs.define",
+                "attrs.frozen",
+            }
+            for decorator in node.decorator_list
+        ) or any(
+            self._identity(base)
+            in {
+                "pydantic.BaseModel",
+                "pydantic.BaseSettings",
+                "pydantic_settings.BaseSettings",
+                "typing.TypedDict",
+                "typing.NamedTuple",
+                "typing_extensions.TypedDict",
+                "typing_extensions.NamedTuple",
+            }
+            for base in node.bases
+        )
 
         lcom4 = result["implementation_lcom4_lower_bound"]
 

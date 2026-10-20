@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from skylos.analysis.architecture_findings import generate_architecture_findings
 from skylos.analysis.architecture_layers import get_layer_policy_findings
+from skylos.analysis.metric_imports import MetricImports
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 
@@ -153,6 +154,14 @@ def _compute_abstractness(tree: ast.AST) -> dict[str, Any]:
     type_vars = 0
     protocols = 0
     has_type_checking = False
+    imports = MetricImports(
+        tree,
+        {
+            "abc": {"ABC", "ABCMeta", "abstractmethod"},
+            "typing": {"Protocol", "TypeVar", "TYPE_CHECKING"},
+            "typing_extensions": {"Protocol", "TypeVar", "TYPE_CHECKING"},
+        },
+    )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
@@ -161,32 +170,27 @@ def _compute_abstractness(tree: ast.AST) -> dict[str, Any]:
             is_protocol = False
 
             for base in node.bases:
-                if isinstance(base, ast.Name):
-                    if base.id in ("ABC", "ABCMeta"):
-                        is_abstract = True
-                    elif base.id == "Protocol":
-                        is_protocol = True
-                elif isinstance(base, ast.Attribute):
-                    if base.attr in ("ABC", "ABCMeta"):
-                        is_abstract = True
-                    elif base.attr == "Protocol":
-                        is_protocol = True
+                identity = imports.resolve(base)
+                if identity == "abc.ABC":
+                    is_abstract = True
+                elif identity in {"typing.Protocol", "typing_extensions.Protocol"}:
+                    is_protocol = True
+            if any(
+                keyword.arg == "metaclass"
+                and imports.resolve(keyword.value) == "abc.ABCMeta"
+                for keyword in node.keywords
+            ):
+                is_abstract = True
 
-            if is_abstract:
-                abstract_classes += 1
             if is_protocol:
                 protocols += 1
+            if is_abstract or is_protocol:
                 abstract_classes += 1
 
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for dec in item.decorator_list:
-                        if isinstance(dec, ast.Name) and dec.id == "abstractmethod":
-                            abstract_methods += 1
-                        elif (
-                            isinstance(dec, ast.Attribute)
-                            and dec.attr == "abstractmethod"
-                        ):
+                        if imports.resolve(dec) == "abc.abstractmethod":
                             abstract_methods += 1
 
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -194,24 +198,17 @@ def _compute_abstractness(tree: ast.AST) -> dict[str, Any]:
 
         elif isinstance(node, ast.Assign):
             if isinstance(node.value, ast.Call):
-                if (
-                    isinstance(node.value.func, ast.Name)
-                    and node.value.func.id == "TypeVar"
-                ):
-                    type_vars += 1
-                elif (
-                    isinstance(node.value.func, ast.Attribute)
-                    and node.value.func.attr == "TypeVar"
-                ):
+                if imports.resolve(node.value.func) in {
+                    "typing.TypeVar",
+                    "typing_extensions.TypeVar",
+                }:
                     type_vars += 1
 
         elif isinstance(node, ast.If):
-            if isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
-                has_type_checking = True
-            elif (
-                isinstance(node.test, ast.Attribute)
-                and node.test.attr == "TYPE_CHECKING"
-            ):
+            if imports.resolve(node.test) in {
+                "typing.TYPE_CHECKING",
+                "typing_extensions.TYPE_CHECKING",
+            }:
                 has_type_checking = True
 
     total_elements = total_classes + total_functions
@@ -299,6 +296,8 @@ def analyze_architecture(
     efferent: dict[str, set[str]] = defaultdict(set)
 
     for module, deps in dependency_graph.items():
+        if module not in all_modules:
+            continue
         for dep in deps:
             if dep in all_modules and dep != module:
                 efferent[module].add(dep)
@@ -414,8 +413,26 @@ def analyze_architecture(
         if not member_metrics:
             continue
 
-        pkg_ca = sum(m.ca for m in member_metrics)
-        pkg_ce = sum(m.ce for m in member_metrics)
+        # Coupling crosses the package boundary. Summing member coupling
+        # double-counts shared providers and turns purely internal wiring
+        # into an external dependency in both directions.
+        member_set = set(members)
+        pkg_ca = len(
+            {
+                importer
+                for member in members
+                for importer in afferent.get(member, ())
+                if importer not in member_set
+            }
+        )
+        pkg_ce = len(
+            {
+                dependency
+                for member in members
+                for dependency in efferent.get(member, ())
+                if dependency not in member_set
+            }
+        )
         pkg_total = pkg_ca + pkg_ce
         pkg_instability = pkg_ce / pkg_total if pkg_total > 0 else 0.0
 
@@ -445,7 +462,7 @@ def analyze_architecture(
     if all_metrics:
         total_deps = 0
         intra_package_deps = 0
-        for module, deps in dependency_graph.items():
+        for module, deps in efferent.items():
             m_pkg = (module_packages or {}).get(module, module.split(".")[0])
             for dep in deps:
                 if dep == module:

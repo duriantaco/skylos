@@ -1,5 +1,7 @@
 """Clone kinds and candidate hashes must respect their literal/name contract."""
 
+import ast
+import json
 from pathlib import Path
 
 from skylos.rules.quality.clones import (
@@ -50,6 +52,32 @@ def test_real_copied_implementation_remains_a_type1_clone():
     assert pairs[0].similarity == 1.0
 
 
+def test_near_identical_literal_change_is_retained_without_type1_claim():
+    first, cfg = fragments(source(), "app/first.py", ignore_literals=True)
+    second, _ = fragments(
+        source(("alphas", "beta", "gamma", "delta")),
+        "app/second.py",
+        ignore_literals=True,
+    )
+    kind, score = classify_clone(first[0], second[0], cfg)
+    assert kind in {CloneType.TYPE2, CloneType.TYPE3}
+    assert score >= cfg.similarity_threshold
+    assert len(detect_pairs(first + second, cfg)) == 1
+
+
+def test_near_identical_annotation_change_is_not_type1():
+    first, cfg = fragments(source().replace("make_record()", "make_record() -> bytes"))
+    second, _ = fragments(source().replace("make_record()", "make_record() -> str"))
+    assert classify_clone(first[0], second[0], cfg)[0] is not CloneType.TYPE1
+
+
+def test_type1_only_does_not_accept_material_lookalike():
+    first, cfg = fragments(source(), enabled_clone_types=(CloneType.TYPE1,))
+    second, _ = fragments(source(("alphas", "beta", "gamma", "delta")))
+    assert classify_clone(first[0], second[0], cfg) is None
+    assert detect_pairs(first + second, cfg) == []
+
+
 def test_explicit_literal_normalization_still_finds_requested_type2_clones():
     first, cfg = fragments(source(), "app/first.py", ignore_literals=True)
     second, _ = fragments(
@@ -90,6 +118,86 @@ def computation(
         "    adjusted = doubled / 3\n"
         "    return adjusted\n"
     )
+
+
+def _annotate_unrelated_source(monkeypatch):
+    from skylos.rules.danger.calls import DangerousCallsRule
+
+    previous = ast.parse("holder = root" + ".field" * 400 + "\n")
+    # These parser nodes are shared by future ast.parse calls. Restore their
+    # previous metadata after this regression, rather than poisoning the suite.
+    contexts = {
+        node for node in ast.walk(previous) if isinstance(node, ast.expr_context)
+    }
+    for context in contexts:
+        monkeypatch.setattr(context, "parent", None, raising=False)
+    DangerousCallsRule()._annotate_parents(previous)
+    return contexts
+
+
+def test_clone_normalization_copies_syntax_without_foreign_parent_metadata(monkeypatch):
+    code = computation()
+    expected, cfg = fragments(code, ignore_identifiers=True, ignore_literals=True)
+    contexts = _annotate_unrelated_source(monkeypatch)
+    parents = {context: context.parent for context in contexts}
+
+    actual = extract_fragments(Path("app/records.py"), code, cfg)
+
+    assert actual == expected
+    assert {context: context.parent for context in contexts} == parents
+
+
+def test_analyze_keeps_production_clones_after_unrelated_security_parent_metadata(
+    tmp_path, monkeypatch
+):
+    from skylos.analyzer import analyze
+
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+    implementation = (
+        "def NAME(value):\n"
+        "    total = value + 1\n"
+        "    total = total * 2\n"
+        "    total = total - 3\n"
+        "    total = total / 4\n"
+        "    total = total + 5\n"
+        "    total = total * 6\n"
+        "    total = total - 7\n"
+        "    total = total / 8\n"
+        "    return total\n"
+    )
+    for relative, name in (
+        ("production/alpha_test.py", "first"),
+        ("production/beta_test.py", "second"),
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(implementation.replace("NAME", name), encoding="utf-8")
+    for name in ("first", "second"):
+        path = tmp_path / "tests" / f"test_{name}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"def test_{name}(text):\n"
+            "    parts = text.split(',')\n"
+            "    parts = [part.strip() for part in parts]\n"
+            "    parts = [part for part in parts if part]\n"
+            "    joined = '-'.join(parts)\n"
+            "    joined = joined.upper()\n"
+            "    joined = joined.replace('A', 'B')\n"
+            "    size = len(joined)\n"
+            "    flag = size > 10\n"
+            "    return joined, flag\n",
+            encoding="utf-8",
+        )
+    _annotate_unrelated_source(monkeypatch)
+
+    result = json.loads(
+        analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+    )
+
+    clones = [row for row in result["quality"] if row["rule_id"] == "SKY-C401"]
+    assert [row["name"] for row in clones] == ["first"]
+    assert result.get("analysis_errors", []) == []
 
 
 def test_default_identifier_normalization_preserves_distinct_bindings():

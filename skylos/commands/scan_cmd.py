@@ -464,6 +464,9 @@ def _run_scan_command(
         def run_main_analysis(progress_callback=None):
             return run_analyze(
                 scan_path,
+                all_advice=bool(
+                    getattr(args, "all_advice", False) or getattr(args, "select", None)
+                ),
                 conf=args.confidence,
                 enable_secrets=bool(args.secrets),
                 enable_danger=bool(args.danger),
@@ -1051,6 +1054,9 @@ def _run_scan_command(
         result.setdefault("analysis_summary", {})["finding_type_counts"] = (
             summarize_finding_types(result)
         )
+        from skylos.reporting.advice_policy import refresh_listing_summary
+
+        result = refresh_listing_summary(result)
         output_result = result
         _cli_severity = getattr(args, "severity", None)
         _cli_category = getattr(args, "category", None)

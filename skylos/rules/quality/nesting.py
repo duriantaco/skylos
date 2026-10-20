@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from skylos.rules.base import SkylosRule
+from skylos.rules.quality._scope import is_non_production_function_scope
 
 RULE_ID = "SKY-Q302"
 
@@ -91,6 +92,8 @@ class NestingRule(SkylosRule):
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        if is_non_production_function_scope(context):
             return None
 
         depth = _max_depth(node.body, 0, is_function_body=True)

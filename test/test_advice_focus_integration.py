@@ -164,18 +164,16 @@ def test_focus_selection_matches_expanded_and_grouped_views(
         if expand:
             assert "permits positional calls" in text
     else:
-        assert "2 advice entries (4 findings)" in normalized
-        assert "4 optional advice findings" in normalized
-        assert (
-            "--all-advice" in text
-            and "JSON and gates retain all findings" in normalized
-        )
+        # The agreeing function metrics are listed; Boolean traps, test-only
+        # nesting and architecture scores are measured and counted.
+        assert "1 advice entry (3 findings)" in normalized
+        assert "5 further advice findings measured, not listed" in normalized
+        assert "--all-advice" in text
         assert "SKY-Q802" not in text and "SKY-Q803" not in text
         assert "SKY-Q302" not in text
         assert "permits positional calls" not in text
+        assert "Observed positional Boolean call" not in text
         assert "Assessment includes all analyzed findings" in normalized
-        if expand:
-            assert "Observed positional Boolean call" in text
 
 
 @pytest.mark.parametrize("kind", ["rich", "pretty", "tree", "llm"])
@@ -205,7 +203,7 @@ def test_all_optional_still_reports_recovery_and_raw_gate(kind, tmp_path):
 def test_advice_priority_is_capped_while_raw_severity_is_retained(kind, tmp_path):
     result = {"quality": [_finding("SKY-C303")]}
 
-    text = _render(kind, result, tmp_path)
+    text = _render(kind, result, tmp_path, all_advice=True)
 
     assert "Advice priority" in text
     assert "MEDIUM" in text

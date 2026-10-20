@@ -66,6 +66,9 @@ def _result():
 
 
 def _render(renderer, result, width, **options):
+    # Layout cases list their sample advice; the default advice set is covered
+    # by test_evidence_gated_advice.py.
+    options.setdefault("all_advice", True)
     output = StringIO()
     console = Console(
         file=output, width=width, color_system=None, theme=_skylos_console_theme()

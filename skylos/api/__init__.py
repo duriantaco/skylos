@@ -979,6 +979,15 @@ def _prepare_report_upload(
     )
     strip_secret_snippets(compatibility_payload)
     scan_summary = _build_report_scan_summary(all_findings, core_payload, definitions)
+    if result_json.get("listing_policy_version") == 1:
+        visibility = result_json.get("advice_visibility")
+        properties = core_payload["runs"][0].setdefault("properties", {})
+        properties["listing_policy_version"] = 1
+        if isinstance(visibility, dict):
+            properties["advice_visibility"] = json.loads(json.dumps(visibility))
+        properties.setdefault("summary", {}).update(scan_summary)
+        legacy_payload["summary"] = dict(scan_summary)
+        compatibility_payload["summary"] = dict(scan_summary)
     analysis_summary = result_json.get("analysis_summary")
     if isinstance(analysis_summary, dict):
         # Preserve completion and scope alongside the findings in every

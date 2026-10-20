@@ -1319,9 +1319,8 @@ Distinct defaults, incomplete overload groups and uncertain decorators remain el
 These detector exclusions reduce raw occurrence counts and can remove findings
 from JSON and gate inputs; the configured repetition threshold is unchanged.
 Bounded occurrence context records function-body counts, non-function
-occurrences and roles without extra literal values. Focused reports can make
-one-function repetition optional; this display choice preserves the remaining
-raw findings and gate inputs. Secret masking evaluates opaque tokens
+occurrences and roles without extra literal values. L027 is counted, not
+listed, unless `--all-advice` or `--select` asks for it. Secret masking evaluates opaque tokens
 individually, so ordinary sentences stay readable while credential patterns
 and sensitive values remain masked.
 
@@ -1340,8 +1339,12 @@ to unique fields are excluded. Unknown decorators, custom command classes,
 descriptors, behavioral constructors and ambiguous bindings retain findings.
 Focused reports make total-only wide signatures and confirmed inherited
 contracts optional. Unresolved bindings and independently widened signatures
-stay visible. These display choices preserve the remaining raw violations and
-gate inputs, and `--all-advice` shows those optional entries.
+stay visible. JSON, SARIF and uploads retain all records with a shared `listing`
+mark and reason. Terminal views and gates use that mark; explicitly configured
+or selected rules are always enforced. `--all-advice` lists every generated check.
+
+`docs/cli-output.md` lists which advice the scan lists by default and which it
+only counts.
 
 L004 evaluates error-catching scopes. Handlerless `try/finally` cleanup, and
 handlers that only clean up and re-raise, catch nothing and are not reported; a

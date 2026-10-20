@@ -423,7 +423,7 @@ def _print_advice_groups(console, result, *, root_path=None, limit=None):
         )
     console.print(
         Text(
-            "  Use --expand-advice for every location and message, or --format json for complete findings.",
+            "  Use --expand-advice for every location and message, or --format json for full records.",
             style="dim",
         )
     )

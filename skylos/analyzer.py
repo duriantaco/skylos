@@ -3867,6 +3867,7 @@ class Skylos:
         include_review_context=False,
         skip_generated=False,
         generated_keep_paths=None,
+        all_advice=True,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -4363,6 +4364,13 @@ class Skylos:
             )
             result["assessment"] = compute_assessment(result)
             result["analysis_summary"]["assessment_scope"] = "all_analyzed_findings"
+            from skylos.reporting.advice_policy import apply_advice_policy
+            from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
+
+            result = apply_advice_policy(
+                result, project_root=str(project_root), all_advice=all_advice,
+                explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+            )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -6231,6 +6239,15 @@ class Skylos:
             result["analysis_summary"]["unused_dependency_analysis"] = (
                 unused_dependency_analysis
             )
+        # The CLI asks for focused advice, so its terminal, JSON, SARIF, gate
+        # and upload read one result. Library callers keep every check.
+        from skylos.reporting.advice_policy import apply_advice_policy
+        from skylos.reporting.listing import explicit_rule_ids, normalize_rule_ids
+
+        result = apply_advice_policy(
+            result, project_root=str(project_root), all_advice=all_advice,
+            explicit_rules=explicit_rule_ids(project_cfg) | normalize_rule_ids(required_config_rules),
+        )
 
         return json.dumps(result, indent=2)
 
@@ -6374,6 +6391,7 @@ def analyze(
     include_review_context=False,
     skip_generated=False,
     generated_keep_paths=None,
+    all_advice=True,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -6400,6 +6418,7 @@ def analyze(
         include_review_context=include_review_context,
         skip_generated=skip_generated,
         generated_keep_paths=generated_keep_paths,
+        all_advice=all_advice,
     )
 
 

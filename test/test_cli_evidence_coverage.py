@@ -14,7 +14,7 @@ from skylos.ui.security_evidence import security_evidence_details
 from skylos.ui.terminal_report import render_pretty_results
 
 
-def _render(result, renderer, width=120):
+def _render(result, renderer, width=120, all_advice=False):
     buffer = StringIO()
     console = Console(
         file=buffer,
@@ -22,7 +22,7 @@ def _render(result, renderer, width=120):
         force_terminal=False,
         theme=cli._skylos_console_theme(),
     )
-    kwargs = {"expand_advice": True}
+    kwargs = {"expand_advice": True, "all_advice": all_advice}
     if renderer is render_results:
         kwargs["copy_badge"] = False
     renderer(console, result, **kwargs)
@@ -208,7 +208,8 @@ def test_signature_advice_explains_injection_without_dropping_test_findings(
     }
     result = {"quality": [row], "analysis_summary": {"total_files": 1}}
     before = copy.deepcopy(result)
-    output = _render(result, renderer)
+    # Wide signatures and Boolean traps are listed with --all-advice.
+    output = _render(result, renderer, all_advice=True)
     assert "If pytest supplies these inputs" in output
     assert "review test setup and case clarity" in output
     assert "Use keyword-only arguments instead." not in output
@@ -216,7 +217,9 @@ def test_signature_advice_explains_injection_without_dropping_test_findings(
     assert result == before
     assert check_gate(result, {"gate": {"max_quality": 0}})[0] is False
     row["name"] = "helpers.process.expected"
-    assert "Use keyword-only arguments instead." in _render(result, renderer)
+    assert "Use keyword-only arguments instead." in _render(
+        result, renderer, all_advice=True
+    )
 
 
 @pytest.mark.parametrize(

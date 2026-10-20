@@ -441,7 +441,7 @@ def _render_advice_groups(console, result, *, root_path=None, limit=None):
             f"  [muted]... and {overflow} more advice groups (use --limit to adjust)[/muted]"
         )
     console.print(
-        "[muted]Use --expand-advice for every location and message, or --format json for complete findings.[/muted]"
+        "[muted]Use --expand-advice for every location and message, or --format json for full records.[/muted]"
     )
     console.print()
 

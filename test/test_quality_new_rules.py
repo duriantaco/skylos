@@ -1,7 +1,17 @@
 import ast
+from skylos.core.safe_cache_io import write_text_no_symlink
 from skylos.rules.quality.logic import UnusedExceptVarRule, ReturnConsistencyRule
 from skylos.rules.quality.class_size import GodClassRule, GodFileRule
 from skylos.rules.quality import clones
+
+
+def _write_project_source(root, relative, source):
+    assert write_text_no_symlink(
+        root / "pyproject.toml", '[project]\nname="fixture-app"\n'
+    )
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert write_text_no_symlink(path, source, encoding="utf-8")
 
 
 def check_code(rule, code, filename="test.py", project_root=None):
@@ -199,6 +209,7 @@ class TestGodClass:
         assert check_code(GodClassRule(), collected, "tests/test_big.py", tmp_path) == []
         # A folder name does not make an ordinary helper a collected test.
         assert len(check_code(GodClassRule(), code, "tests/test_big.py", tmp_path)) == 2
+        _write_project_source(tmp_path, "examples/big.py", code)
         assert check_code(GodClassRule(), code, "examples/big.py", tmp_path) == []
         assert len(check_code(GodClassRule(), code, "pkg/big.py", tmp_path)) == 2
 
@@ -293,6 +304,7 @@ class TestGodFile:
         rule = GodFileRule(max_lines=99, max_definitions=5, max_top_level_definitions=99)
 
         assert check_code(rule, code, "tests/test_many.py", tmp_path) == []
+        _write_project_source(tmp_path, "examples/many.py", code)
         assert check_code(rule, code, "examples/many.py", tmp_path) == []
         assert len(check_code(rule, code, "pkg/many.py", tmp_path)) == 1
 
@@ -378,6 +390,8 @@ class TestCloneFragments:
         # mixed groups and test modules imported by production code.
         assert len(self._fragments(code, tmp_path / "tests" / "x.py", tmp_path)) == 1
         assert len(self._fragments(code, tmp_path / "conftest.py", tmp_path)) == 1
+        _write_project_source(tmp_path, "examples/x.py", code)
+        _write_project_source(tmp_path, "docs/x.py", code)
         assert self._fragments(code, tmp_path / "examples" / "x.py", tmp_path) == []
         assert self._fragments(code, tmp_path / "docs" / "x.py", tmp_path) == []
         # Shipped code named test_* without a test framework is still scanned.

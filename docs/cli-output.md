@@ -479,8 +479,12 @@ this as **Type**, separately from severity:
 | Review | A potential risk requiring context | Possible SSRF, dead code, unbounded ORM queries, unsafe type assertions |
 | Advice | Maintainability or tooling conventions | Function length, complexity, duplicate literals, missing annotations |
 
-When quality checks are enabled (`--quality` or `-a`), all detected Advice stays
-in the raw report. Rich, pretty, tree and LLM views default to focused advice.
+When quality checks are enabled (`--quality` or `-a`), the scan decides once
+which Advice is listed. Every finding remains in JSON, SARIF and upload payloads,
+with a shared `listing` mark containing `version`, `listed` and `reason`.
+Terminal and gate consumers read that mark. Unlisted checks are counted by reason
+in `advice_visibility`; `--all-advice` lists every generated check. An explicitly
+selected rule is listed and enforced. Rich, pretty, tree and LLM views show focused advice.
 They list Defect and Review individually, then summarize the selected Advice
 by rule family with counts and top files. Optional advice includes known
 Boolean-signature suggestions without observed positional-call evidence,
@@ -500,6 +504,26 @@ requires the same signature. Unknown bindings and newly widened overrides stay
 visible. These choices retain the original findings, counts and thresholds;
 `--all-advice` restores them and explicit rule selection keeps its existing
 behavior.
+
+A threshold crossing is a measurement. The current default set retains
+corroborated function metrics and annotation-policy advice. A precision fix does
+not automatically add a rule to this set: promotion requires fresh independent
+labels on previously unused repositories, targeting at least 50% useful findings.
+Small per-rule samples remain uncertain.
+
+| Advice | Listed when | Otherwise (counted under `advice_visibility`) |
+|---|---|---|
+| Python and JS/TS function metrics (Q301/Q306/C304/Q302/L028) | two complexity measures agree on the function: cyclomatic and cognitive, or cognitive and nesting | `single_dimension` |
+| Missing annotations (T101/T102) | the rule reports them (the project's typing policy requires them); one entry per file lists every function line | — |
+| Every other advice rule (for example L027, C303, C401, Q501, Q502, L004, P401) | `--all-advice` or `--select` | `measurement`, counted per rule |
+
+Languages without a cognitive-complexity measure (Go, Java and others) keep their function metrics.
+Folder conventions need a confirming fact: a nested `tests` folder counts as
+tests when the module imports a test framework. Vendor and generated exclusions
+require the provenance or structural evidence described below. A folder name or
+a comment mentioning a generator is insufficient. Shipped tooling packages and
+production routes remain production code. Missing or malformed evidence keeps
+advice visible.
 
 Non-production context is project-relative and read without executing the
 target. Conventional test, example and benchmark paths are checked relative to
@@ -569,11 +593,10 @@ advice on the same unambiguous function share one entry; JSON retains both rule
 records. `--all-advice` and `--select` expand/filter generated findings; they do
 not enable this optional detector behavior by themselves.
 
-Headlines count visible advice entries and, when metrics are combined, their
-underlying findings. The assessment labels its complete count as **total advice
-findings** and its distinct checks as **rules**. Optional advice counts also
-refer to findings. These labels distinguish the selected view from the complete
-assessment without changing either count.
+Headlines count listed advice entries and, when metrics are combined, their
+underlying findings. Assessments use listed findings; JSON separately records
+complete and listed finding counts. Optional advice counts refer to retained
+findings outside the current list. Grouping does not change these counts.
 
 Use `--expand-advice` for focused locations, or combine it with `--all-advice`
 to include optional advice. An explicit `--select` keeps the requested rules
@@ -587,14 +610,28 @@ skylos . --select SKY-L029 --expand-advice
 skylos . -a --format json -o report.json
 ```
 
-JSON and JSON-CI retain each finding record for the chosen scan scope,
-including Advice and its evidence. Findings carry `finding_type`;
-`analysis_summary.finding_type_counts` contains `defect`, `review`, `advice`
-and `advice_groups`. Focus, grouping and expansion never alter these records,
-SARIF, assessments or gate inputs. Optional advice still counts toward configured
-quality limits where applicable. Machine formats, concise output and MCP scan
-resources retain their existing complete records and policies. Analyzer
-thresholds are unchanged.
+JSON and JSON-CI retain every finding and its evidence, including unlisted Advice.
+For example, `"listing": {"version": 1, "listed": false, "reason": "measurement"}`
+keeps a measurement available without listing it by default. Findings also carry
+`finding_type`. `analysis_summary.finding_type_counts` and `quality_count` count
+all retained findings; `listed_finding_type_counts` and `listed_quality_count`
+count the shared listed view. `advice_visibility` gives `total_checks`,
+`omitted_checks` and counts per reason. Uploads and SARIF preserve these marks;
+Cloud consumers must support listing policy version 1 to use the same view.
+Analyzer thresholds and original severities are unchanged.
+
+Gates enforce listed findings plus rules explicitly named in configuration or
+with `--select`. An explicit rule can be enforced without listing all Advice:
+
+```toml
+[tool.skylos.gate]
+rules = ["SKY-L027"]
+max_quality = 0
+```
+
+`--all-advice` lists every generated finding and includes it in the gate.
+Defect, Review, security, dead-code and custom findings cannot be hidden by an
+Advice listing mark. Unknown or malformed marks keep findings visible.
 
 Deterministic LLM reports apply the same focused/all selection as terminal
 reports. Expanded grouped entries retain every original record. MCP replies
