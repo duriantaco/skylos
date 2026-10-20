@@ -217,6 +217,10 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "language",
         "symbol",
         "review_decision",
+        "listing",
+        "security_evidence",
+        "security_trace",
+        "receiver_resolution",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
     verification = _compact_verification(metadata.get("verification"))
@@ -272,6 +276,9 @@ def _compact_upload_finding(
         snippet = _truncate_upload_text(finding.get("snippet"), 240)
         if snippet:
             compact["snippet"] = snippet
+    listing = finding.get("listing")
+    if isinstance(listing, dict):
+        compact["listing"] = dict(listing)
     metadata = _compact_finding_metadata(finding.get("metadata"))
     dead_code_evidence = dead_code_finding_evidence_payload(
         finding,

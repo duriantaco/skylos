@@ -2486,6 +2486,12 @@ def _run_review_command(argv):
     return run_review_command(argv, console_factory=Console)
 
 
+def _run_explain_command(argv):
+    from skylos.commands.security_explain import run_explain_command
+
+    return run_explain_command(argv, console_factory=Console)
+
+
 def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> None:
     try:
         from skylos.api import get_git_root as _get_git_root

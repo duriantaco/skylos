@@ -8,6 +8,7 @@ findings carry for SARIF codeFlows and the agent hook.
 
 from __future__ import annotations
 
+import copy
 import json
 import textwrap
 from pathlib import Path
@@ -467,9 +468,27 @@ def test_fastapi_sample_end_to_end_through_analyzer(tmp_path):
     flow = sarif["runs"][0]["results"][0]["codeFlows"][0]
     steps = flow["threadFlows"][0]["locations"]
     lines = [s["location"]["physicalLocation"]["region"]["startLine"] for s in steps]
-    assert lines == [13, 13]  # textual steps anchored at the sink
-    assert "route parameter" in steps[0]["location"]["message"]["text"]
-    assert flow["message"]["text"].startswith("Flow from route parameter")
+    assert lines == [12, 12, 13, 13, 13, 13, 13]
+    assert flow["message"]["text"].startswith("Partial recorded static trace")
+    sql_finding = next(f for f in danger if f["rule_id"] == "SKY-D211")
+    assert sql_finding["metadata"]["security_trace"]["status"] == "partial"
+    assert "Framework argument binding" in " ".join(
+        sql_finding["metadata"]["security_trace"]["limitations"]
+    )
+
+    # Reports without located traces keep the original textual flow behavior.
+    legacy = copy.deepcopy(sql_finding)
+    legacy["metadata"].pop("security_trace")
+    legacy_sarif = SarifExporter([legacy], analyzer_owned=True).generate()
+    legacy_flow = legacy_sarif["runs"][0]["results"][0]["codeFlows"][0]
+    legacy_steps = legacy_flow["threadFlows"][0]["locations"]
+    legacy_lines = [
+        step["location"]["physicalLocation"]["region"]["startLine"]
+        for step in legacy_steps
+    ]
+    assert legacy_lines == [13, 13]
+    assert "route parameter" in legacy_steps[0]["location"]["message"]["text"]
+    assert legacy_flow["message"]["text"].startswith("Flow from route parameter")
 
 
 @pytest.mark.parametrize("line, rule", [(13, "SKY-D211"), (18, "SKY-D215")])

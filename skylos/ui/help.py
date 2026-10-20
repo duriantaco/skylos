@@ -3,6 +3,17 @@ from rich.markup import escape
 
 COMMANDS = [
     {
+        "name": "skylos explain REPORT.json [--rule RULE] [--interactive]",
+        "desc": "Follow recorded static security evidence across source locations",
+        "details": [
+            "Reads a saved JSON report; never executes or rescans target code",
+            "Use --file, --line and --finding to select a finding",
+            "Interactive commands: next, back, step N, callers, source, quit",
+            "Source viewing requires --root and matching source hashes",
+        ],
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos suite [directory]",
         "desc": "Build one static, debt, defense, and provenance report",
         "details": [

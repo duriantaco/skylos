@@ -45,7 +45,7 @@ def security_evidence_details(finding):
     if not isinstance(evidence, Mapping):
         evidence = finding.get("security_evidence")
     if not isinstance(evidence, Mapping):
-        return []
+        return _located_trace_summary(metadata)
 
     details = []
     additional_sources = evidence.get("sources")
@@ -69,7 +69,8 @@ def security_evidence_details(finding):
         if guards:
             details.append(label + ": " + guards)
     if not details:
-        return []
+        return _located_trace_summary(metadata)
+    details.extend(_located_trace_summary(metadata))
     if evidence.get("analysis_complete") is False:
         details.append(
             "Evidence scope: partial static analysis; review reachability and other guards"
@@ -79,3 +80,24 @@ def security_evidence_details(finding):
             "Evidence scope: static observations; runtime exploitability is not verified"
         )
     return details
+
+
+def _located_trace_summary(metadata):
+    if not isinstance(metadata, Mapping):
+        return []
+    trace = metadata.get("security_trace")
+    if not isinstance(trace, Mapping):
+        return []
+    receiver = trace.get("receiver")
+    if not isinstance(receiver, Mapping) or receiver.get("status") != "resolved":
+        return []
+    identity = _text(receiver.get("qualified_name"))
+    if not identity:
+        return []
+    steps = trace.get("steps")
+    count = 0
+    if isinstance(steps, list):
+        count = len(steps)
+    return [
+        f"Resolved receiver: {identity}; {count} recorded static steps (skylos explain)"
+    ]
