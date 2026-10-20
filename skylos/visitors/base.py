@@ -9,7 +9,11 @@ from skylos.analysis.control_flow import (
     evaluate_static_condition,
     extract_constant_string,
 )
-from skylos.analysis.implicit_refs import pattern_tracker
+from skylos.analysis.implicit_refs import (
+    _compile_pattern_ref as _compile_name_glob,
+    is_specific_name_pattern,
+    pattern_tracker,
+)
 from skylos.visitors.registration_decorators import (
     collect_local_registration_decorators,
 )
@@ -215,6 +219,49 @@ IMPLICIT_DUNDERS = {
     "__copy__",
     "__deepcopy__",
     "__bool__",
+    "__next__",
+    "__fspath__",
+    "__sizeof__",
+    "__trunc__",
+    "__floor__",
+    "__ceil__",
+    "__instancecheck__",
+    "__subclasscheck__",
+    "__subclasshook__",
+    "__mro_entries__",
+    "__buffer__",
+    "__release_buffer__",
+    # dataclasses and attrs call these from the generated __init__.
+    "__post_init__",
+    "__attrs_pre_init__",
+    "__attrs_post_init__",
+}
+
+# printf-style conversion specifiers ("handle_%s" % name, "%(kind)s_view" % d).
+_PRINTF_CONVERSION_RE = re.compile(
+    r"%(?:\([^)]*\))?[#0 +\-]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?[diouxXeEfFgGcrsa%]"
+)
+_SEQUENCE_WRAPPERS = {"sorted", "list", "set", "tuple", "reversed", "iter", "frozenset"}
+# Annotations whose first type argument is the element a loop yields.
+_ITERABLE_ANNOTATIONS = {
+    "Iterable",
+    "Iterator",
+    "Generator",
+    "AsyncIterable",
+    "AsyncIterator",
+    "AsyncGenerator",
+    "Collection",
+    "Sequence",
+    "MutableSequence",
+    "AbstractSet",
+    "Set",
+    "FrozenSet",
+    "List",
+    "Tuple",
+    "list",
+    "set",
+    "frozenset",
+    "tuple",
 }
 
 METACLASS_BASES = {"ABCMeta", "EnumMeta", "type"}
@@ -645,6 +692,24 @@ class Visitor(ast.NodeVisitor):
         self.local_registration_decorators = set()
         self._type_checking_function_ids: set[int] = set()
         self._module_shadows_getattr = False
+        # Computed attribute names bound to variables, per enclosing function:
+        # (function qname, variable) -> wildcard pattern.
+        self._name_patterns: dict[tuple[str, str], str] = {}
+        # String constants that reflection filters may name indirectly.
+        self._module_str_constants: dict[str, str] = {}
+        self._class_str_constants: dict[tuple[str, str], str] = {}
+        # Reflection over attribute names, resolved in finalize() so members
+        # defined after the reflecting method are covered too.
+        self._pending_member_signals: list[tuple[str, str]] = []
+        self._pending_class_reflections: list[tuple[str, list, str]] = []
+        self._pending_module_reflections: list[tuple[str, object, list, set]] = []
+        self._filtered_reflection_calls: set[int] = set()
+        self._function_node_stack: list = []
+        # Return annotations of module-level functions (for the element type
+        # a loop over their result yields), and the declared class of typed
+        # local names: (function qname, variable) -> class qname.
+        self._iterable_return_annotations: dict[str, ast.expr] = {}
+        self._receiver_types: dict[tuple[str, str], str] = {}
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -705,6 +770,13 @@ class Visitor(ast.NodeVisitor):
         )
         self._type_checking_function_ids = type_checking_function_ids(node)
         self._module_shadows_getattr = _module_binds_name(node, "getattr")
+        for stmt in node.body:
+            if (
+                isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and stmt.returns
+            ):
+                qname = f"{self.mod}.{stmt.name}" if self.mod else stmt.name
+                self._iterable_return_annotations[qname] = stmt.returns
         for stmt in node.body:
             self.visit(stmt)
         self._finalize_dunder_all_exports(node.body)
@@ -890,6 +962,10 @@ class Visitor(ast.NodeVisitor):
     def visit_For(self, node: ast.For) -> None:
         self._complexity_stack[-1] += 1
 
+        self._note_attribute_reflection(
+            node.iter, node.target, self._loop_filter_tests(node.body), node.body
+        )
+        self._note_loop_element_type(node.iter, node.target)
         self.visit(node.iter)
         self._bind_target(node.target, node.lineno, suppress_discards=True)
 
@@ -1272,6 +1348,7 @@ class Visitor(ast.NodeVisitor):
         self._complexity_stack.append(1)
 
         self.current_function_scope.append(node.name)
+        self._function_node_stack.append(node)
         self.local_var_maps.append({})
         self.local_type_maps.append({})
         self.local_constants.append({})
@@ -1308,6 +1385,9 @@ class Visitor(ast.NodeVisitor):
                 type_str = self._annotation_to_string(arg.annotation)
                 if type_str:
                     self.inferred_types[param_name] = type_str
+                class_type = self._annotated_class(arg.annotation)
+                if class_type:
+                    self._receiver_types[(qualified_name, arg.arg)] = class_type
 
         if node.args.vararg:
             va = node.args.vararg
@@ -1371,6 +1451,7 @@ class Visitor(ast.NodeVisitor):
                     break
 
         self.current_function_scope.pop()
+        self._function_node_stack.pop()
         self.current_function_params = self._param_stack.pop()
         self.local_var_maps.pop()
         self.local_type_maps.pop()
@@ -1407,6 +1488,17 @@ class Visitor(ast.NodeVisitor):
         self._comprehension_scope_stack.append({})
 
         for generator in node.generators:
+            self._note_attribute_reflection(
+                generator.iter,
+                generator.target,
+                generator.ifs,
+                [
+                    *generator.ifs,
+                    getattr(node, "elt", None),
+                    getattr(node, "value", None),
+                ],
+            )
+            self._note_loop_element_type(generator.iter, generator.target)
             self.visit(generator.iter)
 
             self._bind_comprehension_target(generator.target, node.lineno)
@@ -1845,13 +1937,16 @@ class Visitor(ast.NodeVisitor):
                 for t in node.targets:
                     if isinstance(t, ast.Name):
                         self.local_constants[-1][t.id] = const_val
+        self._record_scope_string_constant(node.targets, const_val)
 
-        if isinstance(node.value, ast.JoinedStr):
-            pattern = self._extract_fstring_pattern(node.value)
-            if pattern:
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        self.pattern_tracker.f_string_patterns[t.id] = pattern
+        pattern = self._dynamic_name_pattern(node.value, lookup_names=False)
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                key = (self._current_function_qname or "", t.id)
+                if pattern:
+                    self._name_patterns[key] = pattern
+                else:
+                    self._name_patterns.pop(key, None)
 
         declaration_only = (
             self._is_type_stub
@@ -1949,6 +2044,9 @@ class Visitor(ast.NodeVisitor):
             self.visit(node.value)
             self._extract_string_refs(node.value)
             self._record_orm_declarative_fields([node.target], node.value)
+            self._record_scope_string_constant(
+                [node.target], extract_constant_string(node.value)
+            )
 
         def _define(t):
             if isinstance(t, ast.Name):
@@ -2335,6 +2433,7 @@ class Visitor(ast.NodeVisitor):
         if callee and not self.current_function_scope and self.cls is None:
             self.top_level_refs.add(callee)
         if callee:
+            self._record_module_call_args(callee, node)
             for index, arg in enumerate(node.args):
                 arg_type = self._get_expr_type(arg)
                 if arg_type:
@@ -2387,46 +2486,28 @@ class Visitor(ast.NodeVisitor):
                         self.add_ref(qualified_name)
 
             else:
-                fstring_pattern = None
-                if isinstance(node.args[1], ast.JoinedStr):
-                    fstring_pattern = self._extract_fstring_pattern(node.args[1])
-                elif isinstance(node.args[1], ast.BinOp) and isinstance(
-                    node.args[1].op, ast.Add
+                fstring_pattern = self._dynamic_name_pattern(node.args[1])
+                if (
+                    not fstring_pattern
+                    and isinstance(node.args[1], ast.Name)
+                    and self.local_constants
                 ):
-                    if isinstance(node.args[1].left, ast.Constant) and isinstance(
-                        node.args[1].left.value, str
-                    ):
-                        fstring_pattern = node.args[1].left.value + "*"
-                    elif isinstance(node.args[1].right, ast.Constant) and isinstance(
-                        node.args[1].right.value, str
-                    ):
-                        fstring_pattern = "*" + node.args[1].right.value
-                elif isinstance(node.args[1], ast.Name):
-                    var_name = node.args[1].id
-                    fstring_pattern = self.pattern_tracker.f_string_patterns.get(
-                        var_name
-                    )
-                    if not fstring_pattern and self.local_constants:
-                        val = self.local_constants[-1].get(var_name)
-                        if val:
-                            self.pattern_tracker.known_refs.add(val)
-                elif (
-                    isinstance(node.args[1], ast.Call)
-                    and isinstance(node.args[1].func, ast.Attribute)
-                    and node.args[1].func.attr == "format"
-                    and isinstance(node.args[1].func.value, ast.Constant)
-                    and isinstance(node.args[1].func.value.value, str)
-                ):
-                    fmt_str = node.args[1].func.value.value
-                    fstring_pattern = re.sub(r"\{[^}]*\}", "*", fmt_str)
+                    val = self.local_constants[-1].get(node.args[1].id)
+                    if val:
+                        self.pattern_tracker.known_refs.add(val)
 
                 if fstring_pattern:
                     self.pattern_tracker.add_pattern_ref(
                         fstring_pattern, 70, source_module=self.mod
                     )
-                    if self._current_function_qname:
-                        self.pattern_tracker.known_refs.add(
-                            self._current_function_qname.split(".")[-1]
+                    owner = self._reflection_class_owner(
+                        node.args[0]
+                    ) or self._receiver_class(node.args[0])
+                    if owner:
+                        # Dispatch on self/cls (or a receiver of a declared
+                        # class) also reaches subclass members elsewhere.
+                        self.pattern_tracker.add_class_pattern_ref(
+                            fstring_pattern, 70, owner
                         )
 
         elif isinstance(node.func, ast.Name) and node.func.id in ("globals", "locals"):
@@ -2444,10 +2525,6 @@ class Visitor(ast.NodeVisitor):
                         self.pattern_tracker.add_pattern_ref(
                             pattern, 70, source_module=self.mod
                         )
-                        if self._current_function_qname:
-                            self.pattern_tracker.known_refs.add(
-                                self._current_function_qname.split(".")[-1]
-                            )
 
         elif isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
             root_mod = ""
@@ -2477,6 +2554,10 @@ class Visitor(ast.NodeVisitor):
                         self.pattern_tracker.add_pattern_ref(
                             pattern, 60, source_module=self.mod
                         )
+
+        elif id(node) in self._filtered_reflection_calls:
+            # A name filter (``startswith``) already scoped this reflection.
+            pass
 
         elif (
             isinstance(node.func, ast.Attribute)
@@ -2522,14 +2603,10 @@ class Visitor(ast.NodeVisitor):
                         owner = f"{self.mod}.{self.cls}"
                     else:
                         owner = self.cls
-                    for d in self.defs:
-                        if d.name.startswith(owner + "."):
-                            d.dynamic_signals.append("inspect_getmembers")
+                    self._pending_member_signals.append((owner, "inspect_getmembers"))
             elif name[0].isupper():
                 qname = self.qual(name)
-                for d in self.defs:
-                    if d.name.startswith(qname + "."):
-                        d.dynamic_signals.append("inspect_getmembers")
+                self._pending_member_signals.append((qname, "inspect_getmembers"))
             else:
                 root_mod = self.mod.split(".")[0] if self.mod else ""
                 if root_mod:
@@ -2554,14 +2631,464 @@ class Visitor(ast.NodeVisitor):
                         owner = f"{self.mod}.{self.cls}"
                     else:
                         owner = self.cls
-                    for d in self.defs:
-                        if d.name.startswith(owner + "."):
-                            d.dynamic_signals.append("dir_self")
+                    self._pending_member_signals.append((owner, "dir_self"))
             elif name[0].isupper():
                 qname = self.qual(name)
-                for d in self.defs:
-                    if d.name.startswith(qname + "."):
-                        d.dynamic_signals.append("dir_class")
+                self._pending_member_signals.append((qname, "dir_class"))
+
+    # Reflection over attribute names ------------------------------------
+
+    def _class_owner(self) -> Optional[str]:
+        if not self.cls:
+            return None
+        return f"{self.mod}.{self.cls}" if self.mod else self.cls
+
+    def _reflection_class_owner(self, subject: ast.AST) -> Optional[str]:
+        """The class whose members ``subject`` exposes, when it names one."""
+        if isinstance(subject, ast.Name):
+            if subject.id in ("self", "cls"):
+                return self._class_owner()
+            return None
+        if (
+            isinstance(subject, ast.Attribute)
+            and subject.attr == "__class__"
+            and isinstance(subject.value, ast.Name)
+            and subject.value.id == "self"
+        ):
+            return self._class_owner()
+        if (
+            isinstance(subject, ast.Call)
+            and isinstance(subject.func, ast.Name)
+            and subject.func.id == "type"
+            and len(subject.args) == 1
+            and isinstance(subject.args[0], ast.Name)
+            and subject.args[0].id in ("self", "cls")
+        ):
+            return self._class_owner()
+        return None
+
+    def _reflection_source(self, node: ast.AST):
+        """Return (subject, yields_pairs, call) when ``node`` lists names of subject.
+
+        Covers ``dir(x)``, ``vars(x)``, ``x.__dict__`` (and their ``keys()`` or
+        ``items()``) and ``inspect.getmembers(x)``, optionally wrapped in
+        ``sorted()``/``list()``.
+        """
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            func = node.func.id
+            if func in ("dir", "vars") and len(node.args) == 1 and not node.keywords:
+                return node.args[0], False, node
+            if func in _SEQUENCE_WRAPPERS and len(node.args) == 1:
+                return self._reflection_source(node.args[0])
+            if (
+                func == "getmembers"
+                and "inspect" in self.alias.get("getmembers", "")
+                and node.args
+            ):
+                return node.args[0], True, node
+            return None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (
+                node.func.attr == "getmembers"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "inspect"
+                and node.args
+            ):
+                return node.args[0], True, node
+            if node.func.attr in ("keys", "items") and not node.args:
+                inner = node.func.value
+                namespace = None
+                if isinstance(inner, ast.Attribute) and inner.attr == "__dict__":
+                    namespace = inner.value
+                elif (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Name)
+                    and inner.func.id == "vars"
+                    and len(inner.args) == 1
+                ):
+                    namespace = inner.args[0]
+                if namespace is not None:
+                    return namespace, node.func.attr == "items", node
+            return None
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            return node.value, False, node
+        return None
+
+    @staticmethod
+    def _reflection_name_var(target: ast.AST, yields_pairs: bool) -> Optional[str]:
+        if yields_pairs:
+            if (
+                isinstance(target, (ast.Tuple, ast.List))
+                and target.elts
+                and isinstance(target.elts[0], ast.Name)
+            ):
+                return target.elts[0].id
+            return None
+        return target.id if isinstance(target, ast.Name) else None
+
+    @staticmethod
+    def _loop_filter_tests(body: list) -> list:
+        """Conditions that select which names a loop body handles."""
+        tests = []
+        for stmt in body:
+            if not isinstance(stmt, ast.If):
+                continue
+            test = stmt.test
+            if (
+                isinstance(test, ast.UnaryOp)
+                and isinstance(test.op, ast.Not)
+                and stmt.body
+                and isinstance(stmt.body[0], ast.Continue)
+            ):
+                # ``if not name.startswith(p): continue`` keeps only ``p*``.
+                tests.append(test.operand)
+            elif not (isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)):
+                tests.append(test)
+        return tests
+
+    def _string_spec(self, node: ast.AST):
+        value = extract_constant_string(node)
+        if value is not None:
+            return ("const", value)
+        if isinstance(node, ast.Name):
+            if self.local_constants and node.id in self.local_constants[-1]:
+                return ("const", self.local_constants[-1][node.id])
+            return ("module", node.id)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = self._reflection_class_owner(node.value)
+            if owner is None and node.value.id[:1].isupper():
+                owner = self.qual(node.value.id)
+            if owner:
+                return ("class_attr", owner, node.attr)
+        return None
+
+    def _name_filter_specs(self, test: ast.AST, var: str):
+        """(method, spec) pairs restricting ``var``, or None if ``test`` doesn't."""
+        if isinstance(test, ast.BoolOp):
+            parts = [self._name_filter_specs(value, var) for value in test.values]
+            if isinstance(test.op, ast.And):
+                return next((part for part in parts if part), None)
+            if parts and all(parts):
+                return [spec for part in parts for spec in part]
+            return None
+        if not (
+            isinstance(test, ast.Call)
+            and isinstance(test.func, ast.Attribute)
+            and test.func.attr in ("startswith", "endswith")
+            and isinstance(test.func.value, ast.Name)
+            and test.func.value.id == var
+            and len(test.args) == 1
+            and not test.keywords
+        ):
+            return None
+        arg = test.args[0]
+        values = arg.elts if isinstance(arg, ast.Tuple) else [arg]
+        specs = []
+        for value in values:
+            spec = self._string_spec(value)
+            if spec is None:
+                return None
+            specs.append((test.func.attr, spec))
+        return specs or None
+
+    def _resolve_string_spec(self, spec) -> Optional[str]:
+        kind = spec[0]
+        if kind == "const":
+            return spec[1]
+        if kind == "module":
+            return self._module_str_constants.get(spec[1])
+        if kind == "class_attr":
+            owner, attr = spec[1], spec[2]
+            seen = set()
+            stack = [owner]
+            while stack:
+                current = stack.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                value = self._class_str_constants.get((current, attr))
+                if value is not None:
+                    return value
+                stack.extend(self.class_bases.get(current, ()))
+        return None
+
+    def _resolve_name_filter(self, specs) -> Optional[set]:
+        """Wildcard patterns for name filters; None when one cannot be resolved."""
+        if not specs:
+            return None
+        patterns = set()
+        for method, spec in specs:
+            value = self._resolve_string_spec(spec)
+            if not value or "*" in value:
+                return None
+            pattern = f"{value}*" if method == "startswith" else f"*{value}"
+            if not is_specific_name_pattern(pattern):
+                return None
+            patterns.add(pattern)
+        return patterns
+
+    def _issubclass_bases(self, nodes) -> set:
+        bases = set()
+        for root in nodes:
+            if not isinstance(root, ast.AST):
+                continue
+            for sub in ast.walk(root):
+                if not (
+                    isinstance(sub, ast.Call)
+                    and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "issubclass"
+                    and len(sub.args) == 2
+                ):
+                    continue
+                arg = sub.args[1]
+                for candidate in arg.elts if isinstance(arg, ast.Tuple) else [arg]:
+                    qualified = self._resolve_callee_fqname(candidate)
+                    if qualified:
+                        bases.add(qualified)
+        return bases
+
+    def _record_scope_string_constant(self, targets, value) -> None:
+        if value is None or self.current_function_scope:
+            return
+        owner = self._class_owner()
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if owner:
+                self._class_str_constants[(owner, target.id)] = value
+            else:
+                self._module_str_constants[target.id] = value
+
+    def _reflected_parameter_index(self, name: str) -> Optional[int]:
+        """Positional index of ``name`` in the enclosing module-level function."""
+        if self.cls or len(self._function_node_stack) != 1:
+            return None
+        function = self._function_node_stack[-1]
+        positional = [*function.args.posonlyargs, *function.args.args]
+        for index, arg in enumerate(positional):
+            if arg.arg == name:
+                return index
+        return None
+
+    def _note_attribute_reflection(self, iter_node, target, tests, body) -> None:
+        source = self._reflection_source(iter_node)
+        if source is None:
+            return
+        subject, yields_pairs, call = source
+        var = self._reflection_name_var(target, yields_pairs)
+        specs = None
+        if var is not None:
+            for test in tests:
+                specs = self._name_filter_specs(test, var)
+                if specs:
+                    break
+
+        owner = self._reflection_class_owner(subject)
+        if owner is None and isinstance(subject, ast.Name) and subject.id[:1].isupper():
+            owner = self.alias.get(subject.id, self.qual(subject.id))
+        if owner is not None:
+            if specs:
+                if yields_pairs:
+                    signal = "inspect_getmembers"
+                elif self._reflection_class_owner(subject):
+                    signal = "dir_self"
+                else:
+                    signal = "dir_class"
+                self._pending_class_reflections.append((owner, specs, signal))
+                self._filtered_reflection_calls.add(id(call))
+            return
+
+        if not isinstance(subject, ast.Name):
+            return
+        bases = self._issubclass_bases(body)
+        index = self._reflected_parameter_index(subject.id)
+        if index is not None and self._current_function_qname:
+            self._pending_module_reflections.append(
+                (self._current_function_qname, index, specs, bases)
+            )
+        elif subject.id in self.alias:
+            self._pending_module_reflections.append(
+                (self.alias[subject.id], None, specs, bases)
+            )
+
+    def _record_module_call_args(self, callee: str, node: ast.Call) -> None:
+        """Remember imported module-like names passed to calls.
+
+        A function that reflects over a parameter (``dir(module)``) reaches the
+        members of whichever module a caller passes it.
+        """
+        for index, arg in enumerate(node.args):
+            if not isinstance(arg, ast.Name):
+                continue
+            target = self.alias.get(arg.id)
+            if not target or not target.rsplit(".", 1)[-1][:1].islower():
+                continue
+            if self.local_var_maps and arg.id in self.local_var_maps[-1]:
+                continue
+            self.pattern_tracker.module_call_args.add((callee, index, target))
+
+    def _apply_reflection_facts(self) -> None:
+        for owner, specs, signal in self._pending_class_reflections:
+            patterns = self._resolve_name_filter(specs)
+            if not patterns:
+                self._pending_member_signals.append((owner, signal))
+                continue
+            regexes = [_compile_name_glob(pattern) for pattern in patterns]
+            for pattern in patterns:
+                self.pattern_tracker.add_class_pattern_ref(pattern, 70, owner)
+            for defn in self.defs:
+                if defn.name.rsplit(".", 1)[0] != owner:
+                    continue
+                if any(regex.match(defn.simple_name) for regex in regexes):
+                    if signal not in defn.dynamic_signals:
+                        defn.dynamic_signals.append(signal)
+
+        for owner, signal in self._pending_member_signals:
+            prefix = owner + "."
+            for defn in self.defs:
+                if defn.name.startswith(prefix) and signal not in defn.dynamic_signals:
+                    defn.dynamic_signals.append(signal)
+
+        for target, index, specs, bases in self._pending_module_reflections:
+            patterns = self._resolve_name_filter(specs) or set()
+            name_filter = (frozenset(bases), frozenset(patterns))
+            if index is None:
+                self.pattern_tracker.reflected_modules.add((target, name_filter))
+            else:
+                self.pattern_tracker.reflective_params.setdefault(
+                    (target, index), set()
+                ).add(name_filter)
+
+        self._pending_class_reflections = []
+        self._pending_member_signals = []
+        self._pending_module_reflections = []
+
+    def _annotated_class(self, annotation: ast.AST) -> Optional[str]:
+        """Qualified class a plain or optional annotation names."""
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            sides = [
+                side
+                for side in (annotation.left, annotation.right)
+                if not (isinstance(side, ast.Constant) and side.value is None)
+            ]
+            return self._annotated_class(sides[0]) if len(sides) == 1 else None
+        if isinstance(annotation, ast.Subscript):
+            base = self._annotation_to_string(annotation.value) or ""
+            if base.rsplit(".", 1)[-1] == "Optional":
+                return self._annotated_class(annotation.slice)
+            return None
+        if not isinstance(annotation, (ast.Name, ast.Attribute)):
+            return None
+        qualified = self._resolve_callee_fqname(annotation)
+        if not qualified or not qualified.rsplit(".", 1)[-1][:1].isupper():
+            return None
+        return qualified
+
+    def _iterable_element_class(self, annotation: ast.AST) -> Optional[str]:
+        if not isinstance(annotation, ast.Subscript):
+            return None
+        base = self._annotation_to_string(annotation.value) or ""
+        if base.rsplit(".", 1)[-1] not in _ITERABLE_ANNOTATIONS:
+            return None
+        element = annotation.slice
+        if isinstance(element, ast.Tuple):
+            if not element.elts:
+                return None
+            element = element.elts[0]
+        return self._annotated_class(element)
+
+    def _note_loop_element_type(self, iter_node: ast.AST, target: ast.AST) -> None:
+        if not isinstance(target, ast.Name) or not isinstance(iter_node, ast.Call):
+            return
+        if not isinstance(iter_node.func, ast.Name):
+            return
+        callee = self.qual(iter_node.func.id)
+        annotation = self._iterable_return_annotations.get(callee)
+        key = (self._current_function_qname or "", target.id)
+        element = self._iterable_element_class(annotation) if annotation else None
+        if element:
+            self._receiver_types[key] = element
+        else:
+            self._receiver_types.pop(key, None)
+
+    def _receiver_class(self, receiver: ast.AST) -> Optional[str]:
+        if not isinstance(receiver, ast.Name):
+            return None
+        return self._receiver_types.get(
+            (self._current_function_qname or "", receiver.id)
+        )
+
+    def _dynamic_name_pattern(
+        self, node: ast.AST, *, lookup_names: bool = True
+    ) -> Optional[str]:
+        """Wildcard pattern for an attribute name computed from literals.
+
+        ``f"handle_{x}"``, ``"handle_" + x``, ``"handle_%s" % x`` and
+        ``"handle_{}".format(x)`` all give ``handle_*``.
+        """
+        if isinstance(node, ast.JoinedStr):
+            return self._extract_fstring_pattern(node)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            parts = []
+            has_var = False
+
+            def flatten(part):
+                nonlocal has_var
+                if isinstance(part, ast.BinOp) and isinstance(part.op, ast.Add):
+                    flatten(part.left)
+                    flatten(part.right)
+                elif isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    parts.append(part.value)
+                elif isinstance(part, ast.JoinedStr):
+                    inner = self._extract_fstring_pattern(part)
+                    if inner is None:
+                        inner = "".join(
+                            str(v.value)
+                            for v in part.values
+                            if isinstance(v, ast.Constant)
+                        )
+                    else:
+                        has_var = True
+                    parts.append(inner)
+                else:
+                    has_var = True
+                    parts.append("*")
+
+            flatten(node)
+            if not has_var:
+                return None
+            return re.sub(r"\*+", "*", "".join(parts))
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Mod)
+            and isinstance(node.left, ast.Constant)
+            and isinstance(node.left.value, str)
+        ):
+            has_var = False
+
+            def conversion(match):
+                nonlocal has_var
+                if match.group(0) == "%%":
+                    return "%"
+                has_var = True
+                return "*"
+
+            pattern = _PRINTF_CONVERSION_RE.sub(conversion, node.left.value)
+            return re.sub(r"\*+", "*", pattern) if has_var else None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Constant)
+            and isinstance(node.func.value.value, str)
+        ):
+            pattern = re.sub(r"\{[^}]*\}", "*", node.func.value.value)
+            return pattern if "*" in pattern else None
+        if lookup_names and isinstance(node, ast.Name):
+            return self._name_patterns.get(
+                (self._current_function_qname or "", node.id)
+            )
+        return None
 
     def _get_call_type(self, call_node: ast.Call) -> Optional[str]:
         if isinstance(call_node.func, ast.Name):
@@ -3104,6 +3631,7 @@ class Visitor(ast.NodeVisitor):
                 if defn.name == class_qname:
                     defn.is_descriptor = True
 
+        self._apply_reflection_facts()
         self._apply_string_patterns()
 
     def _apply_string_patterns(self) -> None:
@@ -3114,10 +3642,10 @@ class Visitor(ast.NodeVisitor):
             except re.error:
                 continue
 
+            # String patterns are evidence for this file's definitions only.
             for defn in self.defs:
                 if regex.match(defn.simple_name):
                     defn.references += 1
-                    self.pattern_tracker.known_refs.add(defn.simple_name)
 
     def get_call_graph(self) -> dict[str, set[str]]:
         return dict(self.call_graph)

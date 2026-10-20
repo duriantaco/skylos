@@ -41,6 +41,7 @@ from skylos.deadcode.confidence import (
 )
 
 from .conventions import convention_reason, is_dev_convention_file
+from .file_references import collect_ts_path_references
 from .tool_configs import RUNNER_CONFIG_FILES as _PLAYWRIGHT_CONFIG_FILES
 from .tool_configs import TOOL_CONFIG_FILES as _CONFIG_FILES
 
@@ -332,6 +333,23 @@ _JSX_RUNTIME_PROTOCOL_EXPORTS = frozenset(
 )
 
 
+def _export_read_by_loading_tool(defn) -> bool:
+    """A framework or tool loads the file by convention and reads this export.
+
+    Jest substitutes a manual mock's exports for the real module's, a tool
+    reads its config file's export, Next.js reads a page's default export.
+    Those reads are imports the graph cannot see, so the export is consumed.
+    The file itself must be one the tool loads: some framework marks are
+    name-only rules.
+    """
+    refs = getattr(defn, "heuristic_refs", None)
+    if not isinstance(refs, dict) or "framework_root" not in refs:
+        return False
+    from .framework import is_framework_loaded_file
+
+    return is_framework_loaded_file(str(defn.filename))
+
+
 def demote_unconsumed_ts_exports(
     defs, consumed_exports, lifecycle_entry_points=None, bundle_entry_points=None
 ):
@@ -371,6 +389,8 @@ def demote_unconsumed_ts_exports(
             continue
 
         if os.path.realpath(str(defn.filename)) in bundle_entry_points:
+            continue
+        if _export_read_by_loading_tool(defn):
             continue
 
         consumed = consumed_exports.get(str(defn.filename), set())
@@ -513,7 +533,7 @@ def _classify_entry_scope(file_path: str, kind: str, reason: str) -> str:
         return "prod"
     if reason.endswith("-config"):
         return "dev"
-    if reason.startswith("vitest-") or reason.startswith("playwright-"):
+    if reason.startswith(("vitest-", "playwright-", "jest-", "angular-test-")):
         return "dev"
     return "prod"
 
@@ -1518,24 +1538,20 @@ def _iter_entry_discoveries(
     if not project_root and workspace_inventory is None:
         return discoveries
 
-    package_roots = set(_workspace_package_roots(workspace_inventory))
-    if workspace_inventory is None or not workspace_inventory.is_monorepo:
-        package_roots.update(
-            _discover_package_roots_from_files(
-                list(ts_files),
-                project_root,
-                exclude_folders=exclude_folders,
+    package_roots = _entry_package_roots(
+        ts_files, project_root, workspace_inventory, exclude_folders
+    )
+
+    for entry_file, reason in _build_config_entry_files(package_roots, project_root):
+        if entry_file in ts_files:
+            discoveries.append(
+                _TsEntryDiscovery(
+                    entry_file,
+                    "config",
+                    reason,
+                    _classify_entry_scope(entry_file, "config", reason),
+                )
             )
-        )
-    if project_root and workspace_inventory is not None:
-        package_roots.update(
-            _discover_referenced_package_roots(
-                list(ts_files),
-                project_root,
-                workspace_inventory,
-                exclude_folders=exclude_folders,
-            )
-        )
 
     custom_config_tools: dict[str, tuple[str, str]] = {}
     for package_root in package_roots:
@@ -1607,7 +1623,13 @@ def _iter_entry_discoveries(
                         else (
                             "tsup"
                             if os.path.basename(candidate).startswith("tsup.config.")
-                            else "vite"
+                            else (
+                                "jest"
+                                if os.path.basename(candidate).startswith(
+                                    "jest.config."
+                                )
+                                else "vite"
+                            )
                         )
                     ),
                     str(package_root),
@@ -1633,6 +1655,9 @@ def _iter_entry_discoveries(
             entry_files = _discover_playwright_config_entries(config_path, ts_files)
         elif tool == "tsup":
             entry_files = _discover_tsup_config_entries(config_path, ts_files, base_dir)
+        elif tool == "jest":
+            # Jest options are read by _build_config_entry_files.
+            entry_files = set()
         else:
             entry_files = _discover_vite_config_entries(config_path, ts_files, base_dir)
         for entry_file in sorted(entry_files):
@@ -1647,6 +1672,96 @@ def _iter_entry_discoveries(
             )
 
     return discoveries
+
+
+def _entry_package_roots(
+    ts_files, project_root, workspace_inventory, exclude_folders
+) -> set[Path]:
+    package_roots = set(_workspace_package_roots(workspace_inventory))
+    if workspace_inventory is None or not workspace_inventory.is_monorepo:
+        package_roots.update(
+            _discover_package_roots_from_files(
+                list(ts_files),
+                project_root,
+                exclude_folders=exclude_folders,
+            )
+        )
+    if project_root and workspace_inventory is not None:
+        package_roots.update(
+            _discover_referenced_package_roots(
+                list(ts_files),
+                project_root,
+                workspace_inventory,
+                exclude_folders=exclude_folders,
+            )
+        )
+    return package_roots
+
+
+def _build_config_directories(package_roots, project_root) -> list[str]:
+    directories = {os.path.realpath(str(root)) for root in package_roots}
+    if project_root:
+        directories.add(os.path.realpath(str(project_root)))
+    return sorted(directories)
+
+
+def _build_config_entry_files(package_roots, project_root) -> list[tuple[str, str]]:
+    """Files that Jest or an Angular workspace config loads, with a reason."""
+    from .build_configs import load_angular_workspace, load_jest_configs
+
+    entries: list[tuple[str, str]] = []
+    for directory in _build_config_directories(package_roots, project_root):
+        for config in load_jest_configs(directory):
+            entries.extend(
+                (entry_file, "jest-derived-root")
+                for entry_file in sorted(config.entry_files)
+            )
+        workspace = load_angular_workspace(directory)
+        if workspace is not None:
+            entries.extend(
+                (
+                    entry_file,
+                    "angular-build-root" if scope == "prod" else "angular-test-root",
+                )
+                for entry_file, scope in sorted(workspace.entry_files)
+            )
+    return entries
+
+
+def discover_ts_build_aliases(
+    files,
+    project_root: str | None = None,
+    workspace_inventory=None,
+    exclude_folders=None,
+):
+    """Jest ``moduleNameMapper`` entries and Angular ``fileReplacements``.
+
+    Returns ``(jest_mappings, file_replacements)``; see build_configs.
+    """
+    if not project_root:
+        return [], []
+    from .build_configs import load_angular_workspace, load_jest_configs
+
+    exclude_root = _resolve_exclude_root(files, project_root)
+    ts_files = _analysed_ts_files(files, exclude_folders, exclude_root)
+    if not ts_files:
+        return [], []
+    package_roots = _entry_package_roots(
+        ts_files, project_root, workspace_inventory, exclude_folders
+    )
+    mappings = []
+    replacements = []
+    for directory in _build_config_directories(package_roots, project_root):
+        for config in load_jest_configs(directory):
+            mappings.extend(config.mappings)
+        workspace = load_angular_workspace(directory)
+        if workspace is not None:
+            replacements.extend(
+                pair
+                for pair in workspace.file_replacements
+                if pair[0] in ts_files and pair[1] in ts_files
+            )
+    return mappings, list(dict.fromkeys(replacements))
 
 
 def _iter_package_entry_targets(entry):
@@ -2107,6 +2222,34 @@ def _is_ts_reachability_root(path: str, entry_files: set[str]) -> bool:
     return real_path in entry_files
 
 
+def _analysed_ts_files(files, exclude_folders, exclude_root) -> set[str]:
+    return {
+        os.path.realpath(str(f))
+        for f in files
+        if str(f).endswith(_TS_JS_EXTENSIONS)
+        and not _is_excluded_path(str(f), exclude_folders, exclude_root)
+    }
+
+
+def _dead_ts_file_set(ts_files, entry_points, norm_importers) -> set[str]:
+    dead_set = set()
+    for tf in ts_files - entry_points:
+        if not norm_importers.get(tf):
+            dead_set.add(tf)
+
+    changed = True
+    iterations = 0
+    while changed and iterations < 50:
+        changed = False
+        iterations += 1
+        for tf in ts_files - entry_points - dead_set:
+            live_importers = norm_importers.get(tf, set()) - dead_set
+            if not live_importers:
+                dead_set.add(tf)
+                changed = True
+    return dead_set
+
+
 def find_dead_ts_files(
     files,
     exclude_folders,
@@ -2147,21 +2290,26 @@ def find_dead_ts_files(
         os.path.realpath(str(path)) for path in browser_entry_points or ()
     )
 
-    dead_set = set()
-    for tf in ts_files - entry_points:
-        if not norm_importers.get(tf):
-            dead_set.add(tf)
-
-    changed = True
-    iterations = 0
-    while changed and iterations < 50:
-        changed = False
-        iterations += 1
-        for tf in ts_files - entry_points - dead_set:
-            live_importers = norm_importers.get(tf, set()) - dead_set
-            if not live_importers:
-                dead_set.add(tf)
-                changed = True
+    dead_set = _dead_ts_file_set(ts_files, entry_points, norm_importers)
+    if dead_set and project_root:
+        # Files named by path in configs, templates, scripts or other
+        # languages are loaded without an import; re-run with those loads.
+        # Classic scripts (no import/export) get no other liveness evidence:
+        # one that no repository file names is reported like any module.
+        try:
+            reference_roots, reference_edges = collect_ts_path_references(
+                project_root,
+                _analysed_ts_files(files, exclude_folders, exclude_root),
+                dead_set,
+                exclude_folders=exclude_folders,
+            )
+        except (OSError, RecursionError, UnicodeError, ValueError):
+            reference_roots, reference_edges = set(), {}
+        if reference_roots or reference_edges:
+            entry_points |= reference_roots
+            for target, referencers in reference_edges.items():
+                norm_importers[target].update(referencers)
+            dead_set = _dead_ts_file_set(ts_files, entry_points, norm_importers)
 
     dead_files = []
     for tf in sorted(dead_set):

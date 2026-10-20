@@ -25,6 +25,10 @@ the tool is in use, so an ordinary module with a similar name stays judged:
   read their exports.
 * **Turborepo generators**: ``turbo/generators/config.{ts,js}`` in the
   repository or a workspace package, loaded by ``turbo gen``.
+* **rc config files**: ``.<tool>rc.<ext>`` (``.prettierrc.js``,
+  ``.eslintrc.cjs``, ``.mocharc.js``) or ``.config/<tool>rc.<ext>``. The
+  cosmiconfig/lilconfig search that these tools use walks up from the file
+  being processed, so no ``package.json`` needs to sit beside them.
 """
 
 from __future__ import annotations
@@ -51,6 +55,13 @@ _TOOL_CONFIG_RE = re.compile(
     r"^[A-Za-z0-9_@-][A-Za-z0-9_.@-]*\.config\.(?:"
     + "|".join(_CONFIG_EXTENSIONS)
     + r")$"
+)
+# cosmiconfig ``searchPlaces``: ``.<name>rc.<ext>`` and ``.config/<name>rc.<ext>``.
+_RC_CONFIG_RE = re.compile(
+    r"^\.[A-Za-z0-9_-]+rc\.(?:" + "|".join(_CONFIG_EXTENSIONS) + r")$"
+)
+_DOT_CONFIG_RC_RE = re.compile(
+    r"^[A-Za-z0-9_-]+rc\.(?:" + "|".join(_CONFIG_EXTENSIONS) + r")$"
 )
 _TURBO_GENERATOR_SUFFIXES = tuple(
     f"turbo/generators/config.{ext}" for ext in _CONFIG_EXTENSIONS
@@ -287,12 +298,24 @@ def is_package_tool_config(path: str | os.PathLike[str]) -> bool:
     return _package_data(os.path.dirname(absolute)) is not None
 
 
+def is_rc_tool_config(path: str | os.PathLike[str]) -> bool:
+    """``.<tool>rc.<ext>`` or ``.config/<tool>rc.<ext>``, found by name."""
+    normalized = os.fspath(path).replace(os.sep, "/")
+    basename = normalized.rsplit("/", 1)[-1]
+    if _RC_CONFIG_RE.match(basename):
+        return True
+    parent = normalized.rsplit("/", 2)[-2] if normalized.count("/") >= 1 else ""
+    return parent == ".config" and bool(_DOT_CONFIG_RC_RE.match(basename))
+
+
 def convention_reason(path: str | os.PathLike[str]) -> str | None:
     """Why a framework or tool loads ``path`` by convention, or None."""
     if is_jest_manual_mock(path):
         return "jest-manual-mock"
     if is_package_tool_config(path):
         return "tool-config"
+    if is_rc_tool_config(path):
+        return "rc-config"
     if is_expo_router_file(path):
         return "expo-router-route"
     if is_react_email_template(path):
@@ -302,4 +325,8 @@ def convention_reason(path: str | os.PathLike[str]) -> str | None:
 
 def is_dev_convention_file(path: str | os.PathLike[str]) -> bool:
     """Convention files that only development tooling loads."""
-    return is_jest_manual_mock(path) or is_package_tool_config(path)
+    return (
+        is_jest_manual_mock(path)
+        or is_package_tool_config(path)
+        or is_rc_tool_config(path)
+    )

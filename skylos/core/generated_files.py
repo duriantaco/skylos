@@ -34,6 +34,7 @@ The kinds are skipped differently:
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import stat
@@ -48,10 +49,17 @@ REASON_STATIC_LIB = "vendored_static_lib"
 REASON_MINIFIED = "minified"
 REASON_VENDORED_BANNER = "vendored_banner"
 REASON_GENERATED_SOURCE = "generated_source"
+# The repository's own .gitattributes markers (GitHub Linguist convention).
+REASON_LINGUIST_VENDORED = "linguist_vendored"
+REASON_LINGUIST_GENERATED = "linguist_generated"
+# Bundler output: a browserify prelude or a webpack bootstrap.
+REASON_BUNDLE = "bundled_output"
 
 # Parsed so their references count, but their dead-code, quality and
 # AI-defect findings are not reported (security findings are kept).
-REPORT_ONLY_REASONS = frozenset({REASON_DJANGO_MIGRATION, REASON_GENERATED_SOURCE})
+REPORT_ONLY_REASONS = frozenset(
+    {REASON_DJANGO_MIGRATION, REASON_GENERATED_SOURCE, REASON_LINGUIST_GENERATED}
+)
 
 # Result sections whose findings are not reported for migrations. Security,
 # reliability, secret and custom-rule findings are kept (module docstring).
@@ -173,6 +181,10 @@ def classify_generated_file(path: Path, root: Path) -> str | None:
         rel_parts = (path.name,)
     directories = [part.lower() for part in rel_parts[:-1]]
 
+    linguist = _linguist_attribute(path, root)
+    if linguist is not None:
+        return linguist
+
     if name.endswith(".py"):
         if (
             directories
@@ -194,6 +206,8 @@ def classify_generated_file(path: Path, root: Path) -> str | None:
             return REASON_VENDORED_BANNER
         if _looks_minified(path):
             return REASON_MINIFIED
+        if _looks_bundled(path):
+            return REASON_BUNDLE
     if name.endswith(_GENERATED_SOURCE_SUFFIXES) and _has_generated_header(path):
         return REASON_GENERATED_SOURCE
     return None
@@ -244,6 +258,395 @@ def finding_in_files(finding, file_keys: frozenset[str]) -> bool:
     if str(value) in file_keys:
         return True
     return not file_keys.isdisjoint(_path_keys((value,)))
+
+
+_BUNDLE_RE = re.compile(
+    r"__webpack_require__|webpackBootstrap"
+    r"|function\s*r\s*\(\s*e\s*,\s*n\s*,\s*t\s*\)\s*\{\s*function\s*o\s*\(\s*i\s*,\s*f\s*\)"
+)
+_LINGUIST_ATTRIBUTES = {
+    "linguist-vendored": REASON_LINGUIST_VENDORED,
+    "linguist-generated": REASON_LINGUIST_GENERATED,
+}
+_MAX_GITATTRIBUTES_BYTES = 256_000
+
+
+def _looks_bundled(path: Path) -> bool:
+    """Require an executable module table/loader, never a marker mention."""
+    head = _read_text(path, 8192)
+    if not head or not _BUNDLE_RE.search(head):
+        return False
+    source = _read_text(path, 2_000_000)
+    if source is None:
+        return False
+    try:
+        from tree_sitter import Language, Parser
+        import tree_sitter_typescript
+
+        data = source.encode("utf-8")
+        tree = Parser(Language(tree_sitter_typescript.language_typescript())).parse(
+            data
+        )
+    except (ImportError, ValueError, TypeError):
+        return False
+    if tree.root_node.has_error:
+        return False
+    functions = {"function_declaration", "function_expression", "arrow_function"}
+    literals = {"comment", "string", "template_string", "regex"}
+
+    def text(node):
+        return data[node.start_byte : node.end_byte].decode() if node else ""
+
+    def unwrap(node):
+        while node is not None and node.type == "parenthesized_expression":
+            named = node.named_children
+            node = named[0] if len(named) == 1 else None
+        return node
+
+    own_cache = {}
+
+    def nodes(root, *, own=False):
+        if own and root in own_cache:
+            return own_cache[root]
+        result, pending = [], [root] if root is not None else []
+        while pending:
+            node = pending.pop()
+            if node.type in literals:
+                continue
+            result.append(node)
+            if not (own and node.type in functions):
+                pending.extend(reversed(node.named_children))
+        if own:
+            own_cache[root] = result
+        return result
+
+    def arguments(call):
+        args = call.child_by_field_name("arguments")
+        return args.named_children if args else []
+
+    def parameters(function):
+        params = function.child_by_field_name("parameters")
+        if params is None:
+            return []
+        return [
+            text(param.child_by_field_name("pattern") or param)
+            for param in params.named_children
+        ]
+
+    def module_table(node):
+        if node is None or node.type not in {"object", "array"}:
+            return False
+        values = [child for child in node.named_children if child.type != "comment"]
+        if not values:
+            return False
+        for value in values:
+            if value.type == "pair":
+                value = value.child_by_field_name("value")
+            if value is not None and value.type == "array":
+                items = [
+                    child for child in value.named_children if child.type != "comment"
+                ]
+                value = items[0] if items else None
+            if value is None or value.type not in functions:
+                return False
+        return True
+
+    def declarations(body):
+        return {
+            text(node.child_by_field_name("name")): node
+            for node in nodes(body, own=True)
+            if node.type in functions and node.child_by_field_name("name")
+        }
+
+    def writes(owned):
+        result = {}
+        for node in owned:
+            binding = None
+            if node.type in {"variable_declarator", "function_declaration"}:
+                binding = node.child_by_field_name("name")
+            elif node.type in {
+                "assignment_expression",
+                "augmented_assignment_expression",
+            }:
+                binding = node.child_by_field_name("left")
+            elif node.type == "update_expression":
+                binding = node.child_by_field_name("argument")
+            if binding is not None and binding.type == "identifier":
+                name = text(binding)
+                result[name] = result.get(name, 0) + 1
+        return result
+
+    def export_member(node):
+        if node is not None and node.type == "member_expression":
+            obj = node.child_by_field_name("object")
+            if (
+                obj is not None
+                and obj.type == "identifier"
+                and text(node.child_by_field_name("property")) == "exports"
+            ):
+                return text(obj)
+        return None
+
+    def webpack(bootstrap, call):
+        body = bootstrap.child_by_field_name("body")
+        owned = nodes(body, own=True)
+        loaders = declarations(body)
+        loader = loaders.get("__webpack_require__")
+        counts = writes(owned)
+        for name in parameters(bootstrap):
+            counts[name] = counts.get(name, 0) + 1
+        if loader is None or counts.get("__webpack_require__") != 1:
+            return False
+        tables = {
+            text(node.child_by_field_name("name"))
+            for node in owned
+            if node.type == "variable_declarator"
+            and module_table(node.child_by_field_name("value"))
+        }
+        tables.update(
+            name
+            for name, argument in zip(parameters(bootstrap), arguments(call))
+            if module_table(argument)
+        )
+        tables = {name for name in tables if counts.get(name) == 1}
+        if not tables or not any(
+            node.type == "call_expression"
+            and text(unwrap(node.child_by_field_name("function")))
+            == "__webpack_require__"
+            for node in owned
+        ):
+            return False
+        loader_nodes = nodes(loader.child_by_field_name("body"), own=True)
+        # A loader-local declaration shadows an enclosing module table.
+        shadows = set(parameters(loader)) | set(writes(loader_nodes))
+        tables.difference_update(shadows)
+        returned = {
+            export_member(node.named_children[0])
+            for node in loader_nodes
+            if node.type == "return_statement" and node.named_children
+        } - {None}
+        for node in loader_nodes:
+            if node.type != "call_expression":
+                continue
+            callee = unwrap(node.child_by_field_name("function"))
+            if (
+                callee is not None
+                and callee.type == "member_expression"
+                and text(callee.child_by_field_name("property")) == "call"
+            ):
+                callee = callee.child_by_field_name("object")
+            if callee is None or callee.type != "subscript_expression":
+                continue
+            if text(callee.child_by_field_name("object")) not in tables:
+                continue
+            # The same module object is passed to its factory and returned as
+            # module.exports by this loader, inside this bootstrap.
+            if any(
+                arg.type == "identifier" and text(arg) in returned
+                for arg in arguments(node)
+            ):
+                return True
+        return False
+
+    all_nodes = nodes(tree.root_node)
+    calls = [node for node in all_nodes if node.type == "call_expression"]
+
+    def browserify(bootstrap, call):
+        body = bootstrap.child_by_field_name("body")
+        factory = declarations(body).get("r")
+        if text(bootstrap.child_by_field_name("name")) == "r":
+            factory = bootstrap
+        if factory is None or parameters(factory) != ["e", "n", "t"]:
+            return False
+        if factory != bootstrap and writes(nodes(body, own=True)).get("r") != 1:
+            return False
+        inner = declarations(factory.child_by_field_name("body")).get("o")
+        if inner is None or parameters(inner) != ["i", "f"]:
+            return False
+        if not any(
+            (
+                node.type == "call_expression"
+                and text(node.child_by_field_name("function")) == "o"
+            )
+            or (
+                node.type == "return_statement"
+                and node.named_children
+                and text(node.named_children[0]) == "o"
+            )
+            for node in nodes(factory.child_by_field_name("body"), own=True)
+        ):
+            return False
+        owned = nodes(inner.child_by_field_name("body"), own=True)
+        if {"e", "n", "t"}.intersection(
+            writes(nodes(factory.child_by_field_name("body"), own=True))
+        ) or {"e", "n"}.intersection(writes(owned)):
+            return False
+        table_call = False
+        cached_exports = False
+        for node in owned:
+            if node.type == "call_expression":
+                callee = node.child_by_field_name("function")
+                if (
+                    callee is not None
+                    and callee.type == "member_expression"
+                    and text(callee.child_by_field_name("property")) == "call"
+                ):
+                    callee = callee.child_by_field_name("object")
+                if callee is not None and callee.type == "subscript_expression":
+                    # Browserify tables contain either factories or
+                    # [factory, dependency-map] pairs.
+                    obj = callee.child_by_field_name("object")
+                    if obj is not None and obj.type == "subscript_expression":
+                        callee = obj
+                    table_call |= (
+                        text(callee.child_by_field_name("object")) == "e"
+                        and text(callee.child_by_field_name("index")) == "i"
+                    )
+            if (
+                node.type == "member_expression"
+                and text(node.child_by_field_name("property")) == "exports"
+            ):
+                obj = node.child_by_field_name("object")
+                cached_exports |= (
+                    obj is not None
+                    and obj.type == "subscript_expression"
+                    and text(obj.child_by_field_name("object")) == "n"
+                    and text(obj.child_by_field_name("index")) == "i"
+                )
+        if not table_call or not cached_exports:
+            return False
+        invocations = (
+            [call]
+            if factory == bootstrap
+            else [
+                node
+                for node in nodes(body, own=True)
+                if node.type == "call_expression"
+                and text(node.child_by_field_name("function")) == "r"
+            ]
+        )
+        # Canonical Browserify returns r from an IIFE and immediately invokes
+        # that result with the literal table and cache.
+        if any(
+            node.type == "return_statement"
+            and node.named_children
+            and text(node.named_children[0]) == "r"
+            for node in nodes(body, own=True)
+        ):
+            invocations.extend(
+                node
+                for node in calls
+                if unwrap(node.child_by_field_name("function")) == call
+            )
+        return any(
+            len(arguments(node)) >= 2
+            and module_table(arguments(node)[0])
+            and arguments(node)[1].type == "object"
+            for node in invocations
+        )
+
+    for call in calls:
+        bootstrap = unwrap(call.child_by_field_name("function"))
+        if bootstrap is not None and bootstrap.type in functions:
+            if webpack(bootstrap, call) or browserify(bootstrap, call):
+                return True
+    return False
+
+
+def _gitattributes_pattern(pattern: str) -> re.Pattern | None:
+    """gitattributes (gitignore-style) pattern to a regex over relative paths."""
+    # Character classes, escapes and quoted patterns need Git's full parser.
+    # Treating their syntax literally can exclude a different first-party file.
+    if (
+        not pattern
+        or pattern.startswith(("!", '"'))
+        or any(char in pattern for char in "[]\\")
+    ):
+        return None
+    anchored = "/" in pattern.rstrip("/")
+    pattern = pattern.lstrip("/")
+    out, i = [], 0
+    while i < len(pattern):
+        boundary = i == 0 or pattern[i - 1] == "/"
+        if boundary and pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif boundary and pattern[i:] == "**":
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            while i < len(pattern) and pattern[i] == "*":
+                i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    body = "".join(out)
+    prefix = "" if anchored else "(?:.*/)?"
+    return re.compile(f"{prefix}{body}$")
+
+
+@functools.lru_cache(maxsize=256)
+def _gitattributes_rules(attributes_file: str, size: int, mtime_ns: int):
+    text = _read_text(Path(attributes_file), _MAX_GITATTRIBUTES_BYTES) or ""
+    rules = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        pattern, *attributes = line.split()
+        settings = {}
+        for attribute in attributes:
+            state = attribute[0] if attribute.startswith(("-", "!")) else ""
+            key, _, value = (attribute[1:] if state else attribute).partition("=")
+            if key in _LINGUIST_ATTRIBUTES:
+                settings[key] = (
+                    None
+                    if state == "!"
+                    else state != "-" and value.lower() not in {"false", "0"}
+                )
+        compiled = _gitattributes_pattern(pattern) if settings else None
+        if compiled is not None:
+            rules.append((compiled, settings))
+    return tuple(rules)
+
+
+def _linguist_attribute(path: Path, root: Path) -> str | None:
+    """Honour .gitattributes linguist-vendored / linguist-generated markers.
+
+    Files from the scan root down to the file's folder are read in order, as
+    git does; a later matching line wins. Unset (`-attr`) or `=false` clears it.
+    """
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return None
+    state = {}
+    folder = Path(root)
+    for part in ("", *relative.parts[:-1]):
+        if part:
+            folder = folder / part
+        attributes = folder / ".gitattributes"
+        try:
+            info = attributes.stat()
+        except OSError:
+            continue
+        if not attributes.is_file() or attributes.is_symlink():
+            continue
+        below = relative.relative_to(folder.relative_to(root)) if part else relative
+        text = below.as_posix()
+        for compiled, settings in _gitattributes_rules(
+            str(attributes), info.st_size, info.st_mtime_ns
+        ):
+            if compiled.match(text):
+                state.update(settings)
+    for key in ("linguist-vendored", "linguist-generated"):
+        if state.get(key):
+            return _LINGUIST_ATTRIBUTES[key]
+    return None
 
 
 def _is_django_migration(path: Path) -> bool:

@@ -1,4 +1,5 @@
 import ast
+import re
 from typing import Any, Optional, NamedTuple
 from skylos.constants import PENALTIES, get_non_library_dir_kind, is_test_path
 from skylos.config import is_whitelisted
@@ -51,6 +52,11 @@ from skylos.analysis.known_patterns import (
     base_class_name,
 )
 from skylos.analysis.documented_conventions import documented_convention_reason
+from skylos.analysis.external_bases import (
+    external_member_owner,
+    external_override_owner,
+    project_class_graph,
+)
 from skylos.visitors.framework_aware import detect_framework_usage
 from pathlib import Path
 
@@ -96,6 +102,30 @@ _ADMIN_ATTRS = {
     "formset",
     "verbose_name",
     "verbose_name_plural",
+    # Remaining documented ModelAdmin / InlineModelAdmin options:
+    # https://docs.djangoproject.com/en/stable/ref/contrib/admin/#modeladmin-options
+    # https://docs.djangoproject.com/en/stable/ref/contrib/admin/#inlinemodeladmin-options
+    "actions_selection_counter",
+    "empty_value_display",
+    "formfield_overrides",
+    "paginator",
+    "preserve_filters",
+    "save_as",
+    "save_as_continue",
+    "save_on_top",
+    "show_facets",
+    "show_full_result_count",
+    "sortable_by",
+    "view_on_site",
+    "add_form_template",
+    "change_form_template",
+    "change_list_template",
+    "delete_confirmation_template",
+    "delete_selected_confirmation_template",
+    "object_history_template",
+    "popup_response_template",
+    "classes",
+    "show_change_link",
 }
 
 _META_ATTRS = {
@@ -157,6 +187,12 @@ _DRF_VIEW_ATTRS = {
     "queryset",
     "lookup_field",
     "lookup_url_kwarg",
+    # ScopedRateThrottle reads ``view.throttle_scope``:
+    # https://www.django-rest-framework.org/api-guide/throttling/#scopedratethrottle
+    "throttle_scope",
+    # View.dispatch and the DRF routers honour ``http_method_names``:
+    # https://docs.djangoproject.com/en/stable/ref/class-based-views/base/#django.views.generic.base.View.http_method_names
+    "http_method_names",
 }
 
 _MIGRATION_ATTRS = {
@@ -829,7 +865,7 @@ def _is_django_migration_class(def_obj, framework):
     return "django" in detected or "/migrations/" in filename
 
 
-def _check_django_methods(def_obj, framework):
+def _check_django_methods(def_obj, framework, analyzer=None):
     detected = getattr(framework, "detected_frameworks", set())
     if "django" not in detected:
         return None
@@ -875,6 +911,18 @@ def _check_django_methods(def_obj, framework):
                     base_name = getattr(base, "id", None) or getattr(base, "attr", None)
                     if base_name in DJANGO_ADMIN_BASES:
                         return _suppress(def_obj)
+            # ModelAdmin options also reach admin classes through project
+            # base classes and third-party ModelAdmin subclasses
+            # (``GuardedModelAdmin``, ``ImportExportModelAdmin``).
+            if analyzer is not None:
+                graph = project_class_graph(analyzer)
+                owner = graph.owner_class(def_obj)
+                if owner is not None and any(
+                    base in DJANGO_ADMIN_BASES
+                    or base.endswith(("ModelAdmin", "Inline"))
+                    for base in graph.ancestor_base_names(owner)
+                ):
+                    return _suppress(def_obj, "Django ModelAdmin option")
 
     if def_obj.type == "class":
         class_defs = getattr(framework, "class_defs", {})
@@ -1079,6 +1127,123 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
             if has_external_base and not method_name.startswith("__"):
                 return -40
 
+    return None
+
+
+def _check_external_override(def_obj, analyzer):
+    """A method or class attribute whose name an external ancestor (stdlib
+    or an installed package, read from source) defines is an override that
+    the library calls or reads: ``ast.NodeVisitor.generic_visit``,
+    ``asyncio.Protocol.eof_received``, a Sphinx ``Domain.resolve_xref``."""
+    if def_obj.type not in ("method", "variable") or "." not in def_obj.name:
+        return None
+    simple_name = def_obj.simple_name
+    if simple_name.startswith("__") and simple_name.endswith("__"):
+        return None
+    defining = external_override_owner(def_obj, analyzer)
+    if defining:
+        return _suppress(
+            def_obj,
+            f"overrides {defining}.{simple_name}",
+            code="external_override",
+        )
+    return None
+
+
+# traitlets registers methods decorated with ``@default``, ``@validate`` and
+# ``@observe`` as trait handlers, and still calls the magic
+# ``_<trait>_default`` (dynamic default) and deprecated ``_<trait>_changed``
+# methods of a declared trait:
+# https://traitlets.readthedocs.io/en/stable/api.html#dynamic-default-values
+# https://traitlets.readthedocs.io/en/stable/api.html#callbacks-when-trait-attributes-change
+_TRAITLETS_HANDLER_DECORATORS = frozenset(
+    {"default", "validate", "observe", "observe_compat"}
+)
+_TRAITLETS_MAGIC_RE = re.compile(r"^_(?P<trait>[A-Za-z_]\w*?)_(?:default|changed)$")
+
+
+def _check_traitlets_hooks(def_obj, analyzer):
+    if def_obj.type != "method" or "." not in def_obj.name:
+        return None
+    graph = project_class_graph(analyzer)
+    decorators = getattr(def_obj, "decorators", None)
+    if not isinstance(decorators, (list, tuple)):
+        decorators = ()
+    for decorator in decorators:
+        resolved = graph.resolve_reference(def_obj.filename, str(decorator))
+        parts = resolved.split(".")
+        if (
+            len(parts) > 1
+            and parts[0] == "traitlets"
+            and parts[-1] in _TRAITLETS_HANDLER_DECORATORS
+        ):
+            return _suppress(def_obj, f"traitlets @{parts[-1]} handler")
+
+    match = _TRAITLETS_MAGIC_RE.match(def_obj.simple_name)
+    if not match:
+        return None
+    owner = graph.owner_class(def_obj)
+    if owner is None:
+        return None
+    _, external = graph.ancestry(owner)
+    # Importing traitlets does not install trait dispatch on unrelated classes.
+    # Magic defaults/notifications require its actual class ancestry.
+    uses_traitlets = any(
+        qname.split(".", 1)[0] == "traitlets" for qname in external
+    )
+    if not uses_traitlets:
+        return None
+    trait = match.group("trait")
+    if graph.class_defines(owner, trait) or external_member_owner(
+        owner, trait, analyzer
+    ):
+        return _suppress(def_obj, f"traitlets magic method for trait {trait}")
+    return None
+
+
+# Django and DRF fields merge ``default_error_messages`` up the MRO:
+# https://www.django-rest-framework.org/api-guide/fields/#raising-validation-errors
+# https://docs.djangoproject.com/en/stable/ref/forms/fields/#error-messages
+_FIELD_FRAMEWORK_ROOTS = frozenset({"rest_framework", "django"})
+
+
+def _check_drf_inherited_hooks(def_obj, analyzer):
+    """DRF names read on classes that reach a DRF base only through project
+    classes, where the per-file base checks cannot see it."""
+    if def_obj.type not in ("method", "variable") or "." not in def_obj.name:
+        return None
+    simple_name = def_obj.simple_name
+    is_field_hook = def_obj.type == "method" and (
+        simple_name.startswith("validate_") and len(simple_name) > len("validate_")
+    )
+    is_error_table = (
+        def_obj.type == "variable" and simple_name == "default_error_messages"
+    )
+    if not (is_field_hook or is_error_table):
+        return None
+    graph = project_class_graph(analyzer)
+    owner = graph.owner_class(def_obj)
+    if owner is None:
+        return None
+    _, external = graph.ancestry(owner)
+    framework_bases = {
+        qname.rsplit(".", 1)[-1]
+        for qname in external
+        if qname.split(".", 1)[0] in _FIELD_FRAMEWORK_ROOTS
+    }
+    if is_field_hook and any(
+        qname.split(".", 1)[0] == "rest_framework"
+        and qname.rsplit(".", 1)[-1] in DRF_SERIALIZER_BASES
+        for qname in external
+    ):
+        # Serializer.to_internal_value calls validate_<field_name>:
+        # https://www.django-rest-framework.org/api-guide/serializers/#field-level-validation
+        return _suppress(def_obj, "DRF validate_<field> hook")
+    if is_error_table and any(
+        base.endswith("Field") or base in DRF_SERIALIZER_BASES
+        for base in framework_bases
+    ):
+        return _suppress(def_obj, "field default_error_messages")
     return None
 
 
@@ -1547,10 +1712,16 @@ def apply_penalties(
     if _check_django_drf_structural(def_obj, framework) is True:
         return
 
-    if _check_django_methods(def_obj, framework) is True:
+    if _check_django_methods(def_obj, framework, analyzer) is True:
         return
 
     if _check_drf_methods(def_obj, framework) is True:
+        return
+
+    if _check_drf_inherited_hooks(def_obj, analyzer) is True:
+        return
+
+    if _check_traitlets_hooks(def_obj, analyzer) is True:
         return
 
     if _check_web_framework_methods(def_obj, framework) is True:
@@ -1561,6 +1732,8 @@ def apply_penalties(
 
     result = _check_abstract_overrides(def_obj, analyzer, framework)
     if result is True:
+        return
+    if _check_external_override(def_obj, analyzer) is True:
         return
     if isinstance(result, int):
         confidence += result
