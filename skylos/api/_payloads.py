@@ -220,6 +220,9 @@ def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
         "symbol",
         "review_decision",
         "listing",
+        "security_evidence",
+        "security_trace",
+        "receiver_resolution",
     }
     compact = {key: metadata[key] for key in keep_keys if key in metadata}
     verification = _compact_verification(metadata.get("verification"))

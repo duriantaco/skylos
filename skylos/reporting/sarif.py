@@ -385,13 +385,29 @@ class SarifExporter:
                     if category in {"DEPENDENCY", "PUBLISHER_CHANGE"}
                     else _MAX_SARIF_METADATA_ITEMS
                 )
+                metadata_input = dict(metadata)
+                located_trace = metadata_input.pop("security_trace", None)
                 safe_metadata = _sanitize_sarif_payload(
-                    metadata, max_items=metadata_items
+                    metadata_input, max_items=metadata_items
                 )
+                if isinstance(located_trace, dict):
+                    # A located trace has its own bounded graph budget. It must
+                    # not consume listing, review or semantic-proof fields.
+                    safe_trace = sanitize_bounded_payload(
+                        located_trace, max_depth=6, max_items=128,
+                        max_text_length=500, max_nodes=4096,
+                        neutralize_mentions=False,
+                    )
+                    safe_metadata["security_trace"] = safe_trace
                 if safe_metadata:
                     properties["skylos_metadata"] = safe_metadata
 
-            safe_evidence_input = _sanitize_sarif_payload(finding)
+            evidence_input = dict(finding)
+            if isinstance(metadata, dict) and "security_trace" in metadata:
+                evidence_metadata = dict(metadata)
+                evidence_metadata.pop("security_trace", None)
+                evidence_input["metadata"] = evidence_metadata
+            safe_evidence_input = _sanitize_sarif_payload(evidence_input)
             if not isinstance(safe_evidence_input, dict):
                 safe_evidence_input = {}
 
@@ -599,14 +615,19 @@ def _sarif_code_flows(
     recorded flow.
     """
     evidence = _security_evidence(finding)
-    if evidence is None:
-        return []
     steps = None
-    for key in ("path", "trace", "traces", "flow"):
-        value = evidence.get(key)
-        if isinstance(value, list) and value:
-            steps = value
-            break
+    metadata = finding.get("metadata")
+    located = None
+    if isinstance(metadata, dict):
+        located = metadata.get("security_trace")
+    if isinstance(located, dict) and isinstance(located.get("steps"), list):
+        steps = located["steps"]
+    if not steps and evidence is not None:
+        for key in ("path", "trace", "traces", "flow"):
+            value = evidence.get(key)
+            if isinstance(value, list) and value:
+                steps = value
+                break
     if not steps:
         return []
     steps = [step for step in steps if isinstance(step, (str, dict)) and step]
@@ -645,10 +666,15 @@ def _sarif_code_flows(
     if not thread_locations:
         return []
     flow = {"threadFlows": [{"locations": thread_locations}]}
-    source = evidence.get("source")
-    sink = evidence.get("sink")
+    source = None
+    sink = None
+    if evidence is not None:
+        source = evidence.get("source")
+        sink = evidence.get("sink")
     if isinstance(source, str) and isinstance(sink, str) and source and sink:
         flow["message"] = {"text": _location_text(f"Flow from {source} to {sink}")}
+    if isinstance(located, dict) and located.get("status") != "source_to_sink":
+        flow["message"] = {"text": "Partial recorded static trace; unresolved steps are not runtime verification."}
     return [flow]
 
 
