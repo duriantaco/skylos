@@ -6,6 +6,8 @@ import json
 import pytest
 import yaml
 
+from test.fixture_paths import make_fixture_directory, write_fixture
+
 from skylos.analysis.typing_policy import AnnotationPolicy, annotation_policy, annotation_requirement
 from skylos.rules.quality.practices import TypeAnnotationPracticeRule
 
@@ -15,12 +17,12 @@ SOURCE = "def public(value):\n    return value\n"
 
 
 def project(root, *, hook=None, provider=MIRROR, settings="strict = true\n", global_config=None):
-    (root / "pkg").mkdir(exist_ok=True)
-    (root / "pkg/__init__.py").write_text("")
-    (root / "pkg/core.py").write_text(SOURCE)
-    (root / "pkg/other.py").write_text(SOURCE)
-    (root / "pkg/core.pyi").write_text("def public(value): ...\n")
-    (root / "pyproject.toml").write_text("[tool.mypy]\n" + settings)
+    make_fixture_directory(root, "pkg")
+    write_fixture(root, "pkg/__init__.py", "", overwrite=True)
+    write_fixture(root, "pkg/core.py", SOURCE, overwrite=True)
+    write_fixture(root, "pkg/other.py", SOURCE, overwrite=True)
+    write_fixture(root, "pkg/core.pyi", "def public(value): ...\n", overwrite=True)
+    write_fixture(root, "pyproject.toml", "[tool.mypy]\n" + settings, overwrite=True)
     write_hooks(root, hook=hook, provider=provider, global_config=global_config)
     return root
 
@@ -34,7 +36,7 @@ def write_hooks(root, *, hook=None, provider=MIRROR, global_config=None):
     if provider != "local":
         repository["rev"] = "v2.4.0"
     config = {**(global_config or {}), "repos": [repository]}
-    (root / ".pre-commit-config.yaml").write_text(yaml.safe_dump(config))
+    write_fixture(root, ".pre-commit-config.yaml", yaml.safe_dump(config), overwrite=True)
 
 
 def requirement(root, relative="pkg/core.py", source=SOURCE, **kwargs):
