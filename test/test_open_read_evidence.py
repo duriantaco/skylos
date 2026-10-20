@@ -147,3 +147,96 @@ def test_update_mode_unrelated_reader_does_not_add_read_claim(tmp_path):
 
 def test_readonly_mode_keeps_existing_read_check_without_consumption(tmp_path):
     assert _rules(tmp_path, "return handle", mode="rb") == {"SKY-D215", "SKY-D325"}
+
+
+def _source_rules(tmp_path, source):
+    source = textwrap.dedent(source)
+    write_fixture(
+        tmp_path, "pyproject.toml", "[project]\nname = 'mode-read-coverage'\n"
+    )
+    path = write_fixture(tmp_path, "service.py", source)
+    findings = []
+    scan(ast.parse(source), path, findings)
+    result = set()
+    for row in findings:
+        if row.get("symbol") == "operate":
+            result.add(row["rule_id"])
+    return result
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        def operate(path, other):
+            mode = 'r+'
+            handle = open(path, mode)
+            content = handle.read()
+            handle = other
+            return content
+        """,
+        """
+        def operate(path, other):
+            mode = 'r+'
+            with open(path, mode) as handle:
+                content = handle.read()
+                handle = other
+                return content
+        """,
+        """
+        def operate(path):
+            mode = 'r+'
+            handle = open(path, mode)
+            def read_contents():
+                return handle.read()
+            return read_contents()
+        """,
+        """
+        def read_contents(handle):
+            return handle.read()
+        def operate(path):
+            mode = 'r+'
+            handle = open(path, mode)
+            return read_contents(handle)
+        """,
+        """
+        def operate(path):
+            mode = 'r+'
+            return open(path, mode)
+        """,
+        """
+        def operate(path, text):
+            original = 'r+' if text else 'w+'
+            mode = original
+            return open(path, mode)
+        """,
+        """
+        def operate(path, text):
+            return open(path, 'r+' if text else 'w+')
+        """,
+    ],
+)
+def test_resolved_update_modes_preserve_reads_beyond_exact_handle_model(
+    tmp_path, source
+):
+    assert _source_rules(tmp_path, source) == {
+        "SKY-D215",
+        "SKY-D324",
+        "SKY-D325",
+    }
+
+
+@pytest.mark.parametrize("mode", ["'r+'", "'w+'", "'a+'"])
+def test_literal_update_mode_without_read_keeps_existing_write_checks(tmp_path, mode):
+    source = "def operate(path):\n    return open(path, " + mode + ")\n"
+    assert _source_rules(tmp_path, source) == {"SKY-D215", "SKY-D324"}
+
+
+def test_resolved_pure_write_alias_still_removes_default_read_noise(tmp_path):
+    source = """
+    def operate(path, text):
+        original = 'w' if text else 'wb'
+        mode = original
+        return open(path, mode)
+    """
+    assert _source_rules(tmp_path, source) == {"SKY-D215", "SKY-D324"}

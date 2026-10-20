@@ -12,8 +12,9 @@ class PathOpenModes:
     """Resolve explicit modes without confusing an unknown value with ``r``.
 
     Only literals, conditional expressions and single dominating assignments
-    establish values. Parameters, mutation and unsupported syntax stay unknown.
-    This class does not establish that the callee itself is a filesystem API.
+    in the same function establish values. Parameters, shared namespaces,
+    mutation and unsupported syntax stay unknown. This class does not establish
+    that the callee itself is a filesystem API.
     """
 
     MAX_DEPTH = 16
@@ -28,12 +29,19 @@ class PathOpenModes:
             self.module = _Module(tree, Path("<path-open-modes>"), "")
         self.changed_scopes = set()
         self.changed_names = {}
+        self.captured_names = {}
         for node in ast.walk(tree):
             scope = self.module.scope(node)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in {"exec", "eval", "globals", "locals", "vars"}:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id in {"exec", "eval", "globals", "locals", "vars"}:
                     self.changed_scopes.add(scope)
-                    if node.func.id in {"exec", "eval", "globals"}:
+                    if node.id in {"exec", "eval", "globals"}:
+                        self.changed_scopes.add(tree)
+            elif isinstance(node, ast.Attribute):
+                if node.attr in {"currentframe", "_getframe", "f_locals", "f_globals"}:
+                    self.changed_scopes.add(scope)
+                    if node.attr in {"f_locals", "f_globals"}:
+                        # Frame namespaces can belong to another caller.
                         self.changed_scopes.add(tree)
             elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
@@ -50,6 +58,25 @@ class PathOpenModes:
                             self.changed_names.setdefault(outer, set()).add(name)
                             break
                         outer = self.module.scope(outer)
+        self._record_captured_names()
+
+    def _record_captured_names(self):
+        functions = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        for node in ast.walk(self.tree):
+            if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                continue
+            origin = self.module.scope(node)
+            if not isinstance(origin, functions):
+                continue
+            scope = origin
+            while scope is not self.tree:
+                if self.module.bindings(scope).get(node.id):
+                    if scope is not origin and isinstance(scope, functions):
+                        self.captured_names.setdefault(scope, set()).add(node.id)
+                    break
+                scope = self.module.scope(scope)
+                if isinstance(scope, ast.ClassDef):
+                    scope = self.module.scope(scope)
 
     def _namespace_changed(self, scope):
         while True:
@@ -61,26 +88,25 @@ class PathOpenModes:
 
     def _binding(self, node):
         scope = self.module.scope(node)
-        while True:
-            if self._namespace_changed(scope):
-                return None
-            if node.id in self.changed_names.get(scope, set()):
-                return None
-            bindings = self.module.bindings(scope).get(node.id, [])
-            if bindings:
-                if len(bindings) != 1:
-                    return None
-                binding, value, _ = bindings[0]
-                if not isinstance(binding, (ast.Assign, ast.AnnAssign)):
-                    return None
-                if not self._dominates(binding, node):
-                    return None
-                return value
-            if scope is self.tree:
-                return None
-            scope = self.module.scope(scope)
-            if isinstance(scope, ast.ClassDef):
-                scope = self.module.scope(scope)
+        # A module or closure namespace can be changed through aliases and
+        # external callbacks. A single assignment there is not stability proof.
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return None
+        if self._namespace_changed(scope):
+            return None
+        if node.id in self.changed_names.get(scope, set()):
+            return None
+        if node.id in self.captured_names.get(scope, set()):
+            return None
+        bindings = self.module.bindings(scope).get(node.id, [])
+        if len(bindings) != 1:
+            return None
+        binding, value, _ = bindings[0]
+        if not isinstance(binding, (ast.Assign, ast.AnnAssign)):
+            return None
+        if not self._dominates(binding, node):
+            return None
+        return value
 
     def _dominates(self, binding, node):
         """The assignment precedes this use in the same containing suite.

@@ -1286,11 +1286,16 @@ class _PathFlowChecker(TaintVisitor):
         may_read = modes is None
         may_write = modes is None
         if modes is not None:
+            literal_update_mode = "+" in _call_mode(node, bound_method=bound_method)
             for mode in modes:
                 if "r" in mode and "+" not in mode:
                     may_read = True
-                if "+" in mode and self._update_handle_is_read(node):
-                    may_read = True
+                if "+" in mode:
+                    # Unobserved reads do not prove a resolved name or
+                    # expression is write-only. Keep its existing read check;
+                    # literal update modes only add a demonstrated read.
+                    if not literal_update_mode or self._update_handle_is_read(node):
+                        may_read = True
                 if _mode_writes(mode):
                     may_write = True
         if may_write:

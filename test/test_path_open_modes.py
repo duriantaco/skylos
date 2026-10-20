@@ -60,8 +60,8 @@ def test_single_dominating_assignments_and_aliases_are_followed():
     assert _modes(source) == {"w", "wb"}
 
 
-def test_module_literal_binding_is_read_as_source_instead_of_trusted_by_name():
-    assert _modes("MODE = 'wb'\ndef save(path):\n    return open(path, MODE)") == {"wb"}
+def test_module_literal_binding_without_namespace_stability_stays_unknown():
+    assert _modes("MODE = 'wb'\ndef save(path):\n    return open(path, MODE)") is None
 
 
 def test_annotated_mode_assignment_is_resolved():
@@ -148,8 +148,14 @@ def test_unrelated_dynamic_loader_does_not_reclassify_known_write_mode():
         ("open(path, mode='w', **kwargs)", {"w"}),
         ("open(path, **kwargs, mode='w')", {"w"}),
         ("open(path, **kwargs, mode='w' if text else 'wb')", {"w", "wb"}),
-        ("mode = 'w'\nopen(path, mode=mode, **kwargs)", {"w"}),
-        ("mode = 'w'\nopen(path, **kwargs, mode=mode)", None),
+        (
+            "def save(path, kwargs):\n    mode = 'w'\n    open(path, mode=mode, **kwargs)",
+            {"w"},
+        ),
+        (
+            "def save(path, kwargs):\n    mode = 'w'\n    open(path, **kwargs, mode=mode)",
+            None,
+        ),
     ],
 )
 def test_keyword_expansion_cannot_override_a_captured_explicit_mode(source, expected):
@@ -177,6 +183,103 @@ def test_class_namespace_is_not_a_bare_method_name_closure():
     assert _modes(source) is None
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "mode = 'w'\nopen(path, mode)",
+        """
+        MODE = 'w'
+        namespace = globals
+        namespace()['MODE'] = 'r'
+        def save(path):
+            return open(path, MODE)
+        """,
+        """
+        import sys
+        MODE = 'w'
+        setattr(sys.modules[__name__], 'MODE', 'r')
+        def save(path):
+            return open(path, MODE)
+        """,
+        """
+        import sys
+        MODE = 'w'
+        def change():
+            setattr(sys.modules[__name__], 'MODE', 'r')
+            return 1
+        def save(path):
+            return open(path, buffering=change(), mode=MODE)
+        """,
+        """
+        def outer(path):
+            mode = 'w'
+            def save():
+                return open(path, mode)
+            return save()
+        """,
+    ],
+)
+def test_shared_namespace_modes_do_not_establish_operations(source):
+    assert _modes(source) is None
+
+
+@pytest.mark.parametrize(
+    "capture",
+    [
+        "def captured():\n    return mode",
+        "captured = lambda: mode",
+        "def nested():\n    def captured():\n        return mode\n    return captured",
+    ],
+)
+def test_captured_local_mode_does_not_claim_closure_cell_stability(capture):
+    source = (
+        "def save(path, callback):\n    mode = 'w'\n"
+        + textwrap.indent(capture, "    ")
+        + "\n    return open(path, mode)\n"
+    )
+    assert _modes(source) is None
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        "def inner():\n    mode = 'r'\n    return mode",
+        "def inner(mode):\n    return mode",
+        "inner = lambda mode: mode",
+        "def inner():\n    mode = 'r'\n    def captured():\n        return mode\n    return captured",
+    ],
+)
+def test_nested_own_mode_binding_does_not_invalidate_unrelated_outer_mode(nested):
+    source = (
+        "def save(path):\n    mode = 'w'\n"
+        + textwrap.indent(nested, "    ")
+        + "\n    return open(path, mode)\n"
+    )
+    assert _modes(source) == {"w"}
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "namespace = locals\nnamespace()['mode'] = 'r'",
+        "namespace = vars\nnamespace()['mode'] = 'r'",
+        "namespace = globals\nnamespace()['mode'] = 'r'",
+        "execute = exec\nexecute(\"mode = 'r'\")",
+        "evaluate = eval\nevaluate(expression)",
+        "frame = inspect.currentframe()\nframe.f_locals['mode'] = 'r'",
+        "frame = sys._getframe()\nframe.f_locals['mode'] = 'r'",
+    ],
+)
+def test_reflective_namespace_aliases_and_frame_access_leave_mode_unknown(operation):
+    source = (
+        "import inspect\nimport sys\n"
+        "def save(path, expression):\n    mode = 'w'\n"
+        + textwrap.indent(operation, "    ")
+        + "\n    return open(path, mode)\n"
+    )
+    assert _modes(source) is None
+
+
 def _scan_rules(tmp_path, source):
     source = textwrap.dedent(source)
     write_fixture(tmp_path, "pyproject.toml", "[project]\nname = 'open-mode-proof'\n")
@@ -196,7 +299,7 @@ def _scan_rules(tmp_path, source):
         ("'w' if text else 'wb'", {"SKY-D215", "SKY-D324"}),
         ("'r' if text else 'rb'", {"SKY-D215", "SKY-D325"}),
         ("'r' if text else 'wb'", {"SKY-D215", "SKY-D324", "SKY-D325"}),
-        ("'r+'", {"SKY-D215", "SKY-D324"}),
+        ("'r+'", {"SKY-D215", "SKY-D324", "SKY-D325"}),
         ("supplied_mode", {"SKY-D215", "SKY-D324", "SKY-D325"}),
     ],
 )
@@ -259,3 +362,104 @@ def test_scanner_conditional_suite_mode_stays_write_in_both_actual_branches(
         "        " + target + "\n"
     )
     assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324"}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        MODE = 'w'
+        namespace = globals
+        namespace()['MODE'] = 'r'
+        def operate(path):
+            return open(path, MODE)
+        """,
+        """
+        import sys
+        MODE = 'w'
+        setattr(sys.modules[__name__], 'MODE', 'r')
+        def operate(path):
+            return open(path, MODE)
+        """,
+        """
+        import sys
+        MODE = 'w'
+        def change():
+            setattr(sys.modules[__name__], 'MODE', 'r')
+            return 1
+        def operate(path):
+            return open(path, buffering=change(), mode=MODE)
+        """,
+    ],
+)
+def test_scanner_namespace_mutations_keep_possible_read_and_write_checks(
+    tmp_path, source
+):
+    assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324", "SKY-D325"}
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "captured.__closure__[0].cell_contents = 'r'",
+        "callback(captured)",
+    ],
+)
+def test_scanner_captured_mode_mutation_keeps_possible_read_and_write_checks(
+    tmp_path, operation
+):
+    source = (
+        "def operate(path, callback):\n"
+        "    mode = 'w'\n"
+        "    def captured():\n"
+        "        return mode\n"
+        "    " + operation + "\n"
+        "    return open(path, mode)\n"
+    )
+    assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324", "SKY-D325"}
+
+
+def test_scanner_nested_local_mode_keeps_outer_write_mode_precision(tmp_path):
+    source = """
+    def operate(path):
+        mode = 'w'
+        def inner():
+            mode = 'r'
+            return mode
+        inner()
+        return open(path, mode)
+    """
+    assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324"}
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "namespace = locals\nnamespace()['mode'] = 'r'",
+        "frame = inspect.currentframe()\nframe.f_locals['mode'] = 'r'",
+        "frame = sys._getframe()\nframe.f_locals['mode'] = 'r'",
+    ],
+)
+def test_scanner_explicit_frame_mutation_keeps_possible_read_and_write_checks(
+    tmp_path, operation
+):
+    source = (
+        "import inspect\nimport sys\n"
+        "def operate(path):\n    mode = 'w'\n"
+        + textwrap.indent(operation, "    ")
+        + "\n    return open(path, mode)\n"
+    )
+    assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324", "SKY-D325"}
+
+
+def test_scanner_frame_namespace_in_helper_cannot_refute_caller_read(tmp_path):
+    source = """
+    import sys
+    def change():
+        sys._getframe(1).f_locals['mode'] = 'r'
+    def operate(path):
+        mode = 'w'
+        change()
+        return open(path, mode)
+    """
+    assert _scan_rules(tmp_path, source) == {"SKY-D215", "SKY-D324", "SKY-D325"}
